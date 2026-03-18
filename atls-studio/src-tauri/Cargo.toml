@@ -1,0 +1,73 @@
+[package]
+name = "atls-studio"
+version = "0.1.0"
+description = "A Tauri App"
+authors = ["you"]
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+# The `_lib` suffix may seem redundant but it is necessary
+# to make the lib name unique and wouldn't conflict with the bin name.
+# This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
+name = "atls_studio_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-opener = "2"
+tauri-plugin-dialog = "2"
+tauri-plugin-fs = "2"
+tauri-plugin-shell = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
+regex = "1"
+ignore = "0.4"
+tauri-plugin-os = "2"
+tauri-plugin-clipboard-manager = "2"
+reqwest = { version = "0.12", features = ["json", "stream"] }
+tokio = { version = "1", features = ["full"] }
+# PTY for interactive terminal
+portable-pty = "0.8"
+# Async channel for PTY streaming
+futures = "0.3"
+# ATLS Core library (direct Rust integration)
+atls-core = { path = "../../atls-rs/crates/atls-core" }
+# SQLite (for direct queries in commands) - must match atls-core version
+rusqlite = { version = "0.31", features = ["bundled"] }
+# Base64 encoding for image attachments
+base64 = "0.22"
+# Home directory resolution for config files
+dirs-next = "2"
+# File watching for auto-refresh
+notify = "6"
+notify-debouncer-mini = "0.4"
+# Tree-sitter - versions MUST match atls-core to avoid ABI conflicts
+tree-sitter = "0.25"
+tree-sitter-typescript = "0.23"
+tree-sitter-javascript = "0.25"
+tree-sitter-rust = "0.24"
+tree-sitter-java = "0.23"
+tree-sitter-go = "0.25"
+tree-sitter-c-sharp = "0.23"
+tree-sitter-python = "0.25"
+tree-sitter-cpp = "0.23"
+tree-sitter-swift = "0.7"
+tree-sitter-php = "0.24"
+tree-sitter-ruby = "0.23"
+tree-sitter-scala = "0.23"
+tree-sitter-dart-orchard = "0.3"
+# Glob matching for context type:tree filtering
+globset = "0.4"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = ["Win32_System_Diagnostics_ToolHelp", "Win32_Foundation"] }
+
+[dev-dependencies]
+tempfile = "3"
+

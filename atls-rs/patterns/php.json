@@ -1,0 +1,502 @@
+[
+  {
+    "id": "PH_PHPSTANTYPE_INVALIDARGUMENT",
+    "languages": [
+      "php"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Invalid argument type",
+    "description": "Argument of an invalid type supplied to function.",
+    "tags": [
+      "phpstan"
+    ],
+    "sources": [
+      {
+        "source": "phpstan",
+        "ruleId": "phpstanType.invalidArgument",
+        "url": "https://phpstan.org/error-identifiers/phpstanType"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T02:22:08.416Z",
+    "structuralHints": {
+      "treeSitterQuery": "(function_call_expression\n  function: (_) @function\n  arguments: (arguments\n    (argument\n      (_) @offender)))"
+    }
+  },
+  {
+    "id": "PH_PHPSTANVARIABLE_UNDEFINED",
+    "languages": [
+      "php"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Undefined variable",
+    "description": "Access to undefined variable.",
+    "tags": [
+      "phpstan"
+    ],
+    "sources": [
+      {
+        "source": "phpstan",
+        "ruleId": "phpstanVariable.undefined",
+        "url": "https://phpstan.org/error-identifiers/phpstanVariable"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T02:22:11.148Z",
+    "structuralHints": {
+      "treeSitterQuery": "(variable_name) @offender"
+    }
+  },
+  {
+    "id": "PH_PHPSTANBINARYOP_INVALID",
+    "languages": [
+      "php"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Invalid binary operation",
+    "description": "Binary operation on invalid types (e.g. string + array).",
+    "tags": [
+      "phpstan"
+    ],
+    "sources": [
+      {
+        "source": "phpstan",
+        "ruleId": "phpstanBinaryOp.invalid",
+        "url": "https://phpstan.org/error-identifiers/phpstanBinaryOp"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T06:28:53.249Z",
+    "structuralHints": {
+      "treeSitterQuery": "(binary_expression\n  left: [\n    (array_creation_expression)\n    (string)\n  ]\n  operator: [\"+\"]\n  right: [\n    (array_creation_expression)\n    (string)\n  ]\n) @offender"
+    }
+  },
+  {
+    "id": "PH_PHPSTANMETHOD_NOTFOUND",
+    "languages": [
+      "php"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Method not found",
+    "description": "Call to undefined method.",
+    "tags": [
+      "phpstan"
+    ],
+    "sources": [
+      {
+        "source": "phpstan",
+        "ruleId": "phpstanMethod.notFound",
+        "url": "https://phpstan.org/error-identifiers/phpstanMethod"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T02:22:16.327Z",
+    "structuralHints": {
+      "treeSitterQuery": "(member_call_expression\n  object: (_)\n  name: (name) @offender)"
+    }
+  },
+  {
+    "id": "PH_PHPSTANPROPERTY_NOTFOUND",
+    "languages": [
+      "php"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Property not found",
+    "description": "Access to undefined property.",
+    "tags": [
+      "phpstan"
+    ],
+    "sources": [
+      {
+        "source": "phpstan",
+        "ruleId": "phpstanProperty.notFound",
+        "url": "https://phpstan.org/error-identifiers/phpstanProperty"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T02:22:18.567Z",
+    "structuralHints": {
+      "treeSitterQuery": "(member_access_expression\n  object: (_)\n  name: (name) @offender)"
+    }
+  },
+  {
+    "id": "PH_PHPSTANRETURN_TYPE",
+    "languages": [
+      "php"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Invalid return type",
+    "description": "Return type does not match declared type.",
+    "tags": [
+      "phpstan"
+    ],
+    "sources": [
+      {
+        "source": "phpstan",
+        "ruleId": "phpstanReturn.type",
+        "url": "https://phpstan.org/error-identifiers/phpstanReturn"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T02:22:20.436Z",
+    "structuralHints": {
+      "treeSitterQuery": "(function_definition\n  return_type: (_) @return_type\n  body: (compound_statement\n    (return_statement\n      (_) @return_value)) @offender)"
+    }
+  },
+  {
+    "id": "PH_PHPSTANARGUMENT_COUNT",
+    "languages": [
+      "php"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Wrong argument count",
+    "description": "Function called with wrong number of arguments.",
+    "tags": [
+      "phpstan"
+    ],
+    "sources": [
+      {
+        "source": "phpstan",
+        "ruleId": "phpstanArgument.count",
+        "url": "https://phpstan.org/error-identifiers/phpstanArgument"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T02:22:23.104Z",
+    "structuralHints": {
+      "treeSitterQuery": "(function_call_expression\n  function: (name) @function_name\n  arguments: (arguments) @offender)"
+    }
+  },
+  {
+    "id": "PH_PHPSTANNULL_NULLABLE",
+    "languages": [
+      "php"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Nullable type issue",
+    "description": "Possible null value used where non-null expected.",
+    "tags": [
+      "phpstan"
+    ],
+    "sources": [
+      {
+        "source": "phpstan",
+        "ruleId": "phpstanNull.nullable",
+        "url": "https://phpstan.org/error-identifiers/phpstanNull"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T06:29:01.899Z",
+    "structuralHints": {
+      "treeSitterQuery": "(binary_expression\n  operator: \"??\"\n  left: (_) @offender\n)"
+    }
+  },
+  {
+    "id": "PH_PHPSTANUNUSED_VARIABLE",
+    "languages": [
+      "php"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Unused variable",
+    "description": "Variable is defined but never used.",
+    "tags": [
+      "phpstan"
+    ],
+    "sources": [
+      {
+        "source": "phpstan",
+        "ruleId": "phpstanUnused.variable",
+        "url": "https://phpstan.org/error-identifiers/phpstanUnused"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T07:02:12.837Z",
+    "structuralHints": {
+      "treeSitterQuery": "(assignment_expression left: (variable_name) @offender) @assign"
+    }
+  },
+  {
+    "id": "PH_PHPSTANDEADCODE_UNREACHABLE",
+    "languages": [
+      "php"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Unreachable code",
+    "description": "Code after return/throw is unreachable.",
+    "tags": [
+      "phpstan"
+    ],
+    "sources": [
+      {
+        "source": "phpstan",
+        "ruleId": "phpstanDeadCode.unreachable",
+        "url": "https://phpstan.org/error-identifiers/phpstanDeadCode"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T06:29:21.227Z",
+    "structuralHints": {
+      "treeSitterQuery": "(function_definition\n  body: (compound_statement\n    (return_statement)\n    .\n    (_) @offender\n    (#not-eq? @offender \"}\")))"
+    }
+  },
+  {
+    "id": "PH_PHPSTANACCESS_PRIVATE",
+    "languages": [
+      "php"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Private access",
+    "description": "Access to private property/method from outside class.",
+    "tags": [
+      "phpstan"
+    ],
+    "sources": [
+      {
+        "source": "phpstan",
+        "ruleId": "phpstanAccess.private",
+        "url": "https://phpstan.org/error-identifiers/phpstanAccess"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T06:29:25.024Z",
+    "structuralHints": {
+      "treeSitterQuery": "(member_access_expression\n  object: (_)\n  name: (name) @offender\n  (#match? @offender \"^(__|_)[a-zA-Z]\"))"
+    }
+  },
+  {
+    "id": "PH_PHPSTANARRAY_OFFSET",
+    "languages": [
+      "php"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Array offset access",
+    "description": "Accessing array offset that may not exist.",
+    "tags": [
+      "phpstan"
+    ],
+    "sources": [
+      {
+        "source": "phpstan",
+        "ruleId": "phpstanArray.offset",
+        "url": "https://phpstan.org/error-identifiers/phpstanArray"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T06:29:33.908Z",
+    "structuralHints": {
+      "treeSitterQuery": "(subscript_expression\n  (name) @offender)"
+    }
+  },
+  {
+    "id": "PH_PHPSTANCALL_STATIC",
+    "languages": [
+      "php"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Static call issue",
+    "description": "Calling static method on instance or vice versa.",
+    "tags": [
+      "phpstan"
+    ],
+    "sources": [
+      {
+        "source": "phpstan",
+        "ruleId": "phpstanCall.static",
+        "url": "https://phpstan.org/error-identifiers/phpstanCall"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T06:29:36.936Z",
+    "structuralHints": {
+      "treeSitterQuery": "(member_call_expression\n    object: (_)\n    name: (name) @offender\n    (#match? @offender \"^[A-Z]\"))"
+    }
+  },
+  {
+    "id": "PH_PHPSTANCLASS_NOTFOUND",
+    "languages": [
+      "php"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Class not found",
+    "description": "Referenced class does not exist.",
+    "tags": [
+      "phpstan"
+    ],
+    "sources": [
+      {
+        "source": "phpstan",
+        "ruleId": "phpstanClass.notFound",
+        "url": "https://phpstan.org/error-identifiers/phpstanClass"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T02:22:44.195Z",
+    "structuralHints": {
+      "treeSitterQuery": "(named_type\n  (qualified_name) @offender\n  (#not-any-of? @offender\n    \"stdClass\" \"Exception\" \"Error\" \"DateTime\" \"DateTimeImmutable\"\n    \"PDO\" \"ArrayObject\" \"SplFileObject\" \"ReflectionClass\"\n    \"Closure\" \"Generator\" \"WeakReference\" \"Throwable\"\n    \"PDOException\" \"RuntimeException\" \"InvalidArgumentException\"\n    \"LogicException\" \"BadMethodCallException\" \"DomainException\"\n    \"LengthException\" \"OutOfBoundsException\" \"OutOfRangeException\"\n    \"OverflowException\" \"RangeException\" \"UnderflowException\"\n    \"UnexpectedValueException\" \"ArrayIterator\" \"CachingIterator\"\n    \"DirectoryIterator\" \"FilesystemIterator\" \"RecursiveDirectoryIterator\"\n    \"RecursiveIteratorIterator\" \"SplDoublyLinkedList\" \"SplFixedArray\"\n    \"SplHeap\" \"SplMaxHeap\" \"SplMinHeap\" \"SplPriorityQueue\" \"SplQueue\"\n    \"SplStack\" \"SplObjectStorage\"))"
+    }
+  },
+  {
+    "id": "PH_PHPSTANINTERFACE_NOTFOUND",
+    "languages": [
+      "php"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Interface not found",
+    "description": "Referenced interface does not exist.",
+    "tags": [
+      "phpstan"
+    ],
+    "sources": [
+      {
+        "source": "phpstan",
+        "ruleId": "phpstanInterface.notFound",
+        "url": "https://phpstan.org/error-identifiers/phpstanInterface"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T02:22:45.156Z",
+    "structuralHints": {
+      "treeSitterQuery": "(base_clause\n  (name) @offender)"
+    }
+  },
+  {
+    "id": "PH_PHPSTANTRAIT_NOTFOUND",
+    "languages": [
+      "php"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Trait not found",
+    "description": "Referenced trait does not exist.",
+    "tags": [
+      "phpstan"
+    ],
+    "sources": [
+      {
+        "source": "phpstan",
+        "ruleId": "phpstanTrait.notFound",
+        "url": "https://phpstan.org/error-identifiers/phpstanTrait"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T06:33:17.381Z",
+    "structuralHints": {
+      "treeSitterQuery": "(\n  (name) @offender\n  (#match? @offender \"^(NonExistentTrait|UndefinedTrait|MissingTrait)$\")\n)"
+    }
+  },
+  {
+    "id": "PH_PHPSTANPARAMETER_TYPE",
+    "languages": [
+      "php"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Parameter type mismatch",
+    "description": "Parameter type does not match declared type.",
+    "tags": [
+      "phpstan"
+    ],
+    "sources": [
+      {
+        "source": "phpstan",
+        "ruleId": "phpstanParameter.type",
+        "url": "https://phpstan.org/error-identifiers/phpstanParameter"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T02:22:50.793Z",
+    "structuralHints": {
+      "treeSitterQuery": "(function_definition\n  parameters: (formal_parameters\n    (simple_parameter\n      type: (_) @declared_type\n      name: (variable_name) @param_name))\n  body: (compound_statement\n    (expression_statement\n      (assignment_expression\n        left: (variable_name) @assigned_var\n        right: (_) @assigned_value))\n    (#eq? @param_name @assigned_var))) @offender"
+    }
+  },
+  {
+    "id": "PH_PHPSTANFUNCTION_NOTFOUND",
+    "languages": [
+      "php"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Function not found",
+    "description": "Call to undefined function.",
+    "tags": [
+      "phpstan"
+    ],
+    "sources": [
+      {
+        "source": "phpstan",
+        "ruleId": "phpstanFunction.notFound",
+        "url": "https://phpstan.org/error-identifiers/phpstanFunction"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T06:29:49.890Z",
+    "structuralHints": {
+      "treeSitterQuery": "(function_call_expression\n  function: (name) @offender)"
+    }
+  },
+  {
+    "id": "PH_PHPSTANVISIBILITY_PROTECTED",
+    "languages": [
+      "php"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Protected access",
+    "description": "Access to protected property/method from outside class hierarchy.",
+    "tags": [
+      "phpstan"
+    ],
+    "sources": [
+      {
+        "source": "phpstan",
+        "ruleId": "phpstanVisibility.protected",
+        "url": "https://phpstan.org/error-identifiers/phpstanVisibility"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T02:22:58.937Z",
+    "structuralHints": {
+      "treeSitterQuery": "(member_access_expression\n  object: (_)\n  name: (name) @offender\n  (#match? @offender \"^[a-zA-Z_][a-zA-Z0-9_]*$\"))"
+    }
+  },
+  {
+    "id": "PH_PHPSTANPROPERTY_READONLY",
+    "languages": [
+      "php"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Read-only property",
+    "description": "Attempting to write to read-only property.",
+    "tags": [
+      "phpstan"
+    ],
+    "sources": [
+      {
+        "source": "phpstan",
+        "ruleId": "phpstanProperty.readOnly",
+        "url": "https://phpstan.org/error-identifiers/phpstanProperty"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T02:23:01.123Z",
+    "structuralHints": {
+      "treeSitterQuery": "(assignment_expression\n  left: (member_access_expression) @offender\n  (#match? @offender \"->readonly\"))"
+    }
+  }
+]

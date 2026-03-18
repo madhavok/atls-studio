@@ -1,0 +1,2400 @@
+[
+  {
+    "id": "AL_AI_AGENT_SECURITY",
+    "languages": [
+      "all"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "AI Agent Security",
+    "description": "OWASP Security Guidance for AI Agent Security",
+    "tags": [
+      "owasp"
+    ],
+    "sources": [
+      {
+        "source": "owasp",
+        "ruleId": "AI_AGENT_SECURITY",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/AI_Agent_Security_Cheat_Sheet.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:37:36.256Z"
+  },
+  {
+    "id": "AL_AUTOMOTIVE_SECURITY",
+    "languages": [
+      "all"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "Automotive Security",
+    "description": "OWASP Security Guidance for Automotive Security",
+    "tags": [
+      "owasp"
+    ],
+    "sources": [
+      {
+        "source": "owasp",
+        "ruleId": "AUTOMOTIVE_SECURITY",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Automotive_Security.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:37:36.256Z"
+  },
+  {
+    "id": "AL_ABUSE_CASE",
+    "languages": [
+      "all"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "Abuse Case",
+    "description": "OWASP Security Guidance for Abuse Case",
+    "tags": [
+      "owasp"
+    ],
+    "sources": [
+      {
+        "source": "owasp",
+        "ruleId": "ABUSE_CASE",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Abuse_Case_Cheat_Sheet.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:37:36.256Z"
+  },
+  {
+    "id": "AL_AUTHORIZATION_TESTING_AUTOMATION",
+    "languages": [
+      "all"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "Authorization Testing Automation",
+    "description": "OWASP Security Guidance for Authorization Testing Automation",
+    "tags": [
+      "owasp"
+    ],
+    "sources": [
+      {
+        "source": "owasp",
+        "ruleId": "AUTHORIZATION_TESTING_AUTOMATION",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Authorization_Testing_Automation_Cheat_Sheet.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:37:36.256Z"
+  },
+  {
+    "id": "AL_AUTHORIZATION",
+    "languages": [
+      "all"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "Authorization",
+    "description": "OWASP Security Guidance for Authorization",
+    "tags": [
+      "owasp"
+    ],
+    "sources": [
+      {
+        "source": "owasp",
+        "ruleId": "AUTHORIZATION",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Authorization_Cheat_Sheet.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:37:36.256Z"
+  },
+  {
+    "id": "AL_AUTHENTICATION",
+    "languages": [
+      "all"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "Authentication",
+    "description": "OWASP Security Guidance for Authentication",
+    "tags": [
+      "owasp"
+    ],
+    "sources": [
+      {
+        "source": "owasp",
+        "ruleId": "AUTHENTICATION",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Authentication_Cheat_Sheet.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:37:36.256Z"
+  },
+  {
+    "id": "AL_ATTACK_SURFACE_ANALYSIS",
+    "languages": [
+      "all"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "Attack Surface Analysis",
+    "description": "OWASP Security Guidance for Attack Surface Analysis",
+    "tags": [
+      "owasp"
+    ],
+    "sources": [
+      {
+        "source": "owasp",
+        "ruleId": "ATTACK_SURFACE_ANALYSIS",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Attack_Surface_Analysis_Cheat_Sheet.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:37:36.256Z"
+  },
+  {
+    "id": "AL_AJAX_SECURITY",
+    "languages": [
+      "all"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "AJAX Security",
+    "description": "OWASP Security Guidance for AJAX Security",
+    "tags": [
+      "owasp"
+    ],
+    "sources": [
+      {
+        "source": "owasp",
+        "ruleId": "AJAX_SECURITY",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/AJAX_Security_Cheat_Sheet.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:37:36.256Z"
+  },
+  {
+    "id": "AL_ACCESS_CONTROL",
+    "languages": [
+      "all"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "Access Control",
+    "description": "OWASP Security Guidance for Access Control",
+    "tags": [
+      "owasp"
+    ],
+    "sources": [
+      {
+        "source": "owasp",
+        "ruleId": "ACCESS_CONTROL",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Access_Control_Cheat_Sheet.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:37:36.256Z"
+  },
+  {
+    "id": "AL_BEAN_VALIDATION",
+    "languages": [
+      "all"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "Bean Validation",
+    "description": "OWASP Security Guidance for Bean Validation",
+    "tags": [
+      "owasp"
+    ],
+    "sources": [
+      {
+        "source": "owasp",
+        "ruleId": "BEAN_VALIDATION",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Bean_Validation_Cheat_Sheet.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:37:36.256Z"
+  },
+  {
+    "id": "AL_BROWSER_EXTENSION_VULNERABILITIES",
+    "languages": [
+      "all"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "Browser Extension Vulnerabilities",
+    "description": "OWASP Security Guidance for Browser Extension Vulnerabilities",
+    "tags": [
+      "owasp"
+    ],
+    "sources": [
+      {
+        "source": "owasp",
+        "ruleId": "BROWSER_EXTENSION_VULNERABILITIES",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Browser_Extension_Vulnerabilities_Cheat_Sheet.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:37:36.256Z"
+  },
+  {
+    "id": "AL_CLICKJACKING_DEFENSE",
+    "languages": [
+      "all"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "Clickjacking Defense",
+    "description": "OWASP Security Guidance for Clickjacking Defense",
+    "tags": [
+      "owasp"
+    ],
+    "sources": [
+      {
+        "source": "owasp",
+        "ruleId": "CLICKJACKING_DEFENSE",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Clickjacking_Defense_Cheat_Sheet.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:37:36.256Z"
+  },
+  {
+    "id": "AL_CONTENT_SECURITY_POLICY",
+    "languages": [
+      "all"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "Content Security Policy",
+    "description": "OWASP Security Guidance for Content Security Policy",
+    "tags": [
+      "owasp"
+    ],
+    "sources": [
+      {
+        "source": "owasp",
+        "ruleId": "CONTENT_SECURITY_POLICY",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Content_Security_Policy_Cheat_Sheet.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:37:36.256Z"
+  },
+  {
+    "id": "AL_CRYPTOGRAPHIC_STORAGE",
+    "languages": [
+      "all"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "Cryptographic Storage",
+    "description": "OWASP Security Guidance for Cryptographic Storage",
+    "tags": [
+      "owasp"
+    ],
+    "sources": [
+      {
+        "source": "owasp",
+        "ruleId": "CRYPTOGRAPHIC_STORAGE",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Cryptographic_Storage_Cheat_Sheet.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:37:36.256Z"
+  },
+  {
+    "id": "AL_CROSS_SITE_REQUEST_FORGERY_PREVENTION",
+    "languages": [
+      "all"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "Cross-Site Request Forgery Prevention",
+    "description": "OWASP Security Guidance for Cross-Site Request Forgery Prevention",
+    "tags": [
+      "owasp"
+    ],
+    "sources": [
+      {
+        "source": "owasp",
+        "ruleId": "CROSS_SITE_REQUEST_FORGERY_PREVENTION",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Cross-Site_Request_Forgery_Prevention_Cheat_Sheet.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:37:36.256Z"
+  },
+  {
+    "id": "AL_CHOOSING_AND_USING_SECURITY_QUESTIONS",
+    "languages": [
+      "all"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "Choosing and Using Security Questions",
+    "description": "OWASP Security Guidance for Choosing and Using Security Questions",
+    "tags": [
+      "owasp"
+    ],
+    "sources": [
+      {
+        "source": "owasp",
+        "ruleId": "CHOOSING_AND_USING_SECURITY_QUESTIONS",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Choosing_and_Using_Security_Questions_Cheat_Sheet.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:37:36.256Z"
+  },
+  {
+    "id": "AL_CROSS_SITE_SCRIPTING_PREVENTION",
+    "languages": [
+      "all"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "Cross Site Scripting Prevention",
+    "description": "OWASP Security Guidance for Cross Site Scripting Prevention",
+    "tags": [
+      "owasp"
+    ],
+    "sources": [
+      {
+        "source": "owasp",
+        "ruleId": "CROSS_SITE_SCRIPTING_PREVENTION",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Cross_Site_Scripting_Prevention_Cheat_Sheet.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:37:36.256Z"
+  },
+  {
+    "id": "AL_COOKIE_THEFT_MITIGATION",
+    "languages": [
+      "all"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "Cookie Theft Mitigation",
+    "description": "OWASP Security Guidance for Cookie Theft Mitigation",
+    "tags": [
+      "owasp"
+    ],
+    "sources": [
+      {
+        "source": "owasp",
+        "ruleId": "COOKIE_THEFT_MITIGATION",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Cookie_Theft_Mitigation_Cheat_Sheet.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:37:36.256Z"
+  },
+  {
+    "id": "AL_C_BASED_TOOLCHAIN_HARDENING",
+    "languages": [
+      "all"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "C-Based Toolchain Hardening",
+    "description": "OWASP Security Guidance for C-Based Toolchain Hardening",
+    "tags": [
+      "owasp"
+    ],
+    "sources": [
+      {
+        "source": "owasp",
+        "ruleId": "C_BASED_TOOLCHAIN_HARDENING",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/C-Based_Toolchain_Hardening_Cheat_Sheet.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:37:36.256Z"
+  },
+  {
+    "id": "AL_CREDENTIAL_STUFFING_PREVENTION",
+    "languages": [
+      "all"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "Credential Stuffing Prevention",
+    "description": "OWASP Security Guidance for Credential Stuffing Prevention",
+    "tags": [
+      "owasp"
+    ],
+    "sources": [
+      {
+        "source": "owasp",
+        "ruleId": "CREDENTIAL_STUFFING_PREVENTION",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Credential_Stuffing_Prevention_Cheat_Sheet.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:37:36.256Z"
+  },
+  {
+    "id": "AL_CI_CD_SECURITY",
+    "languages": [
+      "all"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "CI CD Security",
+    "description": "OWASP Security Guidance for CI CD Security",
+    "tags": [
+      "owasp"
+    ],
+    "sources": [
+      {
+        "source": "owasp",
+        "ruleId": "CI_CD_SECURITY",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/CI_CD_Security_Cheat_Sheet.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:37:36.256Z"
+  },
+  {
+    "id": "AL_DOM_CLOBBERING_PREVENTION",
+    "languages": [
+      "all"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "DOM Clobbering Prevention",
+    "description": "OWASP Security Guidance for DOM Clobbering Prevention",
+    "tags": [
+      "owasp"
+    ],
+    "sources": [
+      {
+        "source": "owasp",
+        "ruleId": "DOM_CLOBBERING_PREVENTION",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/DOM_Clobbering_Prevention_Cheat_Sheet.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:37:36.256Z"
+  },
+  {
+    "id": "AL_DJANGO_SECURITY",
+    "languages": [
+      "all"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "Django Security",
+    "description": "OWASP Security Guidance for Django Security",
+    "tags": [
+      "owasp"
+    ],
+    "sources": [
+      {
+        "source": "owasp",
+        "ruleId": "DJANGO_SECURITY",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Django_Security_Cheat_Sheet.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:37:36.256Z"
+  },
+  {
+    "id": "AL_DATABASE_SECURITY",
+    "languages": [
+      "all"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "Database Security",
+    "description": "OWASP Security Guidance for Database Security",
+    "tags": [
+      "owasp"
+    ],
+    "sources": [
+      {
+        "source": "owasp",
+        "ruleId": "DATABASE_SECURITY",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Database_Security_Cheat_Sheet.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:37:36.256Z"
+  },
+  {
+    "id": "AL_DENIAL_OF_SERVICE",
+    "languages": [
+      "all"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "Denial of Service",
+    "description": "OWASP Security Guidance for Denial of Service",
+    "tags": [
+      "owasp"
+    ],
+    "sources": [
+      {
+        "source": "owasp",
+        "ruleId": "DENIAL_OF_SERVICE",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Denial_of_Service_Cheat_Sheet.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:37:36.256Z"
+  },
+  {
+    "id": "AL_DOCKER_SECURITY",
+    "languages": [
+      "all"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "Docker Security",
+    "description": "OWASP Security Guidance for Docker Security",
+    "tags": [
+      "owasp"
+    ],
+    "sources": [
+      {
+        "source": "owasp",
+        "ruleId": "DOCKER_SECURITY",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Docker_Security_Cheat_Sheet.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:37:36.256Z"
+  },
+  {
+    "id": "AL_DOTNET_SECURITY",
+    "languages": [
+      "all"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "DotNet Security",
+    "description": "OWASP Security Guidance for DotNet Security",
+    "tags": [
+      "owasp"
+    ],
+    "sources": [
+      {
+        "source": "owasp",
+        "ruleId": "DOTNET_SECURITY",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/DotNet_Security_Cheat_Sheet.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:37:36.256Z"
+  },
+  {
+    "id": "AL_DOM_BASED_XSS_PREVENTION",
+    "languages": [
+      "all"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "DOM based XSS Prevention",
+    "description": "OWASP Security Guidance for DOM based XSS Prevention",
+    "tags": [
+      "owasp"
+    ],
+    "sources": [
+      {
+        "source": "owasp",
+        "ruleId": "DOM_BASED_XSS_PREVENTION",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/DOM_based_XSS_Prevention_Cheat_Sheet.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:37:36.256Z"
+  },
+  {
+    "id": "AL_DJANGO_REST_FRAMEWORK",
+    "languages": [
+      "all"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "Django REST Framework",
+    "description": "OWASP Security Guidance for Django REST Framework",
+    "tags": [
+      "owasp"
+    ],
+    "sources": [
+      {
+        "source": "owasp",
+        "ruleId": "DJANGO_REST_FRAMEWORK",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Django_REST_Framework_Cheat_Sheet.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:37:36.256Z"
+  },
+  {
+    "id": "AL_DEPENDENCY_GRAPH_SBOM",
+    "languages": [
+      "all"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "Dependency Graph SBOM",
+    "description": "OWASP Security Guidance for Dependency Graph SBOM",
+    "tags": [
+      "owasp"
+    ],
+    "sources": [
+      {
+        "source": "owasp",
+        "ruleId": "DEPENDENCY_GRAPH_SBOM",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Dependency_Graph_SBOM_Cheat_Sheet.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:37:36.256Z"
+  },
+  {
+    "id": "AL_DRONE_SECURITY",
+    "languages": [
+      "all"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "Drone Security",
+    "description": "OWASP Security Guidance for Drone Security",
+    "tags": [
+      "owasp"
+    ],
+    "sources": [
+      {
+        "source": "owasp",
+        "ruleId": "DRONE_SECURITY",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Drone_Security_Cheat_Sheet.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:37:36.256Z"
+  },
+  {
+    "id": "AL_DESERIALIZATION",
+    "languages": [
+      "all"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "Deserialization",
+    "description": "OWASP Security Guidance for Deserialization",
+    "tags": [
+      "owasp"
+    ],
+    "sources": [
+      {
+        "source": "owasp",
+        "ruleId": "DESERIALIZATION",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Deserialization_Cheat_Sheet.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:37:36.256Z"
+  },
+  {
+    "id": "AL_ERROR_HANDLING",
+    "languages": [
+      "all"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "Error Handling",
+    "description": "OWASP Security Guidance for Error Handling",
+    "tags": [
+      "owasp"
+    ],
+    "sources": [
+      {
+        "source": "owasp",
+        "ruleId": "ERROR_HANDLING",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Error_Handling_Cheat_Sheet.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:37:36.256Z"
+  },
+  {
+    "id": "AL_FORGOT_PASSWORD",
+    "languages": [
+      "all"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "Forgot Password",
+    "description": "OWASP Security Guidance for Forgot Password",
+    "tags": [
+      "owasp"
+    ],
+    "sources": [
+      {
+        "source": "owasp",
+        "ruleId": "FORGOT_PASSWORD",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Forgot_Password_Cheat_Sheet.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:37:36.256Z"
+  },
+  {
+    "id": "AL_FILE_UPLOAD",
+    "languages": [
+      "all"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "File Upload",
+    "description": "OWASP Security Guidance for File Upload",
+    "tags": [
+      "owasp"
+    ],
+    "sources": [
+      {
+        "source": "owasp",
+        "ruleId": "FILE_UPLOAD",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/File_Upload_Cheat_Sheet.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:37:36.256Z"
+  },
+  {
+    "id": "AL_GRAPHQL",
+    "languages": [
+      "all"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "GraphQL",
+    "description": "OWASP Security Guidance for GraphQL",
+    "tags": [
+      "owasp"
+    ],
+    "sources": [
+      {
+        "source": "owasp",
+        "ruleId": "GRAPHQL",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/GraphQL_Cheat_Sheet.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:37:36.256Z"
+  },
+  {
+    "id": "AL_GRPC_SECURITY",
+    "languages": [
+      "all"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "gRPC Security",
+    "description": "OWASP Security Guidance for gRPC Security",
+    "tags": [
+      "owasp"
+    ],
+    "sources": [
+      {
+        "source": "owasp",
+        "ruleId": "GRPC_SECURITY",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/gRPC_Security_Cheat_Sheet.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:37:36.256Z"
+  },
+  {
+    "id": "AL_HTTP_HEADERS",
+    "languages": [
+      "all"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "HTTP Headers",
+    "description": "OWASP Security Guidance for HTTP Headers",
+    "tags": [
+      "owasp"
+    ],
+    "sources": [
+      {
+        "source": "owasp",
+        "ruleId": "HTTP_HEADERS",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/HTTP_Headers_Cheat_Sheet.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:37:36.256Z"
+  },
+  {
+    "id": "AL_HTML5_SECURITY",
+    "languages": [
+      "all"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "HTML5 Security",
+    "description": "OWASP Security Guidance for HTML5 Security",
+    "tags": [
+      "owasp"
+    ],
+    "sources": [
+      {
+        "source": "owasp",
+        "ruleId": "HTML5_SECURITY",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/HTML5_Security_Cheat_Sheet.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:37:36.256Z"
+  },
+  {
+    "id": "AL_HTTP_STRICT_TRANSPORT_SECURITY",
+    "languages": [
+      "all"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "HTTP Strict Transport Security",
+    "description": "OWASP Security Guidance for HTTP Strict Transport Security",
+    "tags": [
+      "owasp"
+    ],
+    "sources": [
+      {
+        "source": "owasp",
+        "ruleId": "HTTP_STRICT_TRANSPORT_SECURITY",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/HTTP_Strict_Transport_Security_Cheat_Sheet.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:37:36.256Z"
+  },
+  {
+    "id": "AL_INJECTION_PREVENTION",
+    "languages": [
+      "all"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "Injection Prevention",
+    "description": "OWASP Security Guidance for Injection Prevention",
+    "tags": [
+      "owasp"
+    ],
+    "sources": [
+      {
+        "source": "owasp",
+        "ruleId": "INJECTION_PREVENTION",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Injection_Prevention_Cheat_Sheet.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:37:36.256Z"
+  },
+  {
+    "id": "AL_INFRASTRUCTURE_AS_CODE_SECURITY",
+    "languages": [
+      "all"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "Infrastructure as Code Security",
+    "description": "OWASP Security Guidance for Infrastructure as Code Security",
+    "tags": [
+      "owasp"
+    ],
+    "sources": [
+      {
+        "source": "owasp",
+        "ruleId": "INFRASTRUCTURE_AS_CODE_SECURITY",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Infrastructure_as_Code_Security_Cheat_Sheet.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:37:36.256Z"
+  },
+  {
+    "id": "AL_INJECTION_PREVENTION_IN_JAVA",
+    "languages": [
+      "all"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "Injection Prevention in Java",
+    "description": "OWASP Security Guidance for Injection Prevention in Java",
+    "tags": [
+      "owasp"
+    ],
+    "sources": [
+      {
+        "source": "owasp",
+        "ruleId": "INJECTION_PREVENTION_IN_JAVA",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Injection_Prevention_in_Java_Cheat_Sheet.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:37:36.256Z"
+  },
+  {
+    "id": "AL_INSECURE_DIRECT_OBJECT_REFERENCE_PREVENTION",
+    "languages": [
+      "all"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "Insecure Direct Object Reference Prevention",
+    "description": "OWASP Security Guidance for Insecure Direct Object Reference Prevention",
+    "tags": [
+      "owasp"
+    ],
+    "sources": [
+      {
+        "source": "owasp",
+        "ruleId": "INSECURE_DIRECT_OBJECT_REFERENCE_PREVENTION",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Insecure_Direct_Object_Reference_Prevention_Cheat_Sheet.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:37:36.256Z"
+  },
+  {
+    "id": "AL_INPUT_VALIDATION",
+    "languages": [
+      "all"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "Input Validation",
+    "description": "OWASP Security Guidance for Input Validation",
+    "tags": [
+      "owasp"
+    ],
+    "sources": [
+      {
+        "source": "owasp",
+        "ruleId": "INPUT_VALIDATION",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Input_Validation_Cheat_Sheet.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:37:36.256Z"
+  },
+  {
+    "id": "AL_JAVA_SECURITY",
+    "languages": [
+      "all"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "Java Security",
+    "description": "OWASP Security Guidance for Java Security",
+    "tags": [
+      "owasp"
+    ],
+    "sources": [
+      {
+        "source": "owasp",
+        "ruleId": "JAVA_SECURITY",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Java_Security_Cheat_Sheet.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:37:36.256Z"
+  },
+  {
+    "id": "AL_JSON_WEB_TOKEN_FOR_JAVA",
+    "languages": [
+      "all"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "JSON Web Token for Java",
+    "description": "OWASP Security Guidance for JSON Web Token for Java",
+    "tags": [
+      "owasp"
+    ],
+    "sources": [
+      {
+        "source": "owasp",
+        "ruleId": "JSON_WEB_TOKEN_FOR_JAVA",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/JSON_Web_Token_for_Java_Cheat_Sheet.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:37:36.256Z"
+  },
+  {
+    "id": "AL_JAAS",
+    "languages": [
+      "all"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "JAAS",
+    "description": "OWASP Security Guidance for JAAS",
+    "tags": [
+      "owasp"
+    ],
+    "sources": [
+      {
+        "source": "owasp",
+        "ruleId": "JAAS",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/JAAS_Cheat_Sheet.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:37:36.256Z"
+  },
+  {
+    "id": "AL_KEY_MANAGEMENT",
+    "languages": [
+      "all"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "Key Management",
+    "description": "OWASP Security Guidance for Key Management",
+    "tags": [
+      "owasp"
+    ],
+    "sources": [
+      {
+        "source": "owasp",
+        "ruleId": "KEY_MANAGEMENT",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Key_Management_Cheat_Sheet.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:37:36.256Z"
+  },
+  {
+    "id": "AL_KUBERNETES_SECURITY",
+    "languages": [
+      "all"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "Kubernetes Security",
+    "description": "OWASP Security Guidance for Kubernetes Security",
+    "tags": [
+      "owasp"
+    ],
+    "sources": [
+      {
+        "source": "owasp",
+        "ruleId": "KUBERNETES_SECURITY",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Kubernetes_Security_Cheat_Sheet.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:37:36.256Z"
+  },
+  {
+    "id": "AL_LDAP_INJECTION_PREVENTION",
+    "languages": [
+      "all"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "LDAP Injection Prevention",
+    "description": "OWASP Security Guidance for LDAP Injection Prevention",
+    "tags": [
+      "owasp"
+    ],
+    "sources": [
+      {
+        "source": "owasp",
+        "ruleId": "LDAP_INJECTION_PREVENTION",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/LDAP_Injection_Prevention_Cheat_Sheet.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:37:36.256Z"
+  },
+  {
+    "id": "AL_LOGGING",
+    "languages": [
+      "all"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "Logging",
+    "description": "OWASP Security Guidance for Logging",
+    "tags": [
+      "owasp"
+    ],
+    "sources": [
+      {
+        "source": "owasp",
+        "ruleId": "LOGGING",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Logging_Cheat_Sheet.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:37:36.256Z"
+  },
+  {
+    "id": "AL_LLM_PROMPT_INJECTION_PREVENTION",
+    "languages": [
+      "all"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "LLM Prompt Injection Prevention",
+    "description": "OWASP Security Guidance for LLM Prompt Injection Prevention",
+    "tags": [
+      "owasp"
+    ],
+    "sources": [
+      {
+        "source": "owasp",
+        "ruleId": "LLM_PROMPT_INJECTION_PREVENTION",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/LLM_Prompt_Injection_Prevention_Cheat_Sheet.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:37:36.256Z"
+  },
+  {
+    "id": "AL_LEGACY_APPLICATION_MANAGEMENT",
+    "languages": [
+      "all"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "Legacy Application Management",
+    "description": "OWASP Security Guidance for Legacy Application Management",
+    "tags": [
+      "owasp"
+    ],
+    "sources": [
+      {
+        "source": "owasp",
+        "ruleId": "LEGACY_APPLICATION_MANAGEMENT",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Legacy_Application_Management_Cheat_Sheet.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:37:36.256Z"
+  },
+  {
+    "id": "AL_LOGGING_VOCABULARY",
+    "languages": [
+      "all"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "Logging Vocabulary",
+    "description": "OWASP Security Guidance for Logging Vocabulary",
+    "tags": [
+      "owasp"
+    ],
+    "sources": [
+      {
+        "source": "owasp",
+        "ruleId": "LOGGING_VOCABULARY",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Logging_Vocabulary_Cheat_Sheet.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:37:36.256Z"
+  },
+  {
+    "id": "AL_LARAVEL",
+    "languages": [
+      "all"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "Laravel",
+    "description": "OWASP Security Guidance for Laravel",
+    "tags": [
+      "owasp"
+    ],
+    "sources": [
+      {
+        "source": "owasp",
+        "ruleId": "LARAVEL",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Laravel_Cheat_Sheet.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:37:36.256Z"
+  },
+  {
+    "id": "AL_MICROSERVICES_BASED_SECURITY_ARCH_DOC",
+    "languages": [
+      "all"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "Microservices based Security Arch Doc",
+    "description": "OWASP Security Guidance for Microservices based Security Arch Doc",
+    "tags": [
+      "owasp"
+    ],
+    "sources": [
+      {
+        "source": "owasp",
+        "ruleId": "MICROSERVICES_BASED_SECURITY_ARCH_DOC",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Microservices_based_Security_Arch_Doc_Cheat_Sheet.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:37:36.256Z"
+  },
+  {
+    "id": "AL_MULTI_TENANT_SECURITY",
+    "languages": [
+      "all"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "Multi Tenant Security",
+    "description": "OWASP Security Guidance for Multi Tenant Security",
+    "tags": [
+      "owasp"
+    ],
+    "sources": [
+      {
+        "source": "owasp",
+        "ruleId": "MULTI_TENANT_SECURITY",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Multi_Tenant_Security_Cheat_Sheet.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:37:36.256Z"
+  },
+  {
+    "id": "AL_MASS_ASSIGNMENT",
+    "languages": [
+      "all"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "Mass Assignment",
+    "description": "OWASP Security Guidance for Mass Assignment",
+    "tags": [
+      "owasp"
+    ],
+    "sources": [
+      {
+        "source": "owasp",
+        "ruleId": "MASS_ASSIGNMENT",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Mass_Assignment_Cheat_Sheet.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:37:36.256Z"
+  },
+  {
+    "id": "AL_MULTIFACTOR_AUTHENTICATION",
+    "languages": [
+      "all"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "Multifactor Authentication",
+    "description": "OWASP Security Guidance for Multifactor Authentication",
+    "tags": [
+      "owasp"
+    ],
+    "sources": [
+      {
+        "source": "owasp",
+        "ruleId": "MULTIFACTOR_AUTHENTICATION",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Multifactor_Authentication_Cheat_Sheet.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:37:36.256Z"
+  },
+  {
+    "id": "AL_MICROSERVICES_SECURITY",
+    "languages": [
+      "all"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "Microservices Security",
+    "description": "OWASP Security Guidance for Microservices Security",
+    "tags": [
+      "owasp"
+    ],
+    "sources": [
+      {
+        "source": "owasp",
+        "ruleId": "MICROSERVICES_SECURITY",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Microservices_Security_Cheat_Sheet.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:37:36.256Z"
+  },
+  {
+    "id": "AL_MOBILE_APPLICATION_SECURITY",
+    "languages": [
+      "all"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "Mobile Application Security",
+    "description": "OWASP Security Guidance for Mobile Application Security",
+    "tags": [
+      "owasp"
+    ],
+    "sources": [
+      {
+        "source": "owasp",
+        "ruleId": "MOBILE_APPLICATION_SECURITY",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Mobile_Application_Security_Cheat_Sheet.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:37:36.256Z"
+  },
+  {
+    "id": "AL_NOSQL_SECURITY",
+    "languages": [
+      "all"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "NoSQL Security",
+    "description": "OWASP Security Guidance for NoSQL Security",
+    "tags": [
+      "owasp"
+    ],
+    "sources": [
+      {
+        "source": "owasp",
+        "ruleId": "NOSQL_SECURITY",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/NoSQL_Security_Cheat_Sheet.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:37:36.256Z"
+  },
+  {
+    "id": "AL_NETWORK_SEGMENTATION",
+    "languages": [
+      "all"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "Network Segmentation",
+    "description": "OWASP Security Guidance for Network Segmentation",
+    "tags": [
+      "owasp"
+    ],
+    "sources": [
+      {
+        "source": "owasp",
+        "ruleId": "NETWORK_SEGMENTATION",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Network_Segmentation_Cheat_Sheet.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:37:36.256Z"
+  },
+  {
+    "id": "AL_NPM_SECURITY",
+    "languages": [
+      "all"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "NPM Security",
+    "description": "OWASP Security Guidance for NPM Security",
+    "tags": [
+      "owasp"
+    ],
+    "sources": [
+      {
+        "source": "owasp",
+        "ruleId": "NPM_SECURITY",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/NPM_Security_Cheat_Sheet.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:37:36.256Z"
+  },
+  {
+    "id": "AL_NODEJS_SECURITY",
+    "languages": [
+      "all"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "Nodejs Security",
+    "description": "OWASP Security Guidance for Nodejs Security",
+    "tags": [
+      "owasp"
+    ],
+    "sources": [
+      {
+        "source": "owasp",
+        "ruleId": "NODEJS_SECURITY",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Nodejs_Security_Cheat_Sheet.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:37:36.256Z"
+  },
+  {
+    "id": "AL_NODEJS_DOCKER",
+    "languages": [
+      "all"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "NodeJS Docker",
+    "description": "OWASP Security Guidance for NodeJS Docker",
+    "tags": [
+      "owasp"
+    ],
+    "sources": [
+      {
+        "source": "owasp",
+        "ruleId": "NODEJS_DOCKER",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/NodeJS_Docker_Cheat_Sheet.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:37:36.256Z"
+  },
+  {
+    "id": "AL_OAUTH2",
+    "languages": [
+      "all"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "OAuth2",
+    "description": "OWASP Security Guidance for OAuth2",
+    "tags": [
+      "owasp"
+    ],
+    "sources": [
+      {
+        "source": "owasp",
+        "ruleId": "OAUTH2",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/OAuth2_Cheat_Sheet.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:37:36.256Z"
+  },
+  {
+    "id": "AL_OS_COMMAND_INJECTION_DEFENSE",
+    "languages": [
+      "all"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "OS Command Injection Defense",
+    "description": "OWASP Security Guidance for OS Command Injection Defense",
+    "tags": [
+      "owasp"
+    ],
+    "sources": [
+      {
+        "source": "owasp",
+        "ruleId": "OS_COMMAND_INJECTION_DEFENSE",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/OS_Command_Injection_Defense_Cheat_Sheet.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:37:36.256Z"
+  },
+  {
+    "id": "AL_PINNING",
+    "languages": [
+      "all"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "Pinning",
+    "description": "OWASP Security Guidance for Pinning",
+    "tags": [
+      "owasp"
+    ],
+    "sources": [
+      {
+        "source": "owasp",
+        "ruleId": "PINNING",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Pinning_Cheat_Sheet.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:37:36.256Z"
+  },
+  {
+    "id": "AL_PROTOTYPE_POLLUTION_PREVENTION",
+    "languages": [
+      "all"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "Prototype Pollution Prevention",
+    "description": "OWASP Security Guidance for Prototype Pollution Prevention",
+    "tags": [
+      "owasp"
+    ],
+    "sources": [
+      {
+        "source": "owasp",
+        "ruleId": "PROTOTYPE_POLLUTION_PREVENTION",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Prototype_Pollution_Prevention_Cheat_Sheet.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:37:36.256Z"
+  },
+  {
+    "id": "AL_PASSWORD_STORAGE",
+    "languages": [
+      "all"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "Password Storage",
+    "description": "OWASP Security Guidance for Password Storage",
+    "tags": [
+      "owasp"
+    ],
+    "sources": [
+      {
+        "source": "owasp",
+        "ruleId": "PASSWORD_STORAGE",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:37:36.256Z"
+  },
+  {
+    "id": "AL_PHP_CONFIGURATION",
+    "languages": [
+      "all"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "PHP Configuration",
+    "description": "OWASP Security Guidance for PHP Configuration",
+    "tags": [
+      "owasp"
+    ],
+    "sources": [
+      {
+        "source": "owasp",
+        "ruleId": "PHP_CONFIGURATION",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/PHP_Configuration_Cheat_Sheet.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:37:36.256Z"
+  },
+  {
+    "id": "AL_QUERY_PARAMETERIZATION",
+    "languages": [
+      "all"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "Query Parameterization",
+    "description": "OWASP Security Guidance for Query Parameterization",
+    "tags": [
+      "owasp"
+    ],
+    "sources": [
+      {
+        "source": "owasp",
+        "ruleId": "QUERY_PARAMETERIZATION",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Query_Parameterization_Cheat_Sheet.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:37:36.256Z"
+  },
+  {
+    "id": "AL_RUBY_ON_RAILS",
+    "languages": [
+      "all"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "Ruby on Rails",
+    "description": "OWASP Security Guidance for Ruby on Rails",
+    "tags": [
+      "owasp"
+    ],
+    "sources": [
+      {
+        "source": "owasp",
+        "ruleId": "RUBY_ON_RAILS",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Ruby_on_Rails_Cheat_Sheet.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:37:36.256Z"
+  },
+  {
+    "id": "AL_REST_SECURITY",
+    "languages": [
+      "all"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "REST Security",
+    "description": "OWASP Security Guidance for REST Security",
+    "tags": [
+      "owasp"
+    ],
+    "sources": [
+      {
+        "source": "owasp",
+        "ruleId": "REST_SECURITY",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/REST_Security_Cheat_Sheet.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:37:36.256Z"
+  },
+  {
+    "id": "AL_REST_ASSESSMENT",
+    "languages": [
+      "all"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "REST Assessment",
+    "description": "OWASP Security Guidance for REST Assessment",
+    "tags": [
+      "owasp"
+    ],
+    "sources": [
+      {
+        "source": "owasp",
+        "ruleId": "REST_ASSESSMENT",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/REST_Assessment_Cheat_Sheet.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:37:36.256Z"
+  },
+  {
+    "id": "AL_SERVERLESS_FAAS_SECURITY",
+    "languages": [
+      "all"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "Serverless FaaS Security",
+    "description": "OWASP Security Guidance for Serverless FaaS Security",
+    "tags": [
+      "owasp"
+    ],
+    "sources": [
+      {
+        "source": "owasp",
+        "ruleId": "SERVERLESS_FAAS_SECURITY",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Serverless_FaaS_Security_Cheat_Sheet.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:37:36.256Z"
+  },
+  {
+    "id": "AL_SOFTWARE_SUPPLY_CHAIN_SECURITY",
+    "languages": [
+      "all"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "Software Supply Chain Security",
+    "description": "OWASP Security Guidance for Software Supply Chain Security",
+    "tags": [
+      "owasp"
+    ],
+    "sources": [
+      {
+        "source": "owasp",
+        "ruleId": "SOFTWARE_SUPPLY_CHAIN_SECURITY",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Software_Supply_Chain_Security_Cheat_Sheet.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:37:36.256Z"
+  },
+  {
+    "id": "AL_SQL_INJECTION_PREVENTION",
+    "languages": [
+      "all"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "SQL Injection Prevention",
+    "description": "OWASP Security Guidance for SQL Injection Prevention",
+    "tags": [
+      "owasp"
+    ],
+    "sources": [
+      {
+        "source": "owasp",
+        "ruleId": "SQL_INJECTION_PREVENTION",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/SQL_Injection_Prevention_Cheat_Sheet.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:37:36.256Z"
+  },
+  {
+    "id": "AL_SERVER_SIDE_REQUEST_FORGERY_PREVENTION",
+    "languages": [
+      "all"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "Server Side Request Forgery Prevention",
+    "description": "OWASP Security Guidance for Server Side Request Forgery Prevention",
+    "tags": [
+      "owasp"
+    ],
+    "sources": [
+      {
+        "source": "owasp",
+        "ruleId": "SERVER_SIDE_REQUEST_FORGERY_PREVENTION",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Server_Side_Request_Forgery_Prevention_Cheat_Sheet.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:37:36.256Z"
+  },
+  {
+    "id": "AL_SESSION_MANAGEMENT",
+    "languages": [
+      "all"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "Session Management",
+    "description": "OWASP Security Guidance for Session Management",
+    "tags": [
+      "owasp"
+    ],
+    "sources": [
+      {
+        "source": "owasp",
+        "ruleId": "SESSION_MANAGEMENT",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Session_Management_Cheat_Sheet.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:37:36.256Z"
+  },
+  {
+    "id": "AL_SECURE_PRODUCT_DESIGN",
+    "languages": [
+      "all"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "Secure Product Design",
+    "description": "OWASP Security Guidance for Secure Product Design",
+    "tags": [
+      "owasp"
+    ],
+    "sources": [
+      {
+        "source": "owasp",
+        "ruleId": "SECURE_PRODUCT_DESIGN",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Secure_Product_Design_Cheat_Sheet.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:37:36.256Z"
+  },
+  {
+    "id": "AL_SECRETS_MANAGEMENT",
+    "languages": [
+      "all"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "Secrets Management",
+    "description": "OWASP Security Guidance for Secrets Management",
+    "tags": [
+      "owasp"
+    ],
+    "sources": [
+      {
+        "source": "owasp",
+        "ruleId": "SECRETS_MANAGEMENT",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Secrets_Management_Cheat_Sheet.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:37:36.256Z"
+  },
+  {
+    "id": "AL_SECURE_CODE_REVIEW",
+    "languages": [
+      "all"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "Secure Code Review",
+    "description": "OWASP Security Guidance for Secure Code Review",
+    "tags": [
+      "owasp"
+    ],
+    "sources": [
+      {
+        "source": "owasp",
+        "ruleId": "SECURE_CODE_REVIEW",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Secure_Code_Review_Cheat_Sheet.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:37:36.256Z"
+  },
+  {
+    "id": "AL_SECURING_CASCADING_STYLE_SHEETS",
+    "languages": [
+      "all"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "Securing Cascading Style Sheets",
+    "description": "OWASP Security Guidance for Securing Cascading Style Sheets",
+    "tags": [
+      "owasp"
+    ],
+    "sources": [
+      {
+        "source": "owasp",
+        "ruleId": "SECURING_CASCADING_STYLE_SHEETS",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Securing_Cascading_Style_Sheets_Cheat_Sheet.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:37:36.256Z"
+  },
+  {
+    "id": "AL_SECURE_CLOUD_ARCHITECTURE",
+    "languages": [
+      "all"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "Secure Cloud Architecture",
+    "description": "OWASP Security Guidance for Secure Cloud Architecture",
+    "tags": [
+      "owasp"
+    ],
+    "sources": [
+      {
+        "source": "owasp",
+        "ruleId": "SECURE_CLOUD_ARCHITECTURE",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Secure_Cloud_Architecture_Cheat_Sheet.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:37:36.256Z"
+  },
+  {
+    "id": "AL_SECURE_AI_MODEL_OPS",
+    "languages": [
+      "all"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "Secure AI Model Ops",
+    "description": "OWASP Security Guidance for Secure AI Model Ops",
+    "tags": [
+      "owasp"
+    ],
+    "sources": [
+      {
+        "source": "owasp",
+        "ruleId": "SECURE_AI_MODEL_OPS",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Secure_AI_Model_Ops_Cheat_Sheet.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:37:36.256Z"
+  },
+  {
+    "id": "AL_SYMFONY",
+    "languages": [
+      "all"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "Symfony",
+    "description": "OWASP Security Guidance for Symfony",
+    "tags": [
+      "owasp"
+    ],
+    "sources": [
+      {
+        "source": "owasp",
+        "ruleId": "SYMFONY",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Symfony_Cheat_Sheet.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:37:36.256Z"
+  },
+  {
+    "id": "AL_SAML_SECURITY",
+    "languages": [
+      "all"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "SAML Security",
+    "description": "OWASP Security Guidance for SAML Security",
+    "tags": [
+      "owasp"
+    ],
+    "sources": [
+      {
+        "source": "owasp",
+        "ruleId": "SAML_SECURITY",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/SAML_Security_Cheat_Sheet.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:37:36.256Z"
+  },
+  {
+    "id": "AL_TLS_CIPHER_STRING",
+    "languages": [
+      "all"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "TLS Cipher String",
+    "description": "OWASP Security Guidance for TLS Cipher String",
+    "tags": [
+      "owasp"
+    ],
+    "sources": [
+      {
+        "source": "owasp",
+        "ruleId": "TLS_CIPHER_STRING",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/TLS_Cipher_String_Cheat_Sheet.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:37:36.256Z"
+  },
+  {
+    "id": "AL_THIRD_PARTY_JAVASCRIPT_MANAGEMENT",
+    "languages": [
+      "all"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "Third Party Javascript Management",
+    "description": "OWASP Security Guidance for Third Party Javascript Management",
+    "tags": [
+      "owasp"
+    ],
+    "sources": [
+      {
+        "source": "owasp",
+        "ruleId": "THIRD_PARTY_JAVASCRIPT_MANAGEMENT",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Third_Party_Javascript_Management_Cheat_Sheet.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:37:36.256Z"
+  },
+  {
+    "id": "AL_TRANSPORT_LAYER_PROTECTION",
+    "languages": [
+      "all"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "Transport Layer Protection",
+    "description": "OWASP Security Guidance for Transport Layer Protection",
+    "tags": [
+      "owasp"
+    ],
+    "sources": [
+      {
+        "source": "owasp",
+        "ruleId": "TRANSPORT_LAYER_PROTECTION",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Transport_Layer_Protection_Cheat_Sheet.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:37:36.256Z"
+  },
+  {
+    "id": "AL_TRANSPORT_LAYER_SECURITY",
+    "languages": [
+      "all"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "Transport Layer Security",
+    "description": "OWASP Security Guidance for Transport Layer Security",
+    "tags": [
+      "owasp"
+    ],
+    "sources": [
+      {
+        "source": "owasp",
+        "ruleId": "TRANSPORT_LAYER_SECURITY",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Transport_Layer_Security_Cheat_Sheet.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:37:36.256Z"
+  },
+  {
+    "id": "AL_THIRD_PARTY_PAYMENT_GATEWAY_INTEGRATION",
+    "languages": [
+      "all"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "Third Party Payment Gateway Integration",
+    "description": "OWASP Security Guidance for Third Party Payment Gateway Integration",
+    "tags": [
+      "owasp"
+    ],
+    "sources": [
+      {
+        "source": "owasp",
+        "ruleId": "THIRD_PARTY_PAYMENT_GATEWAY_INTEGRATION",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Third_Party_Payment_Gateway_Integration.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:37:36.256Z"
+  },
+  {
+    "id": "AL_THREAT_MODELING",
+    "languages": [
+      "all"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "Threat Modeling",
+    "description": "OWASP Security Guidance for Threat Modeling",
+    "tags": [
+      "owasp"
+    ],
+    "sources": [
+      {
+        "source": "owasp",
+        "ruleId": "THREAT_MODELING",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Threat_Modeling_Cheat_Sheet.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:37:36.256Z"
+  },
+  {
+    "id": "AL_TRANSACTION_AUTHORIZATION",
+    "languages": [
+      "all"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "Transaction Authorization",
+    "description": "OWASP Security Guidance for Transaction Authorization",
+    "tags": [
+      "owasp"
+    ],
+    "sources": [
+      {
+        "source": "owasp",
+        "ruleId": "TRANSACTION_AUTHORIZATION",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Transaction_Authorization_Cheat_Sheet.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:37:36.256Z"
+  },
+  {
+    "id": "AL_USER_PRIVACY_PROTECTION",
+    "languages": [
+      "all"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "User Privacy Protection",
+    "description": "OWASP Security Guidance for User Privacy Protection",
+    "tags": [
+      "owasp"
+    ],
+    "sources": [
+      {
+        "source": "owasp",
+        "ruleId": "USER_PRIVACY_PROTECTION",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/User_Privacy_Protection_Cheat_Sheet.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:37:36.256Z"
+  },
+  {
+    "id": "AL_UNVALIDATED_REDIRECTS_AND_FORWARDS",
+    "languages": [
+      "all"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "Unvalidated Redirects and Forwards",
+    "description": "OWASP Security Guidance for Unvalidated Redirects and Forwards",
+    "tags": [
+      "owasp"
+    ],
+    "sources": [
+      {
+        "source": "owasp",
+        "ruleId": "UNVALIDATED_REDIRECTS_AND_FORWARDS",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Unvalidated_Redirects_and_Forwards_Cheat_Sheet.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:37:36.256Z"
+  },
+  {
+    "id": "AL_VULNERABLE_DEPENDENCY_MANAGEMENT",
+    "languages": [
+      "all"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "Vulnerable Dependency Management",
+    "description": "OWASP Security Guidance for Vulnerable Dependency Management",
+    "tags": [
+      "owasp"
+    ],
+    "sources": [
+      {
+        "source": "owasp",
+        "ruleId": "VULNERABLE_DEPENDENCY_MANAGEMENT",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Vulnerable_Dependency_Management_Cheat_Sheet.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:37:36.256Z"
+  },
+  {
+    "id": "AL_VULNERABILITY_DISCLOSURE",
+    "languages": [
+      "all"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "Vulnerability Disclosure",
+    "description": "OWASP Security Guidance for Vulnerability Disclosure",
+    "tags": [
+      "owasp"
+    ],
+    "sources": [
+      {
+        "source": "owasp",
+        "ruleId": "VULNERABILITY_DISCLOSURE",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Vulnerability_Disclosure_Cheat_Sheet.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:37:36.256Z"
+  },
+  {
+    "id": "AL_VIRTUAL_PATCHING",
+    "languages": [
+      "all"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "Virtual Patching",
+    "description": "OWASP Security Guidance for Virtual Patching",
+    "tags": [
+      "owasp"
+    ],
+    "sources": [
+      {
+        "source": "owasp",
+        "ruleId": "VIRTUAL_PATCHING",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Virtual_Patching_Cheat_Sheet.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:37:36.256Z"
+  },
+  {
+    "id": "AL_WEBSOCKET_SECURITY",
+    "languages": [
+      "all"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "WebSocket Security",
+    "description": "OWASP Security Guidance for WebSocket Security",
+    "tags": [
+      "owasp"
+    ],
+    "sources": [
+      {
+        "source": "owasp",
+        "ruleId": "WEBSOCKET_SECURITY",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/WebSocket_Security_Cheat_Sheet.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:37:36.256Z"
+  },
+  {
+    "id": "AL_WEB_SERVICE_SECURITY",
+    "languages": [
+      "all"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "Web Service Security",
+    "description": "OWASP Security Guidance for Web Service Security",
+    "tags": [
+      "owasp"
+    ],
+    "sources": [
+      {
+        "source": "owasp",
+        "ruleId": "WEB_SERVICE_SECURITY",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Web_Service_Security_Cheat_Sheet.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:37:36.256Z"
+  },
+  {
+    "id": "AL_XSS_FILTER_EVASION",
+    "languages": [
+      "all"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "XSS Filter Evasion",
+    "description": "OWASP Security Guidance for XSS Filter Evasion",
+    "tags": [
+      "owasp"
+    ],
+    "sources": [
+      {
+        "source": "owasp",
+        "ruleId": "XSS_FILTER_EVASION",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/XSS_Filter_Evasion_Cheat_Sheet.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:37:36.256Z"
+  },
+  {
+    "id": "AL_XML_SECURITY",
+    "languages": [
+      "all"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "XML Security",
+    "description": "OWASP Security Guidance for XML Security",
+    "tags": [
+      "owasp"
+    ],
+    "sources": [
+      {
+        "source": "owasp",
+        "ruleId": "XML_SECURITY",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/XML_Security_Cheat_Sheet.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:37:36.256Z"
+  },
+  {
+    "id": "AL_XML_EXTERNAL_ENTITY_PREVENTION",
+    "languages": [
+      "all"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "XML External Entity Prevention",
+    "description": "OWASP Security Guidance for XML External Entity Prevention",
+    "tags": [
+      "owasp"
+    ],
+    "sources": [
+      {
+        "source": "owasp",
+        "ruleId": "XML_EXTERNAL_ENTITY_PREVENTION",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/XML_External_Entity_Prevention_Cheat_Sheet.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:37:36.256Z"
+  },
+  {
+    "id": "AL_XS_LEAKS",
+    "languages": [
+      "all"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "XS Leaks",
+    "description": "OWASP Security Guidance for XS Leaks",
+    "tags": [
+      "owasp"
+    ],
+    "sources": [
+      {
+        "source": "owasp",
+        "ruleId": "XS_LEAKS",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/XS_Leaks_Cheat_Sheet.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:37:36.256Z"
+  },
+  {
+    "id": "AL_ZERO_TRUST_ARCHITECTURE",
+    "languages": [
+      "all"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "Zero Trust Architecture",
+    "description": "OWASP Security Guidance for Zero Trust Architecture",
+    "tags": [
+      "owasp"
+    ],
+    "sources": [
+      {
+        "source": "owasp",
+        "ruleId": "ZERO_TRUST_ARCHITECTURE",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Zero_Trust_Architecture_Cheat_Sheet.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:37:36.256Z"
+  }
+]

@@ -1,0 +1,1342 @@
+[
+  {
+    "id": "C_ARRAYINDEXOUTOFBOUNDS",
+    "languages": [
+      "c"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Array index out of bounds",
+    "description": "Array index is out of bounds.",
+    "tags": [
+      "cppcheck"
+    ],
+    "sources": [
+      {
+        "source": "cppcheck",
+        "ruleId": "arrayIndexOutOfBounds",
+        "url": "https://sourceforge.net/p/cppcheck/wiki/ListOfChecks/"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:38:34.679Z",
+    "structuralHints": {
+      "treeSitterQuery": "(subscript_expression\n  argument: (number_literal) @offender)"
+    }
+  },
+  {
+    "id": "C_BUFFERACCESSOUTOFBOUNDS",
+    "languages": [
+      "c"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "Buffer access out of bounds",
+    "description": "Buffer is accessed out of bounds.",
+    "tags": [
+      "cppcheck"
+    ],
+    "sources": [
+      {
+        "source": "cppcheck",
+        "ruleId": "bufferAccessOutOfBounds",
+        "url": "https://sourceforge.net/p/cppcheck/wiki/ListOfChecks/"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:38:37.232Z",
+    "structuralHints": {
+      "treeSitterQuery": "(subscript_expression\n  argument: (number_literal) @offender\n  (#match? @offender \"^[0-9]+$\"))"
+    }
+  },
+  {
+    "id": "C_NULLPOINTER",
+    "languages": [
+      "c"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Null pointer dereference",
+    "description": "Null pointer is dereferenced.",
+    "tags": [
+      "cppcheck"
+    ],
+    "sources": [
+      {
+        "source": "cppcheck",
+        "ruleId": "nullPointer",
+        "url": "https://sourceforge.net/p/cppcheck/wiki/ListOfChecks/"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:38:41.502Z",
+    "structuralHints": {
+      "treeSitterQuery": "(pointer_declarator\n  declarator: (identifier) @offender\n  (#match? @offender \".*\"))"
+    }
+  },
+  {
+    "id": "C_UNINITVAR",
+    "languages": [
+      "c"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Uninitialized variable",
+    "description": "Variable is used before being initialized.",
+    "tags": [
+      "cppcheck"
+    ],
+    "sources": [
+      {
+        "source": "cppcheck",
+        "ruleId": "uninitvar",
+        "url": "https://sourceforge.net/p/cppcheck/wiki/ListOfChecks/"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:38:43.949Z",
+    "structuralHints": {
+      "treeSitterQuery": "(compound_statement\n  (declaration\n    declarator: (identifier) @var)\n  .\n  (_\n    (identifier) @offender\n    (#eq? @offender @var)))"
+    }
+  },
+  {
+    "id": "C_UNINITSTRUCTMEMBER",
+    "languages": [
+      "c"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Uninitialized struct member",
+    "description": "Struct member is used before being initialized.",
+    "tags": [
+      "cppcheck"
+    ],
+    "sources": [
+      {
+        "source": "cppcheck",
+        "ruleId": "uninitStructMember",
+        "url": "https://sourceforge.net/p/cppcheck/wiki/ListOfChecks/"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:38:49.070Z",
+    "structuralHints": {
+      "treeSitterQuery": "(function_definition\n  body: (compound_statement\n    [\n      (declaration\n        declarator: (init_declarator\n          declarator: (_) @struct_var\n          (#match? @struct_var \"^[a-zA-Z_][a-zA-Z0-9_]*$\")))\n      (declaration\n        declarator: (identifier) @struct_var)\n    ]\n    .\n    (_)*\n    .\n    [\n      (expression_statement\n        (assignment_expression\n          left: (field_expression) @offender))\n      (expression_statement\n        (call_expression\n          arguments: (argument_list\n            (field_expression) @offender)))\n      (return_statement\n        (field_expression) @offender)\n      (expression_statement\n        (field_expression) @offender)\n    ]))"
+    }
+  },
+  {
+    "id": "C_MEMORYLEAK",
+    "languages": [
+      "c"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Memory leak",
+    "description": "Memory is allocated but not freed.",
+    "tags": [
+      "cppcheck"
+    ],
+    "sources": [
+      {
+        "source": "cppcheck",
+        "ruleId": "memoryLeak",
+        "url": "https://sourceforge.net/p/cppcheck/wiki/ListOfChecks/"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:38:53.279Z",
+    "structuralHints": {
+      "treeSitterQuery": "(function_definition\n  body: (compound_statement\n    (declaration\n      declarator: (init_declarator\n        declarator: (pointer_declarator\n          declarator: (identifier) @var)\n        value: (call_expression\n          function: (identifier) @func\n          (#match? @func \"(malloc|calloc|realloc)\"))))\n    .\n    (_)* @rest\n    (#not-match? @rest \"free.*@var\"))) @offender"
+    }
+  },
+  {
+    "id": "C_RESOURCELEAK",
+    "languages": [
+      "c"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Resource leak",
+    "description": "Resource is allocated but not released.",
+    "tags": [
+      "cppcheck"
+    ],
+    "sources": [
+      {
+        "source": "cppcheck",
+        "ruleId": "resourceLeak",
+        "url": "https://sourceforge.net/p/cppcheck/wiki/ListOfChecks/"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T04:10:12.563Z",
+    "structuralHints": {
+      "treeSitterQuery": "(function_definition\n  body: (compound_statement\n    (expression_statement\n      (assignment_expression\n        right: (call_expression\n          function: (identifier) @alloc\n          (#match? @alloc \"^(malloc|calloc|realloc)$\")))) @offender))"
+    }
+  },
+  {
+    "id": "C_USEAFTERFREE",
+    "languages": [
+      "c"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Use after free",
+    "description": "Memory is used after being freed.",
+    "tags": [
+      "cppcheck"
+    ],
+    "sources": [
+      {
+        "source": "cppcheck",
+        "ruleId": "useAfterFree",
+        "url": "https://sourceforge.net/p/cppcheck/wiki/ListOfChecks/"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:39:01.628Z",
+    "structuralHints": {
+      "treeSitterQuery": "(function_definition\n  body: (compound_statement\n    (expression_statement\n      (call_expression\n        function: (identifier) @free_func\n        arguments: (argument_list (identifier) @freed_ptr))\n      (#eq? @free_func \"free\"))\n    (expression_statement\n      (assignment_expression\n        left: (_\n          (identifier) @used_ptr))\n      (#eq? @freed_ptr @used_ptr)) @offender))"
+    }
+  },
+  {
+    "id": "C_DOUBLEFREE",
+    "languages": [
+      "c"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Double free",
+    "description": "Memory is freed twice.",
+    "tags": [
+      "cppcheck"
+    ],
+    "sources": [
+      {
+        "source": "cppcheck",
+        "ruleId": "doubleFree",
+        "url": "https://sourceforge.net/p/cppcheck/wiki/ListOfChecks/"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:39:05.232Z",
+    "structuralHints": {
+      "treeSitterQuery": "(function_definition\n  body: (compound_statement\n    (expression_statement\n      (call_expression\n        function: (identifier) @free1 (#eq? @free1 \"free\")\n        arguments: (argument_list (identifier) @var)))\n    (expression_statement\n      (call_expression\n        function: (identifier) @free2 (#eq? @free2 \"free\")\n        arguments: (argument_list (identifier) @var2 (#eq? @var @var2)))) @offender))"
+    }
+  },
+  {
+    "id": "C_INVALIDFUNCTIONARG",
+    "languages": [
+      "c"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Invalid function argument",
+    "description": "Invalid argument passed to function.",
+    "tags": [
+      "cppcheck"
+    ],
+    "sources": [
+      {
+        "source": "cppcheck",
+        "ruleId": "invalidFunctionArg",
+        "url": "https://sourceforge.net/p/cppcheck/wiki/ListOfChecks/"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:39:07.727Z",
+    "structuralHints": {
+      "treeSitterQuery": "(call_expression\n  function: (identifier)\n  arguments: (argument_list\n    [\n      (null)\n      (number_literal)\n      (string_literal)\n    ] @offender))"
+    }
+  },
+  {
+    "id": "C_INVALIDPRINTFARG",
+    "languages": [
+      "c"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Invalid printf argument",
+    "description": "Invalid argument passed to printf function.",
+    "tags": [
+      "cppcheck"
+    ],
+    "sources": [
+      {
+        "source": "cppcheck",
+        "ruleId": "invalidPrintfArg",
+        "url": "https://sourceforge.net/p/cppcheck/wiki/ListOfChecks/"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:39:10.765Z",
+    "structuralHints": {
+      "treeSitterQuery": "(call_expression\n  function: (identifier) @func (#eq? @func \"printf\")\n  arguments: (argument_list\n    .\n    (_) @offender\n    (#not-match? @offender \"^\\\"\")))"
+    }
+  },
+  {
+    "id": "C_UNUSEDFUNCTION",
+    "languages": [
+      "c"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Unused function",
+    "description": "Function is defined but never called.",
+    "tags": [
+      "cppcheck"
+    ],
+    "sources": [
+      {
+        "source": "cppcheck",
+        "ruleId": "unusedFunction",
+        "url": "https://sourceforge.net/p/cppcheck/wiki/ListOfChecks/"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T04:10:15.176Z",
+    "structuralHints": {
+      "treeSitterQuery": "(function_definition\n  declarator: (function_declarator\n    declarator: (identifier) @offender)) @function"
+    }
+  },
+  {
+    "id": "C_UNUSEDVARIABLE",
+    "languages": [
+      "c"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Unused variable",
+    "description": "Variable is defined but never used.",
+    "tags": [
+      "cppcheck"
+    ],
+    "sources": [
+      {
+        "source": "cppcheck",
+        "ruleId": "unusedVariable",
+        "url": "https://sourceforge.net/p/cppcheck/wiki/ListOfChecks/"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:39:15.836Z",
+    "structuralHints": {
+      "treeSitterQuery": "(declaration\n  declarator: (init_declarator\n    declarator: (identifier) @offender))"
+    }
+  },
+  {
+    "id": "C_UNUSEDSTRUCTMEMBER",
+    "languages": [
+      "c"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Unused struct member",
+    "description": "Struct member is defined but never used.",
+    "tags": [
+      "cppcheck"
+    ],
+    "sources": [
+      {
+        "source": "cppcheck",
+        "ruleId": "unusedStructMember",
+        "url": "https://sourceforge.net/p/cppcheck/wiki/ListOfChecks/"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:39:18.356Z",
+    "structuralHints": {
+      "treeSitterQuery": "(struct_specifier\n  body: (field_declaration_list\n    (field_declaration\n      declarator: (field_identifier) @offender)))"
+    }
+  },
+  {
+    "id": "C_REDUNDANTCONDITION",
+    "languages": [
+      "c"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Redundant condition",
+    "description": "Condition is always true or false.",
+    "tags": [
+      "cppcheck"
+    ],
+    "sources": [
+      {
+        "source": "cppcheck",
+        "ruleId": "redundantCondition",
+        "url": "https://sourceforge.net/p/cppcheck/wiki/ListOfChecks/"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T07:02:20.483Z",
+    "structuralHints": {
+      "treeSitterQuery": "(identifier) @offender"
+    }
+  },
+  {
+    "id": "C_UNREACHABLECODE",
+    "languages": [
+      "c"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Unreachable code",
+    "description": "Code after return/break/continue is unreachable.",
+    "tags": [
+      "cppcheck"
+    ],
+    "sources": [
+      {
+        "source": "cppcheck",
+        "ruleId": "unreachableCode",
+        "url": "https://sourceforge.net/p/cppcheck/wiki/ListOfChecks/"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:37:36.256Z"
+  },
+  {
+    "id": "C_MISSINGRETURN",
+    "languages": [
+      "c"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Missing return statement",
+    "description": "Function should return a value but does not.",
+    "tags": [
+      "cppcheck"
+    ],
+    "sources": [
+      {
+        "source": "cppcheck",
+        "ruleId": "missingReturn",
+        "url": "https://sourceforge.net/p/cppcheck/wiki/ListOfChecks/"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:39:26.198Z",
+    "structuralHints": {
+      "treeSitterQuery": "(function_definition\n  type: (primitive_type) @type\n  declarator: (function_declarator)\n  body: (compound_statement) @offender\n  (#not-eq? @type \"void\")\n  (#not-match? @offender \"return\"))"
+    }
+  },
+  {
+    "id": "C_WRONGPRINTFSCANFARGNUM",
+    "languages": [
+      "c"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Wrong printf/scanf argument count",
+    "description": "Wrong number of arguments passed to printf/scanf.",
+    "tags": [
+      "cppcheck"
+    ],
+    "sources": [
+      {
+        "source": "cppcheck",
+        "ruleId": "wrongPrintfScanfArgNum",
+        "url": "https://sourceforge.net/p/cppcheck/wiki/ListOfChecks/"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:39:29.179Z",
+    "structuralHints": {
+      "treeSitterQuery": "(call_expression\n  function: (identifier) @func\n  (#match? @func \"^(printf|scanf|fprintf|fscanf|sprintf|sscanf|snprintf)$\")\n  arguments: (argument_list) @offender)"
+    }
+  },
+  {
+    "id": "C_IGNOREDRETURNVALUE",
+    "languages": [
+      "c"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Ignored return value",
+    "description": "Return value of function is ignored.",
+    "tags": [
+      "cppcheck"
+    ],
+    "sources": [
+      {
+        "source": "cppcheck",
+        "ruleId": "ignoredReturnValue",
+        "url": "https://sourceforge.net/p/cppcheck/wiki/ListOfChecks/"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:39:31.069Z",
+    "structuralHints": {
+      "treeSitterQuery": "(expression_statement\n  (call_expression) @offender)"
+    }
+  },
+  {
+    "id": "C_SHIFTTOOMANYBITS",
+    "languages": [
+      "c"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Shift too many bits",
+    "description": "Shifting by more bits than the type size.",
+    "tags": [
+      "cppcheck"
+    ],
+    "sources": [
+      {
+        "source": "cppcheck",
+        "ruleId": "shiftTooManyBits",
+        "url": "https://sourceforge.net/p/cppcheck/wiki/ListOfChecks/"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:39:34.019Z",
+    "structuralHints": {
+      "treeSitterQuery": "(binary_expression\n  operator: [\"<<\" \">>\"]\n  right: (_) @offender\n  (#match? @offender \"^(3[2-9]|[4-9][0-9]|[1-9][0-9]{2,})$\"))"
+    }
+  },
+  {
+    "id": "C_INTEGEROVERFLOW",
+    "languages": [
+      "c"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Integer overflow",
+    "description": "Integer operation may overflow.",
+    "tags": [
+      "cppcheck"
+    ],
+    "sources": [
+      {
+        "source": "cppcheck",
+        "ruleId": "integerOverflow",
+        "url": "https://sourceforge.net/p/cppcheck/wiki/ListOfChecks/"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:39:37.040Z",
+    "structuralHints": {
+      "treeSitterQuery": "(binary_expression\n  left: (identifier)\n  operator: [\n    \"+\"\n    \"-\"\n    \"*\"\n    \"<<\"\n  ]\n  right: (_)\n) @offender"
+    }
+  },
+  {
+    "id": "C_UNSIGNEDLESSTHANZERO",
+    "languages": [
+      "c"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Unsigned less than zero",
+    "description": "Unsigned value is compared to zero.",
+    "tags": [
+      "cppcheck"
+    ],
+    "sources": [
+      {
+        "source": "cppcheck",
+        "ruleId": "unsignedLessThanZero",
+        "url": "https://sourceforge.net/p/cppcheck/wiki/ListOfChecks/"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:39:41.898Z",
+    "structuralHints": {
+      "treeSitterQuery": "(binary_expression\n  left: (_) @offender\n  operator: [\">=\" \"<\" \">\" \"<=\"]\n  right: (number_literal) @zero\n  (#match? @zero \"^0$\")\n  (#match? @offender \"unsigned\"))"
+    }
+  },
+  {
+    "id": "C_POINTERLESSTHANZERO",
+    "languages": [
+      "c"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Pointer less than zero",
+    "description": "Pointer is compared to zero.",
+    "tags": [
+      "cppcheck"
+    ],
+    "sources": [
+      {
+        "source": "cppcheck",
+        "ruleId": "pointerLessThanZero",
+        "url": "https://sourceforge.net/p/cppcheck/wiki/ListOfChecks/"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:39:45.158Z",
+    "structuralHints": {
+      "treeSitterQuery": "(binary_expression\n  left: (_) @offender\n  operator: [\"==\" \"!=\"]\n  right: (number_literal) @zero\n  (#eq? @zero \"0\"))"
+    }
+  },
+  {
+    "id": "C_ALWAYSTRUEFALSE",
+    "languages": [
+      "c"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Always true/false condition",
+    "description": "Condition is always true or false.",
+    "tags": [
+      "cppcheck"
+    ],
+    "sources": [
+      {
+        "source": "cppcheck",
+        "ruleId": "alwaysTrueFalse",
+        "url": "https://sourceforge.net/p/cppcheck/wiki/ListOfChecks/"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T04:11:27.412Z",
+    "structuralHints": {
+      "treeSitterQuery": "(if_statement\n  condition: (_\n    (true) @offender))"
+    }
+  },
+  {
+    "id": "C_COMPAREBOOLEXPRESSIONWITHINT",
+    "languages": [
+      "c"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Compare bool expression with int",
+    "description": "Boolean expression is compared with integer.",
+    "tags": [
+      "cppcheck"
+    ],
+    "sources": [
+      {
+        "source": "cppcheck",
+        "ruleId": "compareBoolExpressionWithInt",
+        "url": "https://sourceforge.net/p/cppcheck/wiki/ListOfChecks/"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:39:51.099Z",
+    "structuralHints": {
+      "treeSitterQuery": "(binary_expression\n  left: (_) @offender\n  operator: [\n    \"==\"\n    \"!=\"\n    \"<\"\n    \">\"\n    \"<=\"\n    \">=\"\n  ]\n  right: (number_literal)\n  (#match? @offender \"^(true|false|TRUE|FALSE)$\"))"
+    }
+  },
+  {
+    "id": "C_COMPAREPOINTERS",
+    "languages": [
+      "c"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Compare pointers",
+    "description": "Pointers from different memory blocks are compared.",
+    "tags": [
+      "cppcheck"
+    ],
+    "sources": [
+      {
+        "source": "cppcheck",
+        "ruleId": "comparePointers",
+        "url": "https://sourceforge.net/p/cppcheck/wiki/ListOfChecks/"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:39:54.239Z",
+    "structuralHints": {
+      "treeSitterQuery": "(binary_expression\n  left: (_) @offender\n  operator: [\n    \"==\"\n    \"!=\"\n    \"<\"\n    \">\"\n    \"<=\"\n    \">=\"\n  ]\n  right: (_)\n  (#match? @offender \"^(\\\\*|&|->)\"))"
+    }
+  },
+  {
+    "id": "C_COMPARESTRINGLITERAL",
+    "languages": [
+      "c"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Compare string literal",
+    "description": "String literal is compared with == or !=.",
+    "tags": [
+      "cppcheck"
+    ],
+    "sources": [
+      {
+        "source": "cppcheck",
+        "ruleId": "compareStringLiteral",
+        "url": "https://sourceforge.net/p/cppcheck/wiki/ListOfChecks/"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:39:57.504Z",
+    "structuralHints": {
+      "treeSitterQuery": "(binary_expression\n  left: (string_literal) @offender\n  operator: [\"==\" \"!=\"]\n  right: (_))"
+    }
+  },
+  {
+    "id": "C_STRCPY",
+    "languages": [
+      "c"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "Unsafe strcpy",
+    "description": "strcpy is unsafe, use strncpy or strcpy_s.",
+    "tags": [
+      "cppcheck"
+    ],
+    "sources": [
+      {
+        "source": "cppcheck",
+        "ruleId": "strcpy",
+        "url": "https://sourceforge.net/p/cppcheck/wiki/ListOfChecks/"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:39:59.895Z",
+    "examples": [
+      {
+        "bad": "        }\r\n\r\n        strcpy(result[(*resultLines)++], work);\r\n    }\r\n}\r",
+        "notes": "Found in Ocr.c"
+      },
+      {
+        "bad": "    Thing *thing = malloc(sizeof(Thing));\r\n    thing->name = malloc((strlen(name) + 1) * sizeof(char));\r\n    strcpy(thing->name, name);\r\n    thing->birthDate = birthDate;\r\n    return thing;\r",
+        "notes": "Found in thing.c"
+      },
+      {
+        "bad": "\r\n    if (*itemPower == 0) {\r\n        strcpy(itemKind, \"Junk\");\r\n    }\r\n}\r",
+        "notes": "Found in quest.c"
+      }
+    ],
+    "structuralHints": {
+      "treeSitterQuery": "(call_expression\n  function: (identifier) @offender\n  (#eq? @offender \"strcpy\"))"
+    }
+  },
+  {
+    "id": "C_STRCAT",
+    "languages": [
+      "c"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "Unsafe strcat",
+    "description": "strcat is unsafe, use strncat or strcat_s.",
+    "tags": [
+      "cppcheck"
+    ],
+    "sources": [
+      {
+        "source": "cppcheck",
+        "ruleId": "strcat",
+        "url": "https://sourceforge.net/p/cppcheck/wiki/ListOfChecks/"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:40:02.146Z",
+    "structuralHints": {
+      "treeSitterQuery": "(call_expression\n  function: (identifier) @offender\n  (#eq? @offender \"strcat\"))"
+    }
+  },
+  {
+    "id": "C_SPRINTF",
+    "languages": [
+      "c"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "Unsafe sprintf",
+    "description": "sprintf is unsafe, use snprintf or sprintf_s.",
+    "tags": [
+      "cppcheck"
+    ],
+    "sources": [
+      {
+        "source": "cppcheck",
+        "ruleId": "sprintf",
+        "url": "https://sourceforge.net/p/cppcheck/wiki/ListOfChecks/"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:40:04.535Z",
+    "examples": [
+      {
+        "bad": "      \"integrity\": \"sha512-o5Roy6tNG4SL/FOkCAN6RzjiakZS25RLYFrcMttJqbdd8BWrnA+fGz57iN5Pb06pvBGvl5gQ0B48dJlslXvoTg==\",\r\n      \"dependencies\": {\r\n        \"sprintf-js\": \"~1.0.2\"\r\n      }\r\n    },\r",
+        "notes": "Found in package-lock.json"
+      },
+      {
+        "bad": "                    int playerCraftingSkill)\r\n{\r\n    sprintf(result,\r\n            \"%s's Attributes:\\nHealth: %d\\nStrength: %d\\nMagic: %d\\nCrafting \"\r\n            \"Skill: %d\\n\",\r",
+        "notes": "Found in quest.c"
+      },
+      {
+        "bad": "print_item(char* buffer, Item* item) \r\n{\r\n    sprintf(buffer, \"%s, %d, %d\", item->name, item->sellIn, item->quality);\r\n}\r\n\r",
+        "notes": "Found in GildedRose.c"
+      },
+      {
+        "bad": "      \"dev\": true,\r\n      \"dependencies\": {\r\n        \"sprintf-js\": \"~1.0.2\"\r\n      }\r\n    },\r",
+        "notes": "Found in package-lock.json"
+      },
+      {
+        "bad": "  integrity sha512-o5Roy6tNG4SL/FOkCAN6RzjiakZS25RLYFrcMttJqbdd8BWrnA+fGz57iN5Pb06pvBGvl5gQ0B48dJlslXvoTg==\r\n  dependencies:\r\n    sprintf-js \"~1.0.2\"\r\n\r\narr-diff@^4.0.0:\r",
+        "notes": "Found in yarn.lock"
+      },
+      {
+        "bad": "\r\n    public static function playerToString($playerName, $playerHealth, $playerStrength, $playerMagic, $playerCraftingSkill) {\r\n        return sprintf(\"%s's Attributes:\\nHealth: %d\\nStrength: %d\\nMagic: %d\\nCrafting Skill: %d\\n\",\r\n            $playerName, $playerHealth, $playerStrength, $playerMagic, $playerCraftingSkill);\r\n    }\r",
+        "notes": "Found in HeroQuest.php"
+      }
+    ],
+    "structuralHints": {
+      "treeSitterQuery": "(call_expression\n  function: (identifier) @offender\n  (#eq? @offender \"sprintf\"))"
+    }
+  },
+  {
+    "id": "C_GETS",
+    "languages": [
+      "c"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "Unsafe gets",
+    "description": "gets is unsafe, use fgets instead.",
+    "tags": [
+      "cppcheck"
+    ],
+    "sources": [
+      {
+        "source": "cppcheck",
+        "ruleId": "gets",
+        "url": "https://sourceforge.net/p/cppcheck/wiki/ListOfChecks/"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:40:07.312Z",
+    "examples": [
+      {
+        "bad": "- At the end of each day our system lowers both values for every item\r\n\r\nPretty simple, right? Well this is where it gets interesting:\r\n\r\n- Once the sell by date has passed, `Quality` degrades twice as fast\r",
+        "notes": "Found in GildedRoseRequirements.md"
+      },
+      {
+        "bad": "Such anti-patterns often increase the time taken to run the queries on a database management system. \r\nAddressing these anti-patterns will, therefore, help improve the runtime performance of the queries. \r\nThis tool targets all SQL dialects.\")\r\nSET(CPACK_PACKAGE_VERSION ${VERSION})\r\nSET(CPACK_DEBIAN_PACKAGE_MAINTAINER \"Joy Arulraj\") #required\r",
+        "notes": "Found in CMakeLists.txt"
+      },
+      {
+        "bad": "`sqlcheck` automatically detects common SQL anti-patterns. Such anti-patterns often slow down queries. Addressing them will, therefore, help accelerate queries.\r\n\r\n`sqlcheck` targets **all major SQL dialects**.\r\n\r\nFor development updates on `sqlcheck` and general news on <a href=\"https://faculty.cc.gatech.edu/~jarulraj/\">next generation  database systems</a>, follow me at <a class=\"twitter-follow-button\" href=\"https://twitter.com/joy_arulraj\">@joy_arulraj</a>.\r",
+        "notes": "Found in README.md"
+      },
+      {
+        "bad": "#   Important for patching:\r\n#\r\n#   (2) This script targets any POSIX shell, so it avoids extensions provided\r\n#       by Bash, Ksh, etc; in particular arrays are avoided.\r\n#\r",
+        "notes": "Found in gradlew"
+      },
+      {
+        "bad": "        .library(\r\n            name: \"ExpenseReport\",\r\n            targets: [\"ExpenseReport\"]),\r\n    ],\r\n    dependencies: [\r",
+        "notes": "Found in Package.swift"
+      },
+      {
+        "bad": "        \"@babel/code-frame\": \"^7.14.5\",\r\n        \"@babel/generator\": \"^7.15.0\",\r\n        \"@babel/helper-compilation-targets\": \"^7.15.0\",\r\n        \"@babel/helper-module-transforms\": \"^7.15.0\",\r\n        \"@babel/helpers\": \"^7.14.8\",\r",
+        "notes": "Found in package-lock.json"
+      },
+      {
+        "bad": "*& \t- At the end of each day our system lowers both values for every item\r\n*&\r\n*& Seems pretty simple, right? Well this is where it gets interesting:\r\n*&\r\n*& \t- Once the sell by date has passed, Quality degrades twice as fast\r",
+        "notes": "Found in YY_PAO_GILDED_ROSE.abap"
+      },
+      {
+        "bad": "TEXTTESTS = GildedRoseTextTests\r\n\r\n# House-keeping build targets.\r\n\r\nall : $(TESTS) $(TEXTTESTS)\r",
+        "notes": "Found in Makefile"
+      },
+      {
+        "bad": ";; All items have a Quality value which denotes how valuable the item is\r\n;; At the end of each day our system lowers both values for every item\r\n;; Pretty simple, right? Well this is where it gets interesting:\r\n;; Once the sell by date has passed, Quality degrades twice as fast\r\n;; The Quality of an item is never negative\r",
+        "notes": "Found in gilded-rose-functional.lisp"
+      },
+      {
+        "bad": "    </Target>\r\n    <Target Name=\"TextTestFixture:Clean\">\r\n        <MSBuild Projects=\"TextTestFixture.dproj\" Targets=\"Clean\"/>\r\n    </Target>\r\n    <Target Name=\"TextTestFixture:Make\">\r",
+        "notes": "Found in GildedRose.groupproj"
+      },
+      {
+        "bad": "        <ProjectFileVersion>12</ProjectFileVersion>\r\n    </ProjectExtensions>\r\n    <Import Project=\"$(BDS)\\Bin\\CodeGear.Delphi.Targets\" Condition=\"Exists('$(BDS)\\Bin\\CodeGear.Delphi.Targets')\"/>\r\n    <Import Project=\"$(APPDATA)\\Embarcadero\\$(BDSAPPDATABASEDIR)\\$(PRODUCTVERSION)\\UserTools.proj\" Condition=\"Exists('$(APPDATA)\\Embarcadero\\$(BDSAPPDATABASEDIR)\\$(PRODUCTVERSION)\\UserTools.proj')\"/>\r\n    <Import Project=\"$(MSBuildProjectName).deployproj\" Condition=\"Exists('$(MSBuildProjectName).deployproj')\"/>\r",
+        "notes": "Found in TextTestFixture.dproj"
+      },
+      {
+        "bad": "        \"env\",\r\n        {\r\n          \"targets\": {\r\n            \"node\": \"current\"\r\n          }\r",
+        "notes": "Found in package.json"
+      },
+      {
+        "bad": "        \"@babel/code-frame\": \"^7.22.13\",\r\n        \"@babel/generator\": \"^7.23.0\",\r\n        \"@babel/helper-compilation-targets\": \"^7.22.15\",\r\n        \"@babel/helper-module-transforms\": \"^7.23.0\",\r\n        \"@babel/helpers\": \"^7.23.2\",\r",
+        "notes": "Found in package-lock.json"
+      },
+      {
+        "bad": "    \"@babel/code-frame\" \"^7.22.13\"\r\n    \"@babel/generator\" \"^7.22.15\"\r\n    \"@babel/helper-compilation-targets\" \"^7.22.15\"\r\n    \"@babel/helper-module-transforms\" \"^7.22.15\"\r\n    \"@babel/helpers\" \"^7.22.15\"\r",
+        "notes": "Found in yarn.lock"
+      },
+      {
+        "bad": "\t- At the end of each day our system lowers both values for every item\r\n\r\nPretty simple, right? Well this is where it gets interesting:\r\n\r\n\t- Once the sell by date has passed, Quality degrades twice as fast\r",
+        "notes": "Found in GildedRose.st"
+      },
+      {
+        "bad": "        .library(\r\n            name: \"GildedRose\",\r\n            targets: [\"GildedRose\"]\r\n        ),\r\n    ],\r",
+        "notes": "Found in Package.swift"
+      },
+      {
+        "bad": "        funcType m_test; // a function pointer to the test case\r\n\r\n        String m_type; // for templated test cases - gets appended to the real name\r\n        int m_template_id; // an ID used to distinguish between the different versions of a templated test case\r\n        String m_full_name; // contains the name (only for templated test cases!) + the template type\r",
+        "notes": "Found in doctest.h"
+      },
+      {
+        "bad": "        \"contentHash\": \"kz0PEW2lhqygehI/d6XsPCQzD7ff7gUJaVGPVETX611eadGsA3A877GdSlU0LRVMCTH/+P3o2iDTak+S08V2+A==\"\r\n      },\r\n      \"Microsoft.NETCore.Targets\": {\r\n        \"type\": \"Transitive\",\r\n        \"resolved\": \"1.1.0\",\r",
+        "notes": "Found in packages.lock.json"
+      },
+      {
+        "bad": "﻿<?xml version=\"1.0\" encoding=\"utf-8\"?>\r\n<Project ToolsVersion=\"12.0\" DefaultTargets=\"Build\" xmlns=\"http://schemas.microsoft.com/developer/msbuild/2003\">\r\n  <Import Project=\"$(MSBuildExtensionsPath)\\$(MSBuildToolsVersion)\\Microsoft.Common.props\" Condition=\"Exists('$(MSBuildExtensionsPath)\\$(MSBuildToolsVersion)\\Microsoft.Common.props')\" />\r\n  <PropertyGroup>\r",
+        "notes": "Found in GildedRose.fsproj"
+      }
+    ],
+    "structuralHints": {
+      "treeSitterQuery": "(call_expression\n  function: (identifier) @offender\n  (#eq? @offender \"gets\"))"
+    }
+  },
+  {
+    "id": "C_SCANF",
+    "languages": [
+      "c"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "Unsafe scanf",
+    "description": "scanf is unsafe, use fgets and sscanf instead.",
+    "tags": [
+      "cppcheck"
+    ],
+    "sources": [
+      {
+        "source": "cppcheck",
+        "ruleId": "scanf",
+        "url": "https://sourceforge.net/p/cppcheck/wiki/ListOfChecks/"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:40:09.373Z",
+    "structuralHints": {
+      "treeSitterQuery": "(call_expression\n  function: (identifier) @offender\n  (#eq? @offender \"scanf\"))"
+    }
+  },
+  {
+    "id": "C_BUFFEROVERRUN",
+    "languages": [
+      "c"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "Buffer overrun",
+    "description": "Buffer is accessed beyond its bounds.",
+    "tags": [
+      "cppcheck"
+    ],
+    "sources": [
+      {
+        "source": "cppcheck",
+        "ruleId": "bufferOverrun",
+        "url": "https://sourceforge.net/p/cppcheck/wiki/ListOfChecks/"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T04:10:36.229Z",
+    "structuralHints": {
+      "treeSitterQuery": "(subscript_expression\n    argument: (_) @offender)"
+    }
+  },
+  {
+    "id": "C_BUFFERUNDERRUN",
+    "languages": [
+      "c"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "Buffer underrun",
+    "description": "Buffer is accessed before its start.",
+    "tags": [
+      "cppcheck"
+    ],
+    "sources": [
+      {
+        "source": "cppcheck",
+        "ruleId": "bufferUnderrun",
+        "url": "https://sourceforge.net/p/cppcheck/wiki/ListOfChecks/"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:40:17.235Z",
+    "structuralHints": {
+      "treeSitterQuery": "(subscript_expression\n  argument: (binary_expression\n    left: (identifier)\n    operator: \"-\"\n    right: (number_literal)) @offender)"
+    }
+  },
+  {
+    "id": "C_OUTOFBOUNDS",
+    "languages": [
+      "c"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "Out of bounds",
+    "description": "Array index is out of bounds.",
+    "tags": [
+      "cppcheck"
+    ],
+    "sources": [
+      {
+        "source": "cppcheck",
+        "ruleId": "outOfBounds",
+        "url": "https://sourceforge.net/p/cppcheck/wiki/ListOfChecks/"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:40:19.691Z",
+    "structuralHints": {
+      "treeSitterQuery": "(subscript_expression\n  argument: (number_literal) @offender\n  (#match? @offender \"^[0-9]+$\"))"
+    }
+  },
+  {
+    "id": "C_NEGATIVEARRAYSIZE",
+    "languages": [
+      "c"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Negative array size",
+    "description": "Array size is negative.",
+    "tags": [
+      "cppcheck"
+    ],
+    "sources": [
+      {
+        "source": "cppcheck",
+        "ruleId": "negativeArraySize",
+        "url": "https://sourceforge.net/p/cppcheck/wiki/ListOfChecks/"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:40:22.168Z",
+    "structuralHints": {
+      "treeSitterQuery": "(array_declarator\n  size: (number_literal) @offender\n  (#match? @offender \"^-[0-9]+$\"))"
+    }
+  },
+  {
+    "id": "C_NEGATIVEINDEX",
+    "languages": [
+      "c"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Negative index",
+    "description": "Array index is negative.",
+    "tags": [
+      "cppcheck"
+    ],
+    "sources": [
+      {
+        "source": "cppcheck",
+        "ruleId": "negativeIndex",
+        "url": "https://sourceforge.net/p/cppcheck/wiki/ListOfChecks/"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T04:10:40.832Z",
+    "structuralHints": {
+      "treeSitterQuery": "(subscript_expression\n  argument: (unary_expression\n    operator: \"-\") @offender)"
+    }
+  },
+  {
+    "id": "C_DIVIDEBYZERO",
+    "languages": [
+      "c"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Division by zero",
+    "description": "Division by zero.",
+    "tags": [
+      "cppcheck"
+    ],
+    "sources": [
+      {
+        "source": "cppcheck",
+        "ruleId": "divideByZero",
+        "url": "https://sourceforge.net/p/cppcheck/wiki/ListOfChecks/"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:40:27.404Z",
+    "structuralHints": {
+      "treeSitterQuery": "(binary_expression\n  operator: \"/\"\n  right: (number_literal) @offender\n  (#eq? @offender \"0\"))"
+    }
+  },
+  {
+    "id": "C_MODULOBYZERO",
+    "languages": [
+      "c"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Modulo by zero",
+    "description": "Modulo by zero.",
+    "tags": [
+      "cppcheck"
+    ],
+    "sources": [
+      {
+        "source": "cppcheck",
+        "ruleId": "moduloByZero",
+        "url": "https://sourceforge.net/p/cppcheck/wiki/ListOfChecks/"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:40:29.773Z",
+    "structuralHints": {
+      "treeSitterQuery": "(binary_expression\n  operator: \"%\"\n  right: (number_literal) @offender\n  (#eq? @offender \"0\"))"
+    }
+  },
+  {
+    "id": "C_ZERODIV",
+    "languages": [
+      "c"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Division by zero",
+    "description": "Division by zero detected.",
+    "tags": [
+      "cppcheck"
+    ],
+    "sources": [
+      {
+        "source": "cppcheck",
+        "ruleId": "zerodiv",
+        "url": "https://sourceforge.net/p/cppcheck/wiki/ListOfChecks/"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:40:31.979Z",
+    "structuralHints": {
+      "treeSitterQuery": "(binary_expression\n  operator: \"/\"\n  right: (number_literal) @offender\n  (#eq? @offender \"0\"))"
+    }
+  },
+  {
+    "id": "C_ZERODIVCOND",
+    "languages": [
+      "c"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Division by zero condition",
+    "description": "Condition that may lead to division by zero.",
+    "tags": [
+      "cppcheck"
+    ],
+    "sources": [
+      {
+        "source": "cppcheck",
+        "ruleId": "zerodivcond",
+        "url": "https://sourceforge.net/p/cppcheck/wiki/ListOfChecks/"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:40:35.584Z",
+    "structuralHints": {
+      "treeSitterQuery": "(binary_expression\n  operator: \"/\"\n  right: (_) @offender\n  (#match? @offender \"^(0|variable|expression)$\"))"
+    }
+  },
+  {
+    "id": "C_KNOWNCONDITIONTRUEFALSE",
+    "languages": [
+      "c"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Known condition true/false",
+    "description": "Condition is always true or false.",
+    "tags": [
+      "cppcheck"
+    ],
+    "sources": [
+      {
+        "source": "cppcheck",
+        "ruleId": "knownConditionTrueFalse",
+        "url": "https://sourceforge.net/p/cppcheck/wiki/ListOfChecks/"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T07:02:20.843Z",
+    "structuralHints": {
+      "treeSitterQuery": "(identifier) @offender"
+    }
+  },
+  {
+    "id": "C_INVALIDTESTFOROVERFLOW",
+    "languages": [
+      "c"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Invalid test for overflow",
+    "description": "Test for overflow is invalid.",
+    "tags": [
+      "cppcheck"
+    ],
+    "sources": [
+      {
+        "source": "cppcheck",
+        "ruleId": "invalidTestForOverflow",
+        "url": "https://sourceforge.net/p/cppcheck/wiki/ListOfChecks/"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:40:42.734Z",
+    "structuralHints": {
+      "treeSitterQuery": "(binary_expression\n  left: (_) @left\n  operator: [\"+=\" \"+\" \"-=\" \"-\"]\n  right: (_) @right\n  (#match? @left \"^(unsigned|size_t|uint)\")\n) @offender"
+    }
+  },
+  {
+    "id": "C_STLOUTOFBOUNDS",
+    "languages": [
+      "c"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "STL out of bounds",
+    "description": "STL container is accessed out of bounds.",
+    "tags": [
+      "cppcheck"
+    ],
+    "sources": [
+      {
+        "source": "cppcheck",
+        "ruleId": "stlOutOfBounds",
+        "url": "https://sourceforge.net/p/cppcheck/wiki/ListOfChecks/"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:40:50.715Z",
+    "structuralHints": {
+      "treeSitterQuery": "(subscript_expression\n  argument: (number_literal) @offender\n  (#match? @offender \"^[0-9]+$\"))"
+    }
+  },
+  {
+    "id": "C_INVALIDPOINTERCAST",
+    "languages": [
+      "c"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Invalid pointer cast",
+    "description": "Invalid pointer cast detected.",
+    "tags": [
+      "cppcheck"
+    ],
+    "sources": [
+      {
+        "source": "cppcheck",
+        "ruleId": "invalidPointerCast",
+        "url": "https://sourceforge.net/p/cppcheck/wiki/ListOfChecks/"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:40:53.206Z",
+    "structuralHints": {
+      "treeSitterQuery": "(cast_expression\n  type: (type_descriptor) @cast_type\n  value: (_) @value\n) @offender"
+    }
+  },
+  {
+    "id": "C_INVALIDLIFETIME",
+    "languages": [
+      "c"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Invalid lifetime",
+    "description": "Using object after its lifetime has ended.",
+    "tags": [
+      "cppcheck"
+    ],
+    "sources": [
+      {
+        "source": "cppcheck",
+        "ruleId": "invalidLifetime",
+        "url": "https://sourceforge.net/p/cppcheck/wiki/ListOfChecks/"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:40:59.081Z",
+    "structuralHints": {
+      "treeSitterQuery": "(compound_statement\n  (declaration\n    declarator: (pointer_declarator\n      declarator: (identifier) @var))\n  (expression_statement\n    (call_expression\n      function: (identifier) @func\n      arguments: (argument_list (identifier) @arg)))\n  (expression_statement\n    (assignment_expression\n      left: (_)\n      right: (identifier) @var))\n) @offender"
+    }
+  },
+  {
+    "id": "C_LEAKNOVARFUNCTIONCALL",
+    "languages": [
+      "c"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Leak in function call",
+    "description": "Memory leak in function call.",
+    "tags": [
+      "cppcheck"
+    ],
+    "sources": [
+      {
+        "source": "cppcheck",
+        "ruleId": "leakNoVarFunctionCall",
+        "url": "https://sourceforge.net/p/cppcheck/wiki/ListOfChecks/"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T04:10:54.765Z",
+    "structuralHints": {
+      "treeSitterQuery": "(call_expression\n  function: (identifier) @func\n  (#match? @func \"^(malloc|calloc|realloc|strdup|strndup)$\")) @offender"
+    }
+  },
+  {
+    "id": "C_LEAKRETURNVALNOTUSED",
+    "languages": [
+      "c"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Leak return value not used",
+    "description": "Return value indicates memory leak.",
+    "tags": [
+      "cppcheck"
+    ],
+    "sources": [
+      {
+        "source": "cppcheck",
+        "ruleId": "leakReturnValNotUsed",
+        "url": "https://sourceforge.net/p/cppcheck/wiki/ListOfChecks/"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:41:04.692Z",
+    "structuralHints": {
+      "treeSitterQuery": "(return_statement\n  (call_expression\n    function: (identifier) @func\n    (#match? @func \"^(malloc|calloc|realloc|strdup|strndup|alloca)$\")) @offender)"
+    }
+  },
+  {
+    "id": "C_LEAKUNSAFEARG",
+    "languages": [
+      "c"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Leak unsafe argument",
+    "description": "Unsafe argument may cause memory leak.",
+    "tags": [
+      "cppcheck"
+    ],
+    "sources": [
+      {
+        "source": "cppcheck",
+        "ruleId": "leakUnsafeArg",
+        "url": "https://sourceforge.net/p/cppcheck/wiki/ListOfChecks/"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:41:07.044Z",
+    "structuralHints": {
+      "treeSitterQuery": "(call_expression\n  function: (identifier) @func\n  arguments: (argument_list\n    (call_expression) @offender))"
+    }
+  }
+]

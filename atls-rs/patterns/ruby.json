@@ -1,0 +1,28 @@
+[
+  {
+    "id": "RB_EVAL_USAGE",
+    "languages": ["ruby"],
+    "category": "Security",
+    "severity": "high",
+    "title": "eval() usage",
+    "description": "eval executes arbitrary code and is a security risk. Use safer alternatives like JSON.parse or YAML.load with restricted classes.",
+    "tags": ["ruby", "security"],
+    "sources": [],
+    "structuralHints": {
+      "treeSitterQuery": "(call method: (identifier) @method (#eq? @method \"eval\")) @offender"
+    }
+  },
+  {
+    "id": "RB_EMPTY_RESCUE",
+    "languages": ["ruby"],
+    "category": "ErrorHandling",
+    "severity": "medium",
+    "title": "Empty rescue block",
+    "description": "Rescue block with no body swallows exceptions. At minimum log the error or re-raise.",
+    "tags": ["ruby", "rescue"],
+    "sources": [],
+    "structuralHints": {
+      "treeSitterQuery": "(rescue (exception_list)? (_)? (_)?) @offender"
+    }
+  }
+]

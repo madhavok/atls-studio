@@ -1,0 +1,28 @@
+[
+  {
+    "id": "SC_EVAL_USAGE",
+    "languages": ["scala"],
+    "category": "Security",
+    "severity": "high",
+    "title": "eval / toolbox usage",
+    "description": "Runtime code evaluation can execute arbitrary code. Prefer type-safe alternatives.",
+    "tags": ["scala", "security"],
+    "sources": [],
+    "structuralHints": {
+      "treeSitterQuery": "(call_expression function: (identifier) @fn (#eq? @fn \"eval\")) @offender"
+    }
+  },
+  {
+    "id": "SC_EMPTY_CATCH",
+    "languages": ["scala"],
+    "category": "ErrorHandling",
+    "severity": "medium",
+    "title": "Empty catch block",
+    "description": "Catch block with no body swallows exceptions. Log or rethrow.",
+    "tags": ["scala", "catch"],
+    "sources": [],
+    "structuralHints": {
+      "treeSitterQuery": "(catch_case (block) @offender (#eq? @offender \"{}\"))"
+    }
+  }
+]

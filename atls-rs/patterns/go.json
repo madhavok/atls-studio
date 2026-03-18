@@ -1,0 +1,4002 @@
+[
+  {
+    "id": "GO_SA1000",
+    "languages": [
+      "go"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Invalid regular expression",
+    "description": "Invalid regular expression",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "SA1000",
+        "url": "https://staticcheck.dev/docs/checks/#SA1000"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T01:27:07.530Z",
+    "structuralHints": {
+      "treeSitterQuery": "(call_expression\n  function: (selector_expression\n    operand: (identifier) @_pkg\n    field: (field_identifier) @_func)\n  arguments: (argument_list\n    (raw_string_literal) @offender)\n  (#eq? @_pkg \"regexp\")\n  (#match? @_func \"^(Compile|CompilePOSIX|Match|MatchReader|MatchString|MustCompile|MustCompilePOSIX)$\"))"
+    }
+  },
+  {
+    "id": "GO_SA1001",
+    "languages": [
+      "go"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Invalid template",
+    "description": "Invalid template",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "SA1001",
+        "url": "https://staticcheck.dev/docs/checks/#SA1001"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T01:27:11.474Z",
+    "structuralHints": {
+      "treeSitterQuery": "(call_expression\n  function: (selector_expression\n    operand: (_)\n    field: (field_identifier) @_template\n    (#match? @_template \"^(Template|ExecuteTemplate|Parse|ParseFiles|ParseGlob|New)$\"))\n  arguments: (argument_list\n    (interpreted_string_literal) @offender\n    (#match? @offender \"{{.*}}.*{{.*}}\")))"
+    }
+  },
+  {
+    "id": "GO_SA1002",
+    "languages": [
+      "go"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Invalid format in time.Parse",
+    "description": "Invalid format in time.Parse",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "SA1002",
+        "url": "https://staticcheck.dev/docs/checks/#SA1002"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T01:27:15.423Z",
+    "structuralHints": {
+      "treeSitterQuery": "(call_expression\n  function: (selector_expression\n    operand: (identifier) @pkg (#eq? @pkg \"time\")\n    field: (field_identifier) @func (#eq? @func \"Parse\"))\n  arguments: (argument_list\n    (interpreted_string_literal) @offender\n    (#not-match? @offender \"\\\"(2006|01|02|15|04|05|PM|MST|Mon|Monday|Jan|January)\")))"
+    }
+  },
+  {
+    "id": "GO_SA1003",
+    "languages": [
+      "go"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Unsupported argument to functions in encoding/binary",
+    "description": "Unsupported argument to functions in encoding/binary",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "SA1003",
+        "url": "https://staticcheck.dev/docs/checks/#SA1003"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T01:27:18.591Z",
+    "structuralHints": {
+      "treeSitterQuery": "(call_expression\n  function: (selector_expression\n    operand: (identifier) @pkg\n    field: (field_identifier))\n  arguments: (argument_list\n    (_) @offender)\n  (#match? @pkg \"^(binary)$\"))"
+    }
+  },
+  {
+    "id": "GO_SA1004",
+    "languages": [
+      "go"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Suspiciously small untyped constant in time.Sleep",
+    "description": "Suspiciously small untyped constant in time.Sleep",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "SA1004",
+        "url": "https://staticcheck.dev/docs/checks/#SA1004"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T01:27:28.112Z",
+    "structuralHints": {
+      "treeSitterQuery": "(call_expression\n  function: (selector_expression\n    operand: (identifier) @_time (#eq? @_time \"time\")\n    field: (field_identifier) @_sleep (#eq? @_sleep \"Sleep\"))\n  arguments: (argument_list\n    (int_literal) @offender\n    (#match? @offender \"^[0-9]$|^[1-9][0-9]$|^[1-9][0-9][0-9]$\")))"
+    }
+  },
+  {
+    "id": "GO_SA1005",
+    "languages": [
+      "go"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Invalid first argument to exec.Command",
+    "description": "Invalid first argument to exec.Command",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "SA1005",
+        "url": "https://staticcheck.dev/docs/checks/#SA1005"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T01:27:32.398Z",
+    "structuralHints": {
+      "treeSitterQuery": "(call_expression\n  function: (selector_expression\n    operand: (identifier) @pkg (#eq? @pkg \"exec\")\n    field: (field_identifier) @func (#eq? @func \"Command\"))\n  arguments: (argument_list\n    (interpreted_string_literal) @offender\n    (#match? @offender \"^\\\"[^\\\"]*\\\\s\")))"
+    }
+  },
+  {
+    "id": "GO_SA1006",
+    "languages": [
+      "go"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Printf with dynamic first argument and no further arguments",
+    "description": "Printf with dynamic first argument and no further arguments",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "SA1006",
+        "url": "https://staticcheck.dev/docs/checks/#SA1006"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T01:27:36.513Z",
+    "structuralHints": {
+      "treeSitterQuery": "(call_expression\n  function: (selector_expression\n    operand: (_)\n    field: (field_identifier) @_func\n    (#match? @_func \"^(Printf|Fprintf|Sprintf)$\"))\n  arguments: (argument_list\n    .\n    (_) @offender\n    .\n    (#not-match? @offender \"^\\\".*\\\"$\")))"
+    }
+  },
+  {
+    "id": "GO_SA1007",
+    "languages": [
+      "go"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Invalid URL in net/url.Parse",
+    "description": "Invalid URL in net/url.Parse",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "SA1007",
+        "url": "https://staticcheck.dev/docs/checks/#SA1007"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T01:27:40.330Z",
+    "structuralHints": {
+      "treeSitterQuery": "(call_expression\n  function: (selector_expression\n    operand: (identifier) @package (#eq? @package \"url\")\n    field: (field_identifier) @method (#eq? @method \"Parse\"))\n  arguments: (argument_list\n    (interpreted_string_literal) @offender\n    (#match? @offender \"^\\\"[^:/?#]*:?[^:]*$\\\"\")))"
+    }
+  },
+  {
+    "id": "GO_SA1008",
+    "languages": [
+      "go"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Non-canonical key in http.Header map",
+    "description": "Non-canonical key in http.Header map",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "SA1008",
+        "url": "https://staticcheck.dev/docs/checks/#SA1008"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T01:27:44.197Z",
+    "structuralHints": {
+      "treeSitterQuery": "(index_expression\n  operand: (selector_expression\n    operand: (identifier)\n    field: (field_identifier) @field_name)\n  index: (interpreted_string_literal) @offender\n  (#eq? @field_name \"Header\")\n  (#match? @offender \"\\\"[^\\\"]*[A-Z][a-z]\"))"
+    }
+  },
+  {
+    "id": "GO_SA1010",
+    "languages": [
+      "go"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "(*regexp.Regexp).FindAll called with n == 0, which will always return zero results",
+    "description": "(*regexp.Regexp).FindAll called with n == 0, which will always return zero results",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "SA1010",
+        "url": "https://staticcheck.dev/docs/checks/#SA1010"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T01:27:49.114Z",
+    "structuralHints": {
+      "treeSitterQuery": "(call_expression\n  function: (selector_expression\n    operand: (parenthesized_expression\n      (type_assertion_expression\n        type: (pointer_type\n          (qualified_type\n            package: (package_identifier) @pkg\n            name: (type_identifier) @type))))\n    field: (field_identifier) @method)\n  arguments: (argument_list\n    .\n    (_)\n    .\n    (int_literal) @offender\n    .)\n  (#eq? @pkg \"regexp\")\n  (#eq? @type \"Regexp\")\n  (#match? @method \"^FindAll\")\n  (#eq? @offender \"0\"))"
+    }
+  },
+  {
+    "id": "GO_SA1011",
+    "languages": [
+      "go"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Various methods in the strings package expect valid UTF-8, but invalid input is provided",
+    "description": "Various methods in the strings package expect valid UTF-8, but invalid input is provided",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "SA1011",
+        "url": "https://staticcheck.dev/docs/checks/#SA1011"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T01:27:55.402Z",
+    "structuralHints": {
+      "treeSitterQuery": "(call_expression\n  function: (selector_expression\n    operand: (identifier) @pkg (#eq? @pkg \"strings\")\n    field: (field_identifier) @method (#match? @method \"^(Count|Contains|ContainsAny|ContainsRune|EqualFold|Fields|FieldsFunc|HasPrefix|HasSuffix|Index|IndexAny|IndexByte|IndexFunc|IndexRune|LastIndex|LastIndexAny|LastIndexByte|LastIndexFunc|Map|Repeat|Replace|ReplaceAll|Split|SplitAfter|SplitAfterN|SplitN|Title|ToLower|ToTitle|ToUpper|ToValidUTF8|Trim|TrimFunc|TrimLeft|TrimLeftFunc|TrimPrefix|TrimRight|TrimRightFunc|TrimSpace|TrimSuffix)$\"))\n  arguments: (argument_list\n    (interpreted_string_literal) @offender (#match? @offender \"\\\\\\\\x[0-9a-fA-F]{2}\"))) @offender"
+    }
+  },
+  {
+    "id": "GO_SA1012",
+    "languages": [
+      "go"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "A nil context.Context is being passed to a function, consider using context.TODO instead",
+    "description": "A nil context.Context is being passed to a function, consider using context.TODO instead",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "SA1012",
+        "url": "https://staticcheck.dev/docs/checks/#SA1012"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T01:27:58.457Z",
+    "structuralHints": {
+      "treeSitterQuery": "(call_expression\n  function: (_)\n  arguments: (argument_list\n    (nil) @offender))"
+    }
+  },
+  {
+    "id": "GO_SA1013",
+    "languages": [
+      "go"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "io.Seeker.Seek is being called with the whence constant as the first argument, but it should be the second",
+    "description": "io.Seeker.Seek is being called with the whence constant as the first argument, but it should be the second",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "SA1013",
+        "url": "https://staticcheck.dev/docs/checks/#SA1013"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T01:28:02.676Z",
+    "structuralHints": {
+      "treeSitterQuery": "(call_expression\n  function: (selector_expression\n    operand: (_)\n    field: (field_identifier) @field (#eq? @field \"Seek\"))\n  arguments: (argument_list\n    (identifier) @offender (#match? @offender \"^(SeekStart|SeekCurrent|SeekEnd|SEEK_SET|SEEK_CUR|SEEK_END)$\")\n    (_)))"
+    }
+  },
+  {
+    "id": "GO_SA1014",
+    "languages": [
+      "go"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Non-pointer value passed to Unmarshal or Decode",
+    "description": "Non-pointer value passed to Unmarshal or Decode",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "SA1014",
+        "url": "https://staticcheck.dev/docs/checks/#SA1014"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T01:28:06.075Z",
+    "structuralHints": {
+      "treeSitterQuery": "(call_expression\n  function: (selector_expression\n    operand: (_)\n    field: (field_identifier) @method\n    (#match? @method \"^(Unmarshal|Decode)$\"))\n  arguments: (argument_list\n    (identifier) @offender\n    (#not-match? @offender \"^&\")))"
+    }
+  },
+  {
+    "id": "GO_SA1015",
+    "languages": [
+      "go"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Using time.Tick in a way that will leak. Consider using time.NewTicker, and only use time.Tick in tests, commands and endless functions",
+    "description": "Using time.Tick in a way that will leak. Consider using time.NewTicker, and only use time.Tick in tests, commands and endless functions",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "SA1015",
+        "url": "https://staticcheck.dev/docs/checks/#SA1015"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T01:28:08.778Z",
+    "structuralHints": {
+      "treeSitterQuery": "(call_expression\n  function: (selector_expression\n    operand: (identifier) @pkg (#eq? @pkg \"time\")\n    field: (field_identifier) @method (#eq? @method \"Tick\"))\n) @offender"
+    }
+  },
+  {
+    "id": "GO_SA1016",
+    "languages": [
+      "go"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Trapping a signal that cannot be trapped",
+    "description": "Trapping a signal that cannot be trapped",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "SA1016",
+        "url": "https://staticcheck.dev/docs/checks/#SA1016"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T01:28:12.458Z",
+    "structuralHints": {
+      "treeSitterQuery": "(call_expression\n  function: (selector_expression\n    operand: (identifier) @_signal (#eq? @_signal \"signal\")\n    field: (field_identifier) @_notify (#eq? @_notify \"Notify\"))\n  arguments: (argument_list\n    (identifier)\n    (selector_expression\n      operand: (identifier) @_syscall (#eq? @_syscall \"syscall\")\n      field: (field_identifier) @_sig (#match? @_sig \"^(SIGKILL|SIGSTOP)$\"))) @offender)"
+    }
+  },
+  {
+    "id": "GO_SA1017",
+    "languages": [
+      "go"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Channels used with os/signal.Notify should be buffered",
+    "description": "Channels used with os/signal.Notify should be buffered",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "SA1017",
+        "url": "https://staticcheck.dev/docs/checks/#SA1017"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T01:28:15.750Z",
+    "structuralHints": {
+      "treeSitterQuery": "(call_expression\n  function: (selector_expression\n    operand: (identifier) @pkg (#eq? @pkg \"signal\")\n    field: (field_identifier) @method (#eq? @method \"Notify\"))\n  arguments: (argument_list\n    (identifier) @offender\n    .\n    (_)))"
+    }
+  },
+  {
+    "id": "GO_SA1018",
+    "languages": [
+      "go"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "strings.Replace called with n == 0, which does nothing",
+    "description": "strings.Replace called with n == 0, which does nothing",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "SA1018",
+        "url": "https://staticcheck.dev/docs/checks/#SA1018"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T01:28:19.754Z",
+    "structuralHints": {
+      "treeSitterQuery": "((call_expression\n  function: (selector_expression\n    operand: (identifier) @pkg (#eq? @pkg \"strings\")\n    field: (field_identifier) @method (#eq? @method \"Replace\"))\n  arguments: (argument_list\n    .\n    (_)\n    (_)\n    (_)\n    (int_literal) @n (#eq? @n \"0\")\n    .)) @offender)"
+    }
+  },
+  {
+    "id": "GO_SA1019",
+    "languages": [
+      "go"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Using a deprecated function, variable, constant or field",
+    "description": "Using a deprecated function, variable, constant or field",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "SA1019",
+        "url": "https://staticcheck.dev/docs/checks/#SA1019"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T01:28:24.485Z",
+    "structuralHints": {
+      "treeSitterQuery": "(\n  [\n    (call_expression\n      function: (identifier) @offender\n      (#match? @offender \"^(io\\\\.)?Copy$|^syscall\\\\.|^rand\\\\.(Seed|Read)$\"))\n    (call_expression\n      function: (selector_expression\n        field: (field_identifier) @offender)\n      (#match? @offender \"^(ServeHTTP|Handler)$\"))\n    (selector_expression\n      field: (field_identifier) @offender\n      (#match? @offender \"^(CommonName)$\"))\n    (identifier) @offender\n    (#match? @offender \"^(GOMAXPROCS|NumCPU)$\")\n  ]\n)"
+    }
+  },
+  {
+    "id": "GO_SA1020",
+    "languages": [
+      "go"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Using an invalid host:port pair with a net.Listen-related function",
+    "description": "Using an invalid host:port pair with a net.Listen-related function",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "SA1020",
+        "url": "https://staticcheck.dev/docs/checks/#SA1020"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T01:28:29.470Z",
+    "structuralHints": {
+      "treeSitterQuery": "(call_expression\n  function: (selector_expression\n    operand: (identifier) @_pkg (#match? @_pkg \"^net$\")\n    field: (field_identifier) @_func (#match? @_func \"^(Listen|ListenTCP|ListenUDP|ListenIP|ListenUnix|ListenPacket)$\"))\n  arguments: (argument_list\n    (interpreted_string_literal) @offender (#not-match? @offender \"^\\\"([a-zA-Z0-9]+:)?[^:]+:[0-9]+\\\"$|^\\\":[0-9]+\\\"$|^\\\"(tcp|udp|ip|unix|unixgram|unixpacket)\\\"$\")))"
+    }
+  },
+  {
+    "id": "GO_SA1021",
+    "languages": [
+      "go"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Using bytes.Equal to compare two net.IP",
+    "description": "Using bytes.Equal to compare two net.IP",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "SA1021",
+        "url": "https://staticcheck.dev/docs/checks/#SA1021"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T01:28:34.057Z",
+    "structuralHints": {
+      "treeSitterQuery": "(call_expression\n  function: (selector_expression\n    operand: (identifier) @pkg (#eq? @pkg \"bytes\")\n    field: (field_identifier) @method (#eq? @method \"Equal\"))\n  arguments: (argument_list\n    (identifier) @arg1\n    (identifier) @arg2)\n  (#match? @arg1 \"^(ip|IP|addr|address)$\")\n  (#match? @arg2 \"^(ip|IP|addr|address)$\")) @offender"
+    }
+  },
+  {
+    "id": "GO_SA1023",
+    "languages": [
+      "go"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Modifying the buffer in an io.Writer implementation",
+    "description": "Modifying the buffer in an io.Writer implementation",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "SA1023",
+        "url": "https://staticcheck.dev/docs/checks/#SA1023"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T07:02:32.800Z",
+    "structuralHints": {
+      "treeSitterQuery": "(if_statement) @offender"
+    }
+  },
+  {
+    "id": "GO_SA1024",
+    "languages": [
+      "go"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "A string cutset contains duplicate characters",
+    "description": "A string cutset contains duplicate characters",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "SA1024",
+        "url": "https://staticcheck.dev/docs/checks/#SA1024"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T01:28:44.250Z",
+    "structuralHints": {
+      "treeSitterQuery": "(call_expression\n  function: (selector_expression\n    operand: (identifier) @_pkg\n    field: (field_identifier) @_func)\n  arguments: (argument_list\n    .\n    (_)\n    .\n    (interpreted_string_literal) @offender)\n  (#eq? @_pkg \"strings\")\n  (#match? @_func \"^(Trim|TrimLeft|TrimRight)$\")\n  (#match? @offender \"\\\".*(.*).*\\\\1.*\\\"\"))"
+    }
+  },
+  {
+    "id": "GO_SA1025",
+    "languages": [
+      "go"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "It is not possible to use (*time.Timer).Reset&rsquo;s return value correctly",
+    "description": "It is not possible to use (*time.Timer).Reset&rsquo;s return value correctly",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "SA1025",
+        "url": "https://staticcheck.dev/docs/checks/#SA1025"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T05:29:38.019Z",
+    "structuralHints": {
+      "treeSitterQuery": "((call_expression\n  function: (selector_expression\n    operand: (parenthesized_expression\n      (unary_expression\n        operator: \"*\"\n        operand: (selector_expression\n          field: (field_identifier) @timer-type)))\n    field: (field_identifier) @reset-method)\n  arguments: (argument_list))\n  (#eq? @timer-type \"Timer\")\n  (#eq? @reset-method \"Reset\")) @offender"
+    }
+  },
+  {
+    "id": "GO_SA1026",
+    "languages": [
+      "go"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Cannot marshal channels or functions",
+    "description": "Cannot marshal channels or functions",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "SA1026",
+        "url": "https://staticcheck.dev/docs/checks/#SA1026"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T01:28:51.681Z",
+    "structuralHints": {
+      "treeSitterQuery": "(call_expression\n  function: (selector_expression\n    operand: (identifier) @_json\n    field: (field_identifier) @_marshal)\n  arguments: (argument_list\n    (identifier) @offender)\n  (#match? @_json \"json\")\n  (#match? @_marshal \"Marshal\")\n  (#match? @offender \"^(chan|func)\"))"
+    }
+  },
+  {
+    "id": "GO_SA1027",
+    "languages": [
+      "go"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Atomic access to 64-bit variable must be 64-bit aligned",
+    "description": "Atomic access to 64-bit variable must be 64-bit aligned",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "SA1027",
+        "url": "https://staticcheck.dev/docs/checks/#SA1027"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T01:28:56.951Z",
+    "structuralHints": {
+      "treeSitterQuery": "(type_declaration\n  (type_spec\n    name: (type_identifier)\n    type: (struct_type\n      (field_declaration_list\n        (field_declaration\n          name: (field_identifier)\n          type: (_)) @first_field\n        (field_declaration\n          name: (field_identifier)\n          type: [\n            (qualified_type\n              package: (package_identifier) @pkg\n              name: (type_identifier) @type)\n            (type_identifier) @type\n          ]) @offender\n        (#match? @type \"^(Uint64|Int64)$\")\n        (#eq? @pkg \"atomic\")\n        (#not-match? @first_field \"(uint64|int64|atomic\\\\.(Uint64|Int64)|float64|complex64)\")))))"
+    }
+  },
+  {
+    "id": "GO_SA1028",
+    "languages": [
+      "go"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "sort.Slice can only be used on slices",
+    "description": "sort.Slice can only be used on slices",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "SA1028",
+        "url": "https://staticcheck.dev/docs/checks/#SA1028"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T01:29:01.217Z",
+    "structuralHints": {
+      "treeSitterQuery": "(call_expression\n  function: (selector_expression\n    operand: (identifier) @_pkg\n    field: (field_identifier) @_func)\n  arguments: (argument_list\n    (identifier) @offender)\n  (#eq? @_pkg \"sort\")\n  (#eq? @_func \"Slice\")\n  (#not-match? @offender \"^(.*\\\\[\\\\])$\"))"
+    }
+  },
+  {
+    "id": "GO_SA1029",
+    "languages": [
+      "go"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Inappropriate key in call to context.WithValue",
+    "description": "Inappropriate key in call to context.WithValue",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "SA1029",
+        "url": "https://staticcheck.dev/docs/checks/#SA1029"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T01:29:04.527Z",
+    "structuralHints": {
+      "treeSitterQuery": "(call_expression\n  function: (selector_expression\n    operand: (identifier) @_pkg (#eq? @_pkg \"context\")\n    field: (field_identifier) @_method (#eq? @_method \"WithValue\"))\n  arguments: (argument_list\n    .\n    (_)\n    .\n    (_)\n    .\n    (identifier) @offender))"
+    }
+  },
+  {
+    "id": "GO_SA1030",
+    "languages": [
+      "go"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Invalid argument in call to a strconv function",
+    "description": "Invalid argument in call to a strconv function",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "SA1030",
+        "url": "https://staticcheck.dev/docs/checks/#SA1030"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T01:29:07.153Z",
+    "structuralHints": {
+      "treeSitterQuery": "(call_expression\n  function: (selector_expression\n    operand: (identifier) @pkg (#eq? @pkg \"strconv\"))\n  arguments: (argument_list) @offender)"
+    }
+  },
+  {
+    "id": "GO_SA1031",
+    "languages": [
+      "go"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Overlapping byte slices passed to an encoder",
+    "description": "Overlapping byte slices passed to an encoder",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "SA1031",
+        "url": "https://staticcheck.dev/docs/checks/#SA1031"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T05:29:46.162Z",
+    "structuralHints": {
+      "treeSitterQuery": "(call_expression\n  function: (selector_expression\n    field: (field_identifier) @method)\n  arguments: (argument_list\n    (slice_expression\n      operand: (identifier) @base1) @offender\n    (slice_expression\n      operand: (identifier) @base2))\n  (#eq? @base1 @base2)\n  (#match? @method \"^(Write|Encode|Read)\"))"
+    }
+  },
+  {
+    "id": "GO_SA1032",
+    "languages": [
+      "go"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Wrong order of arguments to errors.Is",
+    "description": "Wrong order of arguments to errors.Is",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "SA1032",
+        "url": "https://staticcheck.dev/docs/checks/#SA1032"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T01:29:14.693Z",
+    "structuralHints": {
+      "treeSitterQuery": "((call_expression\n  function: (selector_expression\n    operand: (identifier) @pkg (#eq? @pkg \"errors\")\n    field: (field_identifier) @method (#eq? @method \"Is\"))\n  arguments: (argument_list\n    (identifier)\n    (call_expression\n      function: (selector_expression\n        field: (field_identifier) @new (#eq? @new \"New\"))))) @offender)"
+    }
+  },
+  {
+    "id": "GO_SA2000",
+    "languages": [
+      "go"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "sync.WaitGroup.Add called inside the goroutine, leading to a race condition",
+    "description": "sync.WaitGroup.Add called inside the goroutine, leading to a race condition",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "SA2000",
+        "url": "https://staticcheck.dev/docs/checks/#SA2000"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T05:29:50.802Z",
+    "structuralHints": {
+      "treeSitterQuery": "(go_statement\n  (call_expression\n    function: (selector_expression\n      operand: (_)\n      field: (field_identifier) @field)\n    arguments: (argument_list)) @offender\n  (#match? @field \"^(Add|Done)$\"))"
+    }
+  },
+  {
+    "id": "GO_SA2001",
+    "languages": [
+      "go"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Empty critical section, did you mean to defer the unlock?",
+    "description": "Empty critical section, did you mean to defer the unlock?",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "SA2001",
+        "url": "https://staticcheck.dev/docs/checks/#SA2001"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T07:02:32.814Z",
+    "structuralHints": {
+      "treeSitterQuery": "(identifier) @offender"
+    }
+  },
+  {
+    "id": "GO_SA2002",
+    "languages": [
+      "go"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Called testing.T.FailNow or SkipNow in a goroutine, which isn&rsquo;t allowed",
+    "description": "Called testing.T.FailNow or SkipNow in a goroutine, which isn&rsquo;t allowed",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "SA2002",
+        "url": "https://staticcheck.dev/docs/checks/#SA2002"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T01:29:25.676Z",
+    "structuralHints": {
+      "treeSitterQuery": "(go_statement\n  (call_expression\n    function: (selector_expression\n      operand: (identifier)\n      field: (field_identifier) @method)\n    arguments: (argument_list)) @offender\n  (#match? @method \"^(FailNow|SkipNow)$\"))"
+    }
+  },
+  {
+    "id": "GO_SA2003",
+    "languages": [
+      "go"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Deferred Lock right after locking, likely meant to defer Unlock instead",
+    "description": "Deferred Lock right after locking, likely meant to defer Unlock instead",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "SA2003",
+        "url": "https://staticcheck.dev/docs/checks/#SA2003"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T01:29:28.713Z",
+    "structuralHints": {
+      "treeSitterQuery": "(defer_statement\n  (call_expression\n    function: (selector_expression\n      operand: (_)\n      field: (field_identifier) @method)\n    arguments: (argument_list))\n  (#eq? @method \"Lock\")) @offender"
+    }
+  },
+  {
+    "id": "GO_SA3000",
+    "languages": [
+      "go"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "TestMain doesn&rsquo;t call os.Exit, hiding test failures",
+    "description": "TestMain doesn&rsquo;t call os.Exit, hiding test failures",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "SA3000",
+        "url": "https://staticcheck.dev/docs/checks/#SA3000"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T05:30:06.493Z",
+    "structuralHints": {
+      "treeSitterQuery": "(function_declaration\n  name: (identifier) @name\n  parameters: (parameter_list\n    (parameter_declaration\n      type: (pointer_type\n        (qualified_type\n          package: (package_identifier) @pkg\n          name: (type_identifier) @type))))\n  body: (block) @body\n  (#eq? @name \"TestMain\")\n  (#eq? @pkg \"testing\")\n  (#eq? @type \"M\")\n  (#not-match? @body \"os\\\\.Exit\"))"
+    }
+  },
+  {
+    "id": "GO_SA3001",
+    "languages": [
+      "go"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Assigning to b.N in benchmarks distorts the results",
+    "description": "Assigning to b.N in benchmarks distorts the results",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "SA3001",
+        "url": "https://staticcheck.dev/docs/checks/#SA3001"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T07:02:32.821Z",
+    "structuralHints": {
+      "treeSitterQuery": "(identifier) @offender"
+    }
+  },
+  {
+    "id": "GO_SA4000",
+    "languages": [
+      "go"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Binary operator has identical expressions on both sides",
+    "description": "Binary operator has identical expressions on both sides",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "SA4000",
+        "url": "https://staticcheck.dev/docs/checks/#SA4000"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T01:29:41.902Z",
+    "structuralHints": {
+      "treeSitterQuery": "(binary_expression\n  left: (_) @left\n  right: (_) @right\n  (#eq? @left @right)) @offender"
+    }
+  },
+  {
+    "id": "GO_SA4001",
+    "languages": [
+      "go"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "&*x gets simplified to x, it does not copy x",
+    "description": "&*x gets simplified to x, it does not copy x",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "SA4001",
+        "url": "https://staticcheck.dev/docs/checks/#SA4001"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T01:29:44.092Z",
+    "structuralHints": {
+      "treeSitterQuery": "(unary_expression\n  operator: \"&\"\n  operand: (unary_expression\n    operator: \"*\"\n    operand: (_) @offender))"
+    }
+  },
+  {
+    "id": "GO_SA4003",
+    "languages": [
+      "go"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Comparing unsigned values against negative values is pointless",
+    "description": "Comparing unsigned values against negative values is pointless",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "SA4003",
+        "url": "https://staticcheck.dev/docs/checks/#SA4003"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T01:29:47.241Z",
+    "structuralHints": {
+      "treeSitterQuery": "(binary_expression\n  left: (_) @offender\n  operator: [\n    \"<\"\n    \"<=\"\n    \">\"\n    \">=\"\n    \"==\"\n    \"!=\"\n  ]\n  right: (unary_expression\n    operator: \"-\"\n    operand: (_)))"
+    }
+  },
+  {
+    "id": "GO_SA4004",
+    "languages": [
+      "go"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "The loop exits unconditionally after one iteration",
+    "description": "The loop exits unconditionally after one iteration",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "SA4004",
+        "url": "https://staticcheck.dev/docs/checks/#SA4004"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T07:02:32.827Z",
+    "structuralHints": {
+      "treeSitterQuery": "(for_statement) @offender"
+    }
+  },
+  {
+    "id": "GO_SA4005",
+    "languages": [
+      "go"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Field assignment that will never be observed. Did you mean to use a pointer receiver?",
+    "description": "Field assignment that will never be observed. Did you mean to use a pointer receiver?",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "SA4005",
+        "url": "https://staticcheck.dev/docs/checks/#SA4005"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T07:02:32.830Z",
+    "structuralHints": {
+      "treeSitterQuery": "(identifier) @offender"
+    }
+  },
+  {
+    "id": "GO_SA4006",
+    "languages": [
+      "go"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "A value assigned to a variable is never read before being overwritten. Forgotten error check or dead code?",
+    "description": "A value assigned to a variable is never read before being overwritten. Forgotten error check or dead code?",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "SA4006",
+        "url": "https://staticcheck.dev/docs/checks/#SA4006"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T01:29:54.727Z",
+    "structuralHints": {
+      "treeSitterQuery": "(assignment_statement\n  left: (expression_list\n    (identifier) @offender)\n  right: (_))"
+    }
+  },
+  {
+    "id": "GO_SA4008",
+    "languages": [
+      "go"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "The variable in the loop condition never changes, are you incrementing the wrong variable?",
+    "description": "The variable in the loop condition never changes, are you incrementing the wrong variable?",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "SA4008",
+        "url": "https://staticcheck.dev/docs/checks/#SA4008"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T05:30:51.928Z",
+    "structuralHints": {
+      "treeSitterQuery": "(for_statement\n  body: (block) @offender\n  (#not-any-of? @offender \"++\"))"
+    }
+  },
+  {
+    "id": "GO_SA4009",
+    "languages": [
+      "go"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "A function argument is overwritten before its first use",
+    "description": "A function argument is overwritten before its first use",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "SA4009",
+        "url": "https://staticcheck.dev/docs/checks/#SA4009"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T07:02:32.835Z",
+    "structuralHints": {
+      "treeSitterQuery": "(call_expression) @offender"
+    }
+  },
+  {
+    "id": "GO_SA4010",
+    "languages": [
+      "go"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "The result of append will never be observed anywhere",
+    "description": "The result of append will never be observed anywhere",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "SA4010",
+        "url": "https://staticcheck.dev/docs/checks/#SA4010"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T01:30:07.377Z",
+    "structuralHints": {
+      "treeSitterQuery": "(call_expression\n  function: (identifier) @func (#eq? @func \"append\")\n  arguments: (argument_list)) @offender"
+    }
+  },
+  {
+    "id": "GO_SA4011",
+    "languages": [
+      "go"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Break statement with no effect. Did you mean to break out of an outer loop?",
+    "description": "Break statement with no effect. Did you mean to break out of an outer loop?",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "SA4011",
+        "url": "https://staticcheck.dev/docs/checks/#SA4011"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T07:02:32.838Z",
+    "structuralHints": {
+      "treeSitterQuery": "(for_statement) @offender"
+    }
+  },
+  {
+    "id": "GO_SA4012",
+    "languages": [
+      "go"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Comparing a value against NaN even though no value is equal to NaN",
+    "description": "Comparing a value against NaN even though no value is equal to NaN",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "SA4012",
+        "url": "https://staticcheck.dev/docs/checks/#SA4012"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T01:30:12.593Z",
+    "structuralHints": {
+      "treeSitterQuery": "(binary_expression\n  left: (_)\n  operator: [\"==\" \"!=\"]\n  right: (identifier) @offender\n  (#match? @offender \"^[Nn][Aa][Nn]$\"))"
+    }
+  },
+  {
+    "id": "GO_SA4013",
+    "languages": [
+      "go"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Negating a boolean twice (!!b) is the same as writing b. This is either redundant, or a typo.",
+    "description": "Negating a boolean twice (!!b) is the same as writing b. This is either redundant, or a typo.",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "SA4013",
+        "url": "https://staticcheck.dev/docs/checks/#SA4013"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T01:30:15.754Z",
+    "structuralHints": {
+      "treeSitterQuery": "(unary_expression\n  operator: \"!\"\n  operand: (unary_expression\n    operator: \"!\"\n    operand: (_)) @offender)"
+    }
+  },
+  {
+    "id": "GO_SA4014",
+    "languages": [
+      "go"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "An if/else if chain has repeated conditions and no side-effects; if the condition didn&rsquo;t match the first time, it won&rsquo;t match the second time, either",
+    "description": "An if/else if chain has repeated conditions and no side-effects; if the condition didn&rsquo;t match the first time, it won&rsquo;t match the second time, either",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "SA4014",
+        "url": "https://staticcheck.dev/docs/checks/#SA4014"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T01:30:19.386Z",
+    "structuralHints": {
+      "treeSitterQuery": "(if_statement\n  condition: (_) @cond1\n  consequence: (_)\n  alternative: (if_statement\n    condition: (_) @cond2\n    consequence: (_)) @offender\n  (#eq? @cond1 @cond2))"
+    }
+  },
+  {
+    "id": "GO_SA4015",
+    "languages": [
+      "go"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Calling functions like math.Ceil on floats converted from integers doesn&rsquo;t do anything useful",
+    "description": "Calling functions like math.Ceil on floats converted from integers doesn&rsquo;t do anything useful",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "SA4015",
+        "url": "https://staticcheck.dev/docs/checks/#SA4015"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T01:30:22.980Z",
+    "structuralHints": {
+      "treeSitterQuery": "((call_expression\n  function: (selector_expression\n    field: (field_identifier) @func\n    (#match? @func \"^(Ceil|Floor|Round|Trunc)$\"))\n  arguments: (argument_list\n    (call_expression\n      function: (selector_expression) @conv\n      (#match? @conv \"^float(32|64)$\")))) @offender)"
+    }
+  },
+  {
+    "id": "GO_SA4016",
+    "languages": [
+      "go"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Certain bitwise operations, such as x ^ 0, do not do anything useful",
+    "description": "Certain bitwise operations, such as x ^ 0, do not do anything useful",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "SA4016",
+        "url": "https://staticcheck.dev/docs/checks/#SA4016"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T01:30:25.423Z",
+    "structuralHints": {
+      "treeSitterQuery": "(binary_expression\n  operator: \"^\"\n  right: (int_literal) @offender\n  (#eq? @offender \"0\"))"
+    }
+  },
+  {
+    "id": "GO_SA4017",
+    "languages": [
+      "go"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Discarding the return values of a function without side effects, making the call pointless",
+    "description": "Discarding the return values of a function without side effects, making the call pointless",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "SA4017",
+        "url": "https://staticcheck.dev/docs/checks/#SA4017"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T01:30:28.438Z",
+    "structuralHints": {
+      "treeSitterQuery": "(call_expression\n  function: (_) @func\n  (#not-match? @func \"\\\\b(print|println|panic|close|copy|delete|recover|append)\\\\b\")\n) @offender"
+    }
+  },
+  {
+    "id": "GO_SA4018",
+    "languages": [
+      "go"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Self-assignment of variables",
+    "description": "Self-assignment of variables",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "SA4018",
+        "url": "https://staticcheck.dev/docs/checks/#SA4018"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T05:31:19.977Z",
+    "structuralHints": {
+      "treeSitterQuery": "(short_var_declaration\n  left: (expression_list\n    (identifier) @var)\n  right: (expression_list\n    (identifier) @offender)\n  (#eq? @var @offender))"
+    }
+  },
+  {
+    "id": "GO_SA4019",
+    "languages": [
+      "go"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Multiple, identical build constraints in the same file",
+    "description": "Multiple, identical build constraints in the same file",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "SA4019",
+        "url": "https://staticcheck.dev/docs/checks/#SA4019"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T01:30:34.994Z",
+    "structuralHints": {
+      "treeSitterQuery": "((comment) @offender\n  (#match? @offender \"^//\\\\s*\\\\+build\\\\s+\")\n  (#is-not? unique))"
+    }
+  },
+  {
+    "id": "GO_SA4020",
+    "languages": [
+      "go"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Unreachable case clause in a type switch",
+    "description": "Unreachable case clause in a type switch",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "SA4020",
+        "url": "https://staticcheck.dev/docs/checks/#SA4020"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T07:02:32.844Z",
+    "structuralHints": {
+      "treeSitterQuery": "(identifier) @offender"
+    }
+  },
+  {
+    "id": "GO_SA4021",
+    "languages": [
+      "go"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "x = append(y) is equivalent to x = y",
+    "description": "x = append(y) is equivalent to x = y",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "SA4021",
+        "url": "https://staticcheck.dev/docs/checks/#SA4021"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T01:30:40.941Z",
+    "structuralHints": {
+      "treeSitterQuery": "(assignment_statement\n  left: (expression_list\n    (identifier))\n  right: (expression_list\n    (call_expression\n      function: (identifier) @func\n      arguments: (argument_list\n        (identifier))))) @offender"
+    }
+  },
+  {
+    "id": "GO_SA4022",
+    "languages": [
+      "go"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Comparing the address of a variable against nil",
+    "description": "Comparing the address of a variable against nil",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "SA4022",
+        "url": "https://staticcheck.dev/docs/checks/#SA4022"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T01:30:43.377Z",
+    "structuralHints": {
+      "treeSitterQuery": "(binary_expression\n  left: (unary_expression\n    operator: \"&\"\n    operand: (_) @offender)\n  operator: [\"==\" \"!=\"]\n  right: (nil))"
+    }
+  },
+  {
+    "id": "GO_SA4023",
+    "languages": [
+      "go"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Impossible comparison of interface value with untyped nil",
+    "description": "Impossible comparison of interface value with untyped nil",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "SA4023",
+        "url": "https://staticcheck.dev/docs/checks/#SA4023"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T01:30:45.561Z",
+    "structuralHints": {
+      "treeSitterQuery": "(binary_expression\n  left: (identifier)\n  operator: [\"==\" \"!=\"]\n  right: (nil)) @offender"
+    }
+  },
+  {
+    "id": "GO_SA4024",
+    "languages": [
+      "go"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Checking for impossible return value from a builtin function",
+    "description": "Checking for impossible return value from a builtin function",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "SA4024",
+        "url": "https://staticcheck.dev/docs/checks/#SA4024"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T01:30:48.729Z",
+    "structuralHints": {
+      "treeSitterQuery": "(binary_expression\n  left: (call_expression\n    function: (identifier) @func\n    (#match? @func \"^(append|cap|close|complex|copy|delete|imag|len|make|new|panic|print|println|real|recover)$\"))\n  operator: [\"==\" \"!=\"]\n  right: (nil)) @offender"
+    }
+  },
+  {
+    "id": "GO_SA4025",
+    "languages": [
+      "go"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Integer division of literals that results in zero",
+    "description": "Integer division of literals that results in zero",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "SA4025",
+        "url": "https://staticcheck.dev/docs/checks/#SA4025"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T05:31:37.980Z",
+    "structuralHints": {
+      "treeSitterQuery": "(binary_expression\n  left: (int_literal) @divisor\n  operator: \"/\"\n  right: (int_literal) @dividend\n  (#match? @divisor \"^[0-9]+$\")\n  (#match? @dividend \"^[0-9]+$\")) @offender"
+    }
+  },
+  {
+    "id": "GO_SA4026",
+    "languages": [
+      "go"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Go constants cannot express negative zero",
+    "description": "Go constants cannot express negative zero",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "SA4026",
+        "url": "https://staticcheck.dev/docs/checks/#SA4026"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T01:30:56.586Z",
+    "structuralHints": {
+      "treeSitterQuery": "(const_spec\n  name: (identifier)\n  value: (expression_list\n    (unary_expression\n      operator: \"-\"\n      operand: (int_literal) @zero\n      (#eq? @zero \"0\")))) @offender"
+    }
+  },
+  {
+    "id": "GO_SA4027",
+    "languages": [
+      "go"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "(*net/url.URL).Query returns a copy, modifying it doesn&rsquo;t change the URL",
+    "description": "(*net/url.URL).Query returns a copy, modifying it doesn&rsquo;t change the URL",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "SA4027",
+        "url": "https://staticcheck.dev/docs/checks/#SA4027"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T01:31:00.214Z",
+    "structuralHints": {
+      "treeSitterQuery": "(call_expression\n  function: (selector_expression\n    operand: (call_expression\n      function: (selector_expression\n        field: (field_identifier) @_query (#eq? @_query \"Query\")))\n    field: (field_identifier) @_method (#match? @_method \"^(Set|Add|Del)$\")) @offender)"
+    }
+  },
+  {
+    "id": "GO_SA4028",
+    "languages": [
+      "go"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "x % 1 is always zero",
+    "description": "x % 1 is always zero",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "SA4028",
+        "url": "https://staticcheck.dev/docs/checks/#SA4028"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T01:31:02.896Z",
+    "structuralHints": {
+      "treeSitterQuery": "(binary_expression\n  left: (_)\n  operator: \"%\"\n  right: (int_literal) @offender\n  (#eq? @offender \"1\"))"
+    }
+  },
+  {
+    "id": "GO_SA4029",
+    "languages": [
+      "go"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Ineffective attempt at sorting slice",
+    "description": "Ineffective attempt at sorting slice",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "SA4029",
+        "url": "https://staticcheck.dev/docs/checks/#SA4029"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T01:31:06.423Z",
+    "structuralHints": {
+      "treeSitterQuery": "(call_expression\n  function: (selector_expression\n    operand: (identifier) @_pkg\n    field: (field_identifier) @_method)\n  arguments: (argument_list\n    (identifier))\n  (#eq? @_pkg \"sort\")\n  (#eq? @_method \"Sort\")) @offender"
+    }
+  },
+  {
+    "id": "GO_SA4030",
+    "languages": [
+      "go"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Ineffective attempt at generating random number",
+    "description": "Ineffective attempt at generating random number",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "SA4030",
+        "url": "https://staticcheck.dev/docs/checks/#SA4030"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T01:31:10.286Z",
+    "structuralHints": {
+      "treeSitterQuery": "(call_expression\n  function: (selector_expression\n    operand: (identifier) @pkg (#eq? @pkg \"rand\")\n    field: (field_identifier) @method (#match? @method \"^(Int|Float|Uint|Intn|Int31|Int63|Float32|Float64|Uint32|Uint64|Int31n|Int63n)$\"))\n  arguments: (argument_list)) @offender"
+    }
+  },
+  {
+    "id": "GO_SA4031",
+    "languages": [
+      "go"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Checking never-nil value against nil",
+    "description": "Checking never-nil value against nil",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "SA4031",
+        "url": "https://staticcheck.dev/docs/checks/#SA4031"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T01:31:13.883Z",
+    "structuralHints": {
+      "treeSitterQuery": "(binary_expression\n  left: [\n    (call_expression\n      function: (selector_expression\n        operand: (_)\n        field: (field_identifier)))\n    (selector_expression)\n    (index_expression)\n    (slice_expression)\n    (call_expression)\n  ]\n  operator: [\"==\" \"!=\"]\n  right: (nil)) @offender"
+    }
+  },
+  {
+    "id": "GO_SA4032",
+    "languages": [
+      "go"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Comparing runtime.GOOS or runtime.GOARCH against impossible value",
+    "description": "Comparing runtime.GOOS or runtime.GOARCH against impossible value",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "SA4032",
+        "url": "https://staticcheck.dev/docs/checks/#SA4032"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T01:31:17.776Z",
+    "structuralHints": {
+      "treeSitterQuery": "(binary_expression\n  left: (selector_expression\n    operand: (identifier) @pkg (#eq? @pkg \"runtime\")\n    field: (field_identifier) @field (#match? @field \"^(GOOS|GOARCH)$\"))\n  operator: [\"==\" \"!=\"]\n  right: (interpreted_string_literal) @value) @offender"
+    }
+  },
+  {
+    "id": "GO_SA5000",
+    "languages": [
+      "go"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Assignment to nil map",
+    "description": "Assignment to nil map",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "SA5000",
+        "url": "https://staticcheck.dev/docs/checks/#SA5000"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T01:31:20.495Z",
+    "structuralHints": {
+      "treeSitterQuery": "(assignment_statement\n  left: (expression_list\n    (index_expression\n      operand: (identifier) @map\n      (#match? @map \"^[a-zA-Z_][a-zA-Z0-9_]*$\")))\n  right: (_)) @offender"
+    }
+  },
+  {
+    "id": "GO_SA5001",
+    "languages": [
+      "go"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Deferring Close before checking for a possible error",
+    "description": "Deferring Close before checking for a possible error",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "SA5001",
+        "url": "https://staticcheck.dev/docs/checks/#SA5001"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T01:31:23.943Z",
+    "structuralHints": {
+      "treeSitterQuery": "(defer_statement\n  (call_expression\n    function: (selector_expression\n      operand: (identifier)\n      field: (field_identifier) @field (#eq? @field \"Close\"))) @offender)"
+    }
+  },
+  {
+    "id": "GO_SA5002",
+    "languages": [
+      "go"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "The empty for loop (for {}) spins and can block the scheduler",
+    "description": "The empty for loop (for {}) spins and can block the scheduler",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "SA5002",
+        "url": "https://staticcheck.dev/docs/checks/#SA5002"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T01:31:26.348Z",
+    "structuralHints": {
+      "treeSitterQuery": "(for_statement\n  (block\n    \"{\" @open\n    \"}\" @close)\n  (#eq? @open \"{\")\n  (#eq? @close \"}\")\n) @offender"
+    }
+  },
+  {
+    "id": "GO_SA5003",
+    "languages": [
+      "go"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Defers in infinite loops will never execute",
+    "description": "Defers in infinite loops will never execute",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "SA5003",
+        "url": "https://staticcheck.dev/docs/checks/#SA5003"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T07:02:32.863Z",
+    "structuralHints": {
+      "treeSitterQuery": "(for_statement) @offender"
+    }
+  },
+  {
+    "id": "GO_SA5004",
+    "languages": [
+      "go"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "for { select { ... with an empty default branch spins",
+    "description": "for { select { ... with an empty default branch spins",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "SA5004",
+        "url": "https://staticcheck.dev/docs/checks/#SA5004"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T07:02:32.864Z",
+    "structuralHints": {
+      "treeSitterQuery": "(identifier) @offender"
+    }
+  },
+  {
+    "id": "GO_SA5005",
+    "languages": [
+      "go"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "The finalizer references the finalized object, preventing garbage collection",
+    "description": "The finalizer references the finalized object, preventing garbage collection",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "SA5005",
+        "url": "https://staticcheck.dev/docs/checks/#SA5005"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T01:31:38.830Z",
+    "structuralHints": {
+      "treeSitterQuery": "(call_expression\n  function: (selector_expression\n    operand: (identifier) @_runtime\n    field: (field_identifier) @_setfinalizer)\n  arguments: (argument_list\n    (identifier) @_obj\n    (func_literal\n      body: (block\n        (_) @_body)))\n  (#eq? @_runtime \"runtime\")\n  (#eq? @_setfinalizer \"SetFinalizer\")\n  (#match? @_body \".*\\\\b(#text @_obj)\\\\b.*\")) @offender"
+    }
+  },
+  {
+    "id": "GO_SA5007",
+    "languages": [
+      "go"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Infinite recursive call",
+    "description": "Infinite recursive call",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "SA5007",
+        "url": "https://staticcheck.dev/docs/checks/#SA5007"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T07:02:32.869Z",
+    "structuralHints": {
+      "treeSitterQuery": "(identifier) @offender"
+    }
+  },
+  {
+    "id": "GO_SA5008",
+    "languages": [
+      "go"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Invalid struct tag",
+    "description": "Invalid struct tag",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "SA5008",
+        "url": "https://staticcheck.dev/docs/checks/#SA5008"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T01:31:44.846Z",
+    "structuralHints": {
+      "treeSitterQuery": "(field_declaration\n  tag: (raw_string_literal) @offender\n  (#match? @offender \"^`[^:]+$|^`[^:]+:[^\\\"]+$|^`[^:]+:\\\"[^\\\"]*\\\"[^`]*[^ ]`$\"))"
+    }
+  },
+  {
+    "id": "GO_SA5009",
+    "languages": [
+      "go"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Invalid Printf call",
+    "description": "Invalid Printf call",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "SA5009",
+        "url": "https://staticcheck.dev/docs/checks/#SA5009"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T01:31:48.701Z",
+    "structuralHints": {
+      "treeSitterQuery": "(call_expression\n  function: (selector_expression\n    operand: (_)\n    field: (field_identifier) @func\n    (#match? @func \"^(Printf|Sprintf|Fprintf|Errorf)$\"))\n  arguments: (argument_list\n    .\n    (_) @format\n    (#not-match? @format \"\\\".*%.*\\\"\"))) @offender"
+    }
+  },
+  {
+    "id": "GO_SA5010",
+    "languages": [
+      "go"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Impossible type assertion",
+    "description": "Impossible type assertion",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "SA5010",
+        "url": "https://staticcheck.dev/docs/checks/#SA5010"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T07:02:32.871Z",
+    "structuralHints": {
+      "treeSitterQuery": "(identifier) @offender"
+    }
+  },
+  {
+    "id": "GO_SA5011",
+    "languages": [
+      "go"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Possible nil pointer dereference",
+    "description": "Possible nil pointer dereference",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "SA5011",
+        "url": "https://staticcheck.dev/docs/checks/#SA5011"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T01:31:53.123Z",
+    "structuralHints": {
+      "treeSitterQuery": "(selector_expression\n  operand: (identifier) @offender\n  (#match? @offender \"^[a-z]\"))"
+    }
+  },
+  {
+    "id": "GO_SA5012",
+    "languages": [
+      "go"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Passing odd-sized slice to function expecting even size",
+    "description": "Passing odd-sized slice to function expecting even size",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "SA5012",
+        "url": "https://staticcheck.dev/docs/checks/#SA5012"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T05:32:23.567Z",
+    "structuralHints": {
+      "treeSitterQuery": "(call_expression\n  function: (identifier)\n  arguments: (argument_list\n    (slice_expression\n      operand: (_)\n      (int_literal) @start\n      (int_literal) @end)) @offender\n  (#match? @start \"^[0-9]+$\")\n  (#match? @end \"^[0-9]+$\"))"
+    }
+  },
+  {
+    "id": "GO_SA6000",
+    "languages": [
+      "go"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Using regexp.Match or related in a loop, should use regexp.Compile",
+    "description": "Using regexp.Match or related in a loop, should use regexp.Compile",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "SA6000",
+        "url": "https://staticcheck.dev/docs/checks/#SA6000"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T01:32:00.685Z",
+    "structuralHints": {
+      "treeSitterQuery": "(for_statement\n  body: (_) @loop_body\n  (#match? @loop_body \"(regexp\\\\.(Match|MatchString|MatchReader)|regexp\\\\.MustCompile)\")\n) @offender"
+    }
+  },
+  {
+    "id": "GO_SA6001",
+    "languages": [
+      "go"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Missing an optimization opportunity when indexing maps by byte slices",
+    "description": "Missing an optimization opportunity when indexing maps by byte slices",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "SA6001",
+        "url": "https://staticcheck.dev/docs/checks/#SA6001"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T01:32:03.995Z",
+    "structuralHints": {
+      "treeSitterQuery": "(index_expression\n  operand: (_)\n  index: (slice_expression\n    operand: (identifier)\n    (type_identifier)? @_type\n    (#match? @_type \"string|byte\"))) @offender"
+    }
+  },
+  {
+    "id": "GO_SA6002",
+    "languages": [
+      "go"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Storing non-pointer values in sync.Pool allocates memory",
+    "description": "Storing non-pointer values in sync.Pool allocates memory",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "SA6002",
+        "url": "https://staticcheck.dev/docs/checks/#SA6002"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T01:32:07.869Z",
+    "structuralHints": {
+      "treeSitterQuery": "(call_expression\n  function: (selector_expression\n    operand: (identifier) @pool_var\n    field: (field_identifier) @put_method (#eq? @put_method \"Put\"))\n  arguments: (argument_list\n    (composite_literal\n      type: (_) @type (#not-match? @type \"^\\\\*\"))) @offender)"
+    }
+  },
+  {
+    "id": "GO_SA6003",
+    "languages": [
+      "go"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Converting a string to a slice of runes before ranging over it",
+    "description": "Converting a string to a slice of runes before ranging over it",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "SA6003",
+        "url": "https://staticcheck.dev/docs/checks/#SA6003"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T01:32:11.672Z",
+    "structuralHints": {
+      "treeSitterQuery": "(range_clause\n  left: (_)\n  right: (call_expression\n    function: (identifier) @_cast\n    arguments: (argument_list\n      (identifier) @_arg))\n  (#eq? @_cast \"[]rune\")) @offender"
+    }
+  },
+  {
+    "id": "GO_SA6005",
+    "languages": [
+      "go"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Inefficient string comparison with strings.ToLower or strings.ToUpper",
+    "description": "Inefficient string comparison with strings.ToLower or strings.ToUpper",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "SA6005",
+        "url": "https://staticcheck.dev/docs/checks/#SA6005"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T01:32:16.900Z",
+    "structuralHints": {
+      "treeSitterQuery": "((call_expression\n  function: (selector_expression\n    operand: (identifier) @pkg (#eq? @pkg \"strings\")\n    field: (field_identifier) @func (#match? @func \"^(ToLower|ToUpper)$\"))\n  arguments: (argument_list)) @offender\n  (#match? @offender \".*==.*|.*!=.*\"))"
+    }
+  },
+  {
+    "id": "GO_SA6006",
+    "languages": [
+      "go"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Using io.WriteString to write []byte",
+    "description": "Using io.WriteString to write []byte",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "SA6006",
+        "url": "https://staticcheck.dev/docs/checks/#SA6006"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T01:32:20.406Z",
+    "structuralHints": {
+      "treeSitterQuery": "(call_expression\n  function: (selector_expression\n    operand: (identifier) @_io (#eq? @_io \"io\")\n    field: (field_identifier) @_write (#eq? @_write \"WriteString\"))\n  arguments: (argument_list\n    .\n    (_)\n    .\n    (slice_expression) @offender))"
+    }
+  },
+  {
+    "id": "GO_SA9001",
+    "languages": [
+      "go"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Defers in range loops may not run when you expect them to",
+    "description": "Defers in range loops may not run when you expect them to",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "SA9001",
+        "url": "https://staticcheck.dev/docs/checks/#SA9001"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T07:02:32.881Z",
+    "structuralHints": {
+      "treeSitterQuery": "(for_statement) @offender"
+    }
+  },
+  {
+    "id": "GO_SA9002",
+    "languages": [
+      "go"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Using a non-octal os.FileMode that looks like it was meant to be in octal.",
+    "description": "Using a non-octal os.FileMode that looks like it was meant to be in octal.",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "SA9002",
+        "url": "https://staticcheck.dev/docs/checks/#SA9002"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T01:32:26.680Z",
+    "structuralHints": {
+      "treeSitterQuery": "(call_expression\n  function: (selector_expression\n    operand: (identifier) @_pkg (#eq? @_pkg \"os\")\n    field: (field_identifier) @_field (#match? @_field \"^(Chmod|OpenFile|Mkdir|MkdirAll)$\"))\n  arguments: (argument_list\n    (int_literal) @offender (#match? @offender \"^[1-9][0-7]{2,3}$\")))"
+    }
+  },
+  {
+    "id": "GO_SA9003",
+    "languages": [
+      "go"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Empty body in an if or else branch",
+    "description": "Empty body in an if or else branch",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "SA9003",
+        "url": "https://staticcheck.dev/docs/checks/#SA9003"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T01:32:29.489Z",
+    "structuralHints": {
+      "treeSitterQuery": "(if_statement\n    consequence: (block) @offender\n    (#eq? @offender \"{}\"))"
+    }
+  },
+  {
+    "id": "GO_SA9004",
+    "languages": [
+      "go"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Only the first constant has an explicit type",
+    "description": "Only the first constant has an explicit type",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "SA9004",
+        "url": "https://staticcheck.dev/docs/checks/#SA9004"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T01:32:33.736Z",
+    "structuralHints": {
+      "treeSitterQuery": "(const_spec\n  name: (identifier)\n  type: (_)\n  (expression_list)) @offender"
+    }
+  },
+  {
+    "id": "GO_SA9005",
+    "languages": [
+      "go"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Trying to marshal a struct with no public fields nor custom marshaling",
+    "description": "Trying to marshal a struct with no public fields nor custom marshaling",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "SA9005",
+        "url": "https://staticcheck.dev/docs/checks/#SA9005"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T01:32:39.598Z",
+    "structuralHints": {
+      "treeSitterQuery": "(type_declaration\n  (type_spec\n    name: (type_identifier)\n    type: (struct_type\n      (field_declaration_list))) @offender\n  (#match? @offender \"^type\\\\s+\\\\w+\\\\s+struct\\\\s*\\\\{\\\\s*([a-z_][\\\\w]*\\\\s+[^}]+\\\\s*)*\\\\}\"))"
+    }
+  },
+  {
+    "id": "GO_SA9006",
+    "languages": [
+      "go"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Dubious bit shifting of a fixed size integer value",
+    "description": "Dubious bit shifting of a fixed size integer value",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "SA9006",
+        "url": "https://staticcheck.dev/docs/checks/#SA9006"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T05:32:37.005Z",
+    "structuralHints": {
+      "treeSitterQuery": "(binary_expression\n  left: (_) @value\n  operator: [\"<<\" \">>\"]\n  right: (_) @shift\n  (#match? @shift \"^(32|64)$\")) @offender"
+    }
+  },
+  {
+    "id": "GO_SA9007",
+    "languages": [
+      "go"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Deleting a directory that shouldn&rsquo;t be deleted",
+    "description": "Deleting a directory that shouldn&rsquo;t be deleted",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "SA9007",
+        "url": "https://staticcheck.dev/docs/checks/#SA9007"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T01:32:46.552Z",
+    "structuralHints": {
+      "treeSitterQuery": "(call_expression\n  function: (selector_expression\n    operand: (identifier) @_os (#eq? @_os \"os\")\n    field: (field_identifier) @_func (#match? @_func \"^(Remove|RemoveAll)$\"))\n  arguments: (argument_list\n    (interpreted_string_literal) @offender (#match? @offender \"^\\\"(/|/etc|/home|/usr|/var|/bin|/sbin|/boot|/root|/tmp|/opt|C:\\\\\\\\|C:\\\\\\\\Windows|C:\\\\\\\\Program Files)\")))"
+    }
+  },
+  {
+    "id": "GO_SA9008",
+    "languages": [
+      "go"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "else branch of a type assertion is probably not reading the right value",
+    "description": "else branch of a type assertion is probably not reading the right value",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "SA9008",
+        "url": "https://staticcheck.dev/docs/checks/#SA9008"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T07:02:32.887Z",
+    "structuralHints": {
+      "treeSitterQuery": "(identifier) @offender"
+    }
+  },
+  {
+    "id": "GO_SA9009",
+    "languages": [
+      "go"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Ineffectual Go compiler directive",
+    "description": "Ineffectual Go compiler directive",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "SA9009",
+        "url": "https://staticcheck.dev/docs/checks/#SA9009"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T01:32:53.349Z",
+    "structuralHints": {
+      "treeSitterQuery": "(comment) @offender"
+    }
+  },
+  {
+    "id": "GO_S1000",
+    "languages": [
+      "go"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Use plain channel send or receive instead of single-case select",
+    "description": "Use plain channel send or receive instead of single-case select",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "S1000",
+        "url": "https://staticcheck.dev/docs/checks/#S1000"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T07:02:32.888Z",
+    "structuralHints": {
+      "treeSitterQuery": "(identifier) @offender"
+    }
+  },
+  {
+    "id": "GO_S1001",
+    "languages": [
+      "go"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Replace for loop with call to copy",
+    "description": "Replace for loop with call to copy",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "S1001",
+        "url": "https://staticcheck.dev/docs/checks/#S1001"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T07:02:32.889Z",
+    "structuralHints": {
+      "treeSitterQuery": "(for_statement) @offender"
+    }
+  },
+  {
+    "id": "GO_S1002",
+    "languages": [
+      "go"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Omit comparison with boolean constant",
+    "description": "Omit comparison with boolean constant",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "S1002",
+        "url": "https://staticcheck.dev/docs/checks/#S1002"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T01:33:03.127Z",
+    "structuralHints": {
+      "treeSitterQuery": "(binary_expression\n  operator: [\"==\" \"!=\"]\n  right: [\n    (true)\n    (false)\n  ]) @offender"
+    }
+  },
+  {
+    "id": "GO_S1003",
+    "languages": [
+      "go"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Replace call to strings.Index with strings.Contains",
+    "description": "Replace call to strings.Index with strings.Contains",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "S1003",
+        "url": "https://staticcheck.dev/docs/checks/#S1003"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T01:33:05.988Z",
+    "structuralHints": {
+      "treeSitterQuery": "(call_expression\n  function: (selector_expression\n    operand: (identifier) @pkg (#eq? @pkg \"strings\")\n    field: (field_identifier) @method (#eq? @method \"Index\"))\n) @offender"
+    }
+  },
+  {
+    "id": "GO_S1004",
+    "languages": [
+      "go"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Replace call to bytes.Compare with bytes.Equal",
+    "description": "Replace call to bytes.Compare with bytes.Equal",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "S1004",
+        "url": "https://staticcheck.dev/docs/checks/#S1004"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T01:33:08.696Z",
+    "structuralHints": {
+      "treeSitterQuery": "(call_expression\n  function: (selector_expression\n    operand: (identifier) @pkg (#eq? @pkg \"bytes\")\n    field: (field_identifier) @method (#eq? @method \"Compare\"))\n  arguments: (argument_list)) @offender"
+    }
+  },
+  {
+    "id": "GO_S1005",
+    "languages": [
+      "go"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Drop unnecessary use of the blank identifier",
+    "description": "Drop unnecessary use of the blank identifier",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "S1005",
+        "url": "https://staticcheck.dev/docs/checks/#S1005"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T05:33:13.416Z",
+    "structuralHints": {
+      "treeSitterQuery": "(short_var_declaration\n  left: (expression_list\n    (_)\n    (identifier) @offender)\n  (#eq? @offender \"_\"))"
+    }
+  },
+  {
+    "id": "GO_S1006",
+    "languages": [
+      "go"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Use for { ... } for infinite loops",
+    "description": "Use for { ... } for infinite loops",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "S1006",
+        "url": "https://staticcheck.dev/docs/checks/#S1006"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T07:02:32.893Z",
+    "structuralHints": {
+      "treeSitterQuery": "(for_statement) @offender"
+    }
+  },
+  {
+    "id": "GO_S1007",
+    "languages": [
+      "go"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Simplify regular expression by using raw string literal",
+    "description": "Simplify regular expression by using raw string literal",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "S1007",
+        "url": "https://staticcheck.dev/docs/checks/#S1007"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T01:33:18.040Z",
+    "structuralHints": {
+      "treeSitterQuery": "(call_expression\n  function: (selector_expression\n    operand: (identifier) @_pkg (#eq? @_pkg \"regexp\")\n    field: (field_identifier) @_func (#match? @_func \"^(Compile|CompilePOSIX|MustCompile|MustCompilePOSIX)$\"))\n  arguments: (argument_list\n    (interpreted_string_literal) @offender (#match? @offender \"\\\\\\\\\")))"
+    }
+  },
+  {
+    "id": "GO_S1008",
+    "languages": [
+      "go"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Simplify returning boolean expression",
+    "description": "Simplify returning boolean expression",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "S1008",
+        "url": "https://staticcheck.dev/docs/checks/#S1008"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T01:33:21.636Z",
+    "structuralHints": {
+      "treeSitterQuery": "(return_statement\n  (expression_list\n    (binary_expression\n      left: (_)\n      operator: [\n        \"==\"\n        \"!=\"\n        \"<\"\n        \"<=\"\n        \">\"\n        \">=\"\n      ]\n      right: (identifier) @_bool\n      (#match? @_bool \"^(true|false)$\")\n    ) @offender\n  )\n)"
+    }
+  },
+  {
+    "id": "GO_S1009",
+    "languages": [
+      "go"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Omit redundant nil check on slices, maps, and channels",
+    "description": "Omit redundant nil check on slices, maps, and channels",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "S1009",
+        "url": "https://staticcheck.dev/docs/checks/#S1009"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T07:02:32.900Z",
+    "structuralHints": {
+      "treeSitterQuery": "(identifier) @offender"
+    }
+  },
+  {
+    "id": "GO_S1010",
+    "languages": [
+      "go"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Omit default slice index",
+    "description": "Omit default slice index",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "S1010",
+        "url": "https://staticcheck.dev/docs/checks/#S1010"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T05:33:36.526Z",
+    "structuralHints": {
+      "treeSitterQuery": "(slice_expression\n    operand: (_)\n    start: (int_literal) @start\n    (#eq? @start \"0\")) @offender"
+    }
+  },
+  {
+    "id": "GO_S1011",
+    "languages": [
+      "go"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Use a single append to concatenate two slices",
+    "description": "Use a single append to concatenate two slices",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "S1011",
+        "url": "https://staticcheck.dev/docs/checks/#S1011"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T01:33:30.989Z",
+    "structuralHints": {
+      "treeSitterQuery": "(call_expression\n  function: (identifier) @func (#eq? @func \"append\")\n  arguments: (argument_list\n    .\n    (_)\n    .\n    (slice_expression) @offender\n    .))"
+    }
+  },
+  {
+    "id": "GO_S1012",
+    "languages": [
+      "go"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Replace time.Now().Sub(x) with time.Since(x)",
+    "description": "Replace time.Now().Sub(x) with time.Since(x)",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "S1012",
+        "url": "https://staticcheck.dev/docs/checks/#S1012"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T01:33:34.351Z",
+    "structuralHints": {
+      "treeSitterQuery": "(call_expression\n  function: (selector_expression\n    operand: (call_expression\n      function: (selector_expression\n        operand: (identifier) @pkg (#eq? @pkg \"time\")\n        field: (field_identifier) @method (#eq? @method \"Now\")))\n    field: (field_identifier) @sub (#eq? @sub \"Sub\")) @offender)"
+    }
+  },
+  {
+    "id": "GO_S1016",
+    "languages": [
+      "go"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Use a type conversion instead of manually copying struct fields",
+    "description": "Use a type conversion instead of manually copying struct fields",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "S1016",
+        "url": "https://staticcheck.dev/docs/checks/#S1016"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T05:33:42.286Z",
+    "structuralHints": {
+      "treeSitterQuery": "(assignment_statement\n  left: (expression_list\n    (selector_expression))\n  right: (expression_list\n    (selector_expression)) @offender)"
+    }
+  },
+  {
+    "id": "GO_S1017",
+    "languages": [
+      "go"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Replace manual trimming with strings.TrimPrefix",
+    "description": "Replace manual trimming with strings.TrimPrefix",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "S1017",
+        "url": "https://staticcheck.dev/docs/checks/#S1017"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T07:02:32.913Z",
+    "structuralHints": {
+      "treeSitterQuery": "(identifier) @offender"
+    }
+  },
+  {
+    "id": "GO_S1018",
+    "languages": [
+      "go"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Use copy for sliding elements",
+    "description": "Use copy for sliding elements",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "S1018",
+        "url": "https://staticcheck.dev/docs/checks/#S1018"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T07:02:32.914Z",
+    "structuralHints": {
+      "treeSitterQuery": "(identifier) @offender"
+    }
+  },
+  {
+    "id": "GO_S1019",
+    "languages": [
+      "go"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Simplify make call by omitting redundant arguments",
+    "description": "Simplify make call by omitting redundant arguments",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "S1019",
+        "url": "https://staticcheck.dev/docs/checks/#S1019"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T01:33:46.924Z",
+    "structuralHints": {
+      "treeSitterQuery": "(call_expression\n  function: (identifier) @_func\n  arguments: (argument_list\n    .\n    (identifier) @_type\n    .\n    (int_literal) @_size\n    .\n    (int_literal) @_capacity\n    .)\n  (#eq? @_func \"make\")\n  (#eq? @_size @_capacity)) @offender"
+    }
+  },
+  {
+    "id": "GO_S1020",
+    "languages": [
+      "go"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Omit redundant nil check in type assertion",
+    "description": "Omit redundant nil check in type assertion",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "S1020",
+        "url": "https://staticcheck.dev/docs/checks/#S1020"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T07:02:32.920Z",
+    "structuralHints": {
+      "treeSitterQuery": "(identifier) @offender"
+    }
+  },
+  {
+    "id": "GO_S1021",
+    "languages": [
+      "go"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Merge variable declaration and assignment",
+    "description": "Merge variable declaration and assignment",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "S1021",
+        "url": "https://staticcheck.dev/docs/checks/#S1021"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T01:33:52.666Z",
+    "structuralHints": {
+      "treeSitterQuery": "(source_file\n  (short_var_declaration\n    left: (expression_list\n      (identifier) @offender)\n    right: (expression_list))\n  (assignment_statement\n    left: (expression_list\n      (identifier))\n    right: (expression_list)))"
+    }
+  },
+  {
+    "id": "GO_S1023",
+    "languages": [
+      "go"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Omit redundant control flow",
+    "description": "Omit redundant control flow",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "S1023",
+        "url": "https://staticcheck.dev/docs/checks/#S1023"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T07:02:32.924Z",
+    "structuralHints": {
+      "treeSitterQuery": "(identifier) @offender"
+    }
+  },
+  {
+    "id": "GO_S1024",
+    "languages": [
+      "go"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Replace x.Sub(time.Now()) with time.Until(x)",
+    "description": "Replace x.Sub(time.Now()) with time.Until(x)",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "S1024",
+        "url": "https://staticcheck.dev/docs/checks/#S1024"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T01:33:59.011Z",
+    "structuralHints": {
+      "treeSitterQuery": "(call_expression\n  function: (selector_expression\n    operand: (_) @x\n    field: (field_identifier) @method (#eq? @method \"Sub\"))\n  arguments: (argument_list\n    (call_expression\n      function: (selector_expression\n        operand: (identifier) @pkg (#eq? @pkg \"time\")\n        field: (field_identifier) @func (#eq? @func \"Now\"))\n      arguments: (argument_list)))) @offender"
+    }
+  },
+  {
+    "id": "GO_S1025",
+    "languages": [
+      "go"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Don&rsquo;t use fmt.Sprintf(\"%s\", x) unnecessarily",
+    "description": "Don&rsquo;t use fmt.Sprintf(\"%s\", x) unnecessarily",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "S1025",
+        "url": "https://staticcheck.dev/docs/checks/#S1025"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T05:34:31.223Z",
+    "structuralHints": {
+      "treeSitterQuery": "(call_expression\n  function: (selector_expression\n    operand: (identifier) @pkg (#eq? @pkg \"fmt\")\n    field: (field_identifier) @func (#eq? @func \"Sprintf\"))\n  arguments: (argument_list\n    (interpreted_string_literal) @format (#eq? @format \"\\\"%s\\\"\")\n    (_)) @offender)"
+    }
+  },
+  {
+    "id": "GO_S1028",
+    "languages": [
+      "go"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Simplify error construction with fmt.Errorf",
+    "description": "Simplify error construction with fmt.Errorf",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "S1028",
+        "url": "https://staticcheck.dev/docs/checks/#S1028"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T01:34:06.210Z",
+    "structuralHints": {
+      "treeSitterQuery": "(call_expression\n  function: (selector_expression\n    operand: (identifier) @pkg (#eq? @pkg \"errors\")\n    field: (field_identifier) @method (#eq? @method \"New\"))\n  arguments: (argument_list\n    (call_expression\n      function: (selector_expression\n        operand: (identifier) @fmt_pkg (#eq? @fmt_pkg \"fmt\")\n        field: (field_identifier) @fmt_method (#eq? @fmt_method \"Sprintf\"))))) @offender"
+    }
+  },
+  {
+    "id": "GO_S1029",
+    "languages": [
+      "go"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Range over the string directly",
+    "description": "Range over the string directly",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "S1029",
+        "url": "https://staticcheck.dev/docs/checks/#S1029"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T01:34:08.895Z",
+    "structuralHints": {
+      "treeSitterQuery": "(range_clause\n  left: (_)\n  right: (identifier) @offender\n  (#match? @offender \"^[a-z]\"))"
+    }
+  },
+  {
+    "id": "GO_S1030",
+    "languages": [
+      "go"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Use bytes.Buffer.String or bytes.Buffer.Bytes",
+    "description": "Use bytes.Buffer.String or bytes.Buffer.Bytes",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "S1030",
+        "url": "https://staticcheck.dev/docs/checks/#S1030"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T01:34:11.754Z",
+    "structuralHints": {
+      "treeSitterQuery": "(call_expression\n  function: (selector_expression\n    operand: (identifier)\n    field: (field_identifier) @offender\n    (#match? @offender \"^(String|Bytes)$\"))\n  (#match? @offender \"^(String|Bytes)$\"))"
+    }
+  },
+  {
+    "id": "GO_S1031",
+    "languages": [
+      "go"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Omit redundant nil check around loop",
+    "description": "Omit redundant nil check around loop",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "S1031",
+        "url": "https://staticcheck.dev/docs/checks/#S1031"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T07:02:32.934Z",
+    "structuralHints": {
+      "treeSitterQuery": "(for_statement) @offender"
+    }
+  },
+  {
+    "id": "GO_S1032",
+    "languages": [
+      "go"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Use sort.Ints(x), sort.Float64s(x), and sort.Strings(x)",
+    "description": "Use sort.Ints(x), sort.Float64s(x), and sort.Strings(x)",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "S1032",
+        "url": "https://staticcheck.dev/docs/checks/#S1032"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T01:34:18.481Z",
+    "structuralHints": {
+      "treeSitterQuery": "(call_expression\n    function: (selector_expression\n      operand: (identifier) @_sort (#eq? @_sort \"sort\")\n      field: (field_identifier) @_func (#match? @_func \"^(Ints|Float64s|Strings)$\"))\n    arguments: (argument_list)) @offender"
+    }
+  },
+  {
+    "id": "GO_S1033",
+    "languages": [
+      "go"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Unnecessary guard around call to delete",
+    "description": "Unnecessary guard around call to delete",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "S1033",
+        "url": "https://staticcheck.dev/docs/checks/#S1033"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T07:02:32.938Z",
+    "structuralHints": {
+      "treeSitterQuery": "(identifier) @offender"
+    }
+  },
+  {
+    "id": "GO_S1034",
+    "languages": [
+      "go"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Use result of type assertion to simplify cases",
+    "description": "Use result of type assertion to simplify cases",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "S1034",
+        "url": "https://staticcheck.dev/docs/checks/#S1034"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T05:34:54.883Z",
+    "structuralHints": {
+      "treeSitterQuery": "(if_statement\n  condition: (binary_expression\n    left: (identifier)\n    right: (call_expression\n      function: (selector_expression))) @offender)"
+    }
+  },
+  {
+    "id": "GO_S1035",
+    "languages": [
+      "go"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Redundant call to net/http.CanonicalHeaderKey in method call on net/http.Header",
+    "description": "Redundant call to net/http.CanonicalHeaderKey in method call on net/http.Header",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "S1035",
+        "url": "https://staticcheck.dev/docs/checks/#S1035"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T05:34:59.892Z",
+    "structuralHints": {
+      "treeSitterQuery": "(call_expression\n  function: (selector_expression\n    operand: (_)\n    field: (field_identifier) @method)\n  arguments: (argument_list\n    (call_expression\n      function: (selector_expression\n        operand: (identifier) @pkg\n        field: (field_identifier) @func)\n      arguments: (argument_list\n        (_))) @offender)\n  (#match? @method \"^(Get|Set|Add|Del|Values)$\")\n  (#eq? @pkg \"http\")\n  (#eq? @func \"CanonicalHeaderKey\"))"
+    }
+  },
+  {
+    "id": "GO_S1036",
+    "languages": [
+      "go"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Unnecessary guard around map access",
+    "description": "Unnecessary guard around map access",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "S1036",
+        "url": "https://staticcheck.dev/docs/checks/#S1036"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T07:02:32.946Z",
+    "structuralHints": {
+      "treeSitterQuery": "(identifier) @offender"
+    }
+  },
+  {
+    "id": "GO_S1037",
+    "languages": [
+      "go"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Elaborate way of sleeping",
+    "description": "Elaborate way of sleeping",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "S1037",
+        "url": "https://staticcheck.dev/docs/checks/#S1037"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T01:34:37.265Z",
+    "structuralHints": {
+      "treeSitterQuery": "(call_expression\n  function: (selector_expression\n    operand: (identifier) @_pkg (#eq? @_pkg \"time\")\n    field: (field_identifier) @_method (#eq? @_method \"Sleep\"))\n  arguments: (argument_list\n    (call_expression\n      function: (selector_expression\n        operand: (identifier) @_time (#eq? @_time \"time\")\n        field: (field_identifier) @_dur)))) @offender"
+    }
+  },
+  {
+    "id": "GO_S1038",
+    "languages": [
+      "go"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Unnecessarily complex way of printing formatted string",
+    "description": "Unnecessarily complex way of printing formatted string",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "S1038",
+        "url": "https://staticcheck.dev/docs/checks/#S1038"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T01:34:40.887Z",
+    "structuralHints": {
+      "treeSitterQuery": "(call_expression\n  function: (selector_expression\n    operand: (identifier) @_fmt (#eq? @_fmt \"fmt\")\n    field: (field_identifier) @_method (#eq? @_method \"Printf\"))\n  arguments: (argument_list\n    (interpreted_string_literal) @_format\n    (#not-match? @_format \"%\"))) @offender"
+    }
+  },
+  {
+    "id": "GO_S1039",
+    "languages": [
+      "go"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Unnecessary use of fmt.Sprint",
+    "description": "Unnecessary use of fmt.Sprint",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "S1039",
+        "url": "https://staticcheck.dev/docs/checks/#S1039"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T01:34:44.187Z",
+    "structuralHints": {
+      "treeSitterQuery": "(call_expression\n  function: (selector_expression\n    operand: (identifier) @pkg (#eq? @pkg \"fmt\")\n    field: (field_identifier) @method (#eq? @method \"Sprint\"))\n  arguments: (argument_list\n    .\n    (_)\n    .)) @offender"
+    }
+  },
+  {
+    "id": "GO_S1040",
+    "languages": [
+      "go"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Type assertion to current type",
+    "description": "Type assertion to current type",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "S1040",
+        "url": "https://staticcheck.dev/docs/checks/#S1040"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T07:02:32.950Z",
+    "structuralHints": {
+      "treeSitterQuery": "(identifier) @offender"
+    }
+  },
+  {
+    "id": "GO_ST1000",
+    "languages": [
+      "go"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Incorrect or missing package comment",
+    "description": "Incorrect or missing package comment",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "ST1000",
+        "url": "https://staticcheck.dev/docs/checks/#ST1000"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T05:35:22.480Z",
+    "structuralHints": {
+      "treeSitterQuery": "(source_file\n  (comment)* @_comment\n  (package_clause\n    (package_identifier) @offender)\n  (#not-match? @_comment \"^// Package\"))"
+    }
+  },
+  {
+    "id": "GO_ST1001",
+    "languages": [
+      "go"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Dot imports are discouraged",
+    "description": "Dot imports are discouraged",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "ST1001",
+        "url": "https://staticcheck.dev/docs/checks/#ST1001"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T01:34:53.265Z",
+    "structuralHints": {
+      "treeSitterQuery": "(import_spec\n  name: (dot) @offender)"
+    }
+  },
+  {
+    "id": "GO_ST1003",
+    "languages": [
+      "go"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Poorly chosen identifier",
+    "description": "Poorly chosen identifier",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "ST1003",
+        "url": "https://staticcheck.dev/docs/checks/#ST1003"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T01:34:54.847Z",
+    "structuralHints": {
+      "treeSitterQuery": "(identifier) @offender"
+    }
+  },
+  {
+    "id": "GO_ST1005",
+    "languages": [
+      "go"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Incorrectly formatted error string",
+    "description": "Incorrectly formatted error string",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "ST1005",
+        "url": "https://staticcheck.dev/docs/checks/#ST1005"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T01:34:58.711Z",
+    "structuralHints": {
+      "treeSitterQuery": "(call_expression\n  function: (selector_expression\n    operand: (identifier) @_pkg (#eq? @_pkg \"errors\")\n    field: (field_identifier) @_func (#eq? @_func \"New\"))\n  arguments: (argument_list\n    (interpreted_string_literal) @offender\n    (#match? @offender \"^\\\"[A-Z]|[.!]\\\"$\")))"
+    }
+  },
+  {
+    "id": "GO_ST1006",
+    "languages": [
+      "go"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Poorly chosen receiver name",
+    "description": "Poorly chosen receiver name",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "ST1006",
+        "url": "https://staticcheck.dev/docs/checks/#ST1006"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T01:35:01.602Z",
+    "structuralHints": {
+      "treeSitterQuery": "(method_declaration\n  receiver: (parameter_list\n    (parameter_declaration\n      name: (identifier) @offender\n      (#match? @offender \"^(this|self|me|that|obj|object|receiver)$\"))))"
+    }
+  },
+  {
+    "id": "GO_ST1008",
+    "languages": [
+      "go"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "A function&rsquo;s error value should be its last return value",
+    "description": "A function&rsquo;s error value should be its last return value",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "ST1008",
+        "url": "https://staticcheck.dev/docs/checks/#ST1008"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T01:35:04.258Z",
+    "structuralHints": {
+      "treeSitterQuery": "(function_declaration\n  result: (parameter_list\n    (parameter_declaration\n      type: (type_identifier) @error_type)\n    (parameter_declaration) @offender)\n  (#eq? @error_type \"error\"))"
+    }
+  },
+  {
+    "id": "GO_ST1011",
+    "languages": [
+      "go"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Poorly chosen name for variable of type time.Duration",
+    "description": "Poorly chosen name for variable of type time.Duration",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "ST1011",
+        "url": "https://staticcheck.dev/docs/checks/#ST1011"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T07:02:32.954Z",
+    "structuralHints": {
+      "treeSitterQuery": "(identifier) @offender"
+    }
+  },
+  {
+    "id": "GO_ST1012",
+    "languages": [
+      "go"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Poorly chosen name for error variable",
+    "description": "Poorly chosen name for error variable",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "ST1012",
+        "url": "https://staticcheck.dev/docs/checks/#ST1012"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T01:35:11.575Z",
+    "structuralHints": {
+      "treeSitterQuery": "(short_var_declaration\n  left: (expression_list\n    (identifier) @offender\n    (#not-match? @offender \"^(err|error|.*Err|.*Error)$\"))\n  right: (expression_list\n    .\n    (_\n      type: (type_identifier) @error_type\n      (#eq? @error_type \"error\"))))"
+    }
+  },
+  {
+    "id": "GO_ST1013",
+    "languages": [
+      "go"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Should use constants for HTTP error codes, not magic numbers",
+    "description": "Should use constants for HTTP error codes, not magic numbers",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "ST1013",
+        "url": "https://staticcheck.dev/docs/checks/#ST1013"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T01:35:14.756Z",
+    "structuralHints": {
+      "treeSitterQuery": "(call_expression\n  function: (selector_expression\n    operand: (identifier)\n    field: (field_identifier) @field\n    (#match? @field \"^(Error|WriteHeader)$\"))\n  arguments: (argument_list\n    (int_literal) @offender))"
+    }
+  },
+  {
+    "id": "GO_ST1015",
+    "languages": [
+      "go"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "A switch&rsquo;s default case should be the first or last case",
+    "description": "A switch&rsquo;s default case should be the first or last case",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "ST1015",
+        "url": "https://staticcheck.dev/docs/checks/#ST1015"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T07:02:32.956Z",
+    "structuralHints": {
+      "treeSitterQuery": "(identifier) @offender"
+    }
+  },
+  {
+    "id": "GO_ST1016",
+    "languages": [
+      "go"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Use consistent method receiver names",
+    "description": "Use consistent method receiver names",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "ST1016",
+        "url": "https://staticcheck.dev/docs/checks/#ST1016"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T01:35:19.571Z",
+    "structuralHints": {
+      "treeSitterQuery": "(method_declaration\n  receiver: (parameter_list\n    (parameter_declaration\n      name: (identifier) @offender\n      type: (_)))\n  name: (field_identifier))"
+    }
+  },
+  {
+    "id": "GO_ST1017",
+    "languages": [
+      "go"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Don&rsquo;t use Yoda conditions",
+    "description": "Don&rsquo;t use Yoda conditions",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "ST1017",
+        "url": "https://staticcheck.dev/docs/checks/#ST1017"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T01:35:23.285Z",
+    "structuralHints": {
+      "treeSitterQuery": "((binary_expression\n  left: (_)\n  operator: _\n  right: (identifier)) @offender\n (#match? @offender \"^(==|!=|<|>|<=|>=)\"))"
+    }
+  },
+  {
+    "id": "GO_ST1018",
+    "languages": [
+      "go"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Avoid zero-width and control characters in string literals",
+    "description": "Avoid zero-width and control characters in string literals",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "ST1018",
+        "url": "https://staticcheck.dev/docs/checks/#ST1018"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T01:35:27.576Z",
+    "structuralHints": {
+      "treeSitterQuery": "(interpreted_string_literal\n  (escape_sequence) @offender\n  (#match? @offender \"\\\\\\\\(u0000|u0001|u0002|u0003|u0004|u0005|u0006|u0007|u0008|u000b|u000c|u000e|u000f|u0010|u0011|u0012|u0013|u0014|u0015|u0016|u0017|u0018|u0019|u001a|u001b|u001c|u001d|u001e|u001f|u007f|u0080|u0081|u0082|u0083|u0084|u0085|u0086|u0087|u0088|u0089|u008a|u008b|u008c|u008d|u008e|u008f|u0090|u0091|u0092|u0093|u0094|u0095|u0096|u0097|u0098|u0099|u009a|u009b|u009c|u009d|u009e|u009f|u200b|u200c|u200d|u2060|ufeff)\"))"
+    }
+  },
+  {
+    "id": "GO_ST1019",
+    "languages": [
+      "go"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Importing the same package multiple times",
+    "description": "Importing the same package multiple times",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "ST1019",
+        "url": "https://staticcheck.dev/docs/checks/#ST1019"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T01:35:30.368Z",
+    "structuralHints": {
+      "treeSitterQuery": "((source_file\n  (import_declaration\n    (import_spec_list\n      (import_spec path: (interpreted_string_literal) @path1)\n      (import_spec path: (interpreted_string_literal) @path2)))\n  (#eq? @path1 @path2)) @offender)"
+    }
+  },
+  {
+    "id": "GO_ST1020",
+    "languages": [
+      "go"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "The documentation of an exported function should start with the function&rsquo;s name",
+    "description": "The documentation of an exported function should start with the function&rsquo;s name",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "ST1020",
+        "url": "https://staticcheck.dev/docs/checks/#ST1020"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T01:35:33.181Z",
+    "structuralHints": {
+      "treeSitterQuery": "(function_declaration\n  name: (identifier) @function_name\n  body: (block)\n) @offender"
+    }
+  },
+  {
+    "id": "GO_ST1021",
+    "languages": [
+      "go"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "The documentation of an exported type should start with type&rsquo;s name",
+    "description": "The documentation of an exported type should start with type&rsquo;s name",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "ST1021",
+        "url": "https://staticcheck.dev/docs/checks/#ST1021"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T01:35:36.796Z",
+    "structuralHints": {
+      "treeSitterQuery": "(\n  (comment)* @doc\n  .\n  (type_declaration\n    (type_spec\n      name: (type_identifier) @name\n      (#match? @name \"^[A-Z]\")))\n  @offender\n  (#not-match? @doc \"^//\\\\s*[A-Z][a-z0-9_]*\\\\s+\")\n)"
+    }
+  },
+  {
+    "id": "GO_ST1022",
+    "languages": [
+      "go"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "The documentation of an exported variable or constant should start with variable&rsquo;s name",
+    "description": "The documentation of an exported variable or constant should start with variable&rsquo;s name",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "ST1022",
+        "url": "https://staticcheck.dev/docs/checks/#ST1022"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T01:35:41.367Z",
+    "structuralHints": {
+      "treeSitterQuery": "(\n  (comment)* @doc\n  .\n  [\n    (var_declaration\n      (var_spec\n        name: (identifier) @name\n        (#match? @name \"^[A-Z]\")))\n    (const_declaration\n      (const_spec\n        name: (identifier) @name\n        (#match? @name \"^[A-Z]\")))\n  ] @offender\n  (#not-match? @doc \"^//\\\\s*[A-Z][a-z]*\\\\s\")\n)"
+    }
+  },
+  {
+    "id": "GO_ST1023",
+    "languages": [
+      "go"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Redundant type in variable declaration",
+    "description": "Redundant type in variable declaration",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "ST1023",
+        "url": "https://staticcheck.dev/docs/checks/#ST1023"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T01:35:43.901Z",
+    "structuralHints": {
+      "treeSitterQuery": "(short_var_declaration\n  left: (expression_list\n    (_))\n  right: (expression_list\n    (composite_literal\n      type: (_) @offender)))"
+    }
+  },
+  {
+    "id": "GO_QF1001",
+    "languages": [
+      "go"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Apply De Morgan&rsquo;s law",
+    "description": "Apply De Morgan&rsquo;s law",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "QF1001",
+        "url": "https://staticcheck.dev/docs/checks/#QF1001"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T01:35:46.345Z",
+    "structuralHints": {
+      "treeSitterQuery": "(unary_expression\n  operator: \"!\"\n  operand: (parenthesized_expression\n    (binary_expression\n      operator: [\"&&\" \"||\"]))) @offender"
+    }
+  },
+  {
+    "id": "GO_QF1002",
+    "languages": [
+      "go"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Convert untagged switch to tagged switch",
+    "description": "Convert untagged switch to tagged switch",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "QF1002",
+        "url": "https://staticcheck.dev/docs/checks/#QF1002"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T05:35:49.482Z",
+    "structuralHints": {
+      "treeSitterQuery": "(expression_switch_statement\n  initializer: (_)?\n  !value\n  (expression_case\n    value: (_)+)?) @offender"
+    }
+  },
+  {
+    "id": "GO_QF1003",
+    "languages": [
+      "go"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Convert if/else-if chain to tagged switch",
+    "description": "Convert if/else-if chain to tagged switch",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "QF1003",
+        "url": "https://staticcheck.dev/docs/checks/#QF1003"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T01:35:51.923Z",
+    "structuralHints": {
+      "treeSitterQuery": "(if_statement\n  consequence: (block)\n  alternative: (if_statement\n    consequence: (block))) @offender"
+    }
+  },
+  {
+    "id": "GO_QF1004",
+    "languages": [
+      "go"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Use strings.ReplaceAll instead of strings.Replace with n == -1",
+    "description": "Use strings.ReplaceAll instead of strings.Replace with n == -1",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "QF1004",
+        "url": "https://staticcheck.dev/docs/checks/#QF1004"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T01:35:56.406Z",
+    "structuralHints": {
+      "treeSitterQuery": "(call_expression\n  function: (selector_expression\n    operand: (identifier) @_pkg (#eq? @_pkg \"strings\")\n    field: (field_identifier) @_func (#eq? @_func \"Replace\"))\n  arguments: (argument_list\n    .\n    (_)\n    (_)\n    (_)\n    (unary_expression\n      operator: \"-\"\n      operand: (int_literal) @_n (#eq? @_n \"1\")) @offender))"
+    }
+  },
+  {
+    "id": "GO_QF1005",
+    "languages": [
+      "go"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Expand call to math.Pow",
+    "description": "Expand call to math.Pow",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "QF1005",
+        "url": "https://staticcheck.dev/docs/checks/#QF1005"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T01:35:59.469Z",
+    "structuralHints": {
+      "treeSitterQuery": "(call_expression\n  function: (selector_expression\n    operand: (identifier) @pkg (#eq? @pkg \"math\")\n    field: (field_identifier) @func (#eq? @func \"Pow\"))\n) @offender"
+    }
+  },
+  {
+    "id": "GO_QF1006",
+    "languages": [
+      "go"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Lift if+break into loop condition",
+    "description": "Lift if+break into loop condition",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "QF1006",
+        "url": "https://staticcheck.dev/docs/checks/#QF1006"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T07:02:32.967Z",
+    "structuralHints": {
+      "treeSitterQuery": "(for_statement) @offender"
+    }
+  },
+  {
+    "id": "GO_QF1007",
+    "languages": [
+      "go"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Merge conditional assignment into variable declaration",
+    "description": "Merge conditional assignment into variable declaration",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "QF1007",
+        "url": "https://staticcheck.dev/docs/checks/#QF1007"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T05:36:04.189Z",
+    "structuralHints": {
+      "treeSitterQuery": "(short_var_declaration\n  left: (expression_list\n    (identifier) @var_name)\n  right: (expression_list\n    (_))) @decl"
+    }
+  },
+  {
+    "id": "GO_QF1008",
+    "languages": [
+      "go"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Omit embedded fields from selector expression",
+    "description": "Omit embedded fields from selector expression",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "QF1008",
+        "url": "https://staticcheck.dev/docs/checks/#QF1008"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T01:36:08.548Z",
+    "structuralHints": {
+      "treeSitterQuery": "(selector_expression\n  operand: (_)\n  field: (field_identifier) @offender\n  (#match? @offender \"^[A-Z]\"))"
+    }
+  },
+  {
+    "id": "GO_QF1009",
+    "languages": [
+      "go"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Use time.Time.Equal instead of == operator",
+    "description": "Use time.Time.Equal instead of == operator",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "QF1009",
+        "url": "https://staticcheck.dev/docs/checks/#QF1009"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T01:36:11.484Z",
+    "structuralHints": {
+      "treeSitterQuery": "(binary_expression\n  left: (_) @left\n  operator: \"==\"\n  right: (_) @right\n  (#match? @left \"time\\\\.Time\")\n  (#match? @right \"time\\\\.Time\")) @offender"
+    }
+  },
+  {
+    "id": "GO_QF1010",
+    "languages": [
+      "go"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Convert slice of bytes to string when printing it",
+    "description": "Convert slice of bytes to string when printing it",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "QF1010",
+        "url": "https://staticcheck.dev/docs/checks/#QF1010"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T01:36:16.810Z",
+    "structuralHints": {
+      "treeSitterQuery": "(call_expression\n  function: (selector_expression\n    operand: (identifier) @_fmt (#eq? @_fmt \"fmt\")\n    field: (field_identifier) @_method (#match? @_method \"^(Print|Println|Printf|Sprint|Sprintf|Sprintln|Fprint|Fprintf|Fprintln)$\"))\n  arguments: (argument_list\n    (call_expression\n      function: (identifier) @_string (#eq? @_string \"string\")\n      arguments: (argument_list\n        (slice_expression)? @offender\n        (identifier)? @offender)) @offender))"
+    }
+  },
+  {
+    "id": "GO_QF1011",
+    "languages": [
+      "go"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Omit redundant type from variable declaration",
+    "description": "Omit redundant type from variable declaration",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "QF1011",
+        "url": "https://staticcheck.dev/docs/checks/#QF1011"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T01:36:19.481Z",
+    "structuralHints": {
+      "treeSitterQuery": "(short_var_declaration\n  left: (expression_list\n    (_) @var)\n  right: (expression_list\n    (composite_literal\n      type: (_) @type) @offender))"
+    }
+  },
+  {
+    "id": "GO_QF1012",
+    "languages": [
+      "go"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Use fmt.Fprintf(x, ...) instead of x.Write(fmt.Sprintf(...))",
+    "description": "Use fmt.Fprintf(x, ...) instead of x.Write(fmt.Sprintf(...))",
+    "tags": [
+      "staticcheck"
+    ],
+    "sources": [
+      {
+        "source": "staticcheck",
+        "ruleId": "QF1012",
+        "url": "https://staticcheck.dev/docs/checks/#QF1012"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T01:36:23.093Z",
+    "structuralHints": {
+      "treeSitterQuery": "(call_expression\n  function: (selector_expression\n    operand: (_) @writer\n    field: (field_identifier) @method (#eq? @method \"Write\"))\n  arguments: (argument_list\n    (call_expression\n      function: (selector_expression\n        operand: (identifier) @pkg (#eq? @pkg \"fmt\")\n        field: (field_identifier) @func (#eq? @func \"Sprintf\")))) @offender)"
+    }
+  }
+]

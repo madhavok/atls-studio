@@ -1,0 +1,664 @@
+/**
+ * Unified Batch Executor — the step loop.
+ *
+ * Accepts a UnifiedBatchRequest, dispatches each step through the opMap,
+ * resolves in/out bindings between steps, enforces execution policy,
+ * and returns a UnifiedBatchResult.
+ */
+
+import type {
+  UnifiedBatchRequest,
+  UnifiedBatchResult,
+  StepOutput,
+  StepResult,
+  RefExpr,
+  HandlerContext,
+  BatchInterruption,
+  VerifyClassification,
+} from './types';
+
+import { getHandler } from './opMap';
+import { normalizeStepParams } from './paramNorm';
+import { isStepAllowed, getAutoVerifySteps, isStepCountExceeded, evaluateCondition, isBlockedForSwarm } from './policy';
+import { stepOutputToResult } from './resultFormatter';
+import { resetRecallBudget } from './handlers/session';
+import { SnapshotTracker, AwarenessLevel } from './snapshotTracker';
+import type { LineRegion } from './snapshotTracker';
+import { buildIntentContext, resolveIntents, isPressured } from './intents';
+import './intents/index';
+
+// ---------------------------------------------------------------------------
+// Extracted helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Seed the snapshot tracker from the persistent awareness cache.
+ * Carries forward awareness for unchanged files across batches.
+ */
+function seedSnapshotTracker(
+  tracker: SnapshotTracker,
+  awarenessCache: ReadonlyMap<string, { level: number; filePath: string; snapshotHash: string; readRegions: LineRegion[]; shapeHash?: string }>,
+): void {
+  for (const [, entry] of awarenessCache) {
+    const readKind = entry.level === AwarenessLevel.CANONICAL ? 'canonical' as const
+      : entry.level >= AwarenessLevel.SHAPED ? 'shaped' as const : 'cached' as const;
+    tracker.record(entry.filePath, entry.snapshotHash, readKind, {
+      readRegion: entry.readRegions.length > 0 ? entry.readRegions[0] : undefined,
+      shapeHash: entry.shapeHash,
+    });
+    for (const region of entry.readRegions.slice(1)) {
+      tracker.record(entry.filePath, entry.snapshotHash, 'lines', { readRegion: region });
+    }
+  }
+}
+
+/**
+ * Auto-inject snapshot_hash into change op params from the tracker.
+ * Mutates mergedParams in place.
+ */
+function injectSnapshotHashes(
+  mergedParams: Record<string, unknown>,
+  tracker: SnapshotTracker,
+): void {
+  const targetFile = (mergedParams.file ?? mergedParams.file_path) as string | undefined;
+  if (typeof targetFile === 'string' && !mergedParams.snapshot_hash) {
+    const trackedHash = tracker.getHash(targetFile);
+    if (trackedHash) {
+      mergedParams.snapshot_hash = trackedHash;
+    }
+  }
+  if (Array.isArray(mergedParams.edits)) {
+    mergedParams.edits = mergedParams.edits.map((edit) => {
+      if (!edit || typeof edit !== 'object') return edit;
+      const entry = edit as Record<string, unknown>;
+      const editFile = (entry.file ?? entry.file_path) as string | undefined;
+      if (typeof editFile === 'string' && !entry.snapshot_hash) {
+        const trackedHash = tracker.getHash(editFile);
+        if (trackedHash) {
+          entry.snapshot_hash = trackedHash;
+        }
+      }
+      return entry;
+    });
+  }
+}
+
+/**
+ * Record snapshot hashes from step output into the tracker.
+ * Handles read ops (lines, shaped, canonical) and change ops (invalidate + re-record).
+ */
+function recordSnapshotFromOutput(
+  step: { use: string },
+  output: StepOutput,
+  snapshotTracker: SnapshotTracker,
+  ctx: HandlerContext,
+  policy: { auto_reread_after_mutation?: boolean } | undefined,
+): void {
+  if (!output.ok || !output.content || typeof output.content !== 'object' || Array.isArray(output.content)) return;
+
+  const isChangeStep = step.use.startsWith('change.');
+  const autoReread = policy?.auto_reread_after_mutation !== false;
+  const readKind = step.use === 'read.context' ? 'canonical' as const
+    : step.use === 'read.file' ? 'canonical' as const
+    : step.use === 'read.shaped' ? 'shaped' as const
+    : step.use === 'read.lines' ? 'lines' as const
+    : isChangeStep ? 'canonical' as const
+    : 'cached' as const;
+
+  const artifact = output.content as Record<string, unknown>;
+
+  if (isChangeStep && autoReread) {
+    // After a mutation, invalidate old hashes and record new ones
+    const sources = [artifact.results, artifact.drafts, artifact.batch];
+    for (const arr of sources) {
+      if (!Array.isArray(arr)) continue;
+      for (const entry of arr) {
+        if (!entry || typeof entry !== 'object') continue;
+        const rec = entry as Record<string, unknown>;
+        const fp = SnapshotTracker.extractFilePath(rec);
+        const sh = SnapshotTracker.extractHash(rec);
+        if (fp && sh) snapshotTracker.invalidateAndRerecord(fp, sh);
+      }
+    }
+    // Also check top-level file+hash
+    const topFp = SnapshotTracker.extractFilePath(artifact);
+    const topSh = SnapshotTracker.extractHash(artifact);
+    if (topFp && topSh) snapshotTracker.invalidateAndRerecord(topFp, topSh);
+  } else {
+    // Extended recording: extract readRegions from read.lines, shapeHash from read.shaped
+    if (step.use === 'read.lines') {
+      const rlFile = artifact.file as string | undefined;
+      const rlActualRange = artifact.actual_range as Array<[number, number | null]> | undefined;
+      const rlHash = SnapshotTracker.extractHash(artifact);
+      if (rlFile && rlHash && Array.isArray(rlActualRange)) {
+        for (const range of rlActualRange) {
+          const start = range[0];
+          const end = range[1] ?? start;
+          if (typeof start === 'number' && typeof end === 'number') {
+            snapshotTracker.record(rlFile, rlHash, 'lines', { readRegion: { start, end } });
+          }
+        }
+      }
+    } else if (step.use === 'read.shaped') {
+      const shapedResults = artifact.results as Array<Record<string, unknown>> | undefined;
+      if (Array.isArray(shapedResults)) {
+        for (const result of shapedResults) {
+          if (!result || typeof result !== 'object') continue;
+          const fp = result.file as string | undefined;
+          const sh = SnapshotTracker.extractHash(result);
+          const shapeHash = result.shape_hash as string | undefined;
+          if (fp && sh) {
+            snapshotTracker.record(fp, sh, 'shaped', { shapeHash: shapeHash || undefined });
+          }
+        }
+      }
+    }
+    snapshotTracker.recordFromResponse(artifact, readKind);
+  }
+
+  // Forward new hashes to staged entries after edit completion
+  if (isChangeStep) {
+    const drafts = artifact.drafts as Array<Record<string, unknown>> | undefined;
+    if (Array.isArray(drafts)) {
+      for (const draft of drafts) {
+        const path = draft.file as string | undefined;
+        const hash = draft.content_hash as string | undefined;
+        if (path && hash) {
+          ctx.store().forwardStagedHash(path, hash);
+        }
+      }
+    }
+  }
+}
+
+/**
+ * Build and record a VerifyArtifact from a verify step's output.
+ */
+function buildVerifyArtifact(
+  step: { id: string; use: string },
+  output: StepOutput,
+  results: StepResult[],
+  stepOutputs: Map<string, StepOutput>,
+  snapshotTracker: SnapshotTracker,
+  ctx: HandlerContext,
+): void {
+  const filesObserved: string[] = [];
+  for (const prior of results) {
+    if (!prior.use.startsWith('change.') || !prior.ok) continue;
+    const priorOutput = stepOutputs.get(prior.id);
+    if (!priorOutput?.content || typeof priorOutput.content !== 'object') continue;
+    const artifact = priorOutput.content as Record<string, unknown>;
+    const drafts = (artifact.drafts ?? artifact.results ?? artifact.batch) as Array<Record<string, unknown>> | undefined;
+    if (Array.isArray(drafts)) {
+      for (const d of drafts) {
+        const f = (d.f ?? d.file ?? d.path ?? d.file_path) as string | undefined;
+        if (f) filesObserved.push(f);
+      }
+    }
+  }
+
+  const verifyRaw = output.content as Record<string, unknown> | undefined;
+  const warnCount = typeof verifyRaw?.warnings === 'number' ? verifyRaw.warnings : 0;
+  const errCount = typeof verifyRaw?.errors === 'number' ? verifyRaw.errors : 0;
+  const stepVerificationConfidence = stepOutputToResult(step.id, step.use, output, 0).verification_confidence;
+  const verifySource = verifyRaw && typeof verifyRaw.summary === 'object' && verifyRaw.summary && 'source' in verifyRaw.summary
+    ? (verifyRaw.summary.source === 'cache' ? 'cache' : 'command')
+    : 'command';
+
+  const uniqueFiles = [...new Set(filesObserved)];
+  const fileFingerprint: Record<string, string> = {};
+  const observedHashes = snapshotTracker.getAllForFiles(uniqueFiles);
+  for (const [fp, hash] of observedHashes) {
+    fileFingerprint[fp] = hash;
+  }
+
+  ctx.store().addVerifyArtifact({
+    id: `${step.id}_${Date.now()}`,
+    createdAtRev: ctx.store().getCurrentRev(),
+    filesObserved: uniqueFiles,
+    ok: output.ok,
+    warnings: warnCount,
+    errors: errCount,
+    stepId: step.id,
+    confidence: stepVerificationConfidence,
+    source: verifySource,
+    stale: stepVerificationConfidence === 'obsolete' || stepVerificationConfidence === 'stale-suspect',
+    staleReason: stepVerificationConfidence === 'obsolete'
+      ? 'workspace_changed_since_verification'
+      : stepVerificationConfidence === 'stale-suspect'
+        ? 'suspect_external_change'
+        : undefined,
+    fileFingerprint: Object.keys(fileFingerprint).length > 0 ? fileFingerprint : undefined,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Ref / binding resolution
+// ---------------------------------------------------------------------------
+
+function resolveRefExpr(
+  expr: RefExpr,
+  stepOutputs: ReadonlyMap<string, StepOutput>,
+  namedBindings: ReadonlyMap<string, StepOutput>,
+): unknown {
+  if ('value' in expr) return expr.value;
+
+  if ('ref' in expr) return expr.ref;
+
+  if ('bind' in expr) {
+    const bound = namedBindings.get(expr.bind);
+    if (!bound) return undefined;
+    return bound.refs.length > 0 ? bound.refs : undefined;
+  }
+
+  if ('from_step' in expr) {
+    const output = stepOutputs.get(expr.from_step);
+    if (!output) return undefined;
+    if (expr.path) {
+      // Dot-path access into the StepOutput
+      const parts = expr.path.split('.');
+      let current: unknown = output;
+      for (const part of parts) {
+        if (current == null || typeof current !== 'object') return undefined;
+        current = (current as Record<string, unknown>)[part];
+      }
+      return current;
+    }
+    return output.refs.length > 0 ? output.refs : undefined;
+  }
+
+  return undefined;
+}
+
+function resolveInBindings(
+  inSpec: Record<string, RefExpr> | undefined,
+  stepOutputs: ReadonlyMap<string, StepOutput>,
+  namedBindings: ReadonlyMap<string, StepOutput>,
+): Record<string, unknown> {
+  if (!inSpec) return {};
+  const resolved: Record<string, unknown> = {};
+  for (const [key, expr] of Object.entries(inSpec)) {
+    const val = resolveRefExpr(expr, stepOutputs, namedBindings);
+    if (val !== undefined) {
+      resolved[key] = val;
+    } else if ('from_step' in expr || 'bind' in expr) {
+      const source = 'from_step' in expr ? `step '${expr.from_step}'` : `binding '${(expr as { bind: string }).bind}'`;
+      resolved[`_binding_warning_${key}`] = `${key}: resolved to nothing from ${source} (0 refs). Use explicit path or provide value directly.`;
+    }
+  }
+  return resolved;
+}
+
+function getArtifact(output: StepOutput): Record<string, unknown> | null {
+  if (!output.content || typeof output.content !== 'object' || Array.isArray(output.content)) return null;
+  return output.content as Record<string, unknown>;
+}
+
+function summarizeInterruption(artifact: Record<string, unknown>, fallback: string): string {
+  const actionRequired = artifact.action_required;
+  if (typeof actionRequired === 'string' && actionRequired.trim()) return actionRequired.trim();
+  const next = artifact._next;
+  if (typeof next === 'string' && next.trim()) return next.trim();
+  const warning = artifact._warning;
+  if (typeof warning === 'string' && warning.trim()) return warning.trim();
+  const summary = artifact.summary;
+  if (typeof summary === 'string' && summary.trim()) return summary.trim();
+  return fallback;
+}
+
+/** system.exec outputs that indicate policy-block or confirmation — not real execution failures. */
+function isBlockingSystemExec(
+  stepUse: string,
+  artifact: Record<string, unknown>,
+): boolean {
+  if (stepUse !== 'system.exec') return false;
+  const status = typeof artifact.status === 'string' ? artifact.status.toLowerCase() : '';
+  const actionRequired = typeof artifact.action_required === 'string' ? artifact.action_required.toLowerCase() : '';
+  const next = typeof artifact._next === 'string' ? artifact._next.toLowerCase() : '';
+  return (
+    status === 'paused'
+    || status === 'failed_lint'
+    || status === 'error'
+    || status === 'blocked'
+    || Boolean(artifact._rollback)
+    || artifact.resume_after !== undefined
+    || artifact.dry_run === true
+    || actionRequired.includes('confirm')
+    || next.includes('confirm:true')
+    || next.includes('dry_run:false')
+    || next.includes('preview complete')
+    || next.includes('awaiting review')
+    || next.includes('review and confirm')
+  );
+}
+
+function detectBatchInterruption(stepId: string, stepIndex: number, stepUse: string, output: StepOutput): BatchInterruption | null {
+  const artifact = getArtifact(output);
+  if (!artifact) return null;
+  if (isBlockingSystemExec(stepUse, artifact)) return null;
+
+  const status = typeof artifact.status === 'string' ? artifact.status.toLowerCase() : '';
+  const hasRollback = Boolean(artifact._rollback);
+  const hasResumeAfter = artifact.resume_after !== undefined;
+  const actionRequired = typeof artifact.action_required === 'string' ? artifact.action_required.toLowerCase() : '';
+  const next = typeof artifact._next === 'string' ? artifact._next.toLowerCase() : '';
+  const dryRun = artifact.dry_run === true;
+
+  const reason = typeof artifact.reason === 'string' ? artifact.reason : undefined;
+  const isSuspectExternal = reason === 'suspect_external_change';
+
+  const isPaused =
+    status === 'paused'
+    || status === 'failed_lint'
+    || status === 'error'
+    || hasRollback
+    || hasResumeAfter;
+  if (isPaused) {
+    return {
+      kind: 'paused_on_error',
+      step_id: stepId,
+      step_index: stepIndex,
+      tool_name: stepUse,
+      summary: summarizeInterruption(artifact, `${stepId}: paused and requires follow-up before continuing`),
+      interruption_reason: isSuspectExternal ? 'suspect_external_change' : undefined,
+    };
+  }
+
+  const isConfirmationRequired =
+    dryRun
+    || status === 'preview'
+    || status === 'dry_run_preview'
+    || actionRequired.includes('confirm')
+    || next.includes('confirm:true')
+    || next.includes('dry_run:false')
+    || next.includes('preview complete')
+    || next.includes('awaiting review')
+    || next.includes('review and confirm');
+  if (isConfirmationRequired) {
+    return {
+      kind: 'confirmation_required',
+      step_id: stepId,
+      step_index: stepIndex,
+      tool_name: stepUse,
+      summary: summarizeInterruption(artifact, `${stepId}: confirmation required before continuing`),
+    };
+  }
+
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// Executor
+// ---------------------------------------------------------------------------
+
+export async function executeUnifiedBatch(
+  request: UnifiedBatchRequest,
+  ctx: HandlerContext,
+): Promise<UnifiedBatchResult> {
+  const batchStart = Date.now();
+  const stepOutputs = new Map<string, StepOutput>();
+  const namedBindings = new Map<string, StepOutput>();
+  const results: StepResult[] = [];
+  const allRefs: string[] = [];
+  const bbRefs: string[] = [];
+  const verifyResults: Array<{ step_id: string; passed: boolean; summary: string; classification?: VerifyClassification }> = [];
+  let batchOk = true;
+  let interruption: BatchInterruption | undefined;
+
+  // Reset per-batch state
+  resetRecallBudget();
+  const snapshotTracker = new SnapshotTracker();
+
+  // Seed from persistent awareness cache
+  seedSnapshotTracker(snapshotTracker, ctx.store().getAwarenessCache());
+
+  const policy = request.policy;
+
+  // Resolve intent.* macro steps before main loop
+  const intentCtx = buildIntentContext(ctx.store, stepOutputs);
+  const intentResult = resolveIntents(request.steps, intentCtx);
+  const stepsToRun = [...intentResult.expanded];
+  if (intentResult.lookahead.length > 0 && !isPressured(ctx.store)) {
+    stepsToRun.push(...intentResult.lookahead);
+  }
+
+  // Track batch size for compliance metrics
+  ctx.store().recordManageOps(request.steps.length);
+  ctx.store().recordToolCall();
+
+  // Pre-register named refs from the request envelope
+  if (request.refs) {
+    for (const hint of request.refs) {
+      // Store as a synthetic StepOutput so bindings can reference them
+      namedBindings.set(hint.name, {
+        kind: 'raw', ok: true, refs: [hint.ref], summary: `ref:${hint.name}`,
+      });
+    }
+  }
+
+  let userStepIndex = 0;
+
+  for (let i = 0; i < stepsToRun.length; i++) {
+    const step = stepsToRun[i];
+    const stepStart = Date.now();
+    const isAutoStep = step.id.includes('__auto_stage') || step.id.includes('__auto_verify') || step.id.includes('__rollback') || step.id.includes('__lookahead');
+
+    // Max steps check: only when model explicitly set policy.max_steps
+    if (!isAutoStep && policy && isStepCountExceeded(userStepIndex, policy)) {
+      const output: StepOutput = {
+        kind: 'raw', ok: false, refs: [],
+        summary: `${step.id}: SKIPPED (max_steps ${policy.max_steps} exceeded)`,
+        error: 'max_steps exceeded',
+      };
+      stepOutputs.set(step.id, output);
+      results.push(stepOutputToResult(step.id, step.use, output, 0));
+      batchOk = false;
+      break;
+    }
+
+    // Swarm agent restriction
+    if (ctx.isSwarmAgent && isBlockedForSwarm(step.use)) {
+      const output: StepOutput = {
+        kind: 'raw', ok: false, refs: [],
+        summary: `${step.use}: ERROR blocked for swarm agents (orchestrator owns lifecycle)`,
+        error: 'blocked for swarm agents',
+      };
+      stepOutputs.set(step.id, output);
+      results.push(stepOutputToResult(step.id, step.use, output, 0));
+      continue;
+    }
+
+    // Policy mode check — non-fatal: skip blocked steps, don't interrupt batch
+    const allowed = isStepAllowed(step, request.policy);
+    if (!allowed.allowed) {
+      const output: StepOutput = {
+        kind: 'raw', ok: false, refs: [],
+        summary: `${step.id}: BLOCKED — ${allowed.reason}`,
+        error: allowed.reason,
+      };
+      stepOutputs.set(step.id, output);
+      results.push(stepOutputToResult(step.id, step.use, output, 0));
+      continue;
+    }
+
+    // Conditional execution
+    if (step.if) {
+      const condMet = evaluateCondition(step.if, stepOutputs);
+      if (!condMet) {
+        const output: StepOutput = {
+          kind: 'raw', ok: true, refs: [],
+          summary: `${step.id}: SKIPPED (condition not met)`,
+        };
+        stepOutputs.set(step.id, output);
+        results.push(stepOutputToResult(step.id, step.use, output, 0));
+        continue;
+      }
+    }
+
+    // Resolve in bindings
+    const resolvedInputs = resolveInBindings(step.in, stepOutputs, namedBindings);
+
+    // Merge with and resolved inputs (resolved inputs override with)
+    let mergedParams: Record<string, unknown> = normalizeStepParams(step.use, { ...step.with, ...resolvedInputs });
+
+    // Merge policy options for change ops (e.g. refactor_validation_mode)
+    if (request.policy?.refactor_validation_mode && step.use.startsWith('change.')) {
+      mergedParams = { ...mergedParams, refactor_validation_mode: request.policy.refactor_validation_mode };
+    }
+
+    // Auto-inject snapshot_hash for change ops from the tracker
+    if (step.use.startsWith('change.') && snapshotTracker.size > 0) {
+      injectSnapshotHashes(mergedParams, snapshotTracker);
+    }
+
+    // Dispatch
+    const handler = getHandler(step.use);
+    if (!handler) {
+      const output: StepOutput = {
+        kind: 'raw', ok: false, refs: [],
+        summary: `${step.id}: ERROR unknown operation "${step.use}"`,
+        error: `unknown operation: ${step.use}`,
+      };
+      stepOutputs.set(step.id, output);
+      results.push(stepOutputToResult(step.id, step.use, output, Date.now() - stepStart));
+      batchOk = false;
+      if (step.on_error === 'stop') break;
+      continue;
+    }
+
+    let output: StepOutput;
+    try {
+      output = await handler(mergedParams, ctx);
+    } catch (e) {
+      output = {
+        kind: 'raw', ok: false, refs: [],
+        summary: `${step.id}: ERROR ${e instanceof Error ? e.message : String(e)}`,
+        error: e instanceof Error ? e.message : String(e),
+      };
+    }
+
+    // Store outputs
+    stepOutputs.set(step.id, output);
+
+    // Record snapshot hashes from step output
+    recordSnapshotFromOutput(step, output, snapshotTracker, ctx, policy);
+
+    // Named bindings
+    if (step.out) {
+      const names = Array.isArray(step.out) ? step.out : [step.out];
+      for (const name of names) {
+        namedBindings.set(name, output);
+      }
+    }
+
+    // Collect refs
+    if (output.refs.length > 0) allRefs.push(...output.refs);
+    if (output.kind === 'bb_ref') bbRefs.push(...output.refs);
+    if (output.kind === 'verify_result') {
+      verifyResults.push({ step_id: step.id, passed: output.ok, summary: output.summary, classification: output.classification });
+      buildVerifyArtifact(step, output, results, stepOutputs, snapshotTracker, ctx);
+    }
+
+    // Record result
+    results.push(stepOutputToResult(step.id, step.use, output, Date.now() - stepStart));
+
+    if (!isAutoStep) userStepIndex += 1;
+    const stepInterruption = detectBatchInterruption(step.id, i, step.use, output);
+    const stepArtifact = getArtifact(output);
+    const shouldTreatBlockedSystemExecAsNonFatal =
+      stepArtifact !== null && isBlockingSystemExec(step.use, stepArtifact);
+    if (stepInterruption && !shouldTreatBlockedSystemExecAsNonFatal) {
+      interruption = stepInterruption;
+      batchOk = false;
+      break;
+    }
+    // Error handling
+    if (!output.ok && !shouldTreatBlockedSystemExecAsNonFatal) {
+      const errorBehavior = step.on_error ?? 'continue';
+      if (errorBehavior === 'stop') {
+        batchOk = false;
+        break;
+      }
+      if (errorBehavior === 'rollback' && request.policy?.rollback_on_failure) {
+        // Collect restore/delete from most recent change step with _rollback (refactor execute)
+        let rollbackWith: Record<string, unknown> = {};
+        for (let j = i - 1; j >= 0; j--) {
+          const prior = stepsToRun[j];
+          if (prior?.use?.startsWith('change.')) {
+            const priorOut = stepOutputs.get(prior.id);
+            const content = priorOut?.content as Record<string, unknown> | undefined;
+            const rb = content?._rollback as Record<string, unknown> | undefined;
+            if (rb?.restore) {
+              rollbackWith = { restore: rb.restore, delete: rb.delete };
+              break;
+            }
+          }
+        }
+        if (rollbackWith.restore) {
+          stepsToRun.push({
+            id: `${step.id}__rollback`,
+            use: 'change.rollback',
+            with: rollbackWith,
+            on_error: 'continue',
+          });
+        }
+      }
+    }
+
+    // Auto-behaviors from policy
+    if (output.ok) {
+      // Auto-verify after change
+      const autoVerifySteps = getAutoVerifySteps(step.id, step.use, request.policy);
+      if (autoVerifySteps.length > 0) {
+        stepsToRun.splice(i + 1, 0, ...autoVerifySteps);
+      }
+
+      // Auto-stage refs: only for outputs that carry resolvable refs (read/context/load, bb)
+      const stageableKinds = new Set<StepOutput['kind']>(['file_refs', 'bb_ref']);
+      if (request.policy?.auto_stage_refs && output.refs.length > 0 && stageableKinds.has(output.kind)) {
+        stepsToRun.splice(i + 1, 0, {
+          id: `${step.id}__auto_stage`,
+          use: 'session.stage',
+          with: { hashes: output.refs },
+          on_error: 'continue',
+        });
+      }
+    }
+
+    // Verify failure stop check
+    if (output.kind === 'verify_result' && !output.ok && request.policy?.stop_on_verify_failure) {
+      break;
+    }
+  }
+
+  // Build summary
+  // Flush awareness to persistent cross-batch cache
+  for (const [, identity] of snapshotTracker.entries()) {
+    ctx.store().setAwareness({
+      filePath: identity.filePath,
+      snapshotHash: identity.snapshotHash,
+      level: snapshotTracker.getAwarenessLevel(identity.filePath),
+      readRegions: identity.readRegions ?? [],
+      shapeHash: identity.shapeHash,
+      recordedAt: Date.now(),
+    });
+  }
+
+  const okCount = results.filter(r => r.ok).length;
+  const totalCount = results.length;
+  const summary = request.goal
+    ? `${request.goal}: ${okCount}/${totalCount} steps ok (${Date.now() - batchStart}ms)`
+    : `batch: ${okCount}/${totalCount} steps ok (${Date.now() - batchStart}ms)`;
+
+  return {
+    ok: batchOk,
+    summary,
+    step_results: results,
+    final_refs: allRefs.length > 0 ? allRefs : undefined,
+    bb_refs: bbRefs.length > 0 ? bbRefs : undefined,
+    verify: verifyResults.length > 0 ? verifyResults : undefined,
+    interruption,
+    intent_metrics: intentResult.metrics.length > 0 ? intentResult.metrics : undefined,
+    duration_ms: Date.now() - batchStart,
+  };
+}

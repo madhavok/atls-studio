@@ -1,0 +1,1 @@
+export function normPath(p: string) { return p.replace(/\\/g, '/'); }

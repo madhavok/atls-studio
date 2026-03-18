@@ -1,0 +1,396 @@
+[
+  {
+    "id": "TS__TYPESCRIPT_ESLINT_NO_EXPLICIT_ANY",
+    "languages": [
+      "typescript"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Disallow usage of the any type",
+    "description": "Using the `any` type defeats the purpose of using TypeScript. Avoid it where possible.",
+    "tags": [
+      "eslint"
+    ],
+    "sources": [
+      {
+        "source": "eslint",
+        "ruleId": "@typescript-eslint/no-explicit-any",
+        "url": "https://typescript-eslint.io/rules/no-explicit-any/"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T04:00:54.654Z",
+    "structuralHints": {
+      "treeSitterQuery": "(type_annotation\n  (predefined_type) @offender\n  (#eq? @offender \"any\"))"
+    }
+  },
+  {
+    "id": "TS_CONSOLE_LOG",
+    "languages": [
+      "typescript",
+      "javascript"
+    ],
+    "category": "code_quality",
+    "severity": "low",
+    "title": "console.log left in code",
+    "description": "console.log statements should be removed before production. Use a structured logger instead.",
+    "tags": [
+      "eslint",
+      "cleanup"
+    ],
+    "sources": [
+      {
+        "source": "eslint",
+        "ruleId": "no-console",
+        "url": "https://eslint.org/docs/latest/rules/no-console"
+      }
+    ],
+    "version": "2026.02.16",
+    "updatedAt": "2026-02-16T00:00:00.000Z",
+    "structuralHints": {
+      "treeSitterQuery": "(call_expression\n  function: (member_expression\n    object: (identifier) @obj\n    property: (property_identifier) @prop)\n  (#eq? @obj \"console\")\n  (#match? @prop \"^(log|warn|error|info|debug|trace)$\")) @offender"
+    }
+  },
+  {
+    "id": "TS_NON_NULL_ASSERTION",
+    "languages": [
+      "typescript"
+    ],
+    "category": "code_quality",
+    "severity": "medium",
+    "title": "Non-null assertion operator (!) used",
+    "description": "The non-null assertion operator (!) bypasses TypeScript's null checks. Prefer optional chaining (?.) or explicit null guards.",
+    "tags": [
+      "eslint",
+      "type_safety"
+    ],
+    "sources": [
+      {
+        "source": "eslint",
+        "ruleId": "@typescript-eslint/no-non-null-assertion",
+        "url": "https://typescript-eslint.io/rules/no-non-null-assertion/"
+      }
+    ],
+    "version": "2026.02.16",
+    "updatedAt": "2026-02-16T00:00:00.000Z",
+    "structuralHints": {
+      "treeSitterQuery": "(non_null_expression\n  (_) @inner) @offender"
+    }
+  },
+  {
+    "id": "TS_NESTED_TERNARY",
+    "languages": [
+      "typescript",
+      "javascript"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Nested ternary expression",
+    "description": "Nested ternary expressions are hard to read. Consider using if/else or a helper function.",
+    "tags": [
+      "eslint",
+      "readability"
+    ],
+    "sources": [
+      {
+        "source": "eslint",
+        "ruleId": "no-nested-ternary",
+        "url": "https://eslint.org/docs/latest/rules/no-nested-ternary"
+      }
+    ],
+    "version": "2026.02.16",
+    "updatedAt": "2026-02-16T00:00:00.000Z",
+    "structuralHints": {
+      "treeSitterQuery": "(ternary_expression\n  consequence: (ternary_expression) @offender)"
+    }
+  },
+  {
+    "id": "TS_NESTED_TERNARY_ALT",
+    "languages": [
+      "typescript",
+      "javascript"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Nested ternary expression in alternative branch",
+    "description": "Nested ternary expressions are hard to read. Consider using if/else or a helper function.",
+    "tags": [
+      "eslint",
+      "readability"
+    ],
+    "sources": [
+      {
+        "source": "eslint",
+        "ruleId": "no-nested-ternary",
+        "url": "https://eslint.org/docs/latest/rules/no-nested-ternary"
+      }
+    ],
+    "version": "2026.02.16",
+    "updatedAt": "2026-02-16T00:00:00.000Z",
+    "structuralHints": {
+      "treeSitterQuery": "(ternary_expression\n  alternative: (ternary_expression) @offender)"
+    }
+  },
+  {
+    "id": "TS_EVAL_USAGE",
+    "languages": [
+      "typescript",
+      "javascript"
+    ],
+    "category": "security",
+    "severity": "high",
+    "title": "eval() usage detected",
+    "description": "eval() executes arbitrary code and is a security risk. Use safer alternatives like JSON.parse() or Function constructors.",
+    "tags": [
+      "eslint",
+      "security"
+    ],
+    "sources": [
+      {
+        "source": "eslint",
+        "ruleId": "no-eval",
+        "url": "https://eslint.org/docs/latest/rules/no-eval"
+      }
+    ],
+    "version": "2026.02.16",
+    "updatedAt": "2026-02-16T00:00:00.000Z",
+    "structuralHints": {
+      "treeSitterQuery": "(call_expression\n  function: (identifier) @fn\n  (#eq? @fn \"eval\")) @offender"
+    }
+  },
+  {
+    "id": "TS_ALERT_USAGE",
+    "languages": [
+      "typescript",
+      "javascript"
+    ],
+    "category": "code_quality",
+    "severity": "medium",
+    "title": "alert() usage detected",
+    "description": "alert() blocks the UI thread and should not be used in production code. Use a proper notification/modal component.",
+    "tags": [
+      "eslint",
+      "ux"
+    ],
+    "sources": [
+      {
+        "source": "eslint",
+        "ruleId": "no-alert",
+        "url": "https://eslint.org/docs/latest/rules/no-alert"
+      }
+    ],
+    "version": "2026.02.16",
+    "updatedAt": "2026-02-16T00:00:00.000Z",
+    "structuralHints": {
+      "treeSitterQuery": "(call_expression\n  function: (identifier) @fn\n  (#eq? @fn \"alert\")) @offender"
+    }
+  },
+  {
+    "id": "TS_AS_ANY_CAST",
+    "languages": [
+      "typescript"
+    ],
+    "category": "code_quality",
+    "severity": "medium",
+    "title": "Type assertion to 'any'",
+    "description": "Casting to 'any' bypasses all type checking. Prefer 'as unknown as T' if a type assertion is truly needed, or fix the underlying type issue.",
+    "tags": [
+      "type_safety"
+    ],
+    "sources": [],
+    "version": "2026.02.16",
+    "updatedAt": "2026-02-16T00:00:00.000Z",
+    "structuralHints": {
+      "treeSitterQuery": "(as_expression\n  (predefined_type) @type_name\n  (#eq? @type_name \"any\")) @offender"
+    }
+  },
+  {
+    "id": "TS_EMPTY_CATCH",
+    "languages": [
+      "typescript",
+      "javascript"
+    ],
+    "category": "error_handling",
+    "severity": "medium",
+    "title": "Empty catch block",
+    "description": "Empty catch blocks silently swallow errors. At minimum, log the error or add a comment explaining why it is intentionally ignored.",
+    "tags": [
+      "eslint",
+      "error_handling"
+    ],
+    "sources": [
+      {
+        "source": "eslint",
+        "ruleId": "no-empty",
+        "url": "https://eslint.org/docs/latest/rules/no-empty"
+      }
+    ],
+    "version": "2026.02.16",
+    "updatedAt": "2026-02-16T00:00:00.000Z",
+    "structuralHints": {
+      "treeSitterQuery": "(catch_clause\n  body: (statement_block) @offender\n  (#eq? @offender \"{}\"))"
+    }
+  },
+  {
+    "id": "TS_VAR_DECLARATION",
+    "languages": [
+      "typescript",
+      "javascript"
+    ],
+    "category": "code_quality",
+    "severity": "low",
+    "title": "var declaration used instead of let/const",
+    "description": "var has function-scoped hoisting behavior that causes subtle bugs. Use let or const for block scoping.",
+    "tags": [
+      "eslint",
+      "es6"
+    ],
+    "sources": [
+      {
+        "source": "eslint",
+        "ruleId": "no-var",
+        "url": "https://eslint.org/docs/latest/rules/no-var"
+      }
+    ],
+    "version": "2026.02.16",
+    "updatedAt": "2026-02-16T00:00:00.000Z",
+    "structuralHints": {
+      "treeSitterQuery": "(variable_declaration\n  (variable_declarator\n    name: (identifier) @name)) @offender"
+    }
+  },
+  {
+    "id": "TS_INNERHTML_USAGE",
+    "languages": ["typescript", "javascript"],
+    "category": "security",
+    "severity": "high",
+    "title": "Direct innerHTML assignment (XSS risk)",
+    "description": "Assigning to innerHTML with dynamic content can introduce XSS vulnerabilities. Use textContent, or sanitize input with a library like DOMPurify.",
+    "tags": ["security", "xss"],
+    "sources": [{"source": "eslint", "ruleId": "no-unsanitized/property", "url": "https://github.com/nickstenning/eslint-plugin-no-unsanitized"}],
+    "version": "2026.02.18",
+    "updatedAt": "2026-02-18T00:00:00.000Z",
+    "structuralHints": {
+      "treeSitterQuery": "(assignment_expression\n  left: (member_expression\n    property: (property_identifier) @prop\n    (#eq? @prop \"innerHTML\"))) @offender"
+    }
+  },
+  {
+    "id": "TS_DANGEROUSLY_SET_INNER_HTML",
+    "languages": ["typescript", "javascript"],
+    "category": "security",
+    "severity": "high",
+    "title": "dangerouslySetInnerHTML used in JSX",
+    "description": "dangerouslySetInnerHTML bypasses React's XSS protections. Ensure input is sanitized or use a safer alternative.",
+    "tags": ["security", "xss", "react"],
+    "sources": [{"source": "eslint", "ruleId": "react/no-danger", "url": "https://github.com/jsx-eslint/eslint-plugin-react/blob/master/docs/rules/no-danger.md"}],
+    "version": "2026.02.18",
+    "updatedAt": "2026-02-18T00:00:00.000Z",
+    "structuralHints": {
+      "treeSitterQuery": "(jsx_attribute\n  (property_identifier) @attr\n  (#eq? @attr \"dangerouslySetInnerHTML\")) @offender"
+    }
+  },
+  {
+    "id": "TS_DOCUMENT_WRITE",
+    "languages": ["typescript", "javascript"],
+    "category": "security",
+    "severity": "high",
+    "title": "document.write() usage (XSS risk)",
+    "description": "document.write() can inject arbitrary HTML and is a security risk. Use DOM manipulation methods instead.",
+    "tags": ["security", "xss"],
+    "sources": [{"source": "eslint", "ruleId": "no-document-write", "url": "https://eslint.org/docs/latest/rules/no-restricted-properties"}],
+    "version": "2026.02.18",
+    "updatedAt": "2026-02-18T00:00:00.000Z",
+    "structuralHints": {
+      "treeSitterQuery": "(call_expression\n  function: (member_expression\n    object: (identifier) @obj\n    property: (property_identifier) @prop)\n  (#eq? @obj \"document\")\n  (#eq? @prop \"write\")) @offender"
+    }
+  },
+  {
+    "id": "TS_NEW_FUNCTION",
+    "languages": ["typescript", "javascript"],
+    "category": "security",
+    "severity": "high",
+    "title": "new Function() constructor (code injection risk)",
+    "description": "The Function constructor compiles strings as code at runtime, similar to eval(). Use safer alternatives.",
+    "tags": ["security", "injection"],
+    "sources": [{"source": "eslint", "ruleId": "no-new-func", "url": "https://eslint.org/docs/latest/rules/no-new-func"}],
+    "version": "2026.02.18",
+    "updatedAt": "2026-02-18T00:00:00.000Z",
+    "structuralHints": {
+      "treeSitterQuery": "(new_expression\n  constructor: (identifier) @ctor\n  (#eq? @ctor \"Function\")) @offender"
+    }
+  },
+  {
+    "id": "TS_UNHANDLED_PROMISE",
+    "languages": ["typescript", "javascript"],
+    "category": "error_handling",
+    "severity": "high",
+    "title": "Floating promise (unhandled async result)",
+    "description": "Calling an async function without await, .catch(), or void discards errors silently. Add await or explicit error handling.",
+    "tags": ["async", "error_handling"],
+    "sources": [{"source": "eslint", "ruleId": "@typescript-eslint/no-floating-promises", "url": "https://typescript-eslint.io/rules/no-floating-promises/"}],
+    "version": "2026.02.18",
+    "updatedAt": "2026-02-18T00:00:00.000Z",
+    "structuralHints": {
+      "treeSitterQuery": "(expression_statement\n  (call_expression\n    function: (member_expression\n      property: (property_identifier) @method\n      (#match? @method \"^(then)$\")))) @offender"
+    }
+  },
+  {
+    "id": "TS_THROW_LITERAL",
+    "languages": ["typescript", "javascript"],
+    "category": "error_handling",
+    "severity": "high",
+    "title": "Throwing a non-Error literal",
+    "description": "Throwing a string or other literal loses stack trace information. Always throw an Error instance.",
+    "tags": ["error_handling"],
+    "sources": [{"source": "eslint", "ruleId": "no-throw-literal", "url": "https://eslint.org/docs/latest/rules/no-throw-literal"}],
+    "version": "2026.02.18",
+    "updatedAt": "2026-02-18T00:00:00.000Z",
+    "structuralHints": {
+      "treeSitterQuery": "(throw_statement\n  (string) @offender)"
+    }
+  },
+  {
+    "id": "TS_THROW_LITERAL_TEMPLATE",
+    "languages": ["typescript", "javascript"],
+    "category": "error_handling",
+    "severity": "high",
+    "title": "Throwing a template literal instead of Error",
+    "description": "Throwing a template string loses stack trace information. Always throw an Error instance.",
+    "tags": ["error_handling"],
+    "sources": [{"source": "eslint", "ruleId": "no-throw-literal", "url": "https://eslint.org/docs/latest/rules/no-throw-literal"}],
+    "version": "2026.02.18",
+    "updatedAt": "2026-02-18T00:00:00.000Z",
+    "structuralHints": {
+      "treeSitterQuery": "(throw_statement\n  (template_string) @offender)"
+    }
+  },
+  {
+    "id": "TS_EMPTY_CATCH",
+    "languages": ["typescript", "javascript"],
+    "category": "error_handling",
+    "severity": "high",
+    "title": "Empty catch block swallows errors",
+    "description": "An empty catch block silently suppresses errors, making bugs impossible to diagnose. At minimum, log the error.",
+    "tags": ["error_handling"],
+    "sources": [{"source": "eslint", "ruleId": "no-empty", "url": "https://eslint.org/docs/latest/rules/no-empty"}],
+    "version": "2026.02.18",
+    "updatedAt": "2026-02-18T00:00:00.000Z",
+    "structuralHints": {
+      "treeSitterQuery": "(catch_clause\n  body: (statement_block) @offender\n  (#eq? @offender \"{}\"))"
+    }
+  },
+  {
+    "id": "TS_DEBUGGER",
+    "languages": ["typescript", "javascript"],
+    "category": "code_quality",
+    "severity": "high",
+    "title": "debugger statement left in code",
+    "description": "debugger statements pause execution in browsers and must be removed before production.",
+    "tags": ["cleanup"],
+    "sources": [{"source": "eslint", "ruleId": "no-debugger", "url": "https://eslint.org/docs/latest/rules/no-debugger"}],
+    "version": "2026.02.18",
+    "updatedAt": "2026-02-18T00:00:00.000Z",
+    "structuralHints": {
+      "treeSitterQuery": "(debugger_statement) @offender"
+    }
+  }
+]

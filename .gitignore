@@ -1,0 +1,31 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+target/
+/src-tauri/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# ATLS runtime data
+.atls/
+
+# Logs
+*.log
+
+# Environment
+.env
+.env.local
+CONTEXT_WORKFLOWS.md
+REFACTOR_TOOL_TEST_REPORT.md
+atls-studio/HPP_XRAY_RETEST.md
+.cursor/plans/
+CODEBASE_ANALYSIS.md
+test-hpp-validation.ts

@@ -1,0 +1,4473 @@
+[
+  {
+    "id": "N_PLUS_ONE",
+    "languages": [
+      "typescript",
+      "javascript",
+      "python",
+      "csharp",
+      "java",
+      "php",
+      "go",
+      "swift",
+      "rust",
+      "cpp",
+      "c"
+    ],
+    "category": "Performance",
+    "severity": "high",
+    "title": "N+1 Query Pattern",
+    "description": "Avoid `await` inside loops. Use `Promise.all()` or bulk operations.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "BLOCKING_SYNC",
+    "languages": [
+      "typescript",
+      "javascript",
+      "python",
+      "java",
+      "cpp",
+      "csharp",
+      "php",
+      "go",
+      "swift",
+      "rust"
+    ],
+    "category": "Performance",
+    "severity": "high",
+    "title": "Blocking Synchronous I/O",
+    "description": "Avoid synchronous I/O methods in server code.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "SQL_LIKE_LEADING_WILDCARD",
+    "languages": [
+      "typescript",
+      "javascript",
+      "python",
+      "java",
+      "csharp",
+      "php",
+      "go",
+      "swift",
+      "rust",
+      "cpp",
+      "c",
+      "sql"
+    ],
+    "category": "Performance",
+    "severity": "medium",
+    "title": "SQL LIKE with Leading Wildcard",
+    "description": "Leading wildcard in LIKE query prevents index usage.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "PERFORMANCE_NESTED_LOOP",
+    "languages": [
+      "typescript",
+      "javascript"
+    ],
+    "category": "Performance",
+    "severity": "high",
+    "title": "Nested Loop in Component",
+    "description": "Nested loop in component render detected (O(n²)). Move to useMemo or backend.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "PERFORMANCE_UNSTABLE_PROP",
+    "languages": [
+      "typescript",
+      "javascript"
+    ],
+    "category": "Performance",
+    "severity": "low",
+    "title": "Unstable Prop",
+    "description": "Object/Function literal passed as prop causes re-renders. Consider useMemo/useCallback.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "MEMORY_LEAK",
+    "languages": [
+      "typescript",
+      "javascript",
+      "python",
+      "java",
+      "csharp",
+      "php",
+      "go",
+      "swift",
+      "rust",
+      "cpp",
+      "c"
+    ],
+    "category": "Performance",
+    "severity": "high",
+    "title": "Memory Leak",
+    "description": "useEffect with subscription (setInterval/addEventListener) missing cleanup function.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "GLOBAL_STATE_MUTATION",
+    "languages": [
+      "typescript",
+      "javascript",
+      "python",
+      "java",
+      "csharp",
+      "php",
+      "go",
+      "swift",
+      "rust",
+      "cpp",
+      "c"
+    ],
+    "category": "Performance",
+    "severity": "high",
+    "title": "Global State Mutation",
+    "description": "Avoid mutating global state in useEffect without cleanup/reset mechanism.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "RACE_CONDITION",
+    "languages": [
+      "typescript",
+      "javascript",
+      "python",
+      "java",
+      "csharp",
+      "php",
+      "go",
+      "swift",
+      "rust"
+    ],
+    "category": "Performance",
+    "severity": "medium",
+    "title": "Race Condition",
+    "description": "State update after await should be guarded by isMounted or cleanup flag.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "RACE_CONDITION_GLOBAL_FLAG",
+    "languages": [
+      "typescript",
+      "javascript",
+      "python",
+      "java",
+      "csharp",
+      "php",
+      "go",
+      "swift",
+      "rust"
+    ],
+    "category": "Performance",
+    "severity": "medium",
+    "title": "Race Condition - Global Flag",
+    "description": "Avoid using global flag for synchronization.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "NO_CONSOLE_LOG",
+    "languages": [
+      "typescript",
+      "javascript",
+      "python",
+      "java",
+      "cpp",
+      "csharp",
+      "php",
+      "go",
+      "swift",
+      "rust"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Console.log Usage",
+    "description": "Avoid console.log in production code.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "MAGIC_NUMBER",
+    "languages": [
+      "typescript",
+      "javascript",
+      "python",
+      "java",
+      "cpp",
+      "csharp",
+      "php",
+      "go",
+      "swift",
+      "rust"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Magic Number",
+    "description": "Magic number detected. Define as constant.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "UNHANDLED_PROMISE",
+    "languages": [
+      "typescript",
+      "javascript"
+    ],
+    "category": "Maintainability",
+    "severity": "medium",
+    "title": "Unhandled Promise",
+    "description": "Promise chain does not end with .catch() or return.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "MISSING_ERROR_BOUNDARY",
+    "languages": [
+      "typescript",
+      "javascript"
+    ],
+    "category": "Correctness",
+    "severity": "medium",
+    "title": "Missing Error Boundary",
+    "description": "Root render missing ErrorBoundary wrapper.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "HARDCODED_SECRET",
+    "languages": [
+      "typescript",
+      "javascript",
+      "python",
+      "java",
+      "csharp",
+      "php",
+      "go",
+      "swift",
+      "rust",
+      "cpp",
+      "c"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "Hardcoded Secret",
+    "description": "Potential hardcoded secret (password, token, key) detected. Use environment variables.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "WEAK_CRYPTO",
+    "languages": [
+      "typescript",
+      "javascript",
+      "python",
+      "java",
+      "csharp",
+      "php",
+      "go",
+      "swift",
+      "rust",
+      "cpp",
+      "c"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "Weak Cryptography",
+    "description": "Weak cryptographic algorithm (MD5, SHA1, DES, RC4) detected. Use SHA-256 or better.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "INSECURE_RANDOM",
+    "languages": [
+      "typescript",
+      "javascript",
+      "python",
+      "java",
+      "csharp",
+      "php",
+      "go",
+      "swift",
+      "rust",
+      "cpp",
+      "c"
+    ],
+    "category": "Security",
+    "severity": "medium",
+    "title": "Insecure Randomness",
+    "description": "Math.random() used in security context. Use crypto.getRandomValues() or crypto module.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "DANGEROUS_INNER_HTML",
+    "languages": [
+      "typescript",
+      "javascript"
+    ],
+    "category": "Security",
+    "severity": "medium",
+    "title": "Dangerous InnerHTML",
+    "description": "Usage of dangerouslySetInnerHTML or .innerHTML detected. Ensure content is sanitized.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "DANGEROUS_EXEC",
+    "languages": [
+      "python"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "Dangerous Execution",
+    "description": "Avoid exec() or eval() as they can execute arbitrary code.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "CIRCULAR_DEPENDENCY",
+    "languages": [
+      "typescript",
+      "javascript",
+      "python",
+      "java",
+      "csharp",
+      "php",
+      "go",
+      "swift",
+      "rust"
+    ],
+    "category": "DesignSmell",
+    "severity": "high",
+    "title": "Circular Dependency",
+    "description": "Circular import dependency detected. This creates tight coupling and makes code harder to maintain.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "DEEP_DEPENDENCY_CHAIN",
+    "languages": [
+      "typescript",
+      "javascript",
+      "python",
+      "java",
+      "csharp",
+      "php",
+      "go",
+      "swift",
+      "rust"
+    ],
+    "category": "DesignSmell",
+    "severity": "medium",
+    "title": "Deep Dependency Chain",
+    "description": "File has a very deep dependency chain (>10 levels). Consider refactoring to reduce coupling.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "GOD_OBJECT",
+    "languages": [
+      "typescript",
+      "javascript",
+      "python",
+      "java",
+      "csharp",
+      "php",
+      "go",
+      "swift",
+      "rust"
+    ],
+    "category": "DesignSmell",
+    "severity": "medium",
+    "title": "God Object",
+    "description": "Class has too many methods or high complexity. Consider splitting into smaller, focused classes.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "LARGE_FILE",
+    "languages": [
+      "typescript",
+      "javascript",
+      "python",
+      "java",
+      "csharp",
+      "php",
+      "go",
+      "swift",
+      "rust",
+      "cpp",
+      "c",
+      "sql"
+    ],
+    "category": "DesignSmell",
+    "severity": "medium",
+    "title": "Large File",
+    "description": "File has excessive line count. Consider splitting into smaller, focused modules for better maintainability and AI code assistance.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "REACT_HOOK_CONDITIONAL",
+    "languages": [
+      "typescript",
+      "javascript"
+    ],
+    "category": "Maintainability",
+    "severity": "high",
+    "title": "Hook Called Conditionally",
+    "description": "React hooks must be called in the same order on every render. Do not call hooks inside conditionals.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "REACT_HOOK_IN_LOOP",
+    "languages": [
+      "typescript",
+      "javascript"
+    ],
+    "category": "Maintainability",
+    "severity": "high",
+    "title": "Hook Called in Loop",
+    "description": "React hooks must not be called inside loops. This violates Rules of Hooks.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "REACT_MISSING_DEPS",
+    "languages": [
+      "typescript",
+      "javascript"
+    ],
+    "category": "Maintainability",
+    "severity": "medium",
+    "title": "Missing Hook Dependencies",
+    "description": "useEffect/useCallback/useMemo has empty dependency array but uses variables from outer scope.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "REACT_STALE_CLOSURE",
+    "languages": [
+      "typescript",
+      "javascript"
+    ],
+    "category": "Maintainability",
+    "severity": "medium",
+    "title": "Stale Closure in Hook",
+    "description": "useEffect missing dependency array may cause stale closures.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "REACT_MISSING_KEY",
+    "languages": [
+      "typescript",
+      "javascript"
+    ],
+    "category": "Maintainability",
+    "severity": "medium",
+    "title": "Missing Key Prop",
+    "description": "Array.map() in JSX should include unique key prop for each element.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "REACT_INLINE_FUNCTION",
+    "languages": [
+      "typescript",
+      "javascript"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Inline Function in JSX",
+    "description": "Inline function in JSX prop causes unnecessary re-renders. Extract to useCallback or component-level function.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "REACT_INLINE_OBJECT",
+    "languages": [
+      "typescript",
+      "javascript"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Inline Object in JSX",
+    "description": "Inline object/array literal in JSX prop. Extract to constant or useMemo to avoid re-renders.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "REACT_PROP_DRILLING",
+    "languages": [
+      "typescript",
+      "javascript"
+    ],
+    "category": "Maintainability",
+    "severity": "medium",
+    "title": "Prop Drilling",
+    "description": "Props passed through multiple component levels. Consider using Context or composition.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "REACT_MISSING_MEMO",
+    "languages": [
+      "typescript",
+      "javascript"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Missing React.memo",
+    "description": "Component may benefit from React.memo() to prevent unnecessary re-renders.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "REACT_EXPENSIVE_COMPUTATION",
+    "languages": [
+      "typescript",
+      "javascript"
+    ],
+    "category": "Maintainability",
+    "severity": "medium",
+    "title": "Expensive Computation in Render",
+    "description": "Expensive array operation in render. Wrap with useMemo to avoid re-computation.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "API_MISSING_AUTH",
+    "languages": [
+      "typescript",
+      "javascript"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "Missing API Authentication",
+    "description": "Route handler missing authentication check. Sensitive endpoints should verify user identity.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "API_MISSING_VALIDATION",
+    "languages": [
+      "typescript",
+      "javascript"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "Missing Input Validation",
+    "description": "Route handler missing input validation. Always validate request body/params.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "API_MISSING_RATE_LIMIT",
+    "languages": [
+      "typescript",
+      "javascript"
+    ],
+    "category": "Security",
+    "severity": "medium",
+    "title": "Missing Rate Limiting",
+    "description": "API server created without rate limiting. Add rate limiting middleware to prevent abuse.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "API_UNBOUNDED_QUERY",
+    "languages": [
+      "typescript",
+      "javascript"
+    ],
+    "category": "Security",
+    "severity": "medium",
+    "title": "Unbounded Database Query",
+    "description": "Database query without limit. Always paginate results to prevent resource exhaustion.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "API_MISSING_CORS",
+    "languages": [
+      "typescript",
+      "javascript"
+    ],
+    "category": "Security",
+    "severity": "medium",
+    "title": "Insecure CORS Policy",
+    "description": "Wildcard CORS policy detected. Specify exact origins instead of '*' for security.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "A11Y_MISSING_ALT",
+    "languages": [
+      "typescript",
+      "javascript",
+      "html"
+    ],
+    "category": "Maintainability",
+    "severity": "medium",
+    "title": "Missing Alt Text",
+    "description": "Image element missing alt attribute. Add alt text for screen readers.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "A11Y_MISSING_LABEL",
+    "languages": [
+      "typescript",
+      "javascript",
+      "html"
+    ],
+    "category": "Maintainability",
+    "severity": "medium",
+    "title": "Missing Input Label",
+    "description": "Input field missing accessible label. Add aria-label, aria-labelledby, or label element.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "A11Y_BUTTON_NO_TEXT",
+    "languages": [
+      "typescript",
+      "javascript",
+      "html"
+    ],
+    "category": "Maintainability",
+    "severity": "medium",
+    "title": "Button Without Text",
+    "description": "Button/link has no accessible text. Add text content or aria-label for screen readers.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "A11Y_CLICKABLE_NO_ROLE",
+    "languages": [
+      "typescript",
+      "javascript",
+      "html"
+    ],
+    "category": "Maintainability",
+    "severity": "medium",
+    "title": "Clickable Element Missing Role",
+    "description": "Clickable element missing role attribute. Add role=\"button\" or use semantic HTML.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "A11Y_INVALID_ARIA",
+    "languages": [
+      "typescript",
+      "javascript",
+      "html"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Invalid ARIA Attribute",
+    "description": "Potentially invalid ARIA attribute. Verify against ARIA specification.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "PYTHON_UNSAFE_PICKLE",
+    "languages": [
+      "python"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "Unsafe Pickle Usage",
+    "description": "Unsafe pickle usage. Never unpickle data from untrusted sources. Consider using json instead.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "PYTHON_UNSAFE_YAML",
+    "languages": [
+      "python"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "Unsafe YAML Loading",
+    "description": "Unsafe YAML loading. Use yaml.safe_load() instead of yaml.load() to prevent code execution.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "PYTHON_EVAL_EXEC",
+    "languages": [
+      "python"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "Dangerous eval/exec",
+    "description": "Avoid eval()/exec(). They can execute arbitrary code and are major security risks.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "PYTHON_SQL_INJECTION",
+    "languages": [
+      "python"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "Python SQL Injection",
+    "description": "Potential SQL injection. Use parameterized queries instead of string formatting.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "PYTHON_SHELL_INJECTION",
+    "languages": [
+      "python"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "Python Shell Injection",
+    "description": "subprocess.call/run with shell=True and user input can lead to command injection.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "PYTHON_PATH_TRAVERSAL",
+    "languages": [
+      "python"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "Python Path Traversal",
+    "description": "os.path.join or open() with unsanitized user input can lead to path traversal attacks.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "PYTHON_INEFFICIENT_LOOP",
+    "languages": [
+      "python"
+    ],
+    "category": "Performance",
+    "severity": "medium",
+    "title": "Python Inefficient Loop",
+    "description": "For loop building list with append(). Use list comprehension for better performance.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "PYTHON_MUTABLE_DEFAULT",
+    "languages": [
+      "python"
+    ],
+    "category": "Maintainability",
+    "severity": "high",
+    "title": "Python Mutable Default Argument",
+    "description": "Mutable default arguments ([], {}, set()) create shared state. Use None and initialize in function.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "PYTHON_SLOW_LOOP",
+    "languages": [
+      "python"
+    ],
+    "category": "Performance",
+    "severity": "medium",
+    "title": "Python Slow Loop",
+    "description": "Nested loops detected. Consider optimizing with list comprehensions, itertools, or vectorized operations.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "PYTHON_MEMORY_INTENSIVE",
+    "languages": [
+      "python"
+    ],
+    "category": "Performance",
+    "severity": "medium",
+    "title": "Python Memory Intensive Operation",
+    "description": "Large list/dict comprehension or file reading may consume significant memory. Consider using generators or chunked processing.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "PYTHON_BLOCKING_CALL",
+    "languages": [
+      "python"
+    ],
+    "category": "Performance",
+    "severity": "high",
+    "title": "Python Blocking Call",
+    "description": "Blocking I/O call in async function. Use async alternatives to avoid blocking the event loop.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "PYTHON_MISSING_TYPE_HINTS",
+    "languages": [
+      "python"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Python Missing Type Hints",
+    "description": "Function definition missing type hints. Add type annotations for better code clarity and static type checking.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "PYTHON_BROAD_EXCEPT",
+    "languages": [
+      "python"
+    ],
+    "category": "Maintainability",
+    "severity": "high",
+    "title": "Python Broad Exception Handling",
+    "description": "Bare except or catching Exception is too broad. Catch specific exceptions to handle errors appropriately.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "PYTHON_UNUSED_IMPORT",
+    "languages": [
+      "python"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Python Unused Import",
+    "description": "Potentially unused import. Remove if not used to keep code clean.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "PYTHON_COMPLEX_COMPREHENSION",
+    "languages": [
+      "python"
+    ],
+    "category": "Maintainability",
+    "severity": "medium",
+    "title": "Python Complex Comprehension",
+    "description": "Complex comprehension may be hard to read. Consider extracting to a regular loop or breaking into multiple comprehensions.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "PYTHON_CIRCULAR_IMPORT",
+    "languages": [
+      "python"
+    ],
+    "category": "DesignSmell",
+    "severity": "medium",
+    "title": "Python Circular Import",
+    "description": "Many imports detected. Review for potential circular imports. Consider using dependency injection or lazy imports.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "PYTHON_GOD_MODULE",
+    "languages": [
+      "python"
+    ],
+    "category": "DesignSmell",
+    "severity": "medium",
+    "title": "Python God Module",
+    "description": "Module has too many top-level definitions or too much top-level code. Consider splitting into smaller, focused modules.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "PYTHON_DEEP_NESTING",
+    "languages": [
+      "python"
+    ],
+    "category": "DesignSmell",
+    "severity": "medium",
+    "title": "Python Deep Nesting",
+    "description": "Deep nesting detected. Consider refactoring with early returns, guard clauses, or extracting functions.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "JAVA_SQL_INJECTION",
+    "languages": [
+      "java"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "Java SQL Injection",
+    "description": "SQL injection via string concatenation. Use PreparedStatement with parameterized queries.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "JAVA_DESERIALIZATION",
+    "languages": [
+      "java"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "Java Unsafe Deserialization",
+    "description": "Unsafe deserialization can lead to remote code execution. Validate types or use safer alternatives.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "JAVA_DOUBLE_CHECKED_LOCKING",
+    "languages": [
+      "java"
+    ],
+    "category": "Performance",
+    "severity": "high",
+    "title": "Java Broken Double-Checked Locking",
+    "description": "Double-checked locking without volatile is broken. Use volatile or eager initialization.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "JAVA_SYNCHRONIZED_COLLECTION",
+    "languages": [
+      "java"
+    ],
+    "category": "Performance",
+    "severity": "medium",
+    "title": "Java Synchronized Collection Misuse",
+    "description": "synchronized collections need manual sync for compound ops. Use Concurrent collections instead.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "JAVA_RESOURCE_LEAK",
+    "languages": [
+      "java"
+    ],
+    "category": "Maintainability",
+    "severity": "high",
+    "title": "Java Resource Leak",
+    "description": "Resource not closed properly. Use try-with-resources for AutoCloseable resources.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "JAVA_XSS",
+    "languages": [
+      "java"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "Java XSS Vulnerability",
+    "description": "Potential XSS vulnerability. Escape user input before outputting to HTML.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "JAVA_PATH_TRAVERSAL",
+    "languages": [
+      "java"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "Java Path Traversal",
+    "description": "Path traversal risk. Validate and sanitize file paths from user input.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "JAVA_WEAK_CRYPTO",
+    "languages": [
+      "java"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "Java Weak Cryptography",
+    "description": "Weak cryptographic algorithm. Use stronger algorithms like SHA-256, AES-256-GCM.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "JAVA_N_PLUS_ONE",
+    "languages": [
+      "java"
+    ],
+    "category": "Performance",
+    "severity": "high",
+    "title": "Java N+1 Query Problem",
+    "description": "N+1 query problem detected. Batch queries or use JOIN FETCH in JPA/Hibernate.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "JAVA_SLOW_COLLECTION",
+    "languages": [
+      "java"
+    ],
+    "category": "Performance",
+    "severity": "medium",
+    "title": "Java Slow Collection",
+    "description": "Inefficient collection usage. Consider using more appropriate collection types.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "JAVA_MEMORY_LEAK",
+    "languages": [
+      "java"
+    ],
+    "category": "Performance",
+    "severity": "medium",
+    "title": "Java Memory Leak",
+    "description": "Potential memory leak detected. Ensure proper cleanup of resources and listeners.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "JAVA_BLOCKING_IO",
+    "languages": [
+      "java"
+    ],
+    "category": "Performance",
+    "severity": "high",
+    "title": "Java Blocking I/O",
+    "description": "Blocking I/O operation. Consider using async alternatives for better scalability.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "JAVA_MAGIC_NUMBER",
+    "languages": [
+      "java"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Java Magic Number",
+    "description": "Magic number detected. Extract to a named constant with descriptive name.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "JAVA_UNUSED_IMPORT",
+    "languages": [
+      "java"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Java Unused Import",
+    "description": "Potentially unused import. Remove if not used to keep code clean.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "JAVA_BROAD_EXCEPTION",
+    "languages": [
+      "java"
+    ],
+    "category": "Maintainability",
+    "severity": "medium",
+    "title": "Java Broad Exception Handling",
+    "description": "Catching Exception or Throwable is too broad. Catch specific exception types.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "JAVA_MISSING_NULL_CHECK",
+    "languages": [
+      "java"
+    ],
+    "category": "Maintainability",
+    "severity": "medium",
+    "title": "Java Missing Null Check",
+    "description": "Method may return null. Add null check before using the result.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "JAVA_CIRCULAR_DEPENDENCY",
+    "languages": [
+      "java"
+    ],
+    "category": "DesignSmell",
+    "severity": "medium",
+    "title": "Java Circular Dependency",
+    "description": "Potential circular dependency detected. Consider using dependency injection or breaking cycles.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "JAVA_GOD_CLASS",
+    "languages": [
+      "java"
+    ],
+    "category": "DesignSmell",
+    "severity": "medium",
+    "title": "Java God Class",
+    "description": "Class has too many methods or members. Consider splitting into smaller, focused classes.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "JAVA_DEEP_HIERARCHY",
+    "languages": [
+      "java"
+    ],
+    "category": "DesignSmell",
+    "severity": "medium",
+    "title": "Java Deep Inheritance Hierarchy",
+    "description": "Deep inheritance hierarchy detected. Consider using composition over inheritance.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "JAVA_TIGHT_COUPLING",
+    "languages": [
+      "java"
+    ],
+    "category": "DesignSmell",
+    "severity": "medium",
+    "title": "Java Tight Coupling",
+    "description": "High coupling detected. Consider using dependency injection and programming to interfaces.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "JAVA_SPRING_MISSING_TRANSACTION",
+    "languages": [
+      "java"
+    ],
+    "category": "DesignSmell",
+    "severity": "high",
+    "title": "Spring Missing Transaction",
+    "description": "Data modification method missing @Transactional annotation.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "JAVA_SPRING_CIRCULAR_DEPENDENCY",
+    "languages": [
+      "java"
+    ],
+    "category": "DesignSmell",
+    "severity": "medium",
+    "title": "Spring Circular Dependency",
+    "description": "Potential circular dependency in Spring beans. Consider using @Lazy or refactoring.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "JAVA_SPRING_LAZY_INIT",
+    "languages": [
+      "java"
+    ],
+    "category": "DesignSmell",
+    "severity": "low",
+    "title": "Spring Lazy Initialization",
+    "description": "Consider @Lazy initialization for large beans or be aware of proxy behavior.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "JAVA_SPRING_MISSING_AUTH",
+    "languages": [
+      "java"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "Spring Missing Authorization",
+    "description": "Controller endpoint missing authorization annotation. Add @PreAuthorize or @Secured.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "JAVA_SPRING_N_PLUS_ONE",
+    "languages": [
+      "java"
+    ],
+    "category": "Performance",
+    "severity": "high",
+    "title": "Spring N+1 Query Problem",
+    "description": "N+1 query problem in Spring/JPA. Use JOIN FETCH or @EntityGraph.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "CSHARP_SQL_INJECTION",
+    "languages": [
+      "csharp"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "C# SQL Injection",
+    "description": "SQL injection via string concatenation. Use SqlCommand with SqlParameter objects.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "CSHARP_LDAP_INJECTION",
+    "languages": [
+      "csharp"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "C# LDAP Injection",
+    "description": "LDAP injection risk. Sanitize and escape user input in LDAP filters.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "CSHARP_XSS",
+    "languages": [
+      "csharp"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "C# XSS Vulnerability",
+    "description": "XSS vulnerability. Use HttpUtility.HtmlEncode or HtmlEncoder.Default.Encode to encode user input.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "CSHARP_PATH_TRAVERSAL",
+    "languages": [
+      "csharp"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "C# Path Traversal",
+    "description": "Path traversal risk. Validate and sanitize file paths from user input.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "CSHARP_BOXING",
+    "languages": [
+      "csharp"
+    ],
+    "category": "Performance",
+    "severity": "medium",
+    "title": "C# Boxing",
+    "description": "Boxing value types to object causes performance overhead. Use generic types.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "CSHARP_STRING_CONCAT",
+    "languages": [
+      "csharp"
+    ],
+    "category": "Performance",
+    "severity": "medium",
+    "title": "C# String Concatenation in Loop",
+    "description": "String concatenation in loops is slow. Use StringBuilder for better performance.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "CSHARP_N_PLUS_ONE",
+    "languages": [
+      "csharp"
+    ],
+    "category": "Performance",
+    "severity": "high",
+    "title": "C# N+1 Query Problem",
+    "description": "N+1 query problem detected. Load related data eagerly with Include() or use projection.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "CSHARP_SLOW_LINQ",
+    "languages": [
+      "csharp"
+    ],
+    "category": "Performance",
+    "severity": "medium",
+    "title": "C# Slow LINQ Query",
+    "description": "Inefficient LINQ query. Consider combining operations or using compiled queries.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "CSHARP_MEMORY_LEAK",
+    "languages": [
+      "csharp"
+    ],
+    "category": "Performance",
+    "severity": "medium",
+    "title": "C# Memory Leak",
+    "description": "Potential memory leak detected. Ensure proper cleanup of resources and event handlers.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "CSHARP_BLOCKING_ASYNC",
+    "languages": [
+      "csharp"
+    ],
+    "category": "Performance",
+    "severity": "high",
+    "title": "C# Blocking Async Call",
+    "description": "Blocking async call. Using .Result or .Wait() blocks the thread. Use await instead.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "CSHARP_MAGIC_NUMBER",
+    "languages": [
+      "csharp"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "C# Magic Number",
+    "description": "Magic number detected. Extract to a named constant with descriptive name.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "CSHARP_UNUSED_USING",
+    "languages": [
+      "csharp"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "C# Unused Using Directive",
+    "description": "Unused using directive. Remove if not needed.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "CSHARP_BROAD_EXCEPTION",
+    "languages": [
+      "csharp"
+    ],
+    "category": "Maintainability",
+    "severity": "medium",
+    "title": "C# Broad Exception Handling",
+    "description": "Catching broad exception type. Catch specific exceptions or rethrow after logging.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "CSHARP_MISSING_NULL_CHECK",
+    "languages": [
+      "csharp"
+    ],
+    "category": "Maintainability",
+    "severity": "medium",
+    "title": "C# Missing Null Check",
+    "description": "Potential NullReferenceException. Add null check or use null-conditional operator (?.).",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "CSHARP_RESOURCE_LEAK",
+    "languages": [
+      "csharp"
+    ],
+    "category": "Maintainability",
+    "severity": "high",
+    "title": "C# Resource Leak",
+    "description": "Resource leak: IDisposable resource without using statement. Wrap in using() statement.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "CSHARP_ASYNC_VOID",
+    "languages": [
+      "csharp"
+    ],
+    "category": "Maintainability",
+    "severity": "high",
+    "title": "C# Async Void",
+    "description": "async void makes error handling difficult. Use async Task instead (except for event handlers).",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "CSHARP_CIRCULAR_DEPENDENCY",
+    "languages": [
+      "csharp"
+    ],
+    "category": "DesignSmell",
+    "severity": "medium",
+    "title": "C# Circular Dependency",
+    "description": "Potential circular dependency detected. Consider using dependency injection or breaking cycles.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "CSHARP_GOD_CLASS",
+    "languages": [
+      "csharp"
+    ],
+    "category": "DesignSmell",
+    "severity": "medium",
+    "title": "C# God Class",
+    "description": "God class detected. Consider splitting into smaller, focused classes following Single Responsibility Principle.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "CSHARP_DEEP_HIERARCHY",
+    "languages": [
+      "csharp"
+    ],
+    "category": "DesignSmell",
+    "severity": "medium",
+    "title": "C# Deep Inheritance Hierarchy",
+    "description": "Deep inheritance hierarchy detected. Consider using composition over inheritance or flattening the hierarchy.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "CSHARP_TIGHT_COUPLING",
+    "languages": [
+      "csharp"
+    ],
+    "category": "DesignSmell",
+    "severity": "medium",
+    "title": "C# Tight Coupling",
+    "description": "Tight coupling detected. Consider using dependency injection to reduce coupling and improve testability.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "CSHARP_EF_N_PLUS_ONE",
+    "languages": [
+      "csharp"
+    ],
+    "category": "DesignSmell",
+    "severity": "high",
+    "title": "C# Entity Framework N+1 Query",
+    "description": "Entity Framework N+1 query problem. Use Include() or projection to load related data eagerly.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "CSHARP_EF_MISSING_INDEX",
+    "languages": [
+      "csharp"
+    ],
+    "category": "DesignSmell",
+    "severity": "low",
+    "title": "C# Entity Framework Missing Index",
+    "description": "Query might benefit from an index. Consider adding [Index] attribute or HasIndex() in OnModelCreating.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "CSHARP_ASP_MISSING_AUTH",
+    "languages": [
+      "csharp"
+    ],
+    "category": "DesignSmell",
+    "severity": "high",
+    "title": "C# ASP.NET Missing Authorization",
+    "description": "ASP.NET action method missing [Authorize] attribute. Add [Authorize] to protect the endpoint.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "CSHARP_ASP_MISSING_VALIDATION",
+    "languages": [
+      "csharp"
+    ],
+    "category": "DesignSmell",
+    "severity": "high",
+    "title": "C# ASP.NET Missing Validation",
+    "description": "Model parameter missing validation. Add validation attributes or check ModelState.IsValid.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "GO_SQL_INJECTION",
+    "languages": [
+      "go"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "Go SQL Injection",
+    "description": "SQL injection risk. Use parameterized queries with ? placeholders instead of string concatenation.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "GO_COMMAND_INJECTION",
+    "languages": [
+      "go"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "Go Command Injection",
+    "description": "Command injection risk. Avoid shell execution with user input. Use exec.Command with separate arguments.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "GO_PATH_TRAVERSAL",
+    "languages": [
+      "go"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "Go Path Traversal",
+    "description": "Path traversal risk. Sanitize user input using filepath.Clean, filepath.Base, or filepath.Join before file operations.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "GO_DEFER_IN_LOOP",
+    "languages": [
+      "go"
+    ],
+    "category": "Performance",
+    "severity": "high",
+    "title": "Go Defer in Loop",
+    "description": "defer in loop accumulates until function returns, causing resource leaks. Move cleanup to separate function.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "GO_SLOW_STRING_BUILDER",
+    "languages": [
+      "go"
+    ],
+    "category": "Performance",
+    "severity": "medium",
+    "title": "Go Slow String Builder",
+    "description": "String concatenation in loop is inefficient. Use strings.Builder for better performance when building strings in loops.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "GO_MEMORY_LEAK",
+    "languages": [
+      "go"
+    ],
+    "category": "Performance",
+    "severity": "medium",
+    "title": "Go Memory Leak",
+    "description": "Large slice allocation without bounds checking. Ensure memory usage is bounded to prevent memory leaks.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "GO_BLOCKING_GOROUTINE",
+    "languages": [
+      "go"
+    ],
+    "category": "Performance",
+    "severity": "medium",
+    "title": "Go Blocking Goroutine",
+    "description": "Blocking I/O operation in goroutine. Consider using context.WithTimeout or non-blocking patterns.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "GO_INEFFICIENT_SLICE",
+    "languages": [
+      "go"
+    ],
+    "category": "Performance",
+    "severity": "low",
+    "title": "Go Inefficient Slice",
+    "description": "Slice allocation without capacity hint. If you know the approximate size, use make([]T, 0, capacity) to reduce allocations.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "GO_MAGIC_NUMBER",
+    "languages": [
+      "go"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Go Magic Number",
+    "description": "Magic number detected. Extract to a named constant for better readability and maintainability.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "GO_UNUSED_IMPORT",
+    "languages": [
+      "go"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Go Unused Import",
+    "description": "Unused import detected. Remove unused imports to keep code clean.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "GO_BROAD_ERROR",
+    "languages": [
+      "go"
+    ],
+    "category": "Maintainability",
+    "severity": "medium",
+    "title": "Go Broad Error Handling",
+    "description": "Broad error handling. Provide specific error context or handle errors more specifically.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "GO_MISSING_ERROR_CHECK",
+    "languages": [
+      "go"
+    ],
+    "category": "Maintainability",
+    "severity": "high",
+    "title": "Go Missing Error Check",
+    "description": "Missing error check. Always check errors returned from functions.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "GO_RESOURCE_LEAK",
+    "languages": [
+      "go"
+    ],
+    "category": "Maintainability",
+    "severity": "high",
+    "title": "Go Resource Leak",
+    "description": "Potential resource leak. Use defer file.Close() or defer resp.Body.Close() to ensure resources are closed.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "GO_IGNORED_ERROR",
+    "languages": [
+      "go"
+    ],
+    "category": "Maintainability",
+    "severity": "medium",
+    "title": "Go Ignored Error",
+    "description": "Error return value ignored with blank identifier. Handle or explicitly document why safe to ignore.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "GO_GOROUTINE_LEAK",
+    "languages": [
+      "go"
+    ],
+    "category": "Performance",
+    "severity": "high",
+    "title": "Go Goroutine Leak",
+    "description": "Goroutine without cleanup mechanism. Use context.WithCancel, done channel, or sync.WaitGroup.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "GO_CHANNEL_DEADLOCK",
+    "languages": [
+      "go"
+    ],
+    "category": "Performance",
+    "severity": "medium",
+    "title": "Go Channel Deadlock",
+    "description": "Unbuffered channel can cause deadlock. Ensure send/receive in different goroutines or use buffered channel.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "GO_RACE_CONDITION",
+    "languages": [
+      "go"
+    ],
+    "category": "Performance",
+    "severity": "high",
+    "title": "Go Race Condition",
+    "description": "Potential race condition. Use sync.Mutex, sync.RWMutex, or atomic operations to protect shared state.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "GO_PANIC_IN_LIBRARY",
+    "languages": [
+      "go"
+    ],
+    "category": "Maintainability",
+    "severity": "high",
+    "title": "Go Panic in Library",
+    "description": "panic() in library code. Return errors instead - let callers decide how to handle errors.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "GO_MISSING_ERROR_HANDLING",
+    "languages": [
+      "go"
+    ],
+    "category": "Maintainability",
+    "severity": "high",
+    "title": "Go Missing Error Handling",
+    "description": "Missing error handling. Always check and handle errors returned from functions.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "GO_PANIC_IN_PRODUCTION",
+    "languages": [
+      "go"
+    ],
+    "category": "Maintainability",
+    "severity": "high",
+    "title": "Go Panic in Production",
+    "description": "panic() in production code. Return errors instead of panicking - let callers decide how to handle errors.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "GO_CIRCULAR_IMPORT",
+    "languages": [
+      "go"
+    ],
+    "category": "DesignSmell",
+    "severity": "medium",
+    "title": "Go Circular Import",
+    "description": "Potential circular import. Circular imports can cause compilation issues and tight coupling.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "GO_GOD_PACKAGE",
+    "languages": [
+      "go"
+    ],
+    "category": "DesignSmell",
+    "severity": "medium",
+    "title": "Go God Package",
+    "description": "Package has too many responsibilities. Consider splitting into smaller, focused packages.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "GO_DEEP_NESTING",
+    "languages": [
+      "go"
+    ],
+    "category": "DesignSmell",
+    "severity": "medium",
+    "title": "Go Deep Nesting",
+    "description": "Deep nesting detected. Consider refactoring to reduce nesting depth for better readability.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "GO_TIGHT_COUPLING",
+    "languages": [
+      "go"
+    ],
+    "category": "DesignSmell",
+    "severity": "low",
+    "title": "Go Tight Coupling",
+    "description": "Package-level variable (global state) can lead to tight coupling. Consider using dependency injection.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "RUST_UNSAFE_BLOCK",
+    "languages": [
+      "rust"
+    ],
+    "category": "Maintainability",
+    "severity": "high",
+    "title": "Rust Unsafe Block",
+    "description": "unsafe block or function. Document why necessary and ensure safety invariants are maintained.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "RUST_UNWRAP_PANIC",
+    "languages": [
+      "rust"
+    ],
+    "category": "Maintainability",
+    "severity": "medium",
+    "title": "Rust Unwrap Panic",
+    "description": ".unwrap() can panic. Use .unwrap_or(), .expect() with message, or ? operator for error handling.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "RUST_CLONE_OVERUSE",
+    "languages": [
+      "rust"
+    ],
+    "category": "Performance",
+    "severity": "medium",
+    "title": "Rust Clone Overuse",
+    "description": "Excessive .clone() usage. Consider references, Rc/Arc, or restructuring to avoid unnecessary clones.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "RUST_SEND_SYNC_VIOLATION",
+    "languages": [
+      "rust"
+    ],
+    "category": "Performance",
+    "severity": "high",
+    "title": "Rust Send/Sync Violation",
+    "description": "unsafe impl Send/Sync or raw pointers in structs. Ensure thread safety invariants are maintained.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "RUST_UNNECESSARY_ALLOCATION",
+    "languages": [
+      "rust"
+    ],
+    "category": "Performance",
+    "severity": "medium",
+    "title": "Rust Unnecessary Allocation",
+    "description": "Vec/String parameter when &[T]/&str would suffice. Use references to avoid forcing allocations.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "RUST_UNINITIALIZED_MEMORY",
+    "languages": [
+      "rust"
+    ],
+    "category": "Maintainability",
+    "severity": "high",
+    "title": "Rust Uninitialized Memory",
+    "description": "Uninitialized memory access. Ensure memory is properly initialized before use.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "RUST_DANGLING_POINTER",
+    "languages": [
+      "rust"
+    ],
+    "category": "Maintainability",
+    "severity": "high",
+    "title": "Rust Dangling Pointer",
+    "description": "Potential dangling pointer. Ensure pointer is valid and not dangling before use.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "RUST_DATA_RACE",
+    "languages": [
+      "rust"
+    ],
+    "category": "Maintainability",
+    "severity": "high",
+    "title": "Rust Data Race",
+    "description": "Potential data race. Use thread-safe alternatives like Mutex, RwLock, or atomic types.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "RUST_SLOW_CLONE",
+    "languages": [
+      "rust"
+    ],
+    "category": "Performance",
+    "severity": "medium",
+    "title": "Rust Slow Clone",
+    "description": "Expensive clone operation. Consider using references, Rc/Arc, or restructuring to avoid clones.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "RUST_BLOCKING_ASYNC",
+    "languages": [
+      "rust"
+    ],
+    "category": "Performance",
+    "severity": "high",
+    "title": "Rust Blocking Async",
+    "description": "Blocking operation in async function. Use async alternatives to avoid blocking the executor.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "RUST_MEMORY_LEAK",
+    "languages": [
+      "rust"
+    ],
+    "category": "Performance",
+    "severity": "high",
+    "title": "Rust Memory Leak",
+    "description": "Potential memory leak. Ensure memory is properly managed and cleaned up.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "RUST_MAGIC_NUMBER",
+    "languages": [
+      "rust"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Rust Magic Number",
+    "description": "Magic number detected. Extract to a named constant for better readability.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "RUST_UNUSED_IMPORT",
+    "languages": [
+      "rust"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Rust Unused Import",
+    "description": "Unused import or wildcard import. Prefer explicit imports to avoid namespace pollution.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "RUST_UNWRAP_IN_PRODUCTION",
+    "languages": [
+      "rust"
+    ],
+    "category": "Maintainability",
+    "severity": "medium",
+    "title": "Rust Unwrap in Production",
+    "description": ".unwrap() can panic in production. Use proper error handling with match, if let, or ? operator.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "RUST_MISSING_ERROR_HANDLING",
+    "languages": [
+      "rust"
+    ],
+    "category": "Maintainability",
+    "severity": "high",
+    "title": "Rust Missing Error Handling",
+    "description": "Missing error handling for Result type. Handle errors with match, if let, ? operator, or .unwrap()/.expect().",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "RUST_COMPLEX_MATCH",
+    "languages": [
+      "rust"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Rust Complex Match",
+    "description": "Complex match expression. Consider extracting to a function or using a different pattern.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "RUST_UNNECESSARY_BORROW",
+    "languages": [
+      "rust"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Rust Unnecessary Borrow",
+    "description": "Unnecessary borrow. Copy types can be passed by value, or prefer &str/&[T] over &String/&Vec<T>.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "RUST_MOVE_AFTER_BORROW",
+    "languages": [
+      "rust"
+    ],
+    "category": "Maintainability",
+    "severity": "high",
+    "title": "Rust Move After Borrow",
+    "description": "Potential move after borrow. Ensure borrows don't outlive the moved value.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "RUST_LIFETIME_VIOLATION",
+    "languages": [
+      "rust"
+    ],
+    "category": "Maintainability",
+    "severity": "high",
+    "title": "Rust Lifetime Violation",
+    "description": "Potential lifetime violation. Ensure references outlive their usage or add explicit lifetime parameters.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "RUST_CIRCULAR_DEPENDENCY",
+    "languages": [
+      "rust"
+    ],
+    "category": "DesignSmell",
+    "severity": "medium",
+    "title": "Rust Circular Dependency",
+    "description": "Potential circular dependency. Circular dependencies can cause compilation issues and tight coupling.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "RUST_GOD_MODULE",
+    "languages": [
+      "rust"
+    ],
+    "category": "DesignSmell",
+    "severity": "medium",
+    "title": "Rust God Module",
+    "description": "Module has too many responsibilities. Consider splitting into smaller, focused modules.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "RUST_DEEP_NESTING",
+    "languages": [
+      "rust"
+    ],
+    "category": "DesignSmell",
+    "severity": "medium",
+    "title": "Rust Deep Nesting",
+    "description": "Deep nesting detected. Consider refactoring to reduce nesting depth for better readability.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "RUST_TIGHT_COUPLING",
+    "languages": [
+      "rust"
+    ],
+    "category": "DesignSmell",
+    "severity": "medium",
+    "title": "Rust Tight Coupling",
+    "description": "Tight coupling detected. Consider using dependency injection or passing dependencies explicitly.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "CPP_BUFFER_OVERFLOW",
+    "languages": [
+      "cpp",
+      "c"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "C++ Buffer Overflow",
+    "description": "Unsafe C string functions (strcpy, strcat, sprintf, gets, scanf) can cause buffer overflows. Use safer alternatives.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "CPP_USE_AFTER_FREE",
+    "languages": [
+      "cpp",
+      "c"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "C++ Use After Free",
+    "description": "Accessing memory after delete/free causes undefined behavior. Set pointer to nullptr/NULL after freeing.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "CPP_NULL_DEREFERENCE",
+    "languages": [
+      "cpp",
+      "c"
+    ],
+    "category": "Security",
+    "severity": "medium",
+    "title": "C++ Null Dereference",
+    "description": "Dynamic allocation can return NULL/nullptr. Check for null before dereferencing.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "CPP_FORMAT_STRING",
+    "languages": [
+      "cpp",
+      "c"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "C++ Format String Vulnerability",
+    "description": "Format string vulnerability in printf/scanf/syslog. Use string literal format string or validate input.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "CPP_MEMORY_LEAK",
+    "languages": [
+      "cpp",
+      "c"
+    ],
+    "category": "Performance",
+    "severity": "high",
+    "title": "C++ Memory Leak",
+    "description": "Memory allocated with new/malloc must be freed with delete/free. Use smart pointers or RAII.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "CPP_DOUBLE_FREE",
+    "languages": [
+      "cpp",
+      "c"
+    ],
+    "category": "Performance",
+    "severity": "high",
+    "title": "C++ Double Free",
+    "description": "Freeing memory twice causes undefined behavior. Set pointer to nullptr/NULL after first free.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "CPP_RAII_VIOLATION",
+    "languages": [
+      "cpp"
+    ],
+    "category": "Performance",
+    "severity": "medium",
+    "title": "C++ RAII Violation",
+    "description": "Raw owning pointer detected. Use std::unique_ptr or std::shared_ptr for automatic resource management.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "CPP_DATA_RACE",
+    "languages": [
+      "cpp",
+      "c"
+    ],
+    "category": "Performance",
+    "severity": "high",
+    "title": "C++ Data Race",
+    "description": "Unsynchronized access to shared mutable state. Use std::mutex or std::atomic.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "CPP_DEADLOCK_RISK",
+    "languages": [
+      "cpp",
+      "c"
+    ],
+    "category": "Performance",
+    "severity": "high",
+    "title": "C++ Deadlock Risk",
+    "description": "Multiple locks acquired without consistent ordering or RAII. Use std::scoped_lock or std::lock_guard.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "CPP_UNDEFINED_BEHAVIOR",
+    "languages": [
+      "cpp",
+      "c"
+    ],
+    "category": "Maintainability",
+    "severity": "high",
+    "title": "C++ Undefined Behavior",
+    "description": "Code pattern that causes undefined behavior (signed overflow, array out of bounds, dereferencing end(), etc.).",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "CPP_SLOW_ALGORITHM",
+    "languages": [
+      "cpp",
+      "c"
+    ],
+    "category": "Performance",
+    "severity": "medium",
+    "title": "C++ Slow Algorithm",
+    "description": "Inefficient algorithm detected (O(n²) operations, linear search in loop, vector erase in loop). Optimize algorithm or use better data structures.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "CPP_INEFFICIENT_COPY",
+    "languages": [
+      "cpp"
+    ],
+    "category": "Performance",
+    "severity": "low",
+    "title": "C++ Inefficient Copy",
+    "description": "Unnecessary copy of large object (std::string, std::vector). Use const reference or move semantics.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "CPP_BLOCKING_IO",
+    "languages": [
+      "cpp",
+      "c"
+    ],
+    "category": "Performance",
+    "severity": "high",
+    "title": "C++ Blocking I/O",
+    "description": "Blocking I/O operation detected. Consider using async I/O or separate thread for better performance.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "CPP_MAGIC_NUMBER",
+    "languages": [
+      "cpp",
+      "c"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "C++ Magic Number",
+    "description": "Magic number detected. Extract to a named constant with descriptive name.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "CPP_UNUSED_INCLUDE",
+    "languages": [
+      "cpp",
+      "c"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "C++ Unused Include",
+    "description": "Unused include detected. Remove if not needed.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "CPP_RAW_POINTER",
+    "languages": [
+      "cpp"
+    ],
+    "category": "Maintainability",
+    "severity": "medium",
+    "title": "C++ Raw Pointer",
+    "description": "Raw pointer detected. Consider using smart pointer (unique_ptr/shared_ptr) or reference.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "CPP_MISSING_NULL_CHECK",
+    "languages": [
+      "cpp",
+      "c"
+    ],
+    "category": "Maintainability",
+    "severity": "medium",
+    "title": "C++ Missing Null Check",
+    "description": "Pointer dereferenced without null check. Check for null before dereferencing.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "CPP_RESOURCE_LEAK",
+    "languages": [
+      "cpp",
+      "c"
+    ],
+    "category": "Maintainability",
+    "severity": "high",
+    "title": "C++ Resource Leak",
+    "description": "Resource opened without cleanup (file, socket, mutex). Use RAII wrapper or ensure cleanup is called.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "CPP_SIGNED_OVERFLOW",
+    "languages": [
+      "cpp",
+      "c"
+    ],
+    "category": "Maintainability",
+    "severity": "medium",
+    "title": "C++ Signed Overflow",
+    "description": "Signed integer arithmetic can overflow (undefined behavior). Consider using unsigned types or check for overflow.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "CPP_CIRCULAR_DEPENDENCY",
+    "languages": [
+      "cpp",
+      "c"
+    ],
+    "category": "DesignSmell",
+    "severity": "medium",
+    "title": "C++ Circular Dependency",
+    "description": "Potential circular dependencies detected. Consider using forward declarations or dependency injection to break cycles.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "CPP_GOD_CLASS",
+    "languages": [
+      "cpp",
+      "c"
+    ],
+    "category": "DesignSmell",
+    "severity": "medium",
+    "title": "C++ God Class",
+    "description": "God class detected. Consider splitting into smaller, focused classes.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "CPP_DEEP_HIERARCHY",
+    "languages": [
+      "cpp",
+      "c"
+    ],
+    "category": "DesignSmell",
+    "severity": "medium",
+    "title": "C++ Deep Hierarchy",
+    "description": "Deep inheritance hierarchy detected. Consider using composition or flattening the hierarchy.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "CPP_TIGHT_COUPLING",
+    "languages": [
+      "cpp",
+      "c"
+    ],
+    "category": "DesignSmell",
+    "severity": "medium",
+    "title": "C++ Tight Coupling",
+    "description": "Tight coupling detected. Consider using forward declarations, interfaces, or dependency injection to reduce coupling.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "PHP_SQL_INJECTION",
+    "languages": [
+      "php"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "PHP SQL Injection",
+    "description": "SQL query with string concatenation. Use prepared statements (PDO or mysqli_prepare) to prevent SQL injection.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "PHP_XSS",
+    "languages": [
+      "php"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "PHP Cross-Site Scripting (XSS)",
+    "description": "Unsanitized user input in output. Use htmlspecialchars() or htmlentities() before outputting user data.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "PHP_FILE_INCLUSION",
+    "languages": [
+      "php"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "PHP File Inclusion Vulnerability",
+    "description": "include/require with user input. Never include files based on user input. Use whitelist validation.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "PHP_DEPRECATED_FUNCTION",
+    "languages": [
+      "php"
+    ],
+    "category": "Maintainability",
+    "severity": "medium",
+    "title": "PHP Deprecated Function",
+    "description": "Usage of deprecated PHP function (mysql_*, each, ereg*, create_function). Use modern alternatives.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "PHP_LOOSE_COMPARISON",
+    "languages": [
+      "php"
+    ],
+    "category": "Maintainability",
+    "severity": "medium",
+    "title": "PHP Loose Comparison",
+    "description": "Loose comparison (== or !=) with type-coercive values. Use strict comparison (=== or !==) to avoid unexpected behavior.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "PHP_PATH_TRAVERSAL",
+    "languages": [
+      "php"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "PHP Path Traversal",
+    "description": "Path traversal vulnerability. User input used in file operations without validation. Use basename() or realpath() to sanitize paths.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "PHP_COMMAND_INJECTION",
+    "languages": [
+      "php"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "PHP Command Injection",
+    "description": "Command injection vulnerability. User input used in shell execution without escaping. Use escapeshellarg() or escapeshellcmd() to sanitize input.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "PHP_N_PLUS_ONE",
+    "languages": [
+      "php"
+    ],
+    "category": "Performance",
+    "severity": "high",
+    "title": "PHP N+1 Query Problem",
+    "description": "N+1 query problem. Database query inside loop causes multiple queries. Use eager loading or batch queries.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "PHP_SLOW_QUERY",
+    "languages": [
+      "php"
+    ],
+    "category": "Performance",
+    "severity": "medium",
+    "title": "PHP Slow Query",
+    "description": "Inefficient SQL query detected. Optimize query with proper indexes, avoid SELECT *, add WHERE clauses.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "PHP_MEMORY_LEAK",
+    "languages": [
+      "php"
+    ],
+    "category": "Performance",
+    "severity": "medium",
+    "title": "PHP Memory Leak",
+    "description": "Potential memory leak. Resource created without proper cleanup. Ensure resources are freed (fclose, imagedestroy, curl_close).",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "PHP_BLOCKING_IO",
+    "languages": [
+      "php"
+    ],
+    "category": "Performance",
+    "severity": "medium",
+    "title": "PHP Blocking I/O",
+    "description": "Blocking I/O operation detected. Consider using async operations or background processing for better performance.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "PHP_MAGIC_NUMBER",
+    "languages": [
+      "php"
+    ],
+    "category": "Maintainability",
+    "severity": "medium",
+    "title": "PHP Magic Number",
+    "description": "Magic number detected. Extract to named constant for better readability and maintainability.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "PHP_UNUSED_IMPORT",
+    "languages": [
+      "php"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "PHP Unused Import",
+    "description": "Unused import detected. Remove unused use statements to keep code clean.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "PHP_BROAD_EXCEPTION",
+    "languages": [
+      "php"
+    ],
+    "category": "Maintainability",
+    "severity": "medium",
+    "title": "PHP Broad Exception Handling",
+    "description": "Catching generic Exception or Throwable. Catch specific exception types for better error handling.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "PHP_MISSING_TYPE_HINT",
+    "languages": [
+      "php"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "PHP Missing Type Hint",
+    "description": "Function parameter or return type missing type hint. Add type hints for better code clarity and IDE support.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "PHP_RESOURCE_LEAK",
+    "languages": [
+      "php"
+    ],
+    "category": "Maintainability",
+    "severity": "medium",
+    "title": "PHP Resource Leak",
+    "description": "Resource created without proper cleanup. Ensure resources are freed to prevent resource leaks.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "PHP_LARAVEL_N_PLUS_ONE",
+    "languages": [
+      "php"
+    ],
+    "category": "DesignSmell",
+    "severity": "high",
+    "title": "Laravel N+1 Query Problem",
+    "description": "N+1 query problem. Eloquent relationship accessed in loop without eager loading. Use ->with() or ->load() to eager load relationships.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "PHP_LARAVEL_MISSING_AUTH",
+    "languages": [
+      "php"
+    ],
+    "category": "DesignSmell",
+    "severity": "high",
+    "title": "Laravel Missing Authentication",
+    "description": "Controller method or route missing authentication. Add @auth middleware or ->middleware('auth') to protect this route.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "PHP_LARAVEL_MISSING_VALIDATION",
+    "languages": [
+      "php"
+    ],
+    "category": "DesignSmell",
+    "severity": "medium",
+    "title": "Laravel Missing Validation",
+    "description": "Request input accessed without validation. Validate input using $request->validate() or FormRequest.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "PHP_LARAVEL_EAGER_LOADING",
+    "languages": [
+      "php"
+    ],
+    "category": "DesignSmell",
+    "severity": "low",
+    "title": "Laravel Missing Eager Loading",
+    "description": "Relationship accessed without eager loading. Consider eager loading with ->with() if used in loops.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "PHP_LARAVEL_MISSING_INDEX",
+    "languages": [
+      "php"
+    ],
+    "category": "DesignSmell",
+    "severity": "medium",
+    "title": "Laravel Missing Index",
+    "description": "Foreign key column missing index. Add ->index() for better query performance.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "PHP_CIRCULAR_DEPENDENCY",
+    "languages": [
+      "php"
+    ],
+    "category": "DesignSmell",
+    "severity": "medium",
+    "title": "PHP Circular Dependency",
+    "description": "Potential circular dependency detected. Review dependencies and consider refactoring.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "PHP_GOD_CLASS",
+    "languages": [
+      "php"
+    ],
+    "category": "DesignSmell",
+    "severity": "medium",
+    "title": "PHP God Class",
+    "description": "God class detected (too many lines, methods, or properties). Consider splitting into smaller, focused classes.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "PHP_DEEP_NESTING",
+    "languages": [
+      "php"
+    ],
+    "category": "DesignSmell",
+    "severity": "medium",
+    "title": "PHP Deep Nesting",
+    "description": "Deep nesting detected. Consider refactoring to reduce complexity and improve readability.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "PHP_TIGHT_COUPLING",
+    "languages": [
+      "php"
+    ],
+    "category": "DesignSmell",
+    "severity": "medium",
+    "title": "PHP Tight Coupling",
+    "description": "Tight coupling detected. Consider using dependency injection or interfaces to reduce coupling.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "SWIFT_RETAIN_CYCLE",
+    "languages": [
+      "swift"
+    ],
+    "category": "Performance",
+    "severity": "high",
+    "title": "Swift Retain Cycle",
+    "description": "Strong reference to self in closure may cause retain cycle. Use [weak self] or [unowned self] in capture list.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "SWIFT_FORCE_UNWRAP",
+    "languages": [
+      "swift"
+    ],
+    "category": "Maintainability",
+    "severity": "medium",
+    "title": "Swift Force Unwrap",
+    "description": "Force unwrapping optional (!). Use optional binding (if let/guard let) or optional chaining (?.) for safer code.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "SWIFT_IMPLICITLY_UNWRAPPED",
+    "languages": [
+      "swift"
+    ],
+    "category": "Maintainability",
+    "severity": "medium",
+    "title": "Swift Implicitly Unwrapped Optional",
+    "description": "Implicitly unwrapped optional (Type!) outside of outlets. Consider using regular optional (Type?) for safer code.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "SWIFT_MAIN_THREAD_BLOCKING",
+    "languages": [
+      "swift"
+    ],
+    "category": "Performance",
+    "severity": "high",
+    "title": "Swift Main Thread Blocking",
+    "description": "Blocking operation on main thread (DispatchQueue.main.sync or sleep). This will freeze the UI.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "SWIFT_DATA_RACE",
+    "languages": [
+      "swift"
+    ],
+    "category": "Performance",
+    "severity": "high",
+    "title": "Swift Data Race",
+    "description": "Mutable shared state without synchronization. Consider using actor, @MainActor, or synchronization primitives.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "SWIFT_SQL_INJECTION",
+    "languages": [
+      "swift"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "Swift SQL Injection",
+    "description": "SQL injection risk. Use parameterized queries (NSPredicate, SQLite.swift with bindings, or Core Data) instead of string interpolation.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "SWIFT_XSS",
+    "languages": [
+      "swift"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "Swift XSS",
+    "description": "XSS risk. Escape user input before rendering in web views. Use addingPercentEncoding, htmlEscaped, or similar escaping methods.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "SWIFT_PATH_TRAVERSAL",
+    "languages": [
+      "swift"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "Swift Path Traversal",
+    "description": "Path traversal risk. Sanitize file paths using lastPathComponent, pathComponents, or standardizingPath before file operations.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "SWIFT_SLOW_COLLECTION",
+    "languages": [
+      "swift"
+    ],
+    "category": "Performance",
+    "severity": "medium",
+    "title": "Swift Slow Collection",
+    "description": "Inefficient collection operations. Consider using Set for O(1) lookup or combining operations.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "SWIFT_MEMORY_LEAK",
+    "languages": [
+      "swift"
+    ],
+    "category": "Performance",
+    "severity": "high",
+    "title": "Swift Memory Leak",
+    "description": "Memory leak detected. Remove observers, invalidate timers, or use weak references to prevent leaks.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "SWIFT_BLOCKING_ASYNC",
+    "languages": [
+      "swift"
+    ],
+    "category": "Performance",
+    "severity": "high",
+    "title": "Swift Blocking Async",
+    "description": "Blocking async operations. Use TaskGroup or async let to run operations concurrently instead of sequentially.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "SWIFT_INEFFICIENT_STRING",
+    "languages": [
+      "swift"
+    ],
+    "category": "Performance",
+    "severity": "low",
+    "title": "Swift Inefficient String",
+    "description": "Inefficient string operations. Consider using String interpolation or building strings more efficiently.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "SWIFT_MAGIC_NUMBER",
+    "languages": [
+      "swift"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Swift Magic Number",
+    "description": "Magic number detected. Extract to a named constant with descriptive name.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "SWIFT_UNUSED_IMPORT",
+    "languages": [
+      "swift"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Swift Unused Import",
+    "description": "Unused import detected. Remove if not needed.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "SWIFT_MISSING_ERROR_HANDLING",
+    "languages": [
+      "swift"
+    ],
+    "category": "Maintainability",
+    "severity": "high",
+    "title": "Swift Missing Error Handling",
+    "description": "Throwing function called without error handling. Wrap in do-catch or use try? for proper error handling.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "SWIFT_RESOURCE_LEAK",
+    "languages": [
+      "swift"
+    ],
+    "category": "Maintainability",
+    "severity": "high",
+    "title": "Swift Resource Leak",
+    "description": "Resource opened without cleanup. Use defer or ensure cleanup in deinit.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "SWIFT_STRONG_REFERENCE_CYCLE",
+    "languages": [
+      "swift"
+    ],
+    "category": "Performance",
+    "severity": "medium",
+    "title": "Swift Strong Reference Cycle",
+    "description": "Potential strong reference cycle between classes. Consider using weak or unowned reference if appropriate.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "SWIFT_RACE_CONDITION",
+    "languages": [
+      "swift"
+    ],
+    "category": "Performance",
+    "severity": "high",
+    "title": "Swift Race Condition",
+    "description": "Mutable shared state accessed from concurrent contexts may cause race conditions. Use actor isolation or synchronization.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "SWIFT_ACTOR_ISOLATION",
+    "languages": [
+      "swift"
+    ],
+    "category": "Performance",
+    "severity": "medium",
+    "title": "Swift Actor Isolation",
+    "description": "Actor isolation violation. Ensure proper isolation when accessing actor properties or methods.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "SWIFT_CIRCULAR_DEPENDENCY",
+    "languages": [
+      "swift"
+    ],
+    "category": "DesignSmell",
+    "severity": "medium",
+    "title": "Swift Circular Dependency",
+    "description": "Potential circular dependencies detected. Consider using protocols or dependency injection to break cycles.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "SWIFT_GOD_CLASS",
+    "languages": [
+      "swift"
+    ],
+    "category": "DesignSmell",
+    "severity": "medium",
+    "title": "Swift God Class",
+    "description": "God class detected. Consider splitting into smaller, focused classes/structs.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "SWIFT_DEEP_HIERARCHY",
+    "languages": [
+      "swift"
+    ],
+    "category": "DesignSmell",
+    "severity": "medium",
+    "title": "Swift Deep Hierarchy",
+    "description": "Deep inheritance hierarchy detected. Consider using composition or flattening the hierarchy.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "SWIFT_TIGHT_COUPLING",
+    "languages": [
+      "swift"
+    ],
+    "category": "DesignSmell",
+    "severity": "medium",
+    "title": "Swift Tight Coupling",
+    "description": "Tight coupling detected. Consider using protocols or dependency injection to reduce coupling.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "SQL_INJECTION_RISK",
+    "languages": [
+      "sql"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "SQL Injection Risk",
+    "description": "Dynamic SQL construction. Use parameterized queries to prevent SQL injection.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "SQL_WEAK_AUTH",
+    "languages": [
+      "sql"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "SQL Weak Authentication",
+    "description": "Weak password hashing (MD5/SHA1). Use bcrypt, scrypt, or Argon2.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "SQL_NO_WHERE_UPDATE",
+    "languages": [
+      "sql"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "SQL UPDATE Without WHERE",
+    "description": "UPDATE without WHERE clause updates all rows. Add WHERE or confirm intent.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "SQL_NO_WHERE_DELETE",
+    "languages": [
+      "sql"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "SQL DELETE Without WHERE",
+    "description": "DELETE without WHERE clause deletes all rows. Add WHERE or use TRUNCATE.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "SQL_GRANT_ALL",
+    "languages": [
+      "sql"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "SQL GRANT ALL",
+    "description": "GRANT ALL grants excessive privileges. Use principle of least privilege.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "SQL_SELECT_STAR",
+    "languages": [
+      "sql"
+    ],
+    "category": "Performance",
+    "severity": "medium",
+    "title": "SQL SELECT *",
+    "description": "SELECT * retrieves all columns. Specify only required columns.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "SQL_NO_INDEX_HINT",
+    "languages": [
+      "sql"
+    ],
+    "category": "Performance",
+    "severity": "medium",
+    "title": "SQL Missing Index Hint",
+    "description": "Query on large table without index hint. Consider adding index hints.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "SQL_CARTESIAN_JOIN",
+    "languages": [
+      "sql"
+    ],
+    "category": "Performance",
+    "severity": "high",
+    "title": "SQL Cartesian Join",
+    "description": "JOIN without ON clause creates Cartesian product. Add ON clause.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "SQL_SUBQUERY_IN_SELECT",
+    "languages": [
+      "sql"
+    ],
+    "category": "Performance",
+    "severity": "high",
+    "title": "SQL Subquery in SELECT",
+    "description": "Correlated subquery in SELECT list. Use JOIN or window functions.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "SQL_OR_IN_WHERE",
+    "languages": [
+      "sql"
+    ],
+    "category": "Performance",
+    "severity": "medium",
+    "title": "SQL OR in WHERE",
+    "description": "OR in WHERE clause may prevent index usage. Use IN or UNION.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "SQL_FUNCTION_ON_INDEX",
+    "languages": [
+      "sql"
+    ],
+    "category": "Performance",
+    "severity": "high",
+    "title": "SQL Function on Indexed Column",
+    "description": "Function on indexed column prevents index usage. Use computed columns.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "SQL_IMPLICIT_CONVERSION",
+    "languages": [
+      "sql"
+    ],
+    "category": "Performance",
+    "severity": "medium",
+    "title": "SQL Implicit Conversion",
+    "description": "Type mismatch causes implicit conversion. Match types to use indexes.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "SQL_MISSING_LIMIT",
+    "languages": [
+      "sql"
+    ],
+    "category": "Performance",
+    "severity": "medium",
+    "title": "SQL Missing LIMIT",
+    "description": "SELECT without LIMIT may return large result sets. Add LIMIT clause.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "SQL_RESERVED_KEYWORD",
+    "languages": [
+      "sql"
+    ],
+    "category": "Maintainability",
+    "severity": "medium",
+    "title": "SQL Reserved Keyword",
+    "description": "Using reserved keyword as identifier. Enclose in backticks or rename.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "SQL_INCONSISTENT_NAMING",
+    "languages": [
+      "sql"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "SQL Inconsistent Naming",
+    "description": "Mixed naming conventions (camelCase and snake_case). Be consistent.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "SQL_MISSING_FOREIGN_KEY",
+    "languages": [
+      "sql"
+    ],
+    "category": "Maintainability",
+    "severity": "medium",
+    "title": "SQL Missing Foreign Key",
+    "description": "Column with _id suffix has no foreign key constraint. Add FOREIGN KEY.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "SQL_TEXT_PRIMARY_KEY",
+    "languages": [
+      "sql"
+    ],
+    "category": "Maintainability",
+    "severity": "high",
+    "title": "SQL TEXT/VARCHAR Primary Key",
+    "description": "TEXT/VARCHAR as primary key is inefficient. Use numeric ID.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "SQL_FLOAT_COMPARISON",
+    "languages": [
+      "sql"
+    ],
+    "category": "Maintainability",
+    "severity": "medium",
+    "title": "SQL FLOAT Equality Comparison",
+    "description": "Equality comparison on FLOAT/DOUBLE is unreliable. Use range or DECIMAL.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "SQL_TIMESTAMP_AS_STRING",
+    "languages": [
+      "sql"
+    ],
+    "category": "Maintainability",
+    "severity": "high",
+    "title": "SQL Timestamp as String",
+    "description": "Storing timestamp as string. Use DATETIME or TIMESTAMP type.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "SQL_UNESCAPED_INPUT",
+    "languages": [
+      "sql"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "SQL Unescaped Input",
+    "description": "Unescaped input in SQL statement. Use parameterized queries or proper escaping.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "SQL_PRIVILEGE_ESCALATION",
+    "languages": [
+      "sql"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "SQL Privilege Escalation",
+    "description": "SQL statement may allow privilege escalation. Review and restrict permissions.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "SQL_SENSITIVE_DATA_EXPOSURE",
+    "languages": [
+      "sql"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "SQL Sensitive Data Exposure",
+    "description": "Query may expose sensitive data without proper filtering or encryption.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "SQL_MISSING_INDEX",
+    "languages": [
+      "sql"
+    ],
+    "category": "Performance",
+    "severity": "medium",
+    "title": "SQL Missing Index",
+    "description": "Query or table missing indexes. Add indexes for better performance.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "SQL_FULL_TABLE_SCAN",
+    "languages": [
+      "sql"
+    ],
+    "category": "Performance",
+    "severity": "high",
+    "title": "SQL Full Table Scan",
+    "description": "Query may cause full table scan. Add WHERE clause or indexes.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "SQL_INEFFICIENT_JOIN",
+    "languages": [
+      "sql"
+    ],
+    "category": "Performance",
+    "severity": "medium",
+    "title": "SQL Inefficient Join",
+    "description": "JOIN may be inefficient. Ensure join columns are indexed.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "SQL_N_PLUS_ONE",
+    "languages": [
+      "sql"
+    ],
+    "category": "Performance",
+    "severity": "high",
+    "title": "SQL N+1 Query Problem",
+    "description": "Multiple queries in sequence may indicate N+1 problem. Use JOIN or batch queries.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "SQL_SLOW_QUERY",
+    "languages": [
+      "sql"
+    ],
+    "category": "Performance",
+    "severity": "medium",
+    "title": "SQL Slow Query",
+    "description": "Query structure may be slow. Optimize query or add indexes.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "SQL_MAGIC_NUMBER",
+    "languages": [
+      "sql"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "SQL Magic Number",
+    "description": "Magic number detected. Use named constants for better readability.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "SQL_UNUSED_TABLE",
+    "languages": [
+      "sql"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "SQL Unused Table",
+    "description": "Table is created but not referenced. Verify table is needed.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "SQL_COMPLEX_QUERY",
+    "languages": [
+      "sql"
+    ],
+    "category": "Maintainability",
+    "severity": "medium",
+    "title": "SQL Complex Query",
+    "description": "Complex query detected. Consider breaking into smaller queries or using views.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "SQL_MISSING_COMMENT",
+    "languages": [
+      "sql"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "SQL Missing Comment",
+    "description": "SQL statement without comment. Add comment to document purpose.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "SQL_MISSING_CONSTRAINT",
+    "languages": [
+      "sql"
+    ],
+    "category": "Maintainability",
+    "severity": "high",
+    "title": "SQL Missing Constraint",
+    "description": "Table or column missing constraint. Add constraints to ensure data integrity.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "SQL_NULLABLE_KEY",
+    "languages": [
+      "sql"
+    ],
+    "category": "Maintainability",
+    "severity": "high",
+    "title": "SQL Nullable Key",
+    "description": "PRIMARY KEY or UNIQUE column allows NULL. Keys should be NOT NULL.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "SQL_DUPLICATE_KEY",
+    "languages": [
+      "sql"
+    ],
+    "category": "Maintainability",
+    "severity": "high",
+    "title": "SQL Duplicate Key",
+    "description": "Duplicate PRIMARY KEY or UNIQUE constraint. Review constraint definitions.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "FLAKY_TEST",
+    "languages": [
+      "typescript",
+      "javascript",
+      "python",
+      "java",
+      "csharp",
+      "php",
+      "go",
+      "swift",
+      "rust"
+    ],
+    "category": "Maintainability",
+    "severity": "high",
+    "title": "Flaky Test",
+    "description": "Test uses non-deterministic patterns (Math.random(), Date.now(), setTimeout). Makes tests unreliable.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "MISSING_ASSERTION",
+    "languages": [
+      "typescript",
+      "javascript",
+      "python",
+      "java",
+      "csharp",
+      "php",
+      "go",
+      "swift",
+      "rust"
+    ],
+    "category": "Maintainability",
+    "severity": "medium",
+    "title": "Missing Assertion",
+    "description": "Test function has no assertions. Tests should verify expected behavior.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "TEST_ISOLATION_ISSUE",
+    "languages": [
+      "typescript",
+      "javascript",
+      "python",
+      "java",
+      "csharp",
+      "php",
+      "go",
+      "swift",
+      "rust"
+    ],
+    "category": "Maintainability",
+    "severity": "high",
+    "title": "Test Isolation Issue",
+    "description": "Test mutates global state or shared resources without cleanup. Can cause test interference.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  },
+  {
+    "id": "COMPLEX_TEST",
+    "languages": [
+      "typescript",
+      "javascript",
+      "python",
+      "java",
+      "csharp",
+      "php",
+      "go",
+      "swift",
+      "rust"
+    ],
+    "category": "Maintainability",
+    "severity": "medium",
+    "title": "Complex Test",
+    "description": "Test has high cyclomatic complexity (>10). Consider splitting into smaller, focused tests.",
+    "tags": [
+      "legacy"
+    ],
+    "sources": [],
+    "version": "2025.11.30",
+    "updatedAt": "2025-11-30T08:31:55.933Z"
+  }
+]

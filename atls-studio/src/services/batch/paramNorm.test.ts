@@ -1,0 +1,357 @@
+import { describe, expect, it } from 'vitest';
+import { normalizeStepParams } from './paramNorm';
+
+describe('normalizeStepParams', () => {
+  // -----------------------------------------------------------------------
+  // Global aliases
+  // -----------------------------------------------------------------------
+
+  describe('global file path aliases', () => {
+    it('normalizes "file" → "file_path" (singular op)', () => {
+      const out = normalizeStepParams('change.edit', { file: 'src/a.ts' });
+      expect(out.file_path).toBe('src/a.ts');
+      expect(out.file).toBeUndefined();
+    });
+
+    it('normalizes "file" → "file_paths" (array op via promotion)', () => {
+      const out = normalizeStepParams('search.code', { file: 'src/a.ts', queries: ['x'] });
+      expect(out.file_paths).toEqual(['src/a.ts']);
+      expect(out.file).toBeUndefined();
+      expect(out.file_path).toBeUndefined();
+    });
+
+    it('normalizes "f" → "file_path"', () => {
+      const out = normalizeStepParams('change.edit', { f: 'src/b.ts' });
+      expect(out.file_path).toBe('src/b.ts');
+      expect(out.f).toBeUndefined();
+    });
+
+    it('normalizes "path" → "file_path" (Cline/Aider/Claude convention)', () => {
+      const out = normalizeStepParams('read.lines', { path: 'src/c.ts', lines: '1-10' });
+      expect(out.file_path).toBe('src/c.ts');
+      expect(out.path).toBeUndefined();
+    });
+
+    it('normalizes "target_file" → "file_path" (Cursor convention)', () => {
+      const out = normalizeStepParams('change.edit', { target_file: 'src/d.ts' });
+      expect(out.file_path).toBe('src/d.ts');
+      expect(out.target_file).toBeUndefined();
+    });
+
+    it('normalizes "source_file" → "file_path" (singular op)', () => {
+      const out = normalizeStepParams('change.edit', { source_file: 'src/e.ts' });
+      expect(out.file_path).toBe('src/e.ts');
+      expect(out.source_file).toBeUndefined();
+    });
+
+    it('normalizes "source_file" → "file_paths" (array op via promotion)', () => {
+      const out = normalizeStepParams('change.refactor', { source_file: 'src/e.ts' });
+      expect(out.file_paths).toEqual(['src/e.ts']);
+      expect(out.source_file).toBeUndefined();
+    });
+
+    it('does not overwrite existing canonical "file_path"', () => {
+      const out = normalizeStepParams('change.edit', { file_path: 'canonical.ts', file: 'alias.ts' });
+      expect(out.file_path).toBe('canonical.ts');
+    });
+  });
+
+  describe('global symbol aliases', () => {
+    it('normalizes "symbol" → "symbol_names"', () => {
+      const out = normalizeStepParams('analyze.blast_radius', { symbol: 'Foo' });
+      expect(out.symbol_names).toEqual(['Foo']);
+      expect(out.symbol).toBeUndefined();
+    });
+
+    it('normalizes "symbol_name" → "symbol_names"', () => {
+      const out = normalizeStepParams('search.usage', { symbol_name: 'Bar' });
+      expect(out.symbol_names).toEqual(['Bar']);
+      expect(out.symbol_name).toBeUndefined();
+    });
+  });
+
+  describe('global edit content aliases (cross-IDE)', () => {
+    it('normalizes "old_str" → "old" (Claude)', () => {
+      const out = normalizeStepParams('change.edit', { old_str: 'before', new_str: 'after' });
+      expect(out.old).toBe('before');
+      expect(out.new).toBe('after');
+      expect(out.old_str).toBeUndefined();
+      expect(out.new_str).toBeUndefined();
+    });
+
+    it('normalizes "old_string" → "old" (Cursor)', () => {
+      const out = normalizeStepParams('change.edit', { old_string: 'x', new_string: 'y' });
+      expect(out.old).toBe('x');
+      expect(out.new).toBe('y');
+    });
+
+    it('normalizes "original_lines" → "old" (Aider)', () => {
+      const out = normalizeStepParams('change.edit', { original_lines: 'a', updated_lines: 'b' });
+      expect(out.old).toBe('a');
+      expect(out.new).toBe('b');
+    });
+  });
+
+  describe('global misc aliases', () => {
+    it('normalizes "command" → "cmd"', () => {
+      const out = normalizeStepParams('system.exec', { command: 'npm test' });
+      expect(out.cmd).toBe('npm test');
+      expect(out.command).toBeUndefined();
+    });
+
+    it('normalizes "contents" → "content"', () => {
+      const out = normalizeStepParams('session.bb.write', { key: 'k', contents: 'v' });
+      expect(out.content).toBe('v');
+      expect(out.contents).toBeUndefined();
+    });
+
+    it('normalizes "refs" → "hashes"', () => {
+      const out = normalizeStepParams('session.pin', { refs: ['h:abc'] });
+      expect(out.hashes).toEqual(['h:abc']);
+      expect(out.refs).toBeUndefined();
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // Op-specific aliases
+  // -----------------------------------------------------------------------
+
+  describe('search.code op-specific', () => {
+    it('normalizes "query" → "queries"', () => {
+      const out = normalizeStepParams('search.code', { query: 'auth' });
+      expect(out.queries).toEqual(['auth']);
+      expect(out.query).toBeUndefined();
+    });
+
+    it('does not promote "query" for non-search.code ops', () => {
+      const out = normalizeStepParams('search.symbol', { query: 'Foo' });
+      expect(out.queries).toBeUndefined();
+      // search.symbol maps query → symbol_names
+      expect(out.symbol_names).toEqual(['Foo']);
+    });
+  });
+
+  describe('search.symbol op-specific', () => {
+    it('normalizes "name" → "symbol_names"', () => {
+      const out = normalizeStepParams('search.symbol', { name: 'MyClass' });
+      expect(out.symbol_names).toEqual(['MyClass']);
+      expect(out.name).toBeUndefined();
+    });
+
+    it('normalizes "query" → "symbol_names"', () => {
+      const out = normalizeStepParams('search.symbol', { query: 'doThing' });
+      expect(out.symbol_names).toEqual(['doThing']);
+      expect(out.query).toBeUndefined();
+    });
+  });
+
+  describe('analyze.impact / blast_radius op-specific', () => {
+    it('normalizes "from" → "file_paths" for analyze.impact', () => {
+      const out = normalizeStepParams('analyze.impact', { from: 'src/api.ts' });
+      expect(out.file_paths).toEqual(['src/api.ts']);
+      expect(out.from).toBeUndefined();
+    });
+
+    it('normalizes "from" → "file_paths" for analyze.blast_radius', () => {
+      const out = normalizeStepParams('analyze.blast_radius', { from: ['a.ts', 'b.ts'] });
+      expect(out.file_paths).toEqual(['a.ts', 'b.ts']);
+      expect(out.from).toBeUndefined();
+    });
+
+    it('does not remap "from" for annotate.link', () => {
+      const out = normalizeStepParams('annotate.link', { from: 'h:abc', to: 'h:def' });
+      expect(out.from).toBe('h:abc');
+      expect(out.file_paths).toBeUndefined();
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // Scalar-to-array coercion
+  // -----------------------------------------------------------------------
+
+  describe('scalar-to-array coercion', () => {
+    it('promotes file_path string to file_paths array', () => {
+      const out = normalizeStepParams('read.context', { file_path: 'src/x.ts', type: 'smart' });
+      expect(out.file_paths).toEqual(['src/x.ts']);
+      expect(out.file_path).toBeUndefined();
+    });
+
+    it('does not promote when file_paths already exists', () => {
+      const out = normalizeStepParams('read.context', {
+        file_path: 'single.ts',
+        file_paths: ['a.ts', 'b.ts'],
+        type: 'smart',
+      });
+      expect(out.file_paths).toEqual(['a.ts', 'b.ts']);
+    });
+
+    it('promotes symbol_name string to symbol_names array', () => {
+      const out = normalizeStepParams('search.usage', { symbol_name: 'Foo' });
+      expect(out.symbol_names).toEqual(['Foo']);
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // key → keys coercion for blackboard ops
+  // -----------------------------------------------------------------------
+
+  describe('key → keys coercion', () => {
+    it('promotes key to keys for session.bb.read', () => {
+      const out = normalizeStepParams('session.bb.read', { key: 'notes' });
+      expect(out.keys).toEqual(['notes']);
+      expect(out.key).toBeUndefined();
+    });
+
+    it('promotes key to keys for session.bb.delete', () => {
+      const out = normalizeStepParams('session.bb.delete', { key: 'old' });
+      expect(out.keys).toEqual(['old']);
+    });
+
+    it('does not promote key for session.bb.write', () => {
+      const out = normalizeStepParams('session.bb.write', { key: 'k', content: 'v' });
+      expect(out.key).toBe('k');
+      expect(out.keys).toBeUndefined();
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // Symbol prefix stripping
+  // -----------------------------------------------------------------------
+
+  describe('symbol prefix stripping', () => {
+    it('strips fn(name) wrapper', () => {
+      const out = normalizeStepParams('search.symbol', { symbol_names: ['fn(doThing)'] });
+      expect(out.symbol_names).toEqual(['doThing']);
+    });
+
+    it('strips cls(name) wrapper', () => {
+      const out = normalizeStepParams('search.usage', { symbol_names: ['cls(MyClass)'] });
+      expect(out.symbol_names).toEqual(['MyClass']);
+    });
+
+    it('strips multiple prefixes in array', () => {
+      const out = normalizeStepParams('search.usage', {
+        symbol_names: ['fn(a)', 'cls(B)', 'plain'],
+      });
+      expect(out.symbol_names).toEqual(['a', 'B', 'plain']);
+    });
+
+    it('strips prefix from scalar symbol_names', () => {
+      const out = normalizeStepParams('search.symbol', { symbol_names: 'fn(solo)' });
+      expect(out.symbol_names).toEqual(['solo']);
+    });
+
+    it('strips prefix after alias resolution (symbol → symbol_names)', () => {
+      const out = normalizeStepParams('analyze.blast_radius', { symbol: 'cls(Widget)' });
+      expect(out.symbol_names).toEqual(['Widget']);
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // Null/undefined stripping
+  // -----------------------------------------------------------------------
+
+  describe('null/undefined stripping', () => {
+    it('strips null values', () => {
+      const out = normalizeStepParams('search.code', { queries: ['x'], limit: null });
+      expect(out).not.toHaveProperty('limit');
+    });
+
+    it('strips undefined values', () => {
+      const out = normalizeStepParams('search.code', { queries: ['x'], limit: undefined });
+      expect(out).not.toHaveProperty('limit');
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // Passthrough — canonical params are untouched
+  // -----------------------------------------------------------------------
+
+  describe('passthrough of canonical params', () => {
+    it('passes through file_paths array unchanged', () => {
+      const out = normalizeStepParams('read.context', { file_paths: ['a.ts', 'b.ts'], type: 'full' });
+      expect(out.file_paths).toEqual(['a.ts', 'b.ts']);
+      expect(out.type).toBe('full');
+    });
+
+    it('passes through queries array unchanged', () => {
+      const out = normalizeStepParams('search.code', { queries: ['auth', 'login'] });
+      expect(out.queries).toEqual(['auth', 'login']);
+    });
+
+    it('passes through cmd unchanged', () => {
+      const out = normalizeStepParams('system.exec', { cmd: 'npm test' });
+      expect(out.cmd).toBe('npm test');
+    });
+
+    it('passes through unknown params unchanged', () => {
+      const out = normalizeStepParams('search.code', { queries: ['x'], custom_flag: true });
+      expect(out.custom_flag).toBe(true);
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // Combined scenarios
+  // -----------------------------------------------------------------------
+
+  describe('combined normalization', () => {
+    it('resolves alias + promotes scalar + strips prefix in one pass', () => {
+      const out = normalizeStepParams('search.symbol', { name: 'fn(handleAuth)' });
+      expect(out.symbol_names).toEqual(['handleAuth']);
+      expect(out.name).toBeUndefined();
+    });
+
+    it('resolves file alias + promotes to array', () => {
+      const out = normalizeStepParams('read.context', { path: 'src/app.ts', type: 'smart' });
+      expect(out.file_paths).toEqual(['src/app.ts']);
+      expect(out.path).toBeUndefined();
+      expect(out.file_path).toBeUndefined();
+    });
+
+    it('handles Cursor-style edit params', () => {
+      const out = normalizeStepParams('change.edit', {
+        target_file: 'src/foo.ts',
+        old_string: 'const x = 1;',
+        new_string: 'const x = 2;',
+      });
+      expect(out.file_path).toBe('src/foo.ts');
+      expect(out.old).toBe('const x = 1;');
+      expect(out.new).toBe('const x = 2;');
+    });
+
+    it('handles Claude str_replace style params', () => {
+      const out = normalizeStepParams('change.edit', {
+        path: 'lib/util.py',
+        old_str: 'def old():',
+        new_str: 'def new():',
+      });
+      expect(out.file_path).toBe('lib/util.py');
+      expect(out.old).toBe('def old():');
+      expect(out.new).toBe('def new():');
+    });
+
+    it('handles analyze.blast_radius with from + symbol', () => {
+      const out = normalizeStepParams('analyze.blast_radius', {
+        from: 'src/auth.ts',
+        symbol: 'cls(AuthService)',
+      });
+      expect(out.file_paths).toEqual(['src/auth.ts']);
+      expect(out.symbol_names).toEqual(['AuthService']);
+      expect(out.from).toBeUndefined();
+      expect(out.symbol).toBeUndefined();
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // Immutability
+  // -----------------------------------------------------------------------
+
+  describe('immutability', () => {
+    it('does not mutate the input object', () => {
+      const input = { file: 'src/a.ts', queries: ['x'] };
+      const frozen = { ...input };
+      normalizeStepParams('search.code', input);
+      expect(input).toEqual(frozen);
+    });
+  });
+});

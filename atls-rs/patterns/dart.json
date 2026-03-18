@@ -1,0 +1,15 @@
+[
+  {
+    "id": "DART_EMPTY_CATCH",
+    "languages": ["dart"],
+    "category": "ErrorHandling",
+    "severity": "medium",
+    "title": "Empty catch block",
+    "description": "Catch block with no body swallows exceptions. Log or rethrow.",
+    "tags": ["dart", "catch"],
+    "sources": [],
+    "structuralHints": {
+      "treeSitterQuery": "(catch_clause (block) @offender)"
+    }
+  }
+]

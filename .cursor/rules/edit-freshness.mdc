@@ -1,0 +1,16 @@
+---
+description: Edit freshness protocol — read-once with backend-enforced hash freshness
+alwaysApply: true
+---
+
+# EDIT FRESHNESS PROTOCOL
+
+One read (full file or line range) authorizes all future edits to that file. The context system tracks live file state through edit-chain forwarding and watcher-based invalidation. The backend enforces hash freshness at edit time.
+
+## Rules
+
+- **Read once, edit forever**: a single read.context, read.file, or read.lines on a file is sufficient for all subsequent edits. No re-reads needed between batches.
+- **Hash propagation is automatic**: the executor injects snapshot_hash into change steps from the tracker. Do not manually pass content_hash or edit_target_hash.
+- **Backend enforcement**: if the file changed externally, the backend returns stale_hash or authority_mismatch. On these errors: abandon the patch, re-read the file fresh, and rebuild the edit from current content.
+- Do not combine exploration of multiple candidate files with mutation in the same batch.
+- Prefer exact preimage edits, and prefer whole-file replacements for multiline TS/TSX or other syntax-sensitive changes.

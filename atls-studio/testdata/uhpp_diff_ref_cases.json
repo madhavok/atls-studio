@@ -1,0 +1,27 @@
+[
+  {
+    "desc": "diff ref with prefixes",
+    "input": "h:aabb1122..h:ccdd3344",
+    "expected": { "oldHash": "aabb1122", "newHash": "ccdd3344" }
+  },
+  {
+    "desc": "diff ref with implicit rhs prefix",
+    "input": "h:aabb1122..ccdd3344",
+    "expected": { "oldHash": "aabb1122", "newHash": "ccdd3344" }
+  },
+  {
+    "desc": "rejects missing diff separator",
+    "input": "h:aabb1122",
+    "valid": false
+  },
+  {
+    "desc": "rejects missing leading h prefix",
+    "input": "aabb1122..ccdd3344",
+    "valid": false
+  },
+  {
+    "desc": "rejects invalid rhs hash",
+    "input": "h:aabb1122..h:xyz12345",
+    "valid": false
+  }
+]

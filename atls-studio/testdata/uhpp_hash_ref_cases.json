@@ -1,0 +1,87 @@
+[
+  {
+    "desc": "basic hash ref",
+    "input": "h:66b5d86b",
+    "expected": { "hash": "66b5d86b", "modifier": "auto" }
+  },
+  {
+    "desc": "source modifier",
+    "input": "h:66b5d86b:source",
+    "expected": { "hash": "66b5d86b", "modifier": "source" }
+  },
+  {
+    "desc": "content modifier",
+    "input": "h:66b5d86b:content",
+    "expected": { "hash": "66b5d86b", "modifier": "content" }
+  },
+  {
+    "desc": "single line range",
+    "input": "h:06d649b7:15-30",
+    "expected": { "hash": "06d649b7", "modifier": { "lines": [[15, 30]] } }
+  },
+  {
+    "desc": "multiple line ranges",
+    "input": "h:06d649b7:15-30,40-55",
+    "expected": { "hash": "06d649b7", "modifier": { "lines": [[15, 30], [40, 55]] } }
+  },
+  {
+    "desc": "open ended line range",
+    "input": "h:06d649b7:45-",
+    "expected": { "hash": "06d649b7", "modifier": { "lines": [[45, null]] } }
+  },
+  {
+    "desc": "shape keyword",
+    "input": "h:c862a3be:sig",
+    "expected": { "hash": "c862a3be", "modifier": { "shape": "sig" } }
+  },
+  {
+    "desc": "shape function",
+    "input": "h:c862a3be:head(5)",
+    "expected": { "hash": "c862a3be", "modifier": { "shape": { "head": 5 } } }
+  },
+  {
+    "desc": "line range with shape",
+    "input": "h:06d649b7:15-30:dedent",
+    "expected": { "hash": "06d649b7", "modifier": { "lines": [[15, 30]], "shape": "dedent" } }
+  },
+  {
+    "desc": "function anchor",
+    "input": "h:abc12345:fn(processTest)",
+    "expected": { "hash": "abc12345", "modifier": { "symbol": { "kind": "fn", "name": "processTest" } } }
+  },
+  {
+    "desc": "class anchor alias",
+    "input": "h:abc12345:class(AuthService)",
+    "expected": { "hash": "abc12345", "modifier": { "symbol": { "kind": "cls", "name": "AuthService" } } }
+  },
+  {
+    "desc": "symbol anchor with shape",
+    "input": "h:abc12345:sym(AuthService):sig",
+    "expected": { "hash": "abc12345", "modifier": { "symbol": { "name": "AuthService", "shape": "sig" } } }
+  },
+  {
+    "desc": "tokens modifier",
+    "input": "h:abc12345:tokens",
+    "expected": { "hash": "abc12345", "modifier": "tokens" }
+  },
+  {
+    "desc": "semantic concept modifier",
+    "input": "h:abc12345:concept(authentication)",
+    "expected": { "hash": "abc12345", "modifier": { "shape": { "concept": "authentication" } } }
+  },
+  {
+    "desc": "rejects too short hash",
+    "input": "h:abc",
+    "valid": false
+  },
+  {
+    "desc": "rejects non hex hash",
+    "input": "h:xyz12345",
+    "valid": false
+  },
+  {
+    "desc": "rejects malformed modifier chain",
+    "input": "h:abc12345:latest",
+    "valid": false
+  }
+]

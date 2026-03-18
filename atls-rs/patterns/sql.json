@@ -1,0 +1,2603 @@
+[
+  {
+    "id": "SQ_1001",
+    "languages": [
+      "sql"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Multi-Valued Attribute",
+    "description": "Multi-Valued Attribute",
+    "tags": [
+      "sqlcheck"
+    ],
+    "sources": [
+      {
+        "source": "sqlcheck",
+        "ruleId": "1001",
+        "url": "https://github.com/jarulraj/sqlcheck/blob/master/docs/logical/1001.md"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T06:40:34.256Z",
+    "examples": [
+      {
+        "bad": "### Logical Database Design Anti-Patterns\r\n\r\n  * [Multi-Valued Attribute](https://github.com/jarulraj/sqlcheck/blob/master/docs/logical/1001.md)\r\n  * [Recursive Dependency](https://github.com/jarulraj/sqlcheck/blob/master/docs/logical/1002.md)\r\n  * [Primary Key Does Not Exist](https://github.com/jarulraj/sqlcheck/blob/master/docs/logical/1003.md)\r",
+        "notes": "Found in README.md"
+      },
+      {
+        "bad": "    .quad   DINNER, 5001\r\n    .quad   BREAKFAST, 1000\r\n    .quad   BREAKFAST, 1001\r\n    .quad   CAR_RENTAL, 4\r\n    .quad   0, 0\r",
+        "notes": "Found in ExpenseReport.S"
+      },
+      {
+        "bad": "\tdc.l\tDINNER,5001\r\n\tdc.l\tBREAKFAST,1000\r\n\tdc.l\tBREAKFAST,1001\r\n\tdc.l\tCAR_RENTAL,4\r\n\tdc.l\t0,0\r",
+        "notes": "Found in ExpenseReport.s"
+      },
+      {
+        "bad": "DINNER 5001\r\nBREAKFAST 1000\r\nBREAKFAST 1001\r\nCAR_RENTAL 4\r\nEXPENSES\r",
+        "notes": "Found in ExpenseReport.sh"
+      },
+      {
+        "bad": "type(1) = DINNER: amount(1) = 5001\r\ntype(2) = BREAKFAST: amount(2) = 1000\r\ntype(3) = BREAKFAST: amount(3) = 1001\r\ntype(4) = CARRENTAL: amount(4) = 4\r\nCALL PrintExpenses(type(), amount())\r",
+        "notes": "Found in ExpenseReport.bas"
+      },
+      {
+        "bad": "40 TYPE(1) = DINNER: AMOUNT(1) = 5001\r\n50 TYPE(2) = BREAKFAST: AMOUNT(2) = 1000\r\n60 TYPE(3) = BREAKFAST: AMOUNT(3) = 1001\r\n70 TYPE(4) = CARRENTAL: AMOUNT(4) = 4\r\n80 GOSUB 100\r",
+        "notes": "Found in ExpenseReport.bas"
+      },
+      {
+        "bad": "40 type[1] = DINNER: amount[1] = 5001\r\n50 type[2] = BREAKFAST: amount[2] = 1000\r\n60 type[3] = BREAKFAST: amount[3] = 1001\r\n70 type[4] = CARRENTAL: amount[4] = 4\r\n80 GOSUB 100\r",
+        "notes": "Found in ExpenseReport.bas"
+      },
+      {
+        "bad": "           MOVE 5001 TO WS-AMOUNT(2)\r\n           MOVE 1000 TO WS-AMOUNT(3)\r\n           MOVE 1001 TO WS-AMOUNT(4)\r\n           MOVE 4 TO WS-AMOUNT(5)\r\n           PERFORM PRINTREPORT\r",
+        "notes": "Found in ExpenseReport.cbl"
+      },
+      {
+        "bad": "        { ExpenseType.DINNER, 5001 },\r\n        { ExpenseType.BREAKFAST, 1000 },\r\n        { ExpenseType.BREAKFAST, 1001 },\r\n        { ExpenseType.CAR_RENTAL, 4 },\r\n    ];\r",
+        "notes": "Found in ExpenseReport.d"
+      },
+      {
+        "bad": "        expenses(1)%amount = 1000\r\n        expenses(2)%type = BREAKFAST\r\n        expenses(2)%amount = 1001\r\n        expenses(3)%type = DINNER\r\n        expenses(3)%amount = 5000\r",
+        "notes": "Found in ExpenseReport.f"
+      },
+      {
+        "bad": "        Expense(DINNER, 5001)\r\n        Expense(BREAKFAST, 1000)\r\n        Expense(BREAKFAST, 1001)\r\n        Expense(CAR_RENTAL, 4)\r\n    ]\r",
+        "notes": "Found in Program.fs"
+      },
+      {
+        "bad": "printReport([\r\n    Expense(BREAKFAST, 1000),\r\n    Expense(BREAKFAST, 1001),\r\n    Expense(DINNER, 5000),\r\n    Expense(DINNER, 5001),\r",
+        "notes": "Found in expensereport.jl"
+      },
+      {
+        "bad": "    (make-expense :type :dinner :amount 5001)\r\n    (make-expense :type :breakfast :amount 1000)\r\n    (make-expense :type :breakfast :amount 1001)\r\n    (make-expense :type :car_rental :amount 4)\r\n)\r",
+        "notes": "Found in ExpenseReport.lisp"
+      },
+      {
+        "bad": "    Expense:new(ExpenseType.DINNER, 5001),\r\n    Expense:new(ExpenseType.BREAKFAST, 1000),\r\n    Expense:new(ExpenseType.BREAKFAST, 1001),\r\n    Expense:new(ExpenseType.CAR_RENTAL, 4),\r\n}\r",
+        "notes": "Found in ExpenseReport.lua"
+      },
+      {
+        "bad": "  echo \"Total expenses: \", total\r\n\r\nprintReport(@[(expenseType: DINNER, amount: 5000), (expenseType: DINNER, amount: 5001), (expenseType: BREAKFAST, amount: 1000), (expenseType: BREAKFAST, amount: 1001), (expenseType: CAR_RENTAL, amount: 4)])\r\n",
+        "notes": "Found in ExpenseReport.nim"
+      },
+      {
+        "bad": "    expenses[1].type = DINNER; expenses[1].amount = 5001;\r\n    expenses[2].type = BREAKFAST; expenses[2].amount = 1000;\r\n    expenses[3].type = BREAKFAST; expenses[3].amount = 1001;\r\n    expenses[4].type = CAR_RENTAL; expenses[4].amount = 4;\r\n    printReport(expenses, 5);\r",
+        "notes": "Found in ExpenseReport.m"
+      },
+      {
+        "bad": "}\r\n\r\nprintReport(new Expense(CAR_RENTAL, 5), new Expense(DINNER, 5000), new Expense(BREAKFAST, 1001), new Expense(CAR_RENTAL, 4));\r\n",
+        "notes": "Found in ExpenseReport.pl"
+      },
+      {
+        "bad": "} def\r\n\r\n[[dinner 5000] [dinner 5001] [breakfast 1000] [breakfast 1001] [car_rental 4]]\r\nprintReport\r\n",
+        "notes": "Found in ExpenseReport.ps"
+      },
+      {
+        "bad": "        [dinner, 5001],\r\n        [breakfast, 1000],\r\n        [breakfast, 1001],\r\n        [car_rental, 4]\r\n    ]).\r",
+        "notes": "Found in ExpenseReport.pl"
+      },
+      {
+        "bad": "expense.1.type = DINNER; expense.1.amount = 5001\r\nexpense.2.type = BREAKFAST; expense.2.amount = 1000\r\nexpense.3.type = BREAKFAST; expense.3.amount = 1001\r\nexpense.4.type = CAR_RENTAL; expense.4.amount = 4\r\n\r",
+        "notes": "Found in ExpenseReport.rexx"
+      },
+      {
+        "bad": ")\r\n\r\n(print-report (list (list 'dinner 5000) (list 'dinner 5001) (list 'breakfast 1000) (list 'breakfast 1001) (list 'car-rental 4)))\r\n",
+        "notes": "Found in ExpenseReport.scm"
+      },
+      {
+        "bad": "expense2 := Expense type: 'Dinner' amount: 5001.\r\nexpense3 := Expense type: 'Breakfast' amount: 1000.\r\nexpense4 := Expense type: 'Breakfast' amount: 1001.\r\nexpense5 := Expense type: 'Car Rental' amount: 4.\r\n\r",
+        "notes": "Found in ExpenseReport.st"
+      },
+      {
+        "bad": "(\"dinner\", 5001),\r\n(\"breakfast\", 1000),\r\n(\"breakfast\", 1001),\r\n(\"car_rental\", 4);\r\n\r",
+        "notes": "Found in expesereport.sql"
+      },
+      {
+        "bad": "        Expense {.type = ExpenseType.DINNER, .amount = 5001},\r\n        Expense {.type = ExpenseType.BREAKFAST, .amount = 1000},\r\n        Expense {.type = ExpenseType.BREAKFAST, .amount = 1001},\r\n        Expense {.type = ExpenseType.CAR_RENTAL, .amount = 4},\r\n    };\r",
+        "notes": "Found in ExpenseReport.zig"
+      },
+      {
+        "bad": "type(1) = DINNER: amount(1) = 5001\r\ntype(2) = BREAKFAST: amount(2) = 1000\r\ntype(3) = BREAKFAST: amount(3) = 1001\r\ntype(4) = CARRENTAL: amount(4) = 4\r\nhtmlMode = 1\r",
+        "notes": "Found in ExpenseReport.bas"
+      },
+      {
+        "bad": "    expenses : ExpenseList := (\r\n        (Breakfast, 1000),\r\n        (Breakfast, 1001),\r\n        (Dinner, 5000),\r\n        (Dinner, 5001),\r",
+        "notes": "Found in expensereport.adb"
+      },
+      {
+        "bad": "40 TYPE(1) = DINNER: AMOUNT(1) = 5001\r\n50 TYPE(2) = BREAKFAST: AMOUNT(2) = 1000\r\n60 TYPE(3) = BREAKFAST: AMOUNT(3) = 1001\r\n70 TYPE(4) = CARRENTAL: AMOUNT(4) = 4\r\n80 htmlMode = 1\r",
+        "notes": "Found in ExpenseReport.bas"
+      },
+      {
+        "bad": "        ExpenseReport.printReport(true, [\r\n            %Expense{type: :breakfast, amount: 1000},\r\n            %Expense{type: :breakfast, amount: 1001},\r\n            %Expense{type: :dinner, amount: 5000},\r\n            %Expense{type: :dinner, amount: 5001},\r",
+        "notes": "Found in expensereport.exs"
+      },
+      {
+        "bad": "        Expense(DINNER, 5001)\r\n        Expense(BREAKFAST, 1000)\r\n        Expense(BREAKFAST, 1001)\r\n        Expense(CAR_RENTAL, 4)\r\n    ])\r",
+        "notes": "Found in Program.fs"
+      },
+      {
+        "bad": "    printReport True ([\r\n        Expense Breakfast 1000,\r\n        Expense Breakfast 1001,\r\n        Expense Dinner 5000,\r\n        Expense Dinner 5001,\r",
+        "notes": "Found in expensereport.hs"
+      },
+      {
+        "bad": "    echo \"</html>\"\r\n\r\nprintReport(@[(expenseType: DINNER, amount: 5000), (expenseType: DINNER, amount: 5001), (expenseType: BREAKFAST, amount: 1000), (expenseType: BREAKFAST, amount: 1001), (expenseType: CAR_RENTAL, amount: 4)], true)\r\n",
+        "notes": "Found in ExpenseReport.nim"
+      },
+      {
+        "bad": "    expenses[1].type = DINNER; expenses[1].amount = 5001;\r\n    expenses[2].type = BREAKFAST; expenses[2].amount = 1000;\r\n    expenses[3].type = BREAKFAST; expenses[3].amount = 1001;\r\n    expenses[4].type = CAR_RENTAL; expenses[4].amount = 4;\r\n    printReport(true, expenses, 5);\r",
+        "notes": "Found in ExpenseReport.m"
+      },
+      {
+        "bad": "    SetLength(expenses, 5);\r\n    expenses[0].type_ := Breakfast; expenses[0].amount := 1000;\r\n    expenses[1].type_ := Breakfast; expenses[1].amount := 1001;\r\n    expenses[2].type_ := Dinner; expenses[2].amount := 5000;\r\n    expenses[3].type_ := Dinner; expenses[3].amount := 5001;\r",
+        "notes": "Found in ExpenseReport.pas"
+      },
+      {
+        "bad": "ExpenseReport::print_report(true, [\r\n    new Expense(ExpenseType::BREAKFAST, 1000),\r\n    new Expense(ExpenseType::BREAKFAST, 1001),\r\n    new Expense(ExpenseType::DINNER, 5000),\r\n    new Expense(ExpenseType::DINNER, 5001),\r",
+        "notes": "Found in ExpenseReport.php"
+      },
+      {
+        "bad": "}\r\n\r\nprintReport(1, new Expense(BREAKFAST, 1000), new Expense(BREAKFAST, 1001), new Expense(DINNER, 5000),new Expense(DINNER, 5001),  new Expense(CAR_RENTAL, 4));\r\n",
+        "notes": "Found in ExpenseReport.pl"
+      },
+      {
+        "bad": "}\r\n\r\nprintReport(1, Expense.new(type => BREAKFAST, amount => 1000), Expense.new(type => BREAKFAST, amount => 1001), Expense.new(type => DINNER, amount => 5000), Expense.new(type => DINNER, amount => 5001), Expense.new(type => CAR_RENTAL, amount => 4));\r\n",
+        "notes": "Found in ExpenseReport.raku"
+      },
+      {
+        "bad": "    true,\r\n    Expense.new(:breakfast, 1000),\r\n    Expense.new(:breakfast, 1001),\r\n    Expense.new(:dinner, 5000),\r\n    Expense.new(:dinner, 5001),\r",
+        "notes": "Found in ExpenseReport.rb"
+      },
+      {
+        "bad": ")\r\n\r\n(print-report #t (list (list 'dinner 5000) (list 'dinner 5001) (list 'breakfast 1000) (list 'breakfast 1001) (list 'car-rental 4)))\r\n",
+        "notes": "Found in ExpenseReport.scm"
+      },
+      {
+        "bad": "}\r\n\r\nprintExpenses 1 [Expense new BREAKFAST 1000] [Expense new BREAKFAST 1001] [Expense new DINNER 5000] [Expense new DINNER 5001] [Expense new CAR_RENTAL 4]\r\n",
+        "notes": "Found in ExpenseReport.tcl"
+      },
+      {
+        "bad": "        Dim expenses As List(Of Expense) = new List(Of Expense)\r\n        expenses.add(new Expense(ExpenseType.BREAKFAST, 1000))\r\n        expenses.add(new Expense(ExpenseType.BREAKFAST, 1001))\r\n        expenses.add(new Expense(ExpenseType.DINNER, 5000))\r\n        expenses.add(new Expense(ExpenseType.DINNER, 5001))\r",
+        "notes": "Found in Program.vb"
+      },
+      {
+        "bad": "\"@babel/helper-define-polyfill-provider@^0.4.2\":\r\n  version \"0.4.2\"\r\n  resolved \"https://registry.yarnpkg.com/@babel/helper-define-polyfill-provider/-/helper-define-polyfill-provider-0.4.2.tgz#82c825cadeeeee7aad237618ebbe8fa1710015d7\"\r\n  integrity sha512-k0qnnOqHn5dK9pZpfD5XXZ9SojAITdCKRn2Lp6rnDGzIbaP0rHyMPk/4wsSxVBVz4RfN0q6VpXWP2pDGIoQ7hw==\r\n  dependencies:\r",
+        "notes": "Found in yarn.lock"
+      },
+      {
+        "bad": "    Expense(ExpenseType.DINNER, 5001),\r\n    Expense(ExpenseType.BREAKFAST, 1000),\r\n    Expense(ExpenseType.BREAKFAST, 1001),\r\n  ]);\r\n}\r",
+        "notes": "Found in expensereport.dart"
+      },
+      {
+        "bad": "    Expense(ExpenseType.DINNER, 5001),\r\n    Expense(ExpenseType.BREAKFAST, 1000),\r\n    Expense(ExpenseType.BREAKFAST, 1001),\r\n  ], true);\r\n}\r",
+        "notes": "Found in expensereport.dart"
+      },
+      {
+        "bad": "        &[\r\n            Expense { type_: ExpenseType::Breakfast, amount: 1000 },\r\n            Expense { type_: ExpenseType::Breakfast, amount: 1001 },\r\n            Expense { type_: ExpenseType::Dinner, amount: 5000 },\r\n            Expense { type_: ExpenseType::Dinner, amount: 5001 },\r",
+        "notes": "Found in main.rs"
+      },
+      {
+        "bad": "        printReport(true, [\r\n          new Expense(\"breakfast\", 1000),\r\n          new Expense(\"breakfast\", 1001),\r\n          new Expense(\"dinner\", 5000),\r\n          new Expense(\"dinner\", 5001),\r",
+        "notes": "Found in ExpenseReport.test.ts"
+      },
+      {
+        "bad": "\r\n(defn main []\r\n    (print-report [(expense :car-rental 100) (expense :breakfast 1000) (expense :breakfast 1001) (expense :dinner 5000) (expense :dinner 5001)])\r\n)\r\n",
+        "notes": "Found in core.clj"
+      },
+      {
+        "bad": "\r\n(defn main []\r\n    (print-report true [(expense :car-rental 100) (expense :breakfast 1000) (expense :breakfast 1001) (expense :dinner 5000) (expense :dinner 5001)])\r\n)\r\n",
+        "notes": "Found in core.clj"
+      },
+      {
+        "bad": "            expenses: [\r\n                Expense(type: ExpenseType.breakfast, amount: 1000),\r\n                Expense(type: ExpenseType.breakfast, amount: 1001),\r\n                Expense(type: ExpenseType.dinner, amount: 5000),\r\n                Expense(type: ExpenseType.dinner, amount: 5001),\r",
+        "notes": "Found in ExpenseReportTests.swift"
+      },
+      {
+        "bad": "        new ExpenseReport().printReport(true, List[Expense](\r\n            new Expense(ExpenseType.BREAKFAST, 1000),\r\n            new Expense(ExpenseType.BREAKFAST, 1001),\r\n            new Expense(ExpenseType.DINNER, 5000),\r\n            new Expense(ExpenseType.DINNER, 5001),\r",
+        "notes": "Found in ExpenseReport.scala"
+      }
+    ],
+    "structuralHints": {
+      "treeSitterQuery": "(column_definition\n  name: (identifier) @offender\n  (#match? @offender \"tags|categories|items|values\"))"
+    }
+  },
+  {
+    "id": "SQ_1002",
+    "languages": [
+      "sql"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Recursive Dependency",
+    "description": "Recursive Dependency",
+    "tags": [
+      "sqlcheck"
+    ],
+    "sources": [
+      {
+        "source": "sqlcheck",
+        "ruleId": "1002",
+        "url": "https://github.com/jarulraj/sqlcheck/blob/master/docs/logical/1002.md"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T07:02:41.836Z",
+    "examples": [
+      {
+        "bad": "\r\n  * [Multi-Valued Attribute](https://github.com/jarulraj/sqlcheck/blob/master/docs/logical/1001.md)\r\n  * [Recursive Dependency](https://github.com/jarulraj/sqlcheck/blob/master/docs/logical/1002.md)\r\n  * [Primary Key Does Not Exist](https://github.com/jarulraj/sqlcheck/blob/master/docs/logical/1003.md)\r\n  * [Generic Primary Key](https://github.com/jarulraj/sqlcheck/blob/master/docs/logical/1004.md)\r",
+        "notes": "Found in README.md"
+      },
+      {
+        "bad": "golang.org/x/net v0.0.0-20181023162649-9b4f9f5ad519/go.mod h1:mL1N/T3taQHkDXs73rZJwtUhF3w3ftmwwsq0BUmARs4=\r\ngolang.org/x/net v0.0.0-20181114220301-adae6a3d119a/go.mod h1:mL1N/T3taQHkDXs73rZJwtUhF3w3ftmwwsq0BUmARs4=\r\ngolang.org/x/net v0.0.0-20181201002055-351d144fa1fc/go.mod h1:mL1N/T3taQHkDXs73rZJwtUhF3w3ftmwwsq0BUmARs4=\r\ngolang.org/x/net v0.0.0-20181220203305-927f97764cc3/go.mod h1:mL1N/T3taQHkDXs73rZJwtUhF3w3ftmwwsq0BUmARs4=\r\ngolang.org/x/net v0.0.0-20190108225652-1e06a53dbb7e/go.mod h1:mL1N/T3taQHkDXs73rZJwtUhF3w3ftmwwsq0BUmARs4=\r",
+        "notes": "Found in go.sum"
+      }
+    ],
+    "structuralHints": {
+      "treeSitterQuery": "(identifier) @offender"
+    }
+  },
+  {
+    "id": "SQ_1003",
+    "languages": [
+      "sql"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Primary Key Does Not Exist",
+    "description": "Primary Key Does Not Exist",
+    "tags": [
+      "sqlcheck"
+    ],
+    "sources": [
+      {
+        "source": "sqlcheck",
+        "ruleId": "1003",
+        "url": "https://github.com/jarulraj/sqlcheck/blob/master/docs/logical/1003.md"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T06:41:02.609Z",
+    "examples": [
+      {
+        "bad": "  * [Multi-Valued Attribute](https://github.com/jarulraj/sqlcheck/blob/master/docs/logical/1001.md)\r\n  * [Recursive Dependency](https://github.com/jarulraj/sqlcheck/blob/master/docs/logical/1002.md)\r\n  * [Primary Key Does Not Exist](https://github.com/jarulraj/sqlcheck/blob/master/docs/logical/1003.md)\r\n  * [Generic Primary Key](https://github.com/jarulraj/sqlcheck/blob/master/docs/logical/1004.md)\r\n  * [Foreign Key Does Not Exist](https://github.com/jarulraj/sqlcheck/blob/master/docs/logical/1005.md)\r",
+        "notes": "Found in README.md"
+      }
+    ],
+    "structuralHints": {
+      "treeSitterQuery": "(create_table\n  (column_definitions) @offender\n  (#not-any-of? @offender \"primary\" \"PRIMARY\" \"key\" \"KEY\"))"
+    }
+  },
+  {
+    "id": "SQ_1004",
+    "languages": [
+      "sql"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Generic Primary Key",
+    "description": "Generic Primary Key",
+    "tags": [
+      "sqlcheck"
+    ],
+    "sources": [
+      {
+        "source": "sqlcheck",
+        "ruleId": "1004",
+        "url": "https://github.com/jarulraj/sqlcheck/blob/master/docs/logical/1004.md"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T03:48:56.531Z",
+    "examples": [
+      {
+        "bad": "  * [Recursive Dependency](https://github.com/jarulraj/sqlcheck/blob/master/docs/logical/1002.md)\r\n  * [Primary Key Does Not Exist](https://github.com/jarulraj/sqlcheck/blob/master/docs/logical/1003.md)\r\n  * [Generic Primary Key](https://github.com/jarulraj/sqlcheck/blob/master/docs/logical/1004.md)\r\n  * [Foreign Key Does Not Exist](https://github.com/jarulraj/sqlcheck/blob/master/docs/logical/1005.md)\r\n  * [Entity-Attribute-Value Pattern](https://github.com/jarulraj/sqlcheck/blob/master/docs/logical/1006.md)\r",
+        "notes": "Found in README.md"
+      },
+      {
+        "bad": "golang.org/x/net v0.0.0-20190311183353-d8887717615a/go.mod h1:t9HGtf8HONx5eT2rtn7q6eTqICYqUVnKs3thJo3Qplg=\r\ngolang.org/x/net v0.0.0-20190404232315-eb5bcb51f2a3/go.mod h1:t9HGtf8HONx5eT2rtn7q6eTqICYqUVnKs3thJo3Qplg=\r\ngolang.org/x/net v0.0.0-20190501004415-9ce7a6920f09/go.mod h1:t9HGtf8HONx5eT2rtn7q6eTqICYqUVnKs3thJo3Qplg=\r\ngolang.org/x/net v0.0.0-20190503192946-f4e77d36d62c/go.mod h1:t9HGtf8HONx5eT2rtn7q6eTqICYqUVnKs3thJo3Qplg=\r\ngolang.org/x/net v0.0.0-20190603091049-60506f45cf65/go.mod h1:HSz+uSET+XFnRR8LxR5pz3Of3rY3CfYBVs4xY44aLks=\r",
+        "notes": "Found in go.sum"
+      }
+    ],
+    "structuralHints": {
+      "treeSitterQuery": "(create_table\n  (column_definitions\n    (column_definition\n      name: (identifier) @offender\n      (#match? @offender \"^(id|ID|Id)$\"))))"
+    }
+  },
+  {
+    "id": "SQ_1005",
+    "languages": [
+      "sql"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Foreign Key Does Not Exist",
+    "description": "Foreign Key Does Not Exist",
+    "tags": [
+      "sqlcheck"
+    ],
+    "sources": [
+      {
+        "source": "sqlcheck",
+        "ruleId": "1005",
+        "url": "https://github.com/jarulraj/sqlcheck/blob/master/docs/logical/1005.md"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T03:48:57.706Z",
+    "examples": [
+      {
+        "bad": "   id=\"g302\">\r\n\t\t<path\r\n   d=\"M 239.17821,107.8667 C 239.49559,107.8667 239.78563,107.89502 240.04735,107.95068 C 240.30907,108.00683 240.53368,108.09863 240.72118,108.22607 C 240.9077,108.35351 241.05321,108.52295 241.15575,108.73437 C 241.25829,108.94579 241.31005,109.20703 241.31005,109.51806 C 241.31005,109.854 241.23388,110.13329 241.08056,110.35742 C 240.92822,110.58154 240.70165,110.76465 240.40283,110.90771 C 240.81494,111.02587 241.12256,111.23291 241.32568,111.5288 C 241.5288,111.82469 241.63037,112.18114 241.63037,112.59814 C 241.63037,112.93408 241.56494,113.22509 241.43408,113.47119 C 241.30322,113.7168 241.12646,113.91748 240.90576,114.07324 C 240.68408,114.229 240.43115,114.34424 240.14795,114.41845 C 239.86377,114.49365 239.57275,114.53075 239.27295,114.53075 L 236.03662,114.53075 L 236.03662,107.86669 L 239.17821,107.86669 L 239.17821,107.8667 z M 238.99071,110.56201 C 239.25243,110.56201 239.46727,110.5 239.63622,110.37597 C 239.80419,110.25146 239.88817,110.05029 239.88817,109.77099 C 239.88817,109.61572 239.85985,109.48828 239.80419,109.38915 C 239.74755,109.28954 239.67333,109.21239 239.57958,109.15624 C 239.48583,109.10058 239.37841,109.06151 239.25731,109.04003 C 239.13524,109.01806 239.00926,109.00732 238.8784,109.00732 L 237.50535,109.00732 L 237.50535,110.56201 L 238.99071,110.56201 z M 239.07664,113.39014 C 239.22019,113.39014 239.35691,113.37647 239.48777,113.34815 C 239.61863,113.32032 239.73484,113.27344 239.83445,113.2085 C 239.93406,113.14307 240.01316,113.0542 240.07273,112.94239 C 240.1323,112.83058 240.1616,112.68751 240.1616,112.51319 C 240.1616,112.17139 240.06492,111.92725 239.87156,111.78126 C 239.6782,111.63527 239.42234,111.56202 239.10496,111.56202 L 237.50535,111.56202 L 237.50535,113.39014 L 239.07664,113.39014 z\"\r\n   id=\"path304\"\r\n   style=\"fill:#ffffff\" />\r",
+        "notes": "Found in by-sa.svg"
+      },
+      {
+        "bad": "  * [Primary Key Does Not Exist](https://github.com/jarulraj/sqlcheck/blob/master/docs/logical/1003.md)\r\n  * [Generic Primary Key](https://github.com/jarulraj/sqlcheck/blob/master/docs/logical/1004.md)\r\n  * [Foreign Key Does Not Exist](https://github.com/jarulraj/sqlcheck/blob/master/docs/logical/1005.md)\r\n  * [Entity-Attribute-Value Pattern](https://github.com/jarulraj/sqlcheck/blob/master/docs/logical/1006.md)\r\n  * [Metadata Tribbles](https://github.com/jarulraj/sqlcheck/blob/master/docs/logical/1007.md)\r",
+        "notes": "Found in README.md"
+      },
+      {
+        "bad": "github.com/prometheus/common v0.0.0-20181113130724-41aa239b4cce/go.mod h1:daVV7qP5qjZbuso7PdcryaAu0sAZbrN9i7WWcTMWvro=\r\ngithub.com/prometheus/common v0.4.0/go.mod h1:TNfzLD0ON7rHzMJeJkieUDPYmFC7Snx/y86RQel1bk4=\r\ngithub.com/prometheus/procfs v0.0.0-20181005140218-185b4288413d/go.mod h1:c3At6R/oaqEKCNdg8wHV1ftS6bRYblBhIjjI8uT2IGk=\r\ngithub.com/prometheus/procfs v0.0.0-20190507164030-5867b95ac084/go.mod h1:TjEm7ze935MbeOT/UhFTIMYKhuLP4wbCsTZCD3I8kEA=\r\ngithub.com/prometheus/tsdb v0.7.1/go.mod h1:qhTCs0VvXwvX/y3TZrWD7rabWM+ijKTux40TwIPHuXU=\r",
+        "notes": "Found in go.sum"
+      },
+      {
+        "bad": "endobj\r\n16 0 obj\r\n<</Ascent 728/CapHeight 716/Descent -210/Flags 4/FontBBox[ -664 -324 2000 1005]/FontFile2 17 0 R /FontName/MUFUZY+ArialMT/ItalicAngle 0/StemV 80/Type/FontDescriptor>>\r\nendobj\r\n17 0 obj\r",
+        "notes": "Found in testcases.pdf"
+      }
+    ],
+    "structuralHints": {
+      "treeSitterQuery": "((ERROR) @offender)"
+    }
+  },
+  {
+    "id": "SQ_1006",
+    "languages": [
+      "sql"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Entity-Attribute-Value Pattern",
+    "description": "Entity-Attribute-Value Pattern",
+    "tags": [
+      "sqlcheck"
+    ],
+    "sources": [
+      {
+        "source": "sqlcheck",
+        "ruleId": "1006",
+        "url": "https://github.com/jarulraj/sqlcheck/blob/master/docs/logical/1006.md"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T06:41:14.123Z",
+    "examples": [
+      {
+        "bad": "  * [Generic Primary Key](https://github.com/jarulraj/sqlcheck/blob/master/docs/logical/1004.md)\r\n  * [Foreign Key Does Not Exist](https://github.com/jarulraj/sqlcheck/blob/master/docs/logical/1005.md)\r\n  * [Entity-Attribute-Value Pattern](https://github.com/jarulraj/sqlcheck/blob/master/docs/logical/1006.md)\r\n  * [Metadata Tribbles](https://github.com/jarulraj/sqlcheck/blob/master/docs/logical/1007.md)\r\n\r",
+        "notes": "Found in README.md"
+      }
+    ],
+    "structuralHints": {
+      "treeSitterQuery": "(create_table\n  (column_definitions\n    (column_definition\n      name: (identifier) @attr_name\n      (#match? @attr_name \"^(attribute|attr|property|prop|key|name|field)$\"))\n    (column_definition\n      name: (identifier) @value_name\n      (#match? @value_name \"^(value|val|data|content)$\"))) @offender)"
+    }
+  },
+  {
+    "id": "SQ_1007",
+    "languages": [
+      "sql"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Metadata Tribbles",
+    "description": "Metadata Tribbles",
+    "tags": [
+      "sqlcheck"
+    ],
+    "sources": [
+      {
+        "source": "sqlcheck",
+        "ruleId": "1007",
+        "url": "https://github.com/jarulraj/sqlcheck/blob/master/docs/logical/1007.md"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T07:02:41.901Z",
+    "examples": [
+      {
+        "bad": "                \"type\": \"git\",\r\n                \"url\": \"https://github.com/phpDocumentor/TypeResolver.git\",\r\n                \"reference\": \"b39c7a5b194f9ed7bd0dd345c751007a41862443\"\r\n            },\r\n            \"dist\": {\r",
+        "notes": "Found in composer.lock"
+      },
+      {
+        "bad": "  * [Foreign Key Does Not Exist](https://github.com/jarulraj/sqlcheck/blob/master/docs/logical/1005.md)\r\n  * [Entity-Attribute-Value Pattern](https://github.com/jarulraj/sqlcheck/blob/master/docs/logical/1006.md)\r\n  * [Metadata Tribbles](https://github.com/jarulraj/sqlcheck/blob/master/docs/logical/1007.md)\r\n\r\n### Physical Database Design Anti-Patterns\r",
+        "notes": "Found in README.md"
+      },
+      {
+        "bad": "github.com/coreos/etcd v3.3.13+incompatible/go.mod h1:uF7uidLiAD3TWHmW31ZFd/JWoc32PjwdhPthX9715RE=\r\ngithub.com/coreos/go-semver v0.3.0/go.mod h1:nnelYz7RCh+5ahJtPPxZlU+153eP4D4r3EedlOD2RNk=\r\ngithub.com/coreos/go-systemd v0.0.0-20190321100706-95778dfbb74e/go.mod h1:F5haX7vjVVG0kc13fIWeqUViNPyEJxv/OmvnBo0Yme4=\r\ngithub.com/coreos/pkg v0.0.0-20180928190104-399ea9e2e55f/go.mod h1:E3G3o1h8I7cfcXa63jLwjI0eiQQMgzzUDFVpN/nH/eA=\r\ngithub.com/cpuguy83/go-md2man/v2 v2.0.0/go.mod h1:maD7wRr/U5Z6m/iR4s+kqSMx2CaBsrgA7czyZG/E6dU=\r",
+        "notes": "Found in go.sum"
+      },
+      {
+        "bad": "use@^3.1.0:\r\n  version \"3.1.1\"\r\n  resolved \"https://registry.yarnpkg.com/use/-/use-3.1.1.tgz#d50c8cac79a19fbc20f2911f56eb973f4e10070f\"\r\n  integrity sha512-cwESVXlO3url9YWlFW/TA9cshCEhtu7IKJ/p5soJ/gGpj7vbvFrAY/eIioQ6Dw23KjZhYgiIo8HOs1nQ2vr/oQ==\r\n\r",
+        "notes": "Found in yarn.lock"
+      }
+    ],
+    "structuralHints": {
+      "treeSitterQuery": "(identifier) @offender"
+    }
+  },
+  {
+    "id": "SQ_2001",
+    "languages": [
+      "sql"
+    ],
+    "category": "Performance",
+    "severity": "medium",
+    "title": "Imprecise Data Type",
+    "description": "Imprecise Data Type",
+    "tags": [
+      "sqlcheck"
+    ],
+    "sources": [
+      {
+        "source": "sqlcheck",
+        "ruleId": "2001",
+        "url": "https://github.com/jarulraj/sqlcheck/blob/master/docs/physical/2001.md"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T06:41:29.741Z",
+    "examples": [
+      {
+        "bad": "<project xmlns=\"http://maven.apache.org/POM/4.0.0\" xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\"\r\n  xsi:schemaLocation=\"http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd\">\r\n  <modelVersion>4.0.0</modelVersion>\r",
+        "notes": "Found in pom.xml"
+      },
+      {
+        "bad": "### Physical Database Design Anti-Patterns\r\n\r\n  * [Imprecise Data Type](https://github.com/jarulraj/sqlcheck/blob/master/docs/physical/2001.md)\r\n  * [Values In Definition](https://github.com/jarulraj/sqlcheck/blob/master/docs/physical/2002.md)\r\n  * [Files Are Not SQL Data Types](https://github.com/jarulraj/sqlcheck/blob/master/docs/physical/2003.md)\r",
+        "notes": "Found in readme.md"
+      },
+      {
+        "bad": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\r\n<project xmlns=\"http://maven.apache.org/POM/4.0.0\" xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\"\r\n         xsi:schemaLocation=\"http://maven.apache.org/POM/4.0.0 http://maven.apache.org/maven-v4_0_0.xsd\">\r\n\r",
+        "notes": "Found in pom.xml"
+      },
+      {
+        "bad": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\r\n<phpunit xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\"\r\n\txsi:noNamespaceSchemaLocation=\"https://schema.phpunit.de/9.6/phpunit.xsd\"\r\n\tbackupGlobals=\"false\"\r",
+        "notes": "Found in phpunit.xml"
+      },
+      {
+        "bad": "github.com/beorn7/perks v1.0.0/go.mod h1:KWe93zE9D1o94FZ5RNwFwVgaQK1VOXiVxmqh+CedLV8=\r\ngithub.com/bgentry/speakeasy v0.1.0/go.mod h1:+zsyZBPWlz7T6j88CTgSN5bM796AkVf0kBD4zp0CCIs=\r\ngithub.com/bketelsen/crypt v0.0.3-0.20200106085610-5cbc8cc4026c/go.mod h1:MKsuJmJgSg28kpZDP6UIiPt0e0Oz0kqKNGyRaWEPv84=\r\ngithub.com/cespare/xxhash v1.1.0/go.mod h1:XrSqR1VqqWfGrhpAt58auRo0WTKS1nRRg3ghfAqPWnc=\r\ngithub.com/client9/misspell v0.3.4/go.mod h1:qj6jICC3Q7zFZvVWo7KLAzC3yx5G7kyvSDkc90ppPyw=\r",
+        "notes": "Found in go.sum"
+      },
+      {
+        "bad": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\r\n<project xmlns=\"http://maven.apache.org/POM/4.0.0\"\r\n         xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\"\r\n         xsi:schemaLocation=\"http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd\">\r\n    <modelVersion>4.0.0</modelVersion>\r",
+        "notes": "Found in pom.xml"
+      },
+      {
+        "bad": "<project xmlns=\"http://maven.apache.org/POM/4.0.0\" xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\"\r\n    xsi:schemaLocation=\"http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd\">\r\n    <modelVersion>4.0.0</modelVersion>\r",
+        "notes": "Found in pom.xml"
+      },
+      {
+        "bad": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\r\n<project xmlns=\"http://maven.apache.org/POM/4.0.0\" xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xsi:schemaLocation=\"http://maven.apache.org/POM/4.0.0 http://maven.apache.org/maven-v4_0_0.xsd\">\r\n\r\n    <modelVersion>4.0.0</modelVersion>\r",
+        "notes": "Found in pom.xml"
+      },
+      {
+        "bad": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\r\n<project xmlns=\"http://maven.apache.org/POM/4.0.0\"\r\n         xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\"\r\n         xsi:schemaLocation=\"http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd\">\r\n\r",
+        "notes": "Found in pom.xml"
+      },
+      {
+        "bad": "<project xmlns=\"http://maven.apache.org/POM/4.0.0\" xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xsi:schemaLocation=\"http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd\">\r\n    <modelVersion>4.0.0</modelVersion>\r\n\r",
+        "notes": "Found in pom.xml"
+      },
+      {
+        "bad": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\r\n<phpunit xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xsi:noNamespaceSchemaLocation=\"https://schema.phpunit.de/9.3/phpunit.xsd\" bootstrap=\"vendor/autoload.php\" colors=\"true\">\r\n  <coverage processUncoveredFiles=\"true\">\r\n    <include>\r",
+        "notes": "Found in phpunit.xml"
+      }
+    ],
+    "structuralHints": {
+      "treeSitterQuery": "(column_definition\n  type: [\n    (float) @offender\n    (double) @offender\n  ])"
+    }
+  },
+  {
+    "id": "SQ_2002",
+    "languages": [
+      "sql"
+    ],
+    "category": "Performance",
+    "severity": "medium",
+    "title": "Values In Definition",
+    "description": "Values In Definition",
+    "tags": [
+      "sqlcheck"
+    ],
+    "sources": [
+      {
+        "source": "sqlcheck",
+        "ruleId": "2002",
+        "url": "https://github.com/jarulraj/sqlcheck/blob/master/docs/physical/2002.md"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T06:41:34.104Z",
+    "examples": [
+      {
+        "bad": "\r\n  * [Imprecise Data Type](https://github.com/jarulraj/sqlcheck/blob/master/docs/physical/2001.md)\r\n  * [Values In Definition](https://github.com/jarulraj/sqlcheck/blob/master/docs/physical/2002.md)\r\n  * [Files Are Not SQL Data Types](https://github.com/jarulraj/sqlcheck/blob/master/docs/physical/2003.md)\r\n  * [Too Many Indexes](https://github.com/jarulraj/sqlcheck/blob/master/docs/physical/2004.md)\r",
+        "notes": "Found in readme.md"
+      },
+      {
+        "bad": "golang.org/x/exp v0.0.0-20191030013958-a1ab85dbe136/go.mod h1:JXzH8nQsPlswgeRAPE3MuO9GYsAcnJvJ4vnMwN/5qkY=\r\ngolang.org/x/image v0.0.0-20190227222117-0694c2d4d067/go.mod h1:kZ7UVZpmo3dzQBMxlp+ypCbDeSB+sBbTgSJuh5dn5js=\r\ngolang.org/x/image v0.0.0-20190802002840-cff245a6509b/go.mod h1:FeLwcggjj3mMvU+oOTbSwawSJRM1uh48EjtB4UJZlP0=\r\ngolang.org/x/lint v0.0.0-20181026193005-c67002cb31c3/go.mod h1:UVdnD1Gm6xHRNCYTkRU2/jEulfH38KcIWyp/GAMgvoE=\r\ngolang.org/x/lint v0.0.0-20190227174305-5b3e6a55c961/go.mod h1:wehouNa3lNwaWXcvxsM5YxQ5yQlVC4a0KAMCusXpPoU=\r",
+        "notes": "Found in go.sum"
+      },
+      {
+        "bad": "      \"CREATE TABLE Bugs_2008 ( . . . );\\n\" // 6\r\n\r\n      \"ALTER TABLE Customers ADD (revenue2002 NUMBER(9,2));\\n\" // 7\r\n\r\n      \"CREATE TABLE Bugs_2009 (-- other columns\" // 8\r",
+        "notes": "Found in test_suite.cpp"
+      },
+      {
+        "bad": "        self greg birthDate = Date clone setYear(1972) setMonth(6) setDay(1)\r\n        self sarah name = \"Sarah\"\r\n        self sarah birthDate = Date clone setYear(2002) setMonth(1) setDay(1)\r\n        self mike name = \"Mike\"\r\n        self mike birthDate = Date clone setYear(1999) setMonth(1) setDay(1)\r",
+        "notes": "Found in FinderTest.io"
+      }
+    ],
+    "structuralHints": {
+      "treeSitterQuery": "(column_definition\n  type: (enum) @offender)"
+    }
+  },
+  {
+    "id": "SQ_2003",
+    "languages": [
+      "sql"
+    ],
+    "category": "Performance",
+    "severity": "medium",
+    "title": "Files Are Not SQL Data Types",
+    "description": "Files Are Not SQL Data Types",
+    "tags": [
+      "sqlcheck"
+    ],
+    "sources": [
+      {
+        "source": "sqlcheck",
+        "ruleId": "2003",
+        "url": "https://github.com/jarulraj/sqlcheck/blob/master/docs/physical/2003.md"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T03:49:11.172Z",
+    "examples": [
+      {
+        "bad": "\t\t\t<path\r\n   id=\"path5708_2_\"\r\n   d=\"M 473.88455,-167.54724 C 477.36996,-164.06128 479.11294,-159.79333 479.11294,-154.74451 C 479.11294,-149.69513 477.40014,-145.47303 473.9746,-142.07715 C 470.33929,-138.50055 466.04281,-136.71283 461.08513,-136.71283 C 456.18736,-136.71283 451.96526,-138.48544 448.42003,-142.03238 C 444.87419,-145.57819 443.10158,-149.81537 443.10158,-154.74451 C 443.10158,-159.6731 444.87419,-163.94049 448.42003,-167.54724 C 451.87523,-171.03375 456.09728,-172.77618 461.08513,-172.77618 C 466.13342,-172.77618 470.39914,-171.03375 473.88455,-167.54724 z M 450.76657,-165.20239 C 447.81982,-162.22601 446.34701,-158.7395 446.34701,-154.74005 C 446.34701,-150.7417 447.80529,-147.28485 450.72125,-144.36938 C 453.63778,-141.45288 457.10974,-139.99462 461.1383,-139.99462 C 465.16683,-139.99462 468.66848,-141.46743 471.64486,-144.41363 C 474.47076,-147.14947 475.88427,-150.59069 475.88427,-154.74005 C 475.88427,-158.85809 474.44781,-162.35297 471.57659,-165.22479 C 468.70595,-168.09546 465.22671,-169.53131 461.1383,-169.53131 C 457.04993,-169.53131 453.59192,-168.08813 450.76657,-165.20239 z M 458.52106,-156.49927 C 458.07074,-157.4809 457.39673,-157.9715 456.49781,-157.9715 C 454.90867,-157.9715 454.11439,-156.90198 454.11439,-154.763 C 454.11439,-152.62341 454.90867,-151.55389 456.49781,-151.55389 C 457.54719,-151.55389 458.29676,-152.07519 458.74647,-153.11901 L 460.94923,-151.94598 C 459.8993,-150.0805 458.32417,-149.14697 456.22374,-149.14697 C 454.60384,-149.14697 453.30611,-149.64367 452.33168,-150.63653 C 451.35561,-151.62994 450.86894,-152.99926 450.86894,-154.7445 C 450.86894,-156.46008 451.37123,-157.82159 452.37642,-158.83013 C 453.38161,-159.83806 454.63347,-160.34264 456.13423,-160.34264 C 458.35435,-160.34264 459.94407,-159.46776 460.90504,-157.71978 L 458.52106,-156.49927 z M 468.8844,-156.49927 C 468.43353,-157.4809 467.77292,-157.9715 466.90201,-157.9715 C 465.28095,-157.9715 464.46988,-156.90198 464.46988,-154.763 C 464.46988,-152.62341 465.28095,-151.55389 466.90201,-151.55389 C 467.95304,-151.55389 468.68918,-152.07519 469.10925,-153.11901 L 471.36126,-151.94598 C 470.31301,-150.0805 468.74007,-149.14697 466.64358,-149.14697 C 465.02587,-149.14697 463.73095,-149.64367 462.75711,-150.63653 C 461.78494,-151.62994 461.29773,-152.99926 461.29773,-154.7445 C 461.29773,-156.46008 461.79221,-157.82159 462.78061,-158.83013 C 463.76843,-159.83806 465.02588,-160.34264 466.55408,-160.34264 C 468.77027,-160.34264 470.35776,-159.46776 471.3154,-157.71978 L 468.8844,-156.49927 z\" />\r\n\r\n\t\t</g>\r",
+        "notes": "Found in by-sa.svg"
+      },
+      {
+        "bad": "  * [Imprecise Data Type](https://github.com/jarulraj/sqlcheck/blob/master/docs/physical/2001.md)\r\n  * [Values In Definition](https://github.com/jarulraj/sqlcheck/blob/master/docs/physical/2002.md)\r\n  * [Files Are Not SQL Data Types](https://github.com/jarulraj/sqlcheck/blob/master/docs/physical/2003.md)\r\n  * [Too Many Indexes](https://github.com/jarulraj/sqlcheck/blob/master/docs/physical/2004.md)\r\n  * [Index Attribute Order](https://github.com/jarulraj/sqlcheck/blob/master/docs/physical/2005.md)\r",
+        "notes": "Found in readme.md"
+      },
+      {
+        "bad": "gopkg.in/yaml.v2 v2.2.4/go.mod h1:hI93XBmqTisBFMUTm0b8Fm+jr3Dg1NNxqwp+5A1VGuI=\r\ngopkg.in/yaml.v2 v2.2.8/go.mod h1:hI93XBmqTisBFMUTm0b8Fm+jr3Dg1NNxqwp+5A1VGuI=\r\ngopkg.in/yaml.v3 v3.0.0-20200313102051-9f266ea9e77c/go.mod h1:K4uyk7z7BCEPqu6E+C64Yfv1cQ7kz7rIZviUmN+EgEM=\r\ngopkg.in/yaml.v3 v3.0.0-20200615113413-eeeca48fe776 h1:tQIYjPdBoyREyB9XMu+nnTclpTYkz2zFM+lzLJFO4gQ=\r\ngopkg.in/yaml.v3 v3.0.0-20200615113413-eeeca48fe776/go.mod h1:K4uyk7z7BCEPqu6E+C64Yfv1cQ7kz7rIZviUmN+EgEM=\r",
+        "notes": "Found in go.sum"
+      },
+      {
+        "bad": "﻿<Project xmlns=\"http://schemas.microsoft.com/developer/msbuild/2003\">\r\n    <PropertyGroup>\r\n        <ProjectGuid>{3E0B3749-4258-486E-A44B-05088E7E42D6}</ProjectGuid>\r",
+        "notes": "Found in GildedRose.groupproj"
+      },
+      {
+        "bad": "﻿<Project xmlns=\"http://schemas.microsoft.com/developer/msbuild/2003\">\r\n    <PropertyGroup>\r\n        <ProjectGuid>{3166A4F2-2D40-49FF-9A28-E46E603C9C6A}</ProjectGuid>\r",
+        "notes": "Found in TextTestFixture.dproj"
+      },
+      {
+        "bad": "﻿<Project xmlns=\"http://schemas.microsoft.com/developer/msbuild/2003\">\r\n    <PropertyGroup>\r\n        <ProjectGuid>{9379A28B-85A1-455B-BE8B-BDE5DD446BDF}</ProjectGuid>\r",
+        "notes": "Found in UnitTests.dproj"
+      },
+      {
+        "bad": "﻿<?xml version=\"1.0\" encoding=\"utf-8\"?>\r\n<Project ToolsVersion=\"12.0\" DefaultTargets=\"Build\" xmlns=\"http://schemas.microsoft.com/developer/msbuild/2003\">\r\n  <Import Project=\"$(MSBuildExtensionsPath)\\$(MSBuildToolsVersion)\\Microsoft.Common.props\" Condition=\"Exists('$(MSBuildExtensionsPath)\\$(MSBuildToolsVersion)\\Microsoft.Common.props')\" />\r\n  <PropertyGroup>\r",
+        "notes": "Found in GildedRose.fsproj"
+      }
+    ],
+    "structuralHints": {
+      "treeSitterQuery": "(program\n  (statement\n    (create_table\n      (keyword_create)\n      (keyword_table)\n      (object_reference)\n      (column_definitions\n        (column_definition\n          (identifier)\n          (identifier) @offender\n          (#match? @offender \"^(file|FILE|File)$\"))))))"
+    }
+  },
+  {
+    "id": "SQ_2004",
+    "languages": [
+      "sql"
+    ],
+    "category": "Performance",
+    "severity": "medium",
+    "title": "Too Many Indexes",
+    "description": "Too Many Indexes",
+    "tags": [
+      "sqlcheck"
+    ],
+    "sources": [
+      {
+        "source": "sqlcheck",
+        "ruleId": "2004",
+        "url": "https://github.com/jarulraj/sqlcheck/blob/master/docs/physical/2004.md"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T03:49:12.105Z",
+    "examples": [
+      {
+        "bad": "  * [Values In Definition](https://github.com/jarulraj/sqlcheck/blob/master/docs/physical/2002.md)\r\n  * [Files Are Not SQL Data Types](https://github.com/jarulraj/sqlcheck/blob/master/docs/physical/2003.md)\r\n  * [Too Many Indexes](https://github.com/jarulraj/sqlcheck/blob/master/docs/physical/2004.md)\r\n  * [Index Attribute Order](https://github.com/jarulraj/sqlcheck/blob/master/docs/physical/2005.md)\r\n\r",
+        "notes": "Found in readme.md"
+      },
+      {
+        "bad": "                                 Apache License\r\n                           Version 2.0, January 2004\r\n                        http://www.apache.org/licenses/\r\n\r",
+        "notes": "Found in LICENSE"
+      },
+      {
+        "bad": "golang.org/x/tools v0.0.0-20190816200558-6889da9d5479/go.mod h1:b+2E5dAYhXwXZwtnZ6UAqBI28+e2cm9otk0dWdXHAEo=\r\ngolang.org/x/tools v0.0.0-20190911174233-4f2ddba30aff/go.mod h1:b+2E5dAYhXwXZwtnZ6UAqBI28+e2cm9otk0dWdXHAEo=\r\ngolang.org/x/tools v0.0.0-20191012152004-8de300cfc20a/go.mod h1:b+2E5dAYhXwXZwtnZ6UAqBI28+e2cm9otk0dWdXHAEo=\r\ngolang.org/x/tools v0.0.0-20191112195655-aa38f8e97acc/go.mod h1:b+2E5dAYhXwXZwtnZ6UAqBI28+e2cm9otk0dWdXHAEo=\r\ngolang.org/x/xerrors v0.0.0-20190717185122-a985d3407aa7/go.mod h1:I/5z698sn9Ka8TeJc9MKroUUfqBBauWjQqLJ2OPfmY0=\r",
+        "notes": "Found in go.sum"
+      },
+      {
+        "bad": "\r\n  // metadata tribbles\r\n  PrintMatches(\"bugs_2004\", regex);\r\n  PrintMatches(\"bugs8_foo\", regex);\r\n\r",
+        "notes": "Found in test_suite.cpp"
+      }
+    ],
+    "structuralHints": {
+      "treeSitterQuery": "(create_index) @offender"
+    }
+  },
+  {
+    "id": "SQ_2005",
+    "languages": [
+      "sql"
+    ],
+    "category": "Performance",
+    "severity": "medium",
+    "title": "Index Attribute Order",
+    "description": "Index Attribute Order",
+    "tags": [
+      "sqlcheck"
+    ],
+    "sources": [
+      {
+        "source": "sqlcheck",
+        "ruleId": "2005",
+        "url": "https://github.com/jarulraj/sqlcheck/blob/master/docs/physical/2005.md"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T06:41:49.462Z",
+    "examples": [
+      {
+        "bad": "  * [Files Are Not SQL Data Types](https://github.com/jarulraj/sqlcheck/blob/master/docs/physical/2003.md)\r\n  * [Too Many Indexes](https://github.com/jarulraj/sqlcheck/blob/master/docs/physical/2004.md)\r\n  * [Index Attribute Order](https://github.com/jarulraj/sqlcheck/blob/master/docs/physical/2005.md)\r\n\r\n### Query Anti-Patterns\r",
+        "notes": "Found in readme.md"
+      },
+      {
+        "bad": "golang.org/x/tools v0.0.0-20190621195816-6e04913cbbac/go.mod h1:/rFqwRUd4F7ZHNgwSSTFct+R/Kf4OFW1sUzUTQQTgfc=\r\ngolang.org/x/tools v0.0.0-20190628153133-6cdbf07be9d0/go.mod h1:/rFqwRUd4F7ZHNgwSSTFct+R/Kf4OFW1sUzUTQQTgfc=\r\ngolang.org/x/tools v0.0.0-20190816200558-6889da9d5479/go.mod h1:b+2E5dAYhXwXZwtnZ6UAqBI28+e2cm9otk0dWdXHAEo=\r\ngolang.org/x/tools v0.0.0-20190911174233-4f2ddba30aff/go.mod h1:b+2E5dAYhXwXZwtnZ6UAqBI28+e2cm9otk0dWdXHAEo=\r\ngolang.org/x/tools v0.0.0-20191012152004-8de300cfc20a/go.mod h1:b+2E5dAYhXwXZwtnZ6UAqBI28+e2cm9otk0dWdXHAEo=\r",
+        "notes": "Found in go.sum"
+      },
+      {
+        "bad": "\"@babel/helper-wrap-function@^7.22.9\":\r\n  version \"7.22.10\"\r\n  resolved \"https://registry.yarnpkg.com/@babel/helper-wrap-function/-/helper-wrap-function-7.22.10.tgz#d845e043880ed0b8c18bd194a12005cb16d2f614\"\r\n  integrity sha512-OnMhjWjuGYtdoO3FmsEFWvBStBAe2QOgwOLsLNDjN+aaiMD8InJk1/O3HSD8lkqTjCgg5YI34Tz15KNNA3p+nQ==\r\n  dependencies:\r",
+        "notes": "Found in yarn.lock"
+      },
+      {
+        "bad": "// MSVC++ 10.0      _MSC_VER == 1600 (Visual Studio 2010)\r\n// MSVC++ 9.0       _MSC_VER == 1500 (Visual Studio 2008)\r\n// MSVC++ 8.0       _MSC_VER == 1400 (Visual Studio 2005)\r\n\r\n// Universal Windows Platform support\r",
+        "notes": "Found in doctest.h"
+      }
+    ],
+    "structuralHints": {
+      "treeSitterQuery": "(create_index) @offender"
+    }
+  },
+  {
+    "id": "SQ_3001",
+    "languages": [
+      "sql"
+    ],
+    "category": "Performance",
+    "severity": "medium",
+    "title": "SELECT *",
+    "description": "SELECT *",
+    "tags": [
+      "sqlcheck"
+    ],
+    "sources": [
+      {
+        "source": "sqlcheck",
+        "ruleId": "3001",
+        "url": "https://github.com/jarulraj/sqlcheck/blob/master/docs/query/3001.md"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T03:49:16.640Z",
+    "examples": [
+      {
+        "bad": "### Query Anti-Patterns\r\n\r\n  * [SELECT *](https://github.com/jarulraj/sqlcheck/blob/master/docs/query/3001.md)\r\n  * [NULL Usage](https://github.com/jarulraj/sqlcheck/blob/master/docs/query/3002.md)\r\n  * [NOT NULL Usage](https://github.com/jarulraj/sqlcheck/blob/master/docs/query/3003.md)\r",
+        "notes": "Found in README.md"
+      },
+      {
+        "bad": "golang.org/x/exp v0.0.0-20190510132918-efd6b22b2522/go.mod h1:ZjyILWgesfNpC6sMxTJOJm9Kp84zZh5NQWvqDGG3Qr8=\r\ngolang.org/x/exp v0.0.0-20190829153037-c13cbed26979/go.mod h1:86+5VVa7VpoJ4kLfm080zCjGlMRFzhUhsZKEZO7MGek=\r\ngolang.org/x/exp v0.0.0-20191030013958-a1ab85dbe136/go.mod h1:JXzH8nQsPlswgeRAPE3MuO9GYsAcnJvJ4vnMwN/5qkY=\r\ngolang.org/x/image v0.0.0-20190227222117-0694c2d4d067/go.mod h1:kZ7UVZpmo3dzQBMxlp+ypCbDeSB+sBbTgSJuh5dn5js=\r\ngolang.org/x/image v0.0.0-20190802002840-cff245a6509b/go.mod h1:FeLwcggjj3mMvU+oOTbSwawSJRM1uh48EjtB4UJZlP0=\r",
+        "notes": "Found in go.sum"
+      }
+    ],
+    "structuralHints": {
+      "treeSitterQuery": "(select_expression\n  (term\n    (literal \"*\" @offender)))"
+    }
+  },
+  {
+    "id": "SQ_3002",
+    "languages": [
+      "sql"
+    ],
+    "category": "Performance",
+    "severity": "medium",
+    "title": "NULL Usage",
+    "description": "NULL Usage",
+    "tags": [
+      "sqlcheck"
+    ],
+    "sources": [
+      {
+        "source": "sqlcheck",
+        "ruleId": "3002",
+        "url": "https://github.com/jarulraj/sqlcheck/blob/master/docs/query/3002.md"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T03:49:17.630Z",
+    "examples": [
+      {
+        "bad": "\r\n  * [SELECT *](https://github.com/jarulraj/sqlcheck/blob/master/docs/query/3001.md)\r\n  * [NULL Usage](https://github.com/jarulraj/sqlcheck/blob/master/docs/query/3002.md)\r\n  * [NOT NULL Usage](https://github.com/jarulraj/sqlcheck/blob/master/docs/query/3003.md)\r\n  * [String Concatenation](https://github.com/jarulraj/sqlcheck/blob/master/docs/query/3004.md)\r",
+        "notes": "Found in README.md"
+      }
+    ],
+    "structuralHints": {
+      "treeSitterQuery": "(\n  (keyword_null) @offender\n)"
+    }
+  },
+  {
+    "id": "SQ_3003",
+    "languages": [
+      "sql"
+    ],
+    "category": "Performance",
+    "severity": "medium",
+    "title": "NOT NULL Usage",
+    "description": "NOT NULL Usage",
+    "tags": [
+      "sqlcheck"
+    ],
+    "sources": [
+      {
+        "source": "sqlcheck",
+        "ruleId": "3003",
+        "url": "https://github.com/jarulraj/sqlcheck/blob/master/docs/query/3003.md"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T06:41:59.612Z",
+    "examples": [
+      {
+        "bad": "  * [SELECT *](https://github.com/jarulraj/sqlcheck/blob/master/docs/query/3001.md)\r\n  * [NULL Usage](https://github.com/jarulraj/sqlcheck/blob/master/docs/query/3002.md)\r\n  * [NOT NULL Usage](https://github.com/jarulraj/sqlcheck/blob/master/docs/query/3003.md)\r\n  * [String Concatenation](https://github.com/jarulraj/sqlcheck/blob/master/docs/query/3004.md)\r\n  * [GROUP BY Usage](https://github.com/jarulraj/sqlcheck/blob/master/docs/query/3005.md)\r",
+        "notes": "Found in README.md"
+      }
+    ],
+    "structuralHints": {
+      "treeSitterQuery": "(column_definition\n  (constraint) @offender)"
+    }
+  },
+  {
+    "id": "SQ_3004",
+    "languages": [
+      "sql"
+    ],
+    "category": "Performance",
+    "severity": "medium",
+    "title": "String Concatenation",
+    "description": "String Concatenation",
+    "tags": [
+      "sqlcheck"
+    ],
+    "sources": [
+      {
+        "source": "sqlcheck",
+        "ruleId": "3004",
+        "url": "https://github.com/jarulraj/sqlcheck/blob/master/docs/query/3004.md"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T07:02:42.019Z",
+    "examples": [
+      {
+        "bad": "  * [NULL Usage](https://github.com/jarulraj/sqlcheck/blob/master/docs/query/3002.md)\r\n  * [NOT NULL Usage](https://github.com/jarulraj/sqlcheck/blob/master/docs/query/3003.md)\r\n  * [String Concatenation](https://github.com/jarulraj/sqlcheck/blob/master/docs/query/3004.md)\r\n  * [GROUP BY Usage](https://github.com/jarulraj/sqlcheck/blob/master/docs/query/3005.md)\r\n  * [ORDER BY RAND Usage](https://github.com/jarulraj/sqlcheck/blob/master/docs/query/3006.md)\r",
+        "notes": "Found in README.md"
+      },
+      {
+        "bad": "\"@babel/plugin-transform-unicode-sets-regex@^7.22.5\":\r\n  version \"7.22.5\"\r\n  resolved \"https://registry.yarnpkg.com/@babel/plugin-transform-unicode-sets-regex/-/plugin-transform-unicode-sets-regex-7.22.5.tgz#77788060e511b708ffc7d42fdfbc5b37c3004e91\"\r\n  integrity sha512-lhMfi4FC15j13eKrh3DnYHjpGj6UKQHtNKTbtc1igvAhRy4+kLhV07OpLcsN0VgDEw/MjAvJO4BdMJsHwMhzCg==\r\n  dependencies:\r",
+        "notes": "Found in yarn.lock"
+      }
+    ],
+    "structuralHints": {
+      "treeSitterQuery": "(identifier) @offender"
+    }
+  },
+  {
+    "id": "SQ_3005",
+    "languages": [
+      "sql"
+    ],
+    "category": "Performance",
+    "severity": "medium",
+    "title": "GROUP BY Usage",
+    "description": "GROUP BY Usage",
+    "tags": [
+      "sqlcheck"
+    ],
+    "sources": [
+      {
+        "source": "sqlcheck",
+        "ruleId": "3005",
+        "url": "https://github.com/jarulraj/sqlcheck/blob/master/docs/query/3005.md"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T03:49:22.601Z",
+    "examples": [
+      {
+        "bad": "  * [NOT NULL Usage](https://github.com/jarulraj/sqlcheck/blob/master/docs/query/3003.md)\r\n  * [String Concatenation](https://github.com/jarulraj/sqlcheck/blob/master/docs/query/3004.md)\r\n  * [GROUP BY Usage](https://github.com/jarulraj/sqlcheck/blob/master/docs/query/3005.md)\r\n  * [ORDER BY RAND Usage](https://github.com/jarulraj/sqlcheck/blob/master/docs/query/3006.md)\r\n  * [Pattern Matching Usage](https://github.com/jarulraj/sqlcheck/blob/master/docs/query/3007.md)\r",
+        "notes": "Found in README.md"
+      },
+      {
+        "bad": "golang.org/x/image v0.0.0-20190227222117-0694c2d4d067/go.mod h1:kZ7UVZpmo3dzQBMxlp+ypCbDeSB+sBbTgSJuh5dn5js=\r\ngolang.org/x/image v0.0.0-20190802002840-cff245a6509b/go.mod h1:FeLwcggjj3mMvU+oOTbSwawSJRM1uh48EjtB4UJZlP0=\r\ngolang.org/x/lint v0.0.0-20181026193005-c67002cb31c3/go.mod h1:UVdnD1Gm6xHRNCYTkRU2/jEulfH38KcIWyp/GAMgvoE=\r\ngolang.org/x/lint v0.0.0-20190227174305-5b3e6a55c961/go.mod h1:wehouNa3lNwaWXcvxsM5YxQ5yQlVC4a0KAMCusXpPoU=\r\ngolang.org/x/lint v0.0.0-20190301231843-5614ed5bae6f/go.mod h1:UVdnD1Gm6xHRNCYTkRU2/jEulfH38KcIWyp/GAMgvoE=\r",
+        "notes": "Found in go.sum"
+      },
+      {
+        "bad": "supports-color@^8.0.0:\r\n  version \"8.1.1\"\r\n  resolved \"https://registry.yarnpkg.com/supports-color/-/supports-color-8.1.1.tgz#cd6fc17e28500cff56c1b86c0a7fd4a54a73005c\"\r\n  integrity sha512-MpUEN2OodtUzxvKQl72cUF7RQ5EiHsGvSsVG0ia9c5RbWGL2CI4C7EpPS8UTBIplnlzZiNuV56w+FuNxy3ty2Q==\r\n  dependencies:\r",
+        "notes": "Found in yarn.lock"
+      }
+    ],
+    "structuralHints": {
+      "treeSitterQuery": "(group_by) @offender"
+    }
+  },
+  {
+    "id": "SQ_3006",
+    "languages": [
+      "sql"
+    ],
+    "category": "Performance",
+    "severity": "medium",
+    "title": "ORDER BY RAND Usage",
+    "description": "ORDER BY RAND Usage",
+    "tags": [
+      "sqlcheck"
+    ],
+    "sources": [
+      {
+        "source": "sqlcheck",
+        "ruleId": "3006",
+        "url": "https://github.com/jarulraj/sqlcheck/blob/master/docs/query/3006.md"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T07:02:42.113Z",
+    "examples": [
+      {
+        "bad": "  * [String Concatenation](https://github.com/jarulraj/sqlcheck/blob/master/docs/query/3004.md)\r\n  * [GROUP BY Usage](https://github.com/jarulraj/sqlcheck/blob/master/docs/query/3005.md)\r\n  * [ORDER BY RAND Usage](https://github.com/jarulraj/sqlcheck/blob/master/docs/query/3006.md)\r\n  * [Pattern Matching Usage](https://github.com/jarulraj/sqlcheck/blob/master/docs/query/3007.md)\r\n  * [Spaghetti Query Alert](https://github.com/jarulraj/sqlcheck/blob/master/docs/query/3008.md)\r",
+        "notes": "Found in README.md"
+      }
+    ],
+    "structuralHints": {
+      "treeSitterQuery": "(identifier) @offender"
+    }
+  },
+  {
+    "id": "SQ_3007",
+    "languages": [
+      "sql"
+    ],
+    "category": "Performance",
+    "severity": "medium",
+    "title": "Pattern Matching Usage",
+    "description": "Pattern Matching Usage",
+    "tags": [
+      "sqlcheck"
+    ],
+    "sources": [
+      {
+        "source": "sqlcheck",
+        "ruleId": "3007",
+        "url": "https://github.com/jarulraj/sqlcheck/blob/master/docs/query/3007.md"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T07:02:42.134Z",
+    "examples": [
+      {
+        "bad": "  * [GROUP BY Usage](https://github.com/jarulraj/sqlcheck/blob/master/docs/query/3005.md)\r\n  * [ORDER BY RAND Usage](https://github.com/jarulraj/sqlcheck/blob/master/docs/query/3006.md)\r\n  * [Pattern Matching Usage](https://github.com/jarulraj/sqlcheck/blob/master/docs/query/3007.md)\r\n  * [Spaghetti Query Alert](https://github.com/jarulraj/sqlcheck/blob/master/docs/query/3008.md)\r\n  * [Reduce Number of JOINs](https://github.com/jarulraj/sqlcheck/blob/master/docs/query/3009.md)\r",
+        "notes": "Found in README.md"
+      }
+    ],
+    "structuralHints": {
+      "treeSitterQuery": "(identifier) @offender"
+    }
+  },
+  {
+    "id": "SQ_3008",
+    "languages": [
+      "sql"
+    ],
+    "category": "Performance",
+    "severity": "medium",
+    "title": "Spaghetti Query Alert",
+    "description": "Spaghetti Query Alert",
+    "tags": [
+      "sqlcheck"
+    ],
+    "sources": [
+      {
+        "source": "sqlcheck",
+        "ruleId": "3008",
+        "url": "https://github.com/jarulraj/sqlcheck/blob/master/docs/query/3008.md"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T06:42:50.090Z",
+    "examples": [
+      {
+        "bad": "\t\t\t<circle\r\n   cx=\"242.5498\"\r\n   cy=\"84.083008\"\r\n   r=\"1.63232\"\r\n   id=\"circle321\"\r",
+        "notes": "Found in by-sa.svg"
+      },
+      {
+        "bad": "  * [ORDER BY RAND Usage](https://github.com/jarulraj/sqlcheck/blob/master/docs/query/3006.md)\r\n  * [Pattern Matching Usage](https://github.com/jarulraj/sqlcheck/blob/master/docs/query/3007.md)\r\n  * [Spaghetti Query Alert](https://github.com/jarulraj/sqlcheck/blob/master/docs/query/3008.md)\r\n  * [Reduce Number of JOINs](https://github.com/jarulraj/sqlcheck/blob/master/docs/query/3009.md)\r\n  * [Eliminate Unnecessary DISTINCT Conditions](https://github.com/jarulraj/sqlcheck/blob/master/docs/query/3010.md)\r",
+        "notes": "Found in README.md"
+      },
+      {
+        "bad": "\"@babel/helper-function-name@^7.22.5\":\r\n  version \"7.22.5\"\r\n  resolved \"https://registry.yarnpkg.com/@babel/helper-function-name/-/helper-function-name-7.22.5.tgz#ede300828905bb15e582c037162f99d5183af1be\"\r\n  integrity sha512-wtHSq6jMRE3uF2otvfuD3DIvVhOsSNshQl0Qrd7qC9oQJzHvOL4qQXlQn2916+CXGywIjpGuIkoyZRRxHPiNQQ==\r\n  dependencies:\r",
+        "notes": "Found in yarn.lock"
+      }
+    ],
+    "structuralHints": {
+      "treeSitterQuery": "(create_function) @offender"
+    }
+  },
+  {
+    "id": "SQ_3009",
+    "languages": [
+      "sql"
+    ],
+    "category": "Performance",
+    "severity": "medium",
+    "title": "Reduce Number of JOINs",
+    "description": "Reduce Number of JOINs",
+    "tags": [
+      "sqlcheck"
+    ],
+    "sources": [
+      {
+        "source": "sqlcheck",
+        "ruleId": "3009",
+        "url": "https://github.com/jarulraj/sqlcheck/blob/master/docs/query/3009.md"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T06:42:56.933Z",
+    "examples": [
+      {
+        "bad": "  * [Pattern Matching Usage](https://github.com/jarulraj/sqlcheck/blob/master/docs/query/3007.md)\r\n  * [Spaghetti Query Alert](https://github.com/jarulraj/sqlcheck/blob/master/docs/query/3008.md)\r\n  * [Reduce Number of JOINs](https://github.com/jarulraj/sqlcheck/blob/master/docs/query/3009.md)\r\n  * [Eliminate Unnecessary DISTINCT Conditions](https://github.com/jarulraj/sqlcheck/blob/master/docs/query/3010.md)\r\n  * [Implicit Column Usage](https://github.com/jarulraj/sqlcheck/blob/master/docs/query/3011.md)\r",
+        "notes": "Found in README.md"
+      }
+    ],
+    "structuralHints": {
+      "treeSitterQuery": "(\n  (from\n    [\n      (cross_join)+ @offender\n    ]\n  ) @offender\n  (#match? @offender \".*JOIN.*JOIN.*JOIN.*JOIN.*\")\n)"
+    }
+  },
+  {
+    "id": "SQ_3010",
+    "languages": [
+      "sql"
+    ],
+    "category": "Performance",
+    "severity": "medium",
+    "title": "Eliminate Unnecessary DISTINCT Conditions",
+    "description": "Eliminate Unnecessary DISTINCT Conditions",
+    "tags": [
+      "sqlcheck"
+    ],
+    "sources": [
+      {
+        "source": "sqlcheck",
+        "ruleId": "3010",
+        "url": "https://github.com/jarulraj/sqlcheck/blob/master/docs/query/3010.md"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T06:43:03.022Z",
+    "examples": [
+      {
+        "bad": "  * [Spaghetti Query Alert](https://github.com/jarulraj/sqlcheck/blob/master/docs/query/3008.md)\r\n  * [Reduce Number of JOINs](https://github.com/jarulraj/sqlcheck/blob/master/docs/query/3009.md)\r\n  * [Eliminate Unnecessary DISTINCT Conditions](https://github.com/jarulraj/sqlcheck/blob/master/docs/query/3010.md)\r\n  * [Implicit Column Usage](https://github.com/jarulraj/sqlcheck/blob/master/docs/query/3011.md)\r\n  * [HAVING Clause Usage](https://github.com/jarulraj/sqlcheck/blob/master/docs/query/3012.md)\r",
+        "notes": "Found in README.md"
+      }
+    ],
+    "structuralHints": {
+      "treeSitterQuery": "(select\n  (keyword_distinct) @offender)"
+    }
+  },
+  {
+    "id": "SQ_3011",
+    "languages": [
+      "sql"
+    ],
+    "category": "Performance",
+    "severity": "medium",
+    "title": "Implicit Column Usage",
+    "description": "Implicit Column Usage",
+    "tags": [
+      "sqlcheck"
+    ],
+    "sources": [
+      {
+        "source": "sqlcheck",
+        "ruleId": "3011",
+        "url": "https://github.com/jarulraj/sqlcheck/blob/master/docs/query/3011.md"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T06:43:08.929Z",
+    "examples": [
+      {
+        "bad": "  * [Reduce Number of JOINs](https://github.com/jarulraj/sqlcheck/blob/master/docs/query/3009.md)\r\n  * [Eliminate Unnecessary DISTINCT Conditions](https://github.com/jarulraj/sqlcheck/blob/master/docs/query/3010.md)\r\n  * [Implicit Column Usage](https://github.com/jarulraj/sqlcheck/blob/master/docs/query/3011.md)\r\n  * [HAVING Clause Usage](https://github.com/jarulraj/sqlcheck/blob/master/docs/query/3012.md)\r\n  * [Nested sub queries](https://github.com/jarulraj/sqlcheck/blob/master/docs/query/3013.md)\r",
+        "notes": "Found in README.md"
+      },
+      {
+        "bad": "\"@esbuild/freebsd-arm64@0.19.2\":\r\n  version \"0.19.2\"\r\n  resolved \"https://registry.yarnpkg.com/@esbuild/freebsd-arm64/-/freebsd-arm64-0.19.2.tgz#8e478a0856645265fe79eac4b31b52193011ee06\"\r\n  integrity sha512-YbPY2kc0acfzL1VPVK6EnAlig4f+l8xmq36OZkU0jzBVHcOTyQDhnKQaLzZudNJQyymd9OqQezeaBgkTGdTGeQ==\r\n\r",
+        "notes": "Found in yarn.lock"
+      }
+    ],
+    "structuralHints": {
+      "treeSitterQuery": "(all_fields) @offender"
+    }
+  },
+  {
+    "id": "SQ_3012",
+    "languages": [
+      "sql"
+    ],
+    "category": "Performance",
+    "severity": "medium",
+    "title": "HAVING Clause Usage",
+    "description": "HAVING Clause Usage",
+    "tags": [
+      "sqlcheck"
+    ],
+    "sources": [
+      {
+        "source": "sqlcheck",
+        "ruleId": "3012",
+        "url": "https://github.com/jarulraj/sqlcheck/blob/master/docs/query/3012.md"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T07:02:42.195Z",
+    "examples": [
+      {
+        "bad": "  * [Eliminate Unnecessary DISTINCT Conditions](https://github.com/jarulraj/sqlcheck/blob/master/docs/query/3010.md)\r\n  * [Implicit Column Usage](https://github.com/jarulraj/sqlcheck/blob/master/docs/query/3011.md)\r\n  * [HAVING Clause Usage](https://github.com/jarulraj/sqlcheck/blob/master/docs/query/3012.md)\r\n  * [Nested sub queries](https://github.com/jarulraj/sqlcheck/blob/master/docs/query/3013.md)\r\n  * [OR Usage](https://github.com/jarulraj/sqlcheck/blob/master/docs/query/3014.md)\r",
+        "notes": "Found in README.md"
+      },
+      {
+        "bad": "golang.org/x/lint v0.0.0-20181026193005-c67002cb31c3/go.mod h1:UVdnD1Gm6xHRNCYTkRU2/jEulfH38KcIWyp/GAMgvoE=\r\ngolang.org/x/lint v0.0.0-20190227174305-5b3e6a55c961/go.mod h1:wehouNa3lNwaWXcvxsM5YxQ5yQlVC4a0KAMCusXpPoU=\r\ngolang.org/x/lint v0.0.0-20190301231843-5614ed5bae6f/go.mod h1:UVdnD1Gm6xHRNCYTkRU2/jEulfH38KcIWyp/GAMgvoE=\r\ngolang.org/x/lint v0.0.0-20190313153728-d0100b6bd8b3/go.mod h1:6SW0HCj/g11FgYtHlgUYUwCkIfeOF89ocIRzGO/8vkc=\r\ngolang.org/x/lint v0.0.0-20190409202823-959b441ac422/go.mod h1:6SW0HCj/g11FgYtHlgUYUwCkIfeOF89ocIRzGO/8vkc=\r",
+        "notes": "Found in go.sum"
+      }
+    ],
+    "structuralHints": {
+      "treeSitterQuery": "(identifier) @offender"
+    }
+  },
+  {
+    "id": "SQ_3013",
+    "languages": [
+      "sql"
+    ],
+    "category": "Performance",
+    "severity": "medium",
+    "title": "Nested sub queries",
+    "description": "Nested sub queries",
+    "tags": [
+      "sqlcheck"
+    ],
+    "sources": [
+      {
+        "source": "sqlcheck",
+        "ruleId": "3013",
+        "url": "https://github.com/jarulraj/sqlcheck/blob/master/docs/query/3013.md"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T07:02:42.215Z",
+    "examples": [
+      {
+        "bad": "       id=\"g287\"\r\n       inkscape:export-filename=\"/mnt/hgfs/Bov/Documents/Work/2007/cc/identity/srr buttons/big/by-sa.png\"\r\n       inkscape:export-xdpi=\"300.23013\"\r\n       inkscape:export-ydpi=\"300.23013\">\r\n\t<path\r",
+        "notes": "Found in by-sa.svg"
+      },
+      {
+        "bad": "  * [Implicit Column Usage](https://github.com/jarulraj/sqlcheck/blob/master/docs/query/3011.md)\r\n  * [HAVING Clause Usage](https://github.com/jarulraj/sqlcheck/blob/master/docs/query/3012.md)\r\n  * [Nested sub queries](https://github.com/jarulraj/sqlcheck/blob/master/docs/query/3013.md)\r\n  * [OR Usage](https://github.com/jarulraj/sqlcheck/blob/master/docs/query/3014.md)\r\n  * [UNION Usage](https://github.com/jarulraj/sqlcheck/blob/master/docs/query/3015.md)\r",
+        "notes": "Found in README.md"
+      },
+      {
+        "bad": "gopkg.in/check.v1 v0.0.0-20161208181325-20d25e280405/go.mod h1:Co6ibVJAznAaIkqp8huTwlJQCZ016jof/cbN4VW5Yz0=\r\ngopkg.in/check.v1 v1.0.0-20180628173108-788fd7840127/go.mod h1:Co6ibVJAznAaIkqp8huTwlJQCZ016jof/cbN4VW5Yz0=\r\ngopkg.in/check.v1 v1.0.0-20201130134442-10cb98267c6c/go.mod h1:JHkPIbrfpd72SG/EVd6muEfDQjcINNoR0C8j2r3qZ4Q=\r\ngopkg.in/errgo.v2 v2.1.0/go.mod h1:hNsd1EY+bozCKY1Ytp96fpM3vjJbqLJn88ws8XvfDNI=\r\ngopkg.in/ini.v1 v1.51.0/go.mod h1:pNLf8WUiyNEtQjuu5G5vTm06TEv9tsIgeAvK8hOrP4k=\r",
+        "notes": "Found in go.sum"
+      }
+    ],
+    "structuralHints": {
+      "treeSitterQuery": "(identifier) @offender"
+    }
+  },
+  {
+    "id": "SQ_3014",
+    "languages": [
+      "sql"
+    ],
+    "category": "Performance",
+    "severity": "medium",
+    "title": "OR Usage",
+    "description": "OR Usage",
+    "tags": [
+      "sqlcheck"
+    ],
+    "sources": [
+      {
+        "source": "sqlcheck",
+        "ruleId": "3014",
+        "url": "https://github.com/jarulraj/sqlcheck/blob/master/docs/query/3014.md"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T06:43:50.655Z",
+    "examples": [
+      {
+        "bad": "  * [HAVING Clause Usage](https://github.com/jarulraj/sqlcheck/blob/master/docs/query/3012.md)\r\n  * [Nested sub queries](https://github.com/jarulraj/sqlcheck/blob/master/docs/query/3013.md)\r\n  * [OR Usage](https://github.com/jarulraj/sqlcheck/blob/master/docs/query/3014.md)\r\n  * [UNION Usage](https://github.com/jarulraj/sqlcheck/blob/master/docs/query/3015.md)\r\n  * [DISTINCT & JOIN Usage](https://github.com/jarulraj/sqlcheck/blob/master/docs/query/3016.md)\r",
+        "notes": "Found in README.md"
+      }
+    ],
+    "structuralHints": {
+      "treeSitterQuery": "(binary_expression) @offender"
+    }
+  },
+  {
+    "id": "SQ_3015",
+    "languages": [
+      "sql"
+    ],
+    "category": "Performance",
+    "severity": "medium",
+    "title": "UNION Usage",
+    "description": "UNION Usage",
+    "tags": [
+      "sqlcheck"
+    ],
+    "sources": [
+      {
+        "source": "sqlcheck",
+        "ruleId": "3015",
+        "url": "https://github.com/jarulraj/sqlcheck/blob/master/docs/query/3015.md"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T06:43:56.853Z",
+    "examples": [
+      {
+        "bad": "I translated the original C# into a few other languages, (with a little help from my friends!), and slightly changed the starting position. This means I've actually done a small amount of refactoring already compared with the original form of the kata, and made it easier to get going with writing tests by giving you one failing unit test to start with. I also added test fixtures for Text-Based approval testing with TextTest (see [the TextTests](https://github.com/emilybache/GildedRose-Refactoring-Kata/tree/main/texttests))\r\n\r\nAs Bobby Johnson points out in his article \"Why Most Solutions to Gilded Rose Miss The Bigger Picture\" (on the Wayback Machine [here](https://web.archive.org/web/20230530152324/https://iamnotmyself.com/why-most-solutions-to-gilded-rose-miss-the-bigger-picture/)), it'll actually give you\r\nbetter practice at handling a legacy code situation if you do this Kata in the original C#. However, I think this kata\r\nis also really useful for practicing writing good tests using different frameworks and approaches, and the small changes I've made help with that. I think it's also interesting to compare what the refactored code and tests look like in different programming languages.\r",
+        "notes": "Found in README.md"
+      },
+      {
+        "bad": "  * [Nested sub queries](https://github.com/jarulraj/sqlcheck/blob/master/docs/query/3013.md)\r\n  * [OR Usage](https://github.com/jarulraj/sqlcheck/blob/master/docs/query/3014.md)\r\n  * [UNION Usage](https://github.com/jarulraj/sqlcheck/blob/master/docs/query/3015.md)\r\n  * [DISTINCT & JOIN Usage](https://github.com/jarulraj/sqlcheck/blob/master/docs/query/3016.md)\r\n\r",
+        "notes": "Found in README.md"
+      },
+      {
+        "bad": "golang.org/x/sync v0.0.0-20190423024810-112230192c58/go.mod h1:RxMgew5VJxzue5/jJTE5uejpjVlOe/izrB70Jof72aM=\r\ngolang.org/x/sys v0.0.0-20180823144017-11551d06cbcc/go.mod h1:STP8DvDyc/dI5b8T5hshtkjS+E42TnysNCUPdjciGhY=\r\ngolang.org/x/sys v0.0.0-20180830151530-49385e6e1522/go.mod h1:STP8DvDyc/dI5b8T5hshtkjS+E42TnysNCUPdjciGhY=\r\ngolang.org/x/sys v0.0.0-20180905080454-ebe1bf3edb33/go.mod h1:STP8DvDyc/dI5b8T5hshtkjS+E42TnysNCUPdjciGhY=\r\ngolang.org/x/sys v0.0.0-20181026203630-95b1ffbd15a5/go.mod h1:STP8DvDyc/dI5b8T5hshtkjS+E42TnysNCUPdjciGhY=\r",
+        "notes": "Found in go.sum"
+      },
+      {
+        "bad": "jest@^27.3.1:\r\n  version \"27.5.1\"\r\n  resolved \"https://registry.yarnpkg.com/jest/-/jest-27.5.1.tgz#dadf33ba70a779be7a6fc33015843b51494f63fc\"\r\n  integrity sha512-Yn0mADZB89zTtjkPJEXwrac3LHudkQMR+Paqa8uxJHCBr9agxztUifWCyiYrjhMPBoUVBjyny0I7XH6ozDr7QQ==\r\n  dependencies:\r",
+        "notes": "Found in yarn.lock"
+      }
+    ],
+    "structuralHints": {
+      "treeSitterQuery": "(from\n  (cross_join)\n) @offender"
+    }
+  },
+  {
+    "id": "SQ_3016",
+    "languages": [
+      "sql"
+    ],
+    "category": "Performance",
+    "severity": "medium",
+    "title": "DISTINCT & JOIN Usage",
+    "description": "DISTINCT & JOIN Usage",
+    "tags": [
+      "sqlcheck"
+    ],
+    "sources": [
+      {
+        "source": "sqlcheck",
+        "ruleId": "3016",
+        "url": "https://github.com/jarulraj/sqlcheck/blob/master/docs/query/3016.md"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T07:02:42.257Z",
+    "examples": [
+      {
+        "bad": "  * [OR Usage](https://github.com/jarulraj/sqlcheck/blob/master/docs/query/3014.md)\r\n  * [UNION Usage](https://github.com/jarulraj/sqlcheck/blob/master/docs/query/3015.md)\r\n  * [DISTINCT & JOIN Usage](https://github.com/jarulraj/sqlcheck/blob/master/docs/query/3016.md)\r\n\r\n### Application Development Anti-Patterns\r",
+        "notes": "Found in README.md"
+      }
+    ],
+    "structuralHints": {
+      "treeSitterQuery": "(identifier) @offender"
+    }
+  },
+  {
+    "id": "SQ_4001",
+    "languages": [
+      "sql"
+    ],
+    "category": "Security",
+    "severity": "high",
+    "title": "Readable Passwords",
+    "description": "Readable Passwords",
+    "tags": [
+      "sqlcheck"
+    ],
+    "sources": [
+      {
+        "source": "sqlcheck",
+        "ruleId": "4001",
+        "url": "https://github.com/jarulraj/sqlcheck/blob/master/docs/application/4001.md"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T06:44:20.181Z",
+    "examples": [
+      {
+        "bad": "\t\t\t<path\r\n   id=\"path5708_2_\"\r\n   d=\"M 473.88455,-167.54724 C 477.36996,-164.06128 479.11294,-159.79333 479.11294,-154.74451 C 479.11294,-149.69513 477.40014,-145.47303 473.9746,-142.07715 C 470.33929,-138.50055 466.04281,-136.71283 461.08513,-136.71283 C 456.18736,-136.71283 451.96526,-138.48544 448.42003,-142.03238 C 444.87419,-145.57819 443.10158,-149.81537 443.10158,-154.74451 C 443.10158,-159.6731 444.87419,-163.94049 448.42003,-167.54724 C 451.87523,-171.03375 456.09728,-172.77618 461.08513,-172.77618 C 466.13342,-172.77618 470.39914,-171.03375 473.88455,-167.54724 z M 450.76657,-165.20239 C 447.81982,-162.22601 446.34701,-158.7395 446.34701,-154.74005 C 446.34701,-150.7417 447.80529,-147.28485 450.72125,-144.36938 C 453.63778,-141.45288 457.10974,-139.99462 461.1383,-139.99462 C 465.16683,-139.99462 468.66848,-141.46743 471.64486,-144.41363 C 474.47076,-147.14947 475.88427,-150.59069 475.88427,-154.74005 C 475.88427,-158.85809 474.44781,-162.35297 471.57659,-165.22479 C 468.70595,-168.09546 465.22671,-169.53131 461.1383,-169.53131 C 457.04993,-169.53131 453.59192,-168.08813 450.76657,-165.20239 z M 458.52106,-156.49927 C 458.07074,-157.4809 457.39673,-157.9715 456.49781,-157.9715 C 454.90867,-157.9715 454.11439,-156.90198 454.11439,-154.763 C 454.11439,-152.62341 454.90867,-151.55389 456.49781,-151.55389 C 457.54719,-151.55389 458.29676,-152.07519 458.74647,-153.11901 L 460.94923,-151.94598 C 459.8993,-150.0805 458.32417,-149.14697 456.22374,-149.14697 C 454.60384,-149.14697 453.30611,-149.64367 452.33168,-150.63653 C 451.35561,-151.62994 450.86894,-152.99926 450.86894,-154.7445 C 450.86894,-156.46008 451.37123,-157.82159 452.37642,-158.83013 C 453.38161,-159.83806 454.63347,-160.34264 456.13423,-160.34264 C 458.35435,-160.34264 459.94407,-159.46776 460.90504,-157.71978 L 458.52106,-156.49927 z M 468.8844,-156.49927 C 468.43353,-157.4809 467.77292,-157.9715 466.90201,-157.9715 C 465.28095,-157.9715 464.46988,-156.90198 464.46988,-154.763 C 464.46988,-152.62341 465.28095,-151.55389 466.90201,-151.55389 C 467.95304,-151.55389 468.68918,-152.07519 469.10925,-153.11901 L 471.36126,-151.94598 C 470.31301,-150.0805 468.74007,-149.14697 466.64358,-149.14697 C 465.02587,-149.14697 463.73095,-149.64367 462.75711,-150.63653 C 461.78494,-151.62994 461.29773,-152.99926 461.29773,-154.7445 C 461.29773,-156.46008 461.79221,-157.82159 462.78061,-158.83013 C 463.76843,-159.83806 465.02588,-160.34264 466.55408,-160.34264 C 468.77027,-160.34264 470.35776,-159.46776 471.3154,-157.71978 L 468.8844,-156.49927 z\" />\r\n\r\n\t\t</g>\r",
+        "notes": "Found in by-sa.svg"
+      },
+      {
+        "bad": "### Application Development Anti-Patterns\r\n\r\n  * [Readable Passwords](https://github.com/jarulraj/sqlcheck/blob/master/docs/application/4001.md)\r\n\r\n## Installation\r",
+        "notes": "Found in README.md"
+      }
+    ],
+    "structuralHints": {
+      "treeSitterQuery": "(\n  (comment) @offender\n  (#match? @offender \"(password|passwd|pwd)\")\n)"
+    }
+  },
+  {
+    "id": "SQ_L001",
+    "languages": [
+      "sql"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Unnecessary trailing whitespace",
+    "description": "Remove trailing whitespace.",
+    "tags": [
+      "sqlfluff"
+    ],
+    "sources": [
+      {
+        "source": "sqlfluff",
+        "ruleId": "L001",
+        "url": "https://docs.sqlfluff.com/en/stable/rules.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T03:49:51.858Z",
+    "structuralHints": {
+      "treeSitterQuery": "(program\n  (_) @offender\n  (#match? @offender \"[ \\t]+$\"))"
+    }
+  },
+  {
+    "id": "SQ_L002",
+    "languages": [
+      "sql"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Mixed indentation",
+    "description": "Use consistent indentation (tabs or spaces).",
+    "tags": [
+      "sqlfluff"
+    ],
+    "sources": [
+      {
+        "source": "sqlfluff",
+        "ruleId": "L002",
+        "url": "https://docs.sqlfluff.com/en/stable/rules.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T03:49:53.926Z",
+    "structuralHints": {
+      "treeSitterQuery": "(program\n  (_) @offender\n  (#match? @offender \"^.*\\t.* +.*$|^.* +.*\\t.*$\"))"
+    }
+  },
+  {
+    "id": "SQ_L003",
+    "languages": [
+      "sql"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Indentation not consistent with previous lines",
+    "description": "Maintain consistent indentation.",
+    "tags": [
+      "sqlfluff"
+    ],
+    "sources": [
+      {
+        "source": "sqlfluff",
+        "ruleId": "L003",
+        "url": "https://docs.sqlfluff.com/en/stable/rules.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T03:49:55.446Z",
+    "structuralHints": {
+      "treeSitterQuery": "(statement) @offender"
+    }
+  },
+  {
+    "id": "SQ_L010",
+    "languages": [
+      "sql"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Inconsistent capitalisation of keywords",
+    "description": "Keywords should be consistently capitalized.",
+    "tags": [
+      "sqlfluff"
+    ],
+    "sources": [
+      {
+        "source": "sqlfluff",
+        "ruleId": "L010",
+        "url": "https://docs.sqlfluff.com/en/stable/rules.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T07:02:42.317Z",
+    "structuralHints": {
+      "treeSitterQuery": "(identifier) @offender"
+    }
+  },
+  {
+    "id": "SQ_L011",
+    "languages": [
+      "sql"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Implicit aliasing of table",
+    "description": "Use explicit table aliases.",
+    "tags": [
+      "sqlfluff"
+    ],
+    "sources": [
+      {
+        "source": "sqlfluff",
+        "ruleId": "L011",
+        "url": "https://docs.sqlfluff.com/en/stable/rules.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T07:02:42.338Z",
+    "structuralHints": {
+      "treeSitterQuery": "(identifier) @offender"
+    }
+  },
+  {
+    "id": "SQ_L012",
+    "languages": [
+      "sql"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Implicit aliasing of column",
+    "description": "Use explicit column aliases.",
+    "tags": [
+      "sqlfluff"
+    ],
+    "sources": [
+      {
+        "source": "sqlfluff",
+        "ruleId": "L012",
+        "url": "https://docs.sqlfluff.com/en/stable/rules.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T06:44:50.405Z",
+    "structuralHints": {
+      "treeSitterQuery": "(select\n  (select_expression\n    (_) @offender\n    .\n    (#not-match? @offender \"^(as|AS)$\")))"
+    }
+  },
+  {
+    "id": "SQ_L013",
+    "languages": [
+      "sql"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Column expression without alias",
+    "description": "Add aliases to column expressions.",
+    "tags": [
+      "sqlfluff"
+    ],
+    "sources": [
+      {
+        "source": "sqlfluff",
+        "ruleId": "L013",
+        "url": "https://docs.sqlfluff.com/en/stable/rules.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T07:02:42.429Z",
+    "structuralHints": {
+      "treeSitterQuery": "(identifier) @offender"
+    }
+  },
+  {
+    "id": "SQ_L014",
+    "languages": [
+      "sql"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Inconsistent capitalisation of unquoted identifiers",
+    "description": "Use consistent capitalization for identifiers.",
+    "tags": [
+      "sqlfluff"
+    ],
+    "sources": [
+      {
+        "source": "sqlfluff",
+        "ruleId": "L014",
+        "url": "https://docs.sqlfluff.com/en/stable/rules.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T03:50:05.781Z",
+    "structuralHints": {
+      "treeSitterQuery": "(identifier) @offender"
+    }
+  },
+  {
+    "id": "SQ_L016",
+    "languages": [
+      "sql"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Line is too long",
+    "description": "Split long lines for readability.",
+    "tags": [
+      "sqlfluff"
+    ],
+    "sources": [
+      {
+        "source": "sqlfluff",
+        "ruleId": "L016",
+        "url": "https://docs.sqlfluff.com/en/stable/rules.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T03:50:07.110Z",
+    "structuralHints": {
+      "treeSitterQuery": "(statement) @offender"
+    }
+  },
+  {
+    "id": "SQ_L017",
+    "languages": [
+      "sql"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Function name not immediately followed by bracket",
+    "description": "Function calls should have no space before opening bracket.",
+    "tags": [
+      "sqlfluff"
+    ],
+    "sources": [
+      {
+        "source": "sqlfluff",
+        "ruleId": "L017",
+        "url": "https://docs.sqlfluff.com/en/stable/rules.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T07:02:42.471Z",
+    "structuralHints": {
+      "treeSitterQuery": "(identifier) @offender"
+    }
+  },
+  {
+    "id": "SQ_L018",
+    "languages": [
+      "sql"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "WITH clause closing bracket should be aligned with WITH keyword",
+    "description": "Align closing bracket with WITH keyword.",
+    "tags": [
+      "sqlfluff"
+    ],
+    "sources": [
+      {
+        "source": "sqlfluff",
+        "ruleId": "L018",
+        "url": "https://docs.sqlfluff.com/en/stable/rules.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T06:45:33.808Z",
+    "structuralHints": {
+      "treeSitterQuery": "(cte) @offender"
+    }
+  },
+  {
+    "id": "SQ_L019",
+    "languages": [
+      "sql"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Comma trailing",
+    "description": "Trailing commas are not allowed.",
+    "tags": [
+      "sqlfluff"
+    ],
+    "sources": [
+      {
+        "source": "sqlfluff",
+        "ruleId": "L019",
+        "url": "https://docs.sqlfluff.com/en/stable/rules.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T03:50:12.026Z",
+    "structuralHints": {
+      "treeSitterQuery": "(\n  (ERROR) @offender\n  (#match? @offender \"^,$\")\n)"
+    }
+  },
+  {
+    "id": "SQ_L020",
+    "languages": [
+      "sql"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Table aliases should be unique",
+    "description": "Each table alias should be unique.",
+    "tags": [
+      "sqlfluff"
+    ],
+    "sources": [
+      {
+        "source": "sqlfluff",
+        "ruleId": "L020",
+        "url": "https://docs.sqlfluff.com/en/stable/rules.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T07:02:42.513Z",
+    "structuralHints": {
+      "treeSitterQuery": "(identifier) @offender"
+    }
+  },
+  {
+    "id": "SQ_L021",
+    "languages": [
+      "sql"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Ambiguous distinct",
+    "description": "DISTINCT used with ambiguous column references.",
+    "tags": [
+      "sqlfluff"
+    ],
+    "sources": [
+      {
+        "source": "sqlfluff",
+        "ruleId": "L021",
+        "url": "https://docs.sqlfluff.com/en/stable/rules.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T07:02:42.534Z",
+    "structuralHints": {
+      "treeSitterQuery": "(identifier) @offender"
+    }
+  },
+  {
+    "id": "SQ_L022",
+    "languages": [
+      "sql"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Blank line expected but not found",
+    "description": "Add blank lines for readability.",
+    "tags": [
+      "sqlfluff"
+    ],
+    "sources": [
+      {
+        "source": "sqlfluff",
+        "ruleId": "L022",
+        "url": "https://docs.sqlfluff.com/en/stable/rules.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T03:50:17.516Z",
+    "structuralHints": {
+      "treeSitterQuery": "(program\n  (statement) @offender\n  (statement)\n  (#not-match? @offender \"\\n\\s*\\n\"))"
+    }
+  },
+  {
+    "id": "SQ_L023",
+    "languages": [
+      "sql"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Single whitespace expected after AS in WITH clause",
+    "description": "Format AS keyword correctly.",
+    "tags": [
+      "sqlfluff"
+    ],
+    "sources": [
+      {
+        "source": "sqlfluff",
+        "ruleId": "L023",
+        "url": "https://docs.sqlfluff.com/en/stable/rules.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T03:50:19.173Z",
+    "structuralHints": {
+      "treeSitterQuery": "(keyword_as) @offender"
+    }
+  },
+  {
+    "id": "SQ_L024",
+    "languages": [
+      "sql"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Single whitespace expected after AS in FROM clause",
+    "description": "Format AS keyword correctly.",
+    "tags": [
+      "sqlfluff"
+    ],
+    "sources": [
+      {
+        "source": "sqlfluff",
+        "ruleId": "L024",
+        "url": "https://docs.sqlfluff.com/en/stable/rules.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T07:02:42.576Z",
+    "structuralHints": {
+      "treeSitterQuery": "(identifier) @offender"
+    }
+  },
+  {
+    "id": "SQ_L025",
+    "languages": [
+      "sql"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Tables should not be aliased if not referenced",
+    "description": "Remove unused table aliases.",
+    "tags": [
+      "sqlfluff"
+    ],
+    "sources": [
+      {
+        "source": "sqlfluff",
+        "ruleId": "L025",
+        "url": "https://docs.sqlfluff.com/en/stable/rules.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T06:46:12.737Z",
+    "structuralHints": {
+      "treeSitterQuery": "(from\n  (relation\n    alias: (_) @offender))"
+    }
+  },
+  {
+    "id": "SQ_L026",
+    "languages": [
+      "sql"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Inconsistent capitalisation of function names",
+    "description": "Use consistent capitalization for function names.",
+    "tags": [
+      "sqlfluff"
+    ],
+    "sources": [
+      {
+        "source": "sqlfluff",
+        "ruleId": "L026",
+        "url": "https://docs.sqlfluff.com/en/stable/rules.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T06:46:20.546Z",
+    "structuralHints": {
+      "treeSitterQuery": "(identifier) @offender"
+    }
+  },
+  {
+    "id": "SQ_L027",
+    "languages": [
+      "sql"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Unqualified reference to column",
+    "description": "Qualify column references with table alias.",
+    "tags": [
+      "sqlfluff"
+    ],
+    "sources": [
+      {
+        "source": "sqlfluff",
+        "ruleId": "L027",
+        "url": "https://docs.sqlfluff.com/en/stable/rules.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T07:02:42.617Z",
+    "structuralHints": {
+      "treeSitterQuery": "(identifier) @offender"
+    }
+  },
+  {
+    "id": "SQ_L028",
+    "languages": [
+      "sql"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Unqualified reference to column",
+    "description": "Qualify column references.",
+    "tags": [
+      "sqlfluff"
+    ],
+    "sources": [
+      {
+        "source": "sqlfluff",
+        "ruleId": "L028",
+        "url": "https://docs.sqlfluff.com/en/stable/rules.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T06:46:38.761Z",
+    "structuralHints": {
+      "treeSitterQuery": "(column\n  name: (identifier) @offender)"
+    }
+  },
+  {
+    "id": "SQ_L029",
+    "languages": [
+      "sql"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Keywords should not be used as identifiers",
+    "description": "Avoid using keywords as identifiers.",
+    "tags": [
+      "sqlfluff"
+    ],
+    "sources": [
+      {
+        "source": "sqlfluff",
+        "ruleId": "L029",
+        "url": "https://docs.sqlfluff.com/en/stable/rules.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T03:50:31.556Z",
+    "structuralHints": {
+      "treeSitterQuery": "(identifier) @offender"
+    }
+  },
+  {
+    "id": "SQ_L030",
+    "languages": [
+      "sql"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Inconsistent capitalisation of function names",
+    "description": "Use consistent capitalization.",
+    "tags": [
+      "sqlfluff"
+    ],
+    "sources": [
+      {
+        "source": "sqlfluff",
+        "ruleId": "L030",
+        "url": "https://docs.sqlfluff.com/en/stable/rules.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T07:02:42.658Z",
+    "structuralHints": {
+      "treeSitterQuery": "(identifier) @offender"
+    }
+  },
+  {
+    "id": "SQ_L031",
+    "languages": [
+      "sql"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Avoid table aliases in from clauses and join conditions",
+    "description": "Use table names directly when possible.",
+    "tags": [
+      "sqlfluff"
+    ],
+    "sources": [
+      {
+        "source": "sqlfluff",
+        "ruleId": "L031",
+        "url": "https://docs.sqlfluff.com/en/stable/rules.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T06:46:55.622Z",
+    "structuralHints": {
+      "treeSitterQuery": "(from\n  (relation\n    (object_reference\n      name: (_) @offender)))"
+    }
+  },
+  {
+    "id": "SQ_L032",
+    "languages": [
+      "sql"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Prefer JOIN over comma-separated tables",
+    "description": "Use explicit JOIN syntax.",
+    "tags": [
+      "sqlfluff"
+    ],
+    "sources": [
+      {
+        "source": "sqlfluff",
+        "ruleId": "L032",
+        "url": "https://docs.sqlfluff.com/en/stable/rules.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T06:47:00.513Z",
+    "structuralHints": {
+      "treeSitterQuery": "(from\n  (relation\n    (_) @table1)\n  \",\"? @offender\n  (relation\n    (_) @table2))"
+    }
+  },
+  {
+    "id": "SQ_L033",
+    "languages": [
+      "sql"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Unnecessary brackets",
+    "description": "Remove unnecessary brackets.",
+    "tags": [
+      "sqlfluff"
+    ],
+    "sources": [
+      {
+        "source": "sqlfluff",
+        "ruleId": "L033",
+        "url": "https://docs.sqlfluff.com/en/stable/rules.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T03:50:38.547Z",
+    "structuralHints": {
+      "treeSitterQuery": "(\n  (parenthesized_expression\n    \"(\" @offender\n    (_)\n    \")\"\n  )\n)"
+    }
+  },
+  {
+    "id": "SQ_L034",
+    "languages": [
+      "sql"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Select wildcards then simple targets before calculations and aggregates",
+    "description": "Order SELECT columns consistently.",
+    "tags": [
+      "sqlfluff"
+    ],
+    "sources": [
+      {
+        "source": "sqlfluff",
+        "ruleId": "L034",
+        "url": "https://docs.sqlfluff.com/en/stable/rules.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T07:02:42.709Z",
+    "structuralHints": {
+      "treeSitterQuery": "(identifier) @offender"
+    }
+  },
+  {
+    "id": "SQ_L035",
+    "languages": [
+      "sql"
+    ],
+    "category": "Performance",
+    "severity": "medium",
+    "title": "Do not use \"SELECT DISTINCT\" if it has no effect",
+    "description": "Remove unnecessary DISTINCT.",
+    "tags": [
+      "sqlfluff"
+    ],
+    "sources": [
+      {
+        "source": "sqlfluff",
+        "ruleId": "L035",
+        "url": "https://docs.sqlfluff.com/en/stable/rules.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T06:47:23.714Z",
+    "structuralHints": {
+      "treeSitterQuery": "(keyword_distinct) @offender"
+    }
+  },
+  {
+    "id": "SQ_L036",
+    "languages": [
+      "sql"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Select targets should be on a new line unless there is only one select target",
+    "description": "Format SELECT targets on separate lines.",
+    "tags": [
+      "sqlfluff"
+    ],
+    "sources": [
+      {
+        "source": "sqlfluff",
+        "ruleId": "L036",
+        "url": "https://docs.sqlfluff.com/en/stable/rules.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T06:47:27.316Z",
+    "structuralHints": {
+      "treeSitterQuery": "(select\n  (select_expression) @offender\n  (#not-match? @offender \"^\\\\n\"))"
+    }
+  },
+  {
+    "id": "SQ_L037",
+    "languages": [
+      "sql"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Ambiguous ordering in ORDER BY clause",
+    "description": "Use explicit column references in ORDER BY.",
+    "tags": [
+      "sqlfluff"
+    ],
+    "sources": [
+      {
+        "source": "sqlfluff",
+        "ruleId": "L037",
+        "url": "https://docs.sqlfluff.com/en/stable/rules.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T07:02:42.751Z",
+    "structuralHints": {
+      "treeSitterQuery": "(identifier) @offender"
+    }
+  },
+  {
+    "id": "SQ_L038",
+    "languages": [
+      "sql"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Trailing comma in select statement",
+    "description": "Remove trailing commas.",
+    "tags": [
+      "sqlfluff"
+    ],
+    "sources": [
+      {
+        "source": "sqlfluff",
+        "ruleId": "L038",
+        "url": "https://docs.sqlfluff.com/en/stable/rules.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T03:50:49.270Z",
+    "structuralHints": {
+      "treeSitterQuery": "(\n  (ERROR) @offender\n  (#match? @offender \",\\\\s*$\")\n)"
+    }
+  },
+  {
+    "id": "SQ_L039",
+    "languages": [
+      "sql"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Unnecessary whitespace",
+    "description": "Remove unnecessary whitespace.",
+    "tags": [
+      "sqlfluff"
+    ],
+    "sources": [
+      {
+        "source": "sqlfluff",
+        "ruleId": "L039",
+        "url": "https://docs.sqlfluff.com/en/stable/rules.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T03:50:50.663Z",
+    "structuralHints": {
+      "treeSitterQuery": "(program\n  (_) @offender\n  (#match? @offender \"\\\\s{2,}\"))"
+    }
+  },
+  {
+    "id": "SQ_L040",
+    "languages": [
+      "sql"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Inconsistent capitalisation of boolean/null literal",
+    "description": "Use consistent capitalization for boolean/null literals.",
+    "tags": [
+      "sqlfluff"
+    ],
+    "sources": [
+      {
+        "source": "sqlfluff",
+        "ruleId": "L040",
+        "url": "https://docs.sqlfluff.com/en/stable/rules.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T00:37:36.256Z"
+  },
+  {
+    "id": "SQ_L041",
+    "languages": [
+      "sql"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "SELECT clause should not contain unnecessary brackets",
+    "description": "Remove unnecessary brackets in SELECT.",
+    "tags": [
+      "sqlfluff"
+    ],
+    "sources": [
+      {
+        "source": "sqlfluff",
+        "ruleId": "L041",
+        "url": "https://docs.sqlfluff.com/en/stable/rules.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T07:02:42.854Z",
+    "structuralHints": {
+      "treeSitterQuery": "(identifier) @offender"
+    }
+  },
+  {
+    "id": "SQ_L042",
+    "languages": [
+      "sql"
+    ],
+    "category": "Performance",
+    "severity": "medium",
+    "title": "Join/From clauses should not contain subqueries",
+    "description": "Avoid subqueries in JOIN/FROM when possible.",
+    "tags": [
+      "sqlfluff"
+    ],
+    "sources": [
+      {
+        "source": "sqlfluff",
+        "ruleId": "L042",
+        "url": "https://docs.sqlfluff.com/en/stable/rules.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T07:02:42.875Z",
+    "structuralHints": {
+      "treeSitterQuery": "(identifier) @offender"
+    }
+  },
+  {
+    "id": "SQ_L043",
+    "languages": [
+      "sql"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Case expression should have an ELSE clause",
+    "description": "Add ELSE clause to CASE expressions.",
+    "tags": [
+      "sqlfluff"
+    ],
+    "sources": [
+      {
+        "source": "sqlfluff",
+        "ruleId": "L043",
+        "url": "https://docs.sqlfluff.com/en/stable/rules.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T07:02:42.894Z",
+    "structuralHints": {
+      "treeSitterQuery": "(identifier) @offender"
+    }
+  },
+  {
+    "id": "SQ_L044",
+    "languages": [
+      "sql"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Query produces an unknown number of result columns",
+    "description": "Use explicit column lists instead of SELECT *.",
+    "tags": [
+      "sqlfluff"
+    ],
+    "sources": [
+      {
+        "source": "sqlfluff",
+        "ruleId": "L044",
+        "url": "https://docs.sqlfluff.com/en/stable/rules.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T06:48:11.475Z",
+    "structuralHints": {
+      "treeSitterQuery": "(all_fields) @offender"
+    }
+  },
+  {
+    "id": "SQ_L045",
+    "languages": [
+      "sql"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "DISTINCT used with parentheses",
+    "description": "Remove unnecessary parentheses around DISTINCT.",
+    "tags": [
+      "sqlfluff"
+    ],
+    "sources": [
+      {
+        "source": "sqlfluff",
+        "ruleId": "L045",
+        "url": "https://docs.sqlfluff.com/en/stable/rules.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T07:02:42.925Z",
+    "structuralHints": {
+      "treeSitterQuery": "(identifier) @offender"
+    }
+  },
+  {
+    "id": "SQ_L046",
+    "languages": [
+      "sql"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Jinja tags should have a single whitespace on either side",
+    "description": "Format Jinja tags correctly.",
+    "tags": [
+      "sqlfluff"
+    ],
+    "sources": [
+      {
+        "source": "sqlfluff",
+        "ruleId": "L046",
+        "url": "https://docs.sqlfluff.com/en/stable/rules.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T03:51:01.475Z",
+    "structuralHints": {
+      "treeSitterQuery": "(\n  (ERROR) @offender\n  (#match? @offender \"\\\\{[{%]|[}%]\\\\}\")\n)"
+    }
+  },
+  {
+    "id": "SQ_L047",
+    "languages": [
+      "sql"
+    ],
+    "category": "Performance",
+    "severity": "medium",
+    "title": "Use COUNT(*) instead of COUNT(<column>)",
+    "description": "Use COUNT(*) for counting rows.",
+    "tags": [
+      "sqlfluff"
+    ],
+    "sources": [
+      {
+        "source": "sqlfluff",
+        "ruleId": "L047",
+        "url": "https://docs.sqlfluff.com/en/stable/rules.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T07:02:42.955Z",
+    "structuralHints": {
+      "treeSitterQuery": "(identifier) @offender"
+    }
+  },
+  {
+    "id": "SQ_L048",
+    "languages": [
+      "sql"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Quoted literals should be uppercase",
+    "description": "Use uppercase for quoted literals.",
+    "tags": [
+      "sqlfluff"
+    ],
+    "sources": [
+      {
+        "source": "sqlfluff",
+        "ruleId": "L048",
+        "url": "https://docs.sqlfluff.com/en/stable/rules.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T07:02:42.975Z",
+    "structuralHints": {
+      "treeSitterQuery": "(identifier) @offender"
+    }
+  },
+  {
+    "id": "SQ_L049",
+    "languages": [
+      "sql"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Unnecessary CASE statement",
+    "description": "Simplify unnecessary CASE statements.",
+    "tags": [
+      "sqlfluff"
+    ],
+    "sources": [
+      {
+        "source": "sqlfluff",
+        "ruleId": "L049",
+        "url": "https://docs.sqlfluff.com/en/stable/rules.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T06:48:55.922Z",
+    "structuralHints": {
+      "treeSitterQuery": "(case) @offender"
+    }
+  },
+  {
+    "id": "SQ_L050",
+    "languages": [
+      "sql"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Files should not end with a trailing newline",
+    "description": "Remove trailing newlines.",
+    "tags": [
+      "sqlfluff"
+    ],
+    "sources": [
+      {
+        "source": "sqlfluff",
+        "ruleId": "L050",
+        "url": "https://docs.sqlfluff.com/en/stable/rules.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T06:48:59.277Z",
+    "structuralHints": {
+      "treeSitterQuery": "((_) @offender\n  (#match? @offender \"\\n$\"))"
+    }
+  },
+  {
+    "id": "SQ_L051",
+    "languages": [
+      "sql"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "INNER JOIN must be fully qualified",
+    "description": "Use explicit INNER JOIN syntax.",
+    "tags": [
+      "sqlfluff"
+    ],
+    "sources": [
+      {
+        "source": "sqlfluff",
+        "ruleId": "L051",
+        "url": "https://docs.sqlfluff.com/en/stable/rules.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T06:49:08.997Z",
+    "structuralHints": {
+      "treeSitterQuery": "(from\n  (join) @offender)"
+    }
+  },
+  {
+    "id": "SQ_L052",
+    "languages": [
+      "sql"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Statements must end with a semicolon",
+    "description": "End statements with semicolons.",
+    "tags": [
+      "sqlfluff"
+    ],
+    "sources": [
+      {
+        "source": "sqlfluff",
+        "ruleId": "L052",
+        "url": "https://docs.sqlfluff.com/en/stable/rules.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T03:51:11.178Z",
+    "structuralHints": {
+      "treeSitterQuery": "(statement) @offender"
+    }
+  },
+  {
+    "id": "SQ_L053",
+    "languages": [
+      "sql"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Statements must not end with a semicolon",
+    "description": "Remove trailing semicolons.",
+    "tags": [
+      "sqlfluff"
+    ],
+    "sources": [
+      {
+        "source": "sqlfluff",
+        "ruleId": "L053",
+        "url": "https://docs.sqlfluff.com/en/stable/rules.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T06:49:13.225Z",
+    "structuralHints": {
+      "treeSitterQuery": "(program\n  (statement\n    (_) @offender\n    \";\"\n  )\n)"
+    }
+  },
+  {
+    "id": "SQ_L054",
+    "languages": [
+      "sql"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Inconsistent indentation",
+    "description": "Use consistent indentation.",
+    "tags": [
+      "sqlfluff"
+    ],
+    "sources": [
+      {
+        "source": "sqlfluff",
+        "ruleId": "L054",
+        "url": "https://docs.sqlfluff.com/en/stable/rules.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T03:51:16.373Z",
+    "structuralHints": {
+      "treeSitterQuery": "(program\n  (_) @offender\n  (#match? @offender \"^[ \\\\t]*(  [ \\\\t]+|\\\\t[ \\\\t]*| [ \\\\t]*\\\\t)\"))"
+    }
+  },
+  {
+    "id": "SQ_L055",
+    "languages": [
+      "sql"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Use LEFT JOIN instead of RIGHT JOIN",
+    "description": "Prefer LEFT JOIN over RIGHT JOIN.",
+    "tags": [
+      "sqlfluff"
+    ],
+    "sources": [
+      {
+        "source": "sqlfluff",
+        "ruleId": "L055",
+        "url": "https://docs.sqlfluff.com/en/stable/rules.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T07:02:43.066Z",
+    "structuralHints": {
+      "treeSitterQuery": "(identifier) @offender"
+    }
+  },
+  {
+    "id": "SQ_L056",
+    "languages": [
+      "sql"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Spaces within brackets",
+    "description": "Do not use spaces within brackets.",
+    "tags": [
+      "sqlfluff"
+    ],
+    "sources": [
+      {
+        "source": "sqlfluff",
+        "ruleId": "L056",
+        "url": "https://docs.sqlfluff.com/en/stable/rules.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T06:49:33.749Z",
+    "structuralHints": {
+      "treeSitterQuery": "(list) @offender"
+    }
+  },
+  {
+    "id": "SQ_L057",
+    "languages": [
+      "sql"
+    ],
+    "category": "Performance",
+    "severity": "medium",
+    "title": "Do not use outer joins",
+    "description": "Avoid outer joins when possible.",
+    "tags": [
+      "sqlfluff"
+    ],
+    "sources": [
+      {
+        "source": "sqlfluff",
+        "ruleId": "L057",
+        "url": "https://docs.sqlfluff.com/en/stable/rules.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T07:02:43.097Z",
+    "structuralHints": {
+      "treeSitterQuery": "(identifier) @offender"
+    }
+  },
+  {
+    "id": "SQ_L058",
+    "languages": [
+      "sql"
+    ],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "Structured exception handling",
+    "description": "Use structured exception handling.",
+    "tags": [
+      "sqlfluff"
+    ],
+    "sources": [
+      {
+        "source": "sqlfluff",
+        "ruleId": "L058",
+        "url": "https://docs.sqlfluff.com/en/stable/rules.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T03:51:24.647Z",
+    "structuralHints": {
+      "treeSitterQuery": "(ERROR) @offender"
+    }
+  },
+  {
+    "id": "SQ_L059",
+    "languages": [
+      "sql"
+    ],
+    "category": "Performance",
+    "severity": "medium",
+    "title": "Use NOT IN instead of NOT EXISTS",
+    "description": "Prefer NOT IN over NOT EXISTS when appropriate.",
+    "tags": [
+      "sqlfluff"
+    ],
+    "sources": [
+      {
+        "source": "sqlfluff",
+        "ruleId": "L059",
+        "url": "https://docs.sqlfluff.com/en/stable/rules.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T07:02:43.128Z",
+    "structuralHints": {
+      "treeSitterQuery": "(identifier) @offender"
+    }
+  },
+  {
+    "id": "SQ_L060",
+    "languages": [
+      "sql"
+    ],
+    "category": "Correctness",
+    "severity": "high",
+    "title": "Use NULL instead of empty string",
+    "description": "Use NULL for missing values.",
+    "tags": [
+      "sqlfluff"
+    ],
+    "sources": [
+      {
+        "source": "sqlfluff",
+        "ruleId": "L060",
+        "url": "https://docs.sqlfluff.com/en/stable/rules.html"
+      }
+    ],
+    "version": "2026.01.22",
+    "updatedAt": "2026-01-22T07:02:43.149Z",
+    "structuralHints": {
+      "treeSitterQuery": "(identifier) @offender"
+    }
+  }
+]

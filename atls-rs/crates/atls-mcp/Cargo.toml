@@ -1,0 +1,18 @@
+[package]
+name = "atls-mcp"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "atls-mcp"
+path = "src/main.rs"
+
+[dependencies]
+atls-core = { path = "../atls-core" }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+rusqlite = { workspace = true }

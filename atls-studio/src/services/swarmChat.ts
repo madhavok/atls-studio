@@ -1,0 +1,315 @@
+/**
+ * Swarm-specific chat streaming
+ * Extracted from aiService.ts for better separation of concerns
+ */
+
+import { invoke } from '@tauri-apps/api/core';
+import { listen, UnlistenFn } from '@tauri-apps/api/event';
+import type { ContextUsage, StreamChunk } from '../stores/appStore';
+import { useAppStore } from '../stores/appStore';
+import { useContextStore } from '../stores/contextStore';
+import { resolveHashRefsWithMeta, type HashLookup } from '../utils/hashResolver';
+import type { AIProvider, AIConfig, ToolCallEvent } from './aiService';
+import { executeToolCall } from './aiService';
+import { allSubtasksDone as areAllSubtasksDone } from './aiTaskState';
+
+export interface SwarmStreamCallbacks {
+  onToken: (token: string) => void;
+  onToolCall: (toolCall: ToolCallEvent) => void;
+  onToolResult: (id: string, result: string) => void;
+  onUsageUpdate?: (usage: ContextUsage) => void;
+  onError: (error: Error) => void;
+  onDone: () => void;
+  onSwarmThought?: (thought: string) => void;
+  onSwarmDecision?: (decision: string) => void;
+}
+
+export interface SwarmStreamOptions {
+  isSwarmAgent?: boolean;
+  mode?: string;
+  enableTools?: boolean;
+  maxIterations?: number;
+  maxAutoContinues?: number;
+  swarmTerminalId?: string;
+  agentRole?: string;
+  taskId?: string;
+  fileClaims?: string[];
+}
+
+interface PendingToolCall {
+  id: string;
+  name: string;
+  args: Record<string, unknown>;
+}
+
+function looksLikeNaturalStop(text: string): boolean {
+  const trimmed = text.trim();
+  if (!trimmed) return false;
+
+  const lastChar = trimmed[trimmed.length - 1];
+  if (['.', '!', '?', ':', ')', ']', '}', '"', "'", '`'].includes(lastChar)) {
+    return true;
+  }
+
+  const sentenceEndPattern = /[.!?]\s*$/;
+  if (sentenceEndPattern.test(trimmed)) {
+    return true;
+  }
+
+  return false;
+
+}
+
+function createHashLookup(sessionId: string | null): HashLookup {
+  return async (hash: string): Promise<{ content: string; source?: string } | null> => {
+    const ctx = useContextStore.getState();
+    const fromStore = ctx.getChunkForHashRef(hash);
+
+    if (!fromStore || fromStore.chunkType === 'smart') {
+      try {
+        const resolved = await invoke<{ content: string; source?: string }>('resolve_hash_ref', {
+          rawRef: `h:${hash}:content`,
+          sessionId: sessionId ?? null,
+        });
+        if (resolved?.content) {
+          return { content: resolved.content, source: resolved.source ?? fromStore?.source };
+        }
+      } catch {
+        // Backend doesn't have it — fall through to frontend content
+      }
+    }
+
+    if (fromStore) return fromStore;
+    if (!sessionId) return null;
+    try {
+      const { chatDb } = await import('./chatDb');
+      if (!chatDb.isInitialized()) return null;
+      return await chatDb.getContentByHash(sessionId, hash);
+    } catch {
+      return null;
+    }
+  };
+}
+
+/** Run one streaming round; returns when done. */
+async function runStreamRound(
+  provider: AIProvider,
+  config: AIConfig,
+  messages: Array<{ role: string; content: unknown }>,
+  systemPrompt: string,
+  callbacks: SwarmStreamCallbacks,
+  streamId: string,
+  enableTools: boolean
+): Promise<{ fullResponse: string; pendingToolCalls: PendingToolCall[]; stopReason: string | null }> {
+  let fullResponse = '';
+  const pendingToolCalls: PendingToolCall[] = [];
+  let stopReason: string | null = null;
+
+  let resolveDone: () => void;
+  const donePromise = new Promise<void>((resolve) => {
+    resolveDone = resolve;
+  });
+
+  const unlisten = await listen<StreamChunk>(`chat-chunk-${streamId}`, (event) => {
+    const chunk = event.payload;
+    switch (chunk.type) {
+      case 'text_delta':
+        fullResponse += chunk.delta;
+        callbacks.onToken(chunk.delta);
+        break;
+      case 'tool_input_available':
+        pendingToolCalls.push({
+          id: chunk.tool_call_id,
+          name: chunk.tool_name,
+          args: chunk.input,
+        });
+        callbacks.onToolCall({
+          id: chunk.tool_call_id,
+          name: chunk.tool_name,
+          args: chunk.input,
+          status: 'running',
+        });
+        break;
+      case 'usage':
+        callbacks.onUsageUpdate?.({
+          inputTokens: chunk.input_tokens ?? 0,
+          outputTokens: chunk.output_tokens ?? 0,
+          totalTokens: (chunk.input_tokens ?? 0) + (chunk.output_tokens ?? 0),
+          maxTokens: 200000,
+          percentage: 0,
+        });
+        break;
+      case 'stop_reason':
+        stopReason = chunk.reason;
+        break;
+      case 'done':
+        unlisten();
+        resolveDone!();
+        break;
+      case 'error':
+        callbacks.onError(new Error(chunk.error_text));
+        unlisten();
+        resolveDone!();
+        break;
+      default:
+        break;
+    }
+  });
+
+  if (provider === 'anthropic') {
+    await invoke('stream_chat_anthropic', {
+      apiKey: config.apiKey,
+      model: config.model,
+      messages,
+      maxTokens: config.maxTokens ?? 4096,
+      temperature: config.temperature ?? 0.7,
+      systemPrompt,
+      streamId,
+      enableTools,
+    });
+  } else if (provider === 'openai') {
+    await invoke('stream_chat_openai', {
+      apiKey: config.apiKey,
+      model: config.model,
+      messages,
+      maxTokens: config.maxTokens ?? 4096,
+      temperature: config.temperature ?? 0.7,
+      systemPrompt,
+      streamId,
+    });
+  } else if (provider === 'lmstudio') {
+    await invoke('stream_chat_lmstudio', {
+      baseUrl: config.baseUrl ?? config.apiKey,
+      model: config.model,
+      messages,
+      maxTokens: config.maxTokens ?? 4096,
+      temperature: config.temperature ?? 0.7,
+      systemPrompt,
+      streamId,
+      enableTools,
+    });
+  } else {
+    throw new Error(`Swarm streaming not supported for provider: ${provider}`);
+  }
+
+  await donePromise;
+  return { fullResponse, pendingToolCalls, stopReason };
+}
+
+
+export async function streamChatForSwarm(
+  messages: ChatMessage[],
+  config: AIConfig,
+  systemPrompt: string,
+  _projectPath: string,
+  callbacks: SwarmStreamCallbacks,
+  _options: SwarmStreamOptions
+): Promise<{ taskCompleted: boolean; taskStatus: 'completed' | 'awaiting_input' | 'incomplete'; result: string; taskCompleteSummary?: string }> {
+  const { provider } = config;
+  const sessionId = useAppStore.getState().currentSessionId;
+  const lookup = createHashLookup(sessionId);
+  const setLookup = useContextStore.getState().createSetRefLookup();
+
+  let fullResponse = '';
+  let stopReason: string | null = null;
+  let explicitTaskCompleteCalled = false;
+  let blockingToolResultSeen = false;
+  let latestTaskCompleteSummary: string | undefined;
+
+  const apiMessages: Array<{ role: string; content: unknown }> = [];
+  for (const msg of messages) {
+    const { params } = await resolveHashRefsWithMeta(
+      { content: msg.content },
+      lookup,
+      undefined,
+      setLookup
+    );
+    const resolved = params as { content: unknown };
+    apiMessages.push({ role: msg.role, content: resolved.content });
+  }
+
+  const streamId = `swarm-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+  const enableTools = _options.enableTools ?? false;
+
+  try {
+    const round1 = await runStreamRound(
+      provider,
+      config,
+      apiMessages,
+      systemPrompt,
+      callbacks,
+      streamId,
+      enableTools
+    );
+    fullResponse = round1.fullResponse;
+    stopReason = round1.stopReason;
+
+    // Execute tool calls and run follow-up round if any
+    if (round1.pendingToolCalls.length > 0) {
+      const toolResults: Array<{ tool_use_id: string; content: string }> = [];
+      for (const toolCall of round1.pendingToolCalls) {
+        if (toolCall.name === 'task_complete') {
+          explicitTaskCompleteCalled = true;
+          const summary = typeof toolCall.args?.summary === 'string'
+            ? toolCall.args.summary.trim()
+            : '';
+          latestTaskCompleteSummary = summary || latestTaskCompleteSummary;
+        }
+        try {
+          const result = await executeToolCall(
+            toolCall.name,
+            toolCall.args ?? {},
+            { swarmTerminalId: _options.swarmTerminalId },
+          );
+          if (/BATCH INTERRUPTED|awaiting confirmation|paused/i.test(result)) {
+            blockingToolResultSeen = true;
+          }
+          toolResults.push({ tool_use_id: toolCall.id, content: result });
+          callbacks.onToolResult(toolCall.id, result);
+        } catch (error) {
+          const errorMsg = error instanceof Error ? error.message : String(error);
+          toolResults.push({ tool_use_id: toolCall.id, content: `Error: ${errorMsg}` });
+          callbacks.onToolResult(toolCall.id, errorMsg);
+        }
+      }
+
+      const followUpMessages = [
+        ...apiMessages,
+        { role: 'assistant' as const, content: fullResponse },
+        { role: 'user' as const, content: toolResults },
+      ];
+
+      const round2 = await runStreamRound(
+        provider,
+        config,
+        followUpMessages,
+        systemPrompt,
+        callbacks,
+        streamId,
+        enableTools
+      );
+      fullResponse = round2.fullResponse;
+      stopReason = round2.stopReason;
+    }
+  } finally {
+    callbacks.onDone();
+  }
+
+  const taskCompleted = explicitTaskCompleteCalled && !blockingToolResultSeen;
+  const taskStatus = taskCompleted
+    ? 'completed'
+    : (blockingToolResultSeen ? 'awaiting_input' : 'incomplete');
+
+  const resultText = fullResponse.trim() || latestTaskCompleteSummary || '';
+  return {
+    taskCompleted,
+    taskStatus,
+    result: resultText,
+    taskCompleteSummary: latestTaskCompleteSummary,
+  };
+}
+
+type ChatMessage = {
+  role: string;
+  content: unknown;
+};

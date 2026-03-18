@@ -1,0 +1,522 @@
+/**
+ * Context Formatter — builds working memory blocks for Layer 3 injection.
+ *
+ * Integrates with the Hash Pointer Protocol: chunks the model has already
+ * seen are emitted as compact digest lines (h:ref + structure) instead of
+ * full content, cutting per-chunk cost from ~2000+ tokens to ~20-30 tokens.
+ *
+ * Extracted from contextStore.ts to keep the store focused on state.
+ */
+
+import type { ContextChunk, BlackboardEntry, CognitiveRule, EngramAnnotation, Synapse, ManifestEntry, TaskPlan, StagedSnippet, TransitionBridge, MemoryEvent, ReconcileStats, MemoryTelemetrySummary } from '../stores/contextStore';
+import { STAGE_SOFT_CEILING } from '../stores/contextStore';
+import { HYGIENE_CHECK_INTERVAL_ROUNDS } from './promptMemory';
+import { formatChunkTag } from '../utils/contextHash';
+import {
+  type ChunkRef,
+  getRef,
+  shouldMaterialize,
+  formatRefLine,
+  formatArchivedRefLine,
+  getArchivedRefs,
+  materialize,
+  getTurn,
+  getTurnDelta,
+} from './hashProtocol';
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+export interface FormatterInput {
+  chunks: Map<string, ContextChunk>;
+  blackboardEntries: Map<string, BlackboardEntry>;
+  cognitiveRules?: Map<string, CognitiveRule>;
+  droppedManifest: Map<string, ManifestEntry>;
+  stagedSnippets?: Map<string, StagedSnippet>;
+  taskPlan: TaskPlan | null;
+  maxTokens: number;
+  freedTokens: number;
+  usedTokens: number;
+  pinnedCount: number;
+  bbTokens: number;
+  cacheHitRate?: number;
+  transitionBridge?: TransitionBridge | null;
+  batchMetrics?: { toolCalls: number; manageOps: number };
+  historyTokens?: number;
+  historyBreakdown?: string | null;
+  memoryEvents?: MemoryEvent[];
+  reconcileStats?: ReconcileStats | null;
+  memoryTelemetry?: MemoryTelemetrySummary | null;
+  safetyCompaction?: {
+    count: number;
+    freedTokens: number;
+    usageBefore: number;
+    candidates: Array<{ shortHash: string; tokens: number; source?: string; age: string }>;
+  } | null;
+}
+
+// ---------------------------------------------------------------------------
+// Working Memory (Layer 3)
+// ---------------------------------------------------------------------------
+
+const FILE_TYPES: ReadonlySet<string> = new Set([
+  'file', 'smart', 'raw', 'tree', 'search', 'symbol', 'deps', 'issues',
+]);
+
+function formatEngramMeta(chunk: ContextChunk): string[] {
+  const meta: string[] = [];
+  if (chunk.annotations?.length) {
+    for (const ann of chunk.annotations) {
+      meta.push(`  [note] ${ann.content}`);
+    }
+  }
+  if (chunk.synapses?.length) {
+    for (const syn of chunk.synapses) {
+      meta.push(`  → h:${syn.targetHash.slice(0, 6)} (${syn.relation})`);
+    }
+  }
+  return meta;
+}
+
+function formatSuspectHint(
+  suspectSince?: number,
+  freshness?: string,
+  freshnessCause?: string,
+): string {
+  if (suspectSince == null && !freshness && !freshnessCause) return '';
+  if (freshness === 'shifted' || freshnessCause === 'same_file_prior_edit') {
+    return ' (safe positional drift after your previous edit)';
+  }
+  if ((freshnessCause === 'external_file_change' || freshnessCause === 'watcher_event')
+    && (suspectSince != null || freshness === 'suspect')) {
+    return ' [unsafe external file change; re-read required]';
+  }
+  if (suspectSince != null || freshness === 'suspect') {
+    return ' [suspect: re-read before edit]';
+  }
+  return '';
+}
+
+function formatRebindHint(lastRebind?: {
+  strategy: string;
+  confidence: string;
+  linesAfter?: string;
+  factors?: string[];
+}): string {
+  if (!lastRebind || lastRebind.strategy === 'fresh') return '';
+  const factors = Array.isArray(lastRebind.factors) && lastRebind.factors.length > 0
+    ? ` via ${lastRebind.factors.slice(0, 2).join('+')}`
+    : '';
+  const lineTarget = lastRebind.linesAfter ? ` -> ${lastRebind.linesAfter}` : '';
+  return ` [last rebind: ${lastRebind.strategy}/${lastRebind.confidence}${lineTarget}${factors}]`;
+}
+
+/**
+ * Build the working memory block the model sees each turn.
+ *
+ * Materialized chunks (first time seen) → full content.
+ * Referenced chunks (seen in prior turn) → compact h:ref digest line.
+ */
+export function formatWorkingMemory(input: FormatterInput): string {
+  const {
+    chunks, blackboardEntries, cognitiveRules, droppedManifest, stagedSnippets, taskPlan,
+    maxTokens, freedTokens, usedTokens, pinnedCount, bbTokens, cacheHitRate,
+    historyTokens, historyBreakdown, safetyCompaction, memoryEvents, reconcileStats,
+    memoryTelemetry,
+  } = input;
+
+  if (chunks.size === 0 && blackboardEntries.size === 0 && !taskPlan && droppedManifest.size === 0) {
+    return '';
+  }
+
+  const lines: string[] = [];
+
+  const currentTurn = getTurn();
+  let stagedTokens = 0;
+  if (stagedSnippets) stagedSnippets.forEach(s => stagedTokens += s.tokens);
+  lines.push(`<!-- WM:turn:${currentTurn} -->`);
+  lines.push('## WORKING MEMORY');
+
+  const delta = getTurnDelta();
+  const deltaParts: string[] = [];
+  if (delta.dematerialized > 0) deltaParts.push(`${delta.dematerialized} dematerialized`);
+  if (delta.newMaterialized > 0) deltaParts.push(`${delta.newMaterialized} new`);
+  if (safetyCompaction) deltaParts.push(`SAFETY: ${safetyCompaction.count} auto-compacted, ${(safetyCompaction.freedTokens / 1000).toFixed(1)}k freed`);
+  if (deltaParts.length > 0) {
+    lines.push(`Δ: ${deltaParts.join(' | ')}`);
+  }
+  lines.push('');
+
+  if (safetyCompaction) {
+    lines.push('## SAFETY RAIL WARNING');
+    lines.push(`Auto-compacted ${safetyCompaction.count} unpinned chunks, freed ${(safetyCompaction.freedTokens / 1000).toFixed(1)}k (was at ${safetyCompaction.usageBefore.toFixed(0)}%).`);
+    if (safetyCompaction.candidates.length > 0) {
+      lines.push('Candidates for drop (oldest unpinned):');
+      for (const c of safetyCompaction.candidates.slice(0, 3)) {
+        lines.push(`  h:${c.shortHash} ${(c.tokens / 1000).toFixed(1)}k ${c.source || ''} (age: ${c.age})`);
+      }
+    }
+    lines.push('Action: drop completed work, unpin finished files, compact_history if history heavy.');
+    lines.push('');
+  }
+
+  const latestEvent = memoryEvents && memoryEvents.length > 0 ? memoryEvents[memoryEvents.length - 1] : null;
+  const ruleTokens = cognitiveRules ? Array.from(cognitiveRules.values()).reduce((sum, rule) => sum + rule.tokens, 0) : 0;
+  const hasRetention = memoryTelemetry && (memoryTelemetry.readsReused > 0 || memoryTelemetry.resultsCollapsed > 0 || memoryTelemetry.outcomeTransitions > 0);
+  if (reconcileStats || latestEvent || ruleTokens > 0 || stagedTokens > 0 || hasRetention) {
+    lines.push('## MEMORY TELEMETRY');
+    const telemetryParts: string[] = [];
+    if (historyTokens != null && historyTokens > 0) telemetryParts.push(`history:${(historyTokens / 1000).toFixed(1)}k`);
+    if (stagedTokens > 0) telemetryParts.push(`staged:${(stagedTokens / 1000).toFixed(1)}k`);
+    if (ruleTokens > 0) telemetryParts.push(`rules:${(ruleTokens / 1000).toFixed(1)}k`);
+    if (reconcileStats) telemetryParts.push(`reconcile:${reconcileStats.updated} updated/${reconcileStats.invalidated} invalidated/${reconcileStats.preserved} preserved`);
+    if (memoryTelemetry && memoryTelemetry.eventCount > 0) {
+      telemetryParts.push(`events:${memoryTelemetry.eventCount}`);
+      if (memoryTelemetry.rebindCount > 0) telemetryParts.push(`rebinds:${memoryTelemetry.rebindCount}`);
+      if (memoryTelemetry.blockCount > 0) telemetryParts.push(`blocks:${memoryTelemetry.blockCount}`);
+      if (memoryTelemetry.retryCount > 0) telemetryParts.push(`retries:${memoryTelemetry.retryCount}`);
+      if (memoryTelemetry.lowConfidenceCount > 0) telemetryParts.push(`low_conf:${memoryTelemetry.lowConfidenceCount}`);
+      else if (memoryTelemetry.mediumConfidenceCount > 0) telemetryParts.push(`medium_conf:${memoryTelemetry.mediumConfidenceCount}`);
+    }
+    if (memoryTelemetry) {
+      const retParts: string[] = [];
+      if (memoryTelemetry.readsReused > 0) retParts.push(`reused:${memoryTelemetry.readsReused}`);
+      if (memoryTelemetry.resultsCollapsed > 0) retParts.push(`collapsed:${memoryTelemetry.resultsCollapsed}`);
+      if (memoryTelemetry.outcomeTransitions > 0) retParts.push(`transitions:${memoryTelemetry.outcomeTransitions}`);
+      if (retParts.length > 0) telemetryParts.push(`retention:${retParts.join(',')}`);
+    }
+    if (telemetryParts.length > 0) lines.push(telemetryParts.join(' | '));
+    if (latestEvent) {
+      const eventParts = [`last:${latestEvent.action}`, latestEvent.reason];
+      if (latestEvent.source) eventParts.push(latestEvent.source);
+      if (latestEvent.strategy) eventParts.push(`strategy:${latestEvent.strategy}`);
+      if (latestEvent.confidence) eventParts.push(`confidence:${latestEvent.confidence}`);
+      if (latestEvent.freedTokens != null && latestEvent.freedTokens > 0) eventParts.push(`freed:${(latestEvent.freedTokens / 1000).toFixed(1)}k`);
+      lines.push(eventParts.join(' | '));
+    }
+    lines.push('');
+  }
+
+  // BB summary — full content is in the dynamic context block.
+  if (blackboardEntries.size > 0) {
+    let bbTokens = 0;
+    blackboardEntries.forEach(e => bbTokens += e.tokens);
+    lines.push(`BB: ${blackboardEntries.size} entries, ${(bbTokens / 1000).toFixed(1)}k tk (in dynamic block — use session.bb.read/write to access)`);
+    lines.push('');
+  }
+
+  // Cognitive rules — self-imposed behavioral constraints
+  if (cognitiveRules && cognitiveRules.size > 0) {
+    lines.push('## COGNITIVE RULES');
+    cognitiveRules.forEach((rule, key) => {
+      lines.push(`- ${key}: ${rule.content}`);
+    });
+    lines.push('');
+  }
+
+  // Transition bridge — auto-surfaces recently archived context after subtask advance
+  const { transitionBridge } = input;
+  if (transitionBridge && transitionBridge.turnsRemaining > 0) {
+    lines.push(`## TRANSITION CONTEXT (subtask "${transitionBridge.completedSubtaskId}" just completed, ${transitionBridge.turnsRemaining} turns remaining)`);
+    if (transitionBridge.summary) {
+      lines.push(`Summary: ${transitionBridge.summary}`);
+    }
+    if (transitionBridge.archivedRefs.length > 0) {
+      lines.push('Archived (recall by hash):');
+      for (const ref of transitionBridge.archivedRefs) {
+        lines.push(`  h:${ref.shortHash} ${ref.tokens}tk ${ref.source || ''}`);
+      }
+    }
+    if (transitionBridge.restoredRefs && transitionBridge.restoredRefs.length > 0 && transitionBridge.activatedSubtaskId) {
+      lines.push(`Pre-bound context restored for "${transitionBridge.activatedSubtaskId}":`);
+      for (const ref of transitionBridge.restoredRefs) {
+        lines.push(`  h:${ref.shortHash} ${ref.tokens}tk ${ref.source || ''} [from ${ref.from}]`);
+      }
+    }
+    lines.push('');
+  }
+
+  // Staged snippets (cached at 10% cost, managed by AI)
+  if (stagedSnippets && stagedSnippets.size > 0) {
+    let stagedTotal = 0;
+    stagedSnippets.forEach(s => stagedTotal += s.tokens);
+    lines.push(`## STAGED (cached @ 10% cost, ${(stagedTotal / 1000).toFixed(1)}k tokens)`);
+    stagedSnippets.forEach((snippet, key) => {
+      const lineRange = snippet.lines ? `:${snippet.lines}` : '';
+      lines.push(`${key} ${snippet.source}${lineRange} (${snippet.tokens}tk)${formatSuspectHint(snippet.suspectSince, snippet.freshness, snippet.freshnessCause)}${formatRebindHint(snippet.lastRebind)}`);
+    });
+    lines.push('');
+  }
+
+  // Chat context summary — shows chat turns as manageable hashes
+  const chatChunks = Array.from(chunks.values())
+    .filter(c => c.type === 'msg:user' || c.type === 'msg:asst')
+    .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+
+  if (chatChunks.length > 0) {
+    let chatTokens = 0;
+    for (const c of chatChunks) chatTokens += c.tokens;
+    lines.push(`## CHAT CONTEXT (${chatChunks.length} turns, ${(chatTokens / 1000).toFixed(1)}k tk — compact/drop old turns to free tokens)`);
+    for (const c of chatChunks) {
+      const preview = c.content.slice(0, 60).replace(/\n/g, ' ');
+      if (c.compacted) {
+        const digest = c.digest || c.summary || 'compacted';
+        lines.push(`[C] h:${c.shortHash} ${c.type} ${c.tokens}tk (${digest})`);
+      } else {
+        lines.push(`h:${c.shortHash} ${c.type} ${c.tokens}tk "${preview}${c.content.length > 60 ? '...' : ''}"`);
+      }
+    }
+    lines.push('');
+  }
+
+  // Chunks — sorted: pinned first, file types before artifacts, then LRU
+  const sortedChunks = Array.from(chunks.values())
+    .filter(c => c.type !== 'msg:user' && c.type !== 'msg:asst')
+    .sort((a, b) => {
+      if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;
+      const aFile = FILE_TYPES.has(a.type);
+      const bFile = FILE_TYPES.has(b.type);
+      if (aFile !== bFile) return aFile ? -1 : 1;
+      return b.lastAccessed - a.lastAccessed;
+    });
+
+  if (sortedChunks.length > 0) {
+    const activeSubtaskId = taskPlan?.activeSubtaskId;
+    const subtaskLabel = activeSubtaskId
+      ? ` (subtask: ${taskPlan?.subtasks.find(s => s.id === activeSubtaskId)?.title || activeSubtaskId})`
+      : '';
+
+    // Separate materialized (full content) from referenced (digest only)
+    const materialized: ContextChunk[] = [];
+    const referenced: ContextChunk[] = [];
+
+    for (const chunk of sortedChunks) {
+      const ref = getRef(chunk.hash);
+      if (ref && !shouldMaterialize(ref)) {
+        referenced.push(chunk);
+      } else {
+        materialized.push(chunk);
+      }
+    }
+
+    if (referenced.length > 0) {
+      lines.push(`Dormant: ${referenced.length} engrams (see ## DORMANT ENGRAMS in dynamic block)`);
+      lines.push('');
+    }
+
+    // Materialized section — full content (first read this turn)
+    if (materialized.length > 0) {
+      lines.push(`## ACTIVE ENGRAMS${subtaskLabel}`);
+      for (const chunk of materialized) {
+        const ref = getRef(chunk.hash);
+        const shapedPin = chunk.pinned && ref?.pinnedShape;
+        const pinIndicator = chunk.pinned
+          ? (shapedPin ? `[P:${ref.pinnedShape}] ` : '[P] ')
+          : '';
+        const compactIndicator = chunk.compacted ? '[C] ' : '';
+        const summaryHint = chunk.summary ? ` — ${chunk.summary}` : '';
+        const tag = `${compactIndicator}${pinIndicator}<<h:${chunk.shortHash} tk:${chunk.tokens} ${chunk.type}>> ${chunk.source || ''}${formatSuspectHint(chunk.suspectSince, chunk.freshness, chunk.freshnessCause)}${formatRebindHint(chunk.lastRebind)}${summaryHint}`;
+        lines.push(tag.trim());
+        const metaLines = formatEngramMeta(chunk);
+        if (metaLines.length > 0) lines.push(...metaLines);
+        if (chunk.compacted) {
+          const digest = chunk.editDigest || chunk.digest || chunk.summary || `[compacted — use h:${chunk.shortHash} in tool params]`;
+          lines.push(digest);
+        } else if (shapedPin) {
+          const shapedContent = chunk.editDigest || chunk.digest || chunk.summary || chunk.content.slice(0, 500);
+          lines.push(shapedContent);
+          const totalLines = chunk.content.split('\n').length;
+          materialize(
+            chunk.hash, chunk.type, chunk.source,
+            chunk.tokens, totalLines,
+            chunk.editDigest || chunk.digest || '',
+          );
+        } else {
+          lines.push(chunk.content);
+          const totalLines = chunk.content.split('\n').length;
+          materialize(
+            chunk.hash, chunk.type, chunk.source,
+            chunk.tokens, totalLines,
+            chunk.editDigest || chunk.digest || '',
+          );
+        }
+        lines.push('');
+      }
+    }
+  }
+
+  // Archived engrams — visible to hash resolution but outside working memory token budget
+  const archivedHppRefs = getArchivedRefs();
+  if (archivedHppRefs.length > 0) {
+    const totalArchivedTokens = archivedHppRefs.reduce((sum, r) => sum + r.tokens, 0);
+    const shown = archivedHppRefs.slice(0, 10);
+    lines.push(`## ARCHIVED ENGRAMS (${archivedHppRefs.length} total, ${(totalArchivedTokens / 1000).toFixed(1)}k tk — use recall or pin to restore)`);
+    for (const ref of shown) {
+      lines.push(`  ${formatArchivedRefLine(ref)}`);
+    }
+    if (archivedHppRefs.length > 10) {
+      lines.push(`  +${archivedHppRefs.length - 10} more (use h:@all to list)`);
+    }
+    lines.push('');
+  }
+
+  // Dropped manifest — compact: count + top 5 most recent
+  if (droppedManifest.size > 0) {
+    const sorted = Array.from(droppedManifest.values())
+      .sort((a, b) => b.droppedAt - a.droppedAt);
+    const shown = sorted.slice(0, 5);
+    const totalTokens = sorted.reduce((sum, e) => sum + e.tokens, 0);
+    lines.push(`## DROPPED (${droppedManifest.size} total, ${(totalTokens / 1000).toFixed(1)}k tokens freed, re-read to access)`);
+    for (const entry of shown) {
+      lines.push(`  ${entry.shortHash} ${entry.source || entry.type} ${entry.tokens}tk`);
+    }
+    if (droppedManifest.size > 5) {
+      lines.push(`  +${droppedManifest.size - 5} more`);
+    }
+    lines.push('');
+  }
+
+  return lines.join('\n');
+}
+
+// ---------------------------------------------------------------------------
+// Tagged Context (legacy / debug)
+// ---------------------------------------------------------------------------
+
+export function formatTaggedContext(chunks: Map<string, ContextChunk>): string {
+  const lines: string[] = [];
+  const sorted = Array.from(chunks.values())
+    .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+
+  for (const chunk of sorted) {
+    const tag = formatChunkTag(chunk.shortHash, chunk.tokens, chunk.type, chunk.source);
+    lines.push(`${tag}\n${chunk.content}`);
+  }
+  return lines.join('\n\n');
+}
+
+// ---------------------------------------------------------------------------
+// Stats & Task Lines
+// ---------------------------------------------------------------------------
+
+/** ~60s per turn heuristic for active/stale classification */
+const TURNS_TO_MS = 60_000;
+const ACTIVE_TURNS = 3;
+const STALE_TURNS = 5;
+
+export function formatStatsLine(
+  usedTokens: number,
+  maxTokens: number,
+  chunkCount: number,
+  pinnedCount: number,
+  bbTokens: number,
+  freedTokens: number,
+  cacheHitRate?: number,
+  batchMetrics?: { toolCalls: number; manageOps: number },
+  stagedTokens?: number,
+  historyTokens?: number,
+  historyBreakdown?: string | null,
+  chunks?: Map<string, import('../stores/contextStore').ContextChunk>,
+  roundCount?: number,
+): string {
+  const pct = ((usedTokens / maxTokens) * 100).toFixed(0);
+  const usedK = (usedTokens / 1000).toFixed(0);
+  const maxK = (maxTokens / 1000).toFixed(0);
+  const freedK = (freedTokens / 1000).toFixed(1);
+
+  let line = `<<CTX ${usedK}k/${maxK}k (${pct}%) | chunks:${chunkCount}`;
+  if (pinnedCount > 0) line += ` | pinned:${pinnedCount}`;
+  if (bbTokens > 0) line += ` | bb:${(bbTokens / 1000).toFixed(1)}k`;
+  if (freedTokens > 1000) line += ` | freed:${freedK}k`;
+  if (historyTokens != null && historyTokens > 0) {
+    const hk = (historyTokens / 1000).toFixed(0);
+    line += historyBreakdown ? ` | history:${hk}k (${historyBreakdown})` : ` | history:${hk}k`;
+  }
+  if (cacheHitRate != null && cacheHitRate > 0) line += ` | cache:${(cacheHitRate * 100).toFixed(0)}%`;
+  if (stagedTokens != null && stagedTokens > 0) line += ` | staged:${(stagedTokens / 1000).toFixed(1)}k`;
+  if (batchMetrics && batchMetrics.toolCalls > 0) {
+    const ratio = batchMetrics.manageOps / batchMetrics.toolCalls;
+    line += ` | batch:${ratio.toFixed(1)}ops/call`;
+  }
+  if (chunks && chunks.size > 0) {
+    const now = Date.now();
+    const activeCutoff = now - ACTIVE_TURNS * TURNS_TO_MS;
+    const staleCutoff = now - STALE_TURNS * TURNS_TO_MS;
+    let activeCount = 0, activeTk = 0, staleCount = 0, staleTk = 0, dormantCount = 0, dormantTk = 0;
+    for (const c of chunks.values()) {
+      if (c.compacted) {
+        dormantCount++;
+        dormantTk += c.tokens;
+      } else if (c.lastAccessed >= activeCutoff) {
+        activeCount++;
+        activeTk += c.tokens;
+      } else if (c.lastAccessed >= staleCutoff) {
+        staleCount++;
+        staleTk += c.tokens;
+      } else {
+        staleCount++;
+        staleTk += c.tokens;
+      }
+    }
+    line += ` | active:${activeCount}(${(activeTk / 1000).toFixed(1)}k) stale:${staleCount}(${(staleTk / 1000).toFixed(1)}k) dormant:${dormantCount}(${(dormantTk / 1000).toFixed(1)}k)`;
+  }
+  line += '>>';
+
+  const percentage = (usedTokens / maxTokens) * 100;
+  if (percentage >= 70) {
+    line += ' 70% — consider dropping completed work (session.drop) and compacting history (compact_history). Emergency eviction only at 90%+.';
+  } else if (percentage >= 50) {
+    line += ' consider compacting/dropping completed work — bb_write important findings before they age out';
+  }
+
+  // Batch compliance warning: flag single-op manage calls as wasteful
+  if (batchMetrics && batchMetrics.toolCalls >= 3 && batchMetrics.manageOps / batchMetrics.toolCalls < 2) {
+    line += ' — LOW BATCH RATIO: combine ops into fewer manage calls';
+  }
+
+  if (stagedTokens != null && stagedTokens > STAGE_SOFT_CEILING) {
+    line += ' — staged heavy: unstage completed work';
+  }
+
+  // Turn-based hygiene nudge (skip if already showing 70%+ pressure warning)
+  if (roundCount != null && roundCount > 0 && roundCount % HYGIENE_CHECK_INTERVAL_ROUNDS === 0 && percentage < 70) {
+    line += ' — HYGIENE: budget check due — review BB, drop unused, unstage completed';
+  }
+
+  // Stale > active imbalance nudge
+  if (chunks && chunks.size > 0) {
+    const now = Date.now();
+    const activeCutoff = now - ACTIVE_TURNS * TURNS_TO_MS;
+    let activeTkSum = 0, staleTkSum = 0;
+    for (const c of chunks.values()) {
+      if (!c.compacted && c.lastAccessed >= activeCutoff) activeTkSum += c.tokens;
+      else if (!c.compacted) staleTkSum += c.tokens;
+    }
+    if (staleTkSum > activeTkSum && staleTkSum > 2000) {
+      line += ' — stale > active: drop or distill to BB';
+    }
+  }
+
+  return line;
+}
+
+export function formatTaskLine(plan: TaskPlan | null): string {
+  if (!plan) return '';
+
+  if (plan.subtasks.length === 0) {
+    return `<<TASK: ${plan.goal}>>`;
+  }
+
+  const done = plan.subtasks.filter(s => s.status === 'done').length;
+  const total = plan.subtasks.length;
+
+  const progressParts = plan.subtasks.map(s => {
+    if (s.status === 'done') return `${s.title}(done)`;
+    if (s.status === 'active') return `${s.title}(active)`;
+    if (s.status === 'blocked') return `${s.title}(blocked)`;
+    return s.title;
+  });
+
+  return `<<TASK: ${plan.goal}>>\n<<PLAN: [${done}/${total} done] ${progressParts.join(' -> ')}>>`;
+}

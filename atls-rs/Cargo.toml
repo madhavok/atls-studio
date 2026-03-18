@@ -1,0 +1,15 @@
+[workspace]
+members = ["crates/atls-core", "crates/atls-mcp"]
+resolver = "2"
+
+[workspace.dependencies]
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+rusqlite = { version = "0.31", features = ["bundled"] }
+tree-sitter = "0.25"
+notify = "6"
+ignore = "0.4"
+thiserror = "1"
+tracing = "0.1"
+chrono = { version = "0.4", features = ["serde"] }

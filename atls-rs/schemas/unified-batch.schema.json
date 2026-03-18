@@ -1,0 +1,449 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://atls.dev/schemas/unified-batch/1.0",
+  "title": "UnifiedBatchRequest",
+  "description": "Unified ATLS batch execution schema. One grammar for all operations: discover, understand, change, verify, session, delegate.",
+  "type": "object",
+  "properties": {
+    "version": {
+      "type": "string",
+      "const": "1.0",
+      "description": "Schema version"
+    },
+    "goal": {
+      "type": "string",
+      "description": "Semantic intent for this batch run"
+    },
+    "workspace": {
+      "type": "string",
+      "description": "Target workspace name (for monorepo support)"
+    },
+    "refs": {
+      "type": "array",
+      "description": "Named ref hints pre-registered for step bindings",
+      "items": {
+        "$ref": "#/definitions/RefRegistryHint"
+      }
+    },
+    "policy": {
+      "$ref": "#/definitions/ExecutionPolicy"
+    },
+    "steps": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/Step"
+      },
+      "description": "The steps to execute sequentially"
+    },
+    "output": {
+      "$ref": "#/definitions/OutputSpec"
+    }
+  },
+  "required": ["version", "steps"],
+  "definitions": {
+    "RefRegistryHint": {
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "ref": { "type": "string" }
+      },
+      "required": ["name", "ref"]
+    },
+    "ExecutionPolicy": {
+      "type": "object",
+      "description": "Execution constraints for the batch run",
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": ["readonly", "mutable", "safe-mutable"],
+          "description": "readonly blocks change.* ops. safe-mutable auto-verifies after changes."
+        },
+        "verify_after_change": {
+          "type": "boolean",
+          "description": "Auto-insert verify.typecheck after each change.* step"
+        },
+        "auto_stage_refs": {
+          "type": "boolean",
+          "description": "Auto-stage refs produced by each step"
+        },
+        "auto_pin_outputs": {
+          "type": "string",
+          "enum": ["none", "sig", "full"],
+          "description": "Auto-pin outputs from discover/understand steps"
+        },
+        "rollback_on_failure": {
+          "type": "boolean",
+          "description": "Rollback successful change.* steps if a later step fails"
+        },
+        "max_steps": {
+          "type": "integer",
+          "description": "Maximum step count before aborting"
+        },
+        "stop_on_verify_failure": {
+          "type": "boolean",
+          "description": "Halt execution if a verify step fails"
+        }
+      }
+    },
+    "Step": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Stable handle for cross-step references"
+        },
+        "use": {
+          "type": "string",
+          "description": "Operation kind. Families: search.*, read.*, analyze.*, change.*, verify.*, session.*, annotate.*, delegate.*"
+        },
+        "with": {
+          "type": "object",
+          "description": "Operation-specific parameters"
+        },
+        "in": {
+          "type": "object",
+          "description": "Input bindings — each value is a RefExpr",
+          "additionalProperties": {
+            "$ref": "#/definitions/RefExpr"
+          }
+        },
+        "out": {
+          "description": "Name(s) to expose this step's output for downstream binding",
+          "oneOf": [
+            { "type": "string" },
+            { "type": "array", "items": { "type": "string" } }
+          ]
+        },
+        "if": {
+          "$ref": "#/definitions/ConditionExpr",
+          "description": "Conditional execution"
+        },
+        "on_error": {
+          "type": "string",
+          "enum": ["stop", "continue", "rollback"],
+          "description": "Failure behavior. Default: continue"
+        }
+      },
+      "required": ["id", "use"]
+    },
+    "RefExpr": {
+      "description": "Reference expression for step input bindings",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "ref": { "type": "string", "description": "UHPP hash ref (e.g. h:abc123)" }
+          },
+          "required": ["ref"]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "from_step": { "type": "string", "description": "Step ID to read output from" },
+            "path": { "type": "string", "description": "Dot-path into the step output (e.g. refs.0, content)" }
+          },
+          "required": ["from_step"]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "bind": { "type": "string", "description": "Named binding from a prior step's out" }
+          },
+          "required": ["bind"]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "value": { "description": "Literal value passthrough" }
+          },
+          "required": ["value"]
+        }
+      ]
+    },
+    "ConditionExpr": {
+      "description": "Conditional execution expression",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": { "step_ok": { "type": "string" } },
+          "required": ["step_ok"]
+        },
+        {
+          "type": "object",
+          "properties": { "step_has_refs": { "type": "string" } },
+          "required": ["step_has_refs"]
+        },
+        {
+          "type": "object",
+          "properties": { "ref_exists": { "type": "string" } },
+          "required": ["ref_exists"]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "not": { "$ref": "#/definitions/ConditionExpr" }
+          },
+          "required": ["not"]
+        }
+      ]
+    },
+    "OutputSpec": {
+      "type": "object",
+      "properties": {
+        "format": {
+          "type": "string",
+          "enum": ["full", "summary", "refs_only"]
+        },
+        "include_step_details": {
+          "type": "boolean"
+        }
+      }
+    },
+    "StepOutput": {
+      "type": "object",
+      "description": "Typed artifact produced by each step",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": ["file_refs", "symbol_refs", "search_results", "analysis", "edit_result", "verify_result", "session", "bb_ref", "raw"]
+        },
+        "ok": { "type": "boolean" },
+        "refs": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "content": {},
+        "tokens": { "type": "integer" },
+        "summary": { "type": "string" },
+        "error": { "type": "string" },
+        "_threshold_hint": { "type": "string", "description": "find_similar param tuning hint (e.g. threshold 0.2-0.4)" },
+        "_hash_warnings": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Hash resolution diagnostics (unresolved refs, ambiguities)"
+        }
+      },
+      "required": ["kind", "ok", "refs", "summary"]
+    },
+    "UnifiedBatchResult": {
+      "type": "object",
+      "description": "Top-level batch result",
+      "properties": {
+        "ok": { "type": "boolean" },
+        "summary": { "type": "string" },
+        "step_results": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/StepResult"
+          }
+        },
+        "final_refs": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "bb_refs": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "verify": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "step_id": { "type": "string" },
+              "passed": { "type": "boolean" },
+              "summary": { "type": "string" }
+            }
+          }
+        },
+        "duration_ms": { "type": "integer" }
+      },
+      "required": ["ok", "summary", "step_results", "duration_ms"]
+    },
+    "StepResult": {
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "use": { "type": "string" },
+        "ok": { "type": "boolean" },
+        "refs": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "summary": { "type": "string" },
+        "error": { "type": "string" },
+        "duration_ms": { "type": "integer" },
+        "tokens_delta": { "type": "integer" },
+        "_threshold_hint": { "type": "string", "description": "find_similar param tuning hint" },
+        "_hash_warnings": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Hash resolution diagnostics"
+        }
+      },
+      "required": ["id", "use", "ok", "duration_ms"]
+    },
+    "OperationKind": {
+      "type": "string",
+      "description": "Dotted operation names grouped by semantic family",
+      "enum": [
+        "search.code", "search.symbol", "search.usage", "search.similar", "search.issues", "search.patterns",
+        "read.context", "read.shaped", "read.lines", "read.file",
+        "analyze.deps", "analyze.calls", "analyze.structure", "analyze.impact", "analyze.blast_radius", "analyze.extract_plan",
+        "change.edit", "change.create", "change.delete", "change.refactor", "change.rollback", "change.split_match", "change.split_module",
+        "verify.build", "verify.test", "verify.lint", "verify.typecheck",
+        "session.plan", "session.advance", "session.status",
+        "session.pin", "session.unpin", "session.stage", "session.unstage",
+        "session.compact", "session.unload", "session.drop", "session.recall",
+        "session.stats", "session.debug", "session.compact_history",
+        "session.bb.write", "session.bb.read", "session.bb.delete", "session.bb.list",
+        "session.rule", "session.emit", "session.shape", "session.load", "session.complete",
+        "annotate.engram", "annotate.note", "annotate.link", "annotate.retype",
+        "annotate.split", "annotate.merge", "annotate.design",
+        "delegate.retrieve", "delegate.design",
+        "system.exec", "system.git", "system.help", "system.workspaces"
+      ]
+    },
+    "OperationParams": {
+      "description": "Per-operation canonical param schemas. Aliases (file, path, f, target_file, source_file, symbol, name, query, refs, key, command, contents, old_str, new_str, old_string, new_string, original_lines, updated_lines) are auto-resolved by the normalizer before dispatch.",
+      "type": "object",
+      "properties": {
+        "search.code": {
+          "type": "object",
+          "properties": {
+            "queries": { "type": "array", "items": { "type": "string" } },
+            "file_paths": { "type": "array", "items": { "type": "string" } },
+            "limit": { "type": "integer" },
+            "compact": { "type": "boolean" }
+          },
+          "required": ["queries"]
+        },
+        "search.symbol": {
+          "type": "object",
+          "properties": {
+            "symbol_names": { "type": "array", "items": { "type": "string" } },
+            "limit": { "type": "integer" }
+          },
+          "required": ["symbol_names"]
+        },
+        "search.usage": {
+          "type": "object",
+          "properties": {
+            "symbol_names": { "type": "array", "items": { "type": "string" } },
+            "filter": { "type": "string" },
+            "limit": { "type": "integer" }
+          },
+          "required": ["symbol_names"]
+        },
+        "search.similar": {
+          "type": "object",
+          "properties": {
+            "type": { "type": "string", "enum": ["code", "function", "concept", "pattern"] },
+            "query": {},
+            "threshold": { "type": "number" },
+            "limit": { "type": "integer" }
+          }
+        },
+        "read.context": {
+          "type": "object",
+          "properties": {
+            "file_paths": { "type": "array", "items": { "type": "string" } },
+            "type": { "type": "string", "enum": ["smart", "full", "module", "component", "test", "tree"] },
+            "history": { "type": "boolean" },
+            "depth": { "type": "integer" },
+            "glob": { "type": "string" }
+          },
+          "required": ["file_paths"]
+        },
+        "read.lines": {
+          "type": "object",
+          "properties": {
+            "hash": { "type": "string" },
+            "lines": { "type": "string" },
+            "ref": { "type": "string" },
+            "file_path": { "type": "string" },
+            "start_line": { "type": "integer" },
+            "end_line": { "type": "integer" },
+            "context_lines": { "type": "integer", "minimum": 0, "maximum": 5 }
+          }
+        },
+        "change.edit": {
+          "type": "object",
+          "properties": {
+            "file_path": { "type": "string" },
+            "line_edits": { "type": "array", "items": { "type": "object" } },
+            "edits": { "type": "array", "items": { "type": "object" } },
+            "creates": { "type": "array", "items": { "type": "object" } },
+            "deletes": { "type": "array", "items": { "type": "string" } },
+            "revise": { "type": "string" },
+            "undo": { "type": "string" },
+            "snapshot_hash": { "type": "string" }
+          }
+        },
+        "analyze.deps": {
+          "type": "object",
+          "properties": {
+            "file_paths": { "type": "array", "items": { "type": "string" } },
+            "mode": { "type": "string", "enum": ["graph", "related", "impact"] }
+          },
+          "required": ["file_paths"]
+        },
+        "analyze.impact": {
+          "type": "object",
+          "properties": {
+            "file_paths": { "type": "array", "items": { "type": "string" } },
+            "symbol_names": { "type": "array", "items": { "type": "string" } }
+          },
+          "required": ["file_paths"]
+        },
+        "system.exec": {
+          "type": "object",
+          "properties": {
+            "cmd": { "type": "string" }
+          },
+          "required": ["cmd"]
+        },
+        "system.git": {
+          "type": "object",
+          "properties": {
+            "action": { "type": "string", "enum": ["status", "diff", "stage", "unstage", "commit", "push", "log", "reset", "restore"] },
+            "workspace": { "type": "string" }
+          },
+          "required": ["action"]
+        },
+        "session.pin": {
+          "type": "object",
+          "properties": {
+            "hashes": { "type": "array", "items": { "type": "string" } }
+          },
+          "required": ["hashes"]
+        },
+        "session.bb.write": {
+          "type": "object",
+          "properties": {
+            "key": { "type": "string" },
+            "content": { "type": "string" },
+            "derived_from": { "type": "array", "items": { "type": "string" } }
+          },
+          "required": ["key", "content"]
+        },
+        "session.bb.read": {
+          "type": "object",
+          "properties": {
+            "keys": { "type": "array", "items": { "type": "string" } }
+          },
+          "required": ["keys"]
+        },
+        "delegate.retrieve": {
+          "type": "object",
+          "properties": {
+            "query": { "type": "string" },
+            "focus_files": { "type": "array", "items": { "type": "string" } },
+            "max_tokens": { "type": "integer" }
+          },
+          "required": ["query"]
+        }
+      }
+    }
+  }
+}

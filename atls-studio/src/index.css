@@ -1,0 +1,223 @@
+/* Custom fonts - must be first */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Base styles */
+@layer base {
+  html {
+    font-family: 'Inter', system-ui, sans-serif;
+    /* Prevent scroll chaining and overscroll effects */
+    overscroll-behavior: none;
+  }
+  
+  body {
+    @apply bg-studio-bg text-studio-text;
+    /* Prevent any body-level scrolling or bounce effects */
+    overscroll-behavior: none;
+    overflow: hidden;
+    position: fixed;
+    width: 100%;
+    height: 100%;
+  }
+  
+  code, pre {
+    font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  }
+}
+
+/* Custom scrollbar */
+@layer utilities {
+  .scrollbar-thin {
+    scrollbar-width: thin;
+    scrollbar-color: theme('colors.studio.border') transparent;
+  }
+  
+  .scrollbar-thin::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  
+  .scrollbar-thin::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    background-color: theme('colors.studio.border');
+    border-radius: 4px;
+  }
+  
+  .scrollbar-thin::-webkit-scrollbar-thumb:hover {
+    background-color: theme('colors.studio.muted');
+  }
+}
+
+/* Panel resizer */
+.panel-resizer {
+  @apply bg-studio-border hover:bg-studio-accent transition-colors cursor-col-resize;
+  width: 4px;
+}
+
+.panel-resizer-horizontal {
+  @apply bg-studio-border hover:bg-studio-accent transition-colors cursor-row-resize;
+  height: 4px;
+}
+
+/* Ghost line for deferred panel resize */
+.panel-ghost-line {
+  position: fixed;
+  z-index: 9999;
+  pointer-events: none;
+  opacity: 0.6;
+}
+.panel-ghost-line--vertical {
+  width: 2px;
+  top: 0;
+  bottom: 0;
+  background: theme('colors.studio.accent');
+}
+.panel-ghost-line--horizontal {
+  height: 2px;
+  left: 0;
+  right: 0;
+  background: theme('colors.studio.accent');
+}
+
+/* Animations */
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes slideIn {
+  from { transform: translateY(-10px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+.animate-fadeIn {
+  animation: fadeIn 0.2s ease-out;
+}
+
+.animate-slideIn {
+  animation: slideIn 0.3s ease-out;
+}
+
+/* ── Markdown message styles (scoped to .markdown-message) ────────────── */
+.markdown-message {
+  @apply text-sm text-studio-text leading-relaxed;
+}
+.markdown-message > *:first-child { margin-top: 0; }
+.markdown-message > *:last-child  { margin-bottom: 0; }
+
+/* Headings */
+.markdown-message h1 { @apply text-base font-semibold text-studio-title mt-4 mb-2; }
+.markdown-message h2 { @apply text-sm font-semibold text-studio-title mt-3 mb-1.5; }
+.markdown-message h3 { @apply text-sm font-medium text-studio-title mt-2 mb-1; }
+.markdown-message h4,
+.markdown-message h5,
+.markdown-message h6 { @apply text-sm font-medium text-studio-text mt-2 mb-1; }
+
+/* Paragraph & text */
+.markdown-message p { @apply my-2; }
+
+/* Bold / italic */
+.markdown-message strong { @apply font-semibold text-studio-accent-bright; }
+.markdown-message em { @apply italic; }
+
+/* Links */
+.md-link {
+  @apply text-studio-title underline underline-offset-2 hover:brightness-125 cursor-pointer;
+}
+
+/* Horizontal rule */
+.markdown-message hr {
+  @apply my-4 border-t border-studio-border;
+}
+
+/* Lists */
+.markdown-message ul { @apply my-2 ml-5 list-disc; }
+.markdown-message ol { @apply my-2 ml-5 list-decimal; }
+.markdown-message li { @apply my-0.5; }
+.markdown-message li > p { @apply my-0; }
+
+/* Blockquote */
+.markdown-message blockquote {
+  @apply my-2 pl-3 border-l-2 border-studio-title/40 text-studio-muted italic;
+}
+
+/* Inline code */
+.md-inline-code {
+  @apply font-mono text-xs px-1.5 py-0.5 rounded bg-studio-surface border border-studio-border text-studio-accent-bright;
+}
+
+/* Fenced code blocks */
+.md-code-block {
+  @apply my-3 rounded-lg overflow-hidden border border-studio-border bg-studio-bg;
+}
+.md-code-header {
+  @apply flex items-center justify-between px-3 py-1.5 bg-studio-surface border-b border-studio-border text-xs text-studio-muted;
+}
+.md-code-lang {
+  @apply uppercase tracking-wide text-[10px] font-medium;
+}
+.md-code-copy {
+  @apply p-0.5 rounded hover:bg-studio-border/50 text-studio-muted hover:text-studio-text transition-colors;
+}
+.md-code-pre {
+  @apply p-3 overflow-x-auto text-xs leading-relaxed;
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+}
+.md-code-pre code {
+  @apply text-studio-text;
+  font-family: inherit;
+}
+
+/* Tables */
+.md-table-wrap {
+  @apply my-3 overflow-x-auto rounded-lg border border-studio-border;
+}
+.md-table {
+  @apply w-full text-xs;
+}
+.md-table thead { @apply bg-studio-surface; }
+.md-table th {
+  @apply px-3 py-2 text-left font-medium text-studio-muted border-b border-studio-border;
+}
+.md-table td {
+  @apply px-3 py-2 border-b border-studio-border/50;
+}
+.md-table tbody tr:last-child td { border-bottom: none; }
+.md-table tbody tr:nth-child(even) { @apply bg-studio-surface/40; }
+
+/* Status badges (injected via rehype-raw) */
+.status-badge {
+  @apply inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-medium align-middle mx-0.5;
+}
+.status-badge[data-status="working"] {
+  @apply bg-studio-title/15 text-studio-title;
+}
+.status-badge[data-status="done"],
+.status-badge[data-status="complete"] {
+  @apply bg-studio-title/20 text-studio-title;
+}
+.status-badge[data-status="error"],
+.status-badge[data-status="failed"] {
+  @apply bg-studio-error/15 text-studio-error;
+}
+.status-badge::before {
+  content: attr(data-status);
+  text-transform: capitalize;
+}
+.status-badge[data-step]::after {
+  content: " " attr(data-step);
+  @apply opacity-70;
+}
+/* Only show step text when there actually is a step value */
+.status-badge[data-step=""]::after { content: none; }
+/* Show tool name hint when available */
+.status-badge[data-next]:not([data-next=""])::after {
+  content: " " attr(data-step) " — " attr(data-next);
+  @apply opacity-70;
+}
