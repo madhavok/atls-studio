@@ -8,18 +8,19 @@ const VALID_NATIVE_TOOLS = [
 function levenshtein(a: string, b: string): number {
   if (a.length === 0) return b.length;
   if (b.length === 0) return a.length;
-  const costs: number[] = [];
-  for (let i = 0; i <= a.length; i++) costs[i] = i;
+  const row: number[] = Array.from({ length: a.length + 1 }, (_, i) => i);
   for (let j = 0; j < b.length; j++) {
-    let prev = j;
+    let prev = row[0];
+    row[0] = j + 1;
     for (let i = 0; i < a.length; i++) {
-      const cur = a[i] === b[j] ? prev : Math.min(prev + 1, costs[i] + 1, costs[i + 1] + 1);
-      costs[i] = prev;
-      prev = cur;
+      const temp = row[i + 1];
+      row[i + 1] = a[i] === b[j]
+        ? prev
+        : 1 + Math.min(prev, row[i], row[i + 1]);
+      prev = temp;
     }
-    costs[a.length] = prev;
   }
-  return costs[a.length];
+  return row[a.length];
 }
 
 /** Return nearest valid tool name for typo hints. */
@@ -1545,6 +1546,7 @@ async function streamChatViaTauri(
 
         if (hasToolUse || hasToolResult) {
           console.log(`[aiService] Recovering content blocks from text (tool_use:${hasToolUse}, tool_result:${hasToolResult})`);
+          const savedTextContent = assistantTextContent;
           try {
             const trimmedText = assistantTextContent.trim();
             let contentBlocks: Array<Record<string, unknown>> = [];
@@ -1583,7 +1585,8 @@ async function streamChatViaTauri(
               }
             }
           } catch (e) {
-            console.warn('[aiService] Failed to parse content blocks from text:', e);
+            assistantTextContent = savedTextContent;
+            console.warn('[aiService] Failed to parse content blocks from text, reverting:', e);
           }
         }
       }
@@ -2069,7 +2072,9 @@ async function streamChatViaTauri(
       setRoundRefreshRevisionResolver(null);
     }
     session.activeStreamIds.clear();
-    _toolLoopState = null;
+    if (_activeSession === session || _activeSession === null) {
+      _toolLoopState = null;
+    }
   }
 }
 
@@ -2212,7 +2217,7 @@ function createHandlerContext(options?: { isSwarmAgent?: boolean; swarmTerminalI
     resolveSearchRefs: (params: Record<string, unknown>) => resolveSearchRefs(params, getTurn()),
     expandSetRefsInHashes: (hashes: string[]) => expandSetRefsInHashes(hashes, setLookup),
     expandFilePathRefs: (rawPaths: string[]) => expandFilePathRefs(rawPaths, hashLookup, setLookup),
-    toolLoopState: _toolLoopState,
+    get toolLoopState() { return _activeSession?.toolLoopState ?? _toolLoopState; },
   };
 }
 

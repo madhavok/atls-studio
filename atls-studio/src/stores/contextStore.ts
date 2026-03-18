@@ -2344,7 +2344,7 @@ export const useContextStore = create<ContextStoreState>()(
     const effectiveCause = sourcePaths && sourcePaths.length > 0 ? cause : 'unknown';
     const effectiveSuspectKind = suspectKind ?? 'unknown';
     const now = Date.now();
-    let marked = 0;
+    const result = { marked: 0 };
     set(state => {
       const newChunks = new Map(state.chunks);
       const newArchived = new Map(state.archivedChunks);
@@ -2354,37 +2354,35 @@ export const useContextStore = create<ContextStoreState>()(
         const chunkViewKind = chunk.viewKind ?? defaultViewKindForChunk(chunk.type);
         if (!isFileBackedType(chunk.type) || chunkViewKind !== 'latest' || !sourceMatchesTargets(chunk.source, targets) || chunk.suspectSince != null) continue;
         newChunks.set(key, { ...chunk, suspectSince: now, freshness: 'suspect', freshnessCause: effectiveCause, suspectKind: effectiveSuspectKind });
-        marked++;
+        result.marked++;
       }
       for (const [key, snippet] of state.stagedSnippets) {
-        const snippetViewKind = snippet.viewKind ?? defaultViewKindForStage(snippet.lines, snippet.shapeSpec, snippet.viewKind);
+        const snippetViewKind = snippet.viewKind ?? defaultViewKindForStage(snippet.lines, snippet.shapeSpec);
         if (snippetViewKind !== 'latest' || !sourceMatchesTargets(snippet.source, targets) || snippet.suspectSince != null) continue;
         newStaged.set(key, { ...snippet, suspectSince: now, freshness: 'suspect', freshnessCause: effectiveCause, suspectKind: effectiveSuspectKind });
-        marked++;
+        result.marked++;
       }
       for (const [key, chunk] of state.archivedChunks) {
         const chunkViewKind = chunk.viewKind ?? defaultViewKindForChunk(chunk.type);
         if (!isFileBackedType(chunk.type) || chunkViewKind !== 'latest' || !sourceMatchesTargets(chunk.source, targets) || chunk.suspectSince != null) continue;
         newArchived.set(key, { ...chunk, suspectSince: now, freshness: 'suspect', freshnessCause: effectiveCause, suspectKind: effectiveSuspectKind });
-        marked++;
+        result.marked++;
       }
 
-      if (marked === 0) return {};
+      if (result.marked === 0) return {};
       return { chunks: newChunks, archivedChunks: newArchived, stagedSnippets: newStaged, stageVersion: state.stageVersion + 1 };
     });
-    // Invalidate awareness cache for suspect paths
-    if (marked > 0 && sourcePaths && sourcePaths.length > 0) {
+    if (result.marked > 0 && sourcePaths && sourcePaths.length > 0) {
       get().invalidateAwarenessForPaths(sourcePaths);
-    } else if (marked > 0) {
-      // Coarse suspect (no specific paths) — clear entire awareness cache
+    } else if (result.marked > 0) {
       set({ awarenessCache: new Map() });
     }
-    return marked;
+    return result.marked;
   },
 
   clearSuspect: (hashRefOrSource: string) => {
     const target = hashRefOrSource.replace(/\\/g, '/');
-    let cleared = 0;
+    const result = { cleared: 0 };
     set(state => {
       const newChunks = new Map(state.chunks);
       const newArchived = new Map(state.archivedChunks);
@@ -2406,57 +2404,55 @@ export const useContextStore = create<ContextStoreState>()(
         const nextChunk = { ...chunk };
         delete nextChunk.suspectSince;
         newChunks.set(key, nextChunk);
-        cleared++;
+        result.cleared++;
       }
       for (const [key, chunk] of state.archivedChunks) {
         if (chunk.suspectSince == null || !shouldClear(chunk.source)) continue;
         const nextChunk = { ...chunk };
         delete nextChunk.suspectSince;
         newArchived.set(key, nextChunk);
-        cleared++;
+        result.cleared++;
       }
       for (const [key, snippet] of state.stagedSnippets) {
         if (snippet.suspectSince == null || !shouldClear(snippet.source)) continue;
         const nextSnippet = { ...snippet };
         delete nextSnippet.suspectSince;
         newStaged.set(key, nextSnippet);
-        cleared++;
+        result.cleared++;
       }
 
-      if (cleared === 0) return {};
+      if (result.cleared === 0) return {};
       return { chunks: newChunks, archivedChunks: newArchived, stagedSnippets: newStaged, stageVersion: state.stageVersion + 1 };
     });
-    return cleared;
+    return result.cleared;
   },
 
   pruneObsoleteTaskArtifacts: () => {
-    let compacted: string[] = [];
-    let dropped: string[] = [];
-    let freedTokens = 0;
+    const result: { compacted: string[]; dropped: string[]; freedTokens: number } = { compacted: [], dropped: [], freedTokens: 0 };
     set(state => {
       const pruned = pruneLowValueChunks(state.chunks, state.archivedChunks);
-      compacted = pruned.compacted;
-      dropped = pruned.dropped;
-      freedTokens = pruned.freedTokens;
-      if (compacted.length === 0 && dropped.length === 0) return {};
+      result.compacted = pruned.compacted;
+      result.dropped = pruned.dropped;
+      result.freedTokens = pruned.freedTokens;
+      if (pruned.compacted.length === 0 && pruned.dropped.length === 0) return {};
       return {
         chunks: pruned.chunks,
         archivedChunks: pruned.archivedChunks,
         droppedManifest: new Map(state.droppedManifest),
-        freedTokens: state.freedTokens + freedTokens,
-        lastFreed: freedTokens,
+        freedTokens: state.freedTokens + result.freedTokens,
+        lastFreed: result.freedTokens,
         lastFreedAt: Date.now(),
         memoryEvents: appendMemoryEvent(state.memoryEvents, {
-          action: dropped.length > 0 ? 'drop' : 'compact',
+          action: pruned.dropped.length > 0 ? 'drop' : 'compact',
           reason: 'auto_prune_low_value',
-          refs: [...compacted.slice(0, 5).map(h => `h:${h.slice(0, SHORT_HASH_LEN)}`), ...dropped.slice(0, 5).map(h => `h:${h.slice(0, SHORT_HASH_LEN)}`)],
-          freedTokens,
+          refs: [...pruned.compacted.slice(0, 5).map(h => `h:${h.slice(0, SHORT_HASH_LEN)}`), ...pruned.dropped.slice(0, 5).map(h => `h:${h.slice(0, SHORT_HASH_LEN)}`)],
+          freedTokens: result.freedTokens,
         }),
       };
     });
-    for (const hash of compacted) hppDematerialize(hash);
-    for (const hash of dropped) hppEvict(hash);
-    return { compacted: compacted.length, dropped: dropped.length, freedTokens };
+    for (const hash of result.compacted) hppDematerialize(hash);
+    for (const hash of result.dropped) hppEvict(hash);
+    return { compacted: result.compacted.length, dropped: result.dropped.length, freedTokens: result.freedTokens };
   },
   recordMemoryEvent: (event) => {
     set(state => ({ memoryEvents: appendMemoryEvent(state.memoryEvents, event) }));
@@ -3931,7 +3927,7 @@ export const useContextStore = create<ContextStoreState>()(
         const pattern = selector.pattern;
         const hasPathSep = pattern.includes('/') || pattern.includes('\\');
         if (pattern.includes('*')) {
-          const escaped = pattern.replace(/\./g, '\\.').replace(/\*/g, '.*');
+          const escaped = pattern.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*');
           const re = new RegExp('^' + escaped + '$', 'i');
           matched = pool.filter(c => {
             if (!c.source) return false;

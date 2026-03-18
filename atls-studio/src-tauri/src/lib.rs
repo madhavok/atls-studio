@@ -504,8 +504,23 @@ fn find_fuzzy_anchor_matches(lines: &[String], anchor: &str, limit: usize) -> Ve
         // Score: lower is better. 0 = impossible (excluded — would be an exact match)
         let score = if norm_line.contains(&norm_anchor) {
             1 // case-insensitive substring match
-        } else if norm_anchor.len() >= 8 && norm_line.contains(&norm_anchor[..norm_anchor.len().min(norm_line.len().max(1))]) {
-            2 // prefix match
+        } else if norm_anchor.len() >= 8 {
+            let prefix_len = norm_anchor.len().min(norm_line.len().max(1));
+            let prefix = &norm_anchor[..prefix_len];
+            if prefix.chars().any(|c| c.is_alphanumeric()) && norm_line.contains(prefix) {
+                2 // prefix match
+            } else {
+                // Fall through to token overlap
+                let anchor_tokens: std::collections::HashSet<&str> = norm_anchor.split(|c: char| !c.is_alphanumeric() && c != '_').filter(|s| s.len() > 2).collect();
+                let line_tokens: std::collections::HashSet<&str> = norm_line.split(|c: char| !c.is_alphanumeric() && c != '_').filter(|s| s.len() > 2).collect();
+                let overlap = anchor_tokens.intersection(&line_tokens).count();
+                if overlap > 0 && anchor_tokens.len() > 0 {
+                    let ratio = (overlap * 100) / anchor_tokens.len();
+                    if ratio >= 40 { 3 } else { continue; }
+                } else {
+                    continue;
+                }
+            }
         } else {
             // Token overlap: split on non-alphanumeric, count shared tokens
             let anchor_tokens: std::collections::HashSet<&str> = norm_anchor.split(|c: char| !c.is_alphanumeric() && c != '_').filter(|s| s.len() > 2).collect();
@@ -535,7 +550,7 @@ fn reindent_block(content: &str, target_indent: &str) -> String {
         .map(|l| l.len() - l.trim_start().len())
         .min()
         .unwrap_or(0);
-    block_lines.iter()
+    let mut result = block_lines.iter()
         .map(|l| {
             if l.trim().is_empty() {
                 String::new()
@@ -546,7 +561,11 @@ fn reindent_block(content: &str, target_indent: &str) -> String {
             }
         })
         .collect::<Vec<_>>()
-        .join("\n")
+        .join("\n");
+    if content.ends_with('\n') {
+        result.push('\n');
+    }
+    result
 }
 
 /// Detect the leading whitespace of a line.
