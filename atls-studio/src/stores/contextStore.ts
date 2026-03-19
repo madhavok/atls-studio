@@ -2357,8 +2357,9 @@ export const useContextStore = create<ContextStoreState>()(
         result.marked++;
       }
       for (const [key, snippet] of state.stagedSnippets) {
-        const snippetViewKind = snippet.viewKind ?? defaultViewKindForStage(snippet.lines, snippet.shapeSpec);
-        if (snippetViewKind !== 'latest' || !sourceMatchesTargets(snippet.source, targets) || snippet.suspectSince != null) continue;
+        if (snippet.viewKind === 'snapshot') continue;
+        if (snippet.viewKind != null && snippet.viewKind !== 'latest') continue;
+        if (!sourceMatchesTargets(snippet.source, targets) || snippet.suspectSince != null) continue;
         newStaged.set(key, { ...snippet, suspectSince: now, freshness: 'suspect', freshnessCause: effectiveCause, suspectKind: effectiveSuspectKind });
         result.marked++;
       }

@@ -1547,6 +1547,8 @@ async function streamChatViaTauri(
         if (hasToolUse || hasToolResult) {
           console.log(`[aiService] Recovering content blocks from text (tool_use:${hasToolUse}, tool_result:${hasToolResult})`);
           const savedTextContent = assistantTextContent;
+          const savedPendingSize = pendingToolCalls.size;
+          const savedNeedsToolResults = needsToolResults;
           try {
             const trimmedText = assistantTextContent.trim();
             let contentBlocks: Array<Record<string, unknown>> = [];
@@ -1586,6 +1588,10 @@ async function streamChatViaTauri(
             }
           } catch (e) {
             assistantTextContent = savedTextContent;
+            needsToolResults = savedNeedsToolResults;
+            for (let k = pendingToolCalls.size - 1; k >= savedPendingSize; k--) {
+              pendingToolCalls.delete(k);
+            }
             console.warn('[aiService] Failed to parse content blocks from text, reverting:', e);
           }
         }
