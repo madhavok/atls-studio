@@ -1516,6 +1516,47 @@ pub fn delete_messages_after(state: &ChatDbState, session_id: &str, message_id: 
     })
 }
 
+pub fn delete_messages_from(state: &ChatDbState, session_id: &str, message_id: &str) -> Result<i64, String> {
+    state.with_conn(|conn| {
+        conn.execute_batch("BEGIN IMMEDIATE TRANSACTION;")?;
+        let result: Result<i64, rusqlite::Error> = (|| {
+            conn.execute(
+                "DELETE FROM segments WHERE message_id IN (
+                    SELECT id FROM messages WHERE session_id = ?1 AND timestamp >= (
+                        SELECT timestamp FROM messages WHERE id = ?2
+                    )
+                )",
+                params![session_id, message_id],
+            )?;
+            let deleted = conn.execute(
+                "DELETE FROM messages WHERE session_id = ?1 AND timestamp >= (
+                    SELECT timestamp FROM messages WHERE id = ?2
+                )",
+                params![session_id, message_id],
+            )?;
+            conn.execute(
+                "DELETE FROM session_state WHERE session_id = ?1
+                 AND key LIKE '__restore_point__%'
+                 AND key NOT IN (
+                     SELECT '__restore_point__' || id FROM messages WHERE session_id = ?1
+                 )",
+                params![session_id],
+            )?;
+            Ok(deleted as i64)
+        })();
+        match result {
+            Ok(count) => {
+                conn.execute_batch("COMMIT;")?;
+                Ok(count)
+            }
+            Err(err) => {
+                let _ = conn.execute_batch("ROLLBACK;");
+                Err(err)
+            }
+        }
+    })
+}
+
 pub fn update_message_content(state: &ChatDbState, message_id: &str, content: &str) -> Result<(), String> {
     state.with_conn(|conn| {
         conn.execute(

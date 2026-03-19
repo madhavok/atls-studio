@@ -844,7 +844,9 @@ export function useChatPersistence() {
       // 2. Load the restore point snapshot (saved when this message was originally sent)
       const restoreSnapshot = await loadRestorePoint(sessionId, messageId);
 
-      // 3. Truncate messages in appStore (and optionally replace content)
+      // 3. Truncate messages in appStore.
+      // When editing: truncates *before* the target (exclusive) so handleSend re-adds it.
+      // When just restoring: truncates *after* the target (inclusive of target).
       useAppStore.getState().restoreToMessage(messageId, editedContent);
 
       // 4. Restore memory state if we have a snapshot
@@ -853,10 +855,13 @@ export function useChatPersistence() {
         console.log('[ChatPersistence] Restored memory snapshot for message:', messageId);
       }
 
-      // 5. Clean up DB: delete messages after the target, update content if edited
-      await chatDb.deleteMessagesAfter(sessionId, messageId);
+      // 5. Clean up DB
       if (editedContent !== undefined) {
-        await chatDb.updateMessageContent(messageId, editedContent);
+        // Edit: delete the target message and everything after (handleSend will re-add it)
+        await chatDb.deleteMessagesFrom(sessionId, messageId);
+      } else {
+        // Plain restore: keep the target, delete only what follows
+        await chatDb.deleteMessagesAfter(sessionId, messageId);
       }
 
       // 6. Re-save the session with truncated state

@@ -1439,13 +1439,13 @@ const MessageBubble = memo(function MessageBubble({ message, isEditing, onStartE
               
               {!isEditing && (
                 <div className="flex items-center gap-1 mt-1">
-                  <span className="text-xs text-studio-muted/70">
+                  <span className={`text-xs ${isUser ? 'text-studio-bg/50' : 'text-studio-muted/70'}`}>
                     {timeString}
                   </span>
                   {isUser && !isGenerating && (
                     <button
                       onClick={() => onStartEdit(message.id)}
-                      className="p-0.5 rounded text-studio-muted/0 group-hover/msg:text-studio-muted/50 hover:!text-studio-text transition-colors"
+                      className="p-0.5 rounded opacity-0 group-hover/msg:opacity-50 hover:!opacity-100 transition-opacity"
                       title="Edit and resend"
                     >
                       <EditIcon />
@@ -2340,6 +2340,7 @@ export function AiChat() {
 
   // Message edit-and-resend state
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
+  const pendingResendRef = useRef<string | null>(null);
 
   const handleStartEdit = useCallback((messageId: string) => {
     if (isGenerating) return;
@@ -2354,11 +2355,9 @@ export function AiChat() {
     setEditingMessageId(null);
     const result = await restoreToPoint(messageId, editedContent);
     if (result !== null) {
+      // Store in ref and set input — useEffect below will trigger handleSend
+      pendingResendRef.current = editedContent;
       setInput(editedContent);
-      requestAnimationFrame(() => {
-        const sendBtn = document.querySelector('[data-send-button]') as HTMLButtonElement | null;
-        sendBtn?.click();
-      });
     }
   }, [restoreToPoint]);
 
@@ -2751,17 +2750,21 @@ export function AiChat() {
     if (!trimmedInput && !hasAttachments) return;
     if (isGenerating) return;
 
-    // Clear undo stack on new message send (conversation has diverged)
-    clearRestoreUndo();
+    // Detect if this send was triggered by edit-and-resend (undo stack is fresh)
+    const isEditResend = useAppStore.getState().restoreUndoStack !== null;
 
-    // Save restore point for the current state before adding the new message
-    const appState = useAppStore.getState();
-    if (appState.currentSessionId && appState.messages.length > 0) {
-      const lastUserMsg = [...appState.messages].reverse().find(m => m.role === 'user');
-      if (lastUserMsg) {
-        saveRestorePoint(appState.currentSessionId, lastUserMsg.id).catch(() => {});
+    if (!isEditResend) {
+      // Normal send: clear any stale undo stack and save a restore point
+      clearRestoreUndo();
+      const appState = useAppStore.getState();
+      if (appState.currentSessionId && appState.messages.length > 0) {
+        const lastUserMsg = [...appState.messages].reverse().find(m => m.role === 'user');
+        if (lastUserMsg) {
+          saveRestorePoint(appState.currentSessionId, lastUserMsg.id).catch(() => {});
+        }
       }
     }
+    // Edit-resend: keep the undo stack so user can revert; restore point already saved
 
     // Get context store for hashing
     const contextStore = useContextStore.getState();
@@ -3200,6 +3203,14 @@ export function AiChat() {
       seenToolCallIds.current.clear();
     }
   };
+
+  // Auto-send after edit-and-resend: once input state has flushed with the edited content
+  useEffect(() => {
+    if (pendingResendRef.current && input === pendingResendRef.current && !isGenerating) {
+      pendingResendRef.current = null;
+      handleSend();
+    }
+  }, [input, isGenerating]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {

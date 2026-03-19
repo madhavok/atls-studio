@@ -939,13 +939,14 @@ export const useAppStore = create<AppState>((set) => ({
     set((state) => {
       const idx = state.messages.findIndex(m => m.id === messageId);
       if (idx < 0) return state;
-      truncated = state.messages.slice(idx + 1);
-      const kept = state.messages.slice(0, idx + 1);
+      // When editing, truncate *before* the target so handleSend can re-add it fresh.
+      // When just restoring (no edit), keep the target message.
       if (editedContent !== undefined) {
-        const target = { ...kept[idx], content: editedContent };
-        kept[idx] = target;
+        truncated = state.messages.slice(idx);
+        return { messages: state.messages.slice(0, idx) };
       }
-      return { messages: kept };
+      truncated = state.messages.slice(idx + 1);
+      return { messages: state.messages.slice(0, idx + 1) };
     });
     return truncated;
   },

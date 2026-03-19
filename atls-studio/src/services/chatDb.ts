@@ -832,6 +832,11 @@ class ChatDbService {
     return await invoke<number>('chat_db_delete_messages_after', { sessionId, messageId });
   }
 
+  /** Delete the target message and all messages after it (inclusive). */
+  async deleteMessagesFrom(sessionId: string, messageId: string): Promise<number> {
+    return await invoke<number>('chat_db_delete_messages_from', { sessionId, messageId });
+  }
+
   async updateMessageContent(messageId: string, content: string): Promise<void> {
     await invoke('chat_db_update_message_content', { messageId, content });
   }
