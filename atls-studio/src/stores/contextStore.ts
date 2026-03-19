@@ -3423,9 +3423,8 @@ export const useContextStore = create<ContextStoreState>()(
     const state = get();
     const hasNewerRevision = (source: string | undefined, sourceRevision: string | undefined): boolean => {
       if (!source || !sourceRevision) return false;
-      const norm = source.replace(/\\/g, '/').toLowerCase();
-      return (norm === key || norm.endsWith('/' + key) || key.endsWith('/' + norm))
-        && sourceRevision !== entry.snapshotHash;
+      if (!sourceMatchesTargets(source, [filePath])) return false;
+      return sourceRevision !== entry.snapshotHash;
     };
     for (const [, chunk] of state.chunks) {
       if (hasNewerRevision(chunk.source, chunk.sourceRevision)) return undefined;
@@ -3949,7 +3948,7 @@ export const useContextStore = create<ContextStoreState>()(
         matched = pool.filter(c => c.type === selector.chunkType);
         break;
       case 'edited':
-        matched = pool.filter(c => c.type === 'result');
+        matched = pool.filter(c => c.origin === 'edit' || c.editSessionId != null);
         break;
       case 'latest':
         matched = [...pool]
