@@ -205,10 +205,9 @@ export function MenuBar({ onNewProject, onOpenProject, onSaveFile, onSettings, o
           ? 'h-7 bg-gradient-to-b from-[#3a3a3c] to-[#323234] border-b border-[#1d1d1f]' 
           : 'h-8 bg-studio-surface border-b border-studio-border'
       }`}
-      data-tauri-drag-region={isMacStyle}
     >
       {/* Traffic lights spacing for Mac */}
-      {isMacStyle && <div className="w-20" />}
+      {isMacStyle && <div className="w-20" data-tauri-drag-region />}
       
       {menus.map((menu) => (
         <div key={menu.label} className="relative">
