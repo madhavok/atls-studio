@@ -3,7 +3,7 @@ import { listen, type UnlistenFn, type EventCallback } from '@tauri-apps/api/eve
 /** True when running inside a Tauri webview (vs. a plain browser). */
 export function isTauri(): boolean {
   return typeof window !== 'undefined'
-    && typeof (window as Record<string, unknown>).__TAURI_INTERNALS__ !== 'undefined';
+    && typeof (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ !== 'undefined';
 }
 
 /**

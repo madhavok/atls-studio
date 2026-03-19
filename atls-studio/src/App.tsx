@@ -276,19 +276,6 @@ function App() {
       className={`h-screen w-screen flex flex-col bg-studio-bg text-studio-text overflow-hidden ${isMac ? 'mac-style' : 'win-style'}`}
       style={{ touchAction: 'manipulation', overscrollBehavior: 'none' }}
     >
-      {/* macOS: Traffic lights + drag region */}
-      {isMac && (
-        <div 
-          className="h-8 bg-gradient-to-b from-[#3a3a3c] to-[#323234] flex items-center shrink-0"
-        >
-          <WindowControls />
-          <div className="flex-1 text-center text-sm text-[#888] pointer-events-none" data-tauri-drag-region>
-            ATLS Studio {projectPath ? `— ${projectPath.split(/[/\\]/).pop()}` : ''}
-          </div>
-          <div className="w-20" data-tauri-drag-region />
-        </div>
-      )}
-      
       {/* Windows/Linux: Compact title bar with window controls */}
       {(isWindows || isLinux) && (
         <div 

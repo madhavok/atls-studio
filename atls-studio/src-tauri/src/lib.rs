@@ -1871,7 +1871,49 @@ pub fn run() {
         .manage(GeminiCacheState::default())
         .manage(SearchCacheState::default())
         .manage(GitOpState::default())
-        .setup(|_app| {
+        .setup(|app| {
+            let mut builder = tauri::WebviewWindowBuilder::new(
+                app,
+                "main",
+                tauri::WebviewUrl::default(),
+            )
+            .title("ATLS Studio")
+            .inner_size(1400.0, 900.0)
+            .min_inner_size(800.0, 600.0);
+
+            #[cfg(target_os = "macos")]
+            {
+                builder = builder
+                    .decorations(true)
+                    .title_bar_style(tauri::TitleBarStyle::Overlay)
+                    .hidden_title(true);
+            }
+
+            #[cfg(not(target_os = "macos"))]
+            {
+                builder = builder.decorations(false);
+            }
+
+            let webview_window = builder.build()?;
+
+            // macOS: block WKWebView touch events that interfere with mouse clicks.
+            // WKWebView registers the app as touch-capable, causing phantom touch
+            // listeners to swallow/delay click events.
+            #[cfg(target_os = "macos")]
+            {
+                webview_window.eval(r#"
+                    (function() {
+                        var orig = EventTarget.prototype.addEventListener;
+                        EventTarget.prototype.addEventListener = function(type, fn, opts) {
+                            if (type === 'touchstart' || type === 'touchend' || type === 'touchmove') return;
+                            return orig.call(this, type, fn, opts);
+                        };
+                    })();
+                "#).ok();
+            }
+
+            let _ = webview_window; // suppress unused warning on non-mac
+
             eprintln!("[ATLS Studio] Tauri app setup complete");
             Ok(())
         })

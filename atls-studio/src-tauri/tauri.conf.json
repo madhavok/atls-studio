@@ -10,16 +10,7 @@
     "frontendDist": "../dist"
   },
   "app": {
-    "windows": [
-      {
-        "title": "ATLS Studio",
-        "width": 1400,
-        "height": 900,
-        "minWidth": 800,
-        "minHeight": 600,
-        "decorations": false
-      }
-    ],
+    "windows": [],
     "security": {
       "csp": null
     }

@@ -32,7 +32,7 @@ export function WindowControls() {
   const handleMaximize = useCallback(() => { appWindowRef.current?.toggleMaximize(); }, []);
   const handleClose = useCallback(() => { appWindowRef.current?.close(); }, []);
 
-  if (isMac) return <MacControls hovering={hovering} setHovering={setHovering} maximized={maximized} onMinimize={handleMinimize} onMaximize={handleMaximize} onClose={handleClose} />;
+  if (isMac) return null; // macOS uses native traffic lights via titleBarStyle: Overlay
   if (isLinux) return <LinuxControls maximized={maximized} onMinimize={handleMinimize} onMaximize={handleMaximize} onClose={handleClose} />;
   if (isWindows) return <WindowsControls maximized={maximized} onMinimize={handleMinimize} onMaximize={handleMaximize} onClose={handleClose} />;
   return <WindowsControls maximized={maximized} onMinimize={handleMinimize} onMaximize={handleMaximize} onClose={handleClose} />;
