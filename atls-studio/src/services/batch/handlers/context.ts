@@ -310,15 +310,22 @@ function modifierLinesToBackend(modifier: { lines?: Array<[number | null, number
 
 export const handleReadLines: OpHandler = async (params, ctx) => {
   let rlHash = params.hash as string | undefined;
-  let rlLines = params.lines as string | undefined;
+  let rlLines = typeof params.lines === 'number' ? String(params.lines) : params.lines as string | undefined;
   const requestedContextLines = Math.max(0, Math.min(5, Math.trunc((params.context_lines as number | undefined) ?? 3)));
 
   // Accept ref (h:XXXX:15-50) as shorthand — parse into hash + lines
-  const ref = params.ref as string | undefined;
-  if (ref != null) {
-    if (typeof ref !== 'string') {
-      return err(`read_lines: ref must be a string (h:XXXX:lines), got ${typeof ref}`);
+  // Coerce non-string ref to string when possible (e.g. number from dataflow)
+  let ref: string | undefined;
+  if (params.ref != null) {
+    if (typeof params.ref === 'string') {
+      ref = params.ref;
+    } else if (typeof params.ref === 'number') {
+      ref = String(params.ref);
+    } else {
+      return err(`read_lines: ref must be a string (h:XXXX:lines), got ${typeof params.ref}`);
     }
+  }
+  if (ref != null) {
     if (ref.length > 200) {
       return err(`read_lines: ref too long (${ref.length} chars) — expected h:XXXX:lines format, not code content. Pass hash and lines as separate params.`);
     }
@@ -336,10 +343,10 @@ export const handleReadLines: OpHandler = async (params, ctx) => {
       }
     } else if (typeof ref === 'string') {
       // Fallback when parseHashRef fails: extract h:XXXX:15-50 or h:XXXX:15-50,60-80
-      const refMatch = ref.match(/^h:([0-9a-fA-F]{6,16}):(\d+-\d+(?:,\d+-\d+)*)$/);
+      const refMatch = ref.match(/^h:([0-9a-fA-F]{6,16}):?(\d+-\d+(?:,\d+-\d+)*)?$/);
       if (refMatch) {
         rlHash = rlHash || `h:${refMatch[1]}`;
-        rlLines = rlLines || refMatch[2];
+        if (refMatch[2]) rlLines = rlLines || refMatch[2];
       }
     }
   }
@@ -351,8 +358,7 @@ export const handleReadLines: OpHandler = async (params, ctx) => {
   if (!rlLines && fp != null && startLine != null && endLine != null) {
     rlLines = `${startLine}-${endLine}`;
   }
-
-  const refHint = ref && !rlLines ? ` Invalid ref "${ref}" — use h:XXXX:15-50 (hash 6-16 hex chars).` : '';
+  const refHint = ref && !rlLines ? ` Ref "${ref}" has no line range — provide lines (e.g. "15-50"), start_line + end_line, or use h:XXXX:15-50 format.` : '';
   if (!rlLines) {
     return err(`read_lines: requires lines (e.g. "15-50") or ref (h:XXXX:15-50) or (start_line + end_line).${refHint}`);
   }
