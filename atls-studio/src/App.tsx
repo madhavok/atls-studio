@@ -276,6 +276,14 @@ function App() {
       className={`h-screen w-screen flex flex-col bg-studio-bg text-studio-text overflow-hidden ${isMac ? 'mac-style' : 'win-style'}`}
       style={{ touchAction: 'manipulation', overscrollBehavior: 'none' }}
     >
+      {/* macOS: drag region behind the menu bar for window dragging (overlay titlebar) */}
+      {isMac && (
+        <div
+          className="absolute top-0 left-0 right-0 h-[28px] z-0"
+          data-tauri-drag-region
+        />
+      )}
+
       {/* Windows/Linux: Compact title bar with window controls */}
       {(isWindows || isLinux) && (
         <div 

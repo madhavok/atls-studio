@@ -200,9 +200,9 @@ export function MenuBar({ onNewProject, onOpenProject, onSaveFile, onSettings, o
   return (
     <div 
       ref={menuRef}
-      className={`flex items-center select-none ${
+      className={`flex items-center select-none relative ${
         isMacStyle 
-          ? 'h-7 bg-gradient-to-b from-[#3a3a3c] to-[#323234] border-b border-[#1d1d1f]' 
+          ? 'h-7 bg-gradient-to-b from-[#3a3a3c] to-[#323234] border-b border-[#1d1d1f] z-10' 
           : 'h-8 bg-studio-surface border-b border-studio-border'
       }`}
     >
