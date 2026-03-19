@@ -294,7 +294,6 @@ export function ModelModeSelector() {
     });
     
     setModelsLoading(true);
-    const allModels: ModelInfo[] = [];
 
     const disabled = settings.disabledProviders ?? [];
     const providers = [
@@ -303,21 +302,25 @@ export function ModelModeSelector() {
       { provider: 'google' as const, key: settings.googleApiKey },
       { provider: 'vertex' as const, key: settings.vertexAccessToken, projectId: settings.vertexProjectId },
       { provider: 'lmstudio' as const, key: settings.lmstudioBaseUrl },
-    ].filter(({ provider }) => !disabled.includes(provider)) as { provider: AIProvider; key: string; projectId?: string }[];
+    ]
+      .filter(({ provider }) => !disabled.includes(provider))
+      .filter(({ provider, key }) => {
+        if (!key) return false;
+        if (provider === 'lmstudio' && key === 'http://localhost:1234') return false;
+        return true;
+      }) as { provider: AIProvider; key: string; projectId?: string }[];
 
-    for (const { provider, key, projectId } of providers) {
-      try {
-        // Always fetch - fetchModels returns defaults if no key
+    const results = await Promise.allSettled(
+      providers.map(async ({ provider, key, projectId }) => {
         const models = await fetchModels(provider, key, projectId);
-        console.log(`[ModelModeSelector] ${provider}: got ${models.length} models, hasKey: ${!!key}`);
-        // Only include models if we have an API key for that provider
-        if (key) {
-          allModels.push(...models.map(m => ({ ...m, provider })));
-        }
-      } catch (e) {
-        console.error(`Failed to fetch ${provider} models:`, e);
-      }
-    }
+        console.log(`[ModelModeSelector] ${provider}: got ${models.length} models`);
+        return models.map(m => ({ ...m, provider }));
+      })
+    );
+
+    const allModels: ModelInfo[] = results.flatMap(r =>
+      r.status === 'fulfilled' ? r.value : []
+    );
 
     console.log('[ModelModeSelector] Total models:', allModels.length, allModels.map(m => m.id));
     

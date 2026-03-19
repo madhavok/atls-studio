@@ -1528,6 +1528,10 @@ ${roleDocs}`;
     // Project context with shell-specific guidance
     const ctx = research?.projectContext;
     let shellBlock = '';
+    const commonDiscipline = `Ref discipline: default to read_shaped(..., shape:"sig") for planning only; before any change.edit, re-read the exact target in the same batch with read.context(type:"full") or read.file, then gather read.lines anchors with context_lines:3 if helpful; never mutate from shaped, stale, or suspect refs.
+Speed discipline: batch reconnaissance together, keep mutation batches single-target, use shell/system only for builds/git/packages or bulk mechanical moves, and verify once per structural phase or final milestone.
+Workflow discipline: BB entries are the source of truth for long-running task status and plans; if working-memory task headers conflict with BB or the latest verification result, BB plus latest verification win and stale headers must be regenerated or ignored.
+Condition discipline: do not rely on undocumented or unsupported conditions such as all_steps_ok; prefer step_ok chains and explicit verification gates. Do not use readonly mode for any batch that might mutate or exec.`;
     if (ctx?.shell === 'powershell' || ctx?.os === 'windows') {
       shellBlock = `OS: Windows | Shell: PowerShell | CWD: ${ctx?.cwd || projectPath}
 Shell rules: Use PowerShell cmdlets for system operations only.
@@ -1537,24 +1541,15 @@ Shell rules: Use PowerShell cmdlets for system operations only.
   Processes → Get-Process, Stop-Process
   Env → $env:VAR        path sep → \\        newline → \`r\`n
 Code operations: use ATLS tools for reads/search/edits; do not use Get-Content or Select-String on code files.
-Ref discipline: default to read_shaped(..., shape:"sig") for planning only; before any change.edit, re-read the exact target in the same batch with read.context(type:"full") or read.file, then gather read.lines anchors with context_lines:3 if helpful; never mutate from shaped, stale, or suspect refs.
-Speed discipline: batch reconnaissance together, keep mutation batches single-target, use shell/system only for builds/git/packages or bulk mechanical moves, and verify once per structural phase or final milestone.
-Workflow discipline: BB entries are the source of truth for long-running task status and plans; if working-memory task headers conflict with BB or the latest verification result, BB plus latest verification win and stale headers must be regenerated or ignored.
-Condition discipline: do not rely on undocumented or unsupported conditions such as all_steps_ok; prefer step_ok chains and explicit verification gates. Do not use readonly mode for any batch that might mutate or exec.
-`;
+${commonDiscipline}`;
+    } else if (ctx?.os === 'macos' || ctx?.shell === 'zsh') {
       shellBlock = `OS: macOS | Shell: zsh | CWD: ${ctx?.cwd || projectPath}
 Shell rules: Standard Unix commands (ls, cat, grep, cd, pwd).
-Ref discipline: default to read_shaped(..., shape:"sig") for planning only; before any change.edit, re-read the exact target in the same batch with read.context(type:"full") or read.file, then gather read.lines anchors with context_lines:3 if helpful; never mutate from shaped, stale, or suspect refs.
-Speed discipline: batch reconnaissance together, keep mutation batches single-target, use shell/system only for builds/git/packages or bulk mechanical moves, and verify once per structural phase or final milestone.
-Workflow discipline: BB entries are the source of truth for long-running task status and plans; if working-memory task headers conflict with BB or the latest verification result, BB plus latest verification win and stale headers must be regenerated or ignored.
-Condition discipline: do not rely on undocumented or unsupported conditions such as all_steps_ok; prefer step_ok chains and explicit verification gates. Do not use readonly mode for any batch that might mutate or exec.`;
+${commonDiscipline}`;
     } else {
       shellBlock = `OS: Linux | Shell: bash | CWD: ${ctx?.cwd || projectPath}
 Shell rules: Standard Unix commands (ls, cat, grep, cd, pwd).
-Ref discipline: default to read_shaped(..., shape:"sig") for planning only; before any change.edit, re-read the exact target in the same batch with read.context(type:"full") or read.file, then gather read.lines anchors with context_lines:3 if helpful; never mutate from shaped, stale, or suspect refs.
-Speed discipline: batch reconnaissance together, keep mutation batches single-target, use shell/system only for builds/git/packages or bulk mechanical moves, and verify once per structural phase or final milestone.
-Workflow discipline: BB entries are the source of truth for long-running task status and plans; if working-memory task headers conflict with BB or the latest verification result, BB plus latest verification win.
-Condition discipline: do not rely on undocumented or unsupported conditions such as all_steps_ok; prefer step_ok chains and explicit verification gates. Do not use readonly mode for any batch that might mutate or exec.`;
+${commonDiscipline}`;
     }
     
     const patternsInfo = research?.patterns?.length 

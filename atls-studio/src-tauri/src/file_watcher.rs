@@ -4,6 +4,7 @@ use notify::RecommendedWatcher;
 use notify_debouncer_mini::{Debouncer, new_debouncer};
 use notify::RecursiveMode;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 fn normalize_changed_path(root_path: &str, changed_path: &std::path::Path) -> String {
     to_relative_path(std::path::Path::new(root_path), &changed_path.to_string_lossy()).replace('\\', "/")
@@ -49,14 +50,14 @@ async fn invalidate_freshness_for_paths(app: &AppHandle, root_path: &str, change
 
 pub(crate) struct FileWatcherState {
     pub(crate) watchers: tokio::sync::Mutex<HashMap<String, Debouncer<RecommendedWatcher>>>,
-    pub(crate) watching: AtomicBool,
+    pub(crate) watching: Arc<AtomicBool>,
 }
 
 impl Default for FileWatcherState {
     fn default() -> Self {
         Self {
             watchers: tokio::sync::Mutex::new(HashMap::new()),
-            watching: AtomicBool::new(false),
+            watching: Arc::new(AtomicBool::new(false)),
         }
     }
 }
@@ -96,29 +97,21 @@ pub async fn start_file_watcher(
         state.watching.store(true, Ordering::SeqCst);
     }
 
-    tokio::spawn(async move {
+    // Bridge: blocking recv in a dedicated thread, async processing in a tokio task.
+    let (async_tx, mut async_rx) = tokio::sync::mpsc::channel::<Vec<std::path::PathBuf>>(64);
+    let watching_flag = Arc::clone(&state.watching);
+    let root_for_recv = root_path.clone();
+
+    std::thread::spawn(move || {
         loop {
-            let state = app_clone.try_state::<FileWatcherState>();
-            if let Some(state) = state {
-                if !state.watching.load(Ordering::SeqCst) {
-                    break;
-                }
-                // Check if this specific root was removed
-                if let Ok(lock) = state.watchers.try_lock() {
-                    if !lock.contains_key(&root_path_clone) {
-                        break;
-                    }
-                }
-            } else {
+            if !watching_flag.load(Ordering::SeqCst) {
                 break;
             }
-
             match rx.recv_timeout(Duration::from_millis(100)) {
                 Ok(Ok(events)) => {
-                    let relevant_events: Vec<_> = events.iter()
+                    let relevant: Vec<_> = events.into_iter()
                         .filter(|e| {
                             let path_str = e.path.to_string_lossy();
-                            // Allow .atlsignore changes through so the tree refreshes
                             if path_str.ends_with(".atlsignore") {
                                 return true;
                             }
@@ -128,25 +121,32 @@ pub async fn start_file_watcher(
                             !path_str.contains("target") &&
                             !path_str.contains("__pycache__")
                         })
+                        .map(|e| e.path)
                         .collect();
-
-                    if !relevant_events.is_empty() {
-                        let changed_paths_input = relevant_events
-                            .iter()
-                            .map(|event| event.path.clone())
-                            .collect::<Vec<_>>();
-                        let changed_paths = collect_changed_paths(&root_path_clone, &changed_paths_input);
-                        invalidate_freshness_for_paths(&app_clone, &root_path_clone, &changed_paths).await;
-                        let _ = app_clone.emit("file_tree_changed", serde_json::json!({
-                            "root": root_path_clone,
-                            "count": relevant_events.len(),
-                            "paths": changed_paths
-                        }));
+                    if !relevant.is_empty() {
+                        if async_tx.blocking_send(relevant).is_err() {
+                            break;
+                        }
                     }
                 }
                 Ok(Err(_)) => {}
                 Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
                 Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+            }
+        }
+        eprintln!("[FileWatcher] Recv thread exiting for: {}", root_for_recv);
+    });
+
+    tokio::spawn(async move {
+        while let Some(paths) = async_rx.recv().await {
+            let changed_paths = collect_changed_paths(&root_path_clone, &paths);
+            if !changed_paths.is_empty() {
+                invalidate_freshness_for_paths(&app_clone, &root_path_clone, &changed_paths).await;
+                let _ = app_clone.emit("file_tree_changed", serde_json::json!({
+                    "root": root_path_clone,
+                    "count": paths.len(),
+                    "paths": changed_paths
+                }));
             }
         }
     });

@@ -177,14 +177,30 @@ pub async fn resize_pty(app: AppHandle, id: String, cols: u16, rows: u16) -> Res
 #[tauri::command]
 pub async fn is_pty_busy(app: AppHandle, id: String) -> Result<bool, String> {
     let state = app.state::<PtyState>();
-    let terminals = state.terminals.lock().unwrap();
 
-    let pty = terminals.get(&id)
-        .ok_or_else(|| format!("PTY not found: {}", id))?;
+    // Extract what we need under the lock, then drop it before doing real work.
+    #[cfg(unix)]
+    let (shell_pid, pgid) = {
+        let terminals = state.terminals.lock().unwrap();
+        let pty = terminals.get(&id)
+            .ok_or_else(|| format!("PTY not found: {}", id))?;
+        let shell_pid = match pty.shell_pid {
+            Some(pid) => pid,
+            None => return Ok(false),
+        };
+        let pgid = pty.master.process_group_leader();
+        (shell_pid, pgid)
+    };
 
-    let shell_pid = match pty.shell_pid {
-        Some(pid) => pid,
-        None => return Ok(false),
+    #[cfg(windows)]
+    let shell_pid = {
+        let terminals = state.terminals.lock().unwrap();
+        let pty = terminals.get(&id)
+            .ok_or_else(|| format!("PTY not found: {}", id))?;
+        match pty.shell_pid {
+            Some(pid) => pid,
+            None => return Ok(false),
+        }
     };
 
     #[cfg(windows)]
@@ -194,7 +210,7 @@ pub async fn is_pty_busy(app: AppHandle, id: String) -> Result<bool, String> {
 
     #[cfg(unix)]
     {
-        return is_busy_unix(&*pty.master, shell_pid);
+        return is_busy_unix_from_pgid(pgid, shell_pid);
     }
 
     #[cfg(not(any(windows, unix)))]
@@ -242,8 +258,8 @@ fn is_busy_windows(shell_pid: u32) -> Result<bool, String> {
 }
 
 #[cfg(unix)]
-fn is_busy_unix(master: &dyn MasterPty, shell_pid: u32) -> Result<bool, String> {
-    match master.process_group_leader() {
+fn is_busy_unix_from_pgid(pgid: Option<i32>, shell_pid: u32) -> Result<bool, String> {
+    match pgid {
         Some(pgid) if pgid > 0 && pgid as u32 != shell_pid => Ok(true),
         _ => Ok(false),
     }

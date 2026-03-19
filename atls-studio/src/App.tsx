@@ -92,13 +92,9 @@ function App() {
     const root = rootRef.current;
     if (!root) return;
 
-    // Prevent wheel events from causing page-level scroll/zoom
+    // Prevent Ctrl+wheel zoom but allow normal scrolling everywhere
     const handleWheel = (e: WheelEvent) => {
-      // Allow scrolling within scrollable children, but prevent at root level
-      const target = e.target as HTMLElement | null;
-      const scrollableParent = target?.closest('[data-allow-root-gesture], .overflow-y-auto, .overflow-x-auto, .overflow-auto, .monaco-editor, [data-mprt="true"]');
-
-      if (!scrollableParent) {
+      if (e.ctrlKey || e.metaKey) {
         e.preventDefault();
       }
     };

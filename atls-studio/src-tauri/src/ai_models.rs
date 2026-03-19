@@ -3,7 +3,13 @@ use super::*;
 /// Fetch available models from Google Vertex AI
 #[tauri::command]
 pub async fn fetch_vertex_models(access_token: String, _project_id: String, region: Option<String>) -> Result<Vec<AIModel>, String> {
-    let client = reqwest::Client::new();
+    if access_token.trim().is_empty() {
+        return Ok(vec![]);
+    }
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .map_err(|e| format!("HTTP client error: {}", e))?;
     let region = region.unwrap_or_else(|| "us-central1".to_string());
 
     let known_models = vec![
@@ -103,7 +109,13 @@ pub struct AIModel {
 
 #[tauri::command]
 pub async fn fetch_anthropic_models(api_key: String) -> Result<Vec<AIModel>, String> {
-    let client = reqwest::Client::new();
+    if api_key.trim().is_empty() {
+        return Ok(vec![]);
+    }
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .map_err(|e| format!("HTTP client error: {}", e))?;
     
     let response = client
         .get("https://api.anthropic.com/v1/models")
@@ -156,7 +168,13 @@ pub async fn fetch_anthropic_models(api_key: String) -> Result<Vec<AIModel>, Str
 
 #[tauri::command]
 pub async fn fetch_openai_models(api_key: String) -> Result<Vec<AIModel>, String> {
-    let client = reqwest::Client::new();
+    if api_key.trim().is_empty() {
+        return Ok(vec![]);
+    }
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .map_err(|e| format!("HTTP client error: {}", e))?;
     
     let response = client
         .get("https://api.openai.com/v1/models")
@@ -214,8 +232,11 @@ fn format_openai_model_name(id: &str) -> String {
 
 #[tauri::command]
 pub async fn fetch_lmstudio_models(base_url: String) -> Result<Vec<AIModel>, String> {
+    if base_url.trim().is_empty() {
+        return Ok(vec![]);
+    }
     let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(5))
+        .timeout(std::time::Duration::from_secs(3))
         .build()
         .map_err(|e| format!("HTTP client error: {}", e))?;
 
@@ -296,7 +317,13 @@ pub async fn fetch_lmstudio_models(base_url: String) -> Result<Vec<AIModel>, Str
 
 #[tauri::command]
 pub async fn fetch_google_models(api_key: String) -> Result<Vec<AIModel>, String> {
-    let client = reqwest::Client::new();
+    if api_key.trim().is_empty() {
+        return Ok(vec![]);
+    }
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .map_err(|e| format!("HTTP client error: {}", e))?;
     
     let url = format!(
         "https://generativelanguage.googleapis.com/v1beta/models?key={}",

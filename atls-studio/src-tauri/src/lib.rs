@@ -1173,17 +1173,18 @@ pub(crate) struct PtyInstance {
 impl PtyInstance {
     /// Explicitly tear down the PTY, killing the child and reaping it to avoid
     /// zombie processes and file-descriptor leaks on Unix (macOS/Linux).
+    /// Bounded to ~1s so shutdown never hangs indefinitely.
     fn shutdown(&mut self) {
         let mut child = self.child.lock().unwrap();
         let _ = child.kill();
-        for _ in 0..50 {
+        for _ in 0..100 {
             match child.try_wait() {
                 Ok(Some(_)) => return,
                 Ok(None) => std::thread::sleep(Duration::from_millis(10)),
                 Err(_) => return,
             }
         }
-        let _ = child.wait();
+        eprintln!("[PTY] Child did not exit within 1s after kill, abandoning wait");
     }
 }
 
@@ -2043,13 +2044,15 @@ pub fn run() {
                     }
                 }
 
-                // Kill all PTY terminals
+                // Kill all PTY terminals (try_lock to avoid deadlock if another thread holds it)
                 let pty_state = app_handle.state::<PtyState>();
-                if let Ok(mut terminals) = pty_state.terminals.lock() {
+                if let Ok(mut terminals) = pty_state.terminals.try_lock() {
                     for (id, mut pty) in terminals.drain() {
                         eprintln!("[Shutdown] Killing PTY: {}", id);
                         pty.shutdown();
                     }
+                } else {
+                    eprintln!("[Shutdown] PTY lock contended, skipping graceful PTY shutdown");
                 }
 
                 // Kill all background processes
