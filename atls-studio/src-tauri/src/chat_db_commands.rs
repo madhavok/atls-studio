@@ -335,6 +335,28 @@ pub async fn chat_db_get_memory_snapshot(
 }
 
 // ============================================================================
+// Message Edit / Restore
+// ============================================================================
+
+#[tauri::command]
+pub async fn chat_db_delete_messages_after(
+    session_id: String,
+    message_id: String,
+    state: tauri::State<'_, ChatDbState>,
+) -> Result<i64, String> {
+    chat_db::delete_messages_after(&state, &session_id, &message_id)
+}
+
+#[tauri::command]
+pub async fn chat_db_update_message_content(
+    message_id: String,
+    content: String,
+    state: tauri::State<'_, ChatDbState>,
+) -> Result<(), String> {
+    chat_db::update_message_content(&state, &message_id, &content)
+}
+
+// ============================================================================
 // Staged Snippets Persistence
 // ============================================================================
 

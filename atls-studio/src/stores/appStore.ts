@@ -10,8 +10,15 @@ import {
   saveProjectHistory,
   normalizeProjectHistory,
 } from './projectHistory';
+import type { PersistedMemorySnapshot } from '../services/chatDb';
 
 export type { ProjectHistoryEntry };
+
+export interface RestoreUndoEntry {
+  messages: Message[];
+  memorySnapshot: PersistedMemorySnapshot;
+  restoredAtMessageId: string;
+}
 
 export interface RootFileTree {
   root: string;
@@ -531,6 +538,13 @@ interface AppState {
   clearAgentPendingAction: () => void;
   resetAgentProgress: () => void;
 
+  // Chat restore (edit-and-resend)
+  restoreUndoStack: RestoreUndoEntry | null;
+  setRestoreUndoStack: (entry: RestoreUndoEntry | null) => void;
+  restoreToMessage: (messageId: string, editedContent?: string) => Message[];
+  undoRestore: () => void;
+  clearRestoreUndo: () => void;
+
   // Tool calls
   toolCalls: ToolCall[];
   addToolCall: (toolCall: ToolCall) => void;
@@ -781,6 +795,7 @@ export const useAppStore = create<AppState>((set) => ({
     return { 
       currentSessionId: null, 
       messages: [],
+      restoreUndoStack: null,
       // Reset context usage for new chat
       contextUsage: {
         inputTokens: 0,
@@ -914,7 +929,37 @@ export const useAppStore = create<AppState>((set) => ({
     },
   })),
   resetAgentProgress: () => set({ agentProgress: { ...DEFAULT_AGENT_PROGRESS } }),
-  
+
+  // Chat restore (edit-and-resend)
+  restoreUndoStack: null,
+  setRestoreUndoStack: (entry) => set({ restoreUndoStack: entry }),
+
+  restoreToMessage: (messageId, editedContent) => {
+    let truncated: Message[] = [];
+    set((state) => {
+      const idx = state.messages.findIndex(m => m.id === messageId);
+      if (idx < 0) return state;
+      truncated = state.messages.slice(idx + 1);
+      const kept = state.messages.slice(0, idx + 1);
+      if (editedContent !== undefined) {
+        const target = { ...kept[idx], content: editedContent };
+        kept[idx] = target;
+      }
+      return { messages: kept };
+    });
+    return truncated;
+  },
+
+  undoRestore: () => set((state) => {
+    if (!state.restoreUndoStack) return state;
+    return {
+      messages: state.restoreUndoStack.messages,
+      restoreUndoStack: null,
+    };
+  }),
+
+  clearRestoreUndo: () => set({ restoreUndoStack: null }),
+
   // Chat session tracking - incremented on new chat, checked before UI updates
   chatSessionId: 0,
   incrementChatSession: () => {

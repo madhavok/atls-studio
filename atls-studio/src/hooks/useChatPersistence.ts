@@ -764,6 +764,138 @@ export function useChatPersistence() {
     };
   }, [messages, saveSession]);
 
+  // =========================================================================
+  // Chat Restore Points (edit-and-resend)
+  // =========================================================================
+
+  const RESTORE_POINT_PREFIX = '__restore_point__';
+
+  const saveRestorePoint = useCallback(async (sessionId: string, messageId: string) => {
+    if (!chatDb.isInitialized()) return;
+    try {
+      const ctxState = useContextStore.getState();
+      const geminiSnapshot = getGeminiCacheSnapshot();
+      const snapshot = serializeMemorySnapshot(ctxState, geminiSnapshot);
+      const key = RESTORE_POINT_PREFIX + messageId;
+      await chatDb.setSessionState(sessionId, key, JSON.stringify(snapshot));
+    } catch (e) {
+      console.warn('[ChatPersistence] Failed to save restore point:', e);
+    }
+  }, []);
+
+  const loadRestorePoint = useCallback(async (sessionId: string, messageId: string): Promise<PersistedMemorySnapshot | null> => {
+    if (!chatDb.isInitialized()) return null;
+    try {
+      const key = RESTORE_POINT_PREFIX + messageId;
+      const raw = await chatDb.getSessionState(sessionId, key);
+      if (!raw) return null;
+      return JSON.parse(raw) as PersistedMemorySnapshot;
+    } catch (e) {
+      console.warn('[ChatPersistence] Failed to load restore point:', e);
+      return null;
+    }
+  }, []);
+
+  const applyMemorySnapshot = useCallback((snapshot: PersistedMemorySnapshot) => {
+    const normalizedStagedSnippets = normalizePersistedStagedEntries(snapshot.stagedSnippets);
+    useContextStore.setState({
+      chunks: new Map(rehydrateChunkDates(snapshot.chunks).map(chunk => [chunk.hash, chunk])),
+      archivedChunks: new Map(rehydrateChunkDates(snapshot.archivedChunks).map(chunk => [chunk.hash, chunk])),
+      droppedManifest: new Map(snapshot.droppedManifest),
+      stagedSnippets: new Map(normalizedStagedSnippets),
+      blackboardEntries: new Map(snapshot.blackboardEntries.map(([key, entry]) => [key, { ...entry, createdAt: new Date(entry.createdAt) }])),
+      cognitiveRules: new Map(snapshot.cognitiveRules.map(([key, rule]) => [key, { ...rule, createdAt: new Date(rule.createdAt) }])),
+      taskPlan: snapshot.taskPlan,
+      task: snapshot.taskPlan,
+      freedTokens: snapshot.freedTokens,
+      stageVersion: snapshot.stageVersion,
+      transitionBridge: snapshot.transitionBridge,
+      batchMetrics: snapshot.batchMetrics,
+      hashStack: snapshot.hashStack,
+      editHashStack: snapshot.editHashStack,
+      readHashStack: snapshot.readHashStack,
+      stageHashStack: snapshot.stageHashStack,
+      memoryEvents: snapshot.memoryEvents ?? [],
+      reconcileStats: snapshot.reconcileStats ?? null,
+    });
+    if (snapshot.geminiCache) restoreGeminiCacheSnapshot(snapshot.geminiCache);
+  }, []);
+
+  /**
+   * Restore chat to a specific user message, optionally replacing its content.
+   * Stashes current state for undo. Returns the edited content for auto-resend.
+   */
+  const restoreToPoint = useCallback(async (messageId: string, editedContent?: string): Promise<string | null> => {
+    const appState = useAppStore.getState();
+    const sessionId = appState.currentSessionId;
+    if (!sessionId || !chatDb.isInitialized()) return null;
+
+    try {
+      // 1. Stash current state for undo
+      const ctxState = useContextStore.getState();
+      const geminiSnapshot = getGeminiCacheSnapshot();
+      const currentSnapshot = serializeMemorySnapshot(ctxState, geminiSnapshot);
+      useAppStore.getState().setRestoreUndoStack({
+        messages: [...appState.messages],
+        memorySnapshot: currentSnapshot,
+        restoredAtMessageId: messageId,
+      });
+
+      // 2. Load the restore point snapshot (saved when this message was originally sent)
+      const restoreSnapshot = await loadRestorePoint(sessionId, messageId);
+
+      // 3. Truncate messages in appStore (and optionally replace content)
+      useAppStore.getState().restoreToMessage(messageId, editedContent);
+
+      // 4. Restore memory state if we have a snapshot
+      if (restoreSnapshot) {
+        applyMemorySnapshot(restoreSnapshot);
+        console.log('[ChatPersistence] Restored memory snapshot for message:', messageId);
+      }
+
+      // 5. Clean up DB: delete messages after the target, update content if edited
+      await chatDb.deleteMessagesAfter(sessionId, messageId);
+      if (editedContent !== undefined) {
+        await chatDb.updateMessageContent(messageId, editedContent);
+      }
+
+      // 6. Re-save the session with truncated state
+      lastSaveRef.current = 0;
+      await saveSession();
+
+      console.log('[ChatPersistence] Restored to message:', messageId);
+      return editedContent ?? null;
+    } catch (e) {
+      console.error('[ChatPersistence] Failed to restore to point:', e);
+      return null;
+    }
+  }, [loadRestorePoint, applyMemorySnapshot, saveSession]);
+
+  /**
+   * Undo the last restore operation, bringing back discarded messages and context.
+   */
+  const undoRestoreOp = useCallback(async () => {
+    const appState = useAppStore.getState();
+    const undoEntry = appState.restoreUndoStack;
+    if (!undoEntry) return;
+
+    const sessionId = appState.currentSessionId;
+
+    // Restore messages
+    useAppStore.getState().undoRestore();
+
+    // Restore memory snapshot
+    applyMemorySnapshot(undoEntry.memorySnapshot);
+
+    // Re-save to DB
+    if (sessionId && chatDb.isInitialized()) {
+      lastSaveRef.current = 0;
+      try { await saveSession(); } catch { /* best effort */ }
+    }
+
+    console.log('[ChatPersistence] Undo restore completed');
+  }, [applyMemorySnapshot, saveSession]);
+
   return {
     initChatDb,
     loadSessions,
@@ -773,6 +905,9 @@ export function useChatPersistence() {
     deleteSession,
     syncBlackboardEntry,
     removeBlackboardEntries,
+    saveRestorePoint,
+    restoreToPoint,
+    undoRestore: undoRestoreOp,
     isInitialized: chatDb.isInitialized(),
   };
 }

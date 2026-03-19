@@ -392,6 +392,18 @@ const ErrorIcon = () => (
   </svg>
 );
 
+const EditIcon = () => (
+  <svg className="w-3 h-3" viewBox="0 0 24 24" fill="currentColor">
+    <path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z" />
+  </svg>
+);
+
+const UndoIcon = () => (
+  <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor">
+    <path d="M12.5 8c-2.65 0-5.05.99-6.9 2.6L2 7v9h9l-3.62-3.62c1.39-1.16 3.16-1.88 5.12-1.88 3.54 0 6.55 2.31 7.6 5.5l2.37-.78C21.08 11.03 17.15 8 12.5 8z" />
+  </svg>
+);
+
 // Suggested prompts per mode
 const DEFAULT_SUGGESTED_PROMPTS = [
   'Find security vulnerabilities',
@@ -1228,10 +1240,33 @@ const MessageTextSegment = memo(function MessageTextSegment({ content, nextToolH
 });
 
 // Memoized message bubble to prevent re-renders during streaming
-const MessageBubble = memo(function MessageBubble({ message }: { message: Message }) {
+interface MessageBubbleProps {
+  message: Message;
+  isEditing: boolean;
+  onStartEdit: (messageId: string) => void;
+  onSaveEdit: (messageId: string, content: string) => void;
+  onCancelEdit: () => void;
+}
+
+const MessageBubble = memo(function MessageBubble({ message, isEditing, onStartEdit, onSaveEdit, onCancelEdit }: MessageBubbleProps) {
   const isUser = message.role === 'user';
+  const [editText, setEditText] = useState(message.content);
+  const editRef = useRef<HTMLTextAreaElement>(null);
+  const isGenerating = useAppStore(state => state.isGenerating);
+
+  useEffect(() => {
+    if (isEditing) {
+      setEditText(message.content);
+      requestAnimationFrame(() => {
+        if (editRef.current) {
+          editRef.current.focus();
+          editRef.current.style.height = 'auto';
+          editRef.current.style.height = editRef.current.scrollHeight + 'px';
+        }
+      });
+    }
+  }, [isEditing, message.content]);
   
-  // Memoize timestamp string to prevent recreation on each render
   const timeString = useMemo(() => message.timestamp.toLocaleTimeString(), [message.timestamp]);
 
   const handleMessageAction = useCallback((action: { type: 'view' | 'explain'; label: string; data: unknown }) => {
@@ -1242,12 +1277,21 @@ const MessageBubble = memo(function MessageBubble({ message }: { message: Messag
       addMessage({ role: 'user', content: `Show details for: ${action.data}` });
     }
   }, []);
+
+  const handleEditKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if (e.key === 'Escape') {
+      onCancelEdit();
+    } else if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      if (editText.trim()) onSaveEdit(message.id, editText.trim());
+    }
+  }, [editText, message.id, onSaveEdit, onCancelEdit]);
   
   const parts = getMessageParts(message);
   const hasRichContent = !isUser && parts.length > 0;
 
   return (
-    <div className={`flex gap-3 ${isUser ? 'flex-row-reverse' : ''}`}>
+    <div className={`group/msg flex gap-3 ${isUser ? 'flex-row-reverse' : ''}`}>
       <div className={`
         w-8 h-8 rounded-full flex items-center justify-center shrink-0
         ${isUser ? 'bg-studio-accent' : 'bg-studio-surface'}
@@ -1262,7 +1306,6 @@ const MessageBubble = memo(function MessageBubble({ message }: { message: Messag
           : 'bg-studio-surface border border-studio-border'
         }
       `}>
-        {/* Unified parts-based rendering */}
         {hasRichContent ? (
           <div className="space-y-2">
             {parts.map((part, idx, arr) => {
@@ -1303,7 +1346,6 @@ const MessageBubble = memo(function MessageBubble({ message }: { message: Messag
               }
               return null;
             })}
-            {/* Action buttons and timestamp */}
             <div className="p-3 pt-0">
               {message.actions && message.actions.length > 0 && (
                 <div className="flex gap-2 mb-2 pt-2 border-t border-studio-border/30">
@@ -1327,20 +1369,52 @@ const MessageBubble = memo(function MessageBubble({ message }: { message: Messag
           <>
             <div className={!isUser ? 'p-3' : ''}>
               {isUser ? (
-                <>
-                  <p className="text-sm whitespace-pre-wrap">{message.content}</p>
-                  {message.attachments && message.attachments.length > 0 && (
-                    <div className="mt-2 space-y-1.5">
-                      {message.attachments.map(att => (
-                        att.fileType === 'code' ? (
-                          <SignatureView key={att.id} attachment={att} />
-                        ) : att.fileType === 'image' || att.type === 'image' ? (
-                          <ImageAttachment key={att.id} attachment={att} />
-                        ) : null
-                      ))}
+                isEditing ? (
+                  <div className="space-y-2">
+                    <textarea
+                      ref={editRef}
+                      value={editText}
+                      onChange={(e) => {
+                        setEditText(e.target.value);
+                        e.target.style.height = 'auto';
+                        e.target.style.height = e.target.scrollHeight + 'px';
+                      }}
+                      onKeyDown={handleEditKeyDown}
+                      className="w-full bg-studio-bg/80 text-studio-text text-sm rounded p-2 resize-none focus:outline-none focus:ring-1 focus:ring-studio-accent min-h-[40px] max-h-[200px]"
+                      rows={1}
+                    />
+                    <div className="flex gap-1.5 justify-end">
+                      <button
+                        onClick={onCancelEdit}
+                        className="px-2 py-0.5 text-xs rounded bg-studio-bg/50 text-studio-text/70 hover:text-studio-text transition-colors"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        onClick={() => { if (editText.trim()) onSaveEdit(message.id, editText.trim()); }}
+                        disabled={!editText.trim()}
+                        className="px-2 py-0.5 text-xs rounded bg-studio-bg/80 text-studio-accent hover:bg-studio-bg transition-colors disabled:opacity-40"
+                      >
+                        Save & Resend
+                      </button>
                     </div>
-                  )}
-                </>
+                  </div>
+                ) : (
+                  <>
+                    <p className="text-sm whitespace-pre-wrap">{message.content}</p>
+                    {message.attachments && message.attachments.length > 0 && (
+                      <div className="mt-2 space-y-1.5">
+                        {message.attachments.map(att => (
+                          att.fileType === 'code' ? (
+                            <SignatureView key={att.id} attachment={att} />
+                          ) : att.fileType === 'image' || att.type === 'image' ? (
+                            <ImageAttachment key={att.id} attachment={att} />
+                          ) : null
+                        ))}
+                      </div>
+                    )}
+                  </>
+                )
               ) : (() => {
                 const summary = getTaskCompleteSummaryFromParts(parts);
                 if (summary && !String(message.content || '').trim()) return null;
@@ -1349,7 +1423,6 @@ const MessageBubble = memo(function MessageBubble({ message }: { message: Messag
                 return <MarkdownMessage content={message.content} />;
               })()}
               
-              {/* Action buttons */}
               {message.actions && message.actions.length > 0 && (
                 <div className="flex gap-2 mt-2 pt-2 border-t border-studio-border/30">
                   {message.actions.map((action, idx) => (
@@ -1364,9 +1437,22 @@ const MessageBubble = memo(function MessageBubble({ message }: { message: Messag
                 </div>
               )}
               
-              <span className="text-xs text-studio-muted/70 mt-1 block">
-                {timeString}
-              </span>
+              {!isEditing && (
+                <div className="flex items-center gap-1 mt-1">
+                  <span className="text-xs text-studio-muted/70">
+                    {timeString}
+                  </span>
+                  {isUser && !isGenerating && (
+                    <button
+                      onClick={() => onStartEdit(message.id)}
+                      className="p-0.5 rounded text-studio-muted/0 group-hover/msg:text-studio-muted/50 hover:!text-studio-text transition-colors"
+                      title="Edit and resend"
+                    >
+                      <EditIcon />
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
           </>
         )}
@@ -1375,12 +1461,26 @@ const MessageBubble = memo(function MessageBubble({ message }: { message: Messag
   );
 });
 
-// Memoized message list - prevents re-render during streaming
-const MessageList = memo(function MessageList({ messages }: { messages: Message[] }) {
+interface MessageListProps {
+  messages: Message[];
+  editingMessageId: string | null;
+  onStartEdit: (messageId: string) => void;
+  onSaveEdit: (messageId: string, content: string) => void;
+  onCancelEdit: () => void;
+}
+
+const MessageList = memo(function MessageList({ messages, editingMessageId, onStartEdit, onSaveEdit, onCancelEdit }: MessageListProps) {
   return (
     <>
       {messages.map((msg) => (
-        <MessageBubble key={msg.id} message={msg} />
+        <MessageBubble
+          key={msg.id}
+          message={msg}
+          isEditing={editingMessageId === msg.id}
+          onStartEdit={onStartEdit}
+          onSaveEdit={onSaveEdit}
+          onCancelEdit={onCancelEdit}
+        />
       ))}
     </>
   );
@@ -2197,8 +2297,10 @@ export function AiChat() {
   const agentProgress = useAppStore(state => state.agentProgress);
   
   // Use persistence hook for database-backed session operations
-  const { loadSession, deleteSession, saveSession, createNewSession } = useChatPersistence();
+  const { loadSession, deleteSession, saveSession, createNewSession, saveRestorePoint, restoreToPoint, undoRestore } = useChatPersistence();
   const agentCanContinue = useAppStore(state => state.agentCanContinue);
+  const restoreUndoStack = useAppStore(state => state.restoreUndoStack);
+  const clearRestoreUndo = useAppStore(state => state.clearRestoreUndo);
   const setAgentCanContinue = useAppStore(state => state.setAgentCanContinue);
   const incrementChatSession = useAppStore(state => state.incrementChatSession);
   
@@ -2235,6 +2337,34 @@ export function AiChat() {
   const lastToolCallUpdateRef = useRef<number>(0);
   const pendingToolCallsRef = useRef<Map<string, Partial<ToolCall>>>(new Map());
   const toolCallFlushTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Message edit-and-resend state
+  const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
+
+  const handleStartEdit = useCallback((messageId: string) => {
+    if (isGenerating) return;
+    setEditingMessageId(messageId);
+  }, [isGenerating]);
+
+  const handleCancelEdit = useCallback(() => {
+    setEditingMessageId(null);
+  }, []);
+
+  const handleSaveEdit = useCallback(async (messageId: string, editedContent: string) => {
+    setEditingMessageId(null);
+    const result = await restoreToPoint(messageId, editedContent);
+    if (result !== null) {
+      setInput(editedContent);
+      requestAnimationFrame(() => {
+        const sendBtn = document.querySelector('[data-send-button]') as HTMLButtonElement | null;
+        sendBtn?.click();
+      });
+    }
+  }, [restoreToPoint]);
+
+  const handleUndoRestore = useCallback(async () => {
+    await undoRestore();
+  }, [undoRestore]);
 
   // Drag-and-drop state
   const [isDragOver, setIsDragOver] = useState(false);
@@ -2357,6 +2487,7 @@ export function AiChat() {
   
   // Wrapped newChat that saves current session and resets context store
   const handleNewChat = useCallback(async () => {
+    setEditingMessageId(null);
     await createNewSession();
     newChat();
     resetStaticPromptCache();
@@ -2619,6 +2750,18 @@ export function AiChat() {
 
     if (!trimmedInput && !hasAttachments) return;
     if (isGenerating) return;
+
+    // Clear undo stack on new message send (conversation has diverged)
+    clearRestoreUndo();
+
+    // Save restore point for the current state before adding the new message
+    const appState = useAppStore.getState();
+    if (appState.currentSessionId && appState.messages.length > 0) {
+      const lastUserMsg = [...appState.messages].reverse().find(m => m.role === 'user');
+      if (lastUserMsg) {
+        saveRestorePoint(appState.currentSessionId, lastUserMsg.id).catch(() => {});
+      }
+    }
 
     // Get context store for hashing
     const contextStore = useContextStore.getState();
@@ -3437,6 +3580,8 @@ export function AiChat() {
                     key={session.id}
                     className="group flex items-center gap-2 p-2 rounded hover:bg-studio-surface cursor-pointer"
                     onClick={async () => {
+                      setEditingMessageId(null);
+                      clearRestoreUndo();
                       await loadSession(session.id);
                       useCostStore.getState().resetChat();
                       setShowHistory(false);
@@ -3482,6 +3627,20 @@ export function AiChat() {
       {/* Context/Task/Blackboard Panel */}
       <ContextPanel />
       
+      {/* Undo restore banner */}
+      {restoreUndoStack && (
+        <div className="flex items-center justify-between px-3 py-1.5 bg-studio-info/10 border-b border-studio-info/20 text-xs">
+          <span className="text-studio-info">Conversation restored to earlier message.</span>
+          <button
+            onClick={handleUndoRestore}
+            className="flex items-center gap-1 px-2 py-0.5 rounded text-studio-info hover:bg-studio-info/20 transition-colors font-medium"
+          >
+            <UndoIcon />
+            Undo
+          </button>
+        </div>
+      )}
+
       {/* Messages */}
       <div className="flex-1 overflow-y-auto scrollbar-thin p-4 space-y-4">
         {messages.length === 0 && !isGenerating ? (
@@ -3513,8 +3672,14 @@ export function AiChat() {
         ) : (
           <>
             {/* Memoized message list - won't re-render during streaming */}
-            <MessageList messages={messages} />
-            
+            <MessageList
+              messages={messages}
+              editingMessageId={editingMessageId}
+              onStartEdit={handleStartEdit}
+              onSaveEdit={handleSaveEdit}
+              onCancelEdit={handleCancelEdit}
+            />
+
             {/* Live swarm research progress - shows during research/planning phases */}
             <SwarmResearchProgress />
             

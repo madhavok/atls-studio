@@ -2003,6 +2003,9 @@ pub fn run() {
             commands::chat_db_set_session_state_batch,
             commands::chat_db_save_memory_snapshot,
             commands::chat_db_get_memory_snapshot,
+            // Message Edit / Restore
+            commands::chat_db_delete_messages_after,
+            commands::chat_db_update_message_content,
             // Staged Snippets
             commands::chat_db_save_staged_snippets,
             commands::chat_db_get_staged_snippets,

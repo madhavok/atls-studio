@@ -825,6 +825,18 @@ class ChatDbService {
   }
 
   // ==========================================================================
+  // Message Edit / Restore Operations
+  // ==========================================================================
+
+  async deleteMessagesAfter(sessionId: string, messageId: string): Promise<number> {
+    return await invoke<number>('chat_db_delete_messages_after', { sessionId, messageId });
+  }
+
+  async updateMessageContent(messageId: string, content: string): Promise<void> {
+    await invoke('chat_db_update_message_content', { messageId, content });
+  }
+
+  // ==========================================================================
   // Hash Registry Operations (exposed from Rust)
   // ==========================================================================
 
