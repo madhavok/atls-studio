@@ -11,6 +11,12 @@
     font-family: 'Inter', system-ui, sans-serif;
     /* Prevent scroll chaining and overscroll effects */
     overscroll-behavior: none;
+    /* macOS WKWebView: native overlay scrollbars follow color-scheme (webkit thumb CSS is often ignored) */
+    color-scheme: dark;
+  }
+
+  html.light {
+    color-scheme: light;
   }
   
   body {
@@ -30,35 +36,70 @@
   }
 }
 
-/* Global dark scrollbar for all elements */
-* {
+/*
+ * Scrollbars: explicit hex (theme() in pseudo-elements can be unreliable).
+ * macOS WKWebView: overlay scrollbars follow color-scheme on html; webkit thumb rules are a fallback.
+ */
+html:not(.light) * {
   scrollbar-width: thin;
-  scrollbar-color: theme('colors.studio.border') transparent;
+  scrollbar-color: #262626 transparent;
 }
 
-::-webkit-scrollbar {
+html.light * {
+  scrollbar-width: thin;
+  scrollbar-color: #d4d4d4 #f5f5f5;
+}
+
+html:not(.light) ::-webkit-scrollbar,
+html.light ::-webkit-scrollbar {
   width: 8px;
   height: 8px;
 }
 
-::-webkit-scrollbar-track {
+html:not(.light) ::-webkit-scrollbar-track {
   background: transparent;
 }
 
-::-webkit-scrollbar-thumb {
-  background-color: theme('colors.studio.border');
+html:not(.light) ::-webkit-scrollbar-thumb {
+  background-color: #262626;
   border-radius: 4px;
 }
 
-::-webkit-scrollbar-thumb:hover {
-  background-color: theme('colors.studio.muted');
+html:not(.light) ::-webkit-scrollbar-thumb:hover {
+  background-color: #737373;
+}
+
+html.light ::-webkit-scrollbar-track {
+  background: #f5f5f5;
+}
+
+html.light ::-webkit-scrollbar-thumb {
+  background-color: #d4d4d4;
+  border-radius: 4px;
+}
+
+html.light ::-webkit-scrollbar-thumb:hover {
+  background-color: #a3a3a3;
+}
+
+/* Monaco uses DOM scrollbars, not native webkit scrollbars */
+.monaco-editor .scrollbar > .slider {
+  background: #3a3a3a !important;
+}
+
+html.light .monaco-editor .scrollbar > .slider {
+  background: #c4c4c4 !important;
 }
 
 /* Utility class alias kept for backward compatibility */
 @layer utilities {
   .scrollbar-thin {
     scrollbar-width: thin;
-    scrollbar-color: theme('colors.studio.border') transparent;
+    scrollbar-color: #262626 transparent;
+  }
+
+  html.light .scrollbar-thin {
+    scrollbar-color: #d4d4d4 #f5f5f5;
   }
 }
 
