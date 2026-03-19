@@ -4,6 +4,7 @@ import { useState, useCallback, useEffect, useRef } from 'react';
 import Editor, { OnMount, Monaco } from '@monaco-editor/react';
 import type { editor } from 'monaco-editor';
 import { invoke } from '@tauri-apps/api/core';
+import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { useAppStore } from '../../stores/appStore';
 import { MarkdownMessage } from '../AiChat/MarkdownMessage';
 import { AtlsInternals, INTERNALS_TAB_ID } from '../AtlsInternals';
@@ -29,6 +30,12 @@ interface ReferencesState {
   references: SymbolLocation[];
 }
 
+interface CanonicalRevisionChangedEvent {
+  path: string;
+  revision: string;
+  previous_revision?: string | null;
+}
+
 const DESIGN_PREVIEW_TAB = '__design_preview__';
 
 export function CodeViewer() {
@@ -46,6 +53,16 @@ export function CodeViewer() {
   const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
   const monacoRef = useRef<Monaco | null>(null);
   const referenceClickTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Stable refs for the event listener closure (avoids stale captures)
+  const openFilesRef = useRef(openFiles);
+  openFilesRef.current = openFiles;
+  const fileContentsRef = useRef(fileContents);
+  fileContentsRef.current = fileContents;
+  const originalContentsRef = useRef(originalContents);
+  originalContentsRef.current = originalContents;
+  const savingRef = useRef(saving);
+  savingRef.current = saving;
 
   // Check if a file has unsaved changes
   const isDirty = useCallback((path: string): boolean => {
@@ -165,6 +182,59 @@ export function CodeViewer() {
   // Clean up pending reference click timeout on unmount
   useEffect(() => {
     return () => { if (referenceClickTimeout.current) clearTimeout(referenceClickTimeout.current); };
+  }, []);
+
+  // Auto-refresh open files when they change on disk (AI edits, external tools, watcher)
+  useEffect(() => {
+    let unlisten: UnlistenFn | null = null;
+    (async () => {
+      unlisten = await listen<CanonicalRevisionChangedEvent>('canonical_revision_changed', async (ev) => {
+        const changedPath = ev.payload.path;
+        const changedNorm = changedPath.replace(/\\/g, '/');
+
+        const currentOpenFiles = openFilesRef.current;
+        const matchedFile = currentOpenFiles.find((f) => {
+          const fNorm = f.replace(/\\/g, '/');
+          return fNorm === changedNorm || f === changedPath;
+        });
+        if (!matchedFile) return;
+
+        // Skip files we're currently saving (our own write triggered this event)
+        const currentSaving = savingRef.current;
+        const matchedNorm = matchedFile.replace(/\\/g, '/');
+        if (currentSaving[matchedFile] || currentSaving[matchedNorm]) return;
+
+        const currentContents = fileContentsRef.current;
+        const currentOriginals = originalContentsRef.current;
+        const hasDirtyEdits = currentContents[matchedFile] !== currentOriginals[matchedFile]
+          && currentOriginals[matchedFile] !== undefined;
+
+        const root = useAppStore.getState().activeRoot ?? useAppStore.getState().projectPath;
+        if (!root) return;
+
+        try {
+          const diskContent = await invoke<string>('read_file_contents', { path: matchedFile, projectRoot: root });
+
+          // No-op if content already matches (e.g. user just saved this file)
+          if (diskContent === currentContents[matchedFile]) return;
+
+          if (hasDirtyEdits) {
+            useAppStore.getState().addToast({
+              type: 'warning',
+              message: `"${matchedFile.split(/[/\\]/).pop()}" was modified externally. Save or discard your changes, then reopen to see the latest version.`,
+              duration: 8000,
+            });
+            return;
+          }
+
+          setFileContents((prev) => ({ ...prev, [matchedFile]: diskContent, [matchedNorm]: diskContent }));
+          setOriginalContents((prev) => ({ ...prev, [matchedFile]: diskContent, [matchedNorm]: diskContent }));
+        } catch (err) {
+          console.error('[CodeViewer] Failed to reload changed file:', matchedFile, err);
+        }
+      });
+    })();
+    return () => { unlisten?.(); };
   }, []);
 
   // Get word at cursor position
