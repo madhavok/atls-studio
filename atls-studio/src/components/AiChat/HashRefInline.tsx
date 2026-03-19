@@ -132,7 +132,7 @@ const HashRefPill = memo(function HashRefPill({ ref_data }: { ref_data: Resolved
     navigator.clipboard.writeText(text).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
-    });
+    }).catch(e => console.warn('[HashRef] Clipboard write failed:', e));
   }, [resolved, ref_data]);
 
   const label = buildLabel(ref_data);
@@ -221,7 +221,7 @@ const DiffRefPill = memo(function DiffRefPill({ ref_data }: { ref_data: Resolved
     navigator.clipboard.writeText(text).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
-    });
+    }).catch(e => console.warn('[HashRef] Clipboard write failed:', e));
   }, [resolved, ref_data]);
 
   const diff = parseDiffRef(ref_data.raw);
@@ -301,7 +301,7 @@ const BbRefPill = memo(function BbRefPill({ ref_data }: { ref_data: ResolvedOutp
       navigator.clipboard.writeText(content).then(() => {
         setCopied(true);
         setTimeout(() => setCopied(false), 1500);
-      });
+      }).catch(e => console.warn('[HashRef] Clipboard write failed:', e));
     }
   }, [content]);
 

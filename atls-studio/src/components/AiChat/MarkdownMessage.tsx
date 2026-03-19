@@ -3,6 +3,7 @@ import ReactMarkdown, { type ExtraProps } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
 import rehypeRaw from 'rehype-raw';
+import rehypeSanitize, { defaultSchema } from 'rehype-sanitize';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { HashRefText } from './HashRefInline';
 import { TemplateCard } from './TemplateCard';
@@ -13,6 +14,11 @@ const STATUS_MARKER_RE = /«?(st:\s*(?:working|done)(?:\|[^\n»]*)?)»?/g;
 
 // Matches «tpl:NAME|val1|val2|...» template shorthand markers
 const TPL_MARKER_RE = /«tpl:([a-zA-Z0-9_-]+)\|([^»]+)»/g;
+
+/** Escape a string for safe embedding in an HTML attribute. */
+function escAttr(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
 
 /**
  * Replace status markers and template shorthand with HTML spans that survive
@@ -25,7 +31,7 @@ function injectMarkerHtml(text: string): string {
   // Template markers — must run first (before status markers consume «»)
   result = result.replace(TPL_MARKER_RE, (_match, name: string, valStr: string) => {
     const encoded = encodeURIComponent(valStr);
-    return `<span class="tpl-card" data-tpl="${name}" data-vals="${encoded}"></span>`;
+    return `<span class="tpl-card" data-tpl="${escAttr(name)}" data-vals="${escAttr(encoded)}"></span>`;
   });
 
   // Status markers
@@ -43,7 +49,7 @@ function injectMarkerHtml(text: string): string {
     const badge = `${status}|${step}|${next}`;
     if (badge === lastBadge) return '';
     lastBadge = badge;
-    return `<span class="status-badge" data-status="${status}" data-step="${step}" data-next="${next}"></span>`;
+    return `<span class="status-badge" data-status="${escAttr(status)}" data-step="${escAttr(step)}" data-next="${escAttr(next)}"></span>`;
   });
 
   return result;
@@ -101,7 +107,11 @@ function getHighlighter(): Promise<HighlighterCore> {
         langs: Object.values(bundledLanguages),
         engine: createJavaScriptRegexEngine(),
       })
-    );
+    ).catch(e => {
+      console.warn('[Shiki] Failed to initialize highlighter:', e);
+      highlighterPromise = null;
+      throw e;
+    });
   }
   return highlighterPromise;
 }
@@ -185,7 +195,22 @@ function HashAwareCode({ className, children, ...rest }: ComponentPropsWithoutRe
 }
 
 const remarkPlugins = [remarkGfm, remarkBreaks];
-const rehypePlugins = [rehypeRaw];
+
+const sanitizeSchema = {
+  ...defaultSchema,
+  tagNames: [...(defaultSchema.tagNames ?? []), 'span'],
+  attributes: {
+    ...defaultSchema.attributes,
+    span: [
+      ...(defaultSchema.attributes?.span ?? []),
+      'className', 'class',
+      'data-status', 'data-step', 'data-next',
+      'data-tpl', 'data-vals',
+    ],
+  },
+};
+
+const rehypePlugins = [rehypeRaw, [rehypeSanitize, sanitizeSchema]] as any[];
 
 function MdSpan(props: React.ComponentPropsWithoutRef<'span'> & ExtraProps) {
   const { className, node: _node, ...rest } = props;

@@ -684,7 +684,7 @@ export const useAppStore = create<AppState>((set) => ({
         newSelected.delete(path);
         if (lastSelectedFile === path) {
           const remaining = [...newSelected];
-          lastSelectedFile = remaining.length > 0 ? remaining[0]! : null;
+          lastSelectedFile = remaining.length > 0 ? remaining[0] ?? null : null;
         }
       } else {
         newSelected.add(path);

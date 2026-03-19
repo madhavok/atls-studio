@@ -10,7 +10,7 @@ export function WindowControls() {
   const [hovering, setHovering] = useState(false);
 
   useEffect(() => {
-    appWindow.isMaximized().then(setMaximized).catch(() => {});
+    appWindow.isMaximized().then(setMaximized).catch(e => console.warn('[WindowControls] isMaximized failed:', e));
 
     let unlisten: (() => void) | undefined;
     const setup = async () => {

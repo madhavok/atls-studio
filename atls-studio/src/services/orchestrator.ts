@@ -451,7 +451,7 @@ class OrchestratorService {
               fileContentsMap.set(filePath, truncated);
               smartContentForAnalysis.push({ path: filePath, content: truncated });
             }
-          } catch { /* skip unreadable */ }
+          } catch (e) { console.debug(`[Research] Could not read ${filePath}:`, e); }
         }
       }
       
@@ -825,8 +825,8 @@ Based on the research above, create a detailed task plan.
           try {
             parsed = JSON.parse(trimmed);
             console.log('[Orchestrator] Direct JSON parse succeeded');
-          } catch {
-            // JSON is malformed, fall through to extraction strategies
+          } catch (e) {
+            console.debug('[Orchestrator] Direct JSON parse failed, trying extraction:', e);
           }
         }
       }
@@ -873,8 +873,8 @@ Based on the research above, create a detailed task plan.
             try {
               parsed = JSON.parse(extracted);
               console.log('[Orchestrator] Balanced-brace extraction succeeded');
-            } catch {
-              // Still malformed, fall through
+            } catch (e) {
+              console.debug('[Orchestrator] Balanced-brace extraction failed:', e);
             }
           }
         }
@@ -888,8 +888,8 @@ Based on the research above, create a detailed task plan.
           try {
             parsed = JSON.parse(fenceMatch[1].trim());
             console.log('[Orchestrator] Code fence extraction succeeded');
-          } catch {
-            // Content inside fence isn't valid JSON
+          } catch (e) {
+            console.debug('[Orchestrator] Code fence JSON parse failed:', e);
           }
         }
       }
@@ -1029,19 +1029,20 @@ Based on the research above, create a detailed task plan.
     this._isRunning = true;
     await chatDb.updateSwarmStatus(sessionId, 'running');
     
-    // Start polling for ready tasks
-    this.pollInterval = setInterval(() => {
-      this.processReadyTasks(projectPath, config);
-    }, 1000);
-    
-    // Initial processing
-    await this.processReadyTasks(projectPath, config);
-    
-    // Wait for completion
-    await this.waitForCompletion();
-    
-    // Cleanup
-    this.cleanup();
+    try {
+      // Start polling for ready tasks
+      this.pollInterval = setInterval(() => {
+        this.processReadyTasks(projectPath, config);
+      }, 1000);
+      
+      // Initial processing
+      await this.processReadyTasks(projectPath, config);
+      
+      // Wait for completion
+      await this.waitForCompletion();
+    } finally {
+      this.cleanup();
+    }
     
     // Final status
     const finalState = useSwarmStore.getState();
@@ -1145,9 +1146,10 @@ Based on the research above, create a detailed task plan.
     if (!acquired) {
       // Rate limit timeout - put back in queue for retry if under limit
       const currentRetryCount = task.retryCount || 0;
-      console.log(`[Agent] Task ${task.id} rate limit timeout (retry ${currentRetryCount}/${task.maxRetries})`);
+      const maxRetries = task.maxRetries ?? 10;
+      console.log(`[Agent] Task ${task.id} rate limit timeout (retry ${currentRetryCount}/${maxRetries})`);
       
-      if (currentRetryCount < task.maxRetries - 1) { // -1 because updateTaskError will increment
+      if (currentRetryCount < maxRetries - 1) { // -1 because updateTaskError will increment
         // Exponential backoff with jitter to avoid thundering herd
         // Base: 5s, doubles each retry, max 60s, plus random jitter 0-5s
         const baseDelay = 5000;
@@ -1158,7 +1160,7 @@ Based on the research above, create a detailed task plan.
         
         console.log(`[Agent] Task ${task.id} requeuing for retry, waiting ${(totalDelay/1000).toFixed(1)}s...`);
         // updateTaskError increments retryCount automatically
-        swarmStore.updateTaskError(task.id, `Rate limit, retry ${currentRetryCount + 1}/${task.maxRetries} in ${Math.round(totalDelay/1000)}s`);
+        swarmStore.updateTaskError(task.id, `Rate limit, retry ${currentRetryCount + 1}/${maxRetries} in ${Math.round(totalDelay/1000)}s`);
         
         // Wait with backoff before setting to pending
         await new Promise(resolve => setTimeout(resolve, totalDelay));
@@ -1337,7 +1339,8 @@ Based on the research above, create a detailed task plan.
       if (error.message?.includes('429') || error.message?.includes('rate limit')) {
         rateLimiter.recordRateLimitError(task.assignedProvider);
         
-        if (task.retryCount < task.maxRetries) {
+        const retryMaxRetries = task.maxRetries ?? 10;
+        if (task.retryCount < retryMaxRetries) {
           const currentRetryCount = task.retryCount || 0;
           const baseDelay = 5000;
           const maxDelay = 60000;
@@ -1346,7 +1349,7 @@ Based on the research above, create a detailed task plan.
           const totalDelay = exponentialDelay + jitter;
           
           console.log(`[Agent:${agentLabel}] Rate limited, waiting ${(totalDelay/1000).toFixed(1)}s before retry...`);
-          swarmStore.updateTaskError(task.id, `Rate limited, retry ${currentRetryCount + 1}/${task.maxRetries} in ${Math.round(totalDelay/1000)}s`);
+          swarmStore.updateTaskError(task.id, `Rate limited, retry ${currentRetryCount + 1}/${retryMaxRetries} in ${Math.round(totalDelay/1000)}s`);
           
           await new Promise(resolve => setTimeout(resolve, totalDelay));
           swarmStore.updateTaskStatus(task.id, 'pending');

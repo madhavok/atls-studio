@@ -1331,7 +1331,7 @@ export function FileExplorer() {
         exitUnlistensRef.current.delete(tid);
       }).then(unlisten => {
         exitUnlistensRef.current.set(tid, unlisten);
-      });
+      }).catch(e => console.warn(`[FileExplorer] Failed to listen for pty-exit-${tid}:`, e));
     }
   }, [workspaceToTerminal]);
 

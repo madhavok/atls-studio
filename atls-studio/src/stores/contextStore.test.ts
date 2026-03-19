@@ -18,9 +18,10 @@ function addTestChunk(
   content: string,
   type: string,
   source?: string,
+  opts?: Parameters<ReturnType<typeof useContextStore.getState>['addChunk']>[6],
 ) {
   const store = useContextStore.getState();
-  return store.addChunk(content, type as import('../utils/contextHash').ChunkType, source);
+  return store.addChunk(content, type as import('../utils/contextHash').ChunkType, source, undefined, undefined, undefined, opts);
 }
 
 describe('queryBySetSelector', () => {
@@ -36,10 +37,10 @@ describe('queryBySetSelector', () => {
     expect(result.entries).toHaveLength(3);
   });
 
-  it('kind=edited returns only result-type chunks', () => {
+  it('kind=edited returns only edit-origin chunks', () => {
     addTestChunk('fn foo() {}', 'file', 'src/foo.ts');
-    addTestChunk('tool output 1', 'result');
-    addTestChunk('tool output 2', 'result');
+    addTestChunk('tool output 1', 'result', undefined, { origin: 'edit' });
+    addTestChunk('tool output 2', 'result', undefined, { origin: 'edit' });
 
     const result = useContextStore.getState().queryBySetSelector({ kind: 'edited' });
     expect(result.hashes).toHaveLength(2);
@@ -203,7 +204,7 @@ describe('createSetRefLookup', () => {
 
   it('returns a function that delegates to queryBySetSelector', () => {
     addTestChunk('fn foo() {}', 'file', 'src/foo.ts');
-    addTestChunk('tool output', 'result');
+    addTestChunk('tool output', 'result', undefined, { origin: 'edit' });
 
     const lookup = useContextStore.getState().createSetRefLookup();
     const allResult = lookup({ kind: 'all' });

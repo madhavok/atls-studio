@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 interface UsePanelResizeProps {
   leftWidth: number;
@@ -42,6 +42,19 @@ export const usePanelResize = ({
 }: UsePanelResizeProps) => {
   const [isResizing, setIsResizing] = useState(false);
   const ghostRef = useRef<HTMLDivElement | null>(null);
+  const cleanupRef = useRef<(() => void) | null>(null);
+
+  // Cleanup on unmount: remove any lingering document listeners and ghost lines
+  useEffect(() => {
+    return () => {
+      cleanupRef.current?.();
+      cleanupRef.current = null;
+      removeGhostLine(ghostRef.current);
+      ghostRef.current = null;
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+  }, []);
 
   const handleLeftResize = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
@@ -61,14 +74,24 @@ export const usePanelResize = ({
       ghost.style.left = `${finalX}px`;
     };
 
-    const onMouseUp = () => {
+    const teardown = () => {
       document.removeEventListener('mousemove', onMouseMove);
       document.removeEventListener('mouseup', onMouseUp);
       removeGhostLine(ghost);
       ghostRef.current = null;
       document.body.style.cursor = '';
       document.body.style.userSelect = '';
+      cleanupRef.current = null;
+    };
+
+    const onMouseUp = () => {
+      teardown();
       setLeftWidth(clampLeft(startWidth + finalX - startX));
+      setIsResizing(false);
+    };
+
+    cleanupRef.current = () => {
+      teardown();
       setIsResizing(false);
     };
 
@@ -94,14 +117,24 @@ export const usePanelResize = ({
       ghost.style.left = `${finalX}px`;
     };
 
-    const onMouseUp = () => {
+    const teardown = () => {
       document.removeEventListener('mousemove', onMouseMove);
       document.removeEventListener('mouseup', onMouseUp);
       removeGhostLine(ghost);
       ghostRef.current = null;
       document.body.style.cursor = '';
       document.body.style.userSelect = '';
+      cleanupRef.current = null;
+    };
+
+    const onMouseUp = () => {
+      teardown();
       setRightWidth(clampRight(startWidth - (finalX - startX)));
+      setIsResizing(false);
+    };
+
+    cleanupRef.current = () => {
+      teardown();
       setIsResizing(false);
     };
 
@@ -127,14 +160,24 @@ export const usePanelResize = ({
       ghost.style.top = `${finalY}px`;
     };
 
-    const onMouseUp = () => {
+    const teardown = () => {
       document.removeEventListener('mousemove', onMouseMove);
       document.removeEventListener('mouseup', onMouseUp);
       removeGhostLine(ghost);
       ghostRef.current = null;
       document.body.style.cursor = '';
       document.body.style.userSelect = '';
+      cleanupRef.current = null;
+    };
+
+    const onMouseUp = () => {
+      teardown();
       setBottomHeight(clampBottom(startHeight - (finalY - startY)));
+      setIsResizing(false);
+    };
+
+    cleanupRef.current = () => {
+      teardown();
       setIsResizing(false);
     };
 

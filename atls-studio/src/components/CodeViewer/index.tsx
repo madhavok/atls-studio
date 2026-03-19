@@ -162,6 +162,11 @@ export function CodeViewer() {
     return () => window.removeEventListener('editor-save-file', handler);
   }, [saveActiveFile]);
 
+  // Clean up pending reference click timeout on unmount
+  useEffect(() => {
+    return () => { if (referenceClickTimeout.current) clearTimeout(referenceClickTimeout.current); };
+  }, []);
+
   // Get word at cursor position
   const getWordAtCursor = useCallback((): string | null => {
     if (!editorRef.current || !monacoRef.current) return null;

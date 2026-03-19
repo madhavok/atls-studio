@@ -605,7 +605,7 @@ interface ContextStoreState {
   task: TaskPlan | null;
   
   // Actions
-  addChunk: (content: string, type: ChunkType, source?: string, symbols?: DigestSymbol[], summary?: string, backendHash?: string, opts?: { subtaskIds?: string[]; boundDuringPlanning?: boolean; fullHash?: string; sourceRevision?: string; viewKind?: EngramViewKind; readSpan?: ReadSpan }) => string;
+  addChunk: (content: string, type: ChunkType, source?: string, symbols?: DigestSymbol[], summary?: string, backendHash?: string, opts?: { subtaskIds?: string[]; boundDuringPlanning?: boolean; fullHash?: string; sourceRevision?: string; viewKind?: EngramViewKind; editSessionId?: string; origin?: EngramOrigin; readSpan?: ReadSpan; ttl?: number }) => string;
   findReusableRead: (span: ReadSpan) => string | null;
   touchChunk: (hash: string) => void;
   compactChunks: (hashes: string[], opts?: { confirmWildcard?: boolean; tier?: 'pointer' | 'sig'; sigContentByRef?: Map<string, string> }) => { compacted: number; freedTokens: number };
@@ -2581,7 +2581,7 @@ export const useContextStore = create<ContextStoreState>()(
           archivedRefs: manifestLines.map(line => {
             const match = line.match(/h:(\w+)\s+(\d+)tk\s*(.*)/);
             return match
-              ? { shortHash: match[1], tokens: parseInt(match[2], 10), source: match[3]?.trim() }
+              ? { shortHash: match[1], tokens: parseInt(match[2], 10) || 0, source: match[3]?.trim() }
               : { shortHash: '?', tokens: 0, source: line };
           }),
           turnsRemaining: 2,
@@ -2589,7 +2589,7 @@ export const useContextStore = create<ContextStoreState>()(
       }
       
       const updatedPlan = {
-        ...state.taskPlan!,
+        ...state.taskPlan,
         subtasks,
         activeSubtaskId: subtaskId,
       };
@@ -2943,8 +2943,8 @@ export const useContextStore = create<ContextStoreState>()(
     const [, oldChunk] = found;
 
     const lines = oldChunk.content.split('\n');
-    if (atLine < 1 || atLine >= lines.length) {
-      return { ok: false, error: `split line ${atLine} out of range (1-${lines.length - 1})` };
+    if (atLine < 1 || atLine > lines.length - 1) {
+      return { ok: false, error: `split line ${atLine} out of range (1-${Math.max(1, lines.length - 1)})` };
     }
 
     const contentA = lines.slice(0, atLine).join('\n');
@@ -2972,7 +2972,9 @@ export const useContextStore = create<ContextStoreState>()(
       editDigest: generateEditReadyDigest(contentA, oldChunk.type) || undefined,
       annotations: oldChunk.annotations?.filter(a => {
         const lineRef = a.content.match(/L(\d+)/);
-        return !lineRef || parseInt(lineRef[1]) < atLine;
+        if (!lineRef) return true;
+        const n = parseInt(lineRef[1], 10);
+        return !isNaN(n) && n < atLine;
       }),
       synapses: oldChunk.synapses ? [...oldChunk.synapses] : undefined,
     };
@@ -2987,7 +2989,9 @@ export const useContextStore = create<ContextStoreState>()(
       editDigest: generateEditReadyDigest(contentB, oldChunk.type) || undefined,
       annotations: oldChunk.annotations?.filter(a => {
         const lineRef = a.content.match(/L(\d+)/);
-        return lineRef && parseInt(lineRef[1]) >= atLine;
+        if (!lineRef) return false;
+        const n = parseInt(lineRef[1], 10);
+        return !isNaN(n) && n >= atLine;
       }),
       synapses: oldChunk.synapses ? [...oldChunk.synapses] : undefined,
     };
@@ -3008,6 +3012,9 @@ export const useContextStore = create<ContextStoreState>()(
   },
 
   mergeEngrams: (hashRefs: string[], summary?: string) => {
+    if (!hashRefs || hashRefs.length < 2) {
+      return { ok: false, error: 'mergeEngrams requires at least 2 hash refs' };
+    }
     const state = get();
     const newChunks = new Map(state.chunks);
     const resolved: Array<[string, ContextChunk]> = [];

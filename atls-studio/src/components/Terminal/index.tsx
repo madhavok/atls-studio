@@ -23,6 +23,7 @@ interface XTermInstance {
   container: HTMLDivElement;
   outputUnlisten?: UnlistenFn;
   exitUnlisten?: UnlistenFn;
+  flushTimeout?: ReturnType<typeof setTimeout> | null;
   isInitialized: boolean;
 }
 
@@ -90,28 +91,27 @@ function getOrCreateXterm(terminalId: string): XTermInstance | null {
   xtermInstances.set(terminalId, instance);
 
   let outputBuffer = '';
-  let flushTimeout: ReturnType<typeof setTimeout> | null = null;
   const flushOutput = () => {
     if (outputBuffer) {
       terminal.write(outputBuffer);
       outputBuffer = '';
     }
-    flushTimeout = null;
+    instance.flushTimeout = null;
   };
 
   listen<string>(`pty-output-${terminalId}`, (event) => {
     outputBuffer += event.payload;
-    if (!flushTimeout) {
-      flushTimeout = setTimeout(flushOutput, 16);
+    if (!instance.flushTimeout) {
+      instance.flushTimeout = setTimeout(flushOutput, 16);
     }
     if (outputBuffer.length > 4096) {
-      if (flushTimeout) clearTimeout(flushTimeout);
+      if (instance.flushTimeout) clearTimeout(instance.flushTimeout);
       flushOutput();
     }
   }).then(unlisten => {
     const inst = xtermInstances.get(terminalId);
     if (inst) inst.outputUnlisten = unlisten;
-  });
+  }).catch(e => console.warn(`[Terminal] Failed to listen for pty-output-${terminalId}:`, e));
 
   listen<boolean>(`pty-exit-${terminalId}`, (event) => {
     if (event.payload) {
@@ -122,7 +122,7 @@ function getOrCreateXterm(terminalId: string): XTermInstance | null {
   }).then(unlisten => {
     const inst = xtermInstances.get(terminalId);
     if (inst) inst.exitUnlisten = unlisten;
-  });
+  }).catch(e => console.warn(`[Terminal] Failed to listen for pty-exit-${terminalId}:`, e));
 
   return instance;
 }
@@ -130,6 +130,7 @@ function getOrCreateXterm(terminalId: string): XTermInstance | null {
 function cleanupXtermInstance(tabId: string) {
   const instance = xtermInstances.get(tabId);
   if (instance) {
+    if (instance.flushTimeout) clearTimeout(instance.flushTimeout);
     if (instance.outputUnlisten) instance.outputUnlisten();
     if (instance.exitUnlisten) instance.exitUnlisten();
     instance.terminal.dispose();

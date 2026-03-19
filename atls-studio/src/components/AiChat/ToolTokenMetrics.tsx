@@ -5,7 +5,7 @@
  * Sorted by total tokens descending to surface the biggest optimization targets.
  */
 
-import { memo, useState, useEffect, useCallback, useMemo } from 'react';
+import { memo, useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useAppStore } from '../../stores/appStore';
 import { chatDb } from '../../services/chatDb';
 import {
@@ -169,6 +169,11 @@ export const ToolTokenMetrics = memo(function ToolTokenMetrics({ onClose }: Prop
   const [loading, setLoading] = useState(false);
   const [loadProgress, setLoadProgress] = useState('');
   const [copied, setCopied] = useState(false);
+  const copiedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => { if (copiedTimerRef.current) clearTimeout(copiedTimerRef.current); };
+  }, []);
 
   // Current chat analysis (synchronous)
   const currentReport = useMemo(() => analyzeToolTokens(messages), [messages]);
@@ -216,9 +221,11 @@ export const ToolTokenMetrics = memo(function ToolTokenMetrics({ onClose }: Prop
 
   const handleCopy = useCallback(() => {
     if (!activeReport) return;
-    navigator.clipboard.writeText(JSON.stringify(activeReport, null, 2));
+    navigator.clipboard.writeText(JSON.stringify(activeReport, null, 2))
+      .catch(e => console.warn('[ToolTokenMetrics] Clipboard write failed:', e));
     setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
+    if (copiedTimerRef.current) clearTimeout(copiedTimerRef.current);
+    copiedTimerRef.current = setTimeout(() => setCopied(false), 1500);
   }, [activeReport]);
 
   // Close on Escape

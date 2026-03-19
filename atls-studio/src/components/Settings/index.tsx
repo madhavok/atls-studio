@@ -662,7 +662,7 @@ export function Settings({ isOpen, onClose }: SettingsProps) {
                 <input
                   type="range"
                   value={localSettings.temperature}
-                  onChange={(e) => setLocalSettings(prev => ({ ...prev, temperature: parseFloat(e.target.value) }))}
+                  onChange={(e) => { const v = parseFloat(e.target.value); if (Number.isFinite(v)) setLocalSettings(prev => ({ ...prev, temperature: v })); }}
                   min={0}
                   max={1}
                   step={0.1}

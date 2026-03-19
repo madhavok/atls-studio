@@ -390,7 +390,7 @@ export function SwarmPanel() {
             <span className="text-xs text-studio-muted">Agents:</span>
             <select
               value={maxConcurrentAgents}
-              onChange={(e) => setMaxConcurrentAgents(Number(e.target.value))}
+              onChange={(e) => { const v = Number(e.target.value); if (Number.isFinite(v) && v > 0) setMaxConcurrentAgents(v); }}
               disabled={status === 'running'}
               className="bg-studio-surface border border-studio-border rounded px-2 py-0.5 text-xs text-studio-text disabled:opacity-50 disabled:cursor-not-allowed"
               title={status === 'running' ? 'Cannot change while running' : 'Max concurrent agents'}

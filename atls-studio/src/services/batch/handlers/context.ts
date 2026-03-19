@@ -556,7 +556,7 @@ export const handleEmit: OpHandler = async (params, ctx) => {
     content,
     source: label,
     lang: lang || null,
-  }).catch(() => {});
+  }).catch(e => console.warn('[emit] register_hash_content failed:', e));
 
   return ok(`emit: h:${hash.slice(0, SHORT_HASH_LEN)} (${tokens}tk) "${label}" — use h:${hash.slice(0, SHORT_HASH_LEN)} in response`, [`h:${hash}`], tokens);
 };

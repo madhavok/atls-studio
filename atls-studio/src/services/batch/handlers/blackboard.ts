@@ -68,7 +68,8 @@ export const handleBbRead: OpHandler = async (params, ctx) => {
       let staleWarning = '';
       if (meta.derivedFrom?.length && meta.derivedRevisions?.length) {
         const staleFiles: string[] = [];
-        for (let i = 0; i < meta.derivedFrom.length; i++) {
+        const pairLen = Math.min(meta.derivedFrom.length, meta.derivedRevisions.length);
+        for (let i = 0; i < pairLen; i++) {
           const path = meta.derivedFrom[i];
           const storedRev = meta.derivedRevisions[i];
           if (!storedRev) continue;

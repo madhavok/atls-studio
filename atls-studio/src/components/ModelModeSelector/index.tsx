@@ -728,7 +728,7 @@ export function ModelModeSelector() {
                         <input
                           type="number"
                           value={refactorConfig.maxFileLines}
-                          onChange={(e) => setRefactorConfig({ maxFileLines: Number(e.target.value) })}
+                          onChange={(e) => { const v = Number(e.target.value); if (Number.isFinite(v)) setRefactorConfig({ maxFileLines: v }); }}
                           className="w-full mt-0.5 px-2 py-1.5 bg-studio-bg border border-studio-border rounded text-sm"
                         />
                       </label>
@@ -737,7 +737,7 @@ export function ModelModeSelector() {
                         <input
                           type="number"
                           value={refactorConfig.targetFileLines}
-                          onChange={(e) => setRefactorConfig({ targetFileLines: Number(e.target.value) })}
+                          onChange={(e) => { const v = Number(e.target.value); if (Number.isFinite(v)) setRefactorConfig({ targetFileLines: v }); }}
                           className="w-full mt-0.5 px-2 py-1.5 bg-studio-bg border border-studio-border rounded text-sm"
                         />
                       </label>
@@ -746,7 +746,7 @@ export function ModelModeSelector() {
                         <input
                           type="number"
                           value={refactorConfig.maxMethodLines}
-                          onChange={(e) => setRefactorConfig({ maxMethodLines: Number(e.target.value) })}
+                          onChange={(e) => { const v = Number(e.target.value); if (Number.isFinite(v)) setRefactorConfig({ maxMethodLines: v }); }}
                           className="w-full mt-0.5 px-2 py-1.5 bg-studio-bg border border-studio-border rounded text-sm"
                         />
                       </label>
@@ -762,7 +762,7 @@ export function ModelModeSelector() {
                         <input
                           type="number"
                           value={refactorConfig.minComplexityForExtraction}
-                          onChange={(e) => setRefactorConfig({ minComplexityForExtraction: Number(e.target.value) })}
+                          onChange={(e) => { const v = Number(e.target.value); if (Number.isFinite(v)) setRefactorConfig({ minComplexityForExtraction: v }); }}
                           className="w-full mt-0.5 px-2 py-1.5 bg-studio-bg border border-studio-border rounded text-sm"
                         />
                       </label>
@@ -771,7 +771,7 @@ export function ModelModeSelector() {
                         <input
                           type="number"
                           value={refactorConfig.highComplexityThreshold}
-                          onChange={(e) => setRefactorConfig({ highComplexityThreshold: Number(e.target.value) })}
+                          onChange={(e) => { const v = Number(e.target.value); if (Number.isFinite(v)) setRefactorConfig({ highComplexityThreshold: v }); }}
                           className="w-full mt-0.5 px-2 py-1.5 bg-studio-bg border border-studio-border rounded text-sm"
                         />
                       </label>
@@ -788,19 +788,19 @@ export function ModelModeSelector() {
                           <label className="block">
                             <span className="text-[10px] text-studio-muted">Max Lines</span>
                             <input type="number" value={refactorConfig.featureExtractionMaxLines}
-                              onChange={(e) => setRefactorConfig({ featureExtractionMaxLines: Number(e.target.value) })}
+                              onChange={(e) => { const v = Number(e.target.value); if (Number.isFinite(v)) setRefactorConfig({ featureExtractionMaxLines: v }); }}
                               className="w-full mt-0.5 px-2 py-1 bg-studio-bg border border-studio-border rounded text-xs" />
                           </label>
                           <label className="block">
                             <span className="text-[10px] text-studio-muted">Max Complexity</span>
                             <input type="number" value={refactorConfig.featureExtractionMaxComplexity}
-                              onChange={(e) => setRefactorConfig({ featureExtractionMaxComplexity: Number(e.target.value) })}
+                              onChange={(e) => { const v = Number(e.target.value); if (Number.isFinite(v)) setRefactorConfig({ featureExtractionMaxComplexity: v }); }}
                               className="w-full mt-0.5 px-2 py-1 bg-studio-bg border border-studio-border rounded text-xs" />
                           </label>
                           <label className="block">
                             <span className="text-[10px] text-studio-muted">Max Dependents</span>
                             <input type="number" value={refactorConfig.featureExtractionMaxDependents}
-                              onChange={(e) => setRefactorConfig({ featureExtractionMaxDependents: Number(e.target.value) })}
+                              onChange={(e) => { const v = Number(e.target.value); if (Number.isFinite(v)) setRefactorConfig({ featureExtractionMaxDependents: v }); }}
                               className="w-full mt-0.5 px-2 py-1 bg-studio-bg border border-studio-border rounded text-xs" />
                           </label>
                         </div>
@@ -811,19 +811,19 @@ export function ModelModeSelector() {
                           <label className="block">
                             <span className="text-[10px] text-studio-muted">Max Lines</span>
                             <input type="number" value={refactorConfig.layerExtractionMaxLines}
-                              onChange={(e) => setRefactorConfig({ layerExtractionMaxLines: Number(e.target.value) })}
+                              onChange={(e) => { const v = Number(e.target.value); if (Number.isFinite(v)) setRefactorConfig({ layerExtractionMaxLines: v }); }}
                               className="w-full mt-0.5 px-2 py-1 bg-studio-bg border border-studio-border rounded text-xs" />
                           </label>
                           <label className="block">
                             <span className="text-[10px] text-studio-muted">Max Complexity</span>
                             <input type="number" value={refactorConfig.layerExtractionMaxComplexity}
-                              onChange={(e) => setRefactorConfig({ layerExtractionMaxComplexity: Number(e.target.value) })}
+                              onChange={(e) => { const v = Number(e.target.value); if (Number.isFinite(v)) setRefactorConfig({ layerExtractionMaxComplexity: v }); }}
                               className="w-full mt-0.5 px-2 py-1 bg-studio-bg border border-studio-border rounded text-xs" />
                           </label>
                           <label className="block">
                             <span className="text-[10px] text-studio-muted">Max Dependents</span>
                             <input type="number" value={refactorConfig.layerExtractionMaxDependents}
-                              onChange={(e) => setRefactorConfig({ layerExtractionMaxDependents: Number(e.target.value) })}
+                              onChange={(e) => { const v = Number(e.target.value); if (Number.isFinite(v)) setRefactorConfig({ layerExtractionMaxDependents: v }); }}
                               className="w-full mt-0.5 px-2 py-1 bg-studio-bg border border-studio-border rounded text-xs" />
                           </label>
                         </div>
@@ -861,7 +861,7 @@ export function ModelModeSelector() {
                         <input
                           type="number"
                           value={refactorConfig.maxDependentsForAutomatic}
-                          onChange={(e) => setRefactorConfig({ maxDependentsForAutomatic: Number(e.target.value) })}
+                          onChange={(e) => { const v = Number(e.target.value); if (Number.isFinite(v)) setRefactorConfig({ maxDependentsForAutomatic: v }); }}
                           className="w-16 px-2 py-1 bg-studio-bg border border-studio-border rounded text-xs"
                         />
                       </label>

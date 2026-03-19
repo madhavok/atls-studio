@@ -3,7 +3,7 @@ export async function executeWithConcurrency<T>(
   limit: number,
   abortSignal?: AbortSignal
 ): Promise<T[]> {
-  const results: T[] = new Array(tasks.length);
+  const results: (T | undefined)[] = new Array(tasks.length);
   let currentIndex = 0;
 
   // Resolve immediately when abort fires so we stop waiting for in-flight tasks
@@ -40,5 +40,7 @@ export async function executeWithConcurrency<T>(
   } else {
     await Promise.all(runners);
   }
-  return results;
+
+  // Filter out undefined slots from aborted tasks
+  return results.filter((r): r is T => r !== undefined);
 }

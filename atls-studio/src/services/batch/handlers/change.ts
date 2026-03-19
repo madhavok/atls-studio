@@ -191,8 +191,8 @@ export function invalidateStaleHashes(result: unknown): void {
     if (staleHashes.length > 0) {
       useContextStore.getState().invalidateStaleHashes(staleHashes);
     }
-  } catch {
-    // best-effort
+  } catch (e) {
+    console.warn('[change] post-edit invalidation failed:', e);
   }
 }
 
@@ -318,8 +318,8 @@ export function extractEditLessons(result: unknown, params: Record<string, unkno
 
     evictLessonNamespace(store, 'err:', LESSON_BB_ERR_CAP);
     evictLessonNamespace(store, 'fix:', LESSON_BB_FIX_CAP);
-  } catch {
-    // best-effort
+  } catch (e) {
+    console.warn('[change] lesson extraction failed:', e);
   }
 }
 
@@ -361,8 +361,8 @@ function recordEditSummary(result: unknown, params: Record<string, unknown>): vo
     }
 
     evictLessonNamespace(store, 'edit:', LESSON_BB_EDIT_CAP);
-  } catch {
-    // best-effort
+  } catch (e) {
+    console.warn('[change] edit lesson recording failed:', e);
   }
 }
 
@@ -663,7 +663,8 @@ async function resolveTargetFiles(
             rawRef: ref,
             sessionId,
           });
-        } catch {
+        } catch (e) {
+          console.warn('[change] fallback hash resolve failed for', ref, e);
           return null;
         }
       }));
@@ -865,7 +866,7 @@ function inferEditOperationForValidation(params: Record<string, unknown>): strin
   try {
     return resolveEditOperation(params).operation;
   } catch {
-    return Array.isArray(params.line_edits) ? 'draft' : 'draft';
+    return 'draft';
   }
 }
 

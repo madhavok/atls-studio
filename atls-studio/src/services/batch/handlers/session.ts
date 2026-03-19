@@ -156,8 +156,8 @@ export const handleCompact: OpHandler = async (params, ctx) => {
           rawRef: `h:${chunkHash}:sig`,
         }, READ_TIMEOUT_MS);
         if (resolved?.content) sigContentByRef.set(rawRef, resolved.content);
-      } catch {
-        // fallback to pointer tier for this chunk
+      } catch (e) {
+        console.warn(`[session] sig resolution failed for ${rawRef}:`, e);
       }
     }
   }
@@ -202,7 +202,8 @@ export const handleStage: OpHandler = async (params, ctx) => {
             staged.push(rawRef);
           } else failed.push(rawRef);
         } else failed.push(rawRef);
-      } catch {
+      } catch (e) {
+        console.warn(`[session] stage resolve failed for ${rawRef}:`, e);
         failed.push(rawRef);
       }
     }
@@ -270,7 +271,7 @@ export const handleStage: OpHandler = async (params, ctx) => {
             const retryResult = await ctx.atlsBatchQuery('read_lines', { hash: newHash, lines, file_path: sourcePath, context_lines: contextLines });
             r = retryResult as Record<string, unknown>;
           }
-        } catch { /* fall through to original stale error */ }
+        } catch (e) { console.warn(`[session] stale auto-refresh failed for ${sourcePath}:`, e); }
         if (r.error === 'stale') {
           return err(`stage h:${cleanHash}: file changed on disk and auto-refresh failed — re-read first`);
         }
@@ -293,7 +294,7 @@ export const handleStage: OpHandler = async (params, ctx) => {
           sourcePath = sourcePath || entry.source || 'blackboard';
         }
       }
-    } catch { /* fall through */ }
+    } catch (e) { console.warn(`[session] chatDb content lookup failed for h:${cleanHash}:`, e); }
   }
 
   if (!resolvedContent) return err(`stage: h:${cleanHash} not found — load or read the file first`);
