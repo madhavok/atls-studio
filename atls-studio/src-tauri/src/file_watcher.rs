@@ -84,7 +84,8 @@ pub async fn start_file_watcher(
 
     let (tx, rx) = std::sync::mpsc::channel();
 
-    let mut debouncer = new_debouncer(Duration::from_millis(500), tx)
+    let debounce_ms = if cfg!(target_os = "macos") { 800 } else { 500 };
+    let mut debouncer = new_debouncer(Duration::from_millis(debounce_ms), tx)
         .map_err(|e| format!("Failed to create file watcher: {}", e))?;
 
     debouncer.watcher()
@@ -119,7 +120,13 @@ pub async fn start_file_watcher(
                             !path_str.contains("node_modules") &&
                             !path_str.contains(".git") &&
                             !path_str.contains("target") &&
-                            !path_str.contains("__pycache__")
+                            !path_str.contains("__pycache__") &&
+                            !path_str.contains("/dist/") &&
+                            !path_str.contains("\\dist\\") &&
+                            !path_str.contains("/build/") &&
+                            !path_str.contains("\\build\\") &&
+                            !path_str.contains("/.next/") &&
+                            !path_str.contains("\\.next\\")
                         })
                         .map(|e| e.path)
                         .collect();

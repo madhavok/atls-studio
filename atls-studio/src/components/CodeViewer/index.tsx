@@ -313,8 +313,20 @@ export function CodeViewer() {
       renderLineHighlight: 'line',
       scrollBeyondLastLine: false,
       wordWrap: 'on',
-      automaticLayout: true,
+      automaticLayout: false,
     });
+
+    // Debounced layout on container resize instead of automaticLayout
+    const container = editor.getDomNode()?.parentElement;
+    if (container) {
+      let layoutTimer: ReturnType<typeof setTimeout> | null = null;
+      const ro = new ResizeObserver(() => {
+        if (layoutTimer) clearTimeout(layoutTimer);
+        layoutTimer = setTimeout(() => editor.layout(), 100);
+      });
+      ro.observe(container);
+      editor.onDidDispose(() => ro.disconnect());
+    }
 
     // Add Ctrl+S save command
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
@@ -596,7 +608,7 @@ export function CodeViewer() {
                       lineNumbers: 'on',
                       renderLineHighlight: 'line',
                       scrollBeyondLastLine: false,
-                      automaticLayout: true,
+                      automaticLayout: false,
                     }}
                   />
                   

@@ -87,43 +87,29 @@ function App() {
     setBottomHeight,
   });
 
-  // Prevent unwanted scroll/zoom gestures at app level
+  // Prevent Ctrl/Cmd+wheel zoom at document level (minimal overhead)
   useEffect(() => {
-    const root = rootRef.current;
-    if (!root) return;
-
-    // Prevent Ctrl+wheel zoom but allow normal scrolling everywhere
     const handleWheel = (e: WheelEvent) => {
       if (e.ctrlKey || e.metaKey) {
         e.preventDefault();
       }
     };
 
-    // Prevent pinch-to-zoom gesture
-    const handleGestureStart = (e: Event) => {
+    // Prevent WebKit pinch-to-zoom gestures (macOS WKWebView)
+    const handleGesture = (e: Event) => {
       e.preventDefault();
     };
 
-    // Prevent touchmove at root level (allows within scrollable areas)
-    const handleTouchMove = (e: TouchEvent) => {
-      if (e.touches.length > 1) {
-        // Multi-touch (pinch) - always prevent
-        e.preventDefault();
-      }
-    };
-
-    root.addEventListener('wheel', handleWheel, { passive: false });
-    root.addEventListener('gesturestart', handleGestureStart);
-    root.addEventListener('gesturechange', handleGestureStart);
-    root.addEventListener('gestureend', handleGestureStart);
-    root.addEventListener('touchmove', handleTouchMove, { passive: false });
+    document.addEventListener('wheel', handleWheel, { passive: false });
+    document.addEventListener('gesturestart', handleGesture);
+    document.addEventListener('gesturechange', handleGesture);
+    document.addEventListener('gestureend', handleGesture);
 
     return () => {
-      root.removeEventListener('wheel', handleWheel);
-      root.removeEventListener('gesturestart', handleGestureStart);
-      root.removeEventListener('gesturechange', handleGestureStart);
-      root.removeEventListener('gestureend', handleGestureStart);
-      root.removeEventListener('touchmove', handleTouchMove);
+      document.removeEventListener('wheel', handleWheel);
+      document.removeEventListener('gesturestart', handleGesture);
+      document.removeEventListener('gesturechange', handleGesture);
+      document.removeEventListener('gestureend', handleGesture);
     };
   }, []);
   
@@ -288,7 +274,7 @@ function App() {
     <div 
       ref={rootRef}
       className={`h-screen w-screen flex flex-col bg-studio-bg text-studio-text overflow-hidden ${isMac ? 'mac-style' : 'win-style'}`}
-      style={{ touchAction: 'none', overscrollBehavior: 'none' }}
+      style={{ touchAction: 'manipulation', overscrollBehavior: 'none' }}
     >
       {/* macOS: Traffic lights + drag region */}
       {isMac && (

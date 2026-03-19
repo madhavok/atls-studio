@@ -629,7 +629,7 @@ export const useAppStore = create<AppState>((set) => ({
   setProjectPath: (path) => set({ projectPath: path }),
   atlsInitialized: false,
   setAtlsInitialized: (initialized) => set({ atlsInitialized: initialized }),
-  projectHistory: loadProjectHistory(),
+  projectHistory: [],
   addToProjectHistory: (path) => set((state) => {
     const name = path.split(/[/\\]/).pop() || path;
     const entry: ProjectHistoryEntry = {
@@ -1199,12 +1199,7 @@ export const useAppStore = create<AppState>((set) => ({
     designPreviewSessionId: null,
   }),
   setSelectedAgent: (agentId) => set({ selectedAgent: agentId }),
-  customAgents: (() => {
-    const saved = typeof localStorage !== 'undefined'
-      ? localStorage.getItem('atls-studio-custom-agents')
-      : null;
-    return saved ? JSON.parse(saved) : [];
-  })(),
+  customAgents: [],
   addCustomAgent: (agent) => set((state) => {
     const newAgent: Agent = {
       ...agent,
@@ -1287,3 +1282,20 @@ export const useAppStore = create<AppState>((set) => ({
     toasts: state.toasts.filter((t) => t.id !== id),
   })),
 }));
+
+// Deferred rehydration: load non-visual state after initial render to avoid blocking startup
+queueMicrotask(() => {
+  const history = loadProjectHistory();
+  if (history.length > 0) {
+    useAppStore.setState({ projectHistory: history });
+  }
+
+  try {
+    const savedAgents = typeof localStorage !== 'undefined'
+      ? localStorage.getItem('atls-studio-custom-agents')
+      : null;
+    if (savedAgents) {
+      useAppStore.setState({ customAgents: JSON.parse(savedAgents) });
+    }
+  } catch { /* ignore corrupt data */ }
+});

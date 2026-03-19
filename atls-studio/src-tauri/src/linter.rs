@@ -110,7 +110,7 @@ const COMPILER_LINT_TIMEOUT_MS: u64 = 30000;
 /// times out or fails to spawn, preventing hangs from missing tools or
 /// Windows Defender delays.
 fn run_lint_command(mut cmd: Command, timeout_ms: u64) -> Option<std::process::Output> {
-    use std::time::{Duration, Instant};
+    use std::time::Duration;
 
     #[cfg(windows)]
     cmd.creation_flags(CREATE_NO_WINDOW);
@@ -126,21 +126,18 @@ fn run_lint_command(mut cmd: Command, timeout_ms: u64) -> Option<std::process::O
         }
     };
 
-    let deadline = Duration::from_millis(timeout_ms);
-    let start = Instant::now();
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(child.wait_with_output());
+    });
 
-    // Use wait_with_output but with a thread-based timeout
-    let handle = std::thread::spawn(move || child.wait_with_output());
-
-    loop {
-        if handle.is_finished() {
-            return handle.join().ok()?.ok();
-        }
-        if start.elapsed() >= deadline {
+    match rx.recv_timeout(Duration::from_millis(timeout_ms)) {
+        Ok(Ok(output)) => Some(output),
+        Ok(Err(_)) => None,
+        Err(_) => {
             eprintln!("[Linter] Command timed out after {}ms", timeout_ms);
-            return None;
+            None
         }
-        std::thread::sleep(Duration::from_millis(50));
     }
 }
 

@@ -8,24 +8,21 @@ export function WindowControls() {
   const [hovering, setHovering] = useState(false);
   const appWindowRef = useRef<TauriWindow | null>(null);
 
-  if (!appWindowRef.current) {
-    try { appWindowRef.current = getCurrentWindow(); }
-    catch { /* Tauri runtime not yet available */ }
-  }
-
   useEffect(() => {
+    if (!appWindowRef.current) {
+      try { appWindowRef.current = getCurrentWindow(); }
+      catch { return; }
+    }
     const appWindow = appWindowRef.current;
-    if (!appWindow) return;
 
     appWindow.isMaximized().then(setMaximized).catch(e => console.warn('[WindowControls] isMaximized failed:', e));
 
     let unlisten: (() => void) | undefined;
     const setup = async () => {
-      const u1 = await appWindow.onResized(async () => {
+      unlisten = await appWindow.onResized(async () => {
         const m = await appWindow.isMaximized();
         setMaximized(m);
       });
-      unlisten = u1;
     };
     setup();
     return () => { unlisten?.(); };

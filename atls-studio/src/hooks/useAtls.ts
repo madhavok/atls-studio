@@ -365,11 +365,14 @@ export function useAtls() {
             const pendingPathSet = new Set(pendingPaths.map((path) => path.toLowerCase()));
             const currentCtxState = useContextStore.getState();
             const staleEngrams: string[] = [];
-            for (const [, chunk] of currentCtxState.chunks) {
-              if (!chunk.source || chunk.suspectSince == null) continue;
-              const srcNorm = normPath(chunk.source).toLowerCase();
-              if (!pendingPathSet.has(srcNorm)) continue;
-              staleEngrams.push(`h:${chunk.shortHash} ${chunk.source}`);
+            if (pendingPathSet.size > 0 && currentCtxState.chunks.size > 0) {
+              for (const [, chunk] of currentCtxState.chunks) {
+                if (!chunk.source || chunk.suspectSince == null) continue;
+                const srcNorm = normPath(chunk.source).toLowerCase();
+                if (!pendingPathSet.has(srcNorm)) continue;
+                staleEngrams.push(`h:${chunk.shortHash} ${chunk.source}`);
+                if (staleEngrams.length >= 20) break;
+              }
             }
             if (staleEngrams.length > 0) {
               const ts = new Date().toISOString().slice(11, 19);

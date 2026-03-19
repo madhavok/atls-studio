@@ -8,7 +8,7 @@
  * - Controls for pause/resume/cancel
  */
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useSwarmStore, type SwarmTask, type AgentRole, type TaskStatus } from '../../stores/swarmStore';
 import { useAppStore } from '../../stores/appStore';
 import { rateLimiter } from '../../services/rateLimiter';
@@ -335,13 +335,19 @@ export function SwarmPanel() {
     }
   }, [projectPath, sessionId, agentConfigs, settings.selectedModel, isApproving, approvePlan]);
 
-  // Update stats periodically
+  // Update stats periodically (only triggers re-render on actual data change)
+  const prevRateLimitRef = useRef<string>('');
   useEffect(() => {
     if (!isActive) return;
     
     const interval = setInterval(() => {
       useSwarmStore.getState().updateStats();
-      setRateLimitInfo(rateLimiter.getAllStates());
+      const next = rateLimiter.getAllStates();
+      const serialized = JSON.stringify(next);
+      if (serialized !== prevRateLimitRef.current) {
+        prevRateLimitRef.current = serialized;
+        setRateLimitInfo(next);
+      }
     }, 1000);
     
     return () => clearInterval(interval);

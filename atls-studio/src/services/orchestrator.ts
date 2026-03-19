@@ -1404,7 +1404,7 @@ Based on the research above, create a detailed task plan.
           this.completionInterval = null;
           resolve();
         }
-      }, 500);
+      }, 1000);
       this.completionInterval = checkInterval;
     });
   }
