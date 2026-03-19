@@ -828,7 +828,7 @@ export function useChatPersistence() {
   const restoreToPoint = useCallback(async (messageId: string, editedContent?: string): Promise<string | null> => {
     const appState = useAppStore.getState();
     const sessionId = appState.currentSessionId;
-    if (!sessionId || !chatDb.isInitialized()) return null;
+    const hasDb = sessionId && chatDb.isInitialized();
 
     try {
       // 1. Stash current state for undo
@@ -841,8 +841,8 @@ export function useChatPersistence() {
         restoredAtMessageId: messageId,
       });
 
-      // 2. Load the restore point snapshot (saved when this message was originally sent)
-      const restoreSnapshot = await loadRestorePoint(sessionId, messageId);
+      // 2. Load the restore point snapshot if DB is available
+      const restoreSnapshot = hasDb ? await loadRestorePoint(sessionId, messageId) : null;
 
       // 3. Truncate messages in appStore.
       // When editing: truncates *before* the target (exclusive) so handleSend re-adds it.
@@ -855,18 +855,18 @@ export function useChatPersistence() {
         console.log('[ChatPersistence] Restored memory snapshot for message:', messageId);
       }
 
-      // 5. Clean up DB
-      if (editedContent !== undefined) {
-        // Edit: delete the target message and everything after (handleSend will re-add it)
-        await chatDb.deleteMessagesFrom(sessionId, messageId);
-      } else {
-        // Plain restore: keep the target, delete only what follows
-        await chatDb.deleteMessagesAfter(sessionId, messageId);
-      }
+      // 5. Clean up DB (if available)
+      if (hasDb) {
+        if (editedContent !== undefined) {
+          await chatDb.deleteMessagesFrom(sessionId, messageId);
+        } else {
+          await chatDb.deleteMessagesAfter(sessionId, messageId);
+        }
 
-      // 6. Re-save the session with truncated state
-      lastSaveRef.current = 0;
-      await saveSession();
+        // 6. Re-save the session with truncated state
+        lastSaveRef.current = 0;
+        await saveSession();
+      }
 
       console.log('[ChatPersistence] Restored to message:', messageId);
       return editedContent ?? null;
