@@ -4,7 +4,8 @@
  */
 
 import { invoke } from '@tauri-apps/api/core';
-import { listen, UnlistenFn } from '@tauri-apps/api/event';
+import { type UnlistenFn } from '@tauri-apps/api/event';
+import { safeListen } from '../utils/tauri';
 import type { ContextUsage, StreamChunk } from '../stores/appStore';
 import { useAppStore } from '../stores/appStore';
 import { useContextStore } from '../stores/contextStore';
@@ -110,7 +111,7 @@ async function runStreamRound(
     resolveDone = resolve;
   });
 
-  const unlisten = await listen<StreamChunk>(`chat-chunk-${streamId}`, (event) => {
+  const unlisten = await safeListen<StreamChunk>(`chat-chunk-${streamId}`, (event) => {
     const chunk = event.payload;
     switch (chunk.type) {
       case 'text_delta':

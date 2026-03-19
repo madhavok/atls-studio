@@ -8,7 +8,8 @@
  * Pattern inspired by Vercel AI SDK v5 ChatTransport.
  */
 
-import { listen, type UnlistenFn } from '@tauri-apps/api/event';
+import { type UnlistenFn } from '@tauri-apps/api/event';
+import { safeListen } from '../utils/tauri';
 import type { StreamChunk } from '../stores/appStore';
 
 export interface StreamParams {
@@ -58,7 +59,7 @@ export async function createTauriChatStream(
     },
   });
 
-  unlisten = await listen<StreamChunk>(`chat-chunk-${streamId}`, (event) => {
+  unlisten = await safeListen<StreamChunk>(`chat-chunk-${streamId}`, (event) => {
     const chunk = event.payload;
     if (!streamController) return;
     try {

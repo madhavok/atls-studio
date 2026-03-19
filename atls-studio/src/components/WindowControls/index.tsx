@@ -1,15 +1,22 @@
-import { useState, useEffect, useCallback } from 'react';
-import { getCurrentWindow } from '@tauri-apps/api/window';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { getCurrentWindow, type Window as TauriWindow } from '@tauri-apps/api/window';
 import { useOS } from '../../hooks/useOS';
-
-const appWindow = getCurrentWindow();
 
 export function WindowControls() {
   const { isMac, isWindows, isLinux } = useOS();
   const [maximized, setMaximized] = useState(false);
   const [hovering, setHovering] = useState(false);
+  const appWindowRef = useRef<TauriWindow | null>(null);
+
+  if (!appWindowRef.current) {
+    try { appWindowRef.current = getCurrentWindow(); }
+    catch { /* Tauri runtime not yet available */ }
+  }
 
   useEffect(() => {
+    const appWindow = appWindowRef.current;
+    if (!appWindow) return;
+
     appWindow.isMaximized().then(setMaximized).catch(e => console.warn('[WindowControls] isMaximized failed:', e));
 
     let unlisten: (() => void) | undefined;
@@ -24,9 +31,9 @@ export function WindowControls() {
     return () => { unlisten?.(); };
   }, []);
 
-  const handleMinimize = useCallback(() => { appWindow.minimize(); }, []);
-  const handleMaximize = useCallback(() => { appWindow.toggleMaximize(); }, []);
-  const handleClose = useCallback(() => { appWindow.close(); }, []);
+  const handleMinimize = useCallback(() => { appWindowRef.current?.minimize(); }, []);
+  const handleMaximize = useCallback(() => { appWindowRef.current?.toggleMaximize(); }, []);
+  const handleClose = useCallback(() => { appWindowRef.current?.close(); }, []);
 
   if (isMac) return <MacControls hovering={hovering} setHovering={setHovering} maximized={maximized} onMinimize={handleMinimize} onMaximize={handleMaximize} onClose={handleClose} />;
   if (isLinux) return <LinuxControls maximized={maximized} onMinimize={handleMinimize} onMaximize={handleMaximize} onClose={handleClose} />;

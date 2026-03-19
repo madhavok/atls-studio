@@ -1,6 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { open, save } from '@tauri-apps/plugin-dialog';
-import { listen, UnlistenFn } from '@tauri-apps/api/event';
+import { type UnlistenFn } from '@tauri-apps/api/event';
+import { safeListen } from '../utils/tauri';
 import { useAppStore, FileNode, Issue, ProjectProfile, FocusMatrix, IssueCounts, ALL_CATEGORIES } from '../stores/appStore';
 import { useContextStore, setBulkRevisionResolver } from '../stores/contextStore';
 import { useRef, useCallback, useEffect } from 'react';
@@ -128,7 +129,7 @@ async function processScanQueue() {
         currentScanRoot: job.rootPath, scanQueueTotal: total, scanQueueCompleted: completed,
       });
 
-      progressUnlisten = await listen<ScanProgressEvent>('scan_progress', (ev) => {
+      progressUnlisten = await safeListen<ScanProgressEvent>('scan_progress', (ev) => {
         const qTotal = completed + scanQueue.length + 1;
         setState({
           isScanning: true,
@@ -219,7 +220,7 @@ export function useAtls() {
       console.log('ATLS initialized:', result);
       setAtlsInitialized(true);
 
-      const indexUnlisten = await listen<{
+      const indexUnlisten = await safeListen<{
         phase: string; total: number; indexed?: number; removed?: number; current_file?: string;
       }>('index_progress', (event) => {
         const p = event.payload;
@@ -306,7 +307,7 @@ export function useAtls() {
   useEffect(() => {
     let unlisten: UnlistenFn | null = null;
     (async () => {
-      unlisten = await listen<CanonicalRevisionChangedEvent>('canonical_revision_changed', (ev) => {
+      unlisten = await safeListen<CanonicalRevisionChangedEvent>('canonical_revision_changed', (ev) => {
         const { path, revision } = ev.payload;
         pendingChangedPathsRef.current.delete(normPath(path).toLowerCase());
         const stats = useContextStore.getState().reconcileSourceRevision(path, revision);
@@ -331,7 +332,7 @@ export function useAtls() {
   useEffect(() => {
     let unlisten: UnlistenFn | null = null;
     (async () => {
-      unlisten = await listen<FileTreeChangedEvent>('file_tree_changed', (ev) => {
+      unlisten = await safeListen<FileTreeChangedEvent>('file_tree_changed', (ev) => {
         const changedPaths = Array.isArray(ev.payload.paths)
           ? [...new Map(
             ev.payload.paths

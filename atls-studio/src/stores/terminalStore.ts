@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { invoke } from '@tauri-apps/api/core';
-import { listen, UnlistenFn } from '@tauri-apps/api/event';
+import { type UnlistenFn } from '@tauri-apps/api/event';
+import { safeListen } from '../utils/tauri';
 import { useAppStore } from './appStore';
 
 // Strip ANSI escape sequences from PTY output for AI consumption
@@ -589,13 +590,12 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
   // Set up output listener for a terminal
   setupOutputListener: async (id: string) => {
     // Listen for PTY output - triggers completion detection for AI commands
-    const outputUnlisten = await listen<string>(`pty-output-${id}`, (event) => {
-      // Append to buffer and check for command completion markers
+    const outputUnlisten = await safeListen<string>(`pty-output-${id}`, (event) => {
       appendOutputDirect(id, event.payload);
     });
 
     // Listen for PTY exit
-    const exitUnlisten = await listen(`pty-exit-${id}`, () => {
+    const exitUnlisten = await safeListen(`pty-exit-${id}`, () => {
       set(state => {
         const newTerminals = new Map(state.terminals);
         const terminal = newTerminals.get(id);

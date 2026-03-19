@@ -6,7 +6,8 @@
  */
 
 import { invoke } from '@tauri-apps/api/core';
-import { listen, type UnlistenFn } from '@tauri-apps/api/event';
+import { type UnlistenFn } from '@tauri-apps/api/event';
+import { safeListen } from '../utils/tauri';
 import type { ContextUsage, StreamChunk, AIProvider } from '../stores/appStore';
 import { useAppStore } from '../stores/appStore';
 import { useContextStore } from '../stores/contextStore';
@@ -149,7 +150,7 @@ async function runSubagentRound(
     resolveDone = resolve;
   });
 
-  const unlisten: UnlistenFn = await listen<StreamChunk>(
+  const unlisten: UnlistenFn = await safeListen<StreamChunk>(
     `chat-chunk-${streamId}`,
     (event) => {
       const chunk = event.payload;

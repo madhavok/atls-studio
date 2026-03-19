@@ -4,7 +4,8 @@ import { useState, useCallback, useEffect, useRef } from 'react';
 import Editor, { OnMount, Monaco } from '@monaco-editor/react';
 import type { editor } from 'monaco-editor';
 import { invoke } from '@tauri-apps/api/core';
-import { listen, type UnlistenFn } from '@tauri-apps/api/event';
+import { type UnlistenFn } from '@tauri-apps/api/event';
+import { safeListen } from '../../utils/tauri';
 import { useAppStore } from '../../stores/appStore';
 import { MarkdownMessage } from '../AiChat/MarkdownMessage';
 import { AtlsInternals, INTERNALS_TAB_ID } from '../AtlsInternals';
@@ -188,7 +189,7 @@ export function CodeViewer() {
   useEffect(() => {
     let unlisten: UnlistenFn | null = null;
     (async () => {
-      unlisten = await listen<CanonicalRevisionChangedEvent>('canonical_revision_changed', async (ev) => {
+      unlisten = await safeListen<CanonicalRevisionChangedEvent>('canonical_revision_changed', async (ev) => {
         const changedPath = ev.payload.path;
         const changedNorm = changedPath.replace(/\\/g, '/');
 
