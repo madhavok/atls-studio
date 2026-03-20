@@ -1200,8 +1200,10 @@ export const useContextStore = create<ContextStoreState>()(
       // Check for hash collision with different content (rare but possible)
       const existing = newChunks.get(hash);
       if (existing && existing.content !== content) {
-        const disambiguated = hash + '_' + (++_collisionCounter).toString(36);
-        newChunks.set(disambiguated, { ...chunk, hash: disambiguated });
+        const suffix = (++_collisionCounter).toString(36);
+        const disambiguated = hash + '_' + suffix;
+        const disambiguatedShort = (hash.slice(0, SHORT_HASH_LEN - suffix.length - 1) + '_' + suffix).slice(0, SHORT_HASH_LEN);
+        newChunks.set(disambiguated, { ...chunk, hash: disambiguated, shortHash: disambiguatedShort });
         return { chunks: newChunks };
       }
 
@@ -3908,11 +3910,23 @@ export const useContextStore = create<ContextStoreState>()(
   queryBySetSelector: (selector, scope: 'active' | 'reachable' | 'all' = 'active') => {
     const state = get();
 
-    // Build the candidate pool based on scope
-    const pool: ContextChunk[] = Array.from(state.chunks.values());
+    // Build the candidate pool based on scope, deduplicating by hash key.
+    // Active chunks take priority over archived; archived over staged.
+    const seen = new Set<string>();
+    const pool: ContextChunk[] = [];
+    for (const [key, chunk] of state.chunks) {
+      seen.add(key);
+      pool.push(chunk);
+    }
     if (scope === 'reachable' || scope === 'all') {
-      pool.push(...Array.from(state.archivedChunks.values()));
+      for (const [key, chunk] of state.archivedChunks) {
+        if (seen.has(key)) continue;
+        seen.add(key);
+        pool.push(chunk);
+      }
       for (const [key, snippet] of state.stagedSnippets) {
+        if (seen.has(key)) continue;
+        seen.add(key);
         pool.push({
           hash: key, shortHash: key.slice(0, 8), type: 'smart',
           content: snippet.content, tokens: snippet.tokens, source: snippet.source,

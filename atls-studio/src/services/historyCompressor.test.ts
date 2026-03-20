@@ -217,4 +217,33 @@ describe('deflateToolResults', () => {
     expect(toolResults[0].content).toContain('[->');
     expect(toolResults[1].content).toContain('[->');
   });
+
+  it('deflates using source-match when content hash differs', () => {
+    const store = useContextStore.getState();
+    // Add a chunk whose source matches a tool description
+    store.addChunk('full file content for app.ts\n'.repeat(10), 'smart', 'read.context:src/app.ts');
+
+    const toolResults = [
+      { type: 'tool_result', tool_use_id: 'tu_read', content: 'serialized differently but same file' },
+    ];
+    const history: Array<{ role: string; content: unknown }> = [
+      { role: 'assistant', content: [{ type: 'tool_use', id: 'tu_read', name: 'read', input: { path: 'src/app.ts' } }] },
+    ];
+
+    // The content hash won't match, but description resolves to "read:src/app.ts"
+    // which won't match "read.context:src/app.ts" exactly — this tests that the
+    // deflation path doesn't crash and returns 0 when no match is found.
+    const count = deflateToolResults(toolResults, history);
+    // Source "read:src/app.ts" !== "read.context:src/app.ts" so no match
+    expect(count).toBe(0);
+
+    // Now test with an exact source match
+    store.addChunk('exact match content\n'.repeat(10), 'result', 'read:src/app.ts');
+    const toolResults2 = [
+      { type: 'tool_result', tool_use_id: 'tu_read', content: 'different serialization' },
+    ];
+    const count2 = deflateToolResults(toolResults2, history);
+    expect(count2).toBe(1);
+    expect(toolResults2[0].content).toContain('[->');
+  });
 });

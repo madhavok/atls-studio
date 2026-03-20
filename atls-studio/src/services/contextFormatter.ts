@@ -237,15 +237,13 @@ export function formatWorkingMemory(input: FormatterInput): string {
     lines.push('');
   }
 
-  // Staged snippets (cached at 10% cost, managed by AI)
+  // Staged snippets: full bodies are injected by assembleProviderMessages via
+  // getStagedBlock(). Only emit a summary line here so the model sees total cost
+  // without duplicating the staged content in the prompt.
   if (stagedSnippets && stagedSnippets.size > 0) {
     let stagedTotal = 0;
     stagedSnippets.forEach(s => stagedTotal += s.tokens);
-    lines.push(`## STAGED (cached @ 10% cost, ${(stagedTotal / 1000).toFixed(1)}k tokens)`);
-    stagedSnippets.forEach((snippet, key) => {
-      const lineRange = snippet.lines ? `:${snippet.lines}` : '';
-      lines.push(`${key} ${snippet.source}${lineRange} (${snippet.tokens}tk)${formatSuspectHint(snippet.suspectSince, snippet.freshness, snippet.freshnessCause)}${formatRebindHint(snippet.lastRebind)}`);
-    });
+    lines.push(`Staged: ${stagedSnippets.size} snippets, ${(stagedTotal / 1000).toFixed(1)}k tk (bodies in ## STAGED block above)`);
     lines.push('');
   }
 

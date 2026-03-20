@@ -110,12 +110,16 @@ function findExistingChunkBySource(
   description: string,
 ): { hash: string; shortHash: string; digest?: string } | null {
   const descNorm = description.toLowerCase();
+  let best: { hash: string; shortHash: string; digest?: string; compacted: boolean; lastAccessed: number } | null = null;
   for (const [, chunk] of store.chunks) {
-    if (chunk.source && chunk.source.toLowerCase() === descNorm) {
-      return { hash: chunk.hash, shortHash: chunk.shortHash, digest: chunk.digest };
+    if (!chunk.source || chunk.source.toLowerCase() !== descNorm) continue;
+    if (!best
+        || (!chunk.compacted && best.compacted)
+        || (chunk.compacted === best.compacted && chunk.lastAccessed > best.lastAccessed)) {
+      best = { hash: chunk.hash, shortHash: chunk.shortHash, digest: chunk.digest, compacted: !!chunk.compacted, lastAccessed: chunk.lastAccessed };
     }
   }
-  return null;
+  return best ? { hash: best.hash, shortHash: best.shortHash, digest: best.digest } : null;
 }
 
 /**

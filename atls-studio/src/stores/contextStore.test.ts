@@ -823,3 +823,65 @@ describe('getStagedBlock active engram dedup', () => {
     expect(block).not.toContain('[content in active engram');
   });
 });
+
+// ---------------------------------------------------------------------------
+// Hash collision disambiguation
+// ---------------------------------------------------------------------------
+
+describe('hash collision disambiguation', () => {
+  beforeEach(() => resetStore());
+
+  it('assigns a unique shortHash when content-hash collides', () => {
+    const fixedHash = 'deadbeef12345678';
+    useContextStore.getState().addChunk('original content', 'result', 'src/a.ts', undefined, undefined, fixedHash);
+    expect(useContextStore.getState().chunks.has(fixedHash)).toBe(true);
+
+    // Tamper the stored entry's content so the next addChunk with the same
+    // backendHash sees different content and enters the collision branch.
+    useContextStore.setState(state => {
+      const chunks = new Map(state.chunks);
+      const existing = chunks.get(fixedHash)!;
+      chunks.set(fixedHash, { ...existing, content: 'tampered' });
+      return { chunks };
+    });
+
+    // Re-add with same backendHash but original content → collision
+    useContextStore.getState().addChunk('original content', 'result', 'src/b.ts', undefined, undefined, fixedHash);
+
+    const allChunks = Array.from(useContextStore.getState().chunks.values());
+    const shortHashes = allChunks.map(c => c.shortHash);
+    expect(allChunks.length).toBe(2);
+    expect(new Set(shortHashes).size).toBe(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// queryBySetSelector reachable pool deduplication
+// ---------------------------------------------------------------------------
+
+describe('queryBySetSelector reachable dedup', () => {
+  beforeEach(() => resetStore());
+
+  it('does not return duplicate entries when a chunk exists in both active and archive', () => {
+    const store = useContextStore.getState();
+    const hash = store.addChunk('export const x = 1;', 'smart', 'src/dup.ts');
+
+    // Compact it so it also appears in archivedChunks
+    store.compactChunks([hash]);
+
+    const result = store.queryBySetSelector({ kind: 'all' }, 'reachable');
+    const sourceMatches = result.entries.filter(e => e.source === 'src/dup.ts');
+    expect(sourceMatches.length).toBe(1);
+  });
+
+  it('does not return duplicate entries when a chunk is both active and staged', () => {
+    const store = useContextStore.getState();
+    const content = 'export const y = 2;\n';
+    store.addChunk(content, 'smart', 'src/staged-dup.ts');
+    store.stageSnippet('h:abc12345', content, 'src/staged-dup.ts');
+
+    const result = store.queryBySetSelector({ kind: 'all' }, 'reachable');
+    const hashes = result.hashes;
+    expect(new Set(hashes).size).toBe(hashes.length);
+  });
+});

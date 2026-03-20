@@ -638,14 +638,12 @@ function assembleProviderMessages(
         if (prevMsg) _appendBoundaryMarker(prevMsg);
       }
 
-      if (!isGemini) {
-        useContextStore.getState().markStagedSnippetsUsed();
-        const stagedBlock = useContextStore.getState().getStagedBlock();
-        if (mode !== 'ask' && stagedBlock) {
-          dynamicContextBlock = dynamicContextBlock
-            ? `${stagedBlock}\n\n${dynamicContextBlock}`
-            : stagedBlock;
-        }
+      useContextStore.getState().markStagedSnippetsUsed();
+      const stagedBlock = useContextStore.getState().getStagedBlock();
+      if (mode !== 'ask' && stagedBlock) {
+        dynamicContextBlock = dynamicContextBlock
+          ? `${stagedBlock}\n\n${dynamicContextBlock}`
+          : stagedBlock;
       }
 
       const workingMemory = buildWorkingMemoryBlock();
@@ -2988,8 +2986,10 @@ function _buildBlackboardBlock(): string {
   if (ctxState.blackboardEntries.size === 0) return '';
   const bbLines: string[] = ['## BLACKBOARD'];
   ctxState.blackboardEntries.forEach((entry, key) => {
+    if (key.startsWith('edit:')) return;
     bbLines.push(`${key}: ${entry.content}`);
   });
+  if (bbLines.length <= 1) return '';
   return bbLines.join('\n');
 }
 
@@ -3001,7 +3001,7 @@ function _buildDormantBlock(): string {
   const ctxState = useContextStore.getState();
   const dormantLines: string[] = [];
   ctxState.chunks.forEach(c => {
-    if (c.compacted) {
+    if (c.compacted && c.type !== 'msg:user' && c.type !== 'msg:asst') {
       const src = c.source ? c.source.split(/[/\\]/).pop() || c.source : c.shortHash;
       dormantLines.push(`h:${c.shortHash} ${src} ${c.tokens}tk`);
     }
