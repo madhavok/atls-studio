@@ -384,7 +384,14 @@ export const handleReadLines: OpHandler = async (params, ctx) => {
   const rlHistory = params.history === true;
   try {
     const rlParams: Record<string, unknown> = { hash: rlHash, lines: rlLines, context_lines: requestedContextLines };
-    if (fp || params.file_path) rlParams.file_path = fp || params.file_path;
+    // Always provide file_path to the backend as a fallback for path resolution.
+    // Prefer the explicit param, fall back to looking up the source from context store.
+    let effectiveFp = fp || params.file_path as string | undefined;
+    if (!effectiveFp && rlHash) {
+      const chunk = ctx.store().getChunkForHashRef(rlHash);
+      if (chunk?.source) effectiveFp = chunk.source;
+    }
+    if (effectiveFp) rlParams.file_path = effectiveFp;
     if (rlHistory) rlParams.history = true;
     const rlResult = await ctx.atlsBatchQuery('read_lines', rlParams) as Record<string, unknown>;
     if (rlResult.error) {

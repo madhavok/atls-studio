@@ -236,6 +236,25 @@ impl HashRegistry {
     /// all previous hashes for the same source path forward to this new hash.
     /// Returns the canonical short ref (min 6 chars, adaptive on collision).
     pub fn register(&mut self, hash: String, entry: HashEntry) -> String {
+        // Normalize the source path: strip context-store key prefixes, normalize
+        // separators to forward slashes. This prevents registry mismatches when
+        // the same file is registered with slightly different path forms across
+        // sessions or read modes.
+        let entry = if let Some(ref source) = entry.source {
+            let cleaned = source
+                .trim_start_matches("context:")
+                .trim_start_matches("raw:")
+                .trim_start_matches("smart:")
+                .replace('\\', "/");
+            if cleaned != *source {
+                HashEntry { source: Some(cleaned), ..entry }
+            } else {
+                entry
+            }
+        } else {
+            entry
+        };
+
         // Set up forwarding: if this entry has a source path, forward all
         // previous hashes for that path to this new hash.
         if let Some(ref source) = entry.source {
@@ -1621,14 +1640,50 @@ pub fn peek(
         .trim_start_matches("smart:")
         .to_string();
 
-    let snap = match snapshot_svc.get(project_root, &source) {
-        Ok(s) => s,
-        Err(_) => {
-            return Ok(serde_json::json!({
-                "error": "stale",
-                "file": source,
-                "hint": "File path from hash is invalid or file no longer exists. Re-read the file to get a fresh hash."
-            }));
+    // Try the registry source first; on failure, fall back to file_path_fallback
+    // and resolve_source_file_with_fallback before giving up. This handles the
+    // common case where the registry stored a stale/prefixed path that doesn't
+    // resolve from the current project_root.
+    let (snap, source) = match snapshot_svc.get(project_root, &source) {
+        Ok(s) => (s, source),
+        Err(primary_err) => {
+            // Attempt 1: caller-provided file_path_fallback (direct)
+            let fallback_result = file_path_fallback.and_then(|fp| {
+                let clean = fp.trim_start_matches("context:")
+                    .trim_start_matches("raw:")
+                    .trim_start_matches("smart:");
+                snapshot_svc.get(project_root, clean).ok().map(|s| (s, clean.to_string()))
+            });
+            match fallback_result {
+                Some(ok) => ok,
+                None => {
+                    // Attempt 2: fuzzy path resolution on source, then fallback
+                    let candidates = [Some(source.as_str()), file_path_fallback];
+                    let mut resolved = None;
+                    for candidate in candidates.iter().flatten() {
+                        if let Some((resolved_path, relative)) =
+                            crate::path_utils::resolve_source_file_with_fallback(project_root, candidate)
+                        {
+                            if let Ok(s) = snapshot_svc.get_resolved(&resolved_path, &relative) {
+                                resolved = Some((s, relative));
+                                break;
+                            }
+                        }
+                    }
+                    match resolved {
+                        Some(ok) => ok,
+                        None => {
+                            return Ok(serde_json::json!({
+                                "error": "path_not_found",
+                                "file": source,
+                                "fallback_tried": file_path_fallback.unwrap_or("none"),
+                                "io_error": primary_err,
+                                "hint": "File path from hash is invalid or file no longer exists. Re-read the file to get a fresh hash."
+                            }));
+                        }
+                    }
+                }
+            }
         }
     };
 
@@ -2731,5 +2786,101 @@ mod tests {
 
         assert_eq!(result["content_hash"].as_str(), Some(hash.as_str()));
         assert_eq!(result["h"].as_str(), Some(short_hash.as_str()));
+    }
+
+    #[test]
+    fn test_peek_fallback_when_registry_source_wrong() {
+        let dir = tempfile::tempdir().unwrap();
+        let src_dir = dir.path().join("src");
+        std::fs::create_dir_all(&src_dir).unwrap();
+        let file_path = src_dir.join("app.ts");
+        std::fs::write(&file_path, "line1\nline2\nline3\n").unwrap();
+
+        let content = std::fs::read_to_string(&file_path).unwrap();
+        let hash = content_hash(&content);
+
+        // Register with a WRONG source path (missing src/ prefix)
+        let mut reg = HashRegistry::new();
+        reg.register(hash.clone(), test_entry("app.ts", &content));
+
+        let mut snapshot_svc = crate::snapshot::SnapshotService::new();
+        // Without fallback, peek would fail because "app.ts" doesn't resolve
+        // from project root — but with file_path_fallback = "src/app.ts", it recovers.
+        let result = peek(&reg, dir.path(), &hash, "1-2", Some("src/app.ts"), 0, &mut snapshot_svc).unwrap();
+
+        assert!(result.get("error").is_none(), "expected success but got error: {:?}", result);
+        assert!(result["content"].as_str().unwrap().contains("line1"));
+    }
+
+    #[test]
+    fn test_peek_path_not_found_error_distinct_from_stale() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let mut reg = HashRegistry::new();
+        reg.register("deadbeef12345678".to_string(), test_entry("nonexistent.ts", "content"));
+
+        let mut snapshot_svc = crate::snapshot::SnapshotService::new();
+        let result = peek(&reg, dir.path(), "deadbeef12345678", "1-1", None, 0, &mut snapshot_svc).unwrap();
+
+        // Should be "path_not_found", not the old generic "stale"
+        assert_eq!(result["error"].as_str(), Some("path_not_found"));
+    }
+
+    #[test]
+    fn test_peek_fuzzy_resolve_finds_nested_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let nested = dir.path().join("src").join("components");
+        std::fs::create_dir_all(&nested).unwrap();
+        let file = nested.join("Button.tsx");
+        std::fs::write(&file, "export const Button = () => {};\n").unwrap();
+
+        let content = std::fs::read_to_string(&file).unwrap();
+        let hash = content_hash(&content);
+
+        // Register with an extra prefix that doesn't resolve directly
+        let mut reg = HashRegistry::new();
+        reg.register(hash.clone(), test_entry("myapp/src/components/Button.tsx", &content));
+
+        let mut snapshot_svc = crate::snapshot::SnapshotService::new();
+        let result = peek(&reg, dir.path(), &hash, "1-1", None, 0, &mut snapshot_svc).unwrap();
+
+        assert!(result.get("error").is_none(), "expected fuzzy resolve to succeed: {:?}", result);
+        assert!(result["content"].as_str().unwrap().contains("Button"));
+    }
+
+    #[test]
+    fn test_register_normalizes_source_prefixes() {
+        let mut reg = HashRegistry::new();
+        let entry = HashEntry {
+            source: Some("context:src/demo.ts".to_string()),
+            content: "const x = 1;".to_string(),
+            tokens: 3,
+            lang: None,
+            line_count: 1,
+            symbol_count: None,
+        };
+        reg.register("aabb1122".to_string(), entry);
+
+        let stored = reg.get("aabb1122").unwrap();
+        assert_eq!(stored.source.as_deref(), Some("src/demo.ts"),
+            "context: prefix should be stripped on registration");
+    }
+
+    #[test]
+    fn test_register_normalizes_backslashes() {
+        let mut reg = HashRegistry::new();
+        let entry = HashEntry {
+            source: Some("src\\components\\App.tsx".to_string()),
+            content: "const App = () => {};".to_string(),
+            tokens: 5,
+            lang: None,
+            line_count: 1,
+            symbol_count: None,
+        };
+        reg.register("ccdd3344".to_string(), entry);
+
+        let stored = reg.get("ccdd3344").unwrap();
+        assert_eq!(stored.source.as_deref(), Some("src/components/App.tsx"),
+            "backslashes should be normalized to forward slashes on registration");
     }
 }
