@@ -34,6 +34,60 @@ describe('compressToolLoopHistory', () => {
     expect(history[5]?.content).toBe(latestAssistant);
     expect(after).toBeLessThan(before);
   });
+
+  it('compresses large text blocks in array-shaped assistant messages', () => {
+    const bigText = 'N'.repeat(4000);
+    const toolUseId = 'tu_arr';
+    const history: Array<{ role: string; content: unknown }> = [
+      { role: 'user', content: 'go' },
+      {
+        role: 'assistant',
+        content: [
+          { type: 'text', text: bigText },
+          { type: 'tool_use', id: toolUseId, name: 'batch', input: { version: '1.0', steps: [] } },
+        ],
+      },
+      {
+        role: 'user',
+        content: [{ type: 'tool_result', tool_use_id: toolUseId, content: '{ "ok": true }' }],
+      },
+      { role: 'assistant', content: 'r2' },
+      { role: 'user', content: 'ok' },
+      { role: 'assistant', content: 'r3' },
+      { role: 'user', content: 'ok' },
+      { role: 'assistant', content: 'r4' },
+      { role: 'user', content: 'ok' },
+    ];
+
+    const before = estimateHistoryTokens(history);
+    const count = compressToolLoopHistory(history, 4, 0);
+    const textBlock = (history[1].content as Array<{ type: string; text?: string }>)[0];
+
+    expect(count).toBeGreaterThan(0);
+    expect(textBlock.type).toBe('text');
+    expect(String(textBlock.text)).toContain('[->');
+    expect(estimateHistoryTokens(history)).toBeLessThan(before);
+  });
+
+  it('compresses large text when stored on block.content instead of block.text', () => {
+    const bigText = 'M'.repeat(4000);
+    const history: Array<{ role: string; content: unknown }> = [
+      { role: 'user', content: 'go' },
+      { role: 'assistant', content: [{ type: 'text', content: bigText }] },
+      { role: 'assistant', content: 'r2' },
+      { role: 'user', content: 'ok' },
+      { role: 'assistant', content: 'r3' },
+      { role: 'user', content: 'ok' },
+      { role: 'assistant', content: 'r4' },
+      { role: 'user', content: 'ok' },
+    ];
+
+    const count = compressToolLoopHistory(history, 4, 0);
+    const textBlock = (history[1].content as Array<{ type: string; content?: string }>)[0];
+
+    expect(count).toBeGreaterThan(0);
+    expect(String(textBlock.content)).toContain('[->');
+  });
 });
 
 describe('compressToolLoopHistory dedup', () => {

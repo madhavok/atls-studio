@@ -403,6 +403,9 @@ const TURNS_TO_MS = 60_000;
 const ACTIVE_TURNS = 3;
 const STALE_TURNS = 5;
 
+/** Mirror contextStore CHAT_TYPES — excluded from stale/active heuristics (BP3 is canonical). */
+const CHAT_CHUNK_TYPES = new Set(['msg:user', 'msg:asst']);
+
 export function formatStatsLine(
   usedTokens: number,
   maxTokens: number,
@@ -446,6 +449,8 @@ export function formatStatsLine(
       if (c.compacted) {
         dormantCount++;
         dormantTk += c.tokens;
+      } else if (CHAT_CHUNK_TYPES.has(c.type)) {
+        // Skip: transcript chunks rarely refresh lastAccessed; not a WM hygiene signal.
       } else if (c.lastAccessed >= activeCutoff) {
         activeCount++;
         activeTk += c.tokens;
@@ -488,6 +493,7 @@ export function formatStatsLine(
     const activeCutoff = now - ACTIVE_TURNS * TURNS_TO_MS;
     let activeTkSum = 0, staleTkSum = 0;
     for (const c of chunks.values()) {
+      if (CHAT_CHUNK_TYPES.has(c.type)) continue;
       if (!c.compacted && c.lastAccessed >= activeCutoff) activeTkSum += c.tokens;
       else if (!c.compacted) staleTkSum += c.tokens;
     }

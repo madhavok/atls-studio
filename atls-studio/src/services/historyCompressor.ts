@@ -250,6 +250,27 @@ export function compressToolLoopHistory(
 
         dematerialize(hash);
       }
+
+      // Large assistant narrative in array-shaped messages (e.g. text + tool_use).
+      for (const block of blocks) {
+        if (block.type !== 'text') continue;
+        const tb = block as { type: string; text?: string; content?: string };
+        const raw =
+          typeof tb.text === 'string'
+            ? tb.text
+            : typeof tb.content === 'string'
+              ? tb.content
+              : '';
+        if (!raw || raw.startsWith('[->')) continue;
+        const tokens = estimateTokens(raw);
+        if (tokens <= HISTORY_TEXT_REPLACEMENT_THRESHOLD_TOKENS) continue;
+        const description = `history:assistant:${raw.slice(0, 60).replace(/\s+/g, ' ').trim()}`;
+        const ref = recordReplacement(raw, 'assistant', description);
+        totalSavedTokens += tokens - estimateTokens(ref);
+        if (typeof tb.text === 'string') tb.text = ref;
+        else if (typeof tb.content === 'string') tb.content = ref;
+        compressedCount++;
+      }
     }
 
     if (typeof msg.content === 'string') {
@@ -445,11 +466,18 @@ export function analyzeHistoryBreakdown(
             }
           }
         } else {
-          // text blocks in assistant messages, etc.
-          const text = typeof block.content === 'string' ? block.content : JSON.stringify(block);
+          // text blocks in assistant messages — check both .text and .content (Anthropic uses .text)
+          const tb = block as { type: string; text?: string; content?: string };
+          const text = typeof tb.text === 'string' ? tb.text
+            : typeof tb.content === 'string' ? tb.content
+            : JSON.stringify(block);
           const tokens = estimateTokens(text);
           breakdown.total += tokens;
-          breakdown.assistantText += tokens;
+          if (text.startsWith('[->')) {
+            breakdown.compressed += tokens;
+          } else {
+            breakdown.assistantText += tokens;
+          }
         }
       }
     }

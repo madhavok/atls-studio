@@ -2712,6 +2712,7 @@ function buildDynamicContextBlock(
       const activeCutoff = now - 3 * 60_000; // ~3 turns at ~60s each
       let activeTkSum = 0, staleTkSum = 0;
       for (const c of ctxChunks.values()) {
+        if (c.type === 'msg:user' || c.type === 'msg:asst') continue;
         if (!c.compacted && (c.lastAccessed ?? 0) >= activeCutoff) activeTkSum += c.tokens ?? 0;
         else if (!c.compacted) staleTkSum += c.tokens ?? 0;
       }

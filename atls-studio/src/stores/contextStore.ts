@@ -3742,6 +3742,9 @@ export const useContextStore = create<ContextStoreState>()(
     const DORMANT_DIGEST_LINE_TOKENS = 15;
     let total = 0;
     get().chunks.forEach(c => {
+      // Transcript lives in BP3 (conversation history); counting msg:user/msg:asst
+      // here double-counts the same tokens against WM pressure and Internals totals.
+      if (CHAT_TYPES.has(c.type)) return;
       if (c.compacted) {
         total += DORMANT_DIGEST_LINE_TOKENS;
       } else {

@@ -52,6 +52,7 @@ export function ContextTreemapSection() {
 
     const wmChildren: Block[] = [];
     chunks.forEach((c, hash) => {
+      if (c.type === 'msg:user' || c.type === 'msg:asst') return;
       wmChildren.push({
         key: hash,
         label: c.source ? c.source.split('/').pop()! : c.shortHash,
