@@ -42,6 +42,7 @@ export interface RetentionState {
   incrementReadsReused: () => void;
   getEntry: (fingerprint: string) => RetentionEntry | null;
   getMetrics: () => { readsReused: number; resultsCollapsed: number; transitionsRecorded: number };
+  evictByPrefix: (prefix: string) => number;
   reset: () => void;
 }
 
@@ -130,6 +131,21 @@ export const useRetentionStore = create<RetentionState>()((set, get) => ({
   getMetrics: () => {
     const s = get();
     return { readsReused: s.readsReused, resultsCollapsed: s.resultsCollapsed, transitionsRecorded: s.transitionsRecorded };
+  },
+
+  evictByPrefix: (prefix: string): number => {
+    const state = get();
+    const toDelete: string[] = [];
+    for (const key of state.entries.keys()) {
+      if (key.startsWith(prefix)) toDelete.push(key);
+    }
+    if (toDelete.length === 0) return 0;
+    set(s => {
+      const ne = new Map(s.entries);
+      for (const key of toDelete) ne.delete(key);
+      return { entries: ne };
+    });
+    return toDelete.length;
   },
 
   reset: () => set({ entries: new Map(), readsReused: 0, resultsCollapsed: 0, transitionsRecorded: 0 }),

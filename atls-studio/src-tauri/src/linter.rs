@@ -659,8 +659,17 @@ fn collect_tree_sitter_errors(
         } else {
             format!("Syntax error: unexpected token near: {}", error_text.trim())
         };
+
+        // MISSING nodes in Rust are frequently tree-sitter grammar artifacts
+        // (macros, complex where clauses, proc-macro attributes) that rustc
+        // compiles fine. Downgrade to warning so check_syntax won't block edits.
+        let severity = if node.is_missing() && code_prefix == "RUST" {
+            "warning"
+        } else {
+            "error"
+        };
         
-        results.push(LintResult::new(path.to_string(), (start.row + 1) as u32, (start.column + 1) as u32, "error".to_string(), format!("{}_SYNTAX", code_prefix), message));
+        results.push(LintResult::new(path.to_string(), (start.row + 1) as u32, (start.column + 1) as u32, severity.to_string(), format!("{}_SYNTAX", code_prefix), message));
     }
     
     // Recursively check children (only if they might have errors)

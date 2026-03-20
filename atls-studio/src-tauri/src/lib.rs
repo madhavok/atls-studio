@@ -485,7 +485,7 @@ fn edit_removal_range(
     count_override: Option<usize>,
 ) -> Option<(usize, usize)> {
     match edit.action.as_str() {
-        "replace" | "delete" => {
+        "replace" | "delete" | "replace_body" => {
             let idx = (resolved_line as usize).saturating_sub(1);
             let count = count_override.unwrap_or_else(|| edit.count.unwrap_or(1) as usize);
             let end = std::cmp::min(idx + count, content_len);
@@ -669,30 +669,38 @@ pub(crate) fn apply_line_edits(content: &str, edits: &[LineEdit]) -> Result<(Str
         })
     }).collect::<Result<Vec<u32>, String>>()?;
 
-    let effective_counts: Vec<Option<usize>> = edits
-        .iter()
-        .enumerate()
-        .map(|(i, edit)| {
-            if edit.action != "replace" && edit.action != "delete" {
-                return None;
+    // For replace_body actions, resolve (body_start_offset, body_line_count) relative
+    // to the resolved line. Stored separately so the action dispatch can use them.
+    let mut body_bounds_cache: Vec<Option<(usize, usize)>> = vec![None; edits.len()];
+    let mut effective_counts: Vec<Option<usize>> = vec![None; edits.len()];
+
+    for (i, edit) in edits.iter().enumerate() {
+        if edit.action != "replace" && edit.action != "delete" && edit.action != "replace_body" {
+            continue;
+        }
+        let idx = (resolved_lines[i] as usize).saturating_sub(1);
+        if edit.action == "replace_body" {
+            if idx >= lines.len() { continue; }
+            let slice = &lines[idx..];
+            let refs: Vec<&str> = slice.iter().map(|s| s.as_str()).collect();
+            if let Some((body_start, body_end)) = find_body_bounds(&refs) {
+                let count = body_end - body_start;
+                body_bounds_cache[i] = Some((body_start, count));
+                effective_counts[i] = Some(count);
             }
-            let idx = (resolved_lines[i] as usize).saturating_sub(1);
-            if edit.action == "replace"
-                && edit.anchor.is_some()
-                && edit.content.as_ref().map(|c| c.lines().count()).unwrap_or(0) > 1
-                && edit.count.unwrap_or(1) <= 1
-            {
-                let slice = if idx < lines.len() {
-                    &lines[idx..]
-                } else {
-                    &lines[lines.len()..]
-                };
-                infer_block_extent(slice)
+        } else if edit.action == "replace"
+            && edit.anchor.is_some()
+            && edit.content.as_ref().map(|c| c.lines().count()).unwrap_or(0) > 1
+            && edit.count.unwrap_or(1) <= 1
+        {
+            let slice = if idx < lines.len() {
+                &lines[idx..]
             } else {
-                None
-            }
-        })
-        .collect();
+                &lines[lines.len()..]
+            };
+            effective_counts[i] = infer_block_extent(slice);
+        }
+    }
 
     // Reject overlapping replace/delete ranges — splice order would corrupt output
     for i in 0..edits.len() {
@@ -754,6 +762,23 @@ pub(crate) fn apply_line_edits(content: &str, edits: &[LineEdit]) -> Result<(Str
                 let replacement: Vec<String> = edit.content.as_deref().unwrap_or("").lines().map(String::from).collect();
                 lines.splice(idx..end, replacement);
             }
+            "replace_body" => {
+                let (body_offset, body_count) = body_bounds_cache[*orig_idx]
+                    .ok_or_else(|| format!(
+                        "replace_body at L{}: could not find body bounds (no matching {{ }} block)",
+                        resolved_lines[*orig_idx]
+                    ))?;
+                let body_start = idx + body_offset;
+                let body_end = std::cmp::min(body_start + body_count, lines.len());
+                let raw = edit.content.as_deref().unwrap_or("");
+                let replacement_text = if edit.reindent && body_start < lines.len() {
+                    reindent_block(raw, detect_indent(&lines[body_start]))
+                } else {
+                    raw.to_string()
+                };
+                let replacement: Vec<String> = replacement_text.lines().map(String::from).collect();
+                lines.splice(body_start..body_end, replacement);
+            }
             "delete" => {
                 let count = edit.count.unwrap_or(1) as usize;
                 let end = std::cmp::min(idx + count, lines.len());
@@ -782,7 +807,7 @@ pub(crate) fn apply_line_edits(content: &str, edits: &[LineEdit]) -> Result<(Str
                     }
                 }
             }
-            other => return Err(format!("Unknown line_edit action: {}. Valid: insert_before|prepend|insert_after|append|replace|delete|move", other)),
+            other => return Err(format!("Unknown line_edit action: {}. Valid: insert_before|prepend|insert_after|append|replace|replace_body|delete|move", other)),
         }
     }
     Ok((lines.join("\n"), anchor_warnings))

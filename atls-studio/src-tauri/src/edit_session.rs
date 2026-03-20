@@ -275,8 +275,8 @@ impl EditSession {
         Ok(())
     }
 
-    /// Validate the working content: run tree-sitter syntax check for JS/TS files,
-    /// check for conflict markers, and check brace balance.
+    /// Validate the working content: run tree-sitter syntax check for supported
+    /// languages (JS/TS, Rust, Go, Java, Python, C#), check for conflict markers.
     pub fn validate(&self) -> Result<(), EditSessionError> {
         self.check_conflict_markers()?;
         self.check_syntax()?;
@@ -307,19 +307,44 @@ impl EditSession {
             .and_then(|e| e.to_str())
             .unwrap_or("")
             .to_lowercase();
-        if !matches!(ext.as_str(), "ts" | "tsx" | "js" | "jsx" | "mts" | "cts" | "mjs" | "cjs") {
+
+        let use_ts_check = matches!(ext.as_str(), "ts" | "tsx" | "js" | "jsx" | "mts" | "cts" | "mjs" | "cjs");
+        let use_treesitter_check = matches!(ext.as_str(), "rs" | "go" | "java" | "py" | "pyw" | "cs");
+
+        if !use_ts_check && !use_treesitter_check {
             return Ok(());
         }
+
         // Baseline-aware: only reject errors that are NEW (not pre-existing in the original).
-        // This prevents tree-sitter false positives (e.g. complex TS generics) from blocking
-        // unrelated edits in files that already had those parse artifacts.
-        let baseline_errors: std::collections::HashSet<String> = linter::syntax_check_ts(&self.source_path, &self.original_content)
+        // This prevents tree-sitter false positives (e.g. complex TS generics, Rust macros)
+        // from blocking unrelated edits in files that already had those parse artifacts.
+        let (baseline_results, post_results) = if use_ts_check {
+            (
+                linter::syntax_check_ts(&self.source_path, &self.original_content),
+                linter::syntax_check_ts(&self.source_path, &self.working_content),
+            )
+        } else {
+            let opts = linter::LintOptions {
+                root_path: self.resolved_path.parent()
+                    .unwrap_or(std::path::Path::new("."))
+                    .to_string_lossy()
+                    .to_string(),
+                syntax_only: Some(true),
+                max_errors_per_file: Some(50),
+                ..Default::default()
+            };
+            (
+                linter::lint_treesitter(&self.source_path, &self.original_content, &opts),
+                linter::lint_treesitter(&self.source_path, &self.working_content, &opts),
+            )
+        };
+
+        let baseline_errors: std::collections::HashSet<String> = baseline_results
             .iter()
             .filter(|e| e.severity == "error")
             .map(|e| format!("L{}:{}: {}", e.line, e.column, e.message))
             .collect();
-        let post_errors = linter::syntax_check_ts(&self.source_path, &self.working_content);
-        let new_errors: Vec<String> = post_errors.iter()
+        let new_errors: Vec<String> = post_results.iter()
             .filter(|e| e.severity == "error")
             .map(|e| format!("L{}:{}: {}", e.line, e.column, e.message))
             .filter(|msg| !baseline_errors.contains(msg))

@@ -25,7 +25,76 @@ import { resetRecallBudget } from './handlers/session';
 import { SnapshotTracker, AwarenessLevel } from './snapshotTracker';
 import type { LineRegion } from './snapshotTracker';
 import { buildIntentContext, resolveIntents, isPressured } from './intents';
+import { useRetentionStore } from '../../stores/retentionStore';
 import './intents/index';
+
+// ---------------------------------------------------------------------------
+// Cross-step line-number rebasing
+// ---------------------------------------------------------------------------
+
+function normalizePathForRebase(value: string): string {
+  return value.replace(/\\/g, '/').toLowerCase();
+}
+
+function extractEditTargetFile(params: Record<string, unknown>): string | undefined {
+  const f = params.file ?? params.file_path;
+  return typeof f === 'string' ? f : undefined;
+}
+
+function estimateLineDeltaFromEdits(lineEdits: unknown): number {
+  if (!Array.isArray(lineEdits)) return 0;
+  let delta = 0;
+  for (const edit of lineEdits) {
+    if (!edit || typeof edit !== 'object') continue;
+    const e = edit as Record<string, unknown>;
+    const action = typeof e.action === 'string' ? e.action : '';
+    const count = typeof e.count === 'number' && Number.isFinite(e.count) ? e.count : 1;
+    const contentLines = typeof e.content === 'string' && e.content.length > 0
+      ? e.content.split(/\r?\n/).length
+      : 0;
+    if (action === 'insert_before' || action === 'insert_after' || action === 'prepend' || action === 'append') delta += contentLines;
+    else if (action === 'delete') delta -= count;
+    else if (action === 'replace') delta += contentLines - count;
+  }
+  return delta;
+}
+
+/**
+ * After a successful change.edit step, shift line numbers in subsequent
+ * same-file steps so they reflect insertions/deletions from earlier steps.
+ * Only adjusts explicit `line` values (anchor-based edits resolve at apply time).
+ */
+function rebaseSubsequentSteps(
+  completedParams: Record<string, unknown>,
+  stepsToRun: Array<{ id: string; use: string; with?: Record<string, unknown> }>,
+  startIndex: number,
+): void {
+  const editedFile = extractEditTargetFile(completedParams);
+  if (!editedFile) return;
+  const editedKey = normalizePathForRebase(editedFile);
+
+  const delta = Array.isArray(completedParams.line_edits)
+    ? estimateLineDeltaFromEdits(completedParams.line_edits)
+    : 0;
+  if (delta === 0) return;
+
+  for (let j = startIndex; j < stepsToRun.length; j++) {
+    const future = stepsToRun[j];
+    if (!future.use.startsWith('change.') || !future.with) continue;
+    const futureFile = extractEditTargetFile(future.with);
+    if (!futureFile || normalizePathForRebase(futureFile) !== editedKey) continue;
+
+    const futureEdits = future.with.line_edits;
+    if (!Array.isArray(futureEdits)) continue;
+    for (const le of futureEdits) {
+      if (!le || typeof le !== 'object') continue;
+      const entry = le as Record<string, unknown>;
+      if (typeof entry.line === 'number' && entry.line > 0 && !entry.anchor && !entry.symbol) {
+        entry.line = entry.line + delta;
+      }
+    }
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Extracted helpers
@@ -542,6 +611,16 @@ export async function executeUnifiedBatch(
 
     // Record snapshot hashes from step output
     recordSnapshotFromOutput(step, output, snapshotTracker, ctx, policy);
+
+    // Post-edit housekeeping for successful change ops
+    if (output.ok && step.use.startsWith('change.')) {
+      // Rebase line numbers in subsequent same-file change steps
+      if (step.use === 'change.edit') {
+        rebaseSubsequentSteps(mergedParams, stepsToRun, i + 1);
+      }
+      // Evict cached verify results so verify.build re-runs against the updated files
+      useRetentionStore.getState().evictByPrefix('verify:');
+    }
 
     // Named bindings
     if (step.out) {

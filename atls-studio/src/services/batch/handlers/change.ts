@@ -1289,6 +1289,7 @@ function resolveEditOperation(params: Record<string, unknown>): { operation: str
       'prepend',
       'append',
       'replace',
+      'replace_body',
       'delete',
     ]);
     // Validate each entry: must have (anchor or symbol or line) and explicit valid action. No silent defaults.
@@ -1304,14 +1305,14 @@ function resolveEditOperation(params: Record<string, unknown>): { operation: str
       const action = o.action;
       if (action == null || typeof action !== 'string') {
         throwEditValidationError(
-          `line_edits[${i}] requires action (insert_before|insert_after|replace|delete)`,
+          `line_edits[${i}] requires action (insert_before|insert_after|replace|replace_body|delete)`,
           'invalid_line_edit',
           { index: i },
         );
       }
       if (!VALID_ACTIONS.has(action as string)) {
         throwEditValidationError(
-          `line_edits[${i}] invalid action "${action}". Valid: insert_before|insert_after|replace|delete`,
+          `line_edits[${i}] invalid action "${action}". Valid: insert_before|insert_after|replace|replace_body|delete`,
           'invalid_line_edit',
           { index: i, action },
         );
