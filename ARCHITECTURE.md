@@ -2,7 +2,7 @@
 
 ## Abstract
 
-ATLS Studio is a cognitive architecture that gives large language models managed working memory with freshness guarantees. Instead of treating the context window as a flat conversation transcript, ATLS structures it as a hash-addressed memory system where units of knowledge (engrams) have explicit activation states, freshness tracking, and lifecycle management. The model reads from and writes to this memory through a unified batch tool interface, while the system handles compaction, archival, recall, and staleness detection automatically.
+ATLS Studio is a cognitive runtime that gives large language models managed working memory with freshness guarantees. Instead of treating prompt construction as a flat conversation transcript, ATLS structures it as a hash-addressed external-memory system where units of knowledge (engrams) have explicit activation states, freshness tracking, and lifecycle management. Through a unified batch tool interface, the model can operate on this memory while the runtime handles compaction, archival, recall, and staleness detection.
 
 This document describes the architecture, its core subsystems, and the unsolved API-level problem that constrains its economic viability.
 
@@ -10,7 +10,7 @@ This document describes the architecture, its core subsystems, and the unsolved 
 
 ## 1. The Problem
 
-Current agent frameworks treat the LLM context window as a growing conversation transcript. Messages accumulate until the window fills, at which point the system either truncates history, summarizes it, or fails. The model has no mechanism to:
+Current agent frameworks often rely on a growing conversation transcript as the primary prompt substrate. Messages accumulate until the prompt fills, at which point the system either truncates history, summarizes it, or fails. The model has no mechanism to:
 
 - **Selectively retain knowledge** across turns (everything is either in context or gone)
 - **Know when its knowledge is stale** (file content may have changed since it was read)
@@ -22,7 +22,7 @@ This leads to two failure modes at scale:
 1. **Context bloat**: Long agentic sessions accumulate tool results, file contents, and search output until the window is saturated with noise and the model loses signal.
 2. **Stale reasoning**: The model operates on cached file content that has been modified by its own edits or external changes, producing incorrect patches and hallucinated diffs.
 
-ATLS solves both by introducing a memory layer between the model and its context window.
+ATLS addresses both by introducing a structured working-memory layer into prompt construction.
 
 ---
 
@@ -66,7 +66,7 @@ ATLS solves both by introducing a memory layer between the model and its context
 
 The architecture has four layers:
 
-1. **Cognitive Core**: A behavioral prompt that teaches the model to operate on engrams — to pin, compact, recall, drop, stage, and manage its own memory.
+1. **Cognitive Core**: A behavioral prompt that teaches the model how to operate on engrams — to pin, compact, recall, drop, and stage items within its active working set.
 2. **Context Store**: A Zustand-based store that maintains four memory regions (working memory, archive, staged snippets, blackboard) with hash-addressed access.
 3. **Freshness & Hash Protocol**: Subsystems that track what the model has seen, when it was seen, whether it's still valid, and how to recover when it isn't.
 4. **Rust Backend**: A Tauri application providing file I/O, code intelligence, edit sessions with preimage verification, dependency analysis, and build/verify capabilities.
@@ -119,7 +119,7 @@ Engrams exist in one of four states:
 | **Archived** | Full (in archive map) | No | Yes, by `h:ref` | Unload, subtask advance |
 | **Evicted** | Manifest entry only | No | Must re-read | Drop, emergency eviction |
 
-The model controls transitions explicitly:
+The runtime exposes explicit transition operations to the model:
 
 - **`pin`**: Keeps an engram active across turns (survives `advanceTurn`)
 - **`unpin`**: Allows dormancy on next turn
@@ -429,7 +429,7 @@ Engrams can be bound to multiple subtasks (`subtaskIds`), surviving until all bo
 
 ## 11. The Unsolved Problem: API Economics
 
-ATLS works. It has been proven on Claude Opus, producing correct multi-step agentic behavior with genuine memory management, freshness guarantees, and context-aware reasoning.
+ATLS has been validated on Claude Opus, producing correct multi-step agentic behavior with structured working-memory management, freshness guarantees, and context-aware reasoning.
 
 The blocker is economic.
 
@@ -460,14 +460,14 @@ The architecture is ahead of where the APIs are. The model can do the cognition.
 
 ATLS Studio demonstrates that LLMs can operate with genuine managed memory when given the right infrastructure:
 
-1. **Hash-addressed engrams** with activation states replace the flat context window with structured, selectable, referenceable knowledge.
+1. **Hash-addressed engrams** with activation states replace a flat transcript-centric prompt with structured, selectable, referenceable knowledge.
 2. **Freshness tracking** with a taxonomy of states and a cascade of recovery strategies ensures the model never silently reasons about stale content.
 3. **A unified batch executor** with dataflow bindings, intent macros, and multi-level error recovery provides reliable tool execution.
 4. **History compression** via hash-reference deflation keeps the conversation efficient without losing access to prior knowledge.
 5. **The Hash Presence Protocol** provides turn-aware visibility tracking, so the prompt assembly layer knows exactly what the model can see.
-6. **Self-directed memory management** — the model pins, compacts, drops, recalls, and writes rules to manage its own cognitive state.
+6. **Structured working-set management** — the model can pin, compact, drop, recall, and write rules to manage its active cognitive state through the runtime.
 
-The result is an agent that maintains coherent working memory across dozens of tool-loop rounds, knows when its knowledge is stale, recovers gracefully from freshness violations, and manages its own context budget — capabilities that no existing agent framework provides.
+The result is an agent workflow designed to maintain coherent working memory across many tool-loop rounds, know when its knowledge is stale, recover gracefully from freshness violations, and manage its context budget through the runtime.
 
 ---
 

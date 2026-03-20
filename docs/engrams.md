@@ -71,9 +71,9 @@ Active ──(unpin)──► Dormant ──(age/evict)──► Archived ──
 | **Archived** | Full (in archive map) | Not visible | Yes, by `h:ref` | Unload, subtask advance |
 | **Evicted** | Manifest entry only | Not visible | Must re-read | Drop, emergency eviction at 90% |
 
-### Model-Controlled Transitions
+### Runtime-Exposed Transitions
 
-The model manages its own memory through session operations:
+Through session operations, the model can manage its active working set within the ATLS runtime:
 
 | Operation | Effect | When to Use |
 |-----------|--------|-------------|
@@ -84,7 +84,7 @@ The model manages its own memory through session operations:
 | `session.drop` | Evict entirely | Won't need again |
 | `session.recall` | Promote back to active | Need archived/dormant content again |
 
-**Pin inheritance**: Editing a pinned engram auto-pins the new engram and auto-unpins the old one. The model's attention follows its edits.
+**Pin inheritance**: Editing a pinned engram auto-pins the new engram and auto-unpins the old one. The active working set follows the latest edit result.
 
 ### Shaped Views
 
@@ -132,7 +132,7 @@ When estimated prompt pressure exceeds 90%, `addChunk` triggers emergency evicti
 2. Compact unpinned, non-recent engrams (oldest first)
 3. Drop compacted engrams if still over pressure
 
-The 70% threshold is shown in the stats line as a warning to the model ("consider drop/compact"). The model is expected to manage memory proactively; emergency eviction is a safety net.
+The 70% threshold is shown in the stats line as a warning to the model ("consider drop/compact"). The runtime encourages proactive working-set management; emergency eviction is a safety net.
 
 ## Engram Annotations and Relationships
 

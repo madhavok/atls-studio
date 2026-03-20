@@ -1,6 +1,6 @@
 # ATLS Studio
 
-Managed working memory for agentic LLMs. A cognitive architecture that gives language models hash-addressed memory with freshness guarantees, turning the context window from a flat transcript into structured, selectable, referenceable knowledge.
+Managed working memory for agentic LLMs. A cognitive runtime that gives language models hash-addressed external memory with freshness guarantees, turning prompt construction from a flat transcript into structured, selectable, referenceable knowledge.
 
 **Built with** TypeScript + Rust (Tauri) | **Validated on** Claude Opus (Anthropic API)
 
@@ -8,9 +8,9 @@ Managed working memory for agentic LLMs. A cognitive architecture that gives lan
 
 ## What This Is
 
-ATLS Studio is a desktop application that wraps LLM interactions in a memory management layer. Instead of the model operating on a growing conversation transcript, it operates on **engrams** — content-addressed units of knowledge that can be pinned, compacted, archived, recalled, and evicted.
+ATLS Studio is a desktop application that wraps LLM interactions in a structured working-memory layer. Instead of relying only on a growing conversation transcript, the model works with **engrams** — content-addressed knowledge units that can be pinned, compacted, archived, recalled, and evicted.
 
-The model controls its own memory. The system tracks freshness. Stale content is detected, blocked, or recovered automatically. The result is an agent that maintains coherent working memory across dozens of tool-loop rounds — something no existing agent framework provides.
+Through the ATLS runtime, the model gets structured control over its active working set. The system tracks freshness, and stale content can be detected, blocked, or recovered automatically. The result is an agent workflow designed to maintain coherent working memory across many tool-loop rounds.
 
 ## Key Capabilities
 

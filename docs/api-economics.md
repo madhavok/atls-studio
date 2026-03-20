@@ -1,6 +1,6 @@
 # API Economics: The Caching Problem
 
-ATLS Studio works. It produces correct multi-step agentic behavior with genuine memory management and freshness guarantees on Claude Opus. The constraint is economic: the API pricing model penalizes exactly the architecture that makes cognition reliable.
+ATLS Studio works. It produces correct multi-step agentic behavior with structured working-memory management and freshness guarantees on Claude Opus. The constraint is economic: the API pricing model penalizes exactly the runtime pattern that makes this workflow reliable.
 
 ## The Cost Structure
 
@@ -46,14 +46,14 @@ Traditional chatbot:
   [static system ─── cached ───][growing history ── cached ──][small user msg]
   Cache hit rate: ~85%
 
-ATLS cognitive architecture:
+ATLS runtime architecture:
   [static system ── cached ──][history ── cached ──][BB+staged+WM+dormant+ctx+user]
                                                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
                                                      60-70% of tokens, full price
   Cache hit rate: ~30-40%
 ```
 
-The more sophisticated the memory system, the less cacheable the prompt. A dumb chatbot with a static system prompt gets 85% cache reads. A cognitive agent with living memory gets 30-40% because the interesting part — the cognitive state — is mutable.
+The more sophisticated the memory system, the less cacheable the prompt. A simple chatbot with a static system prompt gets 85% cache reads. An agent workflow with living working memory gets 30-40% because the interesting part — the cognitive state — is mutable.
 
 ## The Staged Content Paradox
 
@@ -96,7 +96,7 @@ ATLS implements several strategies to minimize uncached costs within current API
 - **History compression deferred to round 0** — Append-only within tool loops for BP3 stability
 - **Staged content dedup** — Reduces staged block size when files overlap with active engrams
 - **Token budgets per region** — WM ~32k, BB ~4k, staged ~4k, history ~12k
-- **Model-directed memory management** — The model is prompted to drop/compact proactively
+- **Model-directed working-set management** — The model is prompted to drop/compact proactively
 
 These are mitigations, not solutions. The structural problem remains: living memory costs 10x what static memory costs, and living memory is what makes the architecture work.
 
