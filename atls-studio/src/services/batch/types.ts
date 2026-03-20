@@ -336,6 +336,7 @@ export interface ContextStoreApi {
   addChunk: (content: string, type: string, source?: string, symbols?: unknown[], summary?: string, backendHash?: string, opts?: Record<string, unknown>) => string;
   findReusableRead: (span: { filePath: string; startLine?: number; endLine?: number; shape?: string; sourceRevision: string }) => string | null;
   getChunkContent: (hash: string) => string | null;
+  getChunkForHashRef: (hashRef: string) => { content: string; source?: string; chunkType?: string } | null;
   touchChunk: (hash: string) => void;
 
   // Lifecycle

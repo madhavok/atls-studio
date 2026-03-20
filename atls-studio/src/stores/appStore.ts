@@ -1158,12 +1158,21 @@ export const useAppStore = create<AppState>((set) => ({
       extendedContext: {},
       entryManifestDepth: 'paths',
     };
-    const parsed = saved ? JSON.parse(saved) : {};
+    let parsed: Record<string, unknown> = {};
+    try { parsed = saved ? JSON.parse(saved) : {}; } catch { /* corrupt settings — use defaults */ }
+    const mf = parsed.modelFilters;
+    const ec = parsed.extendedContext;
+    const modelFiltersSpread = typeof mf === 'object' && mf !== null && !Array.isArray(mf)
+      ? (mf as Record<string, boolean>)
+      : {};
+    const extendedContextSpread = typeof ec === 'object' && ec !== null && !Array.isArray(ec)
+      ? (ec as Record<string, unknown>)
+      : {};
     return {
       ...defaults,
       ...parsed,
-      modelFilters: { ...defaults.modelFilters, ...parsed.modelFilters },
-      extendedContext: { ...defaults.extendedContext, ...parsed.extendedContext },
+      modelFilters: { ...defaults.modelFilters, ...modelFiltersSpread },
+      extendedContext: { ...defaults.extendedContext, ...extendedContextSpread },
     };
   })(),
   setSettings: (newSettings) => set((state) => {
@@ -1295,7 +1304,8 @@ queueMicrotask(() => {
       ? localStorage.getItem('atls-studio-custom-agents')
       : null;
     if (savedAgents) {
-      useAppStore.setState({ customAgents: JSON.parse(savedAgents) });
+      const parsed = JSON.parse(savedAgents);
+      if (Array.isArray(parsed)) useAppStore.setState({ customAgents: parsed });
     }
   } catch { /* ignore corrupt data */ }
 });
