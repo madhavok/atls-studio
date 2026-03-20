@@ -120,6 +120,7 @@ pub fn parse_symbol_anchor_str(s: &str) -> Option<(Option<&'static str>, &str)> 
 }
 
 /// Extract symbol names from content (fn/def/class/etc declarations).
+/// Scans line-by-line so large files do not run catastrophic backtracking over the whole buffer.
 pub fn extract_symbol_names(content: &str, kind: Option<&str>) -> Vec<String> {
     let kind_pattern = match kind {
         Some(k) => {
@@ -134,11 +135,19 @@ pub fn extract_symbol_names(content: &str, kind: Option<&str>) -> Vec<String> {
         Ok(r) => r,
         Err(_) => return vec![],
     };
-    re.captures_iter(content)
-        .filter_map(|c| c.get(1).map(|m| m.as_str().to_string()))
-        .collect::<std::collections::HashSet<_>>()
-        .into_iter()
-        .collect::<Vec<_>>()
+    let mut names = std::collections::HashSet::new();
+    for line in content.lines() {
+        // Skip extremely long lines (minified bundles) — regex cost is per-line.
+        if line.len() > 16_384 {
+            continue;
+        }
+        for cap in re.captures_iter(line) {
+            if let Some(m) = cap.get(1) {
+                names.insert(m.as_str().to_string());
+            }
+        }
+    }
+    names.into_iter().collect()
 }
 
 /// Find names similar to the search term (substring, prefix, or contains).

@@ -731,6 +731,15 @@ describe('recency ref resolution', () => {
     setRecencyResolver(() => null);
     expect(resolveRecencyInString('h:$last:60-80')).toBe('h:$last:60-80');
   });
+
+  it('ref field is passthrough — read.lines h:HASH:lines must not expand to content', async () => {
+    const lookup: HashLookup = async () => ({ content: 'FULL_FILE', source: 'a.ts' });
+    const out = await resolveHashRefsInParams(
+      { ref: 'h:abc12345:60-80' },
+      lookup,
+    );
+    expect((out as Record<string, unknown>).ref).toBe('h:abc12345:60-80');
+  });
 });
 
 // ── Set operations (union/intersect/difference) ──

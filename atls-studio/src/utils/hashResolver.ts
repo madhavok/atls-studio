@@ -117,7 +117,9 @@ export function resolveRecencyInString(text: string): string {
 const FILE_FIELDS = ['file', 'file_path', 'file_paths', 'target_file', 'source_file', 'path', 'from', 'from_path', 'target', 'target_path', 'deletes', 'delete'];
 const HASH_FIELDS = ['hash', 'content_hash', 'old_hash', 'new_hash', 'undo', 'hashes', 'refs', 'to', 'edit_target_hash'];
 const SYMBOL_FIELDS = ['symbol', 'symbol_name', 'name'];
-const PASSTHROUGH_REF_FIELDS = new Set(['edit_target_ref']);
+/** Ref strings that must not be expanded to file content by resolveHashRefsInParams.
+ * `ref` is used by read.lines as h:HASH:lines — expanding to content breaks line extraction. */
+const PASSTHROUGH_REF_FIELDS = new Set(['edit_target_ref', 'ref']);
 
 /** Fields where inline h:ref replacement within larger strings is allowed. */
 const INLINE_RESOLVE_FIELDS = new Set([

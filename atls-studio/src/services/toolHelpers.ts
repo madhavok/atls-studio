@@ -1,11 +1,31 @@
 import { invoke } from '@tauri-apps/api/core';
 import { useContextStore } from '../stores/contextStore';
 import { getPreflightAutomationDecision, runFreshnessPreflight } from './freshnessPreflight';
-import { resolveHashRefsInParams, type HashLookup as HppHashLookup } from '../utils/hashResolver';
+import {
+  resolveHashRefsInParams,
+  setRecencyResolver,
+  setEditRecencyResolver,
+  setReadRecencyResolver,
+  setStageRecencyResolver,
+  type HashLookup as HppHashLookup,
+} from '../utils/hashResolver';
 import { parseSetExpression } from '../utils/hashRefParsers';
 import { getTurn } from './hashProtocol';
 
 const TOOL_TIMEOUT_MS = 120000;
+
+/** Ensures h:$last / h:$last_edit / h:$last_read resolvers point at contextStore.
+ * Call before resolveHashRefsInParams — covers paths that load toolHelpers before aiService. */
+let _hppRecencyResolversWired = false;
+function ensureHppRecencyResolversWired(): void {
+  if (_hppRecencyResolversWired) return;
+  _hppRecencyResolversWired = true;
+  const store = () => useContextStore.getState();
+  setRecencyResolver((offset) => store().resolveRecencyRef(offset));
+  setEditRecencyResolver((offset) => store().resolveEditRecencyRef(offset));
+  setReadRecencyResolver((offset) => store().resolveReadRecencyRef(offset));
+  setStageRecencyResolver((offset) => store().resolveStageRecencyRef(offset));
+}
 
 // ---------------------------------------------------------------------------
 // HPP-Native Search: per-turn cache for h:@search(query) results
@@ -280,6 +300,7 @@ export async function atlsBatchQuery(
   params: Record<string, unknown>,
   timeoutMs: number = TOOL_TIMEOUT_MS
 ): Promise<unknown> {
+  ensureHppRecencyResolversWired();
   const sessionId = localStorage.getItem('current_session_id');
   const syncLookup = createHashLookup(sessionId);
   const setLookup = useContextStore.getState().createSetRefLookup();
@@ -353,6 +374,7 @@ export function normalizeToolParams(params: Record<string, unknown>): Record<str
 export async function resolveToolParams(
   params: Record<string, unknown>,
 ): Promise<Record<string, unknown>> {
+  ensureHppRecencyResolversWired();
   const sessionId = localStorage.getItem('current_session_id');
   const syncLookup = createHashLookup(sessionId);
   const setLookup = useContextStore.getState().createSetRefLookup();

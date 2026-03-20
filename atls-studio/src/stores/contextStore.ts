@@ -46,7 +46,8 @@ import { commonPrefixLen } from './contextHelpers';
 import { canonicalizeSnapshotHash } from '../services/batch/snapshotTracker';
 
 // Minimum chars required for prefix-based hash resolution (reduces collision risk)
-const MIN_PREFIX_LEN = 8;
+/** Match SHORT_HASH_LEN (6) so h:abcdef-style refs resolve (annotate.link, synapses). */
+const MIN_PREFIX_LEN = 6;
 
 // Lazy accessor for appStore cache metrics (avoids circular import)
 let _getCacheHitRate: () => number = () => 0;
