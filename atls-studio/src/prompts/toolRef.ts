@@ -41,7 +41,7 @@ change.edit file_path:"" line_edits:[{line:N, action:"replace", count:M, content
   legacy: edits:[{file,old,new}] — exact text match, use only for short unambiguous replacements
   also: creates:[{path,content}] | revise:"hash" | undo:"h:$last_edit" | deletes:["path"|"h:X",...]
 change.create creates:[{path,content}]
-change.delete file_paths:["path"|"h:X",...]
+change.delete file_paths:["path"|"h:X",...] confirm?:true dry_run?:false (defaults to confirm:true — pass dry_run:true for preview only)
 change.refactor action:inventory|impact_analysis|execute|rollback file_paths?:[] symbol_names?:[]
 change.rollback restore:[{file,hash}] delete?:["path"|"h:X",...] (file, hash, delete accept h:refs)
 change.split_match file_path:"" function_name:"" target_module?:"" dry_run?:true strategy?:"" match_index?:N

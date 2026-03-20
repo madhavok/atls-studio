@@ -1257,6 +1257,7 @@ function resolveEditOperation(params: Record<string, unknown>): { operation: str
   }
   if (hasDeletes) {
     resolved.file_paths = params.deletes;
+    resolved.confirm = params.confirm ?? (params.dry_run !== true);
     return { operation: 'delete_files', resolved };
   }
   if (isBatchEdits) {
@@ -1672,9 +1673,13 @@ export const handleCreate: OpHandler = async (params, ctx) => {
 // ---------------------------------------------------------------------------
 
 export const handleDelete: OpHandler = async (params, ctx) => {
-  const merged = { ...params, mode: 'delete_files' };
+  const merged = {
+    ...params,
+    confirm: params.confirm ?? (params.dry_run !== true),
+  };
+  delete (merged as Record<string, unknown>).mode;
   try {
-    const result = await ctx.atlsBatchQuery('edit', merged);
+    const result = await ctx.atlsBatchQuery('delete_files', merged);
     const affectedPaths = extractAffectedPaths(result);
     if (affectedPaths.length > 0) {
       useContextStore.getState().bumpWorkspaceRev(affectedPaths);

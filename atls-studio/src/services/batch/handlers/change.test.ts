@@ -5,7 +5,7 @@
 import { beforeEach, describe, it, expect, vi } from 'vitest';
 import { invoke } from '@tauri-apps/api/core';
 import { useContextStore } from '../../../stores/contextStore';
-import { handleCreate, handleEdit, normalizeEditParams, validateAnchorReplaceContent } from './change';
+import { handleCreate, handleDelete, handleEdit, normalizeEditParams, validateAnchorReplaceContent } from './change';
 
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: vi.fn(),
@@ -990,5 +990,90 @@ describe('freshness safety', () => {
       }],
       stale_policy: 'follow_latest',
     });
+  });
+});
+
+describe('handleDelete routing and confirm', () => {
+  beforeEach(() => {
+    resetContextStore();
+    invokeMock.mockReset();
+  });
+
+  it('routes to delete_files with confirm:true by default', async () => {
+    const atlsBatchQuery = vi.fn().mockResolvedValue({ deleted: ['a.ts'], status: 'ok' });
+    const ctx = {
+      atlsBatchQuery,
+      store: () => ({ getStats: () => ({}), getPinnedCount: () => 0 }),
+    } as unknown as Parameters<typeof handleDelete>[1];
+
+    const out = await handleDelete({ file_paths: ['a.ts'] }, ctx);
+    expect(out.ok).toBe(true);
+    expect(atlsBatchQuery).toHaveBeenCalledWith('delete_files', expect.objectContaining({
+      file_paths: ['a.ts'],
+      confirm: true,
+    }));
+  });
+
+  it('does not set confirm:true when dry_run is explicitly true', async () => {
+    const atlsBatchQuery = vi.fn().mockResolvedValue({ deleted: ['a.ts'], dry_run: true, status: 'preview' });
+    const ctx = {
+      atlsBatchQuery,
+      store: () => ({ getStats: () => ({}), getPinnedCount: () => 0 }),
+    } as unknown as Parameters<typeof handleDelete>[1];
+
+    const out = await handleDelete({ file_paths: ['a.ts'], dry_run: true }, ctx);
+    expect(out.ok).toBe(true);
+    expect(atlsBatchQuery).toHaveBeenCalledWith('delete_files', expect.objectContaining({
+      file_paths: ['a.ts'],
+      confirm: false,
+      dry_run: true,
+    }));
+  });
+
+  it('strips mode key so it does not leak to backend', async () => {
+    const atlsBatchQuery = vi.fn().mockResolvedValue({ deleted: ['a.ts'], status: 'ok' });
+    const ctx = {
+      atlsBatchQuery,
+      store: () => ({ getStats: () => ({}), getPinnedCount: () => 0 }),
+    } as unknown as Parameters<typeof handleDelete>[1];
+
+    await handleDelete({ file_paths: ['a.ts'], mode: 'delete_files' }, ctx);
+    const passedParams = atlsBatchQuery.mock.calls[0][1];
+    expect(passedParams).not.toHaveProperty('mode');
+  });
+});
+
+describe('resolveEditOperation with deletes', () => {
+  beforeEach(() => {
+    resetContextStore();
+    invokeMock.mockReset();
+  });
+
+  it('injects confirm:true when deletes array is present', async () => {
+    const atlsBatchQuery = vi.fn().mockResolvedValue({ deleted: ['b.ts'], status: 'ok' });
+    const ctx = {
+      atlsBatchQuery,
+      store: () => ({ getStats: () => ({}), getPinnedCount: () => 0 }),
+    } as unknown as Parameters<typeof handleEdit>[1];
+
+    await handleEdit({ deletes: ['b.ts'] }, ctx);
+    expect(atlsBatchQuery).toHaveBeenCalledWith('delete_files', expect.objectContaining({
+      file_paths: ['b.ts'],
+      confirm: true,
+    }));
+  });
+
+  it('respects explicit dry_run:true on edit+deletes path', async () => {
+    const atlsBatchQuery = vi.fn().mockResolvedValue({ deleted: ['b.ts'], dry_run: true, status: 'preview' });
+    const ctx = {
+      atlsBatchQuery,
+      store: () => ({ getStats: () => ({}), getPinnedCount: () => 0 }),
+    } as unknown as Parameters<typeof handleEdit>[1];
+
+    await handleEdit({ deletes: ['b.ts'], dry_run: true }, ctx);
+    expect(atlsBatchQuery).toHaveBeenCalledWith('delete_files', expect.objectContaining({
+      file_paths: ['b.ts'],
+      confirm: false,
+    }));
   });
 });

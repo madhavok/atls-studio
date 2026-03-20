@@ -63,6 +63,8 @@ pub async fn atls_batch_query(
                 } else {
                     String::from("draft")
                 }
+            } else if mode == Some("delete_files") && obj.contains_key("file_paths") {
+                String::from("delete_files")
             } else if mode == Some("batch_edits") && edits.map(|e| !e.is_empty()).unwrap_or(false) {
                 String::from("batch_edits")
             } else {
