@@ -1,12 +1,10 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
-import { useOS } from '../../hooks/useOS';
 import { useAppStore } from '../../stores/appStore';
 import { INTERNALS_TAB_ID } from '../AtlsInternals';
 
-// Zoom scale levels
 const ZOOM_LEVELS = [0.8, 0.9, 1.0, 1.1, 1.25, 1.5];
-const DEFAULT_ZOOM_INDEX = 2; // 1.0 = 100%
+const DEFAULT_ZOOM_INDEX = 2;
 const ZOOM_STORAGE_KEY = 'atls-studio-zoom';
 
 function loadZoomIndex(): number {
@@ -32,7 +30,6 @@ interface MenuItem {
   action?: () => void;
   separator?: boolean;
   disabled?: boolean;
-  submenu?: MenuItem[];
 }
 
 interface MenuGroup {
@@ -58,29 +55,25 @@ interface MenuBarProps {
 }
 
 export function MenuBar({ onNewProject, onOpenProject, onSaveFile, onSettings, onNewChat, onFindInFiles, onFindInFile, onReplaceInFile, onToggleTerminal, onAddFolder, onSaveWorkspace, onOpenWorkspace, onCloseWorkspace }: MenuBarProps) {
-  const { isMac, isWindows: _isWindows } = useOS();
   const [openMenu, setOpenMenu] = useState<string | null>(null);
   const [zoomIndex, setZoomIndex] = useState(loadZoomIndex);
   const menuRef = useRef<HTMLDivElement>(null);
   const { 
     quickActionsOpen, setQuickActionsOpen,
     quickFindOpen, setQuickFindOpen,
-    searchPanelOpen, setSearchPanelOpen,
-    terminalOpen, setTerminalOpen,
+    setSearchPanelOpen,
+    setTerminalOpen,
   } = useAppStore();
 
-  // Zoom controls
-  const currentZoom = ZOOM_LEVELS[zoomIndex];
-  const zoomPercent = Math.round(currentZoom * 100);
+  const zoomPercent = Math.round(ZOOM_LEVELS[zoomIndex] * 100);
   
   const applyZoom = useCallback((level: number) => {
     document.documentElement.style.fontSize = `${level * 16}px`;
   }, []);
 
-  // Apply saved zoom on mount
   useEffect(() => {
     applyZoom(ZOOM_LEVELS[zoomIndex]);
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps -- apply once on mount
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
   
   const zoomIn = useCallback(() => {
     const newIndex = Math.min(zoomIndex + 1, ZOOM_LEVELS.length - 1);
@@ -102,7 +95,6 @@ export function MenuBar({ onNewProject, onOpenProject, onSaveFile, onSettings, o
     saveZoomIndex(DEFAULT_ZOOM_INDEX);
   }, [applyZoom]);
 
-  // Close menu when clicking outside
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
       if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
@@ -113,58 +105,53 @@ export function MenuBar({ onNewProject, onOpenProject, onSaveFile, onSettings, o
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  // Modifier key for shortcuts based on OS
-  const mod = isMac ? '⌘' : 'Ctrl';
-  const shift = isMac ? '⇧' : 'Shift';
-  const alt = isMac ? '⌥' : 'Alt';
-
   const menus: MenuGroup[] = [
     {
       label: 'File',
       items: [
-        { label: 'New Project', shortcut: `${mod}+${shift}+N`, action: onNewProject },
-        { label: 'Open Project...', shortcut: `${mod}+O`, action: onOpenProject },
-        { label: 'New Chat', shortcut: `${mod}+N`, action: onNewChat },
+        { label: 'New Project', shortcut: 'Ctrl+Shift+N', action: onNewProject },
+        { label: 'Open Project...', shortcut: 'Ctrl+O', action: onOpenProject },
+        { label: 'New Chat', shortcut: 'Ctrl+N', action: onNewChat },
         { label: 'Add Folder to Workspace...', action: onAddFolder, disabled: !onAddFolder },
         { separator: true },
         { label: 'Save Workspace As...', action: onSaveWorkspace, disabled: !onSaveWorkspace },
         { label: 'Open Workspace...', action: onOpenWorkspace },
         { label: 'Close Workspace', action: onCloseWorkspace, disabled: !onCloseWorkspace },
         { separator: true },
-        { label: 'Save', shortcut: `${mod}+S`, action: onSaveFile },
-        { label: 'Save All', shortcut: `${mod}+${shift}+S`, action: onSaveFile },
+        { label: 'Save', shortcut: 'Ctrl+S', action: onSaveFile },
+        { label: 'Save All', shortcut: 'Ctrl+Shift+S', action: onSaveFile },
         { separator: true },
-        { label: 'Settings', shortcut: `${mod}+,`, action: onSettings },
+        { label: 'Settings', shortcut: 'Ctrl+,', action: onSettings },
         { separator: true },
-        { label: 'Exit', shortcut: isMac ? `${mod}+Q` : `${alt}+F4`, action: () => getCurrentWindow().close() },
+        { label: 'Exit', shortcut: 'Alt+F4', action: () => getCurrentWindow().close() },
       ]
     },
     {
       label: 'Edit',
       items: [
-        { label: 'Undo', shortcut: `${mod}+Z`, action: () => document.execCommand('undo') },
-        { label: 'Redo', shortcut: `${mod}+${shift}+Z`, action: () => document.execCommand('redo') },
+        { label: 'Undo', shortcut: 'Ctrl+Z', action: () => document.execCommand('undo') },
+        { label: 'Redo', shortcut: 'Ctrl+Shift+Z', action: () => document.execCommand('redo') },
         { separator: true },
-        { label: 'Cut', shortcut: `${mod}+X`, action: () => document.execCommand('cut') },
-        { label: 'Copy', shortcut: `${mod}+C`, action: () => document.execCommand('copy') },
-        { label: 'Paste', shortcut: `${mod}+V`, action: () => document.execCommand('paste') },
+        { label: 'Cut', shortcut: 'Ctrl+X', action: () => document.execCommand('cut') },
+        { label: 'Copy', shortcut: 'Ctrl+C', action: () => document.execCommand('copy') },
+        { label: 'Paste', shortcut: 'Ctrl+V', action: () => document.execCommand('paste') },
         { separator: true },
-        { label: 'Find in File', shortcut: `${mod}+F`, action: onFindInFile },
-        { label: 'Replace', shortcut: `${mod}+H`, action: onReplaceInFile },
+        { label: 'Find in File', shortcut: 'Ctrl+F', action: onFindInFile },
+        { label: 'Replace', shortcut: 'Ctrl+H', action: onReplaceInFile },
       ]
     },
     {
       label: 'View',
       items: [
-        { label: 'Quick Actions', shortcut: `${mod}+${shift}+P`, action: () => setQuickActionsOpen(!quickActionsOpen) },
-        { label: 'Quick Find', shortcut: `${mod}+P`, action: () => setQuickFindOpen(!quickFindOpen) },
-        { label: 'Search in Files', shortcut: `${mod}+${shift}+F`, action: onFindInFiles },
+        { label: 'Quick Actions', shortcut: 'Ctrl+Shift+P', action: () => setQuickActionsOpen(!quickActionsOpen) },
+        { label: 'Quick Find', shortcut: 'Ctrl+P', action: () => setQuickFindOpen(!quickFindOpen) },
+        { label: 'Search in Files', shortcut: 'Ctrl+Shift+F', action: onFindInFiles },
         { separator: true },
-        { label: 'Toggle Terminal', shortcut: `${mod}+\``, action: onToggleTerminal },
+        { label: 'Toggle Terminal', shortcut: 'Ctrl+`', action: onToggleTerminal },
         { separator: true },
-        { label: 'Zoom In', shortcut: `${mod}+=`, action: zoomIn },
-        { label: 'Zoom Out', shortcut: `${mod}+-`, action: zoomOut },
-        { label: 'Reset Zoom', shortcut: `${mod}+0`, action: resetZoom },
+        { label: 'Zoom In', shortcut: 'Ctrl+=', action: zoomIn },
+        { label: 'Zoom Out', shortcut: 'Ctrl+-', action: zoomOut },
+        { label: 'Reset Zoom', shortcut: 'Ctrl+0', action: resetZoom },
       ]
     },
     {
@@ -193,22 +180,11 @@ export function MenuBar({ onNewProject, onOpenProject, onSaveFile, onSettings, o
     setOpenMenu(null);
   };
 
-  // macOS style: minimal, centered text, more spacing
-  // Windows/Linux style: traditional menu bar with borders
-  const isMacStyle = isMac;
-
   return (
     <div 
       ref={menuRef}
-      className={`flex items-center select-none relative ${
-        isMacStyle 
-          ? 'h-7 bg-gradient-to-b from-[#3a3a3c] to-[#323234] border-b border-[#1d1d1f] z-10' 
-          : 'h-8 bg-studio-surface border-b border-studio-border'
-      }`}
+      className="flex items-center select-none relative h-8 bg-studio-surface border-b border-studio-border"
     >
-      {/* Traffic lights spacing for Mac */}
-      {isMacStyle && <div className="w-20" data-tauri-drag-region />}
-      
       {menus.map((menu) => (
         <div key={menu.label} className="relative">
           <button
@@ -222,58 +198,34 @@ export function MenuBar({ onNewProject, onOpenProject, onSaveFile, onSettings, o
             }}
             onMouseEnter={() => openMenu && !menu.action && setOpenMenu(menu.label)}
             className={`px-3 py-1 text-sm transition-colors ${
-              isMacStyle
-                ? `${openMenu === menu.label 
-                    ? 'bg-studio-accent-bright/90 text-studio-bg rounded-sm' 
-                    : 'text-[#e5e5e5] hover:bg-white/10 rounded-sm'
-                  }`
-                : `${openMenu === menu.label
-                    ? 'bg-studio-accent-bright text-studio-bg'
-                    : 'text-studio-text hover:bg-studio-bg'
-                  }`
+              openMenu === menu.label
+                ? 'bg-studio-accent-bright text-studio-bg'
+                : 'text-studio-text hover:bg-studio-bg'
             }`}
           >
             {menu.label}
           </button>
           
-          {/* Dropdown */}
           {openMenu === menu.label && menu.items && (
-            <div className={`absolute top-full left-0 z-50 min-w-48 py-1 shadow-xl ${
-              isMacStyle
-                ? 'bg-[#2c2c2e]/95 backdrop-blur-xl border border-[#3d3d3f] rounded-lg mt-0.5'
-                : 'bg-studio-surface border border-studio-border mt-0'
-            }`}>
+            <div className="absolute top-full left-0 z-50 min-w-48 py-1 shadow-xl bg-studio-surface border border-studio-border mt-0">
               {menu.items.map((item, idx) => (
                 item.separator ? (
-                  <div 
-                    key={idx} 
-                    className={`my-1 ${
-                      isMacStyle ? 'border-t border-[#3d3d3f]' : 'border-t border-studio-border'
-                    }`} 
-                  />
+                  <div key={idx} className="my-1 border-t border-studio-border" />
                 ) : (
                   <button
                     key={idx}
                     onClick={() => handleItemClick(item)}
                     disabled={item.disabled}
                     className={`w-full px-3 py-1.5 text-sm text-left flex items-center justify-between ${
-                      isMacStyle
-                        ? `${item.disabled 
-                            ? 'text-[#666] cursor-not-allowed' 
-                            : 'text-[#e5e5e5] hover:bg-studio-accent-bright/80 hover:text-studio-bg'
-                          }`
-                        : `${item.disabled
-                            ? 'text-studio-muted cursor-not-allowed'
-                            : 'text-studio-text hover:bg-studio-accent-bright hover:text-studio-bg'
-                          }`
+                      item.disabled
+                        ? 'text-studio-muted cursor-not-allowed'
+                        : 'text-studio-text hover:bg-studio-accent-bright hover:text-studio-bg'
                     }`}
                   >
                     <span>{item.label}</span>
                     {item.shortcut && (
                       <span className={`ml-8 text-xs ${
-                        isMacStyle 
-                          ? item.disabled ? 'text-[#555]' : 'text-[#888]'
-                          : item.disabled ? 'text-studio-muted/50' : 'text-studio-muted'
+                        item.disabled ? 'text-studio-muted/50' : 'text-studio-muted'
                       }`}>
                         {item.shortcut}
                       </span>
@@ -286,19 +238,13 @@ export function MenuBar({ onNewProject, onOpenProject, onSaveFile, onSettings, o
         </div>
       ))}
       
-      {/* Spacer */}
-      <div className="flex-1" data-tauri-drag-region={isMacStyle} />
+      <div className="flex-1" />
       
-      {/* Zoom controls */}
       <div className="flex items-center gap-0.5 mr-2">
         <button
           onClick={zoomOut}
           disabled={zoomIndex === 0}
-          className={`p-1 rounded transition-colors ${
-            isMacStyle
-              ? 'hover:bg-white/10 text-[#999] disabled:text-[#555]'
-              : 'hover:bg-studio-bg text-studio-muted disabled:text-studio-muted/30'
-          }`}
+          className="p-1 rounded transition-colors hover:bg-studio-bg text-studio-muted disabled:text-studio-muted/30"
           title="Zoom Out"
         >
           <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor">
@@ -307,11 +253,7 @@ export function MenuBar({ onNewProject, onOpenProject, onSaveFile, onSettings, o
         </button>
         <button
           onClick={resetZoom}
-          className={`px-1.5 py-0.5 text-xs rounded transition-colors min-w-[40px] ${
-            isMacStyle
-              ? 'hover:bg-white/10 text-[#999]'
-              : 'hover:bg-studio-bg text-studio-muted'
-          }`}
+          className="px-1.5 py-0.5 text-xs rounded transition-colors min-w-[40px] hover:bg-studio-bg text-studio-muted"
           title="Reset Zoom"
         >
           {zoomPercent}%
@@ -319,11 +261,7 @@ export function MenuBar({ onNewProject, onOpenProject, onSaveFile, onSettings, o
         <button
           onClick={zoomIn}
           disabled={zoomIndex === ZOOM_LEVELS.length - 1}
-          className={`p-1 rounded transition-colors ${
-            isMacStyle
-              ? 'hover:bg-white/10 text-[#999] disabled:text-[#555]'
-              : 'hover:bg-studio-bg text-studio-muted disabled:text-studio-muted/30'
-          }`}
+          className="p-1 rounded transition-colors hover:bg-studio-bg text-studio-muted disabled:text-studio-muted/30"
           title="Zoom In"
         >
           <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor">

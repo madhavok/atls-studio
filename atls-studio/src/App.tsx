@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
+import { listen } from '@tauri-apps/api/event';
 import { usePanelResize } from './hooks/usePanelResize';
 import { FileExplorer } from './components/FileExplorer';
 import { CodeViewer } from './components/CodeViewer';
@@ -12,6 +13,7 @@ import { WindowControls } from './components/WindowControls';
 import { SessionPicker } from './components/SessionPicker';
 import { SwarmPanel } from './components/SwarmPanel';
 import { ToastContainer } from './components/Toast';
+import { INTERNALS_TAB_ID } from './components/AtlsInternals';
 import { useAppStore } from './stores/appStore';
 import { useSwarmStore } from './stores/swarmStore';
 import { useCostStore } from './stores/costStore';
@@ -270,20 +272,67 @@ function App() {
     setTerminalOpen(!terminalOpen);
   }, [setTerminalOpen, terminalOpen]);
 
+  // macOS: listen for native menu events emitted from the Rust backend
+  useEffect(() => {
+    if (!isMac) return;
+
+    const ZOOM_LEVELS = [0.8, 0.9, 1.0, 1.1, 1.25, 1.5];
+    const ZOOM_KEY = 'atls-studio-zoom';
+    const readZoom = () => {
+      try { const v = localStorage.getItem(ZOOM_KEY); if (v !== null) { const i = parseInt(v, 10); if (i >= 0 && i < ZOOM_LEVELS.length) return i; } } catch {}
+      return 2;
+    };
+    const applyZoom = (idx: number) => {
+      const clamped = Math.max(0, Math.min(ZOOM_LEVELS.length - 1, idx));
+      localStorage.setItem(ZOOM_KEY, String(clamped));
+      document.documentElement.style.fontSize = `${ZOOM_LEVELS[clamped] * 16}px`;
+    };
+
+    const unlisten = listen<string>('menu-event', (event) => {
+      switch (event.payload) {
+        case 'new-project': handleNewProject(); break;
+        case 'open-project': handleOpenProject(); break;
+        case 'new-chat': handleNewChat(); break;
+        case 'add-folder': handleAddFolder(); break;
+        case 'save-workspace': handleSaveWorkspace(); break;
+        case 'open-workspace': handleOpenWorkspace(); break;
+        case 'close-workspace': handleCloseWorkspace(); break;
+        case 'save':
+        case 'save-all':
+          window.dispatchEvent(new CustomEvent('editor-save-file'));
+          break;
+        case 'settings': setSettingsOpen(true); break;
+        case 'find-in-file': handleFindInFile(); break;
+        case 'replace': handleReplaceInFile(); break;
+        case 'quick-actions': setQuickActionsOpen(true); break;
+        case 'quick-find': setQuickFindOpen(true); break;
+        case 'search-in-files': setSearchPanelOpen(true); break;
+        case 'toggle-terminal': handleToggleTerminal(); break;
+        case 'zoom-in': applyZoom(readZoom() + 1); break;
+        case 'zoom-out': applyZoom(readZoom() - 1); break;
+        case 'reset-zoom': applyZoom(2); break;
+        case 'documentation':
+          window.open('https://atls.dev/docs', '_blank', 'noopener,noreferrer');
+          break;
+        case 'keyboard-shortcuts': setQuickActionsOpen(true); break;
+        case 'atls-internals':
+          useAppStore.getState().openFile(INTERNALS_TAB_ID);
+          break;
+      }
+    });
+
+    return () => { unlisten.then(fn => fn()); };
+  }, [isMac, handleNewProject, handleOpenProject, handleNewChat, handleAddFolder,
+      handleSaveWorkspace, handleOpenWorkspace, handleCloseWorkspace,
+      handleFindInFile, handleReplaceInFile, handleToggleTerminal,
+      setSettingsOpen, setQuickActionsOpen, setQuickFindOpen, setSearchPanelOpen]);
+
   return (
     <div 
       ref={rootRef}
       className={`h-screen w-screen flex flex-col bg-studio-bg text-studio-text overflow-hidden ${isMac ? 'mac-style' : 'win-style'}`}
       style={{ touchAction: 'manipulation', overscrollBehavior: 'none' }}
     >
-      {/* macOS: drag region behind the menu bar for window dragging (overlay titlebar) */}
-      {isMac && (
-        <div
-          className="absolute top-0 left-0 right-0 h-[28px] z-0"
-          data-tauri-drag-region
-        />
-      )}
-
       {/* Windows/Linux: Compact title bar with window controls */}
       {(isWindows || isLinux) && (
         <div 
@@ -298,22 +347,24 @@ function App() {
         </div>
       )}
 
-      {/* Menu Bar */}
-      <MenuBar 
-        onNewProject={handleNewProject}
-        onOpenProject={handleOpenProject}
-        onSaveFile={() => window.dispatchEvent(new CustomEvent('editor-save-file'))}
-        onSettings={() => setSettingsOpen(true)}
-        onNewChat={handleNewChat}
-        onFindInFiles={() => setSearchPanelOpen(true)}
-        onFindInFile={handleFindInFile}
-        onReplaceInFile={handleReplaceInFile}
-        onToggleTerminal={handleToggleTerminal}
-        onAddFolder={projectPath ? handleAddFolder : undefined}
-        onSaveWorkspace={projectPath ? handleSaveWorkspace : undefined}
-        onOpenWorkspace={handleOpenWorkspace}
-        onCloseWorkspace={projectPath ? handleCloseWorkspace : undefined}
-      />
+      {/* Menu Bar (Windows/Linux only — macOS uses native NSMenu) */}
+      {!isMac && (
+        <MenuBar 
+          onNewProject={handleNewProject}
+          onOpenProject={handleOpenProject}
+          onSaveFile={() => window.dispatchEvent(new CustomEvent('editor-save-file'))}
+          onSettings={() => setSettingsOpen(true)}
+          onNewChat={handleNewChat}
+          onFindInFiles={() => setSearchPanelOpen(true)}
+          onFindInFile={handleFindInFile}
+          onReplaceInFile={handleReplaceInFile}
+          onToggleTerminal={handleToggleTerminal}
+          onAddFolder={projectPath ? handleAddFolder : undefined}
+          onSaveWorkspace={projectPath ? handleSaveWorkspace : undefined}
+          onOpenWorkspace={handleOpenWorkspace}
+          onCloseWorkspace={projectPath ? handleCloseWorkspace : undefined}
+        />
+      )}
 
       {/* Modals */}
       <Settings isOpen={settingsOpen} onClose={() => setSettingsOpen(false)} />

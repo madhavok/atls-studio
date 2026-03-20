@@ -1872,6 +1872,84 @@ pub fn run() {
         .manage(SearchCacheState::default())
         .manage(GitOpState::default())
         .setup(|app| {
+            // macOS: native menu bar (NSMenu) so the titlebar stays draggable
+            #[cfg(target_os = "macos")]
+            {
+                use tauri::menu::{MenuBuilder, SubmenuBuilder, MenuItem};
+
+                let menu = MenuBuilder::new(app)
+                    .item(&SubmenuBuilder::new(app, "ATLS Studio")
+                        .about(None)
+                        .separator()
+                        .services()
+                        .separator()
+                        .hide()
+                        .hide_others()
+                        .show_all()
+                        .separator()
+                        .quit()
+                        .build()?)
+                    .item(&SubmenuBuilder::new(app, "File")
+                        .item(&MenuItem::with_id(app, "new-project", "New Project", true, Some("CmdOrCtrl+Shift+N"))?)
+                        .item(&MenuItem::with_id(app, "open-project", "Open Project...", true, Some("CmdOrCtrl+O"))?)
+                        .item(&MenuItem::with_id(app, "new-chat", "New Chat", true, Some("CmdOrCtrl+N"))?)
+                        .item(&MenuItem::with_id(app, "add-folder", "Add Folder to Workspace...", true, None::<&str>)?)
+                        .separator()
+                        .item(&MenuItem::with_id(app, "save-workspace", "Save Workspace As...", true, None::<&str>)?)
+                        .item(&MenuItem::with_id(app, "open-workspace", "Open Workspace...", true, None::<&str>)?)
+                        .item(&MenuItem::with_id(app, "close-workspace", "Close Workspace", true, None::<&str>)?)
+                        .separator()
+                        .item(&MenuItem::with_id(app, "save", "Save", true, Some("CmdOrCtrl+S"))?)
+                        .item(&MenuItem::with_id(app, "save-all", "Save All", true, Some("CmdOrCtrl+Shift+S"))?)
+                        .separator()
+                        .item(&MenuItem::with_id(app, "settings", "Settings...", true, Some("CmdOrCtrl+,"))?)
+                        .build()?)
+                    .item(&SubmenuBuilder::new(app, "Edit")
+                        .undo()
+                        .redo()
+                        .separator()
+                        .cut()
+                        .copy()
+                        .paste()
+                        .select_all()
+                        .separator()
+                        .item(&MenuItem::with_id(app, "find-in-file", "Find in File", true, Some("CmdOrCtrl+F"))?)
+                        .item(&MenuItem::with_id(app, "replace", "Replace", true, Some("CmdOrCtrl+H"))?)
+                        .build()?)
+                    .item(&SubmenuBuilder::new(app, "View")
+                        .item(&MenuItem::with_id(app, "quick-actions", "Quick Actions", true, Some("CmdOrCtrl+Shift+P"))?)
+                        .item(&MenuItem::with_id(app, "quick-find", "Quick Find", true, Some("CmdOrCtrl+P"))?)
+                        .item(&MenuItem::with_id(app, "search-in-files", "Search in Files", true, Some("CmdOrCtrl+Shift+F"))?)
+                        .separator()
+                        .item(&MenuItem::with_id(app, "toggle-terminal", "Toggle Terminal", true, None::<&str>)?)
+                        .separator()
+                        .item(&MenuItem::with_id(app, "zoom-in", "Zoom In", true, Some("CmdOrCtrl+="))?)
+                        .item(&MenuItem::with_id(app, "zoom-out", "Zoom Out", true, Some("CmdOrCtrl+-"))?)
+                        .item(&MenuItem::with_id(app, "reset-zoom", "Reset Zoom", true, Some("CmdOrCtrl+0"))?)
+                        .build()?)
+                    .item(&SubmenuBuilder::new(app, "Window")
+                        .minimize()
+                        .close_window()
+                        .separator()
+                        .fullscreen()
+                        .build()?)
+                    .item(&SubmenuBuilder::new(app, "Help")
+                        .item(&MenuItem::with_id(app, "documentation", "Documentation", true, None::<&str>)?)
+                        .item(&MenuItem::with_id(app, "keyboard-shortcuts", "Keyboard Shortcuts", true, None::<&str>)?)
+                        .separator()
+                        .item(&MenuItem::with_id(app, "atls-internals", "ATLS Internals", true, None::<&str>)?)
+                        .build()?)
+                    .build()?;
+
+                app.set_menu(menu)?;
+
+                app.on_menu_event(|app_handle, event| {
+                    if let Some(window) = app_handle.get_webview_window("main") {
+                        let _ = window.emit("menu-event", event.id().as_ref().to_string());
+                    }
+                });
+            }
+
             let mut builder = tauri::WebviewWindowBuilder::new(
                 app,
                 "main",
@@ -1883,10 +1961,7 @@ pub fn run() {
 
             #[cfg(target_os = "macos")]
             {
-                builder = builder
-                    .decorations(true)
-                    .title_bar_style(tauri::TitleBarStyle::Overlay)
-                    .hidden_title(true);
+                builder = builder.decorations(true);
             }
 
             #[cfg(not(target_os = "macos"))]
