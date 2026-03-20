@@ -683,8 +683,9 @@ pub(crate) fn js_object_to_json(input: &str) -> String {
     result
 }
 
-/// Extract text-based `atls({...})` tool calls that Gemini may output as text
-/// instead of using native functionCall. Returns (remaining_text, extracted_tool_calls).
+/// Extract text-based tool calls (`batch(...)`, `manage(...)`, `task_complete(...)`)
+/// that Gemini may output as text instead of using native functionCall.
+/// Returns (remaining_text, extracted_tool_calls).
 /// Handles both strict JSON and JS/TOON object literal syntax (unquoted keys).
 /// Strip status markers in both guillemet-wrapped («st:...») and loose (st:...) forms.
 /// Gemini/Vertex models often drop the opening « character.
@@ -699,28 +700,15 @@ pub(crate) fn strip_status_markers(s: &str) -> String {
 
 /// Normalize {"name": "...", "args": {...}} format into {"tool": "...", "params": {...}}.
 /// Gemini 3.x models sometimes emit tool calls in this OpenAI-like array format
-/// instead of the expected atls({tool:..., params:...}) wrapper.
+/// instead of the expected batch({...}) / manage({...}) / task_complete({...}) wrapper.
 pub(crate) fn normalize_name_args_to_tool_params(item: &serde_json::Value) -> Option<serde_json::Value> {
     let name = item.get("name").and_then(|n| n.as_str())?;
     let args = item.get("args").cloned().unwrap_or(serde_json::json!({}));
 
-    match name {
-        "manage" => Some(serde_json::json!({ "tool": "manage", "params": args })),
-        "task_complete" => Some(serde_json::json!({ "tool": "task_complete", "params": args })),
-        "atls" => {
-            if args.get("tool").is_some() {
-                Some(args)
-            } else {
-                Some(serde_json::json!({ "tool": "atls", "params": args }))
-            }
-        }
-        _ => {
-            Some(serde_json::json!({
-                "tool": name,
-                "params": args
-            }))
-        }
-    }
+    Some(serde_json::json!({
+        "tool": name,
+        "params": args
+    }))
 }
 
 pub(crate) fn extract_text_tool_calls(text: &str) -> (String, Vec<serde_json::Value>) {
@@ -732,7 +720,7 @@ pub(crate) fn extract_text_tool_calls(text: &str) -> (String, Vec<serde_json::Va
 
     // Regex to match text-emitted tool wrappers with optional whitespace
     static TOOL_RE: OnceLock<Regex> = OnceLock::new();
-    let tool_re = TOOL_RE.get_or_init(|| Regex::new(r"(atls|manage|task_complete|batch)\s*\(").unwrap());
+    let tool_re = TOOL_RE.get_or_init(|| Regex::new(r"(manage|task_complete|batch)\s*\(").unwrap());
 
     // Regex to find JSON code blocks: ```json { ... } ``` or ```javascript manage(...) ```
     static JSON_BLOCK_RE: OnceLock<Regex> = OnceLock::new();
@@ -815,25 +803,13 @@ pub(crate) fn extract_text_tool_calls(text: &str) -> (String, Vec<serde_json::Va
                             });
                         }
 
-                        // If it was a manage()/atls() wrapper, ensure it's treated as a tool call
+                        // If it was a manage()/batch()/task_complete() wrapper, ensure it's treated as a tool call
                         if is_wrapper && val.get("tool").is_none() {
-                             let tool_name = if trimmed.starts_with("manage") { "manage" } else if trimmed.starts_with("task_complete") { "task_complete" } else { "atls" };
-                             if tool_name == "manage" {
-                                 val = serde_json::json!({
-                                    "tool": "manage",
-                                    "params": val
-                                });
-                             } else if tool_name == "task_complete" {
-                                 val = serde_json::json!({
-                                    "tool": "task_complete",
-                                    "params": val
-                                });
-                             } else {
-                                 val = serde_json::json!({
-                                    "tool": "atls",
-                                    "params": val
-                                });
-                             }
+                             let tool_name = if trimmed.starts_with("manage") { "manage" } else if trimmed.starts_with("task_complete") { "task_complete" } else if trimmed.starts_with("batch") { "batch" } else { "batch" };
+                             val = serde_json::json!({
+                                "tool": tool_name,
+                                "params": val
+                             });
                         }
 
                         if val.get("tool").is_some() {
@@ -901,7 +877,6 @@ pub(crate) fn extract_text_tool_calls(text: &str) -> (String, Vec<serde_json::Va
                     });
 
                 if let Ok(mut val) = parsed {
-                    // If it was manage(...) or task_complete(...), wrap it as atls({tool:..., params: val})
                     if is_manage {
                         val = serde_json::json!({
                             "tool": "manage",
@@ -910,6 +885,11 @@ pub(crate) fn extract_text_tool_calls(text: &str) -> (String, Vec<serde_json::Va
                     } else if match_str.contains("task_complete") {
                         val = serde_json::json!({
                             "tool": "task_complete",
+                            "params": val
+                        });
+                    } else if match_str.contains("batch") {
+                        val = serde_json::json!({
+                            "tool": "batch",
                             "params": val
                         });
                     }
@@ -2730,7 +2710,7 @@ pub async fn stream_chat_google(
         
         // End-of-stream: extract text-based tool calls from full response (Gemini fallback)
         let has_text_tool_hints = !had_native_tool_call && (
-            full_response.contains("atls") || full_response.contains("manage")
+            full_response.contains("batch") || full_response.contains("manage")
             || full_response.contains("task_complete") || full_response.contains("```")
             || full_response.contains("\"name\"")
             || (full_response.contains("tool") && (full_response.contains("params") || full_response.contains("exec") || full_response.contains("workspaces")))

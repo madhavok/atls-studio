@@ -9,7 +9,7 @@ export {
 } from './subagentPrompts';
 
 export {
-  ATLS_TOOL_REF,
+  BATCH_TOOL_REF,
   DESIGNER_TOOL_REF,
   SUBAGENT_TOOL_REF,
 } from './toolRef';

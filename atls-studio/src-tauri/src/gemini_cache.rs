@@ -594,7 +594,7 @@ pub async fn stream_chat_vertex(
 
         // End-of-stream: extract text-based tool calls from full response (Gemini fallback)
         let has_text_tool_hints = !had_native_tool_call && (
-            full_response.contains("atls") || full_response.contains("manage")
+            full_response.contains("batch") || full_response.contains("manage")
             || full_response.contains("task_complete") || full_response.contains("```")
             || full_response.contains("\"name\"")
             || (full_response.contains("tool") && (full_response.contains("params") || full_response.contains("exec") || full_response.contains("workspaces")))

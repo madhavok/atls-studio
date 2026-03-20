@@ -210,7 +210,13 @@ function TerminalPane({ label, tabs, activeId, onSelectTab, onCloseTab, onCreate
     if (!instance) return;
 
     const handleData = (data: string) => {
-      invoke('write_pty', { id: activeId, data }).catch(console.error);
+      invoke('write_pty', { id: activeId, data }).catch((err) => {
+        console.error('[Terminal] write_pty failed:', err);
+        // Terminal may have died — mark as not alive to prevent further writes
+        const store = useTerminalStore.getState();
+        const term = store.terminals.get(activeId);
+        if (term && !term.isAlive) return; // already marked
+      });
     };
     const disposable = instance.terminal.onData(handleData);
     return () => disposable.dispose();

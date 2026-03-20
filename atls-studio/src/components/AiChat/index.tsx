@@ -26,11 +26,8 @@ import { getEffectiveContextWindow, modelSupportsExtendedContext } from '../../u
 import { useRoundHistoryStore } from '../../stores/roundHistoryStore';
 import { parseTaskCompleteArgs } from '../../utils/structuredOutput';
 
-// Detect task_complete regardless of whether it's direct or atls-wrapped
 function isTaskCompleteCall(tc: { name: string; args?: Record<string, unknown> }): boolean {
-  if (tc.name === 'task_complete') return true;
-  if (tc.name === 'atls' && String(tc.args?.tool) === 'task_complete') return true;
-  return false;
+  return tc.name === 'task_complete';
 }
 
 function coerceStringArray(value: unknown): string[] {
@@ -837,7 +834,6 @@ function getFriendlyToolName(toolName: string): string {
     refactor: '🔄 Refactor',
     dependencies: '📦 Dependencies',
     batch_query: '⚡ Query',
-    atls: '⚡ ATLS',
     batch: '⚡ ATLS',
     task_complete: '✅ Task Complete',
     manage: '📋 Manage',
@@ -1338,8 +1334,7 @@ const MessageBubble = memo(function MessageBubble({ message, isEditing, onStartE
                   const { summary, filesChanged } = getTaskCompleteArgs(part.toolCall);
                   return <TaskCompleteCard key={`task-complete-${idx}`} summary={summary} filesChanged={filesChanged} />;
                 }
-                const isSubagentCall = part.toolCall.name === 'subagent'
-                  || (part.toolCall.name === 'atls' && (part.toolCall.args as Record<string, unknown>)?.tool === 'subagent');
+                const isSubagentCall = part.toolCall.name === 'subagent';
                 if (isSubagentCall) {
                   return (
                     <div key={`subagent-${part.toolCall.id}`} className="px-2">
@@ -2163,8 +2158,7 @@ const StreamingBubble = memo(function StreamingBubble({
               <ErrorPart key={`error-${idx}`} errorText={segment.errorText} />
             );
           } else if (segment.type === 'tool') {
-            const isSubagent = segment.toolCall.name === 'subagent'
-              || (segment.toolCall.name === 'atls' && (segment.toolCall.args?.tool === 'subagent'));
+            const isSubagent = segment.toolCall.name === 'subagent';
             if (isSubagent) {
               return (
                 <SubAgentCard

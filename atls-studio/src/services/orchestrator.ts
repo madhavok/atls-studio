@@ -14,7 +14,7 @@ import type { ContextUsage } from '../stores/appStore';
 import { getTerminalStore } from '../stores/terminalStore';
 import { chatDb, type TaskStatus as ChatTaskStatus } from './chatDb';
 import { rateLimiter } from './rateLimiter';
-import { streamChatForSwarm, ATLS_TOOL_REF, type AIConfig, type ChatMessage, type AIProvider } from './aiService';
+import { streamChatForSwarm, BATCH_TOOL_REF, type AIConfig, type ChatMessage, type AIProvider } from './aiService';
 import { toTOON } from '../utils/toon';
 
 // ============================================================================
@@ -1514,7 +1514,7 @@ Result: ${depTask.result.slice(0, 1500)}`);
   ): { systemPrompt: string; contextBlock: string } {
     const role = task.assignedRole;
     const roleDocs = ROLE_TOOL_DOCS[role] || ROLE_TOOL_DOCS.coder;
-    const toolDocs = `${ATLS_TOOL_REF}
+    const toolDocs = `${BATCH_TOOL_REF}
 
 ${roleDocs}`;
     

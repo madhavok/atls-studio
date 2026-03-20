@@ -2016,9 +2016,9 @@ pub async fn atls_batch_query(
                             "deleted": deleted,
                             "clean": staged.is_empty() && modified.is_empty() && untracked.is_empty() && deleted.is_empty(),
                             "_next": if !staged.is_empty() {
-                                "Ready to commit: atls({tool:'git',params:{action:'commit',message:'...'}})"
+                                "Ready to commit: batch({version:\"1.0\",steps:[{id:\"g1\",use:\"system.git\",with:{action:\"commit\",message:\"...\"}}]})"
                             } else if !modified.is_empty() || !untracked.is_empty() {
-                                "Stage files: atls({tool:'git',params:{action:'stage',files:[...]}})"
+                                "Stage files: batch({version:\"1.0\",steps:[{id:\"g1\",use:\"system.git\",with:{action:\"stage\",files:[...]}}]})"
                             } else {
                                 "Working tree clean"
                             }
@@ -2133,7 +2133,7 @@ pub async fn atls_batch_query(
                             "staged": staged,
                             "summary": stat_output.lines().last().unwrap_or(""),
                             "files": file_diffs,
-                            "_next": "Review changes, then: atls({tool:'git',params:{action:'stage',files:[...]}}) or atls({tool:'git',params:{action:'commit',message:'...'}})"
+                            "_next": "Review changes, then: batch({version:\"1.0\",steps:[{id:\"g1\",use:\"system.git\",with:{action:\"stage\",files:[...]}}]}) or batch({version:\"1.0\",steps:[{id:\"g1\",use:\"system.git\",with:{action:\"commit\",message:\"...\"}}]})"
                         }))
                     }
                     "stage" => {
@@ -2170,7 +2170,7 @@ pub async fn atls_batch_query(
                             "action": "stage",
                             "staged": if all { vec!["all".to_string()] } else { file_paths },
                             "success": true,
-                            "_next": "Commit: atls({tool:'git',params:{action:'commit',message:'...'}})"
+                            "_next": "Commit: batch({version:\"1.0\",steps:[{id:\"g1\",use:\"system.git\",with:{action:\"commit\",message:\"...\"}}]})"
                         }))
                     }
                     "unstage" => {
@@ -2231,7 +2231,7 @@ pub async fn atls_batch_query(
                             "commit": commit_hash,
                             "message": message,
                             "output": stdout.to_string(),
-                            "_next": "Push to remote: atls({tool:'git',params:{action:'push'}})"
+                            "_next": "Push to remote: batch({version:\"1.0\",steps:[{id:\"g1\",use:\"system.git\",with:{action:\"push\"}}]})"
                         }))
                     }
                     "push" => {
@@ -3095,9 +3095,9 @@ pub async fn atls_batch_query(
                         let (output_val, test_truncated, test_total_lines) = truncate_output_tail_biased(&combined, 5000, 15, 50);
                         let _ = output_truncated; // superseded by test_truncated
                         let test_next = if success {
-                            "Tests passed. Ready to commit: atls({tool:'git',params:{action:'stage',all:true}})"
+                            "Tests passed. Ready to commit: batch({version:\"1.0\",steps:[{id:\"g1\",use:\"system.git\",with:{action:\"stage\",all:true}}]})"
                         } else {
-                            "Fix failing tests, then re-run: atls({tool:'verify',params:{type:'test'}})"
+                            "Fix failing tests, then re-run: batch({version:\"1.0\",steps:[{id:\"v1\",use:\"verify.test\"}]})"
                         };
                         let status = if !output.status.success() || failed > 0 {
                             "fail"
@@ -3309,9 +3309,9 @@ pub async fn atls_batch_query(
                                 "warning_count": warnings.len()
                             },
                             "_next": if success {
-                                "Build succeeded. Run tests: atls({tool:'verify',params:{type:'test'}})"
+                                "Build succeeded. Run tests: batch({version:\"1.0\",steps:[{id:\"v1\",use:\"verify.test\"}]})"
                             } else {
-                                "Fix build errors, then re-run: atls({tool:'verify',params:{type:'build'}})"
+                                "Fix build errors, then re-run: batch({version:\"1.0\",steps:[{id:\"v1\",use:\"verify.build\"}]})"
                             }
                         });
                         if !success {
@@ -3470,9 +3470,9 @@ pub async fn atls_batch_query(
                                     "warning_count": warnings.len()
                                 },
                                 "_next": if success {
-                                    "Types are valid. Run tests: atls({tool:'verify',params:{type:'test'}})"
+                                    "Types are valid. Run tests: batch({version:\"1.0\",steps:[{id:\"v1\",use:\"verify.test\"}]})"
                                 } else {
-                                    "Fix type errors using atls({tool:'edit',params:{line_edits:[...]}}), then re-run: atls({tool:'verify',params:{type:'typecheck'}})"
+                                    "Fix type errors using batch({version:\"1.0\",steps:[{id:\"e1\",use:\"change.edit\",with:{line_edits:[...]}}]}), then re-run: batch({version:\"1.0\",steps:[{id:\"v1\",use:\"verify.typecheck\"}]})"
                                 }
                             });
                             result["_metadata"] = verify_metadata(&work_dir, &manifest_file, &"cargo check --message-format=json", &selection_reason);
@@ -3556,9 +3556,9 @@ pub async fn atls_batch_query(
                                     "error_count": errors.len()
                                 },
                                 "_next": if success {
-                                    "Types are valid. Run tests: atls({tool:'verify',params:{type:'test'}})"
+                                    "Types are valid. Run tests: batch({version:\"1.0\",steps:[{id:\"v1\",use:\"verify.test\"}]})"
                                 } else {
-                                    "Fix type errors using atls({tool:'edit',params:{line_edits:[...]}}), then re-run: atls({tool:'verify',params:{type:'typecheck'}})"
+                                    "Fix type errors using batch({version:\"1.0\",steps:[{id:\"e1\",use:\"change.edit\",with:{line_edits:[...]}}]}), then re-run: batch({version:\"1.0\",steps:[{id:\"v1\",use:\"verify.typecheck\"}]})"
                                 }
                             });
                             result["_metadata"] = verify_metadata(&work_dir, &manifest_file, &"npx -p typescript tsc --noEmit --pretty false", &selection_reason);
@@ -3581,7 +3581,7 @@ pub async fn atls_batch_query(
                             let combined = combine_output(&stdout, &stderr);
                             let success = output.status.success();
                             let (java_output, java_truncated, java_total) = truncate_output_tail_biased(&combined, 5000, 15, 50);
-                            let java_next = if success { "Compilation passed." } else { "Fix compilation errors, then re-run: atls({tool:'verify',params:{type:'typecheck'}})" };
+                            let java_next = if success { "Compilation passed." } else { "Fix compilation errors, then re-run: batch({version:\"1.0\",steps:[{id:\"v1\",use:\"verify.typecheck\"}]})" };
                             Ok(serde_json::json!({
                                 "type": "typecheck",
                                 "toolchain": "java",
@@ -3598,7 +3598,7 @@ pub async fn atls_batch_query(
                             let combined = combine_output(&stdout, &stderr);
                             let success = output.status.success();
                             let (csharp_output, csharp_truncated, csharp_total) = truncate_output_tail_biased(&combined, 5000, 15, 50);
-                            let csharp_next = if success { "Build passed." } else { "Fix build errors, then re-run: atls({tool:'verify',params:{type:'build'}})" };
+                            let csharp_next = if success { "Build passed." } else { "Fix build errors, then re-run: batch({version:\"1.0\",steps:[{id:\"v1\",use:\"verify.build\"}]})" };
                             Ok(serde_json::json!({
                                 "type": "typecheck",
                                 "toolchain": "csharp",
@@ -3615,7 +3615,7 @@ pub async fn atls_batch_query(
                             let combined = combine_output(&stdout, &stderr);
                             let success = output.status.success();
                             let (swift_output, swift_truncated, swift_total) = truncate_output_tail_biased(&combined, 5000, 15, 50);
-                            let swift_next = if success { "Build passed." } else { "Fix build errors, then re-run: atls({tool:'verify',params:{type:'build'}})" };
+                            let swift_next = if success { "Build passed." } else { "Fix build errors, then re-run: batch({version:\"1.0\",steps:[{id:\"v1\",use:\"verify.build\"}]})" };
                             Ok(serde_json::json!({
                                 "type": "typecheck",
                                 "toolchain": "swift",
@@ -3680,9 +3680,9 @@ pub async fn atls_batch_query(
                                     "error_count": errors.len()
                                 },
                                 "_next": if success {
-                                    "go vet passed. Run tests: atls({tool:'verify',params:{type:'test'}})"
+                                    "go vet passed. Run tests: batch({version:\"1.0\",steps:[{id:\"v1\",use:\"verify.test\"}]})"
                                 } else {
-                                    "Fix vet errors, then re-run: atls({tool:'verify',params:{type:'typecheck',toolchain:'go'}})"
+                                    "Fix vet errors, then re-run: batch({version:\"1.0\",steps:[{id:\"v1\",use:\"verify.typecheck\",with:{toolchain:\"go\"}}]})"
                                 }
                             }))
                         } else if use_python {
@@ -3805,9 +3805,9 @@ pub async fn atls_batch_query(
                                     "error_count": errors.len()
                                 },
                                 "_next": if success {
-                                    "Type check passed. Run tests: atls({tool:'verify',params:{type:'test'}})"
+                                    "Type check passed. Run tests: batch({version:\"1.0\",steps:[{id:\"v1\",use:\"verify.test\"}]})"
                                 } else {
-                                    "Fix type errors, then re-run: atls({tool:'verify',params:{type:'typecheck',toolchain:'python'}})"
+                                    "Fix type errors, then re-run: batch({version:\"1.0\",steps:[{id:\"v1\",use:\"verify.typecheck\",with:{toolchain:\"python\"}}]})"
                                 }
                             }))
                         } else if use_c {
@@ -3879,9 +3879,9 @@ pub async fn atls_batch_query(
                                     "error_count": errors.len()
                                 },
                                 "_next": if success {
-                                    "Build passed. Run tests: atls({tool:'verify',params:{type:'test'}})"
+                                    "Build passed. Run tests: batch({version:\"1.0\",steps:[{id:\"v1\",use:\"verify.test\"}]})"
                                 } else {
-                                    "Fix compilation errors, then re-run: atls({tool:'verify',params:{type:'typecheck',toolchain:'c'}})"
+                                    "Fix compilation errors, then re-run: batch({version:\"1.0\",steps:[{id:\"v1\",use:\"verify.typecheck\",with:{toolchain:\"c\"}}]})"
                                 }
                             }))
                         } else {
@@ -4011,7 +4011,7 @@ pub async fn atls_batch_query(
                                 "error": "Lint tool not available",
                                 "stderr": if stderr.len() < 1000 { stderr.clone() } else { stderr[..1000].to_string() },
                                 "hint": "Install the required linter. E.g.: pip install flake8, npm i -g eslint, cargo install clippy",
-                                "_next": "Install the missing tool and retry: atls({tool:'verify',params:{type:'lint'}})"
+                                "_next": "Install the missing tool and retry: batch({version:\"1.0\",steps:[{id:\"v1\",use:\"verify.lint\"}]})"
                             }));
                         }
 
@@ -4023,9 +4023,9 @@ pub async fn atls_batch_query(
                             "issues": issues,
                             "issue_count": real_issue_count,
                             "_next": if success {
-                                "Linting passed. Run: atls({tool:'verify',params:{type:'test'}})"
+                                "Linting passed. Run: batch({version:\"1.0\",steps:[{id:\"v1\",use:\"verify.test\"}]})"
                             } else {
-                                "Fix lint issues with atls({tool:'edit',params:{line_edits:[...]}})"
+                                "Fix lint issues with batch({version:\"1.0\",steps:[{id:\"e1\",use:\"change.edit\",with:{line_edits:[...]}}]})"
                             }
                         });
                         if !stderr.is_empty() && stderr.len() < 500 {
@@ -4951,7 +4951,7 @@ pub async fn atls_batch_query(
                 Ok(serde_json::json!({
                     "concepts": concepts,
                     "results": all_results,
-                    "_next": "Use atls({tool:'context',params:{type:'smart',file_paths:[...]}}) to read the matched code"
+                    "_next": "Use batch({version:\"1.0\",steps:[{id:\"r1\",use:\"read.context\",with:{type:\"smart\",file_paths:[...]}}]}) to read the matched code"
                 }))
             }
             "find_issues" => {
@@ -5106,7 +5106,7 @@ pub async fn atls_batch_query(
                                 "offset": applied_offset,
                                 "has_more": returned == applied_limit
                             },
-                            "_next": "Use limit/offset to paginate, atls({tool:'edit',params:{line_edits:[...]}}) to fix, atls({tool:'find_issues',params:{mark_noise:true,...}}) to suppress"
+                            "_next": "Use limit/offset to paginate, batch({version:\"1.0\",steps:[{id:\"e1\",use:\"change.edit\",with:{line_edits:[...]}}]}) to fix, batch({version:\"1.0\",steps:[{id:\"s1\",use:\"search.issues\",with:{mark_noise:true,...}}]}) to suppress"
                         });
                         if filtered.is_empty() {
                             result["_hint"] = serde_json::json!(
@@ -6202,7 +6202,7 @@ pub async fn atls_batch_query(
                     "_next": if dry_run {
                         "Review handlers and dispatch_match. Set dry_run:false and target_module to execute."
                     } else {
-                        "Handlers written. Verify with: atls({tool:'verify',params:{type:'typecheck'}})"
+                        "Handlers written. Verify with: batch({version:\"1.0\",steps:[{id:\"v1\",use:\"verify.typecheck\"}]})"
                     }
                 }))
             }
@@ -6499,7 +6499,7 @@ pub async fn atls_batch_query(
                     } else if !lint_results.is_empty() {
                         "Split complete with lint errors. Fix errors and run verify."
                     } else {
-                        "Split complete. Run atls({tool:'verify',params:{type:'typecheck'}}) to validate."
+                        "Split complete. Run batch({version:\"1.0\",steps:[{id:\"v1\",use:\"verify.typecheck\"}]}) to validate."
                     }
                 }))
             }
@@ -8551,9 +8551,9 @@ pub async fn atls_batch_query(
                     } else if all_extracted_methods.is_empty() {
                         "No methods found in symbol index. Re-index the project and retry."
                     } else if source_removal_result.is_some() {
-                        "Extraction complete. Methods removed from source and target files created. Verify with: atls({tool:'verify',params:{type:'typecheck'}})"
+                        "Extraction complete. Methods removed from source and target files created. Verify with: batch({version:\"1.0\",steps:[{id:\"v1\",use:\"verify.typecheck\"}]})"
                     } else {
-                        "Target files created. Verify with: atls({tool:'verify',params:{type:'typecheck'}})"
+                        "Target files created. Verify with: batch({version:\"1.0\",steps:[{id:\"v1\",use:\"verify.typecheck\"}]})"
                     }
                 });
                 if was_reordered {
@@ -10329,7 +10329,7 @@ pub async fn atls_batch_query(
                     } else if dry_run {
                         "Preview complete. Set dry_run:false to apply rename"
                     } else {
-                        "Rename applied. Run atls({tool:'verify',params:{type:'typecheck'}}) to check for errors"
+                        "Rename applied. Run batch({version:\"1.0\",steps:[{id:\"v1\",use:\"verify.typecheck\"}]}) to check for errors"
                     }
                 });
 
@@ -10577,7 +10577,7 @@ pub async fn atls_batch_query(
                         "lints": lint_summary.as_ref().map(|s| s.total).unwrap_or(0)
                     },
                     "_next": if errors.is_empty() {
-                        "All operations completed. Run atls({tool:'verify',params:{type:'typecheck'}}) to validate"
+                        "All operations completed. Run batch({version:\"1.0\",steps:[{id:\"v1\",use:\"verify.typecheck\"}]}) to validate"
                     } else {
                         "Some operations failed. Check errors array"
                     }
@@ -11417,7 +11417,7 @@ pub async fn atls_batch_query(
                             let next_hint = match error_class {
                                 "overlapping_line_edits" => "Make line_edits non-overlapping, or re-read the file and retry with narrower anchors",
                                 "line_out_of_range" => "Re-read the latest file content and retry with current anchors or line ranges",
-                                "anchor_not_found" => "Re-read the target file with atls({tool:'context',params:{type:'full',file_paths:[...]}}), then retry with current anchors",
+                                "anchor_not_found" => "Re-read the target file with batch({version:\"1.0\",steps:[{id:\"r1\",use:\"read.context\",with:{type:\"full\",file_paths:[...]}}]}), then retry with current anchors",
                                 _ => "Re-read the target file and retry with current anchors or old text",
                             };
                             return Ok(serde_json::json!({
@@ -11479,7 +11479,7 @@ pub async fn atls_batch_query(
                             "error": "all_edits_failed",
                             "error_class": error_class,
                             "edit_warnings": edit_warnings,
-                            "_next": "Re-read the target file with atls({tool:'context',params:{type:'full',file_paths:[...]}}), then retry with correct old text",
+                            "_next": "Re-read the target file with batch({version:\"1.0\",steps:[{id:\"r1\",use:\"read.context\",with:{type:\"full\",file_paths:[...]}}]}), then retry with correct old text",
                             "_retry_payload": {
                                 "file_paths": retry_files,
                                 "strategy": "read_shaped_sig_then_retry",
@@ -11719,7 +11719,7 @@ pub async fn atls_batch_query(
                         "has_errors": has_errors,
                         "written": written,
                         "index": index_result,
-                        "_next": "Written to disk. Run atls({tool:'verify',params:{type:'typecheck'}}) to validate"
+                        "_next": "Written to disk. Run batch({version:\"1.0\",steps:[{id:\"v1\",use:\"verify.typecheck\"}]}) to validate"
                     });
                     if !symbol_errors.is_empty() {
                         result["symbol_errors"] = serde_json::json!(symbol_errors);
@@ -11737,7 +11737,7 @@ pub async fn atls_batch_query(
                 let next_hint = if let Some(ref summary) = lint_summary {
                     build_lint_fix_hint(summary, &all_hashes)
                 } else {
-                    "Clean (buffered). Use atls({tool:'edit',params:{flush:[...]}}) to write".to_string()
+                    "Clean (buffered). Use batch({version:\"1.0\",steps:[{id:\"e1\",use:\"change.edit\",with:{flush:[...]}}]}) to write".to_string()
                 };
 
                 let has_errors = lint_summary.as_ref()
@@ -11914,7 +11914,7 @@ pub async fn atls_batch_query(
                         "old_h": old_short,
                         "diff_ref": diff_ref,
                         "index": index_result,
-                        "_next": "Written to disk. Run atls({tool:'verify',params:{type:'typecheck'}}) to validate"
+                        "_next": "Written to disk. Run batch({version:\"1.0\",steps:[{id:\"v1\",use:\"verify.typecheck\"}]}) to validate"
                     }));
                 }
 
@@ -11939,7 +11939,7 @@ pub async fn atls_batch_query(
                 let next_hint = if let Some(ref summary) = lint_summary {
                     build_lint_fix_hint(summary, &hashes)
                 } else {
-                    "Clean (buffered). Use atls({tool:'edit',params:{flush:[...]}}) to write".to_string()
+                    "Clean (buffered). Use batch({version:\"1.0\",steps:[{id:\"e1\",use:\"change.edit\",with:{flush:[...]}}]}) to write".to_string()
                 };
                 let new_short = format!("h:{}", &new_hash[..std::cmp::min(8, new_hash.len())]);
                 let old_short = format!("h:{}", &old_hash[..std::cmp::min(8, old_hash.len())]);
@@ -12117,7 +12117,7 @@ pub async fn atls_batch_query(
                     "errors": errors,
                     "index": index_result,
                     "_next": if errors.is_empty() {
-                        "Files written. Run atls({tool:'verify',params:{type:'typecheck'}}) to validate"
+                        "Files written. Run batch({version:\"1.0\",steps:[{id:\"v1\",use:\"verify.typecheck\"}]}) to validate"
                     } else {
                         "Some flushes failed. Check errors array"
                     }
@@ -12156,7 +12156,7 @@ pub async fn atls_batch_query(
                         "mode": "undo_list",
                         "entries": entries,
                         "count": entries.len(),
-                        "_next": "Use atls({tool:'edit',params:{undo:'<hash>'}}) or atls({tool:'edit',params:{undo:'<file_path>'}}) to restore"
+                        "_next": "Use batch({version:\"1.0\",steps:[{id:\"e1\",use:\"change.edit\",with:{undo:\"<hash>\"}}]}) or batch({version:\"1.0\",steps:[{id:\"e1\",use:\"change.edit\",with:{undo:\"<file_path>\"}}]}) to restore"
                     }));
                 }
 
@@ -12254,7 +12254,7 @@ pub async fn atls_batch_query(
                                             "diff_ref": diff_ref,
                                             "status": "restored",
                                             "index": index_result,
-                                            "_next": "File restored. Run atls({tool:'verify',params:{type:'typecheck'}}) to validate"
+                                            "_next": "File restored. Run batch({version:\"1.0\",steps:[{id:\"v1\",use:\"verify.typecheck\"}]}) to validate"
                                         }))
                                     }
                                     Err(e) => Ok(serde_json::json!({
@@ -12335,7 +12335,7 @@ pub async fn atls_batch_query(
                                                     "diff_ref": diff_ref,
                                                     "status": "restored_from_registry",
                                                     "index": index_result,
-                                                    "_next": "Restored from hash registry. Run atls({tool:'verify',params:{type:'typecheck'}}) to validate"
+                                                    "_next": "Restored from hash registry. Run batch({version:\"1.0\",steps:[{id:\"v1\",use:\"verify.typecheck\"}]}) to validate"
                                                 }))
                                             }
                                             Err(e) => Ok(serde_json::json!({
@@ -12359,7 +12359,7 @@ pub async fn atls_batch_query(
                     None => {
                         let entry_count: usize = undo_store.values().map(|s| s.len()).sum();
                         Ok(serde_json::json!({
-                            "error": "Not found in undo store. Use atls({tool:'edit',params:{undo:'list'}}) to see available entries.",
+                            "error": "Not found in undo store. Use batch({version:\"1.0\",steps:[{id:\"e1\",use:\"change.edit\",with:{undo:\"list\"}}]}) to see available entries.",
                             "ref": undo_ref,
                             "_hint": "Entry may have been evicted or already undone. Use edit({undo:'list'}}) to see available entries.",
                             "undo_store_entries": entry_count
@@ -12389,9 +12389,9 @@ pub async fn atls_batch_query(
                     "drafts": drafts,
                     "count": drafts.len(),
                     "_next": if drafts.is_empty() {
-                        "No buffered drafts. Use atls({tool:'edit',params:{draft:true,...}}) to create one."
+                        "No buffered drafts. Use batch({version:\"1.0\",steps:[{id:\"e1\",use:\"change.edit\",with:{draft:true,...}}]}) to create one."
                     } else {
-                        "Use atls({tool:'edit',params:{revise:'<hash>',...}}) to patch, atls({tool:'edit',params:{flush:['<hash>']}}) to write, or atls({tool:'edit',params:{undo:'<hash>'}}) to rollback"
+                        "Use batch({version:\"1.0\",steps:[{id:\"e1\",use:\"change.edit\",with:{revise:\"<hash>\",...}}]}) to patch, batch({version:\"1.0\",steps:[{id:\"e1\",use:\"change.edit\",with:{flush:[\"<hash>\"]}}]}) to write, or batch({version:\"1.0\",steps:[{id:\"e1\",use:\"change.edit\",with:{undo:\"<hash>\"}}]}) to rollback"
                     }
                 }))
             }
@@ -12471,7 +12471,7 @@ pub async fn atls_batch_query(
                             "_next": if changes == 0 {
                                 "No differences between buffer and disk"
                             } else {
-                                "Use atls({tool:'edit',params:{flush:['<hash>']}}) to write buffer to disk, or atls({tool:'edit',params:{undo:'<hash>'}}) to discard"
+                                "Use batch({version:\"1.0\",steps:[{id:\"e1\",use:\"change.edit\",with:{flush:[\"<hash>\"]}}]}) to write buffer to disk, or batch({version:\"1.0\",steps:[{id:\"e1\",use:\"change.edit\",with:{undo:\"<hash>\"}}]}) to discard"
                             }
                         }))
                     }
@@ -12479,7 +12479,7 @@ pub async fn atls_batch_query(
                         Ok(serde_json::json!({
                             "error": "Hash not found in buffer",
                             "hash": hash,
-                            "hint": "Use atls({tool:'edit',params:{list_drafts:true}}) to see available hashes"
+                            "hint": "Use batch({version:\"1.0\",steps:[{id:\"e1\",use:\"change.edit\",with:{list_drafts:true}}]}) to see available hashes"
                         }))
                     }
                 }
@@ -14003,7 +14003,7 @@ pub async fn atls_batch_query(
                     },
                     "_rollback_applied": format!("Applied {} restore and {} delete entries.", restored.len(), deleted.len()),
                     "_next": if errors.is_empty() {
-                        "All files restored and created files deleted. Run atls({tool:'verify',params:{type:'typecheck'}}) to validate."
+                        "All files restored and created files deleted. Run batch({version:\"1.0\",steps:[{id:\"v1\",use:\"verify.typecheck\"}]}) to validate."
                     } else {
                         "Some files could not be restored. Check errors array."
                     }

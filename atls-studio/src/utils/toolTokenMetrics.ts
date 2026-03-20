@@ -41,8 +41,6 @@ interface RawToolCall {
 
 function resolveToolName(tc: RawToolCall): string {
   if (tc.syntheticParentName?.trim()) return tc.syntheticParentName.trim();
-  if (tc.name === 'atls' && tc.args?.tool) return String(tc.args.tool);
-
   const syntheticTool = tc.args && typeof tc.args === 'object'
     ? (tc.args as Record<string, unknown>).tool_name
     : undefined;

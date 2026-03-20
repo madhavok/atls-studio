@@ -36,6 +36,93 @@ describe('compressToolLoopHistory', () => {
   });
 });
 
+describe('compressToolLoopHistory dedup', () => {
+  beforeEach(() => resetStore());
+
+  it('reuses an existing chunk by content hash instead of creating a duplicate', () => {
+    const bigContent = 'export const data = ' + 'x'.repeat(3000) + ';\n';
+    useContextStore.getState().addChunk(bigContent, 'smart', 'src/data.ts');
+    const chunkCountBefore = useContextStore.getState().chunks.size;
+
+    // The target tool_result is in round 0. With PROTECTED_RECENT_ROUNDS=2
+    // and currentRound=4, skipThreshold=2, so round 0 is eligible.
+    const toolUseId = 'tu_ctx';
+    const history: Array<{ role: string; content: unknown }> = [
+      { role: 'user', content: 'do something' },
+      {
+        role: 'assistant',
+        content: [
+          { type: 'tool_use', id: toolUseId, name: 'batch', input: { version: '1.0', steps: [{ use: 'read.context', with: { file_paths: ['src/data.ts'] } }] } },
+        ],
+      },
+      {
+        role: 'user',
+        content: [
+          { type: 'tool_result', tool_use_id: toolUseId, content: bigContent },
+        ],
+      },
+      // Rounds 1-3 pad history past the protection window
+      { role: 'assistant', content: 'step 2' },
+      { role: 'user', content: 'ok' },
+      { role: 'assistant', content: 'step 3' },
+      { role: 'user', content: 'ok' },
+      { role: 'assistant', content: 'step 4' },
+      { role: 'user', content: 'ok' },
+    ];
+
+    const count = compressToolLoopHistory(history, 4, 0);
+    expect(count).toBeGreaterThan(0);
+
+    const toolResult = (history[2].content as Array<{ content: string }>)[0];
+    expect(toolResult.content).toContain('[->');
+
+    // No new chunk should have been created — the existing 'smart' chunk was reused
+    const chunkCountAfter = useContextStore.getState().chunks.size;
+    expect(chunkCountAfter).toBe(chunkCountBefore);
+  });
+
+  it('reuses a batch-handler chunk with different source via source-match fallback', () => {
+    const bigContent = 'export function search() {}\n'.repeat(80);
+    // Batch handler stores with step-based source (matching extractToolDescription output)
+    useContextStore.getState().addChunk('different serialization of same result', 'search', 'search.code:auth');
+    const chunkCountBefore = useContextStore.getState().chunks.size;
+
+    const toolUseId = 'tu_search';
+    const history: Array<{ role: string; content: unknown }> = [
+      { role: 'user', content: 'find auth' },
+      {
+        role: 'assistant',
+        content: [
+          { type: 'tool_use', id: toolUseId, name: 'batch', input: { version: '1.0', steps: [{ use: 'search.code', with: { queries: ['auth'] } }] } },
+        ],
+      },
+      {
+        role: 'user',
+        content: [
+          { type: 'tool_result', tool_use_id: toolUseId, content: bigContent },
+        ],
+      },
+      // Pad past the protection window
+      { role: 'assistant', content: 'step 2' },
+      { role: 'user', content: 'ok' },
+      { role: 'assistant', content: 'step 3' },
+      { role: 'user', content: 'ok' },
+      { role: 'assistant', content: 'step 4' },
+      { role: 'user', content: 'ok' },
+    ];
+
+    const count = compressToolLoopHistory(history, 4, 0);
+    expect(count).toBeGreaterThan(0);
+
+    const toolResult = (history[2].content as Array<{ content: string }>)[0];
+    expect(toolResult.content).toContain('[->');
+
+    // Source-match found the existing 'search' chunk — no new chunk created
+    const chunkCountAfter = useContextStore.getState().chunks.size;
+    expect(chunkCountAfter).toBe(chunkCountBefore);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // deflateToolResults
 // ---------------------------------------------------------------------------
@@ -87,20 +174,19 @@ describe('deflateToolResults', () => {
   });
 
   it('falls back to source-based matching when content hash differs', () => {
-    // Simulate the atls gateway pattern: tool_use name is 'atls' with tool/params
-    // extractToolDescription produces "context:src/app.ts" as the description
-    const toolUseId = 'tu_atls';
+    // batch tool_use with steps — extractToolDescription produces "read.context:src/app.ts"
+    const toolUseId = 'tu_batch';
     const history: Array<{ role: string; content: unknown }> = [
       {
         role: 'assistant',
         content: [
-          { type: 'tool_use', id: toolUseId, name: 'atls', input: { tool: 'context', params: { file_paths: ['src/app.ts'] } } },
+          { type: 'tool_use', id: toolUseId, name: 'batch', input: { version: '1.0', steps: [{ use: 'read.context', with: { file_paths: ['src/app.ts'] } }] } },
         ],
       },
     ];
 
-    // Store a chunk whose source matches the description "context:src/app.ts"
-    useContextStore.getState().addChunk('original file content', 'smart', 'context:src/app.ts');
+    // Store a chunk whose source matches the description "read.context:src/app.ts"
+    useContextStore.getState().addChunk('original file content', 'smart', 'read.context:src/app.ts');
 
     const toolResults = [
       { type: 'tool_result', tool_use_id: toolUseId, content: 'different content but same source description' },

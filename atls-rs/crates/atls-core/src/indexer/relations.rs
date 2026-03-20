@@ -1101,15 +1101,15 @@ fn extract_imports_python_regex(content: &str) -> Vec<ImportInfo> {
 fn extract_imports_go_regex(content: &str) -> Vec<ImportInfo> {
     static SINGLE_RE: OnceLock<Regex> = OnceLock::new();
     let single_re = SINGLE_RE.get_or_init(|| {
-        Regex::new(r#"(?m)^[ \t]*import\s+"([^"]+)""#).unwrap()
+        Regex::new(r#"(?m)^[ \t]*import\s+"([^"]+)""#).expect("Go single import regex")
     });
     static BLOCK_RE: OnceLock<Regex> = OnceLock::new();
     let block_re = BLOCK_RE.get_or_init(|| {
-        Regex::new(r#"(?ms)import\s*\((.*?)\)"#).unwrap()
+        Regex::new(r#"(?ms)import\s*\((.*?)\)"#).expect("Go block import regex")
     });
     static SPEC_RE: OnceLock<Regex> = OnceLock::new();
     let spec_re = SPEC_RE.get_or_init(|| {
-        Regex::new(r#""([^"]+)""#).unwrap()
+        Regex::new(r#""([^"]+)""#).expect("Go import spec regex")
     });
 
     let mut imports = Vec::new();

@@ -1853,7 +1853,7 @@ pub(crate) fn build_target_file_header(
             } else {
                 format!("{}\n\n", filtered_imports.join("\n"))
             };
-            let ns = package_decl.unwrap_or("namespace Extracted");
+            let ns = package_decl.unwrap_or("namespace Extracted;");
             // Detect if the code body is already a class/struct/interface declaration
             let body_trimmed = code_body.trim();
             let already_has_class = body_trimmed.contains("class ") 

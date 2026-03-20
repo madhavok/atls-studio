@@ -3683,49 +3683,46 @@ mod tool_call_extraction_tests {
     }
 
     #[test]
-    fn test_extract_single_call() {
-        let text = r#"atls({tool:"exec",params:{cmd:"ls -R"}})"#;
+    fn test_extract_single_batch_call() {
+        let text = r#"batch({version:"1.0",steps:[{id:"s1",use:"system.exec",with:{cmd:"ls -R"}}]})"#;
         let (remaining, calls) = extract_text_tool_calls(text);
         assert_eq!(calls.len(), 1);
-        assert_eq!(calls[0]["tool"], "exec");
+        assert_eq!(calls[0]["tool"], "batch");
         assert!(remaining.trim().is_empty());
     }
 
     #[test]
     fn test_extract_regex_matches_newline_prefix() {
         use regex::Regex;
-        let re = Regex::new(r"(atls|manage|task_complete)\s*\(").unwrap();
-        let s = "Here is my plan:\natls({tool:\"exec\"})";
-        assert!(re.is_match(s), "regex should match when atls follows newline");
+        let re = Regex::new(r"(manage|task_complete|batch)\s*\(").unwrap();
+        let s = "Here is my plan:\nbatch({version:\"1.0\",steps:[]})";
+        assert!(re.is_match(s), "regex should match when batch follows newline");
         let mat = re.find(s).expect("should find");
-        assert_eq!(mat.as_str(), "atls(");
+        assert_eq!(mat.as_str(), "batch(");
     }
 
     #[test]
     fn test_js_object_parse_for_extract_input() {
-        // Exact content that would be between atls( and )
-        let raw = r#"{tool:"exec",params:{cmd:"ls"}}"#;
+        let raw = r#"{version:"1.0",steps:[{id:"s1",use:"system.exec",with:{cmd:"ls"}}]}"#;
         let json = js_object_to_json(raw);
         let parsed: serde_json::Value = serde_json::from_str(&json).expect("js_object_to_json should produce valid JSON");
-        assert_eq!(parsed["tool"], "exec");
-        assert_eq!(parsed["params"]["cmd"], "ls");
+        assert_eq!(parsed["version"], "1.0");
+        assert_eq!(parsed["steps"][0]["use"], "system.exec");
     }
 
     #[test]
-    fn test_extract_with_status_markers() {
-        // Two consecutive atls() calls — extraction must find both
-        let text = r#"atls({tool:"exec",params:{cmd:"ls"}})atls({tool:"find_issues",params:{file_paths:["."]}})"#;
+    fn test_extract_consecutive_batch_calls() {
+        let text = r#"batch({version:"1.0",steps:[{id:"s1",use:"system.exec",with:{cmd:"ls"}}]})batch({version:"1.0",steps:[{id:"s2",use:"search.issues",with:{file_paths:["."]}}]})"#;
         let (remaining, calls) = extract_text_tool_calls(text);
         assert_eq!(calls.len(), 2, "Should extract 2 tool calls; remaining={:?}", remaining);
-        assert_eq!(calls[0]["tool"], "exec");
-        assert_eq!(calls[1]["tool"], "find_issues");
+        assert_eq!(calls[0]["tool"], "batch");
+        assert_eq!(calls[1]["tool"], "batch");
         assert!(remaining.trim().is_empty(), "remaining should be empty, got: {}", remaining);
     }
 
     #[test]
     fn test_extract_preserves_surrounding_text() {
-        // When atls() is at start, surrounding text is preserved in remaining
-        let text = "atls({tool:\"exec\",params:{cmd:\"ls\"}}) and then more text";
+        let text = "batch({version:\"1.0\",steps:[{id:\"s1\",use:\"system.exec\",with:{cmd:\"ls\"}}]}) and then more text";
         let (remaining, calls) = extract_text_tool_calls(text);
         assert_eq!(calls.len(), 1, "expected 1 call, got {}; remaining={:?}", calls.len(), remaining);
         assert!(remaining.contains("and then more text"), "remaining should preserve text after call");

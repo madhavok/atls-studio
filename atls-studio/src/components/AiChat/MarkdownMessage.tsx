@@ -210,7 +210,7 @@ const sanitizeSchema = {
   },
 };
 
-const rehypePlugins = [rehypeRaw, [rehypeSanitize, sanitizeSchema]] as any[];
+const rehypePlugins: import('unified').PluggableList = [rehypeRaw, [rehypeSanitize, sanitizeSchema]];
 
 function MdSpan(props: React.ComponentPropsWithoutRef<'span'> & ExtraProps) {
   const { className, node: _node, ...rest } = props;

@@ -55,7 +55,7 @@ Contents (in order):
 1. Mode prompt (agent, designer, reviewer, etc.)
 2. Project line (working directory)
 3. Shell guide (OS-aware shell instructions)
-4. Tool reference (`ATLS_TOOL_REF` or mode-specific subset)
+4. Tool reference (`BATCH_TOOL_REF` or mode-specific subset)
 5. Entry manifest (optional project file listing)
 6. Mode-specific rules
 7. Cognitive Core (`CONTEXT_CONTROL_V4`)

@@ -266,7 +266,13 @@ function loadCostData(): DailyUsage[] {
     const saved = localStorage.getItem(COST_DATA_KEY);
     if (saved) {
       const parsed = JSON.parse(saved);
-      return Array.isArray(parsed) ? parsed as DailyUsage[] : [];
+      if (!Array.isArray(parsed)) return [];
+      // Validate each entry has required fields
+      return parsed.filter((entry: unknown) =>
+        typeof entry === 'object' && entry !== null &&
+        typeof (entry as Record<string, unknown>).date === 'string' &&
+        typeof (entry as Record<string, unknown>).provider === 'string'
+      ) as DailyUsage[];
     }
   } catch (e) {
     console.error('Failed to load cost data:', e);

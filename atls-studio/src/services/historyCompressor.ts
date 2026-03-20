@@ -61,23 +61,29 @@ export function buildCompressionDescription(
   return 'tool_result';
 }
 
-/** Extract a human-readable description from a tool call, unwrapping the atls gateway. */
+/** Extract a human-readable description from a tool call for compression labels. */
 export function extractToolDescription(
   name: string,
   input: Record<string, unknown>,
 ): string {
-  if (name === 'atls' && input.tool) {
-    const subTool = String(input.tool);
-    const subParams = (input.params as Record<string, unknown>) || {};
-    const subArg =
-      (subParams.file_paths as string[])?.[0] ||
-      String(subParams.cmd || '') ||
-      (subParams.queries as string[])?.[0] ||
-      String(subParams.action || '') ||
-      (subParams.symbol_names as string[])?.[0] ||
-      String(subParams.query || '') ||
-      '';
-    return subArg ? `${subTool}:${String(subArg).slice(0, 60)}` : subTool;
+  if (name === 'batch') {
+    const steps = input.steps as Array<{ use?: string; with?: Record<string, unknown> }> | undefined;
+    if (Array.isArray(steps) && steps.length > 0) {
+      const first = steps[0];
+      const stepName = first.use || 'batch';
+      const w = first.with || {};
+      const stepArg =
+        (w.file_paths as string[])?.[0] ||
+        (w.file_path as string) ||
+        String(w.cmd || '') ||
+        (w.queries as string[])?.[0] ||
+        String(w.action || '') ||
+        (w.symbol_names as string[])?.[0] ||
+        String(w.query || '') ||
+        '';
+      const suffix = steps.length > 1 ? ` +${steps.length - 1}` : '';
+      return stepArg ? `${stepName}:${String(stepArg).slice(0, 60)}${suffix}` : `${stepName}${suffix}`;
+    }
   }
   const params = input as Record<string, unknown>;
   const primaryArg =
@@ -93,25 +99,6 @@ export function extractToolDescription(
 // ---------------------------------------------------------------------------
 // Compressor
 // ---------------------------------------------------------------------------
-
-/**
- * Find an existing result-type chunk whose source matches the given description.
- * Used to avoid creating duplicate chunks when the compressor and batch handler
- * both store results for the same tool call.
- */
-function findExistingResultChunk(
-  store: ReturnType<typeof useContextStore.getState>,
-  description: string,
-): { hash: string; shortHash: string; digest?: string } | null {
-  const descNorm = description.toLowerCase();
-  for (const [, chunk] of store.chunks) {
-    if (chunk.type !== 'result') continue;
-    if (chunk.source && chunk.source.toLowerCase() === descNorm) {
-      return { hash: chunk.hash, shortHash: chunk.shortHash, digest: chunk.digest };
-    }
-  }
-  return null;
-}
 
 /**
  * Find any existing chunk whose source matches the description (any type).
@@ -206,15 +193,22 @@ export function compressToolLoopHistory(
 
         if (tokens <= threshold) continue;
 
-        // Dedupe: if a result chunk for this tool already exists, reuse it
-        const existingResult = findExistingResultChunk(contextStore, description);
+        // Dedupe: reuse an existing chunk for this content if one exists.
+        // Phase 1: exact content-hash match (covers same-serialization cases).
+        // Phase 2: source-string match across all chunk types (covers batch
+        //   handlers that store as 'smart'/'raw' with a different source string).
+        const contentHash = hashContentSync(tr.content);
+        const byHash = contextStore.chunks.get(contentHash);
+        const existing = byHash
+          ? { hash: byHash.hash, shortHash: byHash.shortHash, digest: byHash.digest }
+          : findExistingChunkBySource(contextStore, description);
         let hash: string;
         let shortHash: string;
         let chunkDigest: string | undefined;
-        if (existingResult) {
-          hash = existingResult.hash;
-          shortHash = existingResult.shortHash;
-          chunkDigest = existingResult.digest;
+        if (existing) {
+          hash = existing.hash;
+          shortHash = existing.shortHash;
+          chunkDigest = existing.digest;
         } else {
           hash = contextStore.addChunk(tr.content, 'result', description, undefined, `result: ${description}`);
           shortHash = hash.slice(0, SHORT_HASH_LEN);

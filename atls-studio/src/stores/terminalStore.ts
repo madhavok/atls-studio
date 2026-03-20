@@ -145,7 +145,7 @@ function checkPendingCompletions(terminalId: string): void {
       // Found completion marker
       clearTimeout(p.timeoutId);
       
-      const exitCode = match[1] ? parseInt(match[1], 10) : 0;
+      const exitCode = match[1] ? (parseInt(match[1], 10) || 0) : 0;
       const startIdx = p.buffer.indexOf(p.startMarker);
       const endIdx = p.buffer.indexOf(match[0]);
       
@@ -326,6 +326,13 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
   closeTerminal: async (id: string) => {
     const closingTerminal = get().terminals.get(id);
     await get().cleanupTerminal(id);
+    // Clean up leaked resources for the closed terminal
+    const pending = pendingCompletions.get(id);
+    if (pending) {
+      for (const p of pending) clearTimeout(p.timeoutId);
+      pendingCompletions.delete(id);
+    }
+    outputBuffers.delete(id);
     
     set(state => {
       const newTerminals = new Map(state.terminals);

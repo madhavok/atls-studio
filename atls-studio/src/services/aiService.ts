@@ -126,7 +126,7 @@ import { useRefactorStore } from '../stores/refactorStore';
 import { formatChunkRef, estimateTokens, hashContentSync, sliceContentByLines, extractSearchSummary, extractSymbolSummary, extractDepsSummary, SHORT_HASH_LEN, type DigestSymbol } from '../utils/contextHash';
 import { resolveHashRefsWithMeta, setRecencyResolver, setEditRecencyResolver, setReadRecencyResolver, setStageRecencyResolver, type HashLookup, type SetRefLookup } from '../utils/hashResolver';
 import { toTOON, formatResult } from '../utils/toon';
-import { ATLS_TOOL_REF, DESIGNER_TOOL_REF, SUBAGENT_TOOL_REF, NATIVE_TOOL_TOKENS_ESTIMATE } from '../prompts/toolRef';
+import { BATCH_TOOL_REF, DESIGNER_TOOL_REF, SUBAGENT_TOOL_REF, NATIVE_TOOL_TOKENS_ESTIMATE } from '../prompts/toolRef';
 import { CONTEXT_CONTROL_V4, CONTEXT_CONTROL_DESIGNER } from '../prompts/cognitiveCore';
 import { HASH_PROTOCOL_SPEC } from '../prompts/hashProtocol';
 import { getModePrompt } from '../prompts/modePrompts';
@@ -2621,8 +2621,7 @@ function buildContextTOON(context: WorkspaceContext, minimal = false): string {
   return toTOON(ctx);
 }
 
-// ATLS_TOOL_REF re-exported for orchestrator.ts backward compat
-export { ATLS_TOOL_REF } from '../prompts/toolRef';
+export { BATCH_TOOL_REF } from '../prompts/toolRef';
 // ============================================================================
 // Symbol Extraction (for chunk digests)
 // ============================================================================
@@ -2877,7 +2876,7 @@ function _buildStaticSystemPrompt(
     && (settings.subagentModel || settings.subagentProvider);
 
   let toolRef = atlsReady 
-    ? (mode === 'designer' ? DESIGNER_TOOL_REF : ATLS_TOOL_REF)
+    ? (mode === 'designer' ? DESIGNER_TOOL_REF : BATCH_TOOL_REF)
     : `## Terminal Only (ATLS not initialized - open a project first)
 batch({version:"1.0",steps:[{id:"exec",use:"system.exec",with:{cmd:"..."}}]}) → run command
 task_complete({summary, files_changed:[...]}) → optional structured finish signal`;

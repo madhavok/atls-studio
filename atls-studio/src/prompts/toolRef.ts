@@ -2,7 +2,7 @@
  * Tool reference for the collapsed batch-only surface.
  */
 
-export const ATLS_TOOL_REF = `## Batch Tool (shell = builds/git/packages ONLY; h:XXXX = universal pointer)
+export const BATCH_TOOL_REF = `## Batch Tool (shell = builds/git/packages ONLY; h:XXXX = universal pointer)
 Use one native execution surface: batch({version:"1.0",steps:[...]}).
 
 ### Operation Families
