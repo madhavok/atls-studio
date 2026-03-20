@@ -16,7 +16,7 @@ function parseHashCore(rest: string): ParsedHashRef | null {
   const colonPos = rest.indexOf(':');
   const hashPart = colonPos >= 0 ? rest.slice(0, colonPos) : rest;
   const modifierChain = colonPos >= 0 ? rest.slice(colonPos + 1) : '';
-  if (!/^[0-9a-fA-F]{6,16}$/.test(hashPart)) return null;
+  if (!/^[0-9a-fA-F_]{6,16}$/.test(hashPart)) return null;
   const parsedModifier = modifierChain ? parseModifierChain(modifierChain) : 'auto';
   if (parsedModifier == null) return null;
   return { hash: hashPart, modifier: parsedModifier as HashModifierV2 };
