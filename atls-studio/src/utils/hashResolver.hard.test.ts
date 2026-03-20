@@ -14,6 +14,7 @@ import {
   isTemporalSelector,
   setRecencyResolver,
   setEditRecencyResolver,
+  resolveRecencyInString,
   type HashLookup,
   type SetRefLookup,
   type SetSelector,
@@ -700,6 +701,35 @@ describe('recency ref resolution', () => {
       lookup,
     );
     expect((result as Record<string, unknown>).body).toBe('h:$last-5');
+  });
+
+  it('resolveRecencyInString preserves modifier chain on h:$last:60-80', () => {
+    setRecencyResolver((offset) => offset === 0 ? 'aabb1122' : null);
+    const result = resolveRecencyInString('h:$last:60-80');
+    expect(result).toBe('h:aabb1122:60-80');
+  });
+
+  it('resolveRecencyInString preserves modifier chain on h:$last_edit:sig', () => {
+    setEditRecencyResolver((offset) => offset === 0 ? 'ccdd3344' : null);
+    const result = resolveRecencyInString('h:$last_edit:sig');
+    expect(result).toBe('h:ccdd3344:sig');
+  });
+
+  it('resolveRecencyInString handles h:$last-1:1-10,60-70', () => {
+    setRecencyResolver((offset) => offset === 1 ? 'eeff5566' : null);
+    const result = resolveRecencyInString('h:$last-1:1-10,60-70');
+    expect(result).toBe('h:eeff5566:1-10,60-70');
+  });
+
+  it('resolveRecencyInString passes through bare h:$last (no modifier)', () => {
+    setRecencyResolver((offset) => offset === 0 ? 'aabb1122' : null);
+    const result = resolveRecencyInString('h:$last');
+    expect(result).toBe('h:aabb1122');
+  });
+
+  it('resolveRecencyInString leaves unresolvable ref unchanged', () => {
+    setRecencyResolver(() => null);
+    expect(resolveRecencyInString('h:$last:60-80')).toBe('h:$last:60-80');
   });
 });
 

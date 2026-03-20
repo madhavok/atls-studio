@@ -8,6 +8,7 @@ import { estimateTokens, hashContentSync, SHORT_HASH_LEN, type DigestSymbol } fr
 import { invoke } from '@tauri-apps/api/core';
 import { invokeWithTimeout } from '../../toolHelpers';
 import { parseHashRef } from '../../../utils/hashRefParsers';
+import { resolveRecencyInString } from '../../../utils/hashResolver';
 import { useRetentionStore } from '../../../stores/retentionStore';
 
 interface ResolvedHashContent {
@@ -326,6 +327,9 @@ export const handleReadLines: OpHandler = async (params, ctx) => {
     }
   }
   if (ref != null) {
+    // Resolve recency refs (h:$last, h:$last_read, etc.) before parsing —
+    // these are not valid hex hashes and would fail parseHashRef otherwise.
+    ref = resolveRecencyInString(ref);
     if (ref.length > 200) {
       return err(`read_lines: ref too long (${ref.length} chars) — expected h:XXXX:lines format, not code content. Pass hash and lines as separate params.`);
     }
@@ -343,7 +347,7 @@ export const handleReadLines: OpHandler = async (params, ctx) => {
       }
     } else if (typeof ref === 'string') {
       // Fallback when parseHashRef fails: extract h:XXXX:15-50 or h:XXXX:15-50,60-80
-      const refMatch = ref.match(/^h:([0-9a-fA-F]{6,16}):?(\d+-\d+(?:,\d+-\d+)*)?$/);
+      const refMatch = ref.match(/^h:([0-9a-fA-F_]{6,16}):?(\d+-\d*(?:,\d+-\d*)*)?$/);
       if (refMatch) {
         rlHash = rlHash || `h:${refMatch[1]}`;
         if (refMatch[2]) rlLines = rlLines || refMatch[2];

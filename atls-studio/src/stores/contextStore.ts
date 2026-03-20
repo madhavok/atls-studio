@@ -613,7 +613,7 @@ interface ContextStoreState {
   dropChunks: (hashes: string[], opts?: { confirmWildcard?: boolean }) => { dropped: number; freedTokens: number };
   pinChunks: (hashes: string[], shape?: string) => number;
   unpinChunks: (hashes: string[]) => number;
-  registerEditHash: (hash: string, source: string) => { registered: boolean; reason?: string };
+  registerEditHash: (hash: string, source: string, editSessionId?: string) => { registered: boolean; reason?: string };
   invalidateStaleHashes: (shortHashes: string[]) => number;
   /** Invalidate derived shapes (staged, chunks, bindings) where source matches path and sourceRevision !== currentRevision. */
   invalidateDerivedForPath: (path: string, currentRevision: string) => number;
@@ -991,6 +991,17 @@ function findOrPromoteEngram(
     return promoteStagedToChunk(staged[0], staged[1], chunksMap);
   }
 
+  return null;
+}
+
+/** Check droppedManifest for an evicted engram by ref (hash or shortHash). */
+function findInDroppedManifest(ref: string, manifest: Map<string, ManifestEntry>): ManifestEntry | null {
+  const normalized = refToBaseHash(ref);
+  const direct = manifest.get(normalized);
+  if (direct) return direct;
+  for (const entry of manifest.values()) {
+    if (entry.shortHash === normalized) return entry;
+  }
   return null;
 }
 
@@ -1887,7 +1898,7 @@ export const useContextStore = create<ContextStoreState>()(
    * without re-reading the file (backend handles content_hash validation).
    * Returns { registered, reason? } so callers know if registration succeeded.
    */
-  registerEditHash: (hash: string, source: string): { registered: boolean; reason?: string } => {
+  registerEditHash: (hash: string, source: string, editSessionId?: string): { registered: boolean; reason?: string } => {
     const fullHash = hash.startsWith('h:') ? hash.slice(2) : hash;
     const shortHash = fullHash.slice(0, SHORT_HASH_LEN);
     let alreadyExisted = false;
@@ -1905,6 +1916,8 @@ export const useContextStore = create<ContextStoreState>()(
         viewKind: 'derived',
         content: `[edit result] h:${shortHash} → ${source}`,
         tokens: 5,
+        origin: 'edit' as EngramOrigin,
+        editSessionId,
         createdAt: new Date(),
         lastAccessed: Date.now(),
       });
@@ -2838,8 +2851,20 @@ export const useContextStore = create<ContextStoreState>()(
     const newChunks = new Map(state.chunks);
     const fromFound = findOrPromoteEngram(fromRef, newChunks, state.archivedChunks, state.stagedSnippets);
     const toFound = findOrPromoteEngram(toRef, newChunks, state.archivedChunks, state.stagedSnippets);
-    if (!fromFound) return { ok: false, error: `source engram not found: ${fromRef}` };
-    if (!toFound) return { ok: false, error: `target engram not found: ${toRef}` };
+    if (!fromFound) {
+      const inManifest = findInDroppedManifest(fromRef, state.droppedManifest);
+      if (inManifest) {
+        return { ok: false, error: `source engram evicted (was ${inManifest.source ?? 'unknown source'}). Use session.recall to re-materialize h:${inManifest.shortHash} before linking.` };
+      }
+      return { ok: false, error: `source engram not found: ${fromRef}` };
+    }
+    if (!toFound) {
+      const inManifest = findInDroppedManifest(toRef, state.droppedManifest);
+      if (inManifest) {
+        return { ok: false, error: `target engram evicted (was ${inManifest.source ?? 'unknown source'}). Use session.recall to re-materialize h:${inManifest.shortHash} before linking.` };
+      }
+      return { ok: false, error: `target engram not found: ${toRef}` };
+    }
     const [fromKey, fromChunk] = fromFound;
     const [toKey, toChunk] = toFound;
     const now = Date.now();

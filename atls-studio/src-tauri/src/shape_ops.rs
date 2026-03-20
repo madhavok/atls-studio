@@ -276,9 +276,9 @@ pub fn resolve_symbol_anchor(
         }),
     };
 
-    // Collect all matches (for overload disambiguation)
+    // Cheap substring pre-filter: only run the expensive regex on lines containing the name.
     let matches: Vec<usize> = lines.iter().enumerate()
-        .filter(|(_, line)| re.is_match(line))
+        .filter(|(_, line)| line.contains(base_name) && re.is_match(line))
         .map(|(i, _)| i)
         .collect();
 
@@ -350,8 +350,9 @@ pub fn resolve_symbol_anchor_lines(
         message: format!("invalid symbol name: {}", base_name),
     })?;
 
+    // Cheap substring pre-filter: only run the expensive regex on lines containing the name.
     let matches: Vec<usize> = lines.iter().enumerate()
-        .filter(|(_, line)| re.is_match(line))
+        .filter(|(_, line)| line.contains(base_name) && re.is_match(line))
         .map(|(i, _)| i)
         .collect();
 
@@ -880,7 +881,7 @@ pub fn resolve_symbol_anchor_lang(
             if let Ok(re) = regex::Regex::new(&pattern) {
                 let target = overload_idx.unwrap_or(1);
                 let m_lines: Vec<usize> = lines.iter().enumerate()
-                    .filter(|(_, l)| re.is_match(l)).map(|(i, _)| i).collect();
+                    .filter(|(_, l)| l.contains(base_name) && re.is_match(l)).map(|(i, _)| i).collect();
                 if target >= 1 && target <= m_lines.len() {
                     let raw = m_lines[target - 1];
                     let attr_start = expand_to_attributes(&lines, raw);
@@ -5469,5 +5470,40 @@ class HomePage extends StatelessWidget {
         println!("{}", rpt);
 
         assert_eq!(passed, total, "{}/{} checks passed", passed, total);
+    }
+
+    #[test]
+    fn test_fn_symbol_on_large_file_with_prefilter() {
+        // Generates a large file (10K lines) where the target function is near the end.
+        // Verifies the pre-filter optimization doesn't break correctness.
+        let mut lines = Vec::with_capacity(10_100);
+        for i in 0..10_000 {
+            lines.push(format!("const placeholder_{} = {};", i, i));
+        }
+        lines.push("export function targetFunction(x: number): number {".to_string());
+        lines.push("  return x * 2;".to_string());
+        lines.push("}".to_string());
+        let content = lines.join("\n");
+
+        let result = resolve_symbol_anchor(&content, Some("fn"), "targetFunction");
+        assert!(result.is_ok(), "should find function in large file: {:?}", result.err());
+        assert!(result.unwrap().contains("targetFunction"));
+    }
+
+    #[test]
+    fn test_interface_symbol_on_large_file_with_prefilter() {
+        let mut lines = Vec::with_capacity(10_100);
+        for i in 0..10_000 {
+            lines.push(format!("const filler_{} = {};", i, i));
+        }
+        lines.push("export interface MyConfig {".to_string());
+        lines.push("  name: string;".to_string());
+        lines.push("  value: number;".to_string());
+        lines.push("}".to_string());
+        let content = lines.join("\n");
+
+        let result = resolve_symbol_anchor(&content, Some("interface"), "MyConfig");
+        assert!(result.is_ok(), "should find interface in large file: {:?}", result.err());
+        assert!(result.unwrap().contains("MyConfig"));
     }
 }

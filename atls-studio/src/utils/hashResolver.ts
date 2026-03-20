@@ -78,37 +78,40 @@ export function setStageRecencyResolver(fn: (offset: number) => string | null): 
   _resolveStageRecencyRef = fn;
 }
 
-function resolveRecencyInString(text: string): string {
+export function resolveRecencyInString(text: string): string {
   const trimmed = text.trim();
-  const editMatch = /^h:\$last_edit(?:-(\d+))?$/.exec(trimmed);
+
+  // Match recency refs with optional trailing modifier chain (e.g. h:$last:60-80, h:$last_edit:sig)
+  const editMatch = /^(h:\$last_edit(?:-(\d+))?)(?=:|$)/.exec(trimmed);
   if (editMatch && _resolveEditRecencyRef) {
-    const offset = editMatch[1] ? parseInt(editMatch[1], 10) : 0;
+    const offset = editMatch[2] ? parseInt(editMatch[2], 10) : 0;
     const real = _resolveEditRecencyRef(offset);
-    return real ? text.replace(trimmed, `h:${real}`) : text;
+    return real ? text.replace(editMatch[1], `h:${real}`) : text;
   }
 
-  const readMatch = /^h:\$last_read(?:-(\d+))?$/.exec(trimmed);
+  const readMatch = /^(h:\$last_read(?:-(\d+))?)(?=:|$)/.exec(trimmed);
   if (readMatch && _resolveReadRecencyRef) {
-    const offset = readMatch[1] ? parseInt(readMatch[1], 10) : 0;
+    const offset = readMatch[2] ? parseInt(readMatch[2], 10) : 0;
     const real = _resolveReadRecencyRef(offset);
-    return real ? text.replace(trimmed, `h:${real}`) : text;
+    return real ? text.replace(readMatch[1], `h:${real}`) : text;
   }
 
-  const stageMatch = /^h:\$last_stage(?:-(\d+))?$/.exec(trimmed);
+  const stageMatch = /^(h:\$last_stage(?:-(\d+))?)(?=:|$)/.exec(trimmed);
   if (stageMatch && _resolveStageRecencyRef) {
-    const offset = stageMatch[1] ? parseInt(stageMatch[1], 10) : 0;
+    const offset = stageMatch[2] ? parseInt(stageMatch[2], 10) : 0;
     const real = _resolveStageRecencyRef(offset);
-    return real ? text.replace(trimmed, `h:${real}`) : text;
+    return real ? text.replace(stageMatch[1], `h:${real}`) : text;
   }
 
-  const match = /^h:\$last(?:-(\d+))?$/.exec(trimmed);
+  // h:$last must be checked last — it's a prefix of the specialized variants
+  const match = /^(h:\$last(?:-(\d+))?)(?=:|$)/.exec(trimmed);
   if (!match || !_resolveRecencyRef) {
     return text;
   }
 
-  const offset = match[1] ? parseInt(match[1], 10) : 0;
+  const offset = match[2] ? parseInt(match[2], 10) : 0;
   const real = _resolveRecencyRef(offset);
-  return real ? text.replace(trimmed, `h:${real}`) : text;
+  return real ? text.replace(match[1], `h:${real}`) : text;
 }
 
 const FILE_FIELDS = ['file', 'file_path', 'file_paths', 'target_file', 'source_file', 'path', 'from', 'from_path', 'target', 'target_path', 'deletes', 'delete'];

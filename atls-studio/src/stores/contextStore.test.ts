@@ -885,3 +885,80 @@ describe('queryBySetSelector reachable dedup', () => {
     expect(new Set(hashes).size).toBe(hashes.length);
   });
 });
+
+// ---------------------------------------------------------------------------
+// registerEditHash origin tagging (Issue 4)
+// ---------------------------------------------------------------------------
+
+describe('registerEditHash origin tagging', () => {
+  beforeEach(() => resetStore());
+
+  it('tags registered edit hash with origin:edit', () => {
+    useContextStore.getState().registerEditHash('aabb112233445566', 'src/foo.ts');
+    const chunk = useContextStore.getState().chunks.get('aabb112233445566');
+    expect(chunk).toBeDefined();
+    expect(chunk!.origin).toBe('edit');
+  });
+
+  it('tags registered edit hash with editSessionId', () => {
+    useContextStore.getState().registerEditHash('ccdd112233445566', 'src/bar.ts', 'session-42');
+    const chunk = useContextStore.getState().chunks.get('ccdd112233445566');
+    expect(chunk).toBeDefined();
+    expect(chunk!.editSessionId).toBe('session-42');
+  });
+
+  it('edit-registered chunks appear in @edited selector', () => {
+    addTestChunk('fn foo() {}', 'file', 'src/foo.ts');
+    useContextStore.getState().registerEditHash('eeff112233445566', 'src/foo.ts', 'sess-1');
+    const result = useContextStore.getState().queryBySetSelector({ kind: 'edited' });
+    expect(result.hashes).toContain('eeff112233445566');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// addSynapse evicted engram error (Issue 5)
+// ---------------------------------------------------------------------------
+
+describe('addSynapse evicted engram handling', () => {
+  beforeEach(() => resetStore());
+
+  it('returns actionable error when source engram is in droppedManifest', () => {
+    const shortH1 = addTestChunk('fn foo() {}', 'file', 'src/foo.ts');
+    const shortH2 = addTestChunk('fn bar() {}', 'file', 'src/bar.ts');
+
+    // addChunk returns shortHash; find the full hash key used in the map
+    const state0 = useContextStore.getState();
+    const fullH1 = Array.from(state0.chunks.entries()).find(([, c]) => c.shortHash === shortH1)?.[0];
+    expect(fullH1).toBeDefined();
+
+    // Simulate eviction: move h1 to droppedManifest, remove from chunks + archived
+    useContextStore.setState(state => {
+      const newChunks = new Map(state.chunks);
+      newChunks.delete(fullH1!);
+      const newArchived = new Map(state.archivedChunks);
+      newArchived.delete(fullH1!);
+      const newManifest = new Map(state.droppedManifest);
+      newManifest.set(fullH1!, {
+        hash: fullH1!,
+        shortHash: shortH1,
+        type: 'file' as import('../utils/contextHash').ChunkType,
+        source: 'src/foo.ts',
+        tokens: 20,
+        droppedAt: Date.now(),
+      });
+      return { chunks: newChunks, archivedChunks: newArchived, droppedManifest: newManifest };
+    });
+
+    const result = useContextStore.getState().addSynapse(`h:${shortH1}`, `h:${shortH2}`, 'depends_on');
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain('evicted');
+    expect(result.error).toContain('session.recall');
+  });
+
+  it('returns generic error when engram is completely unknown', () => {
+    const h1 = addTestChunk('fn foo() {}', 'file', 'src/foo.ts');
+    const result = useContextStore.getState().addSynapse('h:deadbeef12345678', `h:${h1}`, 'related_to');
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain('not found');
+  });
+});

@@ -98,7 +98,7 @@ export function registerEditHashes(result: unknown, params: Record<string, unkno
       }
 
       if (newHash && source && !source.startsWith('h:')) {
-        store.registerEditHash(newHash, source);
+        store.registerEditHash(newHash, source, sessionId ?? undefined);
         store.recordRevisionAdvance(source, newHash.replace(/^h:/, ''), 'same_file_prior_edit', sessionId ?? undefined);
         const lineDelta = estimateLineDeltaForSource(params, source);
         recordFreshnessJournal({
