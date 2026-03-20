@@ -49,6 +49,17 @@ import { canonicalizeSnapshotHash } from '../services/batch/snapshotTracker';
 /** Match SHORT_HASH_LEN (6) so h:abcdef-style refs resolve (annotate.link, synapses). */
 const MIN_PREFIX_LEN = 6;
 
+function normalizePathForLink(p: string): string {
+  return p.replace(/\\/g, '/').toLowerCase();
+}
+
+/** Match annotate.link `to`/`from` file paths or basenames to chunk.source. */
+function pathMatchesLinkRef(pathNorm: string, chunkSource: string): boolean {
+  const s = normalizePathForLink(chunkSource);
+  const bn = s.split('/').pop() ?? '';
+  return s === pathNorm || s.endsWith('/' + pathNorm) || bn === pathNorm || pathNorm.endsWith(bn);
+}
+
 // Lazy accessor for appStore cache metrics (avoids circular import)
 let _getCacheHitRate: () => number = () => 0;
 export function setCacheHitRateAccessor(fn: () => number): void { _getCacheHitRate = fn; }
@@ -653,6 +664,8 @@ interface ContextStoreState {
   // Engram mutation — annotations, synapses, edit, split, merge
   addAnnotation: (hashRef: string, note: string) => { ok: boolean; id?: string; error?: string };
   addSynapse: (fromRef: string, toRef: string, relation: Synapse['relation']) => { ok: boolean; error?: string };
+  /** Normalize annotate.link endpoints: h: refs stay; bare paths map to h:fullHash when a chunk matches. */
+  resolveLinkRefToHash: (raw: string) => string;
   retypeChunk: (hashRef: string, newType: ChunkType) => { ok: boolean; error?: string };
   editEngram: (hashRef: string, fields: { content?: string; digest?: string; summary?: string; type?: ChunkType }) => { ok: boolean; newHash?: string; metadataOnly?: boolean; error?: string };
   splitEngram: (hashRef: string, atLine: number) => { ok: boolean; hashes?: [string, string]; error?: string };
@@ -2892,6 +2905,30 @@ export const useContextStore = create<ContextStoreState>()(
 
     set({ chunks: newChunks });
     return { ok: true };
+  },
+
+  resolveLinkRefToHash: (raw: string) => {
+    const t = raw.trim();
+    if (!t) return t;
+    if (t.startsWith('h:bb:') || t.startsWith('bb:')) return t;
+    const state = get();
+    if (t.startsWith('h:')) {
+      const inChunks = findChunkByRef(state.chunks, t);
+      if (inChunks) return `h:${inChunks[1].hash}`;
+      const inArch = findChunkByRef(state.archivedChunks, t);
+      if (inArch) return `h:${inArch[1].hash}`;
+      const staged = findStagedByRef(state.stagedSnippets, t);
+      if (staged) return `h:${hashContentSync(staged[1].content)}`;
+      return t;
+    }
+    const pathNorm = normalizePathForLink(t);
+    for (const c of state.chunks.values()) {
+      if (c.source && pathMatchesLinkRef(pathNorm, c.source)) return `h:${c.hash}`;
+    }
+    for (const c of state.archivedChunks.values()) {
+      if (c.source && pathMatchesLinkRef(pathNorm, c.source)) return `h:${c.hash}`;
+    }
+    return t;
   },
 
   retypeChunk: (hashRef: string, newType: ChunkType) => {

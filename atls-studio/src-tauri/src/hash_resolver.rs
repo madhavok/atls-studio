@@ -319,11 +319,20 @@ impl HashRegistry {
         if let Some(entry) = self.entries.get(ref_str) {
             return Some(entry);
         }
-        // Prefix match
-        self.entries
-            .iter()
-            .find(|(k, _)| k.starts_with(ref_str) || ref_str.starts_with(k.as_str()))
-            .map(|(_, v)| v)
+        // Prefix match — prefer longest key (most specific hash). HashMap iteration order
+        // is arbitrary; without this, short-prefix lookups can hit the wrong entry and
+        // surface false "stale" errors in peek/read_lines.
+        let mut best: Option<(&String, &HashEntry)> = None;
+        for (k, v) in &self.entries {
+            let matched = k.starts_with(ref_str) || ref_str.starts_with(k.as_str());
+            if !matched {
+                continue;
+            }
+            if best.map_or(true, |(bk, _)| k.len() > bk.len()) {
+                best = Some((k, v));
+            }
+        }
+        best.map(|(_, v)| v)
     }
 
     /// Get the ORIGINAL content for a hash, bypassing forwarding.
@@ -332,10 +341,17 @@ impl HashRegistry {
         if let Some(entry) = self.entries.get(hash_ref) {
             return Some(entry);
         }
-        self.entries
-            .iter()
-            .find(|(k, _)| k.starts_with(hash_ref) || hash_ref.starts_with(k.as_str()))
-            .map(|(_, v)| v)
+        let mut best: Option<(&String, &HashEntry)> = None;
+        for (k, v) in &self.entries {
+            let matched = k.starts_with(hash_ref) || hash_ref.starts_with(k.as_str());
+            if !matched {
+                continue;
+            }
+            if best.map_or(true, |(bk, _)| k.len() > bk.len()) {
+                best = Some((k, v));
+            }
+        }
+        best.map(|(_, v)| v)
     }
 
     /// Follow the forward chain to get the current target hash, if forwarded.
@@ -1604,6 +1620,27 @@ pub fn extract_lines_for_display(content: &str, ranges: &[(u32, Option<u32>)]) -
 // Peek Handler
 // ---------------------------------------------------------------------------
 
+/// Prefer the latest registered revision for `file_path` when `hash` is a short prefix,
+/// so read_lines/peek don't bind to an older registry entry and report stale_hash falsely.
+fn registry_entry_for_peek<'a>(
+    registry: &'a HashRegistry,
+    hash: &str,
+    file_path_fallback: Option<&str>,
+) -> Option<&'a HashEntry> {
+    let base = hash.trim_start_matches("h:");
+    if let Some(fp) = file_path_fallback {
+        let nk = normalize_source_key(fp);
+        if let Some(hashes) = registry.get_by_source(&nk) {
+            for full in hashes.iter().rev() {
+                if full.starts_with(base) {
+                    return registry.get_original(full);
+                }
+            }
+        }
+    }
+    registry.get(base)
+}
+
 /// Retrieve specific line ranges from a file identified by hash.
 /// Accepts an optional `file_path` fallback from the frontend context store
 /// when the hash isn't in the backend registry (e.g., smart context reads).
@@ -1616,7 +1653,7 @@ pub fn peek(
     context_lines: u32,
     snapshot_svc: &mut crate::snapshot::SnapshotService,
 ) -> Result<serde_json::Value, String> {
-    let (raw_source, has_registry_entry) = match registry.get(hash) {
+    let (raw_source, has_registry_entry) = match registry_entry_for_peek(registry, hash, file_path_fallback) {
         Some(entry) => match &entry.source {
             Some(src) => (src.clone(), true),
             None => match file_path_fallback {
@@ -1698,7 +1735,7 @@ pub fn peek(
     };
 
     if has_registry_entry {
-        if let Some(entry) = registry.get(hash) {
+        if let Some(entry) = registry_entry_for_peek(registry, hash, file_path_fallback) {
             let expected_hash = content_hash(&entry.content);
             if *current_hash != expected_hash {
                 let normalize_deep = |s: &str| -> String {

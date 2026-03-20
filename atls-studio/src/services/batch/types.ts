@@ -376,6 +376,7 @@ export interface ContextStoreApi {
   editEngram: (hash: string, fields: Record<string, unknown>) => { ok: boolean; newHash?: string; metadataOnly?: boolean; error?: string };
   addAnnotation: (hash: string, note: string) => { ok: boolean; id?: string; error?: string };
   addSynapse: (from: string, to: string, relation: string) => { ok: boolean; error?: string };
+  resolveLinkRefToHash: (raw: string) => string;
   retypeChunk: (hash: string, type: string) => { ok: boolean; error?: string };
   splitEngram: (hash: string, at: number) => { ok: boolean; hashes?: string[]; error?: string };
   mergeEngrams: (hashes: string[], summary?: string) => { ok: boolean; newHash?: string; error?: string };

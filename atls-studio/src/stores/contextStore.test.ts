@@ -962,3 +962,32 @@ describe('addSynapse evicted engram handling', () => {
     expect(result.error).toContain('not found');
   });
 });
+
+// ---------------------------------------------------------------------------
+// resolveLinkRefToHash (annotate.link path / short-hash endpoints)
+// ---------------------------------------------------------------------------
+
+describe('resolveLinkRefToHash', () => {
+  beforeEach(() => resetStore());
+
+  it('maps file basename to canonical h:fullHash', () => {
+    addTestChunk('export const x = 1', 'file', 'src/utils/contextHash.ts');
+    const full = Array.from(useContextStore.getState().chunks.values())[0]!.hash;
+    const r = useContextStore.getState().resolveLinkRefToHash('contextHash.ts');
+    expect(r).toBe(`h:${full}`);
+  });
+
+  it('canonicalizes short h: ref to h:fullHash', () => {
+    const short = addTestChunk('fn x() {}', 'file', 'src/a.ts');
+    const full = Array.from(useContextStore.getState().chunks.entries()).find(([, c]) => c.shortHash === short)?.[0];
+    expect(full).toBeDefined();
+    const r = useContextStore.getState().resolveLinkRefToHash(`h:${short}`);
+    expect(r).toBe(`h:${full}`);
+  });
+
+  it('passes through unresolved path', () => {
+    addTestChunk('a', 'file', 'src/only.ts');
+    const r = useContextStore.getState().resolveLinkRefToHash('nonexistent.ts');
+    expect(r).toBe('nonexistent.ts');
+  });
+});

@@ -286,8 +286,15 @@ pub fn resolve_symbol_anchor(
     };
 
     // Cheap substring pre-filter: only run the expensive regex on lines containing the name.
-    let matches: Vec<usize> = lines.iter().enumerate()
-        .filter(|(_, line)| line.contains(base_name) && re.is_match(line))
+    let matches: Vec<usize> = lines
+        .iter()
+        .enumerate()
+        .filter(|(_, line)| {
+            if !line.contains(base_name) {
+                return false;
+            }
+            re.is_match(line)
+        })
         .map(|(i, _)| i)
         .collect();
 
@@ -360,8 +367,15 @@ pub fn resolve_symbol_anchor_lines(
     })?;
 
     // Cheap substring pre-filter: only run the expensive regex on lines containing the name.
-    let matches: Vec<usize> = lines.iter().enumerate()
-        .filter(|(_, line)| line.contains(base_name) && re.is_match(line))
+    let matches: Vec<usize> = lines
+        .iter()
+        .enumerate()
+        .filter(|(_, line)| {
+            if !line.contains(base_name) {
+                return false;
+            }
+            re.is_match(line)
+        })
         .map(|(i, _)| i)
         .collect();
 

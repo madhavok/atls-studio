@@ -3,6 +3,7 @@
  */
 
 import type { OpHandler, StepOutput, ContextStoreApi } from '../types';
+import { SHORT_HASH_LEN } from '../../../utils/contextHash';
 
 function ok(summary: string, refs: string[] = []): StepOutput {
   return { kind: 'session', ok: true, refs, summary };
@@ -12,10 +13,16 @@ function err(summary: string): StepOutput {
   return { kind: 'session', ok: false, refs: [], summary, error: summary };
 }
 
+/** Base hash segment (strips h: and shape/line suffix). */
+function baseHashFromRef(ref: string): string {
+  const rest = ref.startsWith('h:') ? ref.slice(2) : ref;
+  return rest.includes(':') ? rest.split(':')[0]! : rest;
+}
+
 /** Block when chunk is suspect — annotation ops mutate in-place and cannot relocate. */
 function isChunkSuspect(store: ContextStoreApi): (hash: string) => boolean {
   return (hash: string) => {
-    const short = hash.replace(/^h:/, '').slice(0, 8);
+    const short = baseHashFromRef(hash).slice(0, SHORT_HASH_LEN);
     for (const [, chunk] of store.chunks) {
       if (chunk.shortHash === short || chunk.hash.startsWith(short)) {
         return chunk.suspectSince != null;
@@ -93,12 +100,14 @@ export const handleAnnotate: OpHandler = async (params, ctx) => {
 };
 
 export const handleLink: OpHandler = async (params, ctx) => {
-  const from = params.from as string;
-  const to = params.to as string;
+  const fromRaw = params.from as string;
+  const toRaw = params.to as string;
   const relation = params.relation as string;
-  if (!from || !to) return err('link: ERROR missing from/to params');
+  if (!fromRaw || !toRaw) return err('link: ERROR missing from/to params');
 
   const store = ctx.store();
+  const from = store.resolveLinkRefToHash(fromRaw);
+  const to = store.resolveLinkRefToHash(toRaw);
   const suspect = isChunkSuspect(store);
   if (suspect(from) || suspect(to)) {
     return err('link: ERROR one or more refs are suspect (file changed externally); re-read before editing');
