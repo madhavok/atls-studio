@@ -266,6 +266,67 @@ describe('line_edits validation', () => {
       { line: 3, action: 'replace', count: 2, content: 'alpha\nbeta' },
     ]);
   });
+
+  it('rejects move without destination', async () => {
+    const out = await handleEdit(
+      {
+        file: 'a.ts',
+        line_edits: [{ line: 2, action: 'move', count: 1 }],
+      },
+      mockCtx,
+    );
+    expect(out.ok).toBe(false);
+    expect(out.summary ?? (out as { error?: string }).error).toMatch(/move requires destination/);
+    expect((out.content as { error_class?: string })?.error_class).toBe('invalid_line_edit');
+  });
+
+  it('rejects move with invalid destination', async () => {
+    const out = await handleEdit(
+      {
+        file: 'a.ts',
+        line_edits: [{ line: 2, action: 'move', count: 1, destination: 0 }],
+      },
+      mockCtx,
+    );
+    expect(out.ok).toBe(false);
+    expect(out.summary ?? (out as { error?: string }).error).toMatch(/move requires destination/);
+  });
+
+  it('rejects move when reindent is non-boolean', async () => {
+    const out = await handleEdit(
+      {
+        file: 'a.ts',
+        line_edits: [{ line: 2, action: 'move', count: 1, destination: 5, reindent: 'yes' as unknown as boolean }],
+      },
+      mockCtx,
+    );
+    expect(out.ok).toBe(false);
+    expect(out.summary ?? (out as { error?: string }).error).toMatch(/reindent must be boolean/);
+  });
+
+  it('dispatches move line_edits to batch query', async () => {
+    const atlsBatchQuery = vi.fn().mockResolvedValue({ h: 'h:after1234', old_h: 'h:before1234' });
+    const ctx = {
+      atlsBatchQuery,
+      store: () => ({ getStats: () => ({}), getPinnedCount: () => 0, recordMemoryEvent: () => {}, recordRebindOutcomes: () => {} }),
+    } as unknown as Parameters<typeof handleEdit>[1];
+
+    await handleEdit(
+      {
+        file: 'a.ts',
+        snapshot_hash: 'feedface',
+        line_edits: [
+          { line: 3, action: 'move', count: 2, destination: 10, reindent: true },
+        ],
+      },
+      ctx,
+    );
+
+    const [, payload] = atlsBatchQuery.mock.calls.at(-1)! as [string, Record<string, unknown>];
+    expect(payload.line_edits).toEqual([
+      { line: 3, action: 'move', count: 2, destination: 10, reindent: true },
+    ]);
+  });
 });
 
 describe('freshness safety', () => {

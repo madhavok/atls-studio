@@ -138,6 +138,7 @@ import { executeUnifiedBatch, type HandlerContext, type UnifiedBatchRequest, typ
 import { resetMainAgentTerminal } from './batch/handlers/system';
 import type { ExpandedFilePath } from './batch/types';
 import { formatBatchResult } from './batch/resultFormatter';
+import { coerceBatchSteps } from './batch/coerceBatchSteps';
 import {
   BLACKBOARD_BUDGET_TOKENS,
   STAGED_BUDGET_TOKENS,
@@ -1812,13 +1813,17 @@ async function streamChatViaTauri(
           safeCallbacks.onToolCall({ id: tc.id, name: tc.name || '', args: tc.args, status: 'failed', result: errMsg });
           return { type: 'tool_result', tool_use_id: tc.id, name: tc.name || '', content: errMsg };
         }
+        if (tc.name === 'batch') {
+          const batchArgs = tc.args as Record<string, unknown>;
+          batchArgs.steps = coerceBatchSteps(batchArgs.steps);
+        }
         // Track tool in agent progress.
         const params = tc.args as Record<string, unknown>;
         let displayName = tc.name;
         let detail: string;
 
         if (tc.name === 'batch') {
-          const steps = (params.steps as Array<Record<string, unknown>> | undefined) || [];
+          const steps = coerceBatchSteps(params.steps);
           const firstStep = steps[0] || {};
           displayName = String(firstStep.use || 'batch');
           const firstParams = (firstStep.with as Record<string, unknown>) || {};
@@ -1847,7 +1852,7 @@ async function streamChatViaTauri(
         
         // Check for session.plan inside batch - update current task display.
         if (tc.name === 'batch') {
-          const steps = (params.steps as Array<Record<string, unknown>> | undefined) || [];
+          const steps = coerceBatchSteps(params.steps);
           const planStep = steps.find(step => step.use === 'session.plan');
           const withParams = (planStep?.with as Record<string, unknown> | undefined) || {};
           if (withParams.goal) {
@@ -1886,7 +1891,7 @@ async function streamChatViaTauri(
           const execution = await executeToolCallDetailed(tc.name, tc.args, { deferTaskComplete: true });
           result = execution.displayText;
           if (tc.name === 'batch') {
-            const steps = (tc.args.steps as Array<Record<string, unknown>> | undefined) || [];
+            const steps = coerceBatchSteps((tc.args as Record<string, unknown>).steps);
             const batchStepSummaries = steps.map((step, index) => {
               const withParams = (step.with as Record<string, unknown> | undefined) || {};
               const stepName = String(step.use || `step_${index + 1}`);
@@ -2255,6 +2260,9 @@ function normalizeToolParams(args: Record<string, unknown>): void {
   if (args.symbol_name !== undefined && args.symbol_names === undefined) {
     const s = args.symbol_name as string;
     if (s) args.symbol_names = [s];
+  }
+  if (args.steps !== undefined) {
+    args.steps = coerceBatchSteps(args.steps);
   }
 }
 

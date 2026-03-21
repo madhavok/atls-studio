@@ -15,6 +15,7 @@ import { useCostStore, calculateCost } from '../stores/costStore';
 import { useRoundHistoryStore, type RoundSnapshot } from '../stores/roundHistoryStore';
 import { estimateTokens } from '../utils/contextHash';
 import { RETRIEVER_SUBAGENT_PROMPT_V2, DESIGN_SUBAGENT_PROMPT_V2 } from '../prompts/subagentPrompts';
+import { coerceBatchSteps } from './batch/coerceBatchSteps';
 
 // Re-export for consumers
 export type { AIProvider };
@@ -245,8 +246,9 @@ async function executeRetrieverToolCall(
     return `Error: Tool '${name}' is not allowed for retriever subagent. Allowed: ${[...RETRIEVER_ALLOWED_TOOLS].join(', ')}`;
   }
 
-  const steps = args.steps as Array<Record<string, unknown>> | undefined;
-  if (!Array.isArray(steps) || steps.length === 0) {
+  args.steps = coerceBatchSteps(args.steps);
+  const steps = args.steps as Array<Record<string, unknown>>;
+  if (steps.length === 0) {
     return 'Error: retriever subagent requires batch steps';
   }
   const disallowed = steps.filter(step => !RETRIEVER_ALLOWED_OPS.has(String(step.use)));
@@ -266,8 +268,9 @@ async function executeDesignToolCall(
     return `Error: Tool '${name}' is not allowed for design subagent. Allowed: ${[...DESIGN_ALLOWED_TOOLS].join(', ')}`;
   }
 
-  const steps = args.steps as Array<Record<string, unknown>> | undefined;
-  if (!Array.isArray(steps) || steps.length === 0) {
+  args.steps = coerceBatchSteps(args.steps);
+  const steps = args.steps as Array<Record<string, unknown>>;
+  if (steps.length === 0) {
     return 'Error: design subagent requires batch steps';
   }
   const disallowed = steps.filter(step => !DESIGN_ALLOWED_OPS.has(String(step.use)));
@@ -534,7 +537,9 @@ export async function executeRetriever(
       for (const tc of result.pendingToolCalls) {
         totalToolCalls++;
 
-        const steps = (tc.args.steps as Array<Record<string, unknown>> | undefined) || [];
+        const batchArgs = tc.args as Record<string, unknown>;
+        batchArgs.steps = coerceBatchSteps(batchArgs.steps);
+        const steps = batchArgs.steps as Array<Record<string, unknown>>;
         const firstStep = steps[0] || {};
         const toolName = String(firstStep.use || tc.name);
         const toolParams = (firstStep.with as Record<string, unknown>) || {};
@@ -798,7 +803,9 @@ export async function executeDesign(
       for (const tc of result.pendingToolCalls) {
         totalToolCalls++;
 
-        const steps = (tc.args.steps as Array<Record<string, unknown>> | undefined) || [];
+        const batchArgs = tc.args as Record<string, unknown>;
+        batchArgs.steps = coerceBatchSteps(batchArgs.steps);
+        const steps = batchArgs.steps as Array<Record<string, unknown>>;
         const firstStep = steps[0] || {};
         const toolName = String(firstStep.use || tc.name);
         const toolParams = (firstStep.with as Record<string, unknown>) || {};
