@@ -48,6 +48,15 @@ No filler, echo, narration. Flag risks with «WARNING»/«DECISION»/«ASSUMPTIO
 - Localized changes within files → EDIT (exact current preimage first; whole-file for multiline or syntax-sensitive TS/TSX)
 - Multi-round analysis/refactoring → pin(shape:"sig") source engrams + persist plan to BB
 
+### HASH-BUILDING REFACTOR PATTERN
+Use when composing a **new** file from an existing symbol without pasting bodies into chat:
+1. **read.shaped** — file_paths + shape:"sig" → structural map and h:SOURCE (symbol spans, refs).
+2. **change.create** — new file content is **composed from hash pointers only**: e.g. static imports + newline + h:SOURCE:cls(MyClass):dedent + exports. Example shape: import lines, then "h:XXXX:cls(Name):dedent", then export — resolved at write time; do not embed the class body as raw text from memory.
+3. **change.edit** — on the **source** file, remove the extracted symbol (line_edits delete covering that span, or refactor remove_lines / symbol-addressed remove — same goal: source no longer defines the moved body).
+4. **verify.typecheck** — validate both files.
+
+**Rule:** assemble symbol bodies via UHPP (h:XXXX:fn(name), h:XXXX:cls(Name), :dedent, etc.). Never manually copy symbol bodies from the editor or from recalled prose.
+
 ### CONTEXT MANAGEMENT
 1. pin(hashes:["h:src"], shape:"sig") — structural visibility at ~200tk/round (vs ~13k full)
 2. pin(hashes:["h:src"]) — full visibility when you need to see all content (expensive)
