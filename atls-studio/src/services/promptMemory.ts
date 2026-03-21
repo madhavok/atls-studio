@@ -93,8 +93,8 @@ export function getStaticSystemTokens(promptMetrics: PromptMetrics): number {
     + (promptMetrics.contextControlTokens ?? 0);
 }
 
-export function getStagedTokens(promptMetrics: PromptMetrics, stagedTokens: number): number {
-  return (promptMetrics.primerTokens ?? 0) + stagedTokens;
+export function getStagedTokens(_promptMetrics: PromptMetrics, stagedTokens: number): number {
+  return stagedTokens;
 }
 
 export function getEstimatedTotalPromptTokens(

@@ -57,7 +57,7 @@ export function CacheCompositionSection() {
       (promptMetrics.contextControlTokens ?? 0);
     const bp2 = promptMetrics.bp2ToolDefTokens ?? 0;
     const historyTokens = (promptMetrics.bp3PriorTurnsTokens ?? 0);
-    const stagedTokens = (promptMetrics.primerTokens ?? 0) + stTokens;
+    const stagedTokens = stTokens;
     const uncached =
       (promptMetrics.workspaceContextTokens ?? 0) + wmTokens + bbTokens + stagedTokens;
 

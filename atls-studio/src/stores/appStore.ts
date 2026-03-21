@@ -661,9 +661,11 @@ export const useAppStore = create<AppState>((set) => ({
       const startIdx = allVisiblePaths.indexOf(lastSelectedFile);
       const endIdx = allVisiblePaths.indexOf(path);
       if (startIdx === -1) {
-        lastSelectedFile = path;
+        newSelected.clear();
+        newSelected.add(path);
+        return { selectedFiles: newSelected, lastSelectedFile: path, selectedFile: path };
       }
-      if (startIdx !== -1 && endIdx !== -1) {
+      if (endIdx !== -1) {
         const from = Math.min(startIdx, endIdx);
         const to = Math.max(startIdx, endIdx);
         if (!ctrlKey) newSelected.clear();
@@ -671,11 +673,6 @@ export const useAppStore = create<AppState>((set) => ({
           newSelected.add(allVisiblePaths[i]);
         }
         return { selectedFiles: newSelected, lastSelectedFile, selectedFile: path };
-      }
-      if (startIdx === -1) {
-        newSelected.clear();
-        newSelected.add(path);
-        return { selectedFiles: newSelected, lastSelectedFile: path, selectedFile: path };
       }
     }
 

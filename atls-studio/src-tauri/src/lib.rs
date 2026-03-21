@@ -217,7 +217,7 @@ pub(crate) fn lookup_undo_history(
             }
             let ch = current_hash.unwrap();
             // Try matching current_hash against entry hashes
-            if let Some(entry) = stack.iter().rev().find(|e| e.hash == ch || e.hash.starts_with(ch) || ch.starts_with(&e.hash)) {
+            if let Some(entry) = stack.iter().rev().find(|e| e.hash == ch || (e.hash.len() >= 8 && ch.starts_with(&e.hash)) || (ch.len() >= 8 && e.hash.starts_with(ch))) {
                 let mut result = serde_json::json!({ "edits": edits });
                 if let Some(ref ph) = entry.parent_hash {
                     result["hash"] = serde_json::json!(format!("h:{}", &ph[..std::cmp::min(8, ph.len())]));
@@ -225,7 +225,7 @@ pub(crate) fn lookup_undo_history(
                 return Some(result);
             }
             // current_hash might be the PARENT hash (file was undone/reverted) — check parent_hash fields
-            if let Some(entry) = stack.iter().rev().find(|e| e.parent_hash.as_ref().map(|ph| ph == ch || ph.starts_with(ch) || ch.starts_with(ph.as_str())).unwrap_or(false)) {
+            if let Some(entry) = stack.iter().rev().find(|e| e.parent_hash.as_ref().map(|ph| ph == ch || (ph.len() >= 8 && ch.starts_with(ph.as_str())) || (ch.len() >= 8 && ph.starts_with(ch))).unwrap_or(false)) {
                 let mut result = serde_json::json!({ "edits": edits });
                 if let Some(ref ph) = entry.parent_hash {
                     result["hash"] = serde_json::json!(format!("h:{}", &ph[..std::cmp::min(8, ph.len())]));
@@ -398,7 +398,7 @@ pub(crate) fn exact_replacen_for_write(
     while let Some(pos) = content[search_start..].find(old_text) {
         let abs_pos = search_start + pos;
         matches.push((abs_pos, abs_pos + old_text.len()));
-        search_start = abs_pos + 1;
+        search_start = abs_pos + old_text.len();
     }
     match matches.len() {
         0 => Ok(None),

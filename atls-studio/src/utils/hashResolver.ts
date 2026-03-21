@@ -324,9 +324,14 @@ function resolveSetEntryValue(
 ): string {
   if (fieldName && HASH_FIELDS.includes(fieldName)) return hash;
   if (fieldName && FILE_FIELDS.some(f => fieldName.toLowerCase().includes(f))) {
-    return entry.source ?? hash;
+    if (!entry.source) throw new Error(`Hash h:${hash} has no source path for file-path field '${fieldName}'`);
+    return entry.source;
   }
-  if (modifier === 'auto') return entry.source ?? resolveAuto(fieldName, entry);
+  if (modifier === 'auto') {
+    if (entry.source) return entry.source;
+    if (!fieldName) throw new Error(`Hash h:${hash} has no source path and no field context — cannot resolve auto in set expansion`);
+    return resolveAuto(fieldName, entry);
+  }
   if (modifier === 'content') return entry.content;
   if (modifier === 'source') return entry.source ?? entry.content;
 

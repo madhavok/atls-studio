@@ -549,7 +549,7 @@ function getEstimatedPromptPressureTokens(
     + promptMetrics.contextControlTokens;
   // BB is in the dynamic block (uncached). History is the only BP3 content.
   const bp3Tokens = (promptMetrics.bp3PriorTurnsTokens ?? 0);
-  const stagedTokens = (promptMetrics.primerTokens ?? 0) + state.getStagedTokenCount();
+  const stagedTokens = state.getStagedTokenCount();
   return staticSystemTokens
     + bp3Tokens
     + stagedTokens
@@ -1377,6 +1377,7 @@ export const useContextStore = create<ContextStoreState>()(
             for (const c of newChunks.values()) currentUsed += c.tokens;
             if (currentUsed + tokens > state.maxTokens * 0.90) {
               _autoManageInProgress = true;
+              try {
               const { hashes: protectedChat2 } = getProtectedChatHashes(newChunks, currentUsed, state.maxTokens);
               const completedSubtaskIds2 = new Set(
                 (state.taskPlan?.subtasks || []).filter(s => s.status === 'done').map(s => s.id)
@@ -1426,7 +1427,9 @@ export const useContextStore = create<ContextStoreState>()(
                 autoEvictedHashes.push(cur.hash);
                 newChunks.delete(key);
               }
-              _autoManageInProgress = false;
+              } finally {
+                _autoManageInProgress = false;
+              }
             }
           }
       }
@@ -3054,10 +3057,16 @@ export const useContextStore = create<ContextStoreState>()(
       editDigest: generateEditReadyDigest(contentB, oldChunk.type) || undefined,
       annotations: oldChunk.annotations?.filter(a => {
         const lineRef = a.content.match(/L(\d+)/);
-        if (!lineRef) return false;
+        if (!lineRef) return true;
         const n = parseInt(lineRef[1], 10);
         return !isNaN(n) && n >= atLine;
-      }),
+      }).map(a => ({
+        ...a,
+        content: a.content.replace(/L(\d+)/g, (_m: string, num: string) => {
+          const n = parseInt(num, 10);
+          return `L${n - atLine + 1}`;
+        }),
+      })),
       synapses: oldChunk.synapses ? [...oldChunk.synapses] : undefined,
     };
     const compactContent = oldChunk.editDigest || oldChunk.digest || `[split → h:${chunkA.shortHash} + h:${chunkB.shortHash}]`;
