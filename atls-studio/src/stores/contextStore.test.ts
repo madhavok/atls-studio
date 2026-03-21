@@ -698,6 +698,23 @@ describe('recency stack management', () => {
     expect(useContextStore.getState().resolveEditRecencyRef(1)).toBe('edit0001');
   });
 
+  it('addChunk with result type does not push to hashStack', () => {
+    addTestChunk('fn foo() {}', 'file', 'src/foo.ts');
+    const afterFile = useContextStore.getState().hashStack.slice();
+    expect(afterFile.length).toBe(1);
+
+    addTestChunk('batch output', 'result');
+    const afterResult = useContextStore.getState().hashStack;
+    expect(afterResult).toEqual(afterFile);
+  });
+
+  it('addChunk with file-relevant types pushes to hashStack', () => {
+    addTestChunk('content a', 'smart', 'src/a.ts');
+    addTestChunk('content b', 'raw', 'src/b.ts');
+    addTestChunk('content c', 'search');
+    expect(useContextStore.getState().hashStack.length).toBe(3);
+  });
+
   it('edit stack is bounded to 50 entries', () => {
     const store = useContextStore.getState();
     for (let i = 0; i < 60; i++) {

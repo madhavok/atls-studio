@@ -1476,10 +1476,10 @@ export const useContextStore = create<ContextStoreState>()(
       };
     });
 
-    // Push to recency stacks
-    get().pushHash(shortHash);
+    // Push to recency stacks (file-relevant types only — keeps h:$last aligned with h:$last_read)
     const FILE_TYPES_FOR_RECENCY = new Set(['file', 'smart', 'raw', 'tree', 'search', 'symbol', 'deps']);
     if (FILE_TYPES_FOR_RECENCY.has(type)) {
+      get().pushHash(shortHash);
       get().pushReadHash(shortHash);
     }
     for (const compactedHash of autoCompactedHashes) hppDematerialize(compactedHash);
