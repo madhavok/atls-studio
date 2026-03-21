@@ -71,8 +71,9 @@ function generateTitle(messages: Message[]): string {
   if (firstUser) {
     const text = extractFirstTextFromMessage(firstUser);
     if (text) {
-      const truncated = text.slice(0, TITLE_MAX_LENGTH);
-      return truncated.length < text.length ? truncated + '...' : truncated;
+      const chars = Array.from(text);
+      const truncated = chars.slice(0, TITLE_MAX_LENGTH).join('');
+      return chars.length > TITLE_MAX_LENGTH ? truncated + '...' : truncated;
     }
   }
   // Fallback: use first assistant message text (e.g. tool-only conversations)
@@ -80,8 +81,9 @@ function generateTitle(messages: Message[]): string {
   if (firstAssistant) {
     const text = extractFirstTextFromMessage(firstAssistant);
     if (text) {
-      const truncated = text.slice(0, TITLE_MAX_LENGTH);
-      return truncated.length < text.length ? truncated + '...' : truncated;
+      const chars = Array.from(text);
+      const truncated = chars.slice(0, TITLE_MAX_LENGTH).join('');
+      return chars.length > TITLE_MAX_LENGTH ? truncated + '...' : truncated;
     }
   }
   return 'New Chat';
@@ -292,6 +294,8 @@ export interface ContextUsage {
   totalTokens: number;
   maxTokens: number;
   percentage: number;
+  /** Session cost in cents (optional until first usage update) */
+  costCents?: number;
 }
 
 // Prompt overhead breakdown — tokens consumed by instructions/tools, not user content
@@ -898,7 +902,7 @@ export const useAppStore = create<AppState>((set) => ({
         inputTokens: state.contextUsage.inputTokens,
         outputTokens: state.contextUsage.outputTokens,
         totalTokens: state.contextUsage.totalTokens,
-        costCents: 0,
+        costCents: state.contextUsage.costCents ?? 0,
       },
     };
     
@@ -1030,15 +1034,18 @@ export const useAppStore = create<AppState>((set) => ({
           )
         };
       }
+      const MAX_TOOL_CALLS = 20;
+      const startTime2 = call.startTime !== undefined ? rehydrateDate(call.startTime) : new Date();
+      const newCall: ToolCall = {
+        ...call,
+        id,
+        name: call.name || 'unknown',
+        status: call.status || 'pending',
+        startTime: startTime2,
+      } as ToolCall;
+      const calls = [...state.toolCalls, newCall];
       return {
-        toolCalls: [...state.toolCalls, {
-          id,
-          name: call.name || 'unknown',
-          status: call.status || 'pending',
-          args: call.args,
-          startTime,
-          ...call,
-        } as ToolCall]
+        toolCalls: calls.length > MAX_TOOL_CALLS ? calls.slice(-MAX_TOOL_CALLS) : calls,
       };
     });
     // Note: Auto-removal disabled to prevent setTimeout pile-up

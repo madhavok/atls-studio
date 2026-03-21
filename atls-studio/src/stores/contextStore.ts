@@ -57,16 +57,18 @@ function normalizePathForLink(p: string): string {
 function pathMatchesLinkRef(pathNorm: string, chunkSource: string): boolean {
   const s = normalizePathForLink(chunkSource);
   const bn = s.split('/').pop() ?? '';
-  return s === pathNorm || s.endsWith('/' + pathNorm) || bn === pathNorm || pathNorm.endsWith(bn);
+  // Avoid false-positive when basename is empty (source ends with /)
+  return bn.length > 0 && (s === pathNorm || s.endsWith('/' + pathNorm) || bn === pathNorm || pathNorm.endsWith('/' + bn));
 }
 
 // Lazy accessor for appStore cache metrics (avoids circular import)
 let _getCacheHitRate: () => number = () => 0;
 export function setCacheHitRateAccessor(fn: () => number): void { _getCacheHitRate = fn; }
 
-// Lazy accessor for appStore workspaces (avoids circular import)
 let _getWorkspaces: () => Array<{ name: string; path: string }> = () => [];
-export function setWorkspacesAccessor(fn: () => Array<{ name: string; path: string }>): void { _getWorkspaces = fn; }
+export function setWorkspacesAccessor(fn: () => Array<{ name: string; path: string }>): void {
+  _getWorkspaces = fn;
+}
 
 type PromptMetricsAccessor = {
   modePromptTokens: number;
@@ -114,6 +116,15 @@ export function setBulkRevisionResolver(fn: ((paths: string[]) => Promise<Map<st
  * Batch sources (comma-separated paths) only match exactly — never via
  * substring, so "a.ts, b.ts" does not match "a.ts" on re-read.
  */
+function sourcePathsMatch(a: string, b: string): boolean {
+  const aNorm = normalizePathForLink(a);
+  const bNorm = normalizePathForLink(b);
+  if (aNorm === bNorm) return true;
+  // Check if one is a suffix of the other (handles relative vs absolute)
+  return aNorm.endsWith('/' + bNorm) || bNorm.endsWith('/' + aNorm);
+}
+
+// Max tokens for archived chunks — LRU-evicted when exceeded
 // Max tokens for archived chunks — LRU-evicted when exceeded
 const ARCHIVE_MAX_TOKENS = 50000;
 

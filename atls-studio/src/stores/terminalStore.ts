@@ -206,7 +206,11 @@ function registerPendingCompletion(
             output: `Timeout. Last output: ${p.buffer.slice(-200)}`, 
             success: false 
           });
+        } else {
+          resolve({ exitCode: -1, output: 'Timeout (marker not found)', success: false });
         }
+      } else {
+        resolve({ exitCode: -1, output: 'Timeout (terminal destroyed)', success: false });
       }
     }, timeoutMs);
     
