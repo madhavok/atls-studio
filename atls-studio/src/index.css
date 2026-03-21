@@ -270,3 +270,70 @@ html.light .monaco-editor .scrollbar > .slider {
   content: " " attr(data-step) " — " attr(data-next);
   @apply opacity-70;
 }
+
+/* ---------------------------------------------------------------------------
+   Agent Terminal (virtual read-only view)
+   --------------------------------------------------------------------------- */
+
+.agent-term-container {
+  @apply flex flex-col h-full outline-none;
+  background: #1a1b26;
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+}
+
+.agent-term-scroll {
+  @apply flex-1 overflow-y-auto p-3 space-y-3;
+}
+
+.agent-term-empty {
+  @apply flex items-center justify-center h-full text-xs;
+  color: #414868;
+}
+
+.agent-term-entry {
+  @apply rounded;
+}
+
+.agent-term-cmd-line {
+  @apply flex items-center gap-2 text-xs leading-5;
+}
+
+.agent-term-prompt {
+  @apply shrink-0 select-none;
+  color: #7aa2f7;
+}
+
+.agent-term-cmd {
+  @apply flex-1 break-all;
+  color: #c0caf5;
+}
+
+.agent-term-status {
+  @apply text-[11px] shrink-0 select-none;
+}
+
+.agent-term-status.running {
+  @apply inline-block w-1.5 h-1.5 rounded-full;
+  background: #e0af68;
+  animation: agent-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes agent-pulse {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 1; }
+}
+
+.agent-term-output {
+  @apply text-xs mt-1 ml-5 whitespace-pre-wrap break-all leading-relaxed;
+  color: #a9b1d6;
+}
+
+.agent-term-message {
+  @apply text-xs;
+  color: #565f89;
+}
+
+.agent-term-hint {
+  @apply text-[10px] text-center py-1 select-none;
+  color: #414868;
+}

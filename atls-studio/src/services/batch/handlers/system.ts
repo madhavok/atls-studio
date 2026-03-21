@@ -57,15 +57,29 @@ function err(summary: string): StepOutput {
   return { kind: 'raw', ok: false, refs: [], summary, error: summary };
 }
 
+// Session-scoped agent terminal for the main (non-swarm) agent.
+// Reused across exec calls within the same AI session to avoid spawning
+// a new PTY for every command. Reset via resetMainAgentTerminal().
+let _mainAgentTerminalId: string | null = null;
+
+/** Clear cached main-agent terminal. Called when a new AI session starts. */
+export function resetMainAgentTerminal(): void {
+  _mainAgentTerminalId = null;
+}
+
 export function resolveTerminalTarget(
   explicitId: string | undefined,
   ctx: { swarmTerminalId?: string; isSwarmAgent?: boolean },
 ): string | null {
   if (explicitId) return explicitId;
   if (ctx.swarmTerminalId) return ctx.swarmTerminalId;
-  // Never fall through to the user's active terminal for swarm agents
-  if (ctx.isSwarmAgent) return null;
-  return getTerminalStore().activeTerminalId || null;
+  // Reuse cached main-agent terminal if still alive
+  if (_mainAgentTerminalId) {
+    const t = getTerminalStore().terminals.get(_mainAgentTerminalId);
+    if (t?.isAlive) return _mainAgentTerminalId;
+    _mainAgentTerminalId = null;
+  }
+  return null;
 }
 
 async function ensureTerminalTarget(
@@ -74,10 +88,16 @@ async function ensureTerminalTarget(
 ): Promise<string> {
   const id = resolveTerminalTarget(explicitId, ctx);
   if (id) return id;
-  // Create a new terminal; for swarm agents, mark it as an agent terminal
+  // All AI-driven commands use agent terminals
   const terminalStore = getTerminalStore();
-  const newId = await terminalStore.createTerminal(undefined, ctx.isSwarmAgent ? { background: true, isAgent: true } : undefined);
+  const newId = await terminalStore.createTerminal(undefined, {
+    background: true,
+    isAgent: true,
+    name: ctx.isSwarmAgent ? undefined : 'Agent',
+  });
   await new Promise(resolve => setTimeout(resolve, 150));
+  // Cache for the main (non-swarm) agent session
+  if (!ctx.isSwarmAgent) _mainAgentTerminalId = newId;
   return newId;
 }
 
@@ -87,12 +107,7 @@ export const handleSystemExec: OpHandler = async (params, ctx) => {
 
   const terminalStore = getTerminalStore();
   const targetId = await ensureTerminalTarget(params.terminal_id as string | undefined, ctx);
-
-  // Only force the terminal panel open for user terminals, not agent-owned ones
-  const targetTerminal = terminalStore.terminals.get(targetId);
-  if (!targetTerminal?.isAgent) {
-    useAppStore.getState().setTerminalOpen(true);
-  }
+  useAppStore.getState().setTerminalOpen(true);
 
   try {
     const result = await terminalStore.executeCommand(cmd, targetId);
@@ -188,10 +203,7 @@ export const handleSystemGit: OpHandler = async (params, ctx) => {
     const terminalStore = getTerminalStore();
     const targetId = await ensureTerminalTarget(params.terminal_id as string | undefined, ctx);
 
-    const targetTerminal = terminalStore.terminals.get(targetId);
-    if (!targetTerminal?.isAgent) {
-      useAppStore.getState().setTerminalOpen(true);
-    }
+    useAppStore.getState().setTerminalOpen(true);
 
     try {
       const result = await terminalStore.executeCommand(gitCmd, targetId);

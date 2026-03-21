@@ -83,7 +83,7 @@ Literal refs: {ref:"h:X"}.
 Named bindings: {bind:"$name"}.
 Literals: {value:123}.
 Policy: mode:"readonly"|"mutable"|"safe-mutable", verify_after_change, rollback_on_failure, max_steps, stop_on_verify_failure.
-Discipline: use mode:"safe-mutable" for any batch that might mutate or exec; readonly is for analysis-only batches.
+Default mode is mutable — omit policy.mode unless you specifically need readonly (pure analysis with no exec/change/verify steps). system.exec and system.git require mutable or safe-mutable.
 on_error: "stop"|"continue"|"rollback" per step.
 
 ### Param Aliases (auto-resolved — use canonical names above)

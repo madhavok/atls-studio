@@ -27,6 +27,15 @@ export interface ExecutionResult {
   success: boolean;
 }
 
+export interface AgentCommandEntry {
+  id: string;
+  command: string;
+  output: string;
+  exitCode: number | null;
+  status: 'running' | 'done' | 'error' | 'timeout' | 'message';
+  timestamp: number;
+}
+
 // Command queue item
 interface QueuedCommand {
   command: string;
@@ -46,6 +55,9 @@ interface TerminalStore {
   // Command queue state (per terminal)
   commandQueues: Map<string, QueuedCommand[]>;
   isExecuting: Map<string, boolean>;
+
+  // Agent log version counter (triggers re-renders for AgentTerminalView)
+  agentLogVersion: number;
   
   // Actions
   createTerminal: (cwd?: string, options?: { background?: boolean; name?: string; isAgent?: boolean }) => Promise<string>;
@@ -68,6 +80,11 @@ interface TerminalStore {
   // Poll the backend is_pty_busy command to detect when a shell command finishes.
   // Returns a cleanup function. Calls onComplete(success) when the shell becomes idle.
   watchPtyBusy: (terminalId: string, onComplete: (success: boolean) => void) => () => void;
+
+  // Agent terminal display
+  getAgentLog: (terminalId: string) => AgentCommandEntry[];
+  appendAgentMessage: (terminalId: string, message: string) => void;
+  sendInterrupt: (terminalId: string) => Promise<void>;
 
   // Internal: actual execution (not queued)
   _executeCommandDirect: (command: string, terminalId: string) => Promise<ExecutionResult>;
@@ -101,6 +118,119 @@ interface PendingCompletion {
 }
 const pendingCompletions = new Map<string, PendingCompletion[]>();
 
+// ---------------------------------------------------------------------------
+// Agent display filter — non-reactive state for streaming command output
+// ---------------------------------------------------------------------------
+
+interface AgentDisplayState {
+  phase: 'idle' | 'awaiting_start' | 'streaming';
+  activeMarker: string | null;
+  activeEntryId: string | null;
+  lineBuf: string;
+}
+
+const agentLogEntries = new Map<string, AgentCommandEntry[]>();
+const agentDisplayStates = new Map<string, AgentDisplayState>();
+let agentLogFlushTimer: ReturnType<typeof setTimeout> | null = null;
+
+function scheduleAgentLogFlush(): void {
+  if (agentLogFlushTimer) return;
+  agentLogFlushTimer = setTimeout(() => {
+    agentLogFlushTimer = null;
+    useTerminalStore.setState(s => ({ agentLogVersion: s.agentLogVersion + 1 }));
+  }, 50);
+}
+
+function flushAgentLogNow(): void {
+  if (agentLogFlushTimer) {
+    clearTimeout(agentLogFlushTimer);
+    agentLogFlushTimer = null;
+  }
+  useTerminalStore.setState(s => ({ agentLogVersion: s.agentLogVersion + 1 }));
+}
+
+function finalizeAgentEntry(
+  terminalId: string,
+  entryId: string,
+  exitCode: number,
+  status: 'done' | 'error' | 'timeout',
+): void {
+  const entries = agentLogEntries.get(terminalId);
+  const entry = entries?.find(e => e.id === entryId);
+  if (entry) {
+    entry.exitCode = exitCode;
+    entry.status = status;
+    entry.output = entry.output.trimEnd();
+  }
+  const ds = agentDisplayStates.get(terminalId);
+  if (ds) {
+    ds.phase = 'idle';
+    ds.activeMarker = null;
+    ds.activeEntryId = null;
+    ds.lineBuf = '';
+  }
+  flushAgentLogNow();
+}
+
+/** Line-buffer state machine: extracts clean output between START/END markers. */
+function processAgentDisplayChunk(terminalId: string, data: string): void {
+  const ds = agentDisplayStates.get(terminalId);
+  if (!ds || ds.phase === 'idle') return;
+
+  ds.lineBuf += data;
+  const parts = ds.lineBuf.split(/\r?\n/);
+  ds.lineBuf = parts.pop() || '';
+
+  let dirty = false;
+  const entries = agentLogEntries.get(terminalId);
+  const activeEntry = entries?.find(e => e.id === ds.activeEntryId);
+
+  const endTag = ds.activeMarker ? `##ATLS_END_${ds.activeMarker}_` : null;
+  const startTag = ds.activeMarker ? `##ATLS_START_${ds.activeMarker}##` : null;
+
+  for (const rawLine of parts) {
+    const clean = stripAnsi(rawLine.replace(/\r/g, '')).trim();
+
+    switch (ds.phase) {
+      case 'awaiting_start':
+        // Exact match only — the standalone Write-Host output is just the
+        // marker text; the shell echo has surrounding wrapper code.
+        if (startTag && clean === startTag) {
+          ds.phase = 'streaming';
+        }
+        break;
+      case 'streaming': {
+        // END marker can appear mid-line (PowerShell concatenates output
+        // with the next Write-Host when | Out-String flushes).
+        const endIdx = endTag ? clean.indexOf(endTag) : -1;
+        if (endIdx !== -1) {
+          // Capture any output text before the marker on this line
+          if (endIdx > 0 && activeEntry) {
+            const before = clean.slice(0, endIdx).trimEnd();
+            if (before) {
+              activeEntry.output += before + '\n';
+              dirty = true;
+            }
+          }
+          ds.phase = 'idle';
+          ds.activeMarker = null;
+        } else if (activeEntry) {
+          // Skip lines that are just the start marker echo or wrapper noise
+          if (startTag && clean === startTag) break;
+          if (clean.includes('##ATLS_START_') || clean.includes('##ATLS_END_')) break;
+          if (activeEntry.output || clean) {
+            activeEntry.output += clean + '\n';
+            dirty = true;
+          }
+        }
+        break;
+      }
+    }
+  }
+
+  if (dirty) scheduleAgentLogFlush();
+}
+
 // Get output buffer (non-reactive)
 function getOutputBufferDirect(id: string): string[] {
   return outputBuffers.get(id) || [];
@@ -129,6 +259,9 @@ function appendOutputDirect(id: string, data: string): void {
     // Check each pending completion for its marker
     checkPendingCompletions(id);
   }
+
+  // Feed agent display filter (streams clean output to agentLogEntries)
+  processAgentDisplayChunk(id, data);
 }
 
 // Check if any pending completions have their marker
@@ -141,21 +274,25 @@ function checkPendingCompletions(terminalId: string): void {
   
   for (let i = 0; i < pending.length; i++) {
     const p = pending[i];
-    const endPattern = new RegExp(`##ATLS_END_${p.marker}_(-?\\d*)##`);
-    const match = p.buffer.match(endPattern);
+    // Strip ANSI codes before matching — ConPTY can insert cursor-movement
+    // sequences mid-token when the line wraps, breaking literal matches.
+    const cleanBuf = stripAnsi(p.buffer);
+    // Accept digits OR literal $__ec (PowerShell sometimes fails to interpolate
+    // the variable when ConPTY line-wrapping corrupts the one-liner parsing).
+    const endPattern = new RegExp(`##ATLS_END_${p.marker}_((?:-?\\d+|\\$__ec)?)##`);
+    const match = cleanBuf.match(endPattern);
     
     if (match) {
-      // Found completion marker
       clearTimeout(p.timeoutId);
       
-      const exitCode = match[1] ? (parseInt(match[1], 10) || 0) : 0;
-      const startIdx = p.buffer.indexOf(p.startMarker);
-      const endIdx = p.buffer.indexOf(match[0]);
+      const raw = match[1] || '';
+      const exitCode = /^-?\d+$/.test(raw) ? parseInt(raw, 10) : 0;
+      const startIdx = cleanBuf.indexOf(p.startMarker);
+      const endIdx = cleanBuf.indexOf(match[0]);
       
       let output = '';
       if (startIdx !== -1 && endIdx !== -1 && endIdx > startIdx) {
-        output = p.buffer.slice(startIdx + p.startMarker.length, endIdx).trim();
-        // Clean up output
+        output = cleanBuf.slice(startIdx + p.startMarker.length, endIdx).trim();
         const lines = output.split('\n');
         const cleanLines = lines.filter(line => {
           const trimmed = line.trim();
@@ -168,7 +305,7 @@ function checkPendingCompletions(terminalId: string): void {
                  !trimmed.startsWith('+ FullyQualifiedErrorId') &&
                  !(trimmed.startsWith("Program '") && trimmed.includes("failed to run:"));
         });
-        output = stripAnsi(cleanLines.join('\n').trim());
+        output = cleanLines.join('\n').trim();
       }
       
       p.resolve({ exitCode, output, success: exitCode === 0 });
@@ -247,6 +384,9 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
   commandQueues: new Map(),
   isExecuting: new Map(),
 
+  // Agent log version (incremented to trigger re-renders)
+  agentLogVersion: 0,
+
   markTerminalDead: (id: string) => {
     set(state => {
       const newTerminals = new Map(state.terminals);
@@ -314,6 +454,12 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
         shell: undefined, // Use OS default
       });
 
+      // Agent terminals are never rendered in xterm, so fitAddon never runs.
+      // Widen the PTY so wrapped marker commands fit on a single ConPTY line.
+      if (isAgent) {
+        await invoke('resize_pty', { id, cols: 250, rows: 24 }).catch(() => {});
+      }
+
       // Wait for the shell to be ready (prompt appeared) before resolving.
       // PowerShell emits "PS path> " when ready; bash/zsh emit "$ " or "% ".
       const READY_TIMEOUT = 3000;
@@ -344,6 +490,8 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
       pendingCompletions.delete(id);
     }
     outputBuffers.delete(id);
+    agentLogEntries.delete(id);
+    agentDisplayStates.delete(id);
     
     set(state => {
       const newTerminals = new Map(state.terminals);
@@ -587,6 +735,29 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
     const startMarker = `##ATLS_START_${marker}##`;
     const endMarker = `##ATLS_END_${marker}_`;
 
+    // For agent terminals, create a display entry and arm the display filter
+    let agentEntryId: string | null = null;
+    if (terminal.isAgent) {
+      agentEntryId = crypto.randomUUID().slice(0, 8);
+      let entries = agentLogEntries.get(terminalId);
+      if (!entries) { entries = []; agentLogEntries.set(terminalId, entries); }
+      entries.push({
+        id: agentEntryId,
+        command,
+        output: '',
+        exitCode: null,
+        status: 'running',
+        timestamp: Date.now(),
+      });
+      agentDisplayStates.set(terminalId, {
+        phase: 'awaiting_start',
+        activeMarker: marker,
+        activeEntryId: agentEntryId,
+        lineBuf: '',
+      });
+      scheduleAgentLogFlush();
+    }
+
     // Register completion handler BEFORE sending command (event-driven, no polling)
     const completionPromise = registerPendingCompletion(terminalId, marker, startMarker, 30000);
 
@@ -598,11 +769,54 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
     try {
       await invoke('write_pty', { id: terminalId, data: wrapped + '\r' });
     } catch (error) {
+      if (terminal.isAgent && agentEntryId) {
+        finalizeAgentEntry(terminalId, agentEntryId, -1, 'error');
+      }
       return { exitCode: -1, output: `Failed to write to terminal: ${error}`, success: false };
     }
 
     // Wait for completion (event-driven - resolves when marker detected in output)
-    return completionPromise;
+    const result = await completionPromise;
+
+    // Finalize agent display entry
+    if (terminal.isAgent && agentEntryId) {
+      const status = result.exitCode === -1 && result.output.startsWith('Timeout')
+        ? 'timeout' as const
+        : result.success ? 'done' as const : 'error' as const;
+      finalizeAgentEntry(terminalId, agentEntryId, result.exitCode, status);
+    }
+
+    return result;
+  },
+
+  // Agent terminal display methods
+
+  getAgentLog: (terminalId: string) => {
+    return agentLogEntries.get(terminalId) || [];
+  },
+
+  appendAgentMessage: (terminalId: string, message: string) => {
+    let entries = agentLogEntries.get(terminalId);
+    if (!entries) { entries = []; agentLogEntries.set(terminalId, entries); }
+    entries.push({
+      id: crypto.randomUUID().slice(0, 8),
+      command: '',
+      output: stripAnsi(message),
+      exitCode: null,
+      status: 'message',
+      timestamp: Date.now(),
+    });
+    flushAgentLogNow();
+  },
+
+  sendInterrupt: async (terminalId: string) => {
+    const terminal = get().terminals.get(terminalId);
+    if (!terminal?.isAlive) return;
+    try {
+      await invoke('write_pty', { id: terminalId, data: '\x03' });
+    } catch (e) {
+      console.warn('[Terminal] Failed to send interrupt:', e);
+    }
   },
 
   // Set up output listener for a terminal

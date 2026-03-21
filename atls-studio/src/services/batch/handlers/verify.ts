@@ -39,9 +39,13 @@ async function echoVerifyToTerminal(
     const terminal = terminalStore.terminals.get(targetId);
     if (!terminal?.isAlive) return;
 
-    if (!terminal.isAgent) {
-      useAppStore.getState().setTerminalOpen(true);
+    if (terminal.isAgent) {
+      const icon = passed ? '\u2713' : '\u2717';
+      terminalStore.appendAgentMessage(targetId, `[verify.${mode}] ${icon} ${command}`);
+      return;
     }
+
+    useAppStore.getState().setTerminalOpen(true);
     const statusIcon = passed ? '\x1b[32m\u2713\x1b[0m' : '\x1b[31m\u2717\x1b[0m';
     const line = `\r\n\x1b[90m[verify.${mode}]\x1b[0m ${statusIcon} ${command}\r\n`;
     await terminalStore.writeRaw(targetId, `echo "${line.replace(/"/g, '`"')}"\r`);

@@ -6,6 +6,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen, UnlistenFn } from '@tauri-apps/api/event';
 import { useAppStore } from '../../stores/appStore';
 import { useTerminalStore, TerminalInstance, getTerminalStore } from '../../stores/terminalStore';
+import { AgentTerminalView } from './AgentTerminalView';
 import '@xterm/xterm/css/xterm.css';
 import { CloseIcon } from '../icons';
 
@@ -397,15 +398,48 @@ export function TerminalPanel({ isOpen, onClose }: TerminalPanelProps) {
               className="panel-resizer shrink-0"
               onMouseDown={handleSplitResize}
             />
-            <div style={{ width: `${(1 - splitRatio) * 100}%` }} className="min-w-0">
-              <TerminalPane
-                label="Agent"
-                tabs={agentTabs}
-                activeId={activeAgentTerminalId}
-                onSelectTab={setActiveAgentTerminal}
-                onCloseTab={handleCloseTab}
-                emptyMessage="No agent terminals"
-              />
+            <div style={{ width: `${(1 - splitRatio) * 100}%` }} className="min-w-0 flex flex-col h-full">
+              {/* Agent tab bar */}
+              <div className="flex items-center bg-studio-surface border-b border-studio-border px-2 shrink-0">
+                <span className="text-xs font-semibold text-studio-title uppercase tracking-wide mr-2 shrink-0 py-1">
+                  Agent
+                </span>
+                <div className="flex items-center gap-1 flex-1 overflow-x-auto scrollbar-thin py-1">
+                  {agentTabs.map((tab) => (
+                    <div
+                      key={tab.id}
+                      className={`
+                        flex items-center gap-2 px-3 py-1 rounded cursor-pointer group
+                        ${tab.id === activeAgentTerminalId
+                          ? 'bg-studio-bg text-studio-text'
+                          : 'text-studio-muted hover:text-studio-text hover:bg-studio-border/30'
+                        }
+                      `}
+                      onClick={() => setActiveAgentTerminal(tab.id)}
+                    >
+                      <span className="text-xs whitespace-nowrap">{tab.name}</span>
+                      {!tab.isAlive && (
+                        <span className="text-xs text-studio-error">(exited)</span>
+                      )}
+                      <button
+                        className="opacity-0 group-hover:opacity-100 p-0.5 hover:bg-studio-border rounded transition-opacity"
+                        onClick={(e) => { e.stopPropagation(); handleCloseTab(tab.id); }}
+                      >
+                        <CloseIcon className="w-3 h-3" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Virtual agent terminal content */}
+              {activeAgentTerminalId ? (
+                <AgentTerminalView terminalId={activeAgentTerminalId} />
+              ) : (
+                <div className="flex-1 flex items-center justify-center text-xs text-studio-muted">
+                  No agent terminals
+                </div>
+              )}
             </div>
           </>
         )}

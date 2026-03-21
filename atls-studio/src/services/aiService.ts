@@ -135,6 +135,7 @@ import { GEMINI_REINFORCEMENT, GEMINI_RECENCY_BOOST } from '../prompts/providerO
 import { advanceTurn, resetProtocol, dematerialize, getAllRefs, getRef, shouldMaterialize, getTurn, setRoundRefreshHook } from './hashProtocol';
 import { useRoundHistoryStore, type VerificationConfidence } from '../stores/roundHistoryStore';
 import { executeUnifiedBatch, type HandlerContext, type UnifiedBatchRequest, type UnifiedBatchResult } from './batch';
+import { resetMainAgentTerminal } from './batch/handlers/system';
 import type { ExpandedFilePath } from './batch/types';
 import { formatBatchResult } from './batch/resultFormatter';
 import {
@@ -894,6 +895,7 @@ function createChatSession(isSwarm: boolean): ChatSessionContext {
     _activeSession = null;
     currentAbortController = null;
   }
+  resetMainAgentTerminal();
 
   const controller = new AbortController();
   const session: ChatSessionContext = {
@@ -917,15 +919,6 @@ export function getActiveSession(): ChatSessionContext | null {
 // Rate limiting constants
 const TOOL_LOOP_DELAY_MS = 150; // Delay between API calls in tool loop to reduce idle churn while keeping provider pacing
 const MAX_CONCURRENT_TOOLS = 3; // Max parallel tool executions — keeps machine load manageable
-
-// Role-based tool allowlist for swarm agents (enforced at runtime)
-const SWARM_ROLE_ALLOWED_TOOLS: Record<string, Set<string>> = {
-  coder: new Set(['batch', 'task_complete']),
-  debugger: new Set(['batch', 'task_complete']),
-  reviewer: new Set(['batch', 'task_complete']),
-  tester: new Set(['batch', 'task_complete']),
-  documenter: new Set(['batch', 'task_complete']),
-};
 
 /**
  * Sleep helper for rate limiting
