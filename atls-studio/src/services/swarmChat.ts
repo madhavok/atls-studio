@@ -157,40 +157,48 @@ async function runStreamRound(
     }
   });
 
-  if (provider === 'anthropic') {
-    await invoke('stream_chat_anthropic', {
-      apiKey: config.apiKey,
-      model: config.model,
-      messages,
-      maxTokens: config.maxTokens ?? 4096,
-      temperature: config.temperature ?? 0.7,
-      systemPrompt,
-      streamId,
-      enableTools,
-    });
-  } else if (provider === 'openai') {
-    await invoke('stream_chat_openai', {
-      apiKey: config.apiKey,
-      model: config.model,
-      messages,
-      maxTokens: config.maxTokens ?? 4096,
-      temperature: config.temperature ?? 0.7,
-      systemPrompt,
-      streamId,
-    });
-  } else if (provider === 'lmstudio') {
-    await invoke('stream_chat_lmstudio', {
-      baseUrl: config.baseUrl ?? config.apiKey,
-      model: config.model,
-      messages,
-      maxTokens: config.maxTokens ?? 4096,
-      temperature: config.temperature ?? 0.7,
-      systemPrompt,
-      streamId,
-      enableTools,
-    });
-  } else {
-    throw new Error(`Swarm streaming not supported for provider: ${provider}`);
+  try {
+    if (provider === 'anthropic') {
+      await invoke('stream_chat_anthropic', {
+        apiKey: config.apiKey,
+        model: config.model,
+        messages,
+        maxTokens: config.maxTokens ?? 4096,
+        temperature: config.temperature ?? 0.7,
+        systemPrompt,
+        streamId,
+        enableTools,
+      });
+    } else if (provider === 'openai') {
+      await invoke('stream_chat_openai', {
+        apiKey: config.apiKey,
+        model: config.model,
+        messages,
+        maxTokens: config.maxTokens ?? 4096,
+        temperature: config.temperature ?? 0.7,
+        systemPrompt,
+        streamId,
+      });
+    } else if (provider === 'lmstudio') {
+      await invoke('stream_chat_lmstudio', {
+        baseUrl: config.baseUrl ?? config.apiKey,
+        model: config.model,
+        messages,
+        maxTokens: config.maxTokens ?? 4096,
+        temperature: config.temperature ?? 0.7,
+        systemPrompt,
+        streamId,
+        enableTools,
+      });
+    } else {
+      throw new Error(`Swarm streaming not supported for provider: ${provider}`);
+    }
+  } catch (invokeError: unknown) {
+    // Tauri invoke rejects with bare strings — normalize to Error
+    const msg = invokeError instanceof Error ? invokeError.message
+      : typeof invokeError === 'string' ? invokeError
+      : JSON.stringify(invokeError) || 'Stream invocation failed';
+    throw new Error(msg);
   }
 
   await donePromise;

@@ -341,10 +341,15 @@ class OrchestratorService {
       // Phase 3: Execute plan
       await this.executePlan(sessionId, plan, projectPath, config);
       
-    } catch (error) {
+    } catch (error: unknown) {
       console.error('[Orchestrator] Error:', error);
       swarmStore.resetSwarm();
-      throw error;
+      // Normalize to Error so callers always get a .message
+      if (error instanceof Error) throw error;
+      const msg = typeof error === 'string' ? error
+        : (error && typeof error === 'object' && 'message' in error) ? String((error as any).message)
+        : JSON.stringify(error) || 'Orchestrator failed';
+      throw new Error(msg);
     }
   }
 
@@ -569,14 +574,20 @@ class OrchestratorService {
       }
       
       // Step 8: Build research digest with per-file symbol extraction
-      swarmStore.addResearchLog('🔬 Building research digest (symbols, deps, edit targets)...');
-      const digest = this.buildResearchDigest(
-        smartContentForAnalysis, filesToModify, filesForContext,
-        smartHashes, rawHashes, fileContentsMap, keywords, projectProfileText,
-      );
-      swarmStore.addResearchLog(`  🔗 Dependency edges: ${Array.from(digest.dependencyGraph.values()).reduce((s, v) => s + v.length, 0)}`);
-      swarmStore.addResearchLog(`  🎯 Edit targets: ${digest.editPlan.length}`);
-      swarmStore.addResearchLog(`  📋 File digests: ${digest.files.size}`);
+      let digest: ResearchDigest | undefined;
+      try {
+        swarmStore.addResearchLog('🔬 Building research digest (symbols, deps, edit targets)...');
+        digest = this.buildResearchDigest(
+          smartContentForAnalysis, filesToModify, filesForContext,
+          smartHashes, rawHashes, fileContentsMap, keywords, projectProfileText,
+        );
+        swarmStore.addResearchLog(`  🔗 Dependency edges: ${Array.from(digest.dependencyGraph.values()).reduce((s, v) => s + v.length, 0)}`);
+        swarmStore.addResearchLog(`  🎯 Edit targets: ${digest.editPlan.length}`);
+        swarmStore.addResearchLog(`  📋 File digests: ${digest.files.size}`);
+      } catch (digestError) {
+        console.warn('[Research] Digest build failed (non-fatal):', digestError);
+        swarmStore.addResearchLog(`⚠️ Digest build failed — agents will discover targets at runtime`);
+      }
 
       // Build legacy rawFindings for backward compat
       const rawFindings = `
@@ -598,8 +609,9 @@ SEARCH KEYWORDS USED: ${keywords.join(', ')}
 `;
 
       const patterns = this.extractPatterns(smartContentForAnalysis);
-      const dependencies = Array.from(digest.dependencyGraph.entries())
-        .flatMap(([src, deps]) => deps.map(d => `${src} -> ${d}`));
+      const dependencies = digest
+        ? Array.from(digest.dependencyGraph.entries()).flatMap(([src, deps]) => deps.map(d => `${src} -> ${d}`))
+        : [];
 
       swarmStore.addResearchLog(`✅ Research complete!`);
       swarmStore.addResearchLog(`───────────────────────`);
