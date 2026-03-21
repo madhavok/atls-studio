@@ -35,7 +35,7 @@ analyze.blast_radius file_paths?:[] symbol_names?:[] action?:""
 analyze.extract_plan file_path:"" strategy:by_cluster|by_prefix|by_kind min_lines?:N min_complexity?:N
 change.edit file_path:"" line_edits:[{line:N, action:"replace", count:M, content:"new code"}] — preferred: replaces lines N..N+M-1, no old text needed
   also: line_edits:[{line:N, action:"insert_before"|"insert_after", content:"...", reindent?:true}]
-  also: line_edits:[{line:N, action:"delete", count:M}]
+  also: line_edits:[{line:N, action:"delete", count:M}] — spans must keep valid syntax; partial deletes may fail with syntax_error_after_edit
   also: line_edits:[{line:N, action:"move", count:M, destination:D, reindent?:true}]
   also: line_edits:[{anchor:"unique text", action:"replace", count:M, content:"..."}] — anchor resolves to line
   legacy: edits:[{file,old,new}] — exact text match, use only for short unambiguous replacements
@@ -102,7 +102,7 @@ on_error: "stop"|"continue"|"rollback" per step.
 - deletes, delete (rollback): paths or h:refs — resolve to path
 - hashes (session.pin/unpin/compact/unload/drop/recall): h:refs pass-through
 - restore items: file and hash accept h:refs
-- line_edits: prefer line+count+action:"replace" with explicit line numbers from read_lines output — no old text needed. For 200+ line files, always use line_edits with line numbers. Anchors (content-match, shift-immune) are a fallback when line numbers are unavailable.
+- line_edits discipline: read exact lines first (read.lines or read.context), then build the patch — never guess ranges from memory. Verify the span with read.lines (target_range + actual_range) before editing. Count braces in braced languages so replacement blocks balance. For complex nested / scope-sensitive edits, prefer anchor on line_edits over line numbers alone. For simple spans after a fresh read, line+count+action:"replace" with numbers from that read — no old text needed. For 200+ line files, always derive line numbers from read.lines output.
 - use refactor, not edit, for cross-file extract/move/rename flows
 - each successful edit returns fresh refs; chain from the newest refs
 - default cadence: batch related change.* steps first, then run one verify.build at a milestone or task end unless the change is high risk
@@ -116,6 +116,7 @@ on_error: "stop"|"continue"|"rollback" per step.
 - intent.search_replace is literal only — old_text must be exact, no regex, no semantic transforms
 
 ### Model Discipline
+- line edits: read.lines (or read.context) on the target range before constructing replacement text; brace-check replacements in `{`/`}` languages; use anchors when nesting/scope makes line math unsafe
 - never call an intent you haven't prepared for: read files before intent.edit, have exact line_edits before intent.edit_multi
 - intents automate plumbing (reads, retries, verify), not thinking — if you don't know the inputs, use primitives to explore first
 - don't use intents for exploration: read.context then reason, then intent.edit with confident changes
