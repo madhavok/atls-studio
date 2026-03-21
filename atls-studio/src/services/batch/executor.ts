@@ -41,28 +41,58 @@ function extractEditTargetFile(params: Record<string, unknown>): string | undefi
   return typeof f === 'string' ? f : undefined;
 }
 
-function estimateLineDeltaFromEdits(lineEdits: unknown): number {
-  if (!Array.isArray(lineEdits)) return 0;
-  let delta = 0;
+/**
+ * Count lines in content matching Rust's `.lines()` behavior:
+ * trailing newline does NOT produce an extra empty line.
+ */
+function countContentLines(content: string): number {
+  if (content.length === 0) return 0;
+  const stripped = content.replace(/\r?\n$/, '');
+  return stripped.split(/\r?\n/).length;
+}
+
+interface PositionalDelta {
+  line: number;
+  delta: number;
+}
+
+/**
+ * Compute per-edit positional deltas from a completed line_edits array.
+ * Each entry records the line where the edit occurred and the net line change.
+ * Anchor/symbol edits (line <= 0) are excluded — they can't inform positional rebase.
+ */
+function computePositionalDeltas(lineEdits: unknown): PositionalDelta[] {
+  if (!Array.isArray(lineEdits)) return [];
+  const deltas: PositionalDelta[] = [];
   for (const edit of lineEdits) {
     if (!edit || typeof edit !== 'object') continue;
     const e = edit as Record<string, unknown>;
     const action = typeof e.action === 'string' ? e.action : '';
+    const line = typeof e.line === 'number' && Number.isFinite(e.line) ? e.line : 0;
     const count = typeof e.count === 'number' && Number.isFinite(e.count) ? e.count : 1;
     const contentLines = typeof e.content === 'string' && e.content.length > 0
-      ? e.content.split(/\r?\n/).length
+      ? countContentLines(e.content as string)
       : 0;
-    if (action === 'insert_before' || action === 'insert_after' || action === 'prepend' || action === 'append') delta += contentLines;
-    else if (action === 'delete') delta -= count;
-    else if (action === 'replace') delta += contentLines - count;
+    let d = 0;
+    if (action === 'insert_before' || action === 'insert_after' || action === 'prepend' || action === 'append') d = contentLines;
+    else if (action === 'delete') d = -count;
+    else if (action === 'replace') d = contentLines - count;
+    if (d !== 0 && line > 0) deltas.push({ line, delta: d });
   }
-  return delta;
+  return deltas;
+}
+
+function estimateLineDeltaFromEdits(lineEdits: unknown): number {
+  return computePositionalDeltas(lineEdits).reduce((sum, d) => sum + d.delta, 0);
 }
 
 /**
  * After a successful change.edit step, shift line numbers in subsequent
  * same-file steps so they reflect insertions/deletions from earlier steps.
  * Only adjusts explicit `line` values (anchor-based edits resolve at apply time).
+ *
+ * Uses positional deltas: each future line is shifted only by edits that
+ * occurred at or before that line, not by a single global delta.
  */
 function rebaseSubsequentSteps(
   completedParams: Record<string, unknown>,
@@ -73,10 +103,10 @@ function rebaseSubsequentSteps(
   if (!editedFile) return;
   const editedKey = normalizePathForRebase(editedFile);
 
-  const delta = Array.isArray(completedParams.line_edits)
-    ? estimateLineDeltaFromEdits(completedParams.line_edits)
-    : 0;
-  if (delta === 0) return;
+  const deltas = Array.isArray(completedParams.line_edits)
+    ? computePositionalDeltas(completedParams.line_edits)
+    : [];
+  if (deltas.length === 0) return;
 
   for (let j = startIndex; j < stepsToRun.length; j++) {
     const future = stepsToRun[j];
@@ -90,7 +120,11 @@ function rebaseSubsequentSteps(
       if (!le || typeof le !== 'object') continue;
       const entry = le as Record<string, unknown>;
       if (typeof entry.line === 'number' && entry.line > 0 && !entry.anchor && !entry.symbol) {
-        entry.line = entry.line + delta;
+        let shift = 0;
+        for (const d of deltas) {
+          if (d.line <= (entry.line as number)) shift += d.delta;
+        }
+        if (shift !== 0) entry.line = (entry.line as number) + shift;
       }
     }
   }

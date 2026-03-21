@@ -130,6 +130,14 @@ export function registerEditHashes(result: unknown, params: Record<string, unkno
   }
 }
 
+/**
+ * Count lines matching Rust's `.lines()` — trailing newline does NOT produce an extra line.
+ */
+function countContentLines(content: string): number {
+  if (content.length === 0) return 0;
+  return content.replace(/\r?\n$/, '').split(/\r?\n/).length;
+}
+
 function estimateLineDeltaFromLineEdits(lineEdits: unknown): number {
   if (!Array.isArray(lineEdits)) return 0;
   let delta = 0;
@@ -139,7 +147,7 @@ function estimateLineDeltaFromLineEdits(lineEdits: unknown): number {
     const action = typeof entry.action === 'string' ? entry.action : '';
     const count = typeof entry.count === 'number' && Number.isFinite(entry.count) ? entry.count : 1;
     const contentLines = typeof entry.content === 'string' && entry.content.length > 0
-      ? entry.content.split(/\r?\n/).length
+      ? countContentLines(entry.content as string)
       : 0;
     if (action === 'insert_before' || action === 'insert_after') delta += contentLines;
     else if (action === 'delete') delta -= count;

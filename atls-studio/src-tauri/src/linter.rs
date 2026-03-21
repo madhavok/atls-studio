@@ -660,10 +660,12 @@ fn collect_tree_sitter_errors(
             format!("Syntax error: unexpected token near: {}", error_text.trim())
         };
 
-        // MISSING nodes in Rust are frequently tree-sitter grammar artifacts
-        // (macros, complex where clauses, proc-macro attributes) that rustc
-        // compiles fine. Downgrade to warning so check_syntax won't block edits.
-        let severity = if node.is_missing() && code_prefix == "RUST" {
+        // MISSING nodes are frequently tree-sitter grammar artifacts that the
+        // real compiler handles fine. Rust: macros, complex where clauses,
+        // proc-macro attributes. TS/JS: optional semicolons, complex type
+        // annotations, template literal expressions, multi-line arrow functions.
+        // Downgrade to warning so syntax_check won't block edits on these.
+        let severity = if node.is_missing() {
             "warning"
         } else {
             "error"
