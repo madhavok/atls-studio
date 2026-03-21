@@ -116,7 +116,7 @@ on_error: "stop"|"continue"|"rollback" per step.
 - intent.search_replace is literal only — old_text must be exact, no regex, no semantic transforms
 
 ### Model Discipline
-- line edits: read.lines (or read.context) on the target range before constructing replacement text; brace-check replacements in `{`/`}` languages; use anchors when nesting/scope makes line math unsafe
+- line edits: read.lines (or read.context) on the target range before constructing replacement text; brace-check replacements in \`{\`/\`}\` languages; use anchors when nesting/scope makes line math unsafe
 - never call an intent you haven't prepared for: read files before intent.edit, have exact line_edits before intent.edit_multi
 - intents automate plumbing (reads, retries, verify), not thinking — if you don't know the inputs, use primitives to explore first
 - don't use intents for exploration: read.context then reason, then intent.edit with confident changes
