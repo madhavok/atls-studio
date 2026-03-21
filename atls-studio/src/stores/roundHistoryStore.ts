@@ -48,6 +48,8 @@ export interface RoundSnapshot {
   actualCost: number;
   // SubAgent tracking (optional — present when this round belongs to a subagent invocation)
   isSubagentRound?: boolean;
+  /** Swarm worker / planner / synthesis stream (not main chat agent loop) */
+  isSwarmRound?: boolean;
   subagentType?: 'retriever' | 'design';
   subagentModel?: string;
   subagentProvider?: string;

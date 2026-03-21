@@ -115,6 +115,12 @@ export interface SwarmStats {
   pendingTasks: number;
   totalTokensUsed: number;
   totalCostCents: number;
+  /** LLM usage for task planning (orchestrator model), not worker tasks */
+  planPhaseTokens: number;
+  planPhaseCostCents: number;
+  /** LLM usage for post-run synthesis */
+  synthesisPhaseTokens: number;
+  synthesisPhaseCostCents: number;
   startedAt?: Date;
   completedAt?: Date;
   elapsedMs: number;
@@ -214,6 +220,12 @@ interface SwarmStoreState {
   // Cancel handling
   cancelRequested: boolean;
   cancelMode: 'graceful' | 'immediate' | null;
+
+  /** Cumulative plan-phase LLM usage (createPlan), separate from worker tasks */
+  orchestrationPlanTokens: number;
+  orchestrationPlanCostCents: number;
+  orchestrationSynthesisTokens: number;
+  orchestrationSynthesisCostCents: number;
   
   // Actions
   startSwarm: (sessionId: string, userRequest: string) => void;
@@ -259,6 +271,9 @@ interface SwarmStoreState {
   // Stats
   updateStats: () => void;
   getTasksByStatus: (status: TaskStatus) => SwarmTask[];
+
+  recordOrchestrationPlanUsage: (inputTokens: number, outputTokens: number, costCents: number) => void;
+  recordOrchestrationSynthesisUsage: (inputTokens: number, outputTokens: number, costCents: number) => void;
 }
 
 // ============================================================================
@@ -298,6 +313,10 @@ export const useSwarmStore = create<SwarmStoreState>((set, get) => ({
     pendingTasks: 0,
     totalTokensUsed: 0,
     totalCostCents: 0,
+    planPhaseTokens: 0,
+    planPhaseCostCents: 0,
+    synthesisPhaseTokens: 0,
+    synthesisPhaseCostCents: 0,
     elapsedMs: 0,
   },
   maxConcurrentAgents: savedSettings.maxConcurrentAgents || 2, // Default to 2 concurrent agents
@@ -308,6 +327,10 @@ export const useSwarmStore = create<SwarmStoreState>((set, get) => ({
   synthesis: null,
   cancelRequested: false,
   cancelMode: null,
+  orchestrationPlanTokens: 0,
+  orchestrationPlanCostCents: 0,
+  orchestrationSynthesisTokens: 0,
+  orchestrationSynthesisCostCents: 0,
 
   // ==========================================================================
   // Swarm Lifecycle
@@ -326,6 +349,10 @@ export const useSwarmStore = create<SwarmStoreState>((set, get) => ({
       planApproved: false,
       cancelRequested: false,
       cancelMode: null,
+      orchestrationPlanTokens: 0,
+      orchestrationPlanCostCents: 0,
+      orchestrationSynthesisTokens: 0,
+      orchestrationSynthesisCostCents: 0,
       stats: {
         totalTasks: 0,
         completedTasks: 0,
@@ -334,6 +361,10 @@ export const useSwarmStore = create<SwarmStoreState>((set, get) => ({
         pendingTasks: 0,
         totalTokensUsed: 0,
         totalCostCents: 0,
+        planPhaseTokens: 0,
+        planPhaseCostCents: 0,
+        synthesisPhaseTokens: 0,
+        synthesisPhaseCostCents: 0,
         startedAt: new Date(),
         elapsedMs: 0,
       },
@@ -392,8 +423,16 @@ export const useSwarmStore = create<SwarmStoreState>((set, get) => ({
         pendingTasks: 0,
         totalTokensUsed: 0,
         totalCostCents: 0,
+        planPhaseTokens: 0,
+        planPhaseCostCents: 0,
+        synthesisPhaseTokens: 0,
+        synthesisPhaseCostCents: 0,
         elapsedMs: 0,
       },
+      orchestrationPlanTokens: 0,
+      orchestrationPlanCostCents: 0,
+      orchestrationSynthesisTokens: 0,
+      orchestrationSynthesisCostCents: 0,
     });
   },
 
@@ -724,6 +763,24 @@ export const useSwarmStore = create<SwarmStoreState>((set, get) => ({
   // Stats
   // ==========================================================================
 
+  recordOrchestrationPlanUsage: (inputTokens: number, outputTokens: number, costCents: number) => {
+    const tok = inputTokens + outputTokens;
+    set(s => ({
+      orchestrationPlanTokens: s.orchestrationPlanTokens + tok,
+      orchestrationPlanCostCents: s.orchestrationPlanCostCents + costCents,
+    }));
+    get().updateStats();
+  },
+
+  recordOrchestrationSynthesisUsage: (inputTokens: number, outputTokens: number, costCents: number) => {
+    const tok = inputTokens + outputTokens;
+    set(s => ({
+      orchestrationSynthesisTokens: s.orchestrationSynthesisTokens + tok,
+      orchestrationSynthesisCostCents: s.orchestrationSynthesisCostCents + costCents,
+    }));
+    get().updateStats();
+  },
+
   updateStats: () => {
     set(state => {
       const tasks = state.tasks;
@@ -732,8 +789,14 @@ export const useSwarmStore = create<SwarmStoreState>((set, get) => ({
       const running = tasks.filter(t => t.status === 'running');
       const pending = tasks.filter(t => t.status === 'pending' || t.status === 'awaiting_input');
       
-      const totalTokens = tasks.reduce((sum, t) => sum + t.tokensUsed, 0);
-      const totalCost = tasks.reduce((sum, t) => sum + t.costCents, 0);
+      const taskTokens = tasks.reduce((sum, t) => sum + t.tokensUsed, 0);
+      const taskCost = tasks.reduce((sum, t) => sum + t.costCents, 0);
+      const planTok = state.orchestrationPlanTokens;
+      const planCost = state.orchestrationPlanCostCents;
+      const synthTok = state.orchestrationSynthesisTokens;
+      const synthCost = state.orchestrationSynthesisCostCents;
+      const totalTokens = taskTokens + planTok + synthTok;
+      const totalCost = taskCost + planCost + synthCost;
       
       const rawStart = state.stats.startedAt;
       const parsed =
@@ -765,6 +828,10 @@ export const useSwarmStore = create<SwarmStoreState>((set, get) => ({
           pendingTasks: pending.length,
           totalTokensUsed: totalTokens,
           totalCostCents: totalCost,
+          planPhaseTokens: planTok,
+          planPhaseCostCents: planCost,
+          synthesisPhaseTokens: synthTok,
+          synthesisPhaseCostCents: synthCost,
           startedAt: startedAt ?? state.stats.startedAt,
           completedAt: allDone ? new Date() : undefined,
           elapsedMs,

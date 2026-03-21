@@ -9,7 +9,6 @@ import { invoke } from '@tauri-apps/api/core';
 import { atlsBatchQuery } from './toolHelpers';
 import { useSwarmStore, type SwarmTask, type AgentRole, type ResearchResult } from '../stores/swarmStore';
 import { useContextStore } from '../stores/contextStore';
-import { calculateCost } from '../stores/costStore';
 import { useAppStore } from '../stores/appStore';
 import { getTerminalStore } from '../stores/terminalStore';
 import { chatDb, type TaskStatus as ChatTaskStatus } from './chatDb';
@@ -17,6 +16,10 @@ import { rateLimiter } from './rateLimiter';
 import { streamChatForSwarm, BATCH_TOOL_REF, type AIConfig, type ChatMessage, type AIProvider } from './aiService';
 import { toTOON } from '../utils/toon';
 import { estimateTokens } from '../utils/contextHash';
+
+/** Persisted in agent_stats for LLM usage not tied to a worker task row */
+const SWARM_ORCHESTRATION_PLAN_TASK_ID = '__swarm_orchestration_plan__';
+const SWARM_ORCHESTRATION_SYNTHESIS_TASK_ID = '__swarm_orchestration_synthesis__';
 
 // ============================================================================
 // Types
@@ -256,8 +259,7 @@ const ROLE_TOOL_DOCS: Record<AgentRole, string> = {
 4. task_complete with summary of what was documented.`,
 };
 
-// Note: Role-based tool enforcement is now in aiService.ts streamChatForSwarm()
-// The ROLE_ALLOWED_TOOLS map there is the source of truth for runtime validation.
+// Swarm tool surface: executeToolCall / executeToolCallDetailed (batch + task_complete only).
 
 // ============================================================================
 // Orchestrator Class
@@ -1007,7 +1009,11 @@ Based on the research above, create a detailed task plan.
     
     console.log('[Orchestrator] Calling AI for plan with model:', config.model);
     
-    await streamChatForSwarm(
+    const {
+      sessionInputTokens: planInTok,
+      sessionOutputTokens: planOutTok,
+      sessionCostCents: planCostCents,
+    } = await streamChatForSwarm(
       messages,
       aiConfig,
       ORCHESTRATOR_SYSTEM_PROMPT,
@@ -1032,6 +1038,23 @@ Based on the research above, create a detailed task plan.
       },
       { mode: 'planner', enableTools: false }
     );
+
+    swarmStore.recordOrchestrationPlanUsage(planInTok, planOutTok, Math.round(planCostCents));
+    const planSessionId = swarmStore.sessionId;
+    if (planSessionId) {
+      try {
+        await chatDb.recordAgentStats(
+          planSessionId,
+          SWARM_ORCHESTRATION_PLAN_TASK_ID,
+          config.model,
+          Math.round(planInTok),
+          Math.round(planOutTok),
+          Math.round(planCostCents),
+        );
+      } catch (e) {
+        console.warn('[Orchestrator] Could not persist plan-phase agent stats:', e);
+      }
+    }
     
     // Check for streaming errors
     if (streamError) {
@@ -1358,7 +1381,8 @@ ${result}`;
       ? `\n## Blackboard\n${bbEntries.map(e => `${e.key}: ${e.preview}`).join('\n')}`
       : '';
 
-    const statsLine = `Tasks: ${swarmStore.stats.completedTasks} completed, ${swarmStore.stats.failedTasks} failed | Tokens: ${swarmStore.stats.totalTokensUsed} | Cost: $${(swarmStore.stats.totalCostCents / 100).toFixed(4)}`;
+    const s = swarmStore.stats;
+    const statsLine = `Tasks: ${s.completedTasks} completed, ${s.failedTasks} failed | Tokens (workers+plan): ${s.totalTokensUsed} | Cost (workers+plan): $${(s.totalCostCents / 100).toFixed(4)} | Plan phase: ${s.planPhaseTokens} tok / $${(s.planPhaseCostCents / 100).toFixed(4)}`;
 
     const userMessage = `## Plan
 ${planSummary}
@@ -1387,7 +1411,11 @@ Synthesize the swarm outcome.`;
     let synthJson = '';
     let synthError: Error | null = null;
 
-    await streamChatForSwarm(
+    const {
+      sessionInputTokens: synthInTok,
+      sessionOutputTokens: synthOutTok,
+      sessionCostCents: synthCostCents,
+    } = await streamChatForSwarm(
       [{ role: 'user', content: userMessage }],
       synthConfig,
       OrchestratorService.SYNTHESIS_SYSTEM_PROMPT,
@@ -1406,6 +1434,22 @@ Synthesize the swarm outcome.`;
       },
       { mode: 'planner', enableTools: false },
     );
+
+    swarmStore.recordOrchestrationSynthesisUsage(synthInTok, synthOutTok, Math.round(synthCostCents));
+    if (sessionId) {
+      try {
+        await chatDb.recordAgentStats(
+          sessionId,
+          SWARM_ORCHESTRATION_SYNTHESIS_TASK_ID,
+          config.model,
+          Math.round(synthInTok),
+          Math.round(synthOutTok),
+          Math.round(synthCostCents),
+        );
+      } catch (e) {
+        console.warn('[Orchestrator] Could not persist synthesis agent stats:', e);
+      }
+    }
 
     if (synthError) {
       console.warn('[Orchestrator] Synthesis stream failed:', synthError);
@@ -1649,7 +1693,7 @@ Synthesize the swarm outcome.`;
         temperature: 0.4, // Slightly lower for more deterministic agent behavior
       };
       
-      // Stream chat with tools — per-round cost/session metrics are recorded inside streamChatForSwarm (costStore, context bar, rate limiter).
+      // Stream chat with tools — per-round cost in costStore + rateLimiter; main chat context bar/round counter skipped by default (affectMainChatMetrics false).
       const toolCallNames = new Map<string, string>();
       const {
         taskCompleted,

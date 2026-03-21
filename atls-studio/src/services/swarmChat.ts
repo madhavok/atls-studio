@@ -9,10 +9,11 @@ import type { ContextUsage, StreamChunk } from '../stores/appStore';
 import { useAppStore } from '../stores/appStore';
 import { useContextStore } from '../stores/contextStore';
 import { useCostStore, calculateCost, type AIProvider as CostProvider } from '../stores/costStore';
+import { useRoundHistoryStore } from '../stores/roundHistoryStore';
 import { getEffectiveContextWindow } from '../utils/modelCapabilities';
 import { resolveHashRefsWithMeta, type HashLookup } from '../utils/hashResolver';
 import { rateLimiter } from './rateLimiter';
-import type { AIProvider, AIConfig, ToolCallEvent } from './aiService';
+import type { AIProvider, AIConfig, ChatMessage as AiChatMessage, ToolCallEvent } from './aiService';
 import { executeToolCall } from './aiService';
 
 export interface SwarmStreamCallbacks {
@@ -36,6 +37,13 @@ export interface SwarmStreamOptions {
   agentRole?: string;
   taskId?: string;
   fileClaims?: string[];
+  /**
+   * When true, updates main chat context bar, prompt round counter, and session cache metrics.
+   * Default false so parallel swarm workers do not distort the primary chat UI.
+   */
+  affectMainChatMetrics?: boolean;
+  /** When true (default), records a compact round snapshot for Internals (marked isSwarmRound). */
+  recordSwarmRoundHistory?: boolean;
 }
 
 interface PendingToolCall {
@@ -93,6 +101,63 @@ function createHashLookup(sessionId: string | null): HashLookup {
   };
 }
 
+function pushSwarmRoundSnapshot(
+  roundIndex: number,
+  r: {
+    roundInputTokens: number;
+    roundOutputTokens: number;
+    roundCacheReadTokens: number;
+    roundCacheWriteTokens: number;
+    roundCostCents: number;
+  },
+  config: AIConfig,
+  provider: AIProvider,
+): void {
+  const appState = useAppStore.getState();
+  const modelInfo = appState.availableModels.find(m => m.id === config.model);
+  const extendedContext = appState.settings.extendedContext ?? {};
+  const maxTk = modelInfo
+    ? (getEffectiveContextWindow(modelInfo.id, modelInfo.provider, modelInfo.contextWindow, extendedContext)
+      ?? (provider === 'google' || provider === 'vertex' ? 1000000 : 200000))
+    : (provider === 'google' || provider === 'vertex' ? 1000000 : 200000);
+
+  useRoundHistoryStore.getState().pushSnapshot({
+    round: roundIndex,
+    timestamp: Date.now(),
+    wmTokens: 0,
+    wmStoreTokens: 0,
+    bbTokens: 0,
+    stagedTokens: 0,
+    archivedTokens: 0,
+    overheadTokens: 0,
+    freeTokens: Math.max(0, maxTk - r.roundInputTokens),
+    maxTokens: maxTk,
+    staticSystemTokens: 0,
+    conversationHistoryTokens: 0,
+    stagedBucketTokens: 0,
+    workspaceContextTokens: 0,
+    providerInputTokens: r.roundInputTokens,
+    estimatedTotalPromptTokens: r.roundInputTokens,
+    cacheStablePrefixTokens: 0,
+    cacheChurnTokens: r.roundInputTokens,
+    reliefAction: 'none',
+    legacyHistoryTelemetryKnownWrong: false,
+    inputTokens: r.roundInputTokens,
+    outputTokens: r.roundOutputTokens,
+    cacheReadTokens: r.roundCacheReadTokens,
+    cacheWriteTokens: r.roundCacheWriteTokens,
+    costCents: r.roundCostCents,
+    compressionSavings: 0,
+    freedTokens: 0,
+    cumulativeSaved: 0,
+    toolCalls: 0,
+    manageOps: 0,
+    hypotheticalNonBatchedCost: r.roundCostCents,
+    actualCost: r.roundCostCents,
+    isSwarmRound: true,
+  });
+}
+
 /** Run one streaming round; returns when done. Mirrors agent-mode metrics: costStore, context bar, cache, rate limiter. */
 async function runStreamRound(
   provider: AIProvider,
@@ -103,6 +168,7 @@ async function runStreamRound(
   streamId: string,
   enableTools: boolean,
   sessionTotals: { input: number; output: number },
+  affectMainChatMetrics: boolean,
 ): Promise<{
   fullResponse: string;
   pendingToolCalls: PendingToolCall[];
@@ -157,30 +223,34 @@ async function runStreamRound(
         const cacheRead = chunk.cache_read_input_tokens ?? 0;
         if (cacheWrite > 0) roundCacheWriteTokens = cacheWrite;
         if (cacheRead > 0) roundCacheReadTokens = cacheRead;
-        if (cacheWrite > 0 || cacheRead > 0) {
+        if (affectMainChatMetrics && (cacheWrite > 0 || cacheRead > 0)) {
           useAppStore.getState().addCacheMetrics({ cacheWrite, cacheRead, uncached: inTokens });
         }
 
         const openaiCached = chunk.openai_cached_tokens ?? 0;
         if (openaiCached > 0) {
           roundCacheReadTokens = openaiCached;
-          useAppStore.getState().addCacheMetrics({
-            cacheWrite: 0,
-            cacheRead: openaiCached,
-            uncached: inTokens - openaiCached,
-            lastRequestCachedTokens: openaiCached,
-          });
+          if (affectMainChatMetrics) {
+            useAppStore.getState().addCacheMetrics({
+              cacheWrite: 0,
+              cacheRead: openaiCached,
+              uncached: inTokens - openaiCached,
+              lastRequestCachedTokens: openaiCached,
+            });
+          }
         }
 
         const geminiCached = chunk.cached_content_tokens ?? 0;
         if (geminiCached > 0) {
           roundCacheReadTokens = geminiCached;
-          useAppStore.getState().addCacheMetrics({
-            cacheWrite: 0,
-            cacheRead: geminiCached,
-            uncached: inTokens - geminiCached,
-            lastRequestCachedTokens: geminiCached,
-          });
+          if (affectMainChatMetrics) {
+            useAppStore.getState().addCacheMetrics({
+              cacheWrite: 0,
+              cacheRead: geminiCached,
+              uncached: inTokens - geminiCached,
+              lastRequestCachedTokens: geminiCached,
+            });
+          }
         }
 
         const displayIn = sessionTotals.input + roundInputTokens;
@@ -199,8 +269,10 @@ async function runStreamRound(
           maxTokens,
           percentage: Math.min(100, ((displayIn + displayOut) / maxTokens) * 100),
         };
-        useAppStore.getState().setContextUsage(usage);
-        callbacks.onUsageUpdate?.(usage);
+        if (affectMainChatMetrics) {
+          useAppStore.getState().setContextUsage(usage);
+          callbacks.onUsageUpdate?.(usage);
+        }
         break;
       }
       case 'stop_reason':
@@ -220,6 +292,12 @@ async function runStreamRound(
     }
   });
 
+  // Cast messages for Gemini cache (same shape as aiService streamChatViaTauri)
+  const cacheMessages: AiChatMessage[] = messages.map((m) => ({
+    role: m.role as AiChatMessage['role'],
+    content: m.content as AiChatMessage['content'],
+  }));
+
   try {
     if (provider === 'anthropic') {
       await invoke('stream_chat_anthropic', {
@@ -231,6 +309,7 @@ async function runStreamRound(
         systemPrompt,
         streamId,
         enableTools,
+        anthropicBeta: config.anthropicBeta ?? null,
       });
     } else if (provider === 'openai') {
       await invoke('stream_chat_openai', {
@@ -241,6 +320,7 @@ async function runStreamRound(
         temperature: config.temperature ?? 0.7,
         systemPrompt,
         streamId,
+        enableTools,
       });
     } else if (provider === 'lmstudio') {
       await invoke('stream_chat_lmstudio', {
@@ -252,6 +332,56 @@ async function runStreamRound(
         systemPrompt,
         streamId,
         enableTools,
+      });
+    } else if (provider === 'vertex') {
+      const { manageGeminiRollingCache } = await import('./geminiCache');
+      const { cacheName: vertexCache, cachedMessageCount: vertexCachedCount } = await manageGeminiRollingCache(
+        'vertex',
+        config.apiKey,
+        config.model,
+        systemPrompt,
+        cacheMessages,
+        config.projectId,
+        config.region,
+      );
+      const vertexUncachedStart = vertexCache ? Math.min(vertexCachedCount, messages.length - 1) : 0;
+      const vertexMessages = vertexCache ? messages.slice(vertexUncachedStart) : messages;
+      await invoke('stream_chat_vertex', {
+        accessToken: config.apiKey,
+        projectId: config.projectId || '',
+        region: config.region || null,
+        model: config.model,
+        messages: vertexMessages,
+        maxTokens: config.maxTokens ?? 4096,
+        temperature: config.temperature ?? 0.7,
+        systemPrompt,
+        streamId,
+        enableTools,
+        cachedContent: vertexCache,
+        dynamicContext: null,
+      });
+    } else if (provider === 'google') {
+      const { manageGeminiRollingCache } = await import('./geminiCache');
+      const { cacheName: googleCache, cachedMessageCount: googleCachedCount } = await manageGeminiRollingCache(
+        'google',
+        config.apiKey,
+        config.model,
+        systemPrompt,
+        cacheMessages,
+      );
+      const googleUncachedStart = googleCache ? Math.min(googleCachedCount, messages.length - 1) : 0;
+      const googleMessages = googleCache ? messages.slice(googleUncachedStart) : messages;
+      await invoke('stream_chat_google', {
+        apiKey: config.apiKey,
+        model: config.model,
+        messages: googleMessages,
+        maxTokens: config.maxTokens ?? 4096,
+        temperature: config.temperature ?? 0.7,
+        systemPrompt,
+        streamId,
+        enableTools,
+        cachedContent: googleCache,
+        dynamicContext: null,
       });
     } else {
       throw new Error(`Swarm streaming not supported for provider: ${provider}`);
@@ -266,7 +396,9 @@ async function runStreamRound(
 
   await donePromise;
 
-  useAppStore.getState().recordRound();
+  if (affectMainChatMetrics) {
+    useAppStore.getState().recordRound();
+  }
 
   let roundCostCents = 0;
   if (roundInputTokens > 0 || roundOutputTokens > 0) {
@@ -354,11 +486,33 @@ export async function streamChatForSwarm(
 
   const streamId = `swarm-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
   const enableTools = _options.enableTools ?? false;
+  const affectMainChatMetrics = _options.affectMainChatMetrics ?? false;
+  const recordSwarmRoundHistory = _options.recordSwarmRoundHistory ?? true;
+  let swarmHistoryRoundSeq = 0;
 
   const accumulateRound = (r: Awaited<ReturnType<typeof runStreamRound>>) => {
     sessionTotalInput += r.roundInputTokens;
     sessionTotalOutput += r.roundOutputTokens;
     sessionCostCents += r.roundCostCents;
+  };
+
+  const recordRoundAndHistory = (r: Awaited<ReturnType<typeof runStreamRound>>) => {
+    accumulateRound(r);
+    if (recordSwarmRoundHistory) {
+      swarmHistoryRoundSeq += 1;
+      pushSwarmRoundSnapshot(
+        swarmHistoryRoundSeq,
+        {
+          roundInputTokens: r.roundInputTokens,
+          roundOutputTokens: r.roundOutputTokens,
+          roundCacheReadTokens: r.roundCacheReadTokens,
+          roundCacheWriteTokens: r.roundCacheWriteTokens,
+          roundCostCents: r.roundCostCents,
+        },
+        config,
+        provider,
+      );
+    }
   };
 
   try {
@@ -372,8 +526,9 @@ export async function streamChatForSwarm(
         `${streamId}-r${round}`,
         enableTools,
         { input: sessionTotalInput, output: sessionTotalOutput },
+        affectMainChatMetrics,
       );
-      accumulateRound(roundResult);
+      recordRoundAndHistory(roundResult);
       fullResponse = roundResult.fullResponse;
 
       // No tool calls -- check if we should auto-continue or stop
@@ -448,8 +603,9 @@ export async function streamChatForSwarm(
           `${streamId}-r${round + 1}`,
           enableTools,
           { input: sessionTotalInput, output: sessionTotalOutput },
+          affectMainChatMetrics,
         );
-        accumulateRound(finalRound);
+        recordRoundAndHistory(finalRound);
         fullResponse = finalRound.fullResponse;
         break;
       }
