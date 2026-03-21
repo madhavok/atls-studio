@@ -140,6 +140,51 @@ ATLS Studio uses AI-powered fixes via `edit(line_edits)` instead of pre-defined 
 
 This approach provides more contextual, intelligent fixes compared to rigid pattern-based auto-fixers.
 
+## Hash-Building Refactor Pipeline
+
+ATLS Studio supports a content-as-ref composition model for code extraction and refactoring. Instead of regenerating code through the LLM, the model emits hash pointers that the runtime resolves to exact source content.
+
+### Pipeline Steps
+
+1. `context(type:'full')` + `session.pin` - obtain `h:SOURCE` with full file content
+2. `edit(creates:[{path, content}])` - compose new file using `h:SOURCE:cls(Name):dedent` refs in content
+3. `edit(line_edits:[{action:'delete', line:N, count:M}])` - remove extracted code from source
+4. `refactor(action:'rewire_consumers', source_file, target_file, symbol_names:[...])` - auto-rewrite imports in all consumer files + add source import
+5. `verify(type:typecheck)` - validate all files
+
+### Requirements
+
+- **Source hash must have full content** - shaped or sig-only reads do not contain function/class bodies. Symbol anchors (`cls()`, `fn()`, `sym()`) will error against shaped content.
+- **Source hash must be pinned or active** - evicted hashes cannot be resolved.
+- **Imports in the new file are manual** - the hash-building path does not auto-scaffold imports in the created file. Use `refactor(action:execute)` with `extract:` / `from:` / `to:` for automatic import scaffolding. Consumer imports are handled by `refactor(action:'rewire_consumers')`.
+
+### Supported Symbol Kinds
+
+- `cls(ClassName)` - class extraction
+- `fn(functionName)` - function extraction
+- `sym(symbolName)` - generic symbol extraction
+- `:dedent` modifier - strips common indentation from extracted code
+
+### Symbol-Anchored Deletes
+
+Instead of manually reading line numbers, use the `symbol` field on `line_edits` to delete by symbol name:
+
+```
+edit(line_edits:[{action:'delete', symbol:'MyClass', position:'before'}])
+```
+
+When `action` is `delete` and `symbol` is provided with `position:'before'`, the `count` is automatically set to cover the full symbol range. No manual line reads needed.
+
+### Alternative: Declarative Extract
+
+For single-symbol extraction with automatic import/export handling, use the refactor execute path:
+
+```
+refactor(action:'execute', extract:'fn(myFunc)', from:'h:SOURCE', to:'target.ts')
+```
+
+This automatically scaffolds imports, adds export keywords, removes from source, and rewires consumer imports.
+
 ## Tauri Commands
 
 The Rust backend provides these commands via IPC:

@@ -133,8 +133,9 @@ const INLINE_RESOLVE_FIELDS = new Set([
 ]);
 
 /** Array keys whose child objects contain literal file content — inline h:ref
- *  expansion inside these would corrupt code being written to disk. */
-const LITERAL_CONTENT_ARRAYS = new Set(['line_edits', 'creates', 'edits']);
+ *  expansion inside these would corrupt code being written to disk.
+ *  `creates` is excluded: `creates[].content` is CONTENT-AS-REF (UHPP v6). */
+const LITERAL_CONTENT_ARRAYS = new Set(['line_edits', 'edits']);
 
 const HASH_MODIFIER_TOKEN_RE = buildHashModifierTokenRe();
 
@@ -145,11 +146,12 @@ const INLINE_HREF_DETECT = new RegExp(
 
 const INLINE_HREF_G = new RegExp(INLINE_HREF_DETECT.source, 'g');
 
-/** Resolve all inline h:refs embedded in a larger string. */
+/** Resolve all inline h:refs embedded in a larger string. Collects warnings for failed resolutions. */
 async function resolveInlineRefs(
   text: string,
   fieldName: string | undefined,
   lookup: HashLookup,
+  warnings?: string[],
 ): Promise<string> {
   if (!text.includes('h:')) return text;
   INLINE_HREF_G.lastIndex = 0;
@@ -165,14 +167,23 @@ async function resolveInlineRefs(
   for (const { match, start, end } of matches) {
     result += text.slice(cursor, start);
     const parsed = parseHashRef(match);
-    if (parsed) {
+    if (parsed && parsed.modifier !== 'auto' && !isInsideComment(text, start)) {
       try {
         const resolved = await resolveSingle(parsed, fieldName, lookup);
         result += resolved;
-      } catch {
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        const isShapedError = msg.includes('shaped') || msg.includes('bodies stripped');
+        if (isShapedError) {
+          warnings?.push(`[HPP] inline ref ${match} (field: ${fieldName ?? '?'}): ${msg}`);
+          console.warn(`[HPP] inline ref unresolved (shaped content): ${match} in field '${fieldName ?? '?'}'`);
+        }
         result += match;
       }
     } else {
+      if (parsed && parsed.modifier !== 'auto' && isInsideComment(text, start)) {
+        warnings?.push(`[HPP] skipped ref ${match} inside comment (field: ${fieldName ?? '?'}). Move it to its own line to resolve.`);
+      }
       result += match;
     }
     cursor = end;
@@ -209,6 +220,24 @@ export const SET_REF_PATTERN = new RegExp(
   'g',
 );
 
+/** True if position `pos` in `text` falls on a comment line (after //, #, or --). */
+function isInsideComment(text: string, pos: number): boolean {
+  let lineStart = text.lastIndexOf('\n', pos - 1) + 1;
+  const prefix = text.slice(lineStart, pos).trimStart();
+  return prefix.startsWith('//') || prefix.startsWith('#') || prefix.startsWith('--') || prefix.startsWith('*');
+}
+
+/** True if extracted content looks like a shaped stub (collapsed body). */
+function looksLikeShapedStub(content: string): boolean {
+  const trimmed = content.trim();
+  return /\{\s*\.\.\.\s*\}/.test(trimmed) || /\{\s*\/\*\s*\.\.\.\s*\*\/\s*\}/.test(trimmed);
+}
+
+/** True if an error message indicates shaped-content resolution failure (should not be silently swallowed). */
+function isShapedContentError(msg: string): boolean {
+  return msg.includes('shaped') && (msg.includes('bodies stripped') || msg.includes('shaped stub') || msg.includes('content is shaped'));
+}
+
 /** True if the string parses as a set ref — aligns detection with `parseSetRef`. */
 export function matchesSetRefString(s: string): boolean {
   const t = s.trim();
@@ -238,15 +267,26 @@ function resolveModifierOnEntry(
 
   if (typeof modifier === 'object' && 'symbol' in modifier) {
     const { kind, name, shape } = modifier.symbol;
+    const contentIsShaped = entry.content.includes('{ ... }') || entry.content.includes('{ /* ... */ }');
     const range = resolveSymbolToLines(entry.content, kind, name);
     if (!range) {
-      if (opts.missingSymbol === 'throw') {
-        throw new Error(`Symbol '${name}' not found in h:${opts.hashShort} — content may be shaped (use full-content hash)`);
+      if (opts.missingSymbol === 'throw' || contentIsShaped) {
+        throw new Error(
+          contentIsShaped
+            ? `Symbol '${name}' not found in h:${opts.hashShort} -- content is shaped (bodies stripped). Use full-content hash instead.`
+            : `Symbol '${name}' not found in h:${opts.hashShort} -- content may be shaped (use full-content hash)`,
+        );
       }
       return entry.content;
     }
     const lineSpec = `${range[0]}-${range[1]}`;
     let extracted = sliceContentByLines(entry.content, lineSpec, true);
+    if (contentIsShaped && looksLikeShapedStub(extracted)) {
+      throw new Error(
+        `Symbol '${name}' resolved to a shaped stub in h:${opts.hashShort} -- content is shaped (bodies stripped). ` +
+        `Cannot extract real code from shaped content. Pin the full-content hash first.`,
+      );
+    }
     if (shape) extracted = applyShape(extracted, shape);
     return extracted;
   }
@@ -495,6 +535,7 @@ export function resolveSetRefToValues(
 export interface ResolveResult {
   params: unknown;
   setRefExpansions: SetRefExpansion[];
+  warnings: string[];
 }
 
 /**
@@ -509,9 +550,11 @@ export async function resolveHashRefsInParams(
   parentKey?: string,
   setLookup?: SetRefLookup,
   _expansions?: SetRefExpansion[],
+  _warnings?: string[],
 ): Promise<unknown> {
   const expansions = _expansions ?? [];
-  const result = await _resolveInner(params, lookup, parentKey, setLookup, expansions, false);
+  const warnings = _warnings ?? [];
+  const result = await _resolveInner(params, lookup, parentKey, setLookup, expansions, false, warnings);
   return result;
 }
 
@@ -525,8 +568,9 @@ export async function resolveHashRefsWithMeta(
   setLookup?: SetRefLookup,
 ): Promise<ResolveResult> {
   const expansions: SetRefExpansion[] = [];
-  const resolved = await _resolveInner(params, lookup, parentKey, setLookup, expansions, false);
-  return { params: resolved, setRefExpansions: expansions };
+  const warnings: string[] = [];
+  const resolved = await _resolveInner(params, lookup, parentKey, setLookup, expansions, false, warnings);
+  return { params: resolved, setRefExpansions: expansions, warnings };
 }
 
 async function _resolveInner(
@@ -536,6 +580,7 @@ async function _resolveInner(
   setLookup: SetRefLookup | undefined,
   expansions: SetRefExpansion[],
   skipInline: boolean,
+  warnings: string[] = [],
 ): Promise<unknown> {
   if (params === null || params === undefined) return params;
 
@@ -572,6 +617,9 @@ async function _resolveInner(
       try {
         return await resolveSingle(parsed, parentKey, lookup);
       } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        if (isShapedContentError(msg)) throw e;
+        warnings.push(`[HPP] h:${parsed.hash} (field: ${parentKey ?? '?'}): ${msg}`);
         console.warn(`[HPP] hash ref unresolved: h:${parsed.hash} (field: ${parentKey ?? '?'}):`, e);
         return resolved;
       }
@@ -580,7 +628,7 @@ async function _resolveInner(
     // Skip when inside literal-content arrays (line_edits, creates, edits) to
     // prevent hash patterns in file content from being expanded.
     if (!skipInline && parentKey && INLINE_RESOLVE_FIELDS.has(parentKey) && resolved.includes('h:') && INLINE_HREF_DETECT.test(resolved)) {
-      return await resolveInlineRefs(resolved, parentKey, lookup);
+      return await resolveInlineRefs(resolved, parentKey, lookup, warnings);
     }
     return resolved;
   }
@@ -602,7 +650,7 @@ async function _resolveInner(
           continue;
         }
       }
-      expanded.push(await _resolveInner(item, lookup, fieldName, setLookup, expansions, skipInline));
+      expanded.push(await _resolveInner(item, lookup, fieldName, setLookup, expansions, skipInline, warnings));
     }
     return expanded;
   }
@@ -634,16 +682,19 @@ async function _resolveInner(
         try {
           result[key] = await resolveSingle(parsed, key, lookup);
         } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          if (isShapedContentError(msg)) throw e;
+          warnings.push(`[HPP] h:${parsed.hash} (field: ${key}): ${msg}`);
           console.warn(`[HPP] hash ref unresolved: h:${parsed.hash} (field: ${key}):`, e);
           result[key] = resolvedVal;
         }
       } else if (!childSkipInline && INLINE_RESOLVE_FIELDS.has(key) && INLINE_HREF_DETECT.test(resolvedVal)) {
-        result[key] = await resolveInlineRefs(resolvedVal, key, lookup);
+        result[key] = await resolveInlineRefs(resolvedVal, key, lookup, warnings);
       } else {
         result[key] = resolvedVal;
       }
     } else if (val !== null && typeof val === 'object') {
-      result[key] = await _resolveInner(val, lookup, key, setLookup, expansions, childSkipInline);
+      result[key] = await _resolveInner(val, lookup, key, setLookup, expansions, childSkipInline, warnings);
     } else {
       result[key] = val;
     }

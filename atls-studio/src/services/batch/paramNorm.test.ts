@@ -44,10 +44,10 @@ describe('normalizeStepParams', () => {
       expect(out.source_file).toBeUndefined();
     });
 
-    it('normalizes "source_file" → "file_paths" (array op via promotion)', () => {
+    it('preserves "source_file" for change.refactor (rewire_consumers needs it)', () => {
       const out = normalizeStepParams('change.refactor', { source_file: 'src/e.ts' });
-      expect(out.file_paths).toEqual(['src/e.ts']);
-      expect(out.source_file).toBeUndefined();
+      expect(out.source_file).toBe('src/e.ts');
+      expect(out.file_paths).toBeUndefined();
     });
 
     it('does not overwrite existing canonical "file_path"', () => {

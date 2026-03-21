@@ -101,7 +101,7 @@ pub async fn atls_batch_query(
                         "dependencies": "Analyze structure (mode: graph|related|impact, file_paths:[], filter:str?, limit:30)",
                         "find_similar": "Similarity search (type: code|function|concept|pattern, + type-specific params)",
                         "edit": "Modify code (edits|creates|deletes|line_edits|revise|undo). Auto-lints and auto-writes (lint reports but never blocks).",
-                        "refactor": "Structural changes (action: inventory|rename|move|extract|impact_analysis|plan|rollback)",
+                        "refactor": "Structural changes (action: inventory|rename|move|extract|impact_analysis|execute|rewire_consumers|plan|rollback)",
                         "ast_query": "Structural patterns (query: 'function where complexity > 10', 'fn where name contains X and params > 2'). syntax:'raw' for SQL WHERE.",
                         "detect_patterns": "Find anti-patterns (file_paths:[], patterns:[])",
                         "find_issues": "Find code issues (file_paths:[], severity:high|medium|low)",
@@ -123,6 +123,7 @@ pub async fn atls_batch_query(
                             "inventory": "List methods by complexity (file_paths, min_complexity)",
                             "impact_analysis": "Full blast radius (symbol, from) â†’ definitions, references, imports, files_touched",
                             "execute": "Atomic line-edit refactoring: create?:{path,content}, source:'h:X', remove_lines?:'23-30', import_updates?:[{file,line,anchor?,action,content}] â†’ sequential lint pipeline with auto-rollback",
+                            "rewire_consumers": "Rewrite imports in consumer files after hash-building extraction (source_file, target_file, symbol_names:[], dry_run?:false). Also adds source import for still-referenced symbols. Returns consumer_import_fixes + rollback data.",
                             "rollback": "Restore files to pre-refactor hashes (restore:[{file, hash}], delete?:[paths|h:ref])",
                             "rename": "(legacy, prefer execute+import_updates) Cross-file rename (old_name, new_name)",
                             "move": "(legacy, prefer execute+create+remove_lines) Move symbols (symbol_names, target_file)",
@@ -156,6 +157,14 @@ pub async fn atls_batch_query(
                             "3. refactor(action:execute, create, source:'h:X', remove_lines, import_updates) - atomic HPP pipeline with auto-rollback",
                             "4. verify(type:typecheck) - catch cross-file semantic issues",
                             "5. if errors: refactor(action:rollback, restore:[{file, hash}]) - restore pre-refactor state"
+                        ],
+                        "hash_building_refactor": [
+                            "1. context(type:'full') + session.pin - get h:SOURCE with FULL content (required for symbol anchors)",
+                            "2. edit(creates:[{path, content:'imports\\n\\nh:SOURCE:cls(Name):dedent\\n'}]) - compose file from hash refs",
+                            "3. edit(line_edits:[{action:'delete', line:N, count:M}]) - remove extracted code from source",
+                            "4. refactor(action:'rewire_consumers', source_file, target_file, symbol_names:[...]) - auto-rewrite imports in all consumer files",
+                            "5. verify(type:typecheck) - validate all files",
+                            "CRITICAL: Source hash MUST have full content (not sig/shaped). Symbol anchors (cls/fn/sym) against shaped content will error."
                         ]
                     },
                     "decision_trees": {
@@ -11316,6 +11325,10 @@ pub async fn atls_batch_query(
                                 }
                                 _ => return Err(format!("Unknown position '{}'. Use: before, after, body_start, body_end", pos)),
                             };
+                            // Auto-set count for delete when symbol provides the full range
+                            if edit.action == "delete" && edit.count.is_none() && pos == "before" {
+                                edit.count = Some(range.end_line - range.start_line + 1);
+                            }
                             if edit.action == "insert_before" || edit.action == "prepend" {
                                 // keep as-is
                             } else if pos == "after" || pos == "body_end" {
@@ -15357,6 +15370,129 @@ pub async fn atls_batch_query(
                     return Ok(response);
                 }
 
+                // rewire_consumers: standalone consumer import rewriting for the hash-building path.
+                // Bridges the gap between change.create + change.edit and refactor execute's
+                // automatic consumer import updates.
+                if action == "rewire_consumers" {
+                    let source_file = params.get("source_file")
+                        .or_else(|| params.get("from"))
+                        .or_else(|| params.get("file_path"))
+                        .and_then(|v| v.as_str())
+                        .or_else(|| params.get("file_paths").and_then(|v| v.as_array()).and_then(|a| a.first()).and_then(|v| v.as_str()))
+                        .ok_or("rewire_consumers requires 'source_file' (the file symbols were extracted from)")?;
+                    let target_file = params.get("target_file")
+                        .or_else(|| params.get("to"))
+                        .and_then(|v| v.as_str())
+                        .ok_or("rewire_consumers requires 'target_file' (the file symbols were moved to)")?;
+                    let symbol_names: Vec<String> = params.get("symbol_names")
+                        .and_then(|v| v.as_array())
+                        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+                        .unwrap_or_default();
+                    if symbol_names.is_empty() {
+                        return Err("rewire_consumers requires 'symbol_names' array (symbols that moved from source to target)".into());
+                    }
+                    let dry_run = params.get("dry_run").and_then(|v| v.as_bool()).unwrap_or(false);
+
+                    let src_lang = hash_resolver::detect_lang(Some(source_file))
+                        .and_then(|l| Some(atls_core::Language::from_str(&l)))
+                        .unwrap_or(atls_core::Language::Unknown);
+                    if src_lang == atls_core::Language::Unknown {
+                        return Err(format!("rewire_consumers: cannot detect language for '{}'", source_file));
+                    }
+
+                    let mut consumer_snapshots: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+                    let fixes = generate_consumer_import_updates_with_snapshots(
+                        &project, source_file, target_file,
+                        &symbol_names, src_lang, &project_root, dry_run,
+                        Some(&mut consumer_snapshots),
+                    );
+
+                    // Also add import in source file for extracted symbols still referenced there
+                    let mut source_fixes: Vec<serde_json::Value> = Vec::new();
+                    if !dry_run {
+                        let source_abs = resolve_project_path(&project_root, source_file);
+                        if let Ok(src_content) = std::fs::read_to_string(&source_abs) {
+                            let still_used: Vec<String> = symbol_names.iter()
+                                .filter(|s| src_content.contains(s.as_str()))
+                                .cloned()
+                                .collect();
+                            if !still_used.is_empty() {
+                                if let Some(imp) = build_source_import_for_moved_symbols_with_root(
+                                    source_file, target_file, &still_used, src_lang, Some(&project_root),
+                                ) {
+                                    consumer_snapshots.entry(source_file.to_string())
+                                        .or_insert_with(|| src_content.clone());
+                                    let updated = insert_import_line(&src_content, &imp, src_lang);
+                                    if updated != src_content {
+                                        let _ = std::fs::write(&source_abs, &updated);
+                                        source_fixes.push(serde_json::json!({
+                                            "consumer": source_file,
+                                            "symbols": still_used,
+                                            "action": "source_import_added",
+                                            "import": imp,
+                                        }));
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Build rollback data from consumer snapshots
+                    let rollback_restore: Vec<serde_json::Value> = consumer_snapshots.iter().map(|(path, content)| {
+                        let h = content_hash(content);
+                        serde_json::json!({"file": path, "hash": format!("h:{}", &h[..hash_resolver::SHORT_HASH_LEN])})
+                    }).collect();
+
+                    // Register snapshot hashes for rollback
+                    for (path, content) in &consumer_snapshots {
+                        let h = content_hash(content);
+                        let hr_state = app.state::<hash_resolver::HashRegistryState>();
+                        let mut registry = hr_state.registry.lock().await;
+                        registry.register(h, hash_resolver::HashEntry {
+                            source: Some(path.clone()),
+                            content: content.clone(),
+                            tokens: content.split_whitespace().count(),
+                            lang: hash_resolver::detect_lang(Some(path.as_str())),
+                            line_count: content.lines().count(),
+                            symbol_count: None,
+                        });
+                    }
+
+                    // Re-index modified files
+                    let mut modified: Vec<String> = fixes.iter()
+                        .filter_map(|f| f["consumer"].as_str().map(|s| s.to_string()))
+                        .collect();
+                    for sf in &source_fixes {
+                        if let Some(c) = sf["consumer"].as_str() {
+                            if !modified.contains(&c.to_string()) {
+                                modified.push(c.to_string());
+                            }
+                        }
+                    }
+                    if !modified.is_empty() && !dry_run {
+                        let indexer = project.indexer().clone();
+                        let _ = index_modified_files(&app, &indexer, &project_root, &modified).await;
+                    }
+
+                    let mut all_fixes = fixes;
+                    all_fixes.extend(source_fixes);
+
+                    let mut response = serde_json::json!({
+                        "status": if dry_run { "dry_run" } else { "success" },
+                        "consumer_import_fixes": all_fixes,
+                        "files_modified": modified.len(),
+                        "_dispatched_from": "refactor",
+                        "_action": "rewire_consumers",
+                    });
+                    if !rollback_restore.is_empty() {
+                        response["_rollback"] = serde_json::json!({
+                            "restore": rollback_restore,
+                            "delete": [],
+                        });
+                    }
+                    return Ok(response);
+                }
+
                 // Route to the appropriate handler by rewriting the operation
                 let delegated_op = match action {
                     "inventory" => "method_inventory",
@@ -15367,7 +15503,7 @@ pub async fn atls_batch_query(
                     "plan" => "refactor_plan",
                     "rollback" => "refactor_rollback",
                     other => return Err(format!(
-                        "Unknown refactor action: '{}'. Use: inventory, impact_analysis, execute, rollback",
+                        "Unknown refactor action: '{}'. Use: inventory, impact_analysis, execute, rewire_consumers, rollback",
                         other
                     ))
                 };

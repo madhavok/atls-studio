@@ -1071,7 +1071,9 @@ const INLINE_RESOLVE_FIELDS: &[&str] = &[
 
 /// Array keys whose child objects contain literal file content — inline h:ref
 /// expansion inside these structures would corrupt code being written to disk.
-const LITERAL_CONTENT_ARRAYS: &[&str] = &["line_edits", "creates", "edits"];
+/// `creates` is excluded: `creates[].content` is CONTENT-AS-REF (UHPP v6) and must
+/// resolve embedded `h:…` refs before `create_files`.
+const LITERAL_CONTENT_ARRAYS: &[&str] = &["line_edits", "edits"];
 
 /// Recursively walk the params JSON and resolve all `h:XXXX` references.
 /// Mutates `params` in place. Returns (resolved_count, unresolved_warnings).
@@ -1145,6 +1147,13 @@ fn resolve_value(
     }
 }
 
+/// True if `pos` in `text` falls on a line whose leading non-whitespace is a comment marker.
+fn is_inside_comment(text: &str, pos: usize) -> bool {
+    let line_start = text[..pos].rfind('\n').map(|i| i + 1).unwrap_or(0);
+    let prefix = text[line_start..pos].trim_start();
+    prefix.starts_with("//") || prefix.starts_with('#') || prefix.starts_with("--") || prefix.starts_with('*')
+}
+
 /// Scan a string for embedded h:refs and replace each with its resolved content.
 fn resolve_inline_refs(
     text: &str,
@@ -1180,14 +1189,24 @@ fn resolve_inline_refs(
     for m in re.find_iter(text) {
         result.push_str(&text[last_end..m.start()]);
         if let Some(href) = parse_hash_ref(m.as_str()) {
-            match resolve_single(&href, Some(field_name), registry, project_root) {
-                Ok(resolved) => {
-                    result.push_str(&resolved);
-                    *count += 1;
-                }
-                Err(e) => {
-                    warnings.push(format!("h:{} (inline, field {:?}): {}", href.hash, field_name, e));
-                    result.push_str(m.as_str());
+            if matches!(href.modifier, HashModifier::Auto) {
+                result.push_str(m.as_str());
+            } else if is_inside_comment(text, m.start()) {
+                warnings.push(format!(
+                    "h:{} (inline, field {:?}): skipped — ref is inside a comment. Move it to its own line to resolve.",
+                    href.hash, field_name
+                ));
+                result.push_str(m.as_str());
+            } else {
+                match resolve_single(&href, Some(field_name), registry, project_root) {
+                    Ok(resolved) => {
+                        result.push_str(&resolved);
+                        *count += 1;
+                    }
+                    Err(e) => {
+                        warnings.push(format!("h:{} (inline, field {:?}): {}", href.hash, field_name, e));
+                        result.push_str(m.as_str());
+                    }
                 }
             }
         } else {
@@ -2279,6 +2298,27 @@ mod tests {
         assert_eq!(count, 1);
         assert!(warnings.is_empty());
         assert_eq!(params["file"].as_str().unwrap(), "src/utils.ts");
+    }
+
+    #[test]
+    fn test_resolve_hash_refs_creates_content_inline_expands() {
+        let mut reg = HashRegistry::new();
+        reg.register(
+            "aabb1122".to_string(),
+            test_entry("src/utils.ts", "export function foo() {}"),
+        );
+        let mut params = serde_json::json!({
+            "creates": [{
+                "path": "out/generated.ts",
+                "content": "prefix h:aabb1122:content suffix"
+            }]
+        });
+        let (count, warnings) = resolve_hash_refs(&mut params, &reg, Path::new("/tmp"));
+        assert!(count >= 1, "expected inline resolution, warnings: {warnings:?}");
+        assert!(warnings.is_empty());
+        let c = params["creates"][0]["content"].as_str().unwrap();
+        assert!(c.contains("export function foo"));
+        assert!(!c.contains("h:aabb1122"));
     }
 
     #[test]

@@ -328,14 +328,23 @@ describe('resolveHashRefsWithMeta pipeline', () => {
     expect(arr[1]).toBe('src/other.ts');
   });
 
-  it('inline refs in content field resolved', async () => {
+  it('inline refs with modifier in content field resolved', async () => {
     const { params } = await resolveHashRefsWithMeta(
-      { content: 'See h:aabb1122 for details' },
+      { content: 'See h:aabb1122:content for details' },
       mockLookup,
     );
     const c = (params as Record<string, string>).content;
     expect(c).toContain('function foo()');
     expect(c).not.toContain('h:aabb1122');
+  });
+
+  it('bare h:ref in content field left as literal (no modifier)', async () => {
+    const { params } = await resolveHashRefsWithMeta(
+      { content: 'See h:aabb1122 for details' },
+      mockLookup,
+    );
+    const c = (params as Record<string, string>).content;
+    expect(c).toBe('See h:aabb1122 for details');
   });
 
   it('line_edits content NOT expanded (literal content array)', async () => {
@@ -345,6 +354,26 @@ describe('resolveHashRefsWithMeta pipeline', () => {
     );
     const edits = (params as Record<string, Array<Record<string, string>>>).line_edits;
     expect(edits[0].content).toBe('h:aabb1122 stays literal');
+  });
+
+  it('creates[].content expands inline UHPP with modifier (CONTENT-AS-REF)', async () => {
+    const { params } = await resolveHashRefsWithMeta(
+      { creates: [{ path: 'new.ts', content: 'import { foo } from "./foo";\n\nh:aabb1122:content' }] },
+      mockLookup,
+    );
+    const creates = (params as Record<string, Array<Record<string, string>>>).creates;
+    expect(creates[0].content).toContain('function foo()');
+    expect(creates[0].content).not.toContain('h:aabb1122');
+  });
+
+  it('creates[].content leaves bare h:ref as literal', async () => {
+    const { params } = await resolveHashRefsWithMeta(
+      { creates: [{ path: 'new.ts', content: '// source: h:aabb1122\nexport const x = 1;' }] },
+      mockLookup,
+    );
+    const creates = (params as Record<string, Array<Record<string, string>>>).creates;
+    expect(creates[0].content).toContain('h:aabb1122');
+    expect(creates[0].content).toContain('export const x = 1;');
   });
 });
 
@@ -1100,5 +1129,121 @@ describe('edit chaining via recency refs', () => {
     );
     expect((result as Record<string, unknown>).last).toBe('recency content');
     expect((result as Record<string, unknown>).lastEdit).toBe('edit content');
+  });
+});
+
+// ── Phase 1: Shaped content safety ──
+
+describe('shaped content safety', () => {
+  const SHAPED_CONTENT = [
+    'export class MyClass { ... }',
+    'export function doStuff(a: string): void { /* ... */ }',
+  ].join('\n');
+
+  const FULL_CONTENT = [
+    'export class MyClass {',
+    '  private value = 42;',
+    '  getValue() { return this.value; }',
+    '}',
+    'export function doStuff(a: string): void {',
+    '  console.log(a);',
+    '}',
+  ].join('\n');
+
+  it('throws on symbol anchor against shaped content (strict path via resolveSingle)', async () => {
+    const lookup: HashLookup = async (hash) => {
+      if (hash === 'aabb1122') return { content: SHAPED_CONTENT, source: 'src/mod.ts' };
+      return null;
+    };
+
+    await expect(
+      resolveHashRefsInParams({ body: 'h:aabb1122:cls(MyClass)' }, lookup),
+    ).rejects.toThrow(/shaped/i);
+  });
+
+  it('throws on symbol anchor against shaped content (lenient path via set entry)', async () => {
+    const lookup: HashLookup = async (hash) => {
+      if (hash === 'aabb1122') return { content: SHAPED_CONTENT, source: 'src/mod.ts' };
+      return null;
+    };
+
+    await expect(
+      resolveHashRefsWithMeta({ content: 'h:aabb1122:cls(MyClass)' }, lookup),
+    ).rejects.toThrow(/shaped/i);
+  });
+
+  it('collects warning for inline ref with shaped content', async () => {
+    const lookup: HashLookup = async (hash) => {
+      if (hash === 'aabb1122') return { content: SHAPED_CONTENT, source: 'src/mod.ts' };
+      return null;
+    };
+
+    const { params, warnings } = await resolveHashRefsWithMeta(
+      { content: 'import { MyClass } from "./mod";\n\nh:aabb1122:cls(MyClass):dedent' },
+      lookup,
+    );
+    const content = (params as Record<string, unknown>).content as string;
+    expect(content).toContain('h:aabb1122:cls(MyClass):dedent');
+    expect(warnings.length).toBeGreaterThan(0);
+    expect(warnings[0]).toMatch(/shaped|bodies stripped/i);
+  });
+
+  it('resolves symbol anchor against full content without error', async () => {
+    const lookup: HashLookup = async (hash) => {
+      if (hash === 'ccdd3344') return { content: FULL_CONTENT, source: 'src/mod.ts' };
+      return null;
+    };
+
+    const { params, warnings } = await resolveHashRefsWithMeta(
+      { content: 'h:ccdd3344:cls(MyClass):dedent' },
+      lookup,
+    );
+    const content = (params as Record<string, unknown>).content as string;
+    expect(content).not.toContain('h:ccdd3344');
+    expect(content).toContain('class MyClass');
+    expect(warnings).toHaveLength(0);
+  });
+
+  it('warnings array is always present in resolveHashRefsWithMeta result', async () => {
+    const lookup: HashLookup = async () => ({ content: 'hello', source: 'a.ts' });
+    const result = await resolveHashRefsWithMeta({ x: 'plain' }, lookup);
+    expect(result).toHaveProperty('warnings');
+    expect(Array.isArray(result.warnings)).toBe(true);
+  });
+
+  it('skips ref with modifier inside // comment, resolves same ref on own line', async () => {
+    const lookup: HashLookup = async (hash) => {
+      if (hash === 'ccdd3344') return { content: FULL_CONTENT, source: 'src/mod.ts' };
+      return null;
+    };
+
+    const input = [
+      '// Do not resolve: h:ccdd3344:cls(MyClass)',
+      'h:ccdd3344:cls(MyClass):dedent',
+    ].join('\n');
+
+    const { params, warnings } = await resolveHashRefsWithMeta(
+      { content: input },
+      lookup,
+    );
+    const content = (params as Record<string, unknown>).content as string;
+    expect(content).toContain('// Do not resolve: h:ccdd3344:cls(MyClass)');
+    expect(content).toContain('class MyClass');
+    expect(warnings.some(w => w.includes('inside comment'))).toBe(true);
+  });
+
+  it('skips ref inside # comment (Python/shell)', async () => {
+    const lookup: HashLookup = async (hash) => {
+      if (hash === 'ccdd3344') return { content: FULL_CONTENT, source: 'src/mod.ts' };
+      return null;
+    };
+
+    const { params } = await resolveHashRefsWithMeta(
+      { content: '# source: h:ccdd3344:cls(MyClass)\nh:ccdd3344:cls(MyClass):dedent' },
+      lookup,
+    );
+    const content = (params as Record<string, unknown>).content as string;
+    expect(content).toContain('# source: h:ccdd3344:cls(MyClass)');
+    expect(content).toContain('class MyClass');
   });
 });
