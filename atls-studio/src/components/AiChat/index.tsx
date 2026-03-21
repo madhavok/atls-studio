@@ -1567,12 +1567,7 @@ const SwarmExecutionProgress = memo(function SwarmExecutionProgress() {
   const status = useSwarmStore(state => state.status);
   const tasks = useSwarmStore(state => state.tasks);
   const stats = useSwarmStore(state => state.stats);
-  
-  // Only show during running phase
-  if (status !== 'running') {
-    return null;
-  }
-  
+
   const { pending, running, completed, failed, total, progress } = useMemo(() => {
     const p = tasks.filter(t => t.status === 'pending');
     const r = tasks.filter(t => t.status === 'running');
@@ -1588,7 +1583,7 @@ const SwarmExecutionProgress = memo(function SwarmExecutionProgress() {
       progress: tot > 0 ? Math.round((c.length / tot) * 100) : 0,
     };
   }, [tasks]);
-  
+
   // Format cost
   const formatCostValue = (cents: number) => `$${(cents / 100).toFixed(4)}`;
   
@@ -1599,7 +1594,12 @@ const SwarmExecutionProgress = memo(function SwarmExecutionProgress() {
     if (minutes > 0) return `${minutes}m ${seconds % 60}s`;
     return `${seconds}s`;
   };
-  
+
+  // Only show during running phase (after hooks — Rules of Hooks)
+  if (status !== 'running') {
+    return null;
+  }
+
   return (
     <div className="flex gap-3 mb-4">
       <div className="w-8 h-8 rounded-full flex items-center justify-center shrink-0 bg-studio-accent/20">
