@@ -1494,6 +1494,8 @@ export const useContextStore = create<ContextStoreState>()(
   findReusableRead: (span: ReadSpan): string | null => {
     const state = get();
     const normPath = normalizeSourcePath(span.filePath);
+    let matchHash: string | null = null;
+    let matchShortHash: string | null = null;
     for (const [, chunk] of state.chunks) {
       if (chunk.compacted) continue;
       const rs = chunk.readSpan;
@@ -1503,32 +1505,31 @@ export const useContextStore = create<ContextStoreState>()(
       if ((rs.shape ?? '') !== (span.shape ?? '')) continue;
       // Full-file span: both undefined means match
       if (span.startLine == null && rs.startLine == null) {
-        set(s => {
-          const nc = new Map(s.chunks);
-          const key = chunk.hash;
-          const c = nc.get(key);
-          if (c) nc.set(key, { ...c, lastAccessed: Date.now() });
-          return { chunks: nc };
-        });
-        return chunk.shortHash;
+        matchHash = chunk.hash;
+        matchShortHash = chunk.shortHash;
+        break;
       }
       // Requested range must be contained within existing range
       if (span.startLine != null && rs.startLine != null && rs.endLine != null) {
         const reqStart = span.startLine;
         const reqEnd = span.endLine ?? span.startLine;
         if (reqStart >= rs.startLine && reqEnd <= rs.endLine) {
-          set(s => {
-            const nc = new Map(s.chunks);
-            const key = chunk.hash;
-            const c = nc.get(key);
-            if (c) nc.set(key, { ...c, lastAccessed: Date.now() });
-            return { chunks: nc };
-          });
-          return chunk.shortHash;
+          matchHash = chunk.hash;
+          matchShortHash = chunk.shortHash;
+          break;
         }
       }
     }
-    return null;
+    // Update lastAccessed outside the iteration loop to avoid mid-iteration re-renders
+    if (matchHash) {
+      set(s => {
+        const nc = new Map(s.chunks);
+        const c = nc.get(matchHash!);
+        if (c) nc.set(matchHash!, { ...c, lastAccessed: Date.now() });
+        return { chunks: nc };
+      });
+    }
+    return matchShortHash;
   },
   
   /**
@@ -4003,7 +4004,7 @@ export const useContextStore = create<ContextStoreState>()(
         if (seen.has(key)) continue;
         seen.add(key);
         pool.push({
-          hash: key, shortHash: key.slice(0, 8), type: 'smart',
+          hash: key, shortHash: key.slice(0, SHORT_HASH_LEN), type: 'smart',
           content: snippet.content, tokens: snippet.tokens, source: snippet.source,
           createdAt: new Date(), lastAccessed: Date.now(),
         });

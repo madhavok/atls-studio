@@ -70,9 +70,19 @@ function generateTitle(messages: Message[]): string {
   const firstUser = messages.find(m => m.role === 'user');
   if (firstUser) {
     const text = extractFirstTextFromMessage(firstUser);
-    if (!text) return 'New Chat';
-    const truncated = text.slice(0, TITLE_MAX_LENGTH);
-    return truncated.length < text.length ? truncated + '...' : truncated;
+    if (text) {
+      const truncated = text.slice(0, TITLE_MAX_LENGTH);
+      return truncated.length < text.length ? truncated + '...' : truncated;
+    }
+  }
+  // Fallback: use first assistant message text (e.g. tool-only conversations)
+  const firstAssistant = messages.find(m => m.role === 'assistant');
+  if (firstAssistant) {
+    const text = extractFirstTextFromMessage(firstAssistant);
+    if (text) {
+      const truncated = text.slice(0, TITLE_MAX_LENGTH);
+      return truncated.length < text.length ? truncated + '...' : truncated;
+    }
   }
   return 'New Chat';
 }
@@ -678,6 +688,8 @@ export const useAppStore = create<AppState>((set) => ({
         }
         return { selectedFiles: newSelected, lastSelectedFile, selectedFile: path };
       }
+      // Target path not in visible list — no-op, preserve current selection
+      return { selectedFiles: newSelected, lastSelectedFile, selectedFile: state.selectedFile };
     }
 
     if (ctrlKey) {
@@ -733,7 +745,13 @@ export const useAppStore = create<AppState>((set) => ({
     let newActiveFile = state.activeFile;
     if (state.activeFile === path) {
       const idx = state.openFiles.indexOf(path);
-      newActiveFile = newOpenFiles[Math.max(0, idx - 1)] ?? null;
+      if (idx === -1 || newOpenFiles.length === 0) {
+        // File already removed or last tab closed
+        newActiveFile = newOpenFiles.length > 0 ? newOpenFiles[0] : null;
+      } else {
+        // Prefer tab at same position (right neighbor), else left neighbor
+        newActiveFile = newOpenFiles[Math.min(idx, newOpenFiles.length - 1)] ?? null;
+      }
     }
     return { openFiles: newOpenFiles, activeFile: newActiveFile };
   }),
@@ -1039,7 +1057,8 @@ export const useAppStore = create<AppState>((set) => ({
   setContextUsage: (usage) => set((state) => {
     const newUsage = { ...state.contextUsage, ...usage };
     newUsage.totalTokens = newUsage.inputTokens + newUsage.outputTokens;
-    newUsage.percentage = Math.min(100, (newUsage.totalTokens / newUsage.maxTokens) * 100);
+    // percentage based on input tokens only — output tokens don't consume context window
+    newUsage.percentage = Math.min(100, (newUsage.inputTokens / newUsage.maxTokens) * 100);
     return { contextUsage: newUsage };
   }),
   

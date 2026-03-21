@@ -72,9 +72,13 @@ export async function advanceTurn(): Promise<number> {
   lastTurnDelta = { dematerialized, newMaterialized: 0 };
   const hook = getRoundRefreshHook();
   if (hook) {
-    const result = hook();
-    if (result instanceof Promise) {
-      await result;
+    try {
+      const result = hook();
+      if (result instanceof Promise) {
+        await result;
+      }
+    } catch (err) {
+      console.error('[hashProtocol] Round-refresh hook failed:', err);
     }
   }
   return currentTurn;

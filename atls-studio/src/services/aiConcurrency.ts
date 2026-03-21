@@ -4,6 +4,7 @@ export async function executeWithConcurrency<T>(
   abortSignal?: AbortSignal
 ): Promise<T[]> {
   const results: (T | undefined)[] = new Array(tasks.length);
+  const errors: { index: number; error: unknown }[] = [];
   let currentIndex = 0;
 
   // Resolve immediately when abort fires so we stop waiting for in-flight tasks
@@ -19,12 +20,18 @@ export async function executeWithConcurrency<T>(
     if (index >= tasks.length) return;
     if (abortSignal?.aborted) return;
 
-    if (abortPromise) {
-      const outcome = await Promise.race([tasks[index]().then(r => ({ r })), abortPromise]);
-      if (outcome === 'aborted') return;
-      results[index] = (outcome as { r: T }).r;
-    } else {
-      results[index] = await tasks[index]();
+    try {
+      if (abortPromise) {
+        const outcome = await Promise.race([tasks[index]().then(r => ({ r })), abortPromise]);
+        if (outcome === 'aborted') return;
+        results[index] = (outcome as { r: T }).r;
+      } else {
+        results[index] = await tasks[index]();
+      }
+    } catch (err) {
+      // Record the error but don't stop other runners
+      errors.push({ index, error: err });
+      return;
     }
 
     if (abortSignal?.aborted) return;
@@ -39,6 +46,12 @@ export async function executeWithConcurrency<T>(
     await Promise.race([Promise.all(runners), abortPromise]);
   } else {
     await Promise.all(runners);
+  }
+
+  // If any task failed, throw the first error (after all runners complete)
+  if (errors.length > 0) {
+    const firstErr = errors[0].error;
+    throw firstErr instanceof Error ? firstErr : new Error(String(firstErr));
   }
 
   // Filter out undefined slots from aborted tasks

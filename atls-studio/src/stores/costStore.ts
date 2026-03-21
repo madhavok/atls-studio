@@ -268,11 +268,16 @@ function loadCostData(): DailyUsage[] {
       const parsed = JSON.parse(saved);
       if (!Array.isArray(parsed)) return [];
       // Validate each entry has required fields
-      return parsed.filter((entry: unknown) =>
-        typeof entry === 'object' && entry !== null &&
-        typeof (entry as Record<string, unknown>).date === 'string' &&
-        typeof (entry as Record<string, unknown>).provider === 'string'
-      ) as DailyUsage[];
+      return parsed.filter((entry: unknown) => {
+        if (typeof entry !== 'object' || entry === null) return false;
+        const e = entry as Record<string, unknown>;
+        if (typeof e.date !== 'string' || typeof e.provider !== 'string') return false;
+        // Validate numeric fields — reject entries with non-finite numbers
+        for (const key of ['inputTokens', 'outputTokens', 'cacheReadTokens', 'cacheCreationTokens', 'costCents']) {
+          if (key in e && (typeof e[key] !== 'number' || !Number.isFinite(e[key] as number))) return false;
+        }
+        return true;
+      }) as DailyUsage[];
     }
   } catch (e) {
     console.error('Failed to load cost data:', e);
