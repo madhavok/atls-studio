@@ -987,10 +987,8 @@ export function stopChat(): void {
     currentAbortController = null;
     invoke('cancel_all_chat_streams').catch(() => {});
     // Ensure UI exits generating state synchronously
-    try {
-      const { useAppStore } = require('../stores/appStore');
-      useAppStore.getState().setIsGenerating(false);
-    } catch (_) { /* store may not be initialized in tests */ }
+    useAppStore.getState().setIsGenerating(false);
+    console.log('[aiService] Chat stopped by user');
     console.log('[aiService] Chat stopped by user');
   }
 }
