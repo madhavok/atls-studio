@@ -27,6 +27,7 @@ export interface OrchestratorConfig {
   provider: AIProvider;
   maxConcurrentAgents: number;
   autoApprove: boolean;
+  enableSynthesis?: boolean;
 }
 
 export interface TaskPlan {
@@ -1267,10 +1268,183 @@ Based on the research above, create a detailed task plan.
       this.cleanup();
     }
     
+    // Phase 4: Synthesis — orchestrator recap of all task results
+    const postState = useSwarmStore.getState();
+    const shouldSynthesize = (config.enableSynthesis ?? true) && postState.tasks.length > 1;
+    if (shouldSynthesize && !postState.cancelRequested) {
+      try {
+        await this.synthesizeResults(sessionId, projectPath, config);
+      } catch (synthError) {
+        console.warn('[Orchestrator] Synthesis failed (non-fatal):', synthError);
+      }
+    }
+
     // Final status
     const finalState = useSwarmStore.getState();
     const finalStatus = finalState.stats.failedTasks > 0 ? 'failed' : 'completed';
     await chatDb.updateSwarmStatus(sessionId, finalStatus);
+  }
+
+  // ============================================================================
+  // Synthesis Phase
+  // ============================================================================
+
+  private static readonly SYNTHESIS_SYSTEM_PROMPT = `You are a senior engineering lead reviewing the results of a multi-agent swarm. Output ONLY valid JSON.
+
+Summarize the swarm outcome for the developer. Be concise and actionable.
+
+## JSON Format
+{
+  "summary": "1-3 sentence overview of what was accomplished",
+  "filesChanged": ["list of files that were modified"],
+  "risks": ["potential issues, regressions, or things to watch — omit if none"],
+  "suggestedFollowUps": ["next steps the developer should consider — omit if none"],
+  "openQuestions": ["unresolved items or ambiguities — omit if none"],
+  "verdict": "success | partial | failed"
+}
+
+CRITICAL: Output ONLY the raw JSON object. No markdown, no explanation, no code fences.`;
+
+  private async synthesizeResults(
+    sessionId: string,
+    _projectPath: string,
+    config: OrchestratorConfig,
+  ): Promise<void> {
+    const swarmStore = useSwarmStore.getState();
+    swarmStore.setStatus('synthesizing');
+    await chatDb.updateSwarmStatus(sessionId, 'synthesizing');
+
+    console.log('[Orchestrator] Starting synthesis phase...');
+
+    const tasks = swarmStore.tasks;
+    const planSummary = swarmStore.plan || '';
+
+    // Build structured task results for the synthesis model
+    const taskSummaries = tasks.map(t => {
+      const filesChanged = t.fileClaims.join(', ') || 'none';
+      const result = t.result ? t.result.slice(0, 1200) : '(no result)';
+      const error = t.error ? `Error: ${t.error}` : '';
+      return `### ${t.title} (${t.assignedRole}) — ${t.status}
+Files: ${filesChanged}
+${error}
+${result}`;
+    }).join('\n\n');
+
+    // Collect blackboard entries
+    const contextStore = useContextStore.getState();
+    const bbEntries = contextStore.listBlackboardEntries();
+    const bbSection = bbEntries.length > 0
+      ? `\n## Blackboard\n${bbEntries.map(e => `${e.key}: ${e.preview}`).join('\n')}`
+      : '';
+
+    const statsLine = `Tasks: ${swarmStore.stats.completedTasks} completed, ${swarmStore.stats.failedTasks} failed | Tokens: ${swarmStore.stats.totalTokensUsed} | Cost: $${(swarmStore.stats.totalCostCents / 100).toFixed(4)}`;
+
+    const userMessage = `## Plan
+${planSummary}
+
+## Task Results
+${taskSummaries}
+${bbSection}
+
+## Stats
+${statsLine}
+
+## Original User Request
+${swarmStore.userRequest || '(unknown)'}
+
+Synthesize the swarm outcome.`;
+
+    // Use the orchestrator model (or a cheaper one if available)
+    const synthConfig: AIConfig = {
+      provider: config.provider,
+      model: config.model,
+      apiKey: '',
+      maxTokens: 2048,
+      temperature: 0.2,
+    };
+
+    let synthJson = '';
+    let synthError: Error | null = null;
+
+    await streamChatForSwarm(
+      [{ role: 'user', content: userMessage }],
+      synthConfig,
+      OrchestratorService.SYNTHESIS_SYSTEM_PROMPT,
+      _projectPath,
+      {
+        onToken: (text: string) => { synthJson += text; },
+        onToolCall: () => {},
+        onToolResult: () => {},
+        onUsageUpdate: (usage: ContextUsage) => {
+          const cost = calculateCost(config.provider, config.model, usage.inputTokens, usage.outputTokens);
+          console.log(`[Orchestrator] Synthesis cost: ${usage.inputTokens + usage.outputTokens} tokens, $${(cost / 100).toFixed(4)}`);
+        },
+        onDone: () => {
+          console.log(`[Orchestrator] Synthesis stream complete, ${synthJson.length} chars`);
+        },
+        onError: (error: Error) => {
+          console.error('[Orchestrator] Synthesis stream error:', error);
+          synthError = error;
+        },
+      },
+      { mode: 'planner', enableTools: false },
+    );
+
+    if (synthError) {
+      console.warn('[Orchestrator] Synthesis stream failed:', synthError);
+      return;
+    }
+
+    if (!synthJson.trim()) {
+      console.warn('[Orchestrator] Synthesis returned empty response');
+      return;
+    }
+
+    // Parse the synthesis JSON (same robust extraction as createPlan)
+    let parsed: any = null;
+    const trimmed = synthJson.trim();
+    if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
+      try { parsed = JSON.parse(trimmed); } catch { /* fall through */ }
+    }
+    if (!parsed) {
+      const firstBrace = synthJson.indexOf('{');
+      const lastBrace = synthJson.lastIndexOf('}');
+      if (firstBrace !== -1 && lastBrace > firstBrace) {
+        try { parsed = JSON.parse(synthJson.slice(firstBrace, lastBrace + 1)); } catch { /* fall through */ }
+      }
+    }
+
+    if (parsed) {
+      const synthesis = [
+        `**${parsed.verdict === 'success' ? 'Completed' : parsed.verdict === 'partial' ? 'Partially Completed' : 'Failed'}**`,
+        '',
+        parsed.summary || '',
+        '',
+        parsed.filesChanged?.length ? `**Files changed:** ${parsed.filesChanged.join(', ')}` : '',
+        parsed.risks?.length ? `**Risks:** ${parsed.risks.join('; ')}` : '',
+        parsed.suggestedFollowUps?.length ? `**Suggested follow-ups:** ${parsed.suggestedFollowUps.join('; ')}` : '',
+        parsed.openQuestions?.length ? `**Open questions:** ${parsed.openQuestions.join('; ')}` : '',
+      ].filter(Boolean).join('\n');
+
+      swarmStore.setSynthesis(synthesis);
+      console.log('[Orchestrator] Synthesis stored:', synthesis.slice(0, 200));
+
+      // Persist synthesis to context store + DB blackboard
+      try {
+        const ctxStore = useContextStore.getState();
+        const synthHash = ctxStore.addChunk(synthesis, 'result', 'orchestrator:synthesis');
+        const synthChunk = ctxStore.getAllChunks().find(c => c.shortHash === synthHash);
+        if (synthChunk) {
+          await chatDb.addBlackboardEntry(sessionId, synthChunk);
+        }
+      } catch (e) {
+        console.warn('[Orchestrator] Could not persist synthesis to DB:', e);
+      }
+    } else {
+      // Fallback: store raw text
+      swarmStore.setSynthesis(synthJson.trim());
+      console.warn('[Orchestrator] Synthesis JSON parse failed, stored raw text');
+    }
   }
 
   /**

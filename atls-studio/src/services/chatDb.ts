@@ -104,7 +104,7 @@ export interface DbAgentStats {
 }
 
 export type ChatMode = 'agent' | 'designer' | 'ask' | 'reviewer' | 'retriever' | 'custom' | 'swarm';
-export type SwarmStatus = 'researching' | 'planning' | 'running' | 'paused' | 'completed' | 'failed';
+export type SwarmStatus = 'researching' | 'planning' | 'running' | 'paused' | 'synthesizing' | 'completed' | 'failed';
 export type TaskStatus = 'pending' | 'running' | 'awaiting_input' | 'completed' | 'failed' | 'cancelled';
 
 // ============================================================================

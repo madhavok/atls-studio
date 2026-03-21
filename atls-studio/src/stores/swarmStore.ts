@@ -13,7 +13,7 @@ import type { AIProvider } from '../services/aiService';
 // ============================================================================
 
 export type TaskStatus = 'pending' | 'running' | 'awaiting_input' | 'completed' | 'failed' | 'cancelled';
-export type SwarmStatus = 'idle' | 'researching' | 'planning' | 'running' | 'paused' | 'completed' | 'failed';
+export type SwarmStatus = 'idle' | 'researching' | 'planning' | 'running' | 'paused' | 'synthesizing' | 'completed' | 'failed';
 export type AgentRole = 'orchestrator' | 'coder' | 'debugger' | 'reviewer' | 'tester' | 'documenter';
 
 // Research results from the orchestrator
@@ -208,6 +208,9 @@ interface SwarmStoreState {
   plan: string | null;
   planApproved: boolean;
   
+  // Post-run synthesis from orchestrator
+  synthesis: string | null;
+  
   // Cancel handling
   cancelRequested: boolean;
   cancelMode: 'graceful' | 'immediate' | null;
@@ -243,6 +246,9 @@ interface SwarmStoreState {
   // Plan management
   setPlan: (plan: string) => void;
   approvePlan: () => void;
+  
+  // Synthesis
+  setSynthesis: (synthesis: string) => void;
   
   // Rate limiting
   checkRateLimit: (provider: AIProvider, estimatedTokens: number) => boolean;
@@ -299,6 +305,7 @@ export const useSwarmStore = create<SwarmStoreState>((set, get) => ({
   researchLogs: [],
   plan: null,
   planApproved: false,
+  synthesis: null,
   cancelRequested: false,
   cancelMode: null,
 
@@ -374,6 +381,7 @@ export const useSwarmStore = create<SwarmStoreState>((set, get) => ({
       researchLogs: [],
       plan: null,
       planApproved: false,
+      synthesis: null,
       cancelRequested: false,
       cancelMode: null,
       stats: {
@@ -597,6 +605,10 @@ export const useSwarmStore = create<SwarmStoreState>((set, get) => ({
 
   approvePlan: () => {
     set({ planApproved: true, status: 'running' });
+  },
+
+  setSynthesis: (synthesis: string) => {
+    set({ synthesis });
   },
 
   // ==========================================================================
