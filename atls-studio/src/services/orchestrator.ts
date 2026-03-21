@@ -10,7 +10,7 @@ import { atlsBatchQuery } from './toolHelpers';
 import { useSwarmStore, type SwarmTask, type AgentRole, type ResearchResult } from '../stores/swarmStore';
 import { useContextStore } from '../stores/contextStore';
 import { calculateCost } from '../stores/costStore';
-import type { ContextUsage } from '../stores/appStore';
+import { useAppStore, type ContextUsage } from '../stores/appStore';
 import { getTerminalStore } from '../stores/terminalStore';
 import { chatDb, type TaskStatus as ChatTaskStatus } from './chatDb';
 import { rateLimiter } from './rateLimiter';
@@ -106,6 +106,18 @@ export interface TaskPacket {
 
 // Default context budget per agent (tokens). Leaves room for system prompt + output.
 const DEFAULT_AGENT_CONTEXT_BUDGET = 120_000;
+
+function resolveApiKey(provider: AIProvider): string {
+  const settings = useAppStore.getState().settings as unknown as Record<string, unknown>;
+  switch (provider) {
+    case 'anthropic': return (settings.anthropicApiKey as string) || '';
+    case 'openai': return (settings.openaiApiKey as string) || '';
+    case 'google': return (settings.googleApiKey as string) || '';
+    case 'vertex': return (settings.vertexAccessToken as string) || '';
+    case 'lmstudio': return (settings.lmstudioBaseUrl as string) || 'http://localhost:1234';
+    default: return '';
+  }
+}
 
 // ============================================================================
 // Orchestrator Prompts
@@ -985,7 +997,7 @@ Based on the research above, create a detailed task plan.
     const aiConfig: AIConfig = {
       provider: config.provider,
       model: config.model,
-      apiKey: '', // Will be filled from settings
+      apiKey: resolveApiKey(config.provider),
       maxTokens: 4096,
       temperature: 0.3,
     };
@@ -1370,7 +1382,7 @@ Synthesize the swarm outcome.`;
     const synthConfig: AIConfig = {
       provider: config.provider,
       model: config.model,
-      apiKey: '',
+      apiKey: resolveApiKey(config.provider),
       maxTokens: 2048,
       temperature: 0.2,
     };
@@ -1639,7 +1651,7 @@ Synthesize the swarm outcome.`;
       const aiConfig: AIConfig = {
         provider: task.assignedProvider,
         model: task.assignedModel,
-        apiKey: '', // Will be filled from settings
+        apiKey: resolveApiKey(task.assignedProvider),
         maxTokens: 8192,
         temperature: 0.4, // Slightly lower for more deterministic agent behavior
       };
