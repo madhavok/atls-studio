@@ -102,6 +102,13 @@ function parseHeadSelector(body: string): ParsedSetRef | null {
   return finalizeSetRef({ kind: 'head', path, offset }, modifierChain);
 }
 
+/** Reject splitting `C` from `C:\foo:head(5)` — last colon is not the modifier boundary. */
+function isBadDriveLetterSplit(candidatePath: string, candidateMod: string): boolean {
+  if (!/^[A-Za-z]$/.test(candidatePath)) return false;
+  const c0 = candidateMod[0];
+  return c0 === '\\' || c0 === '/' || c0 === ':';
+}
+
 function parseNamedGitSelector(body: string): ParsedSetRef | null {
   if (!body.startsWith('tag:') && !body.startsWith('commit:')) return null;
   const isTag = body.startsWith('tag:');
@@ -112,14 +119,19 @@ function parseNamedGitSelector(body: string): ParsedSetRef | null {
   const remainder = tail.slice(firstColon + 1);
   if (!first || !remainder) return null;
 
-  const lastColon = remainder.lastIndexOf(':');
-  if (lastColon >= 0) {
-    const maybePath = remainder.slice(0, lastColon);
-    const maybeModifier = remainder.slice(lastColon + 1);
-    const parsedModifier = parseModifierChain(maybeModifier);
-    if (maybePath && parsedModifier != null) {
+  // Right-to-left: first colon where RHS is a valid modifier chain (handles Windows paths with `:`).
+  for (let i = remainder.length - 1; i >= 0; i--) {
+    if (remainder[i] !== ':') continue;
+    const candidatePath = remainder.slice(0, i);
+    const candidateMod = remainder.slice(i + 1);
+    if (!candidatePath || !candidateMod) continue;
+    if (isBadDriveLetterSplit(candidatePath, candidateMod)) continue;
+    const parsedModifier = parseModifierChain(candidateMod);
+    if (parsedModifier != null) {
       return {
-        selector: isTag ? { kind: 'tag', name: first, path: maybePath } : { kind: 'commit', sha: first, path: maybePath },
+        selector: isTag
+          ? { kind: 'tag', name: first, path: candidatePath }
+          : { kind: 'commit', sha: first, path: candidatePath },
         modifier: parsedModifier,
       };
     }

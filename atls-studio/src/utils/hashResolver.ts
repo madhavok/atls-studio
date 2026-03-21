@@ -9,7 +9,7 @@
  */
 
 import { sliceContentByLines, SHORT_HASH_LEN } from './contextHash';
-import { parseModifierChain } from './hashModifierParser';
+import { buildHashModifierTokenRe } from './uhppAnchorPrefixes';
 import { applyShape, dedent } from './shapeOps';
 import { resolveSymbolToLines } from './symbolResolver';
 import { parseHashRef, parseDiffRef, parseSetExpression, parseSetRef } from './hashRefParsers';
@@ -43,11 +43,6 @@ export type {
 // HPP v4: Recency ref resolution (h:$last, h:$last-1, etc.)
 // ---------------------------------------------------------------------------
 
-const RECENCY_PATTERN = /h:\$last(?:-(\d+))?/g;
-const RECENCY_EDIT_PATTERN = /h:\$last_edit(?:-(\d+))?/g;
-const RECENCY_READ_PATTERN = /h:\$last_read(?:-(\d+))?/g;
-const RECENCY_STAGE_PATTERN = /h:\$last_stage(?:-(\d+))?/g;
-
 /**
  * Replace all h:$last-N, h:$last_edit-N, h:$last_read-N, h:$last_stage-N
  * occurrences in a string with real hashes from the typed recency stacks.
@@ -80,41 +75,51 @@ export function setStageRecencyResolver(fn: (offset: number) => string | null): 
 
 export function resolveRecencyInString(text: string): string {
   const trimmed = text.trim();
+  const m = /^(h:\$)(last_edit|last_read|last_stage|last)(?:-(\d+))?(?=:|$)/.exec(trimmed);
+  if (!m) return text;
 
-  // Match recency refs with optional trailing modifier chain (e.g. h:$last:60-80, h:$last_edit:sig)
-  const editMatch = /^(h:\$last_edit(?:-(\d+))?)(?=:|$)/.exec(trimmed);
-  if (editMatch && _resolveEditRecencyRef) {
-    const offset = editMatch[2] ? parseInt(editMatch[2], 10) : 0;
-    const real = _resolveEditRecencyRef(offset);
-    return real ? text.replace(editMatch[1], `h:${real}`) : text;
+  const offset = m[3] ? parseInt(m[3], 10) : 0;
+  const fullRef = `${m[1]}${m[2]}${m[3] !== undefined ? `-${m[3]}` : ''}`;
+
+  let resolver: ((o: number) => string | null) | null = null;
+  switch (m[2]) {
+    case 'last_edit':
+      resolver = _resolveEditRecencyRef;
+      break;
+    case 'last_read':
+      resolver = _resolveReadRecencyRef;
+      break;
+    case 'last_stage':
+      resolver = _resolveStageRecencyRef;
+      break;
+    case 'last':
+      resolver = _resolveRecencyRef;
+      break;
+    default:
+      return text;
   }
 
-  const readMatch = /^(h:\$last_read(?:-(\d+))?)(?=:|$)/.exec(trimmed);
-  if (readMatch && _resolveReadRecencyRef) {
-    const offset = readMatch[2] ? parseInt(readMatch[2], 10) : 0;
-    const real = _resolveReadRecencyRef(offset);
-    return real ? text.replace(readMatch[1], `h:${real}`) : text;
-  }
-
-  const stageMatch = /^(h:\$last_stage(?:-(\d+))?)(?=:|$)/.exec(trimmed);
-  if (stageMatch && _resolveStageRecencyRef) {
-    const offset = stageMatch[2] ? parseInt(stageMatch[2], 10) : 0;
-    const real = _resolveStageRecencyRef(offset);
-    return real ? text.replace(stageMatch[1], `h:${real}`) : text;
-  }
-
-  // h:$last must be checked last — it's a prefix of the specialized variants
-  const match = /^(h:\$last(?:-(\d+))?)(?=:|$)/.exec(trimmed);
-  if (!match || !_resolveRecencyRef) {
-    return text;
-  }
-
-  const offset = match[2] ? parseInt(match[2], 10) : 0;
-  const real = _resolveRecencyRef(offset);
-  return real ? text.replace(match[1], `h:${real}`) : text;
+  if (!resolver) return text;
+  const real = resolver(offset);
+  return real ? text.replace(fullRef, `h:${real}`) : text;
 }
 
-const FILE_FIELDS = ['file', 'file_path', 'file_paths', 'target_file', 'source_file', 'path', 'from', 'from_path', 'target', 'target_path', 'deletes', 'delete'];
+/** Exact-match fields that always resolve to content (Rust CONTENT_FIELDS). */
+const CONTENT_FIELDS = ['from_ref', 'from_refs', 'content', 'body', 'code'];
+
+/** Substring-matched file-path fields — excludes bare `from` / `source` (see EXACT_FILE_FIELDS). */
+const FILE_FIELDS = [
+  'file', 'file_path', 'file_paths', 'target_file', 'source_file',
+  'path', 'from_path', 'target', 'target_path', 'deletes', 'delete',
+];
+
+/** Exact-only file path fields — avoids `from_ref` matching substring `from`. */
+const EXACT_FILE_FIELDS = ['source', 'from'];
+
+function isFilePathField(lowerField: string): boolean {
+  if (EXACT_FILE_FIELDS.includes(lowerField)) return true;
+  return FILE_FIELDS.some(f => lowerField.includes(f));
+}
 const HASH_FIELDS = ['hash', 'content_hash', 'old_hash', 'new_hash', 'undo', 'hashes', 'refs', 'to', 'edit_target_hash'];
 const SYMBOL_FIELDS = ['symbol', 'symbol_name', 'name'];
 /** Ref strings that must not be expanded to file content by resolveHashRefsInParams.
@@ -131,28 +136,14 @@ const INLINE_RESOLVE_FIELDS = new Set([
  *  expansion inside these would corrupt code being written to disk. */
 const LITERAL_CONTENT_ARRAYS = new Set(['line_edits', 'creates', 'edits']);
 
-/** All UHPP symbol anchor prefixes. Mirrors Rust UHPP_ANCHOR_PREFIXES. */
-const UHPP_ANCHOR_PREFIXES: Array<[string, string | null]> = [
-  ['fn', 'fn'], ['sym', null], ['cls', 'cls'], ['class', 'cls'],
-  ['struct', 'struct'], ['trait', 'trait'], ['interface', 'trait'],
-  ['protocol', 'protocol'], ['enum', 'enum'], ['record', 'record'],
-  ['extension', 'extension'], ['mixin', 'mixin'], ['impl', 'impl'],
-  ['type', 'type'], ['const', 'const'], ['static', 'static'],
-  ['mod', 'mod'], ['ns', 'mod'], ['namespace', 'mod'], ['package', 'mod'],
-  ['macro', 'macro'], ['ctor', 'ctor'], ['property', 'property'],
-  ['field', 'field'], ['enum_member', 'enum_member'], ['variant', 'enum_member'],
-  ['operator', 'operator'], ['event', 'event'], ['object', 'object'],
-  ['actor', 'actor'], ['union', 'union'],
-];
-
-const UHPP_ANCHOR_KINDS_RE = UHPP_ANCHOR_PREFIXES.map(([p]) => p).join('|');
-const HASH_MODIFIER_TOKEN_RE =
-  `(?:[0-9]+(?:-[0-9]*)?(?:,[0-9]+(?:-[0-9]*)?)*|(?:${UHPP_ANCHOR_KINDS_RE})\\([^)]+\\)|sig|fold|dedent|nocomment|imports|exports|content|source|tokens|meta|lang|head\\(\\d+\\)|tail\\(\\d+\\)|grep\\([^)]+\\)|ex\\([^)]+\\)|hl\\([^)]+\\)|concept\\([^)]+\\)|pattern\\([^)]+\\)|if\\([^)]+\\))`;
+const HASH_MODIFIER_TOKEN_RE = buildHashModifierTokenRe();
 
 /** Lightweight regex for detecting h:refs anywhere in a string (non-global for testing). */
 const INLINE_HREF_DETECT = new RegExp(
   `h:[0-9a-fA-F]{6,16}(?::${HASH_MODIFIER_TOKEN_RE})*`
 );
+
+const INLINE_HREF_G = new RegExp(INLINE_HREF_DETECT.source, 'g');
 
 /** Resolve all inline h:refs embedded in a larger string. */
 async function resolveInlineRefs(
@@ -161,10 +152,10 @@ async function resolveInlineRefs(
   lookup: HashLookup,
 ): Promise<string> {
   if (!text.includes('h:')) return text;
-  const pattern = new RegExp(INLINE_HREF_DETECT.source, 'g');
+  INLINE_HREF_G.lastIndex = 0;
   const matches: { match: string; start: number; end: number }[] = [];
   let m: RegExpExecArray | null;
-  while ((m = pattern.exec(text)) !== null) {
+  while ((m = INLINE_HREF_G.exec(text)) !== null) {
     matches.push({ match: m[0], start: m.index, end: m.index + m[0].length });
   }
   if (matches.length === 0) return text;
@@ -212,45 +203,24 @@ export const HREF_PATTERN = new RegExp(
 /** Matches h:bb:keyname blackboard references. Keys may contain alphanumerics, underscores, hyphens, dots, colons. */
 export const BB_REF_PATTERN = /h:bb:[a-zA-Z0-9_.\-:]+/g;
 
-/** Matches h:@selector with optional modifier chain (includes temporal + workspace refs). */
-export const SET_REF_PATTERN = /h:@(?:sub:[a-zA-Z0-9_-]+|file=[^\s:]+|type=[a-z:]+|edited|latest(?::\d+)?|pinned|all|stale|dormant|HEAD(?:~\d+)?:[^\s:]+|tag:[^\s:]+:[^\s:]+|commit:[0-9a-fA-F]+:[^\s:]+|ws:[a-zA-Z0-9_@/.#-]+|search\([^\n)]*\))(?::(?:sig|fold|dedent|nocomment|imports|exports|diff|concept|pattern|if)(?:\([^)]*\))?)?/g;
+/** Matches h:@selector with optional modifier chain (heuristic; prefer `matchesSetRefString` when correctness matters). */
+export const SET_REF_PATTERN = new RegExp(
+  `h:@(?:sub:[a-zA-Z0-9_-]+|file=[^\\s:]+|type=[a-z:]+|edited|latest(?::\\d+)?|pinned|all|stale|dormant|HEAD(?:~\\d+)?:[^\\s:]+|tag:[^\\s:]+:[^\\s]+|commit:[0-9a-fA-F]+:[^\\s]+|ws:[a-zA-Z0-9_@/.#-]+|search\\([^\\n)]*\\))(?::${HASH_MODIFIER_TOKEN_RE})?`,
+  'g',
+);
 
-const SHAPE_KEYWORDS = new Set(['sig', 'fold', 'dedent', 'nocomment', 'imports', 'exports']);
+/** True if the string parses as a set ref — aligns detection with `parseSetRef`. */
+export function matchesSetRefString(s: string): boolean {
+  const t = s.trim();
+  if (!t.startsWith('h:@')) return false;
+  return parseSetRef(t) !== null;
+}
 
-/**
- * Resolve a single h: ref using the lookup. Returns the resolved string.
- */
-async function resolveSingle(
-  parsed: ParsedHashRef,
-  fieldName: string | undefined,
-  lookup: HashLookup
-): Promise<string> {
-  const { hash, modifier } = parsed;
-  const lowerField = fieldName?.toLowerCase();
-
-  if (lowerField && HASH_FIELDS.includes(lowerField)) {
-    return hash;
-  }
-
-  const entry = await lookup(hash);
-  if (!entry) throw new Error(`Hash h:${hash} not found — content may have been evicted or never loaded`);
-  if (lowerField && FILE_FIELDS.some(f => lowerField.includes(f)) && modifier !== 'auto') {
-    if (!entry.source) throw new Error(`Hash h:${hash} has no source path (may be from search/tool output)`);
-    return entry.source;
-  }
-  if (!entry.content && modifier !== 'source') {
-    throw new Error(`Hash h:${hash} has no content (may be compacted — use recall() to re-materialize)`);
-  }
-
-  if (modifier === 'source') {
-    if (!entry.source) throw new Error(`Hash h:${hash} has no source path (may be from search/tool output)`);
-    return entry.source;
-  }
-
-  if (modifier === 'content') return entry.content;
-
-  if (modifier === 'auto') return resolveAuto(fieldName, entry);
-
+function resolveModifierOnEntry(
+  entry: HashLookupResult,
+  modifier: HashModifierV2,
+  opts: { missingSymbol: 'throw' | 'content'; warnSemantic: boolean; hashShort: string },
+): string {
   if (typeof modifier === 'object' && 'lines' in modifier) {
     const lineSpec = modifier.lines
       .map(([s, e]) => (e == null ? `${s}-` : s === e ? `${s}` : `${s}-${e}`))
@@ -270,7 +240,10 @@ async function resolveSingle(
     const { kind, name, shape } = modifier.symbol;
     const range = resolveSymbolToLines(entry.content, kind, name);
     if (!range) {
-      throw new Error(`Symbol '${name}' not found in h:${hash} — content may be shaped (use full-content hash)`);
+      if (opts.missingSymbol === 'throw') {
+        throw new Error(`Symbol '${name}' not found in h:${opts.hashShort} — content may be shaped (use full-content hash)`);
+      }
+      return entry.content;
     }
     const lineSpec = `${range[0]}-${range[1]}`;
     let extracted = sliceContentByLines(entry.content, lineSpec, true);
@@ -278,24 +251,70 @@ async function resolveSingle(
     return extracted;
   }
 
-  // Warn on parser-only semantic modifiers that have no runtime implementation
   if (typeof modifier === 'object') {
     const mod = modifier as Record<string, unknown>;
     if ('concept' in mod) {
-      console.warn(`[HPP] :concept(${mod.concept}) is parser-only — returning unfiltered content`);
+      if (opts.warnSemantic) {
+        console.warn(`[HPP] :concept(${mod.concept}) is parser-only — returning unfiltered content`);
+      }
       return `[WARNING: :concept(${mod.concept}) modifier is not yet implemented — content returned unfiltered]\n${entry.content}`;
     }
     if ('pattern' in mod) {
-      console.warn(`[HPP] :pattern(${mod.pattern}) is parser-only — returning unfiltered content`);
+      if (opts.warnSemantic) {
+        console.warn(`[HPP] :pattern(${mod.pattern}) is parser-only — returning unfiltered content`);
+      }
       return `[WARNING: :pattern(${mod.pattern}) modifier is not yet implemented — content returned unfiltered]\n${entry.content}`;
     }
     if ('if' in mod) {
-      console.warn(`[HPP] :if(${mod.if}) is parser-only — returning unfiltered content`);
+      if (opts.warnSemantic) {
+        console.warn(`[HPP] :if(${mod.if}) is parser-only — returning unfiltered content`);
+      }
       return `[WARNING: :if(${mod.if}) modifier is not yet implemented — content returned unfiltered]\n${entry.content}`;
     }
   }
 
   return entry.content;
+}
+
+/**
+ * Resolve a single h: ref using the lookup. Returns the resolved string.
+ */
+async function resolveSingle(
+  parsed: ParsedHashRef,
+  fieldName: string | undefined,
+  lookup: HashLookup,
+): Promise<string> {
+  const { hash, modifier } = parsed;
+  const lowerField = fieldName?.toLowerCase();
+
+  if (lowerField && HASH_FIELDS.includes(lowerField)) {
+    return hash;
+  }
+
+  const entry = await lookup(hash);
+  if (!entry) throw new Error(`Hash h:${hash} not found — content may have been evicted or never loaded`);
+  if (lowerField && isFilePathField(lowerField) && modifier !== 'auto') {
+    if (!entry.source) throw new Error(`Hash h:${hash} has no source path (may be from search/tool output)`);
+    return entry.source;
+  }
+  if (!entry.content && modifier !== 'source') {
+    throw new Error(`Hash h:${hash} has no content (may be compacted — use recall() to re-materialize)`);
+  }
+
+  if (modifier === 'source') {
+    if (!entry.source) throw new Error(`Hash h:${hash} has no source path (may be from search/tool output)`);
+    return entry.source;
+  }
+
+  if (modifier === 'content') return entry.content;
+
+  if (modifier === 'auto') return resolveAuto(fieldName, entry);
+
+  return resolveModifierOnEntry(entry, modifier, {
+    missingSymbol: 'throw',
+    warnSemantic: true,
+    hashShort: hash.slice(0, SHORT_HASH_LEN),
+  });
 }
 
 /**
@@ -305,7 +324,10 @@ async function resolveSingle(
 function resolveAuto(fieldName: string | undefined, entry: HashLookupResult): string {
   if (fieldName) {
     const lower = fieldName.toLowerCase();
-    if (FILE_FIELDS.some(f => lower.includes(f))) {
+    if (CONTENT_FIELDS.some(f => lower === f)) {
+      return entry.content;
+    }
+    if (isFilePathField(lower)) {
       if (!entry.source) throw new Error(`Hash has no source path for field '${fieldName}'`);
       return entry.source;
     }
@@ -322,8 +344,9 @@ function resolveSetEntryValue(
   fieldName: string | undefined,
   modifier: HashModifierV2,
 ): string {
-  if (fieldName && HASH_FIELDS.includes(fieldName)) return hash;
-  if (fieldName && FILE_FIELDS.some(f => fieldName.toLowerCase().includes(f))) {
+  const lf = fieldName?.toLowerCase();
+  if (lf && HASH_FIELDS.includes(lf)) return hash;
+  if (lf && isFilePathField(lf)) {
     if (!entry.source) throw new Error(`Hash h:${hash} has no source path for file-path field '${fieldName}'`);
     return entry.source;
   }
@@ -335,43 +358,11 @@ function resolveSetEntryValue(
   if (modifier === 'content') return entry.content;
   if (modifier === 'source') return entry.source ?? entry.content;
 
-  if (typeof modifier === 'object' && 'lines' in modifier) {
-    const lineSpec = modifier.lines
-      .map(([start, end]) => (end == null ? `${start}-` : start === end ? `${start}` : `${start}-${end}`))
-      .join(',');
-    let extracted = sliceContentByLines(entry.content, lineSpec, true);
-    if ('shape' in modifier && modifier.shape) {
-      extracted = applyShape(extracted, modifier.shape);
-    }
-    return extracted;
-  }
-
-  if (typeof modifier === 'object' && 'shape' in modifier) {
-    return applyShape(entry.content, modifier.shape);
-  }
-
-  if (typeof modifier === 'object' && 'symbol' in modifier) {
-    const { kind, name, shape } = modifier.symbol;
-    const range = resolveSymbolToLines(entry.content, kind, name);
-    if (!range) return entry.content;
-    const lineSpec = `${range[0]}-${range[1]}`;
-    let extracted = sliceContentByLines(entry.content, lineSpec, true);
-    if (shape) extracted = applyShape(extracted, shape);
-    return extracted;
-  }
-
-  const mod = modifier as unknown as Record<string, unknown>;
-  if ('concept' in mod) {
-    return `[WARNING: :concept(${mod.concept}) modifier is not yet implemented — content returned unfiltered]\n${entry.content}`;
-  }
-  if ('pattern' in mod) {
-    return `[WARNING: :pattern(${mod.pattern}) modifier is not yet implemented — content returned unfiltered]\n${entry.content}`;
-  }
-  if ('if' in mod) {
-    return `[WARNING: :if(${mod.if}) modifier is not yet implemented — content returned unfiltered]\n${entry.content}`;
-  }
-
-  return entry.content;
+  return resolveModifierOnEntry(entry, modifier, {
+    missingSymbol: 'content',
+    warnSemantic: false,
+    hashShort: hash.slice(0, SHORT_HASH_LEN),
+  });
 }
 
 /** Extract primary symbol name from digest metadata if available */
@@ -455,10 +446,8 @@ export function resolveCompositeSetRef(
     sources: resultEntries.map((e) => e.source ?? '(no source)'),
   };
 
-  const isFileField = fieldName
-    ? FILE_FIELDS.some(f => fieldName.toLowerCase().includes(f))
-    : false;
-  const isHashField = fieldName ? HASH_FIELDS.includes(fieldName) : false;
+  const isFileField = fieldName ? isFilePathField(fieldName.toLowerCase()) : false;
+  const isHashField = fieldName ? HASH_FIELDS.includes(fieldName.toLowerCase()) : false;
 
   const values = resultEntries.map((entry, i) => {
     if (isHashField) return resultHashes[i];
@@ -491,10 +480,8 @@ export function resolveSetRefToValues(
 
   if (entries.length === 0) return { values: [], expansion };
 
-  const isFileField = fieldName
-    ? FILE_FIELDS.some(f => fieldName.toLowerCase().includes(f))
-    : false;
-  const isHashField = fieldName ? HASH_FIELDS.includes(fieldName) : false;
+  const isFileField = fieldName ? isFilePathField(fieldName.toLowerCase()) : false;
+  const isHashField = fieldName ? HASH_FIELDS.includes(fieldName.toLowerCase()) : false;
 
   const values = entries.map((entry, i) => {
     if (isHashField) return hashes[i];

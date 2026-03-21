@@ -1,18 +1,17 @@
 import type { ShapeOp, HashModifierV2 } from './uhppTypes';
+import { UHPP_ANCHOR_PREFIXES } from './uhppAnchorPrefixes';
 
 const SHAPE_KEYWORDS = new Set(['sig', 'fold', 'dedent', 'nocomment', 'imports', 'exports']);
 
-const UHPP_ANCHOR_PREFIXES: Array<[string, string | null]> = [
-  ['fn', 'fn'], ['sym', null], ['cls', 'cls'], ['class', 'cls'],
-  ['struct', 'struct'], ['trait', 'trait'], ['interface', 'trait'],
-  ['protocol', 'protocol'], ['enum', 'enum'], ['record', 'record'],
-  ['union', 'union'], ['type', 'type'], ['alias', 'alias'],
-  ['const', 'const'], ['var', 'var'], ['let', 'let'],
-  ['prop', 'prop'], ['field', 'field'], ['attr', 'attr'],
-  ['method', 'method'], ['impl', 'impl'], ['mod', 'mod'],
-  ['ns', 'ns'], ['pkg', 'pkg'], ['test', 'test'],
-  ['macro', 'macro'],
-];
+const TYPO_HINTS: Record<string, string> = {
+  sgi: 'sig',
+  sg: 'sig',
+  imorts: 'imports',
+  imort: 'imports',
+  soure: 'source',
+  soruce: 'source',
+  contnet: 'content',
+};
 
 export function parseModifierChain(chain: string): HashModifierV2 | null {
   // Single keyword modifiers
@@ -45,6 +44,29 @@ export function parseModifierChain(chain: string): HashModifierV2 | null {
   if (ranges) return { lines: ranges };
 
   return null;
+}
+
+/**
+ * Like `parseModifierChain` but returns a reason when the chain is invalid.
+ * Used for diagnostics (e.g. typos like `sgi` → `sig`).
+ */
+export function parseModifierChainWithError(
+  chain: string,
+):
+  | { ok: true; modifier: HashModifierV2 }
+  | { ok: false; reason: string; suggestion?: string } {
+  const modifier = parseModifierChain(chain);
+  if (modifier !== null) return { ok: true, modifier };
+  const lc = chain.toLowerCase();
+  const hint = TYPO_HINTS[lc];
+  if (hint) {
+    return {
+      ok: false,
+      reason: 'unrecognized modifier chain',
+      suggestion: hint,
+    };
+  }
+  return { ok: false, reason: 'unrecognized modifier chain' };
 }
 
 export function parseShapeOp(s: string): ShapeOp | null {
@@ -103,9 +125,11 @@ export function parseSymbolAnchor(chain: string): HashModifierV2 | null {
     const re = new RegExp(`^${prefix}\\((.+)\\)$`);
     const m = anchorPart.match(re);
     if (m) {
+      const name = m[1].trim();
+      if (!name) return null;
       return canonicalKind
-        ? { symbol: { kind: canonicalKind, name: m[1], shape: shapeSuffix } }
-        : { symbol: { name: m[1], shape: shapeSuffix } };
+        ? { symbol: { kind: canonicalKind, name, shape: shapeSuffix } }
+        : { symbol: { name, shape: shapeSuffix } };
     }
   }
 

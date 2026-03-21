@@ -1,17 +1,15 @@
 /**
-
-  it('rejects h:@latest without a separator', () => {
-    expect(parseSetRef('h:@latest3')).toBeNull();
-  });
  * HPP — Hash reference parser and resolver tests.
  */
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { parseHashRef } from './hashRefParsers';
+import { parseModifierChainWithError } from './hashModifierParser';
 import {
   parseDiffRef,
   parseSetRef,
   HREF_PATTERN,
   SET_REF_PATTERN,
+  matchesSetRefString,
   type HashLookup,
 } from './hashResolver';
 
@@ -53,6 +51,14 @@ describe('parseHashRef', () => {
     expect(r).not.toBeNull();
     expect(r!.modifier).toMatchObject({
       symbol: { kind: 'fn', name: 'authenticate' },
+    });
+  });
+
+  it('parses ctor anchor (Rust UHPP parity)', () => {
+    const r = parseHashRef('h:abc12345:ctor(init)');
+    expect(r).not.toBeNull();
+    expect(r!.modifier).toMatchObject({
+      symbol: { kind: 'ctor', name: 'init' },
     });
   });
 
@@ -159,6 +165,24 @@ describe('parseSetRef', () => {
   it('returns null for non-set-ref', () => {
     expect(parseSetRef('h:abc12345')).toBeNull();
   });
+
+  it('parses tag ref with Windows path and shape modifier (colon scan)', () => {
+    const r = parseSetRef('h:@tag:v1.0:C:\\proj\\file.ts:sig');
+    expect(r).not.toBeNull();
+    if (r && 'selector' in r) {
+      expect(r.selector).toEqual({ kind: 'tag', name: 'v1.0', path: 'C:\\proj\\file.ts' });
+      expect(r.modifier).toEqual({ shape: 'sig' });
+    }
+  });
+
+  it('parses tag ref with short Windows path and head modifier (drive-letter guard)', () => {
+    const r = parseSetRef('h:@tag:v1:C:\\foo:head(5)');
+    expect(r).not.toBeNull();
+    if (r && 'selector' in r) {
+      expect(r.selector).toEqual({ kind: 'tag', name: 'v1', path: 'C:\\foo' });
+      expect(r.modifier).toEqual({ shape: { head: 5 } });
+    }
+  });
 });
 
 describe('HREF_PATTERN', () => {
@@ -195,6 +219,26 @@ describe('SET_REF_PATTERN', () => {
   });
 });
 
+describe('matchesSetRefString', () => {
+  it('returns true for parseable set refs', () => {
+    expect(matchesSetRefString('h:@latest')).toBe(true);
+    expect(matchesSetRefString('  h:@search(q):sig  ')).toBe(true);
+  });
+
+  it('returns false for non-set refs', () => {
+    expect(matchesSetRefString('h:abc12345')).toBe(false);
+    expect(matchesSetRefString('plain')).toBe(false);
+  });
+});
+
+describe('parseModifierChainWithError', () => {
+  it('suggests sig for sgi typo', () => {
+    const r = parseModifierChainWithError('sgi');
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.suggestion).toBe('sig');
+  });
+});
+
 describe('resolveHashRefsWithMeta', () => {
   it('resolves h:ref in params via lookup', async () => {
     const { resolveHashRefsWithMeta } = await import('./hashResolver');
@@ -205,5 +249,18 @@ describe('resolveHashRefsWithMeta', () => {
       lookup,
     );
     expect(params).toEqual({ content: 'resolved!' });
+  });
+
+  it('resolves from_ref to content, not file path (CONTENT_FIELDS parity)', async () => {
+    const { resolveHashRefsWithMeta } = await import('./hashResolver');
+    const lookup: HashLookup = async (hash) =>
+      hash === 'abc12345'
+        ? { content: 'BODY', source: '/x/foo.ts' }
+        : null;
+    const { params } = await resolveHashRefsWithMeta(
+      { from_ref: 'h:abc12345' },
+      lookup,
+    );
+    expect(params).toEqual({ from_ref: 'BODY' });
   });
 });
