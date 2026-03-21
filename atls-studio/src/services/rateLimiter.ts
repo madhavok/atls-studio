@@ -393,9 +393,10 @@ class RateLimiterService {
     // Process requests in order
     while (state.queue.length > 0) {
       const request = state.queue[0];
-      
+
       if (this.canProceed(provider, request.estimatedTokens)) {
         state.queue.shift();
+        state.activeRequests++;
         request.resolve(true);
       } else {
         // Can't proceed, schedule retry
