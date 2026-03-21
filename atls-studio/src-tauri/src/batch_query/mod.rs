@@ -83,7 +83,7 @@ pub async fn atls_batch_query(
                 Ok(serde_json::json!({
                     "operations": [
                         "context", "code_search", "find_symbol", "symbol_usage", "call_hierarchy", "symbol_dep_graph",
-                        "dependencies", "find_similar", "edit", "refactor", "extract_plan", "split_match", "split_module",
+                        "dependencies", "find_similar", "edit", "refactor", "extract_plan", "split_module",
                         "impact_analysis", "refactor_rollback",
                         "ast_query", "detect_patterns", "find_issues", "verify", "git", "workspaces", "help"
                     ],
@@ -96,7 +96,6 @@ pub async fn atls_batch_query(
                         "call_hierarchy": "Call graph analysis (symbol_names:[], depth:2, filter:str?, limit:10)",
                         "symbol_dep_graph": "Intra-file symbol dependency graph (file_paths:[], kinds?:[], hub_threshold?:N, exclude_hubs?:true) â€” symbols + edges + hub detection (IQR outlier) + hub-excluded clusters",
                         "extract_plan": "Propose extraction plan (file_path or file_paths:[], strategy:'by_cluster'|'by_prefix'|'by_kind', min_lines?, min_complexity?) â€” hub-aware clustering, multi-segment prefix grouping, cohesion/risk metrics + ready-to-execute params",
-                        "split_match": "Split match/switch into dispatch fns (file_path, function_name, strategy?:'one_fn_per_arm', match_index?:0, arm_filter?:[], target_module?, dry_run?:true) â€” AST-based match arm extraction with shared-state detection",
                         "split_module": "Split monolithic file into directory module (source_file, target_dir, plan:[{module,symbols:[]}], dry_run?:true, mod_style?:'mod_rs') -- creates mod.rs + child modules with pub use re-exports",
                         "dependencies": "Analyze structure (mode: graph|related|impact, file_paths:[], filter:str?, limit:30)",
                         "find_similar": "Similarity search (type: code|function|concept|pattern, + type-specific params)",
@@ -5837,7 +5836,7 @@ pub async fn atls_batch_query(
                         if proposed_modules.len() <= 2 && largest_cluster_ratio > 0.7 {
                             warnings.push(format!(
                                 "Largest cluster contains {:.0}% of symbols. File may still be too interconnected for pure graph clustering. \
-                                 Try: strategy:\"by_prefix\" for name-based grouping, or split_match on hub functions first.",
+                                 Try: strategy:\"by_prefix\" for name-based grouping, or refactor hub functions into smaller helpers first.",
                                 largest_cluster_ratio * 100.0
                             ));
                         }
@@ -5951,7 +5950,7 @@ pub async fn atls_batch_query(
                 if !hubs.is_empty() {
                     response["hubs"] = serde_json::json!(hubs);
                     response["_hub_note"] = serde_json::json!(format!(
-                        "{} hub(s) detected and excluded from clustering. Consider split_match on these first.",
+                        "{} hub(s) detected and excluded from clustering. Consider refactoring these into smaller helpers before clustering.",
                         hubs.len()
                     ));
                 }
@@ -5967,255 +5966,6 @@ pub async fn atls_batch_query(
                 } else {
                     Ok(batch_results.into_iter().next().unwrap_or(serde_json::json!({})))
                 }
-            }
-            "split_match" => {
-                // Split a large match/switch expression into dispatch functions.
-                // Uses tree-sitter to parse match arms and generate handler functions.
-                let file_path = params
-                    .get("file_path")
-                    .and_then(|v| v.as_str())
-                    .ok_or("file_path required for split_match")?;
-                let function_name = params
-                    .get("function_name")
-                    .and_then(|v| v.as_str())
-                    .ok_or("function_name required for split_match")?;
-                let strategy = params
-                    .get("strategy")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("one_fn_per_arm");
-                let target_module = params
-                    .get("target_module")
-                    .and_then(|v| v.as_str());
-                let dry_run = params
-                    .get("dry_run")
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(true);
-                let arm_filter: Option<Vec<String>> = params
-                    .get("arm_filter")
-                    .and_then(|v| v.as_array())
-                    .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect());
-                let match_index = params
-                    .get("match_index")
-                    .and_then(|v| v.as_u64())
-                    .unwrap_or(0) as usize;
-
-                let resolved_path = resolve_project_path(project_root, file_path);
-                let source = std::fs::read_to_string(&resolved_path)
-                    .map(|c| normalize_line_endings(&c))
-                    .map_err(|e| format!("Cannot read {}: {}", file_path, e))?;
-
-                let lang_str = hash_resolver::detect_lang(Some(file_path));
-                let language = lang_str.as_deref()
-                    .map(atls_core::Language::from_str)
-                    .unwrap_or(atls_core::Language::Rust);
-
-                // Parse with tree-sitter
-                let tree = project.parser_registry().parse(language, &source)
-                    .map_err(|e| format!("Parse failed: {}", e))?;
-
-                // Find the target function
-                let fn_node = find_function_node(&tree.root_node(), &source, function_name, language)
-                    .ok_or_else(|| format!("Function '{}' not found in AST (language: {:?})", function_name, language))?;
-
-                // Find match expressions inside the function
-                let match_nodes = find_match_expressions(&fn_node, &source);
-                if match_nodes.is_empty() {
-                    if language != atls_core::Language::Rust {
-                        return Err(format!(
-                            "split_match currently only supports Rust match expressions. \
-                             Function '{}' was found but language {:?} match/switch extraction is not yet implemented.",
-                            function_name, language
-                        ));
-                    }
-                    return Err(format!("No match expressions found in '{}'", function_name));
-                }
-                if match_index >= match_nodes.len() {
-                    return Err(format!(
-                        "match_index {} out of range, function has {} match expression(s)",
-                        match_index, match_nodes.len()
-                    ));
-                }
-                let match_info = &match_nodes[match_index];
-                let match_start = &match_info.start_line;
-                let match_end = &match_info.end_line;
-                let scrutinee = &match_info.scrutinee;
-                let arms = &match_info.arms;
-
-                // Detect shared state: function params + let bindings before the match
-                let shared_params = detect_shared_state(&fn_node, &source, *match_start);
-
-                // Filter arms if requested
-                let filtered_arms: Vec<&MatchArmInfo> = if let Some(ref filter) = arm_filter {
-                    arms.iter().filter(|a| filter.iter().any(|f| a.pattern.contains(f))).collect()
-                } else {
-                    arms.iter().collect()
-                };
-
-                // Determine return type from function signature
-                let return_type = detect_return_type(&fn_node, &source)
-                    .unwrap_or_else(|| "Result<serde_json::Value, String>".to_string());
-                let is_async = detect_is_async(&fn_node, &source);
-
-                // Generate handler functions
-                let mut handlers: Vec<serde_json::Value> = Vec::new();
-                let mut dispatch_arms: Vec<String> = Vec::new();
-
-                for arm in &filtered_arms {
-                    let handler_name = arm_to_handler_name(&arm.pattern);
-                    let body = arm.body.clone();
-
-                    // Determine which shared params this arm actually uses
-                    let used_params: Vec<&SharedParam> = shared_params.iter()
-                        .filter(|p| is_identifier_match(&body, &p.name))
-                        .collect();
-
-                    let param_list: String = used_params.iter()
-                        .map(|p| format!("{}: {}", p.name, p.type_hint))
-                        .collect::<Vec<_>>()
-                        .join(", ");
-                    let arg_list: String = used_params.iter()
-                        .map(|p| p.name.clone())
-                        .collect::<Vec<_>>()
-                        .join(", ");
-
-                    let async_kw = if is_async { "async " } else { "" };
-                    let await_kw = if is_async { ".await" } else { "" };
-
-                    let handler_code = format!(
-                        "{}fn {}({}) -> {} {{\n{}\n}}",
-                        async_kw, handler_name, param_list, return_type, body
-                    );
-
-                    let dispatch = format!(
-                        "            {} => {}({}){},",
-                        arm.pattern, handler_name, arg_list, await_kw
-                    );
-
-                    handlers.push(serde_json::json!({
-                        "name": handler_name,
-                        "pattern": arm.pattern,
-                        "params": used_params.iter().map(|p| serde_json::json!({"name": p.name, "type": p.type_hint})).collect::<Vec<_>>(),
-                        "code": handler_code,
-                        "lines": body.lines().count(),
-                    }));
-                    dispatch_arms.push(dispatch);
-                }
-
-                // Build the replacement dispatch match
-                let dispatch_match = format!(
-                    "match {} {{\n{}\n        }}",
-                    scrutinee,
-                    dispatch_arms.join("\n")
-                );
-
-                // Arms not included in the filter (kept inline)
-                let kept_arms: Vec<serde_json::Value> = arms.iter()
-                    .filter(|a| !filtered_arms.iter().any(|f| f.pattern == a.pattern))
-                    .map(|a| serde_json::json!({"pattern": a.pattern, "lines": a.body.lines().count()}))
-                    .collect();
-
-                let total_lines_extracted: usize = handlers.iter()
-                    .filter_map(|h| h["lines"].as_u64())
-                    .sum::<u64>() as usize;
-
-                if !dry_run && target_module.is_some() {
-                    let target = target_module.unwrap();
-                    let target_path = resolve_project_path(project_root, target);
-
-                    // Derive module name from target path for mod declaration
-                    let mod_name = std::path::Path::new(target)
-                        .file_stem()
-                        .and_then(|s| s.to_str())
-                        .unwrap_or("handlers")
-                        .to_string();
-
-                    // Build handler file with use declarations for shared types
-                    let mut target_content = String::new();
-                    let mut used_types: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
-                    for p in &shared_params {
-                        let ty = p.type_hint.trim_start_matches('&').trim().to_string();
-                        let base = ty.split('<').next().unwrap_or(&ty).trim().to_string();
-                        if base.contains("::") || base.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) {
-                            used_types.insert(base);
-                        }
-                    }
-                    if !used_types.is_empty() {
-                        target_content.push_str("use super::*;\n\n");
-                    }
-
-                    for h in &handlers {
-                        if let Some(code) = h["code"].as_str() {
-                            if !target_content.is_empty() {
-                                target_content.push_str("\n\n");
-                            }
-                            target_content.push_str(code);
-                        }
-                    }
-                    if let Some(parent) = target_path.parent() {
-                        let _ = std::fs::create_dir_all(parent);
-                    }
-                    let _ = std::fs::write(&target_path, &target_content);
-
-                    // Replace the match expression in source with the dispatch table
-                    let match_sb = match_info.start_byte;
-                    let match_eb = match_info.end_byte;
-                    if match_sb < source.len() && match_eb <= source.len() && match_sb < match_eb {
-                        let new_source = format!(
-                            "{}{}{}",
-                            &source[..match_sb],
-                            dispatch_match,
-                            &source[match_eb..]
-                        );
-
-                        // Add `mod <name>;` if not already present
-                        let mod_decl = format!("mod {};", mod_name);
-                        let final_source = if !new_source.contains(&mod_decl) {
-                            let insert_pos = new_source.find("\nfn ")
-                                .or_else(|| new_source.find("\nasync fn "))
-                                .or_else(|| new_source.find("\npub fn "))
-                                .or_else(|| new_source.find("\npub async fn "))
-                                .unwrap_or(0);
-                            if insert_pos > 0 {
-                                format!(
-                                    "{}\n{}\n{}",
-                                    &new_source[..insert_pos],
-                                    mod_decl,
-                                    &new_source[insert_pos..]
-                                )
-                            } else {
-                                format!("{}\n\n{}", mod_decl, new_source)
-                            }
-                        } else {
-                            new_source
-                        };
-
-                        let _ = crate::snapshot::atomic_write(&resolved_path, final_source.as_bytes());
-                    }
-                }
-
-                Ok(serde_json::json!({
-                    "function": function_name,
-                    "file": file_path,
-                    "match_scrutinee": scrutinee,
-                    "match_location": {"start_line": match_start, "end_line": match_end},
-                    "strategy": strategy,
-                    "dry_run": dry_run,
-                    "handlers": handlers,
-                    "dispatch_match": dispatch_match,
-                    "kept_inline": kept_arms,
-                    "shared_params": shared_params.iter().map(|p| serde_json::json!({"name": p.name, "type": p.type_hint})).collect::<Vec<_>>(),
-                    "stats": {
-                        "total_arms": arms.len(),
-                        "extracted_arms": filtered_arms.len(),
-                        "kept_arms": kept_arms.len(),
-                        "lines_extracted": total_lines_extracted,
-                    },
-                    "_next": if dry_run {
-                        "Review handlers and dispatch_match. Set dry_run:false and target_module to execute."
-                    } else {
-                        "Handlers written. Verify with: batch({version:\"1.0\",steps:[{id:\"v1\",use:\"verify.typecheck\"}]})"
-                    }
-                }))
             }
             "split_module" => {
                 // Split a monolithic file into a directory module structure.

@@ -80,7 +80,6 @@ const SCALAR_TO_ARRAY: ReadonlyArray<{ from: string; to: string }> = [
 const SINGULAR_FILE_PATH_OPS = new Set<OperationKind>([
   'change.edit',
   'change.create',
-  'change.split_match',
   'change.split_module',
   'read.lines',
   'analyze.extract_plan',

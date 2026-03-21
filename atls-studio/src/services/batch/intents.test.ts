@@ -423,14 +423,14 @@ describe('intent.survey resolver', () => {
 describe('intent.refactor resolver', () => {
   const params = { file_path: 'src/lib.rs', symbol_names: ['dispatch'], _intentId: 'rf1' };
 
-  it('empty context → emits read + pin + deps + extract + split + verify', () => {
+  it('empty context → emits read + pin + deps + extract + refactor + verify', () => {
     const result = resolveRefactor(params, emptyContext());
     const ops = result.steps.map(s => s.use);
     expect(ops).toContain('read.shaped');
     expect(ops).toContain('session.pin');
     expect(ops).toContain('analyze.deps');
     expect(ops).toContain('analyze.extract_plan');
-    expect(ops).toContain('change.split_match');
+    expect(ops).toContain('change.refactor');
     expect(ops).toContain('verify.build');
   });
 
@@ -454,14 +454,14 @@ describe('intent.refactor resolver', () => {
     const ops = result.steps.map(s => s.use);
     expect(ops).not.toContain('analyze.deps');
     expect(ops).not.toContain('analyze.extract_plan');
-    expect(ops).toContain('change.split_match');
+    expect(ops).toContain('change.refactor');
     expect(ops).toContain('verify.build');
   });
 
-  it('verify.build has conditional on split_match success', () => {
+  it('verify.build has conditional on refactor success', () => {
     const result = resolveRefactor(params, emptyContext());
     const verifyStep = result.steps.find(s => s.use === 'verify.build');
-    expect(verifyStep?.if).toEqual({ step_ok: 'rf1__split_match' });
+    expect(verifyStep?.if).toEqual({ step_ok: 'rf1__refactor' });
   });
 });
 

@@ -43,7 +43,7 @@ task_complete reports what you DID, not PLANNED. It is useful for structured tas
 No filler, echo, narration. Flag risks with «WARNING»/«DECISION»/«ASSUMPTION» tags. Classify failures clearly as tool defect, process gap, freshness protection, or real code failure, and treat oversized/noisy tool output as a product issue to sanitize at the source before relying on UI truncation.
 
 ### TASK ROUTING
-- Split/extract large file (>500 lines) → PIPELINE: pin(shape:"sig") source → dep_graph → identify hubs → split_match hubs → dep_graph again → extract_plan → extract_methods → verify(type:build) after each cohesive extraction batch or risky dependency boundary. NEVER use shell for code extraction.
+- Split/extract large file (>500 lines) → PIPELINE: pin(shape:"sig") source → dep_graph → identify hubs → change.refactor hubs → dep_graph again → extract_plan → extract_methods → verify(type:build) after each cohesive extraction batch or risky dependency boundary. NEVER use shell for code extraction.
 - Move/rename symbols across files → REFACTOR (extract)
 - Localized changes within files → EDIT (exact current preimage first; whole-file for multiline or syntax-sensitive TS/TSX)
 - Multi-round analysis/refactoring → pin(shape:"sig") source engrams + persist plan to BB

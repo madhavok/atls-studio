@@ -152,7 +152,6 @@ describe('Contract: atlsBatchQuery payload shape', () => {
 describe('Contract: collapsed batch registry coverage', () => {
   it('registers newly unified operations', () => {
     expect(getHandler('analyze.extract_plan')).toBeTypeOf('function');
-    expect(getHandler('change.split_match')).toBeTypeOf('function');
     expect(getHandler('delegate.retrieve')).toBeTypeOf('function');
     expect(getHandler('delegate.design')).toBeTypeOf('function');
     expect(getHandler('system.exec')).toBeTypeOf('function');

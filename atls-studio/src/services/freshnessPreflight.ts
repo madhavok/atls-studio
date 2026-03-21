@@ -207,7 +207,7 @@ export function getPreflightAutomationDecision(result: Pick<PreflightResult, 'bl
 /** Operations that consume file-backed refs and need preflight */
 const PREFLIGHT_OPS = new Set([
   'draft', 'batch_edits', 'edit', 'read_lines', 'context', 'create_files', 'refactor',
-  'split_match', 'code_search', 'find_symbol', 'symbol_usage', 'find_issues', 'detect_patterns',
+  'code_search', 'find_symbol', 'symbol_usage', 'find_issues', 'detect_patterns',
   'dependencies', 'call_hierarchy', 'symbol_dep_graph', 'change_impact', 'impact_analysis',
   'extract_plan', 'verify', 'git', 'workspaces', 'ast_query',
 ]);

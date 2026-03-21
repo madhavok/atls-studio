@@ -1,7 +1,7 @@
 /**
  * UHPP — Universal Hash Pointer Protocol.
  * Core syntax for system prompt injection. Advanced features (temporal, pipeline,
- * extract_plan, split_match, dep_graph, fallback) live in BB/staged reference.
+ * extract_plan, dep_graph, fallback) live in BB/staged reference.
  */
 
 export const HASH_PROTOCOL_SPEC = `## UHPP — Universal Hash Pointer Protocol (v6)

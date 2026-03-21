@@ -467,7 +467,7 @@ fn normalize_step_params(use_val: &str, params: &mut Value) {
     }
 
     // Scalar-to-array coercion: file_path → file_paths (for non-singular ops)
-    let singular_ops = ["change.edit", "change.create", "change.split_match", "change.split_module", "read.lines", "read.shaped", "analyze.extract_plan"];
+    let singular_ops = ["change.edit", "change.create", "change.split_module", "read.lines", "read.shaped", "analyze.extract_plan"];
     if !singular_ops.contains(&use_val) && !obj.contains_key("file_paths") {
         if let Some(fp) = obj.remove("file_path") {
             if fp.is_string() {

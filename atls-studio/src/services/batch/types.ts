@@ -39,7 +39,6 @@ export type ChangeOp =
   | 'change.delete'
   | 'change.refactor'
   | 'change.rollback'
-  | 'change.split_match'
   | 'change.split_module';
 
 export type VerifyOp =
@@ -741,16 +740,6 @@ export interface ChangeRefactorParams {
 export interface ChangeRollbackParams {
   restore?: Array<{ file: string; hash: string }>;
   delete?: string[];
-}
-
-export interface ChangeSplitMatchParams {
-  file_path: string;
-  function_name: string;
-  target_module?: string;
-  dry_run?: boolean;
-  strategy?: string;
-  match_index?: number;
-  arm_filter?: string[];
 }
 
 export interface ChangeSplitModuleParams {

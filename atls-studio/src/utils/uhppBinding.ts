@@ -57,7 +57,6 @@ const PROFILES: ReadonlyMap<string, OperationProfile> = new Map<string, Operatio
   ['change.delete',    { family: 'mutate',    requires_target: true,  min_hydration: 'id_only',            default_verification: ['freshness'],     eligible_target_kinds: ['file'] }],
   ['change.refactor',  { family: 'mutate',    requires_target: true,  min_hydration: 'edit_ready_digest',  default_verification: ['freshness', 'structural', 'typecheck'], eligible_target_kinds: DEFAULT_TARGET_KINDS }],
   ['change.rollback',  { family: 'mutate',    requires_target: true,  min_hydration: 'id_only',            default_verification: [],               eligible_target_kinds: ['file'] }],
-  ['change.split_match', { family: 'mutate',  requires_target: true,  min_hydration: 'edit_ready_digest',  default_verification: ['freshness'],     eligible_target_kinds: ['file'] }],
 
   // verify
   ['verify.build',     { family: 'verify',    requires_target: false, min_hydration: 'id_only',            default_verification: [],               eligible_target_kinds: [] }],

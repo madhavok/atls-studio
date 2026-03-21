@@ -199,7 +199,7 @@ All model-initiated actions flow through a single tool: `batch()`. This collapse
 |--------|-----------|---------|
 | **discover** | `search.code`, `search.symbol`, `search.usage`, `search.similar`, `search.issues`, `search.patterns` | Find code |
 | **understand** | `read.context`, `read.shaped`, `read.lines`, `analyze.deps`, `analyze.calls`, `analyze.structure`, `analyze.impact`, `analyze.blast_radius`, `analyze.extract_plan` | Comprehend code |
-| **change** | `change.edit`, `change.create`, `change.delete`, `change.refactor`, `change.rollback`, `change.split_match` | Modify code |
+| **change** | `change.edit`, `change.create`, `change.delete`, `change.refactor`, `change.rollback` | Modify code |
 | **verify** | `verify.build`, `verify.test`, `verify.lint`, `verify.typecheck` | Validate changes |
 | **session** | `session.plan`, `session.advance`, `session.pin`, `session.compact`, `session.drop`, `session.recall`, `session.bb.write`, `session.rule`, `session.compact_history` | Manage memory and tasks |
 | **annotate** | `annotate.engram`, `annotate.note`, `annotate.link`, `annotate.split`, `annotate.merge` | Annotate and connect engrams |

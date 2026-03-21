@@ -36,7 +36,7 @@ import {
 } from './handlers/query';
 
 import {
-  handleEdit, handleCreate, handleDelete, handleRefactor, handleRollback, handleSplitMatch,
+  handleEdit, handleCreate, handleDelete, handleRefactor, handleRollback,
   handleSplitModule,
 } from './handlers/change';
 
@@ -83,7 +83,6 @@ const OP_MAP: ReadonlyMap<OperationKind, OpHandler> = new Map<OperationKind, OpH
   ['change.delete', handleDelete],
   ['change.refactor', handleRefactor],
   ['change.rollback', handleRollback],
-  ['change.split_match', handleSplitMatch],
   ['change.split_module', handleSplitModule],
 
   // verify

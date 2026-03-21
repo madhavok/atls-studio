@@ -2,7 +2,6 @@
  * intent.extract — extract symbols from source to a new target file.
  *
  * Uses change.refactor(action:execute) for cross-language support.
- * Works for TS/JS and Rust (split_match is Rust-only).
  *
  * Discipline: Symbols must be self-contained (no tangled dependencies).
  */

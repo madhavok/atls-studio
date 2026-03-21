@@ -40,7 +40,7 @@ export const resolveRefactor: IntentResolver = (
   const pinId = makeStepId(intentId, 'pin');
   const depsId = makeStepId(intentId, 'analyze_deps');
   const extractId = makeStepId(intentId, 'extract_plan');
-  const splitId = makeStepId(intentId, 'split_match');
+  const refactorId = makeStepId(intentId, 'refactor');
   const verifyId = makeStepId(intentId, 'verify');
 
   const needsRead = force || (!pinned && !hasAwareness);
@@ -82,18 +82,18 @@ export const resolveRefactor: IntentResolver = (
     });
   }
 
-  const splitWith: Record<string, unknown> = {
-    file_path: filePath,
-    dry_run: false,
+  const refactorWith: Record<string, unknown> = {
+    action: 'execute',
+    file_paths: [filePath],
   };
-  if (symbolNames.length > 0) splitWith.function_name = symbolNames[0];
-  if (targetFile) splitWith.target_module = targetFile;
-  if (strategy) splitWith.strategy = strategy;
+  if (symbolNames.length > 0) refactorWith.symbol_names = symbolNames;
+  if (targetFile) refactorWith.to = targetFile;
+  if (strategy) refactorWith.strategy = strategy;
 
   steps.push({
-    id: splitId,
-    use: 'change.split_match',
-    with: splitWith,
+    id: refactorId,
+    use: 'change.refactor',
+    with: refactorWith,
     ...(needsExtract
       ? { if: { step_ok: extractId } }
       : {}),
@@ -102,7 +102,7 @@ export const resolveRefactor: IntentResolver = (
   steps.push({
     id: verifyId,
     use: 'verify.build',
-    if: { step_ok: splitId },
+    if: { step_ok: refactorId },
   });
 
   const lookahead = computeNextTargets(intentId, 'intent.refactor', [filePath], context);

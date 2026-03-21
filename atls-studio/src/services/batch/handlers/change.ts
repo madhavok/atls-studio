@@ -1292,7 +1292,10 @@ function resolveEditOperation(params: Record<string, unknown>): { operation: str
       'replace',
       'replace_body',
       'delete',
+      'move',
     ]);
+    const VALID_ACTIONS_HINT =
+      'insert_before|insert_after|prepend|append|replace|replace_body|delete|move';
     // Validate each entry: must have (anchor or symbol or line) and explicit valid action. No silent defaults.
     // Backend LineEdit requires line: u32 for serde; when anchor/symbol present, line=0 signals resolve-from-anchor.
     let le = leRaw.map((e: unknown, i: number) => {
@@ -1306,14 +1309,14 @@ function resolveEditOperation(params: Record<string, unknown>): { operation: str
       const action = o.action;
       if (action == null || typeof action !== 'string') {
         throwEditValidationError(
-          `line_edits[${i}] requires action (insert_before|insert_after|replace|replace_body|delete)`,
+          `line_edits[${i}] requires action (${VALID_ACTIONS_HINT})`,
           'invalid_line_edit',
           { index: i },
         );
       }
       if (!VALID_ACTIONS.has(action as string)) {
         throwEditValidationError(
-          `line_edits[${i}] invalid action "${action}". Valid: insert_before|insert_after|replace|replace_body|delete`,
+          `line_edits[${i}] invalid action "${action}". Valid: ${VALID_ACTIONS_HINT}`,
           'invalid_line_edit',
           { index: i, action },
         );
@@ -1322,6 +1325,24 @@ function resolveEditOperation(params: Record<string, unknown>): { operation: str
         throwEditValidationError(`line_edits[${i}] line must be a positive integer`, 'invalid_line_edit', { index: i, line: o.line });
       }
       if ((hasAnchor || hasSymbol) && !hasLine) o.line = 0; // backend serde contract: 0 = resolve from anchor/symbol
+      if (action === 'move') {
+        const dest = o.destination;
+        if (dest == null || typeof dest !== 'number' || !Number.isInteger(dest) || dest <= 0) {
+          throwEditValidationError(
+            `line_edits[${i}] move requires destination (1-based positive integer)`,
+            'invalid_line_edit',
+            { index: i, destination: dest },
+          );
+        }
+        effectiveExplicitLineEditCount(o);
+        if (o.reindent != null && typeof o.reindent !== 'boolean') {
+          throwEditValidationError(
+            `line_edits[${i}] move reindent must be boolean when set`,
+            'invalid_line_edit',
+            { index: i },
+          );
+        }
+      }
       return o;
     });
     // Pre-dispatch: validate anchor replace content for brace languages — reject obviously unbalanced blocks
@@ -1728,20 +1749,6 @@ export const handleRollback: OpHandler = async (params, ctx) => {
     return ok(JSON.stringify(result), refs, result);
   } catch (rbErr) {
     return err(`rollback: ERROR ${rbErr instanceof Error ? rbErr.message : String(rbErr)}`);
-  }
-};
-
-// ---------------------------------------------------------------------------
-// change.split_match
-// ---------------------------------------------------------------------------
-
-export const handleSplitMatch: OpHandler = async (params, ctx) => {
-  try {
-    const result = await ctx.atlsBatchQuery('split_match', params);
-    const refs = extractRefs(result);
-    return ok(JSON.stringify(result), refs, result);
-  } catch (splitErr) {
-    return err(`split_match: ERROR ${splitErr instanceof Error ? splitErr.message : String(splitErr)}`);
   }
 };
 

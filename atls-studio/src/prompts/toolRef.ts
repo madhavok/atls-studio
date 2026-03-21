@@ -8,7 +8,7 @@ Use one native execution surface: batch({version:"1.0",steps:[...]}).
 ### Operation Families
 discover: search.code, search.symbol, search.usage, search.similar, search.issues, search.patterns
 understand: read.context, read.shaped, read.lines, read.file, analyze.deps, analyze.calls, analyze.structure, analyze.impact, analyze.blast_radius, analyze.extract_plan
-change: change.edit, change.create, change.delete, change.refactor, change.rollback, change.split_match
+change: change.edit, change.create, change.delete, change.refactor, change.rollback
 verify: verify.build, verify.test, verify.lint, verify.typecheck
 session: session.plan, session.advance, session.status, session.pin (hashes:["h:X",...]), session.unpin, session.stage, session.unstage, session.compact, session.unload, session.drop, session.recall, session.stats, session.bb.write, session.bb.read, session.bb.delete, session.bb.list, session.rule, session.emit, session.shape, session.load, session.compact_history
 annotate: annotate.engram (hash, fields:{...}), annotate.note, annotate.link (from:"h:X" to:"h:Y"), annotate.retype, annotate.split, annotate.merge, annotate.design
@@ -44,7 +44,6 @@ change.create creates:[{path,content}]
 change.delete file_paths:["path"|"h:X",...] confirm?:true dry_run?:false (defaults to confirm:true — pass dry_run:true for preview only)
 change.refactor action:inventory|impact_analysis|execute|rollback file_paths?:[] symbol_names?:[]
 change.rollback restore:[{file,hash}] delete?:["path"|"h:X",...] (file, hash, delete accept h:refs)
-change.split_match file_path:"" function_name:"" target_module?:"" dry_run?:true strategy?:"" match_index?:N
 change.split_module source_file:"" target_dir:"" plan:[{module,symbols:[]}] dry_run?:true mod_style?:""
 verify.build|test|lint|typecheck target_dir?:"" workspace?:"" runner?:""
 system.git action:status|diff|stage|commit|push|log|reset workspace?:""
@@ -62,17 +61,17 @@ intent.edit_multi edits:[{file_path:"",line_edits:[...]}] verify?:bool force?:bo
 intent.investigate query:"" file_paths?:[] force?:bool — searches, reads results, stages, caches in BB; skips if BB has prior results
 intent.diagnose file_paths?:[] severity?:"" query?:"" force?:bool — search.issues, read context, analyze.impact, stage, cache; does NOT edit (read-only discovery)
 intent.survey directory:"" depth?:N force?:bool — reads tree, stages sigs, caches in BB; skips if tree already cached
-intent.refactor file_path:"" strategy?:"" symbol_names?:[] target_file?:"" force?:bool — reads, pins, analyzes, extracts plan, splits, verifies; reuses prior understand/survey results
+intent.refactor file_path:"" strategy?:"" symbol_names?:[] target_file?:"" force?:bool — reads, pins, analyzes, extracts plan, refactors, verifies; reuses prior understand/survey results
 intent.create target_path:"" content:"" ref_files?:[] verify?:bool force?:bool — reads ref_file sigs for dep context, creates file, verifies types; AI must provide full content
 intent.test source_file:"" test_file?:"" force?:bool — reads source sigs + existing test context, stages, caches in BB; does NOT write the test (context prep only)
 intent.search_replace search_query?:"" old_text:"" new_text:"" file_glob?:"" max_matches?:N verify?:bool force?:bool — searches, emits capped anchor-based edits, verifies; literal text only, no regex
-intent.extract source_file:"" symbol_names?:[] target_file:"" force?:bool — reads source, splits via change.split_match, verifies; symbols must be self-contained
+intent.extract source_file:"" symbol_names?:[] target_file:"" force?:bool — reads source, refactors via change.refactor, verifies; symbols must be self-contained
 
 ### Examples
 batch({version:"1.0",goal:"search then edit",steps:[{id:"s1",use:"search.code",with:{queries:["auth"]}},{id:"s2",use:"change.edit",with:{edits:[...]}},{id:"s3",use:"verify.typecheck",if:{step_ok:"s2"}}]})
 batch({version:"1.0",goal:"batch related implementation before verification",steps:[{id:"r1",use:"read.context",with:{type:"smart",file_paths:["src/auth.ts","src/session.ts"]}},{id:"c1",use:"change.edit",with:{edits:[...]}},{id:"c2",use:"change.edit",if:{step_ok:"c1"},with:{edits:[...]}},{id:"v1",use:"verify.build",if:{step_ok:"c2"}}]})
 batch({version:"1.0",steps:[{id:"r1",use:"read.context",with:{type:"smart",file_paths:["src/api.ts","src/db.ts"]}},{id:"p1",use:"session.pin",in:{hashes:{from_step:"r1",path:"refs"}}}]})
-batch({version:"1.0",steps:[{id:"plan",use:"analyze.extract_plan",with:{file_path:"src/lib.rs",strategy:"by_cluster"}},{id:"split",use:"change.split_match",with:{file_path:"src/lib.rs",function_name:"dispatch",target_module:"handlers.rs",dry_run:false}}]})
+batch({version:"1.0",steps:[{id:"plan",use:"analyze.extract_plan",with:{file_path:"src/lib.rs",strategy:"by_cluster"}},{id:"r1",use:"change.refactor",with:{action:"execute",file_paths:["src/lib.rs"],symbol_names:["dispatch"],to:"handlers.rs"}}]})
 batch({version:"1.0",steps:[{id:"git",use:"system.git",with:{action:"status"}},{id:"help",use:"system.help",with:{topic:"edit"}}]})
 batch({version:"1.0",steps:[{id:"u1",use:"intent.understand",with:{file_paths:["src/auth.ts","src/session.ts"]}}]})
 batch({version:"1.0",steps:[{id:"u1",use:"intent.understand",with:{file_paths:["src/api.ts"]}},{id:"e1",use:"intent.edit",with:{file_path:"src/api.ts",line_edits:[{line:10,action:"replace",count:1,content:"const x = 1;"}]}}]})
