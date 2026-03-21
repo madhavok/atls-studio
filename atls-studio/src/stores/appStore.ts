@@ -43,6 +43,10 @@ export function getMessageParts(msg: Message | { parts?: MessagePart[]; segments
     }
     return parts;
   }
+  // Plain text content with no structured parts
+  if (typeof msg.content === 'string' && msg.content.trim()) {
+    return [{ type: 'text', content: msg.content }];
+  }
   return [];
 }
 
@@ -845,10 +849,10 @@ export const useAppStore = create<AppState>((set) => ({
         promptMetrics: {
           modePromptTokens: 0, toolRefTokens: 0, shellGuideTokens: 0,
           nativeToolTokens: 0, primerTokens: 0, contextControlTokens: 0,
-        workspaceContextTokens: 0,
-        totalOverheadTokens: 0, compressionSavings: 0,
-        compressionCount: 0, roundCount: 0, cumulativeInputSaved: 0,
-      },
+          workspaceContextTokens: 0, entryManifestTokens: 0,
+          totalOverheadTokens: 0, compressionSavings: 0,
+          compressionCount: 0, roundCount: 0, cumulativeInputSaved: 0,
+        },
       cacheMetrics: {
         sessionCacheWrites: 0, sessionCacheReads: 0, sessionUncached: 0,
         sessionRequests: 0, lastRequestHitRate: 0, sessionHitRate: 0,

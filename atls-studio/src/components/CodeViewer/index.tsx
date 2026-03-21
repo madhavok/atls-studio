@@ -54,6 +54,12 @@ export function CodeViewer() {
   const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
   const monacoRef = useRef<Monaco | null>(null);
   const referenceClickTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const activeFileRef = useRef(activeFile);
+  activeFileRef.current = activeFile;
+  const activeRootRef = useRef(activeRoot);
+  activeRootRef.current = activeRoot;
+  const projectPathRef = useRef(projectPath);
+  projectPathRef.current = projectPath;
 
   // Stable refs for the event listener closure (avoids stale captures)
   const openFilesRef = useRef(openFiles);
@@ -254,15 +260,17 @@ export function CodeViewer() {
   // Jump to Source (F12)
   const handleJumpToSource = useCallback(async () => {
     const word = getWordAtCursor();
-    if (!word || !projectPath) return;
+    const root = activeRootRef.current ?? projectPathRef.current;
+    if (!word || !root) return;
 
     try {
       const usage = await invoke<SymbolUsage>('get_symbol_usage', {
         symbol: word,
-        path: projectPath,
+        path: root,
       });
 
-      const def = usage.definitions.find((definition) => definition.file === activeFile) ?? usage.definitions[0];
+      const currentFile = activeFileRef.current;
+      const def = usage.definitions.find((definition) => definition.file === currentFile) ?? usage.definitions[0];
       if (def) {
         openFile(def.file);
         setPendingScrollLine(def.line);
@@ -270,17 +278,18 @@ export function CodeViewer() {
     } catch (error) {
       console.error('Jump to source failed:', error);
     }
-  }, [activeFile, getWordAtCursor, projectPath, openFile]);
+  }, [getWordAtCursor, openFile]);
 
   // Find Usages (Shift+F12)
   const handleFindUsages = useCallback(async () => {
     const word = getWordAtCursor();
-    if (!word || !projectPath) return;
+    const root = activeRootRef.current ?? projectPathRef.current;
+    if (!word || !root) return;
 
     try {
       const usage = await invoke<SymbolUsage>('get_symbol_usage', { 
         symbol: word, 
-        path: projectPath 
+        path: root 
       });
 
       const seen = new Set<string>();
@@ -299,7 +308,7 @@ export function CodeViewer() {
     } catch (error) {
       console.error('Find usages failed:', error);
     }
-  }, [getWordAtCursor, projectPath]);
+  }, [getWordAtCursor]);
 
   const handleEditorMount: OnMount = useCallback((editor, monaco) => {
     editorRef.current = editor;
