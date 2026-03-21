@@ -888,7 +888,9 @@ function createChatSession(isSwarm: boolean): ChatSessionContext {
   if (prior) {
     prior.abortController.abort();
     prior.activeStreamIds.clear();
-    invoke('cancel_all_chat_streams').catch(() => {});
+    invoke('cancel_all_chat_streams').catch((err) => {
+      console.warn('[aiService] cancel_all_chat_streams failed:', err);
+    });
     _activeSession = null;
     currentAbortController = null;
   }
@@ -985,7 +987,9 @@ export function stopChat(): void {
     session.activeStreamIds.clear();
     _activeSession = null;
     currentAbortController = null;
-    invoke('cancel_all_chat_streams').catch(() => {});
+    invoke('cancel_all_chat_streams').catch((err) => {
+      console.warn('[aiService] cancel_all_chat_streams failed:', err);
+    });
     // Ensure UI exits generating state synchronously
     useAppStore.getState().setIsGenerating(false);
     console.log('[aiService] Chat stopped by user');

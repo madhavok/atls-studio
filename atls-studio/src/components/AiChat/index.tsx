@@ -36,6 +36,16 @@ function coerceStringArray(value: unknown): string[] {
   return [];
 }
 
+/** Tauri v2 dialog may return a path string or `{ path: string }`. */
+function dialogSelectedPath(entry: unknown): string | null {
+  if (typeof entry === 'string') return entry;
+  if (entry !== null && typeof entry === 'object' && 'path' in entry) {
+    const p = (entry as { path: unknown }).path;
+    if (typeof p === 'string') return p;
+  }
+  return null;
+}
+
 function getTaskCompleteArgs(tc: { args?: Record<string, unknown> }): { summary: string; filesChanged: string[] } {
   const parsed = parseTaskCompleteArgs(tc.args ?? {});
 
@@ -2733,8 +2743,11 @@ export function AiChat() {
       if (!result) return;
       const paths = Array.isArray(result) ? result : [result];
       for (const filePath of paths) {
-        // Handle Tauri v2 dialog which returns objects with path property
-        const p = typeof filePath === 'string' ? filePath : (filePath as any).path || String(filePath);
+        const p = dialogSelectedPath(filePath);
+        if (!p) {
+          console.warn('Attach: could not resolve path from file dialog entry', filePath);
+          continue;
+        }
         const name = p.split(/[/\\]/).pop() || p;
         try {
           const attachment = await processFileAttachment(p, name);
@@ -2767,7 +2780,7 @@ export function AiChat() {
       if (appState.currentSessionId && appState.messages.length > 0) {
         const lastUserMsg = [...appState.messages].reverse().find(m => m.role === 'user');
         if (lastUserMsg) {
-          saveRestorePoint(appState.currentSessionId, lastUserMsg.id).catch(() => {});
+          void saveRestorePoint(appState.currentSessionId, lastUserMsg.id);
         }
       }
     }

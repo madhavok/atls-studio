@@ -13,25 +13,31 @@ function err(summary: string): StepOutput {
   return { kind: 'bb_ref', ok: false, refs: [], summary, error: summary };
 }
 
-async function persistBlackboardNote(key: string, content: string, sessionId: string | null): Promise<void> {
+/** @returns false if DB was required and the operation failed */
+async function persistBlackboardNote(key: string, content: string, sessionId: string | null): Promise<boolean> {
   try {
     const { chatDb } = await import('../../chatDb');
     if (sessionId && chatDb.isInitialized()) {
       await chatDb.setBlackboardNote(sessionId, key, content);
     }
+    return true;
   } catch (e) {
     console.warn('[bb] Failed to persist bb note:', e);
+    return false;
   }
 }
 
-async function deleteBlackboardNote(key: string, sessionId: string | null): Promise<void> {
+/** @returns false if DB was required and the operation failed */
+async function deleteBlackboardNote(key: string, sessionId: string | null): Promise<boolean> {
   try {
     const { chatDb } = await import('../../chatDb');
     if (sessionId && chatDb.isInitialized()) {
       await chatDb.deleteBlackboardNote(sessionId, key);
     }
+    return true;
   } catch (e) {
     console.warn('[bb] Failed to delete bb note:', e);
+    return false;
   }
 }
 
@@ -42,6 +48,8 @@ export const handleBbWrite: OpHandler = async (params, ctx) => {
   if (key.startsWith('__ctx_')) return err('bb_write: ERROR reserved key prefix __ctx_');
 
   if (!content || content.trim() === '') {
+    const dbOk = await deleteBlackboardNote(key, ctx.sessionId);
+    if (!dbOk) return err('bb_write: ERROR could not delete note from database');
     const removed = ctx.store().removeBlackboardEntry(key);
     return ok(removed ? `bb_write: ${key} deleted (empty content)` : `bb_write: ${key} not found`);
   }
@@ -50,9 +58,11 @@ export const handleBbWrite: OpHandler = async (params, ctx) => {
   const { tokens } = ctx.store().setBlackboardEntry(key, content, derivedFrom?.length ? { derivedFrom } : undefined);
   let line = `bb_write: h:bb:${key} (${tokens}tk) — use h:bb:${key} in response`;
   if (derivedFrom?.length) line += ` | derived_from: ${derivedFrom.join(', ')}`;
-  persistBlackboardNote(key, content, ctx.sessionId).catch((e) => {
-    console.warn('[bb] persistBlackboardNote fire-and-forget failed:', e);
-  });
+  const persisted = await persistBlackboardNote(key, content, ctx.sessionId);
+  if (!persisted) {
+    ctx.store().removeBlackboardEntry(key);
+    return err('bb_write: ERROR could not persist note to database');
+  }
   return ok(line, [`h:bb:${key}`]);
 };
 
@@ -98,10 +108,11 @@ export const handleBbDelete: OpHandler = async (params, ctx) => {
 
   let deleted = 0;
   for (const k of keys) {
+    const dbOk = await deleteBlackboardNote(k, ctx.sessionId);
+    if (!dbOk) {
+      return err(`bb_delete: ERROR could not delete ${k} from database`);
+    }
     if (ctx.store().removeBlackboardEntry(k)) deleted++;
-    deleteBlackboardNote(k, ctx.sessionId).catch((e) => {
-      console.warn('[bb] deleteBlackboardNote fire-and-forget failed:', e);
-    });
   }
   return ok(`bb_delete: ${deleted} entries removed`);
 };

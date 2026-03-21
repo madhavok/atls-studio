@@ -73,6 +73,9 @@ interface TerminalStore {
   _executeCommandDirect: (command: string, terminalId: string) => Promise<ExecutionResult>;
   _processQueue: (terminalId: string) => Promise<void>;
   
+  /** Mark PTY as dead (backend gone or write failed). Mirrors pty-exit handling. */
+  markTerminalDead: (id: string) => void;
+
   // Initialization
   setupOutputListener: (id: string) => Promise<void>;
   cleanupTerminal: (id: string) => Promise<void>;
@@ -244,6 +247,17 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
   commandQueues: new Map(),
   isExecuting: new Map(),
 
+  markTerminalDead: (id: string) => {
+    set(state => {
+      const newTerminals = new Map(state.terminals);
+      const terminal = newTerminals.get(id);
+      if (terminal) {
+        newTerminals.set(id, { ...terminal, isAlive: false });
+      }
+      return { terminals: newTerminals };
+    });
+  },
+
   // Create a new terminal
   // Options:
   //   background: true → don't set as active (used by swarm agents)
@@ -313,14 +327,7 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
       }
     } catch (error) {
       console.error('Failed to spawn PTY:', error);
-      set(state => {
-        const newTerminals = new Map(state.terminals);
-        const term = newTerminals.get(id);
-        if (term) {
-          newTerminals.set(id, { ...term, isAlive: false });
-        }
-        return { terminals: newTerminals };
-      });
+      get().markTerminalDead(id);
     }
 
     return id;
@@ -607,14 +614,7 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
 
     // Listen for PTY exit
     const exitUnlisten = await safeListen(`pty-exit-${id}`, () => {
-      set(state => {
-        const newTerminals = new Map(state.terminals);
-        const terminal = newTerminals.get(id);
-        if (terminal) {
-          newTerminals.set(id, { ...terminal, isAlive: false });
-        }
-        return { terminals: newTerminals };
-      });
+      get().markTerminalDead(id);
     });
 
     set(state => ({

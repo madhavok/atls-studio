@@ -780,6 +780,11 @@ export function useChatPersistence() {
       await chatDb.setSessionState(sessionId, key, JSON.stringify(snapshot));
     } catch (e) {
       console.warn('[ChatPersistence] Failed to save restore point:', e);
+      useAppStore.getState().addToast({
+        type: 'error',
+        message: 'Could not save restore point for edit-and-resend. If you edit a message, undo may be incomplete.',
+        duration: 6000,
+      });
     }
   }, []);
 

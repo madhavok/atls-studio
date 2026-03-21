@@ -212,10 +212,15 @@ function TerminalPane({ label, tabs, activeId, onSelectTab, onCloseTab, onCreate
     const handleData = (data: string) => {
       invoke('write_pty', { id: activeId, data }).catch((err) => {
         console.error('[Terminal] write_pty failed:', err);
-        // Terminal may have died — mark as not alive to prevent further writes
         const store = useTerminalStore.getState();
         const term = store.terminals.get(activeId);
-        if (term && !term.isAlive) return; // already marked
+        if (term && !term.isAlive) return;
+        store.markTerminalDead(activeId);
+        useAppStore.getState().addToast({
+          type: 'error',
+          message: 'Terminal disconnected — input was not sent to the shell.',
+          duration: 5000,
+        });
       });
     };
     const disposable = instance.terminal.onData(handleData);

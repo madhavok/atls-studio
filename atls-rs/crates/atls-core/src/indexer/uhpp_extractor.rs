@@ -957,4 +957,13 @@ const utils = {
         assert!(names.contains(&"of"), "missing object method of: {:?}", names);
         assert!(names.contains(&"from"), "missing object method from: {:?}", names);
     }
+
+    #[test]
+    fn uhpp_symbol_kind_patterns_compile() {
+        for (kind, pat) in UHPP_SYMBOL_KINDS {
+            regex::Regex::new(pat).unwrap_or_else(|e| {
+                panic!("invalid UHPP regex for kind {kind}: {e}");
+            });
+        }
+    }
 }
