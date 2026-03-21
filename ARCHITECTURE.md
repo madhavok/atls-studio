@@ -71,6 +71,15 @@ The architecture has four layers:
 3. **Freshness & Hash Protocol**: Subsystems that track what the model has seen, when it was seen, whether it's still valid, and how to recover when it isn't.
 4. **Rust Backend**: A Tauri application providing file I/O, code intelligence, edit sessions with preimage verification, dependency analysis, and build/verify capabilities.
 
+For subsystem-oriented overviews that complement this runtime-focused architecture doc, see:
+
+- [Studio App Shell](docs/studio-app-shell.md)
+- [Tauri Backend](docs/tauri-backend.md)
+- [Session Persistence](docs/session-persistence.md)
+- [Swarm And Orchestration](docs/swarm-orchestration.md)
+- [ATLS Engine](docs/atls-engine.md)
+- [MCP Integration](docs/mcp-integration.md)
+
 ---
 
 ## 3. Engrams: Hash-Addressed Units of Knowledge

@@ -62,6 +62,12 @@ See [Architecture Document](ARCHITECTURE.md) for the full technical description,
 | [Prompt Assembly](docs/prompt-assembly.md) | Cache-aware prompt construction and middleware pipeline |
 | [History Compression](docs/history-compression.md) | Hash-reference deflation and conversation management |
 | [API Economics](docs/api-economics.md) | The caching problem and what would fix it |
+| [Studio App Shell](docs/studio-app-shell.md) | Desktop UI structure, panel layout, and shell-level responsibilities |
+| [Tauri Backend](docs/tauri-backend.md) | Native Rust service layer, command groups, and backend boundaries |
+| [Session Persistence](docs/session-persistence.md) | Per-project chat DB, session restore, memory snapshots, and swarm persistence |
+| [Swarm And Orchestration](docs/swarm-orchestration.md) | Multi-agent research, planning, execution, and task coordination |
+| [ATLS Engine](docs/atls-engine.md) | Shared Rust engine for indexing, parsing, queries, and project state |
+| [MCP Integration](docs/mcp-integration.md) | External MCP server surface and how it differs from the Studio host |
 
 ## Tech Stack
 
