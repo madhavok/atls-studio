@@ -299,6 +299,20 @@ export const handleRead: OpHandler = async (params, ctx) => {
 // read_lines
 // ---------------------------------------------------------------------------
 
+/** Check if a parsed UHPP modifier is non-line (symbol, shape, or string shape) — needs resolve_hash_ref */
+function isNonLineModifier(modifier: unknown): boolean {
+  if (typeof modifier === 'string') {
+    // String modifiers like 'sig', 'content', 'fold', 'imports', 'exports', etc.
+    return modifier !== 'auto';
+  }
+  if (modifier && typeof modifier === 'object') {
+    // Symbol modifier: { symbol: { kind?, name, shape? } }
+    if ('symbol' in modifier) return true;
+    // Shape modifier: { shape: ShapeOp }
+    if ('shape' in modifier && !('lines' in modifier)) return true;
+  }
+  return false;
+}
 /** Convert modifier.lines ([[15,30],[40,55]]) to backend "15-30,40-55" format */
 function modifierLinesToBackend(modifier: { lines?: Array<[number | null, number | null]> }): string | null {
   const lines = modifier?.lines;
@@ -339,7 +353,38 @@ export const handleReadLines: OpHandler = async (params, ctx) => {
       rlHash = rlHash || `h:${parsed.hash}`;
       if (!rlLines) {
         const fromMod = modifierLinesToBackend(parsed.modifier as { lines?: Array<[number | null, number | null]> });
-        if (fromMod) rlLines = fromMod;
+        if (fromMod) {
+          rlLines = fromMod;
+        } else if (isNonLineModifier(parsed.modifier)) {
+          // UHPP symbol/shape modifier (e.g. :fn(name), :cls(Name), :sig, :fold)
+          // Delegate to resolve_hash_ref like handleShape does
+          try {
+            const rawRef = ref!.startsWith('h:') ? ref! : `h:${ref!}`;
+            const resolved = await invokeWithTimeout<ResolvedHashContent>('resolve_hash_ref', { rawRef }, READ_TIMEOUT_MS);
+            const resolvedHash = ctx.store().addChunk(resolved.content, 'smart', resolved.source || undefined);
+            const tokens = estimateTokens(resolved.content);
+            const source = resolved.source || '';
+            if (source && resolved.snapshot_hash) {
+              ctx.store().reconcileSourceRevision(source, resolved.snapshot_hash);
+            }
+            return {
+              kind: 'file_refs' as const, ok: true,
+              refs: [`h:${resolvedHash}`],
+              summary: `read_lines: ${ref} → h:${resolvedHash} (${tokens}tk, resolved via UHPP modifier)\n${resolved.content}`,
+              tokens,
+              content: {
+                file: source,
+                hash: resolvedHash,
+                ...(resolved.snapshot_hash ? { snapshot_hash: resolved.snapshot_hash } : {}),
+                target_range: resolved.target_range,
+                actual_range: resolved.actual_range,
+                content: resolved.content,
+              },
+            };
+          } catch (modErr) {
+            return err(`read_lines: ERROR resolving UHPP modifier in ref "${ref}": ${modErr instanceof Error ? modErr.message : String(modErr)}`);
+          }
+        }
       }
     } else if (typeof ref === 'string') {
       // Fallback when parseHashRef fails: extract h:XXXX:15-50 or h:XXXX:15-50,60-80
