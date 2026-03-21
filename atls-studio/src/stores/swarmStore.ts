@@ -35,6 +35,8 @@ export interface ResearchResult {
     os: string;
     shell: string;
   } | null;
+  // Structured research digest with per-file symbols, deps, and edit targets
+  digest?: import('../services/orchestrator').ResearchDigest;
 }
 
 export interface SwarmTask {

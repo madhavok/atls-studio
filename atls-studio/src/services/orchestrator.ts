@@ -16,6 +16,7 @@ import { chatDb, type TaskStatus as ChatTaskStatus } from './chatDb';
 import { rateLimiter } from './rateLimiter';
 import { streamChatForSwarm, BATCH_TOOL_REF, type AIConfig, type ChatMessage, type AIProvider } from './aiService';
 import { toTOON } from '../utils/toon';
+import { estimateTokens } from '../utils/contextHash';
 
 // ============================================================================
 // Types
@@ -43,6 +44,7 @@ export interface PlannedTask {
   contextNeeded: string[];
   dependencies: string[];
   priority: number;
+  editTargets?: EditTarget[];
 }
 
 interface AgentExecution {
@@ -52,10 +54,65 @@ interface AgentExecution {
 }
 
 // ============================================================================
+// Research Digest Types (Context Compiler)
+// ============================================================================
+
+export interface EditTarget {
+  file: string;
+  symbol: string;
+  kind: 'function' | 'class' | 'method' | 'export' | 'interface' | 'type' | 'block';
+  lineRange?: [number, number];
+  reason: string;
+}
+
+export interface FileDigest {
+  path: string;
+  smartHash: string;
+  rawHash?: string;
+  smartContent?: string;
+  rawContent?: string;
+  signatures: string[];
+  imports: string[];
+  importedBy: string[];
+  editTargets: EditTarget[];
+  relevanceScore: number;
+}
+
+export interface ResearchDigest {
+  files: Map<string, FileDigest>;
+  dependencyGraph: Map<string, string[]>;
+  reverseDependencyGraph: Map<string, string[]>;
+  editPlan: EditTarget[];
+  projectProfile: string;
+}
+
+export interface TaskPacket {
+  task: { title: string; description: string; role: AgentRole };
+  ownership: { editable: string[]; readonly: string[] };
+  content: {
+    owned: Array<{ path: string; content: string; editTargets: EditTarget[] }>;
+    references: Array<{ path: string; signatures: string }>;
+    dependencies: Array<{ path: string; signatures: string }>;
+  };
+  context: {
+    userRequest: string;
+    dependencyResults: string;
+    blackboard: Record<string, string>;
+    projectContext: { os: string; shell: string; cwd: string } | null;
+  };
+  budget: { maxRounds: number; maxTokens: number };
+}
+
+// Default context budget per agent (tokens). Leaves room for system prompt + output.
+const DEFAULT_AGENT_CONTEXT_BUDGET = 120_000;
+
+// ============================================================================
 // Orchestrator Prompts
 // ============================================================================
 
 const ORCHESTRATOR_SYSTEM_PROMPT = `You are a senior engineering lead decomposing a task for a team of specialist agents. Output ONLY valid JSON.
+
+You will receive a RESEARCH DIGEST containing per-file symbol signatures, a dependency graph, and candidate edit targets. Use this structured data to make precise task assignments.
 
 ## Agent Roles
 - coder: Implements features and refactors code. Uses batch + task_complete.
@@ -69,10 +126,12 @@ const ORCHESTRATOR_SYSTEM_PROMPT = `You are a senior engineering lead decomposin
 2. DEPENDENCIES: If task B needs the output of task A, list A's title in B's "dependencies". Agents receive completed dependency results.
 3. CONTEXT FILES: List read-only reference files in "contextNeeded" — agents can read these but not edit them.
 4. USE REAL PATHS: Only reference files found in the research phase. Never invent paths.
-5. DETAILED DESCRIPTIONS: Include specific function names, patterns, and line-level guidance from the research. Each agent works alone with only its assigned context.
+5. DETAILED DESCRIPTIONS: Include specific function names, patterns, and line-level guidance from the research. Each agent works alone with only its assigned context. Reference the exact symbols and line ranges from the digest.
 6. MINIMAL TASKS: Prefer fewer, well-scoped tasks over many tiny ones. Group related changes into one task when they touch the same files.
 7. PRIORITY: Lower number = runs first (along with dependency ordering).
 8. TASK COUNT: Aim for 2-5 tasks. If the request is simple, 1-2 tasks may suffice. More than 7 tasks usually means over-decomposition.
+9. EDIT TARGETS: When the research digest provides specific symbols and line ranges, include them in editTargets so agents know exactly what to modify.
+10. COUPLING: Files that import each other heavily should be in the same task when possible. Use the dependency graph to identify tightly-coupled clusters.
 
 ## JSON Format
 {
@@ -85,7 +144,10 @@ const ORCHESTRATOR_SYSTEM_PROMPT = `You are a senior engineering lead decomposin
       "files": ["path/to/file.ts"],
       "contextNeeded": ["path/to/reference.ts"],
       "dependencies": ["Title of prerequisite task"],
-      "priority": 1
+      "priority": 1,
+      "editTargets": [
+        {"file": "path/to/file.ts", "symbol": "functionName", "kind": "function", "lineRange": [10, 25], "reason": "Add validation logic"}
+      ]
     }
   ]
 }
@@ -505,7 +567,17 @@ class OrchestratorService {
         }
       }
       
-      // Step 8: Build research summary
+      // Step 8: Build research digest with per-file symbol extraction
+      swarmStore.addResearchLog('🔬 Building research digest (symbols, deps, edit targets)...');
+      const digest = this.buildResearchDigest(
+        smartContentForAnalysis, filesToModify, filesForContext,
+        smartHashes, rawHashes, fileContentsMap, keywords, projectProfileText,
+      );
+      swarmStore.addResearchLog(`  🔗 Dependency edges: ${Array.from(digest.dependencyGraph.values()).reduce((s, v) => s + v.length, 0)}`);
+      swarmStore.addResearchLog(`  🎯 Edit targets: ${digest.editPlan.length}`);
+      swarmStore.addResearchLog(`  📋 File digests: ${digest.files.size}`);
+
+      // Build legacy rawFindings for backward compat
       const rawFindings = `
 === CODEBASE RESEARCH RESULTS ===
 
@@ -523,19 +595,11 @@ CONTEXT HASHES STORED:
 
 SEARCH KEYWORDS USED: ${keywords.join(', ')}
 `;
-      
-      // Extract patterns and dependencies from available content
-      const patternable = smartContentForAnalysis.map(f => ({
-        path: f.path,
-        content: f.content,
-        summary: f.content.split('\n').slice(0, 50).join('\n'),
-      }));
-      const patterns = this.extractPatterns(patternable);
-      const dependencies = this.extractDependencies(patternable);
-      swarmStore.addResearchLog(`  🔗 Patterns found: ${patterns.length}`);
-      swarmStore.addResearchLog(`  📦 Dependencies tracked: ${dependencies.length}`);
-      
-      // Final summary
+
+      const patterns = this.extractPatterns(smartContentForAnalysis);
+      const dependencies = Array.from(digest.dependencyGraph.entries())
+        .flatMap(([src, deps]) => deps.map(d => `${src} -> ${d}`));
+
       swarmStore.addResearchLog(`✅ Research complete!`);
       swarmStore.addResearchLog(`───────────────────────`);
       swarmStore.addResearchLog(`📊 Summary: ${filesToModify.length} to modify, ${filesForContext.length} for context | ${smartHashes.size} smart + ${rawHashes.size} raw hashes stored`);
@@ -551,6 +615,7 @@ SEARCH KEYWORDS USED: ${keywords.join(', ')}
         rawHashes,
         fileContents: fileContentsMap,
         projectContext,
+        digest,
       };
       
     } catch (error) {
@@ -560,11 +625,155 @@ SEARCH KEYWORDS USED: ${keywords.join(', ')}
     }
   }
 
+  // ============================================================================
+  // Research Digest Builder
+  // ============================================================================
+
+  private buildResearchDigest(
+    smartContent: { path: string; content: string }[],
+    filesToModify: string[],
+    filesForContext: string[],
+    smartHashes: Map<string, string>,
+    rawHashes: Map<string, string>,
+    fileContents: Map<string, string>,
+    keywords: string[],
+    projectProfile: string,
+  ): ResearchDigest {
+    const files = new Map<string, FileDigest>();
+    const depGraph = new Map<string, string[]>();
+    const reverseDepGraph = new Map<string, string[]>();
+    const modifySet = new Set(filesToModify);
+
+    for (const { path, content } of smartContent) {
+      const signatures = this.extractSignatures(content);
+      const imports = this.extractImportPaths(content);
+      const relevanceScore = keywords.reduce(
+        (score, kw) => score + (content.toLowerCase().includes(kw.toLowerCase()) ? 1 : 0), 0,
+      );
+
+      depGraph.set(path, imports);
+      for (const imp of imports) {
+        const existing = reverseDepGraph.get(imp) || [];
+        existing.push(path);
+        reverseDepGraph.set(imp, existing);
+      }
+
+      const editTargets: EditTarget[] = [];
+      if (modifySet.has(path)) {
+        const rawContent = fileContents.get(path) || content;
+        for (const sig of signatures) {
+          const matchesKeyword = keywords.some(kw =>
+            sig.toLowerCase().includes(kw.toLowerCase()),
+          );
+          if (matchesKeyword) {
+            const lineRange = this.findSymbolLineRange(rawContent, sig);
+            editTargets.push({
+              file: path,
+              symbol: sig.split(/[(\s{:]/)[0].replace(/^(export\s+)?(default\s+)?(async\s+)?(function|class|interface|type|const|let|var)\s+/, '').trim(),
+              kind: this.classifySignature(sig),
+              lineRange: lineRange ?? undefined,
+              reason: `Matches keywords: ${keywords.filter(kw => sig.toLowerCase().includes(kw.toLowerCase())).join(', ')}`,
+            });
+          }
+        }
+      }
+
+      files.set(path, {
+        path,
+        smartHash: smartHashes.get(path) || '',
+        rawHash: rawHashes.get(path),
+        smartContent: content,
+        rawContent: fileContents.get(path),
+        signatures,
+        imports,
+        importedBy: [],
+        editTargets,
+        relevanceScore,
+      });
+    }
+
+    // Populate reverse dependencies
+    for (const [target, sources] of reverseDepGraph) {
+      const digest = files.get(target);
+      if (digest) digest.importedBy = sources;
+    }
+
+    const editPlan = Array.from(files.values()).flatMap(f => f.editTargets);
+
+    return { files, dependencyGraph: depGraph, reverseDependencyGraph: reverseDepGraph, editPlan, projectProfile };
+  }
+
+  private extractSignatures(content: string): string[] {
+    const sigs: string[] = [];
+    const patterns = [
+      /^export\s+(?:default\s+)?(?:async\s+)?function\s+\w+[^{]*/gm,
+      /^export\s+(?:default\s+)?class\s+\w+[^{]*/gm,
+      /^export\s+(?:default\s+)?interface\s+\w+[^{]*/gm,
+      /^export\s+(?:default\s+)?type\s+\w+[^=]*/gm,
+      /^export\s+const\s+\w+/gm,
+      /^(?:async\s+)?function\s+\w+[^{]*/gm,
+      /^class\s+\w+[^{]*/gm,
+      /^interface\s+\w+[^{]*/gm,
+      /^(?:pub\s+)?(?:async\s+)?fn\s+\w+[^{]*/gm,
+      /^(?:pub\s+)?struct\s+\w+/gm,
+      /^(?:pub\s+)?enum\s+\w+/gm,
+      /^(?:pub\s+)?trait\s+\w+/gm,
+    ];
+    for (const pat of patterns) {
+      for (const m of content.matchAll(pat)) {
+        const sig = m[0].trim().slice(0, 120);
+        if (!sigs.includes(sig)) sigs.push(sig);
+      }
+    }
+    return sigs;
+  }
+
+  private extractImportPaths(content: string): string[] {
+    const imports: string[] = [];
+    const importMatches = content.matchAll(/from\s+['"](\.[^'"]+)['"]/g);
+    for (const m of importMatches) {
+      if (m[1] && !imports.includes(m[1])) imports.push(m[1]);
+    }
+    const useMatches = content.matchAll(/use\s+(?:crate|super)::([^;{]+)/g);
+    for (const m of useMatches) {
+      if (m[1] && !imports.includes(m[1])) imports.push(m[1].trim());
+    }
+    return imports;
+  }
+
+  private classifySignature(sig: string): EditTarget['kind'] {
+    const lower = sig.toLowerCase();
+    if (/\bclass\b/.test(lower)) return 'class';
+    if (/\binterface\b/.test(lower)) return 'interface';
+    if (/\btype\b/.test(lower)) return 'type';
+    if (/\bfunction\b|\bfn\b/.test(lower)) return 'function';
+    if (/\bmethod\b/.test(lower)) return 'method';
+    if (/\bexport\b/.test(lower)) return 'export';
+    return 'block';
+  }
+
+  private findSymbolLineRange(content: string, signature: string): [number, number] | null {
+    const sigPrefix = signature.slice(0, 60);
+    const lines = content.split('\n');
+    for (let i = 0; i < lines.length; i++) {
+      if (lines[i].includes(sigPrefix.split('(')[0].trim().split(' ').pop() || '')) {
+        let depth = 0;
+        let started = false;
+        for (let j = i; j < lines.length; j++) {
+          for (const ch of lines[j]) {
+            if (ch === '{') { depth++; started = true; }
+            else if (ch === '}') depth--;
+          }
+          if (started && depth <= 0) return [i + 1, j + 1];
+        }
+        return [i + 1, Math.min(i + 30, lines.length)];
+      }
+    }
+    return null;
+  }
+
   /**
    * Sanitize query for FTS5 to avoid syntax errors.
-   * Mirrors the Rust `sanitize_fts_input` in atls-core/query/search.rs:
-   * keeps alphanumeric, underscore, hyphen; collapses everything else
-   * into single spaces so `<CloseIcon>` -> `CloseIcon`, `foo::bar` -> `foo bar`.
    */
   private sanitizeFts5Query(query: string): string {
     if (!query || typeof query !== 'string') {
@@ -591,11 +800,7 @@ SEARCH KEYWORDS USED: ${keywords.join(', ')}
     return sanitized;
   }
 
-  /**
-   * Extract relevant keywords from user request
-   */
   private extractKeywords(request: string): string[] {
-    // Remove common words and extract meaningful terms
     const stopWords = new Set([
       'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for',
       'of', 'with', 'by', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
@@ -605,7 +810,6 @@ SEARCH KEYWORDS USED: ${keywords.join(', ')}
       'you', 'it', 'this', 'that', 'these', 'those', 'my', 'our', 'your'
     ]);
     
-    // Sanitize for FTS5 first
     const sanitized = this.sanitizeFts5Query(request);
     
     const words = sanitized
@@ -614,47 +818,23 @@ SEARCH KEYWORDS USED: ${keywords.join(', ')}
       .split(/\s+/)
       .filter(w => w.length > 2 && !stopWords.has(w));
     
-    // Also extract potential identifiers (camelCase, snake_case, etc.)
     const identifiers = request.match(/[A-Z][a-z]+[A-Z][a-zA-Z]*/g) || [];
     const snakeCase = request.match(/[a-z]+_[a-z_]+/g) || [];
     
     return [...new Set([...words, ...identifiers.map(i => i.toLowerCase()), ...snakeCase])].slice(0, 10);
   }
 
-  /**
-   * Extract code patterns from file contents
-   */
   private extractPatterns(files: { path: string; content: string }[]): string[] {
     const patterns: string[] = [];
-    
     for (const file of files) {
-      // Look for common patterns
       const imports = file.content.match(/^import .+ from ['"].+['"]/gm) || [];
       const exports = file.content.match(/^export (default |const |function |class )/gm) || [];
       const classNames = file.content.match(/class \w+/g) || [];
-      
       if (imports.length > 0) patterns.push(`Imports pattern in ${file.path}`);
       if (exports.length > 0) patterns.push(`Exports: ${exports.slice(0, 3).join(', ')}`);
       if (classNames.length > 0) patterns.push(`Classes: ${classNames.slice(0, 3).join(', ')}`);
     }
-    
     return [...new Set(patterns)].slice(0, 10);
-  }
-
-  /**
-   * Extract dependencies between files
-   */
-  private extractDependencies(files: { path: string; content: string }[]): string[] {
-    const deps: string[] = [];
-    
-    for (const file of files) {
-      const localImports = file.content.match(/from ['"]\.\.?\/.+['"]/g) || [];
-      for (const imp of localImports.slice(0, 3)) {
-        deps.push(`${file.path} imports ${imp}`);
-      }
-    }
-    
-    return deps.slice(0, 10);
   }
 
   /**
@@ -702,9 +882,41 @@ SEARCH KEYWORDS USED: ${keywords.join(', ')}
   ): Promise<TaskPlan> {
     const swarmStore = useSwarmStore.getState();
     
-    // Build rich context from research
+    // Build rich context from research digest
     let researchContext = '';
-    if (research && research.rawFindings) {
+    const digest = (research as ResearchResult & { digest?: ResearchDigest })?.digest;
+    if (digest && digest.files.size > 0) {
+      const fileDigests: string[] = [];
+      for (const [path, fd] of digest.files) {
+        const role = research!.filesToModify.includes(path) ? 'EDIT' : 'REF';
+        const sigs = fd.signatures.length > 0 ? `\n  Signatures: ${fd.signatures.slice(0, 8).join('; ')}` : '';
+        const deps = fd.imports.length > 0 ? `\n  Imports: ${fd.imports.slice(0, 6).join(', ')}` : '';
+        const importedBy = fd.importedBy.length > 0 ? `\n  Imported by: ${fd.importedBy.slice(0, 4).join(', ')}` : '';
+        const targets = fd.editTargets.length > 0
+          ? `\n  Edit targets: ${fd.editTargets.map(t => `${t.symbol}(${t.kind}${t.lineRange ? `:${t.lineRange[0]}-${t.lineRange[1]}` : ''}) — ${t.reason}`).join('; ')}`
+          : '';
+        fileDigests.push(`- [${role}] ${path} (relevance:${fd.relevanceScore})${sigs}${deps}${importedBy}${targets}`);
+      }
+
+      const depEdges = Array.from(digest.dependencyGraph.entries())
+        .filter(([, deps]) => deps.length > 0)
+        .map(([src, deps]) => `  ${src} -> ${deps.join(', ')}`)
+        .slice(0, 20);
+
+      researchContext = `=== RESEARCH DIGEST ===
+
+${digest.projectProfile}
+
+=== FILE DIGESTS (${digest.files.size} files) ===
+${fileDigests.join('\n')}
+
+=== DEPENDENCY GRAPH ===
+${depEdges.join('\n') || '(no cross-file dependencies detected)'}
+
+=== CANDIDATE EDIT TARGETS (${digest.editPlan.length}) ===
+${digest.editPlan.map(t => `- ${t.file}:${t.symbol}(${t.kind}${t.lineRange ? `:${t.lineRange[0]}-${t.lineRange[1]}` : ''}) — ${t.reason}`).join('\n') || '(none identified — agents will discover targets)'}
+`;
+    } else if (research && research.rawFindings) {
       researchContext = `
 === RESEARCH FINDINGS ===
 ${research.rawFindings}
@@ -914,6 +1126,17 @@ Based on the research above, create a detailed task plan.
         contextNeeded: Array.isArray(t.contextNeeded) ? t.contextNeeded : [],
         dependencies: Array.isArray(t.dependencies) ? t.dependencies : [],
         priority: typeof t.priority === 'number' ? t.priority : 0,
+        editTargets: Array.isArray(t.editTargets)
+          ? t.editTargets.map((et: any) => ({
+              file: et.file || '',
+              symbol: et.symbol || '',
+              kind: et.kind || 'block',
+              lineRange: Array.isArray(et.lineRange) && et.lineRange.length === 2
+                ? et.lineRange as [number, number]
+                : undefined,
+              reason: et.reason || '',
+            }))
+          : undefined,
       }));
       
       if (tasks.length === 0) {
@@ -1500,10 +1723,9 @@ Result: ${depTask.result.slice(0, 1500)}`);
 
   /**
    * Build agent prompt as a 4-layer architecture (matching chat agent structure).
-   * Returns { systemPrompt, contextBlock } so the caller can inject Layer 3 separately.
-   * 
-   * Layer 1 (systemPrompt): Role + tools + rules + environment (CACHED, high attention)
-   * Layer 3 (contextBlock): Task + owned files + reference summaries + dependency results
+   * Now acts as a context compiler: inlines full content for owned files,
+   * signatures for references, and specific edit targets with line ranges.
+   * Uses token budget to progressively degrade when context is too large.
    */
   private buildAgentPrompt(
     task: SwarmTask,
@@ -1518,7 +1740,6 @@ Result: ${depTask.result.slice(0, 1500)}`);
 
 ${roleDocs}`;
     
-    // Role-specific identity and expertise
     const ROLE_IDENTITY: Record<AgentRole, string> = {
       orchestrator: '',
       coder: 'You are an expert software engineer. You write clean, well-structured, production-quality code that follows existing patterns in the codebase.',
@@ -1528,7 +1749,6 @@ ${roleDocs}`;
       documenter: 'You are a technical writer who creates clear, accurate documentation with examples. You focus on what developers need to know.',
     };
 
-    // Project context with shell-specific guidance
     const ctx = research?.projectContext;
     let shellBlock = '';
     const commonDiscipline = `Ref discipline: default to read_shaped(..., shape:"sig") for planning only; before any change.edit, re-read the exact target in the same batch with read.context(type:"full") or read.file, then gather read.lines anchors with context_lines:3 if helpful; never mutate from shaped, stale, or suspect refs.
@@ -1559,9 +1779,8 @@ ${commonDiscipline}`;
       ? `\nCodebase patterns: ${research.patterns.slice(0, 5).join('; ')}`
       : '';
 
-    // Budget awareness
     const budgetLine = maxIterations 
-      ? `\n## BUDGET\n- You have ~${maxIterations} tool rounds. Plan efficiently.`
+      ? `\n## BUDGET\n- You have ~${maxIterations} tool rounds. Plan efficiently. File content is pre-loaded below — start implementing immediately.`
       : '';
 
     // ─── LAYER 1: System prompt (role + tools + rules) ───
@@ -1577,73 +1796,34 @@ ${toolDocs}
 1. SCOPE: Only do what your task describes. Other agents handle other parts.
 2. OWNERSHIP: Only write to files in your ownership list. Read any file you need.
 3. PATHS: Always use ABSOLUTE paths for all file operations.
-4. VERIFICATION: Run impact_analysis before modifying existing code. Batch related implementation work first, then verify at a milestone or near task completion unless the boundary is risky.
-5. COMPLETION: Do NOT call task_complete until verify.build completes successfully OR you hit a blocker. If blocked, call task_complete with the blocker reason. Include files_changed array. This is a completion gate, not an instruction to verify after every small edit.
-6. CONFIRMATION BOUNDARIES: If any tool returns preview, paused, rollback, action_required, or confirm-needed state, stop at that boundary. Resolve it, then continue the task if planned work remains. Never batch later side effects or task_complete after it.
-7. STATE CHANGES: If the user reports a bug, lint/build error, or any new instruction, assume state changed and re-evaluate before continuing or completing.
-8. EFFICIENCY: Use pre-loaded context below. Use ATLS batch tools for additional reads.
+4. PRE-LOADED CONTEXT: Your owned files are pre-loaded below with full content. Do NOT re-read them unless you suspect they changed on disk. Start implementing immediately.
+5. VERIFICATION: Batch related implementation work first, then verify at a milestone or near task completion unless the boundary is risky.
+6. COMPLETION: Do NOT call task_complete until verify.build completes successfully OR you hit a blocker. If blocked, call task_complete with the blocker reason. Include files_changed array.
+7. CONFIRMATION BOUNDARIES: If any tool returns preview, paused, rollback, action_required, or confirm-needed state, stop at that boundary. Resolve it, then continue the task if planned work remains.
+8. STATE CHANGES: If the user reports a bug, lint/build error, or any new instruction, assume state changed and re-evaluate before continuing or completing.
 9. QUALITY: Follow existing code patterns. Add error handling. No placeholder/TODO code.
 10. OUTPUT: No narration or filler. Lead with summary. Bullets over paragraphs. Code over prose. Every token costs money.${budgetLine}`;
 
-    // ─── LAYER 3: Context block (task + files from blackboard) ───
+    // ─── LAYER 3: Context block — hydrated task packet ───
     const contextStore = useContextStore.getState();
     const swarmStore = useSwarmStore.getState();
     const userRequest = swarmStore.userRequest || '';
-    
-    const allChunks = contextStore.getAllChunks();
-    const describeHash = (hash: string | undefined, label: string, fallbackPath: string): string => {
-      if (!hash) return `- ${fallbackPath} (${label}, load on demand)`;
-      const chunk = allChunks.find(c => c.shortHash === hash);
-      const tokenText = chunk ? `${(chunk.tokens / 1000).toFixed(1)}k tk` : 'tokens unknown';
-      const source = chunk?.source || fallbackPath;
-      return `- h:${hash} ${source} (${label}, ${tokenText})`;
+    const digest = (research as ResearchResult & { digest?: ResearchDigest })?.digest;
+
+    // Token budget for context block (reserve room for system prompt + output)
+    const contextBudget = DEFAULT_AGENT_CONTEXT_BUDGET;
+    let tokensUsed = 0;
+
+    const budgetLog: string[] = [];
+    const trackTokens = (label: string, content: string): number => {
+      const tk = estimateTokens(content);
+      tokensUsed += tk;
+      budgetLog.push(`${label}: ${(tk / 1000).toFixed(1)}k`);
+      return tk;
     };
 
-    // Build owned files section as a lightweight manifest.
-    let ownedFilesSection = '';
-    if (task.fileClaims.length > 0) {
-      const ownedParts: string[] = [];
-      for (const filePath of task.fileClaims) {
-        const hash = research?.rawHashes?.get(filePath);
-        ownedParts.push(describeHash(hash, 'owned', filePath));
-      }
-      if (ownedParts.length > 0) {
-        ownedFilesSection = `\n## YOUR FILES (preloaded manifests; load bodies on demand)\n${ownedParts.join('\n')}`;
-      }
-    }
-    
-    // Build reference files section as a lightweight manifest.
-    let refFilesSection = '';
-    if (task.contextFiles && task.contextFiles.length > 0) {
-      const refParts: string[] = [];
-      for (const filePath of task.contextFiles) {
-        if (task.fileClaims.includes(filePath)) continue;
-        const hash = research?.smartHashes?.get(filePath);
-        refParts.push(describeHash(hash, 'reference', filePath));
-      }
-      if (refParts.length > 0) {
-        refFilesSection = `\n## REFERENCE FILES (read-only manifests; do NOT write to these)\n${refParts.join('\n')}`;
-      }
-    }
-
-    // Build blackboard section from contextStore
-    let blackboardSection = '';
-    const bbEntries = contextStore.listBlackboardEntries();
-    if (bbEntries.length > 0) {
-      const bbLines = bbEntries.map(e => `${e.key}: ${e.preview}`).join('\n');
-      blackboardSection = `\n## SHARED KNOWLEDGE (blackboard — persists across agents)\n${bbLines}`;
-    }
-
-    // Build compressed chunk index for recall
-    let compressedIndex = '';
-    const compressedRefs = allChunks
-      .filter(c => c.type === 'result' || c.type === 'call')
-      .map(c => `[-> ${c.shortHash}, ${c.tokens}tk | ${c.source || c.type}]`);
-    if (compressedRefs.length > 0) {
-      compressedIndex = `\n## COMPRESSED (use batch session.recall to retrieve)\n${compressedRefs.join('\n')}`;
-    }
-
-    const contextBlock = `## CONTEXT
+    // --- Build task header ---
+    const taskHeader = `## CONTEXT
 
 ## ORIGINAL USER REQUEST
 ${userRequest}
@@ -1652,13 +1832,143 @@ ${userRequest}
 ${task.description}
 
 ## FILE OWNERSHIP
-You may ONLY write to these files: ${task.fileClaims.length > 0 ? task.fileClaims.join(', ') : '(none assigned — use judgment based on task description)'}
-Use the preloaded manifests below first. Load full content only when needed for the next concrete step.
+You may ONLY write to these files: ${task.fileClaims.length > 0 ? task.fileClaims.join(', ') : '(none assigned — use judgment based on task description)'}`;
+    trackTokens('task-header', taskHeader);
+
+    // --- Build edit targets section ---
+    let editTargetsSection = '';
+    const taskEditTargets = digest
+      ? task.fileClaims.flatMap(f => digest.files.get(f)?.editTargets || [])
+      : [];
+    if (taskEditTargets.length > 0) {
+      editTargetsSection = `\n## EDIT TARGETS (specific locations to modify)\n${taskEditTargets.map(t =>
+        `- ${t.file}:${t.symbol}(${t.kind}${t.lineRange ? `:${t.lineRange[0]}-${t.lineRange[1]}` : ''}) — ${t.reason}`
+      ).join('\n')}`;
+      trackTokens('edit-targets', editTargetsSection);
+    }
+
+    // --- Inline owned file content (full raw content, budget-aware) ---
+    let ownedFilesSection = '';
+    if (task.fileClaims.length > 0) {
+      const ownedParts: string[] = [];
+      for (const filePath of task.fileClaims) {
+        const rawContent = research?.fileContents?.get(filePath);
+        const fd = digest?.files.get(filePath);
+
+        if (rawContent && (tokensUsed + estimateTokens(rawContent)) < contextBudget) {
+          // Full content fits — inline it
+          const fileBlock = `### ${filePath} [EDIT]\n\`\`\`\n${rawContent}\n\`\`\``;
+          trackTokens(`owned:${filePath.split(/[/\\]/).pop()}`, fileBlock);
+          ownedParts.push(fileBlock);
+        } else if (fd?.smartContent && (tokensUsed + estimateTokens(fd.smartContent)) < contextBudget) {
+          // Degrade to signatures
+          const sigBlock = `### ${filePath} [EDIT — signatures only, load full with read.context]\n${fd.smartContent}`;
+          trackTokens(`owned-sig:${filePath.split(/[/\\]/).pop()}`, sigBlock);
+          ownedParts.push(sigBlock);
+        } else {
+          // Degrade to hash ref
+          const hash = research?.rawHashes?.get(filePath) || research?.smartHashes?.get(filePath);
+          const ref = hash ? `h:${hash}` : 'load on demand';
+          ownedParts.push(`### ${filePath} [EDIT — ${ref}, load with read.context type:"full"]`);
+        }
+      }
+      if (ownedParts.length > 0) {
+        ownedFilesSection = `\n## YOUR FILES (pre-loaded content)\n${ownedParts.join('\n\n')}`;
+      }
+    }
+    
+    // --- Inline reference file signatures (budget-aware) ---
+    let refFilesSection = '';
+    if (task.contextFiles && task.contextFiles.length > 0) {
+      const refParts: string[] = [];
+      for (const filePath of task.contextFiles) {
+        if (task.fileClaims.includes(filePath)) continue;
+        const fd = digest?.files.get(filePath);
+
+        if (fd?.signatures.length && (tokensUsed + estimateTokens(fd.signatures.join('\n'))) < contextBudget) {
+          const sigBlock = `### ${filePath} [READ-ONLY]\nSignatures: ${fd.signatures.join('; ')}`;
+          trackTokens(`ref:${filePath.split(/[/\\]/).pop()}`, sigBlock);
+          refParts.push(sigBlock);
+        } else if (fd?.smartContent && (tokensUsed + estimateTokens(fd.smartContent)) < contextBudget) {
+          const smartBlock = `### ${filePath} [READ-ONLY]\n${fd.smartContent}`;
+          trackTokens(`ref-smart:${filePath.split(/[/\\]/).pop()}`, smartBlock);
+          refParts.push(smartBlock);
+        } else {
+          const hash = research?.smartHashes?.get(filePath);
+          refParts.push(`### ${filePath} [READ-ONLY — ${hash ? `h:${hash}` : 'load on demand'}]`);
+        }
+      }
+      if (refParts.length > 0) {
+        refFilesSection = `\n## REFERENCE FILES (read-only)\n${refParts.join('\n\n')}`;
+      }
+    }
+
+    // --- Dependency context: signatures of files that import/are-imported-by owned files ---
+    let depContextSection = '';
+    if (digest && tokensUsed < contextBudget * 0.85) {
+      const depPaths = new Set<string>();
+      for (const filePath of task.fileClaims) {
+        const fd = digest.files.get(filePath);
+        if (fd) {
+          for (const imp of fd.imports) depPaths.add(imp);
+          for (const ib of fd.importedBy) depPaths.add(ib);
+        }
+      }
+      // Remove files already shown
+      for (const fp of task.fileClaims) depPaths.delete(fp);
+      for (const fp of (task.contextFiles || [])) depPaths.delete(fp);
+
+      const depParts: string[] = [];
+      for (const depPath of depPaths) {
+        if (tokensUsed >= contextBudget * 0.9) break;
+        const fd = digest.files.get(depPath);
+        if (fd?.signatures.length) {
+          const line = `- ${depPath}: ${fd.signatures.slice(0, 5).join('; ')}`;
+          trackTokens(`dep:${depPath.split(/[/\\]/).pop()}`, line);
+          depParts.push(line);
+        }
+      }
+      if (depParts.length > 0) {
+        depContextSection = `\n## DEPENDENCY CONTEXT (signatures of related files)\n${depParts.join('\n')}`;
+      }
+    }
+
+    // --- Blackboard ---
+    let blackboardSection = '';
+    const bbEntries = contextStore.listBlackboardEntries();
+    if (bbEntries.length > 0) {
+      const bbLines = bbEntries.map(e => `${e.key}: ${e.preview}`).join('\n');
+      blackboardSection = `\n## SHARED KNOWLEDGE (blackboard — persists across agents)\n${bbLines}`;
+      trackTokens('blackboard', blackboardSection);
+    }
+
+    // --- Compressed chunk index ---
+    let compressedIndex = '';
+    if (tokensUsed < contextBudget * 0.95) {
+      const allChunks = contextStore.getAllChunks();
+      const compressedRefs = allChunks
+        .filter(c => c.type === 'result' || c.type === 'call')
+        .map(c => `[-> ${c.shortHash}, ${c.tokens}tk | ${c.source || c.type}]`);
+      if (compressedRefs.length > 0) {
+        compressedIndex = `\n## COMPRESSED (use batch session.recall to retrieve)\n${compressedRefs.join('\n')}`;
+        trackTokens('compressed-index', compressedIndex);
+      }
+    }
+
+    // --- Budget summary for observability ---
+    const budgetSummary = `\n<!-- Hydration budget: ${(tokensUsed / 1000).toFixed(1)}k / ${(contextBudget / 1000).toFixed(0)}k tokens | ${budgetLog.join(' | ')} -->`;
+
+    const contextBlock = `${taskHeader}
+${editTargetsSection}
 ${ownedFilesSection}
 ${refFilesSection}
+${depContextSection}
 ${blackboardSection}
 ${compressedIndex}
-${dependencyResults || ''}`;
+${dependencyResults || ''}
+${budgetSummary}`;
+
+    console.log(`[Orchestrator] Hydration for ${task.title}: ${(tokensUsed / 1000).toFixed(1)}k tokens (${budgetLog.length} blocks)`);
 
     return { systemPrompt, contextBlock };
   }

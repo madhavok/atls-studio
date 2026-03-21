@@ -211,11 +211,14 @@ export async function streamChatForSwarm(
   const lookup = createHashLookup(sessionId);
   const setLookup = useContextStore.getState().createSetRefLookup();
 
+  const maxIterations = _options.maxIterations ?? 2;
+  const maxAutoContinues = _options.maxAutoContinues ?? 0;
+
   let fullResponse = '';
-  let stopReason: string | null = null;
   let explicitTaskCompleteCalled = false;
   let blockingToolResultSeen = false;
   let latestTaskCompleteSummary: string | undefined;
+  let autoContinueCount = 0;
 
   const apiMessages: Array<{ role: string; content: unknown }> = [];
   for (const msg of messages) {
@@ -233,22 +236,40 @@ export async function streamChatForSwarm(
   const enableTools = _options.enableTools ?? false;
 
   try {
-    const round1 = await runStreamRound(
-      provider,
-      config,
-      apiMessages,
-      systemPrompt,
-      callbacks,
-      streamId,
-      enableTools
-    );
-    fullResponse = round1.fullResponse;
-    stopReason = round1.stopReason;
+    for (let round = 0; round < maxIterations; round++) {
+      const roundResult = await runStreamRound(
+        provider,
+        config,
+        apiMessages,
+        systemPrompt,
+        callbacks,
+        `${streamId}-r${round}`,
+        enableTools
+      );
+      fullResponse = roundResult.fullResponse;
 
-    // Execute tool calls and run follow-up round if any
-    if (round1.pendingToolCalls.length > 0) {
+      // No tool calls -- check if we should auto-continue or stop
+      if (roundResult.pendingToolCalls.length === 0) {
+        if (
+          !explicitTaskCompleteCalled &&
+          !blockingToolResultSeen &&
+          autoContinueCount < maxAutoContinues &&
+          roundResult.stopReason === 'end_turn' &&
+          looksLikeNaturalStop(fullResponse)
+        ) {
+          autoContinueCount++;
+          apiMessages.push(
+            { role: 'assistant', content: fullResponse },
+            { role: 'user', content: 'Continue. You have not called task_complete yet. Finish the remaining work or call task_complete with your summary.' },
+          );
+          continue;
+        }
+        break;
+      }
+
+      // Execute tool calls for this round
       const toolResults: Array<{ tool_use_id: string; content: string }> = [];
-      for (const toolCall of round1.pendingToolCalls) {
+      for (const toolCall of roundResult.pendingToolCalls) {
         if (toolCall.name === 'task_complete') {
           explicitTaskCompleteCalled = true;
           const summary = typeof toolCall.args?.summary === 'string'
@@ -274,23 +295,42 @@ export async function streamChatForSwarm(
         }
       }
 
-      const followUpMessages = [
-        ...apiMessages,
-        { role: 'assistant' as const, content: fullResponse },
-        { role: 'user' as const, content: toolResults },
-      ];
+      // If task_complete was called or a blocking result was seen, run one
+      // final round so the model can acknowledge, then stop.
+      if (explicitTaskCompleteCalled || blockingToolResultSeen) {
+        // Build assistant content block with text + tool_use entries
+        const assistantContent: unknown[] = [];
+        if (fullResponse) {
+          assistantContent.push({ type: 'text', text: fullResponse });
+        }
+        for (const tc of roundResult.pendingToolCalls) {
+          assistantContent.push({ type: 'tool_use', id: tc.id, name: tc.name, input: tc.args });
+        }
+        apiMessages.push(
+          { role: 'assistant', content: assistantContent },
+          { role: 'user', content: toolResults.map(tr => ({ type: 'tool_result', tool_use_id: tr.tool_use_id, content: tr.content })) },
+        );
 
-      const round2 = await runStreamRound(
-        provider,
-        config,
-        followUpMessages,
-        systemPrompt,
-        callbacks,
-        streamId,
-        enableTools
+        const finalRound = await runStreamRound(
+          provider, config, apiMessages, systemPrompt, callbacks,
+          `${streamId}-r${round + 1}`, enableTools,
+        );
+        fullResponse = finalRound.fullResponse;
+        break;
+      }
+
+      // Append this round's exchange to the conversation for the next round
+      const assistantContent: unknown[] = [];
+      if (fullResponse) {
+        assistantContent.push({ type: 'text', text: fullResponse });
+      }
+      for (const tc of roundResult.pendingToolCalls) {
+        assistantContent.push({ type: 'tool_use', id: tc.id, name: tc.name, input: tc.args });
+      }
+      apiMessages.push(
+        { role: 'assistant', content: assistantContent },
+        { role: 'user', content: toolResults.map(tr => ({ type: 'tool_result', tool_use_id: tr.tool_use_id, content: tr.content })) },
       );
-      fullResponse = round2.fullResponse;
-      stopReason = round2.stopReason;
     }
   } finally {
     callbacks.onDone();
