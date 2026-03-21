@@ -735,14 +735,25 @@ export const useSwarmStore = create<SwarmStoreState>((set, get) => ({
       const totalTokens = tasks.reduce((sum, t) => sum + t.tokensUsed, 0);
       const totalCost = tasks.reduce((sum, t) => sum + t.costCents, 0);
       
-      const startedAt = state.stats.startedAt;
-      const elapsedMs = startedAt ? Date.now() - startedAt.getTime() : 0;
+      const rawStart = state.stats.startedAt;
+      const parsed =
+        rawStart instanceof Date
+          ? rawStart
+          : rawStart != null
+            ? new Date(rawStart as unknown as string | number)
+            : undefined;
+      const startedAt =
+        parsed && Number.isFinite(parsed.getTime()) ? parsed : undefined;
+      const startMs = startedAt ? startedAt.getTime() : NaN;
+      const elapsedMs = Number.isFinite(startMs) ? Date.now() - startMs : 0;
       
       // Check if swarm is complete
       const allDone = tasks.length > 0 && pending.length === 0 && running.length === 0;
-      const newStatus = allDone 
-        ? (failed.length > 0 ? 'failed' : 'completed')
-        : state.status;
+      // Do not clobber synthesizing — orchestrator sets final status after synthesis completes.
+      const newStatus =
+        allDone && state.status !== 'synthesizing'
+          ? (failed.length > 0 ? 'failed' : 'completed')
+          : state.status;
       
       return {
         status: newStatus,
@@ -754,7 +765,7 @@ export const useSwarmStore = create<SwarmStoreState>((set, get) => ({
           pendingTasks: pending.length,
           totalTokensUsed: totalTokens,
           totalCostCents: totalCost,
-          startedAt,
+          startedAt: startedAt ?? state.stats.startedAt,
           completedAt: allDone ? new Date() : undefined,
           elapsedMs,
         },

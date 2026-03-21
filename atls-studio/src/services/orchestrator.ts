@@ -10,7 +10,7 @@ import { atlsBatchQuery } from './toolHelpers';
 import { useSwarmStore, type SwarmTask, type AgentRole, type ResearchResult } from '../stores/swarmStore';
 import { useContextStore } from '../stores/contextStore';
 import { calculateCost } from '../stores/costStore';
-import { useAppStore, type ContextUsage } from '../stores/appStore';
+import { useAppStore } from '../stores/appStore';
 import { getTerminalStore } from '../stores/terminalStore';
 import { chatDb, type TaskStatus as ChatTaskStatus } from './chatDb';
 import { rateLimiter } from './rateLimiter';
@@ -1022,10 +1022,6 @@ Based on the research above, create a detailed task plan.
         },
         onToolCall: () => {},
         onToolResult: () => {},
-        onUsageUpdate: (usage: ContextUsage) => {
-          const cost = calculateCost(config.provider, config.model, usage.inputTokens, usage.outputTokens);
-          console.log(`[Orchestrator] Plan cost: ${usage.inputTokens + usage.outputTokens} tokens, $${(cost / 100).toFixed(4)}`);
-        },
         onDone: () => {
           console.log(`[Orchestrator] Stream complete, received ${planJson.length} chars`);
         },
@@ -1303,9 +1299,10 @@ Based on the research above, create a detailed task plan.
       }
     }
 
-    // Final status
+    // Final status — sync UI store (DB was updated per-phase; swarm panel must leave synthesizing)
     const finalState = useSwarmStore.getState();
     const finalStatus = finalState.stats.failedTasks > 0 ? 'failed' : 'completed';
+    useSwarmStore.getState().setStatus(finalStatus);
     await chatDb.updateSwarmStatus(sessionId, finalStatus);
   }
 
@@ -1399,10 +1396,6 @@ Synthesize the swarm outcome.`;
         onToken: (text: string) => { synthJson += text; },
         onToolCall: () => {},
         onToolResult: () => {},
-        onUsageUpdate: (usage: ContextUsage) => {
-          const cost = calculateCost(config.provider, config.model, usage.inputTokens, usage.outputTokens);
-          console.log(`[Orchestrator] Synthesis cost: ${usage.inputTokens + usage.outputTokens} tokens, $${(cost / 100).toFixed(4)}`);
-        },
         onDone: () => {
           console.log(`[Orchestrator] Synthesis stream complete, ${synthJson.length} chars`);
         },
@@ -1656,12 +1649,17 @@ Synthesize the swarm outcome.`;
         temperature: 0.4, // Slightly lower for more deterministic agent behavior
       };
       
-      let totalInputTokens = 0;
-      let totalOutputTokens = 0;
-      
-      // Stream chat with tools - uses internal iteration loop
+      // Stream chat with tools — per-round cost/session metrics are recorded inside streamChatForSwarm (costStore, context bar, rate limiter).
       const toolCallNames = new Map<string, string>();
-      const { taskCompleted, taskStatus, result, taskCompleteSummary } = await streamChatForSwarm(
+      const {
+        taskCompleted,
+        taskStatus,
+        result,
+        taskCompleteSummary,
+        sessionInputTokens,
+        sessionOutputTokens,
+        sessionCostCents,
+      } = await streamChatForSwarm(
         messages,
         aiConfig,
         systemPrompt,
@@ -1690,11 +1688,6 @@ Synthesize the swarm outcome.`;
               toolResult: displayResult,
             });
           },
-          onUsageUpdate: (usage: ContextUsage) => {
-            totalInputTokens = usage.inputTokens;
-            totalOutputTokens = usage.outputTokens;
-            rateLimiter.recordSuccess(task.assignedProvider, usage.inputTokens, usage.outputTokens);
-          },
           onDone: () => {
             console.log(`[Agent:${agentLabel}] Stream completed`);
           },
@@ -1714,10 +1707,13 @@ Synthesize the swarm outcome.`;
         }
       );
       
-      // Update task with results (cost recording handled per-round inside streamChatForSwarm)
-      const cost = calculateCost(task.assignedProvider, task.assignedModel, totalInputTokens, totalOutputTokens);
+      // Update task with results (sessionCostCents is sum of cache-aware per-round costs from streamChatForSwarm)
       swarmStore.updateTaskResult(task.id, taskCompleteSummary || result);
-      swarmStore.updateTaskStats(task.id, totalInputTokens + totalOutputTokens, cost);
+      swarmStore.updateTaskStats(
+        task.id,
+        sessionInputTokens + sessionOutputTokens,
+        Math.round(sessionCostCents),
+      );
       
       // Distinguish explicit completion from blocked/incomplete agent exits
       const finalStatus: ChatTaskStatus = taskCompleted
@@ -1729,7 +1725,7 @@ Synthesize the swarm outcome.`;
         console.log(`[Agent:${agentLabel}] Finished without explicit task_complete (iteration limit reached)`);
       }
       
-      console.log(`[Agent:${agentLabel}] Done: ${totalInputTokens + totalOutputTokens} tokens, $${(cost / 100).toFixed(4)}`);
+      console.log(`[Agent:${agentLabel}] Done: ${sessionInputTokens + sessionOutputTokens} tokens, $${(sessionCostCents / 100).toFixed(4)}`);
       
       // Record stats to database (non-fatal if fails)
       try {
@@ -1737,9 +1733,9 @@ Synthesize the swarm outcome.`;
           swarmStore.sessionId!,
           task.id,
           task.assignedModel,
-          Math.round(totalInputTokens),
-          Math.round(totalOutputTokens),
-          Math.round(cost)
+          Math.round(sessionInputTokens),
+          Math.round(sessionOutputTokens),
+          Math.round(sessionCostCents),
         );
       } catch (statsError: unknown) {
         const errorMsg = statsError instanceof Error ? statsError.message : String(statsError);

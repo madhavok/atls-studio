@@ -12,6 +12,7 @@ import { MenuBar } from './components/MenuBar';
 import { WindowControls } from './components/WindowControls';
 import { SessionPicker } from './components/SessionPicker';
 import { SwarmPanel } from './components/SwarmPanel';
+import { SwarmErrorBoundary } from './components/SwarmPanel/SwarmErrorBoundary';
 import { ToastContainer } from './components/Toast';
 import { INTERNALS_TAB_ID } from './components/AtlsInternals';
 import { useAppStore } from './stores/appStore';
@@ -422,11 +423,13 @@ function App() {
         <div className="flex-1 flex flex-col overflow-hidden">
           {/* Main View - Code Viewer OR Swarm Panel */}
           <div 
-            className="flex-1 overflow-hidden"
+            className={`flex-1 overflow-hidden min-h-0 ${swarmActive && chatMode === 'swarm' ? 'bg-studio-bg' : ''}`}
             style={{ minHeight: 200 }}
           >
             {swarmActive && chatMode === 'swarm' ? (
-              <SwarmPanel />
+              <SwarmErrorBoundary>
+                <SwarmPanel />
+              </SwarmErrorBoundary>
             ) : (
               <CodeViewer />
             )}

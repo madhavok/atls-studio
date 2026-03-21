@@ -4,15 +4,16 @@
  */
 
 import { invoke } from '@tauri-apps/api/core';
-import { type UnlistenFn } from '@tauri-apps/api/event';
 import { safeListen } from '../utils/tauri';
 import type { ContextUsage, StreamChunk } from '../stores/appStore';
 import { useAppStore } from '../stores/appStore';
 import { useContextStore } from '../stores/contextStore';
+import { useCostStore, calculateCost, type AIProvider as CostProvider } from '../stores/costStore';
+import { getEffectiveContextWindow } from '../utils/modelCapabilities';
 import { resolveHashRefsWithMeta, type HashLookup } from '../utils/hashResolver';
+import { rateLimiter } from './rateLimiter';
 import type { AIProvider, AIConfig, ToolCallEvent } from './aiService';
 import { executeToolCall } from './aiService';
-import { allSubtasksDone as areAllSubtasksDone } from './aiTaskState';
 
 export interface SwarmStreamCallbacks {
   onToken: (token: string) => void;
@@ -92,7 +93,7 @@ function createHashLookup(sessionId: string | null): HashLookup {
   };
 }
 
-/** Run one streaming round; returns when done. */
+/** Run one streaming round; returns when done. Mirrors agent-mode metrics: costStore, context bar, cache, rate limiter. */
 async function runStreamRound(
   provider: AIProvider,
   config: AIConfig,
@@ -100,11 +101,26 @@ async function runStreamRound(
   systemPrompt: string,
   callbacks: SwarmStreamCallbacks,
   streamId: string,
-  enableTools: boolean
-): Promise<{ fullResponse: string; pendingToolCalls: PendingToolCall[]; stopReason: string | null }> {
+  enableTools: boolean,
+  sessionTotals: { input: number; output: number },
+): Promise<{
+  fullResponse: string;
+  pendingToolCalls: PendingToolCall[];
+  stopReason: string | null;
+  roundInputTokens: number;
+  roundOutputTokens: number;
+  roundCacheReadTokens: number;
+  roundCacheWriteTokens: number;
+  roundCostCents: number;
+}> {
   let fullResponse = '';
   const pendingToolCalls: PendingToolCall[] = [];
   let stopReason: string | null = null;
+
+  let roundInputTokens = 0;
+  let roundOutputTokens = 0;
+  let roundCacheReadTokens = 0;
+  let roundCacheWriteTokens = 0;
 
   let resolveDone: () => void;
   const donePromise = new Promise<void>((resolve) => {
@@ -131,15 +147,62 @@ async function runStreamRound(
           status: 'running',
         });
         break;
-      case 'usage':
-        callbacks.onUsageUpdate?.({
-          inputTokens: chunk.input_tokens ?? 0,
-          outputTokens: chunk.output_tokens ?? 0,
-          totalTokens: (chunk.input_tokens ?? 0) + (chunk.output_tokens ?? 0),
-          maxTokens: 200000,
-          percentage: 0,
-        });
+      case 'usage': {
+        const inTokens = chunk.input_tokens ?? 0;
+        const outTokens = chunk.output_tokens ?? 0;
+        if (inTokens > 0) roundInputTokens = inTokens;
+        if (outTokens > 0) roundOutputTokens = outTokens;
+
+        const cacheWrite = chunk.cache_creation_input_tokens ?? 0;
+        const cacheRead = chunk.cache_read_input_tokens ?? 0;
+        if (cacheWrite > 0) roundCacheWriteTokens = cacheWrite;
+        if (cacheRead > 0) roundCacheReadTokens = cacheRead;
+        if (cacheWrite > 0 || cacheRead > 0) {
+          useAppStore.getState().addCacheMetrics({ cacheWrite, cacheRead, uncached: inTokens });
+        }
+
+        const openaiCached = chunk.openai_cached_tokens ?? 0;
+        if (openaiCached > 0) {
+          roundCacheReadTokens = openaiCached;
+          useAppStore.getState().addCacheMetrics({
+            cacheWrite: 0,
+            cacheRead: openaiCached,
+            uncached: inTokens - openaiCached,
+            lastRequestCachedTokens: openaiCached,
+          });
+        }
+
+        const geminiCached = chunk.cached_content_tokens ?? 0;
+        if (geminiCached > 0) {
+          roundCacheReadTokens = geminiCached;
+          useAppStore.getState().addCacheMetrics({
+            cacheWrite: 0,
+            cacheRead: geminiCached,
+            uncached: inTokens - geminiCached,
+            lastRequestCachedTokens: geminiCached,
+          });
+        }
+
+        const displayIn = sessionTotals.input + roundInputTokens;
+        const displayOut = sessionTotals.output + roundOutputTokens;
+        const modelInfo = useAppStore.getState().availableModels.find(m => m.id === config.model);
+        const extendedContext = useAppStore.getState().settings.extendedContext ?? {};
+        const maxTokens = modelInfo
+          ? (getEffectiveContextWindow(modelInfo.id, modelInfo.provider, modelInfo.contextWindow, extendedContext)
+            ?? (provider === 'google' || provider === 'vertex' ? 1000000 : 200000))
+          : (provider === 'google' || provider === 'vertex' ? 1000000 : 200000);
+
+        const usage: ContextUsage = {
+          inputTokens: displayIn,
+          outputTokens: displayOut,
+          totalTokens: displayIn + displayOut,
+          maxTokens,
+          percentage: Math.min(100, ((displayIn + displayOut) / maxTokens) * 100),
+        };
+        useAppStore.getState().setContextUsage(usage);
+        callbacks.onUsageUpdate?.(usage);
         break;
+      }
       case 'stop_reason':
         stopReason = chunk.reason;
         break;
@@ -202,7 +265,44 @@ async function runStreamRound(
   }
 
   await donePromise;
-  return { fullResponse, pendingToolCalls, stopReason };
+
+  useAppStore.getState().recordRound();
+
+  let roundCostCents = 0;
+  if (roundInputTokens > 0 || roundOutputTokens > 0) {
+    roundCostCents = calculateCost(
+      config.provider as CostProvider,
+      config.model,
+      roundInputTokens,
+      roundOutputTokens,
+      roundCacheReadTokens,
+      roundCacheWriteTokens,
+    );
+    useCostStore.getState().recordUsage({
+      provider: config.provider as CostProvider,
+      model: config.model,
+      inputTokens: roundInputTokens,
+      outputTokens: roundOutputTokens,
+      cacheReadTokens: roundCacheReadTokens,
+      cacheWriteTokens: roundCacheWriteTokens,
+      costCents: roundCostCents,
+      timestamp: new Date(),
+    });
+    rateLimiter.recordSuccess(provider, roundInputTokens, roundOutputTokens);
+  } else {
+    console.warn('[swarmChat] Round completed with zero usage — cost may show $0');
+  }
+
+  return {
+    fullResponse,
+    pendingToolCalls,
+    stopReason,
+    roundInputTokens,
+    roundOutputTokens,
+    roundCacheReadTokens,
+    roundCacheWriteTokens,
+    roundCostCents,
+  };
 }
 
 
@@ -213,7 +313,15 @@ export async function streamChatForSwarm(
   _projectPath: string,
   callbacks: SwarmStreamCallbacks,
   _options: SwarmStreamOptions
-): Promise<{ taskCompleted: boolean; taskStatus: 'completed' | 'awaiting_input' | 'incomplete'; result: string; taskCompleteSummary?: string }> {
+): Promise<{
+  taskCompleted: boolean;
+  taskStatus: 'completed' | 'awaiting_input' | 'incomplete';
+  result: string;
+  taskCompleteSummary?: string;
+  sessionInputTokens: number;
+  sessionOutputTokens: number;
+  sessionCostCents: number;
+}> {
   const { provider } = config;
   const sessionId = useAppStore.getState().currentSessionId;
   const lookup = createHashLookup(sessionId);
@@ -227,6 +335,10 @@ export async function streamChatForSwarm(
   let blockingToolResultSeen = false;
   let latestTaskCompleteSummary: string | undefined;
   let autoContinueCount = 0;
+
+  let sessionTotalInput = 0;
+  let sessionTotalOutput = 0;
+  let sessionCostCents = 0;
 
   const apiMessages: Array<{ role: string; content: unknown }> = [];
   for (const msg of messages) {
@@ -243,6 +355,12 @@ export async function streamChatForSwarm(
   const streamId = `swarm-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
   const enableTools = _options.enableTools ?? false;
 
+  const accumulateRound = (r: Awaited<ReturnType<typeof runStreamRound>>) => {
+    sessionTotalInput += r.roundInputTokens;
+    sessionTotalOutput += r.roundOutputTokens;
+    sessionCostCents += r.roundCostCents;
+  };
+
   try {
     for (let round = 0; round < maxIterations; round++) {
       const roundResult = await runStreamRound(
@@ -252,8 +370,10 @@ export async function streamChatForSwarm(
         systemPrompt,
         callbacks,
         `${streamId}-r${round}`,
-        enableTools
+        enableTools,
+        { input: sessionTotalInput, output: sessionTotalOutput },
       );
+      accumulateRound(roundResult);
       fullResponse = roundResult.fullResponse;
 
       // No tool calls -- check if we should auto-continue or stop
@@ -320,9 +440,16 @@ export async function streamChatForSwarm(
         );
 
         const finalRound = await runStreamRound(
-          provider, config, apiMessages, systemPrompt, callbacks,
-          `${streamId}-r${round + 1}`, enableTools,
+          provider,
+          config,
+          apiMessages,
+          systemPrompt,
+          callbacks,
+          `${streamId}-r${round + 1}`,
+          enableTools,
+          { input: sessionTotalInput, output: sessionTotalOutput },
         );
+        accumulateRound(finalRound);
         fullResponse = finalRound.fullResponse;
         break;
       }
@@ -355,6 +482,9 @@ export async function streamChatForSwarm(
     taskStatus,
     result: resultText,
     taskCompleteSummary: latestTaskCompleteSummary,
+    sessionInputTokens: sessionTotalInput,
+    sessionOutputTokens: sessionTotalOutput,
+    sessionCostCents,
   };
 }
 

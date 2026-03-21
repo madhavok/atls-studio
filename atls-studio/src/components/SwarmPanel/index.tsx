@@ -19,6 +19,16 @@ import { getProviderFromModel } from '../../services/aiService';
 // Sub-Components
 // ============================================================================
 
+function formatLogTime(ts: Date | string | number | undefined): string {
+  if (ts == null) return '??:??:??';
+  try {
+    const d = ts instanceof Date ? ts : new Date(ts);
+    return Number.isFinite(d.getTime()) ? d.toLocaleTimeString() : '??:??:??';
+  } catch {
+    return '??:??:??';
+  }
+}
+
 interface AgentCardProps {
   task: SwarmTask;
   expanded: boolean;
@@ -121,7 +131,7 @@ function AgentCard({ task, expanded, onToggleExpand }: AgentCardProps) {
           {task.conversationLog.map((msg) => (
             <div key={msg.id} className="mb-2">
               <div className="text-studio-muted">
-                [{msg.timestamp.toLocaleTimeString()}] {msg.role}
+                [{formatLogTime(msg.timestamp)}] {msg.role}
                 {msg.toolName && ` (${msg.toolName})`}:
               </div>
               <div className="text-studio-text whitespace-pre-wrap pl-2">
