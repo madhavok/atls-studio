@@ -148,20 +148,6 @@ When `reconcileSourceRevision` runs, it consumes this record to determine whethe
 
 ---
 
-## Edit Freshness Protocol (Cursor / Agent)
-
-These rules live in `.cursor/rules/edit-freshness.mdc` and are enforced for agent edits:
-
-| Rule | Meaning |
-|------|---------|
-| **Read once, edit forever** | One `read.context`, `read.file`, or `read.lines` on a file authorizes later edits without re-reading between batches. |
-| **Automatic hash injection** | The batch executor injects `snapshot_hash` into `change.*` steps from the snapshot tracker. Do **not** manually pass `content_hash` / `edit_target_hash` unless you have a deliberate reason. |
-| **Backend enforcement** | If the file changed externally, the backend returns `stale_hash` or `authority_mismatch` — abandon the patch, re-read, rebuild from current content. |
-| **Batch discipline** | Do not explore multiple candidate files and mutate in the same batch. |
-| **Edit style** | Prefer exact preimage edits; for multiline TS/TSX or syntax-sensitive code, prefer whole-file replacement when appropriate. |
-
----
-
 ## Sequential `line_edits` (Top-Down Application)
 
 `apply_line_edits` in the Rust backend applies edits **in array order**. Each edit resolves its `line` / `anchor` against the *current* file content **after all prior edits in the same array**.

@@ -6,7 +6,7 @@ Subsystem docs for the Studio app and batch runtime. Start here for orientation.
 
 | Doc | Topics |
 |-----|--------|
-| **[freshness.md](./freshness.md)** | Snapshot tracker, awareness levels, hash injection, freshness states, preflight/rebase, reconciliation, **edit freshness protocol**, **sequential `line_edits`**, **cross-step line rebase**, **post-edit context refresh**, **own-write suppression** |
+| **[freshness.md](./freshness.md)** | Snapshot tracker, awareness levels, hash injection, freshness states, preflight/rebase, reconciliation, **sequential `line_edits`**, **cross-step line rebase**, **post-edit context refresh**, **own-write suppression** |
 
 Related:
 
