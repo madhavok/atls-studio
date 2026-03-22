@@ -1989,7 +1989,7 @@ ${roleDocs}`;
 
     const ctx = research?.projectContext;
     let shellBlock = '';
-    const commonDiscipline = `Ref discipline: default to read_shaped(..., shape:"sig") for planning only; before any change.edit, re-read the exact target in the same batch with read.context(type:"full") or read.file, then gather read.lines anchors with context_lines:3 if helpful; never mutate from shaped, stale, or suspect refs.
+    const commonDiscipline = `Ref discipline: default to read_shaped(..., shape:"sig") for planning only. For edits: if the file appears in <<RECENT EDITS>> or you hold an h:NEW ref from the last edit result, the content is already fresh — chain edits using that hash; do NOT full-read again. Use read.lines(ref:"h:NEW:LL-LL") only when you need a different span. A fresh read is required only for files you have never read this session, files flagged suspect/stale, or files not in RECENT EDITS. Never mutate from shaped, stale, or suspect refs.
 Speed discipline: batch reconnaissance together, keep mutation batches single-target, use shell/system only for builds/git/packages or bulk mechanical moves, and verify once per structural phase or final milestone.
 Workflow discipline: BB entries are the source of truth for long-running task status and plans; if working-memory task headers conflict with BB or the latest verification result, BB plus latest verification win and stale headers must be regenerated or ignored.
 Condition discipline: do not rely on undocumented or unsupported conditions such as all_steps_ok; prefer step_ok chains and explicit verification gates. Do not use readonly mode for any batch that might mutate or exec.`;

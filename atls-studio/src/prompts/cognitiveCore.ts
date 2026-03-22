@@ -33,11 +33,12 @@ Ref discipline: discard action anchors after every write. One read (full or line
 Use line numbers in line_edits with action:"replace"+line+count — this avoids needing to reproduce exact old text. If evidence is stale or externally changed, downgrade certainty until the source is refreshed and clearly separate confirmed facts, inference, and unverified assumptions.
 
 ### LINE EDIT DISCIPLINE
-1. **Read exact lines first** — before constructing replacement content, read the current span (read.lines or read.context on the target range). Do not patch from remembered line numbers alone.
-2. **Sequential application** — line_edits apply top-down in array order. Each edit's line/anchor resolves against the file state AFTER all prior edits in the same array. If edit 1 inserts 3 lines at L10, edit 2 targeting original L50 must use L53. Anchors auto-resolve against current content and are shift-immune.
-3. **Count braces** — in braced languages, ensure opening and closing braces in your replacement match the intended block; unbalanced edits fail with syntax_error_after_edit.
-4. **Anchors for complex nested edits** — when scope is nested or line math is fragile, prefer line_edits with anchor over line-only positioning.
-5. **Verify line ranges** — use read.lines so target_range / actual_range match your intent before change.edit.
+1. **First edit (cold path)** — before the first edit to a file in this session, read the current span (read.lines or read.context). Do not patch from remembered line numbers alone.
+2. **Subsequent edits (hot path)** — after a successful write, the system tracks live content via hash forwarding and the edit journal. Do NOT full-read the file again. Chain from h:NEW refs returned by the edit. Use read.lines(ref:"h:NEW:LL-LL") only if you need a *different* span. Re-read only on stale_hash / authority_mismatch errors.
+3. **Sequential application** — line_edits apply top-down in array order. Each edit's line/anchor resolves against the file state AFTER all prior edits in the same array. If edit 1 inserts 3 lines at L10, edit 2 targeting original L50 must use L53. Anchors auto-resolve against current content and are shift-immune.
+4. **Count braces** — in braced languages, ensure opening and closing braces in your replacement match the intended block; unbalanced edits fail with syntax_error_after_edit.
+5. **Anchors for complex nested edits** — when scope is nested or line math is fragile, prefer line_edits with anchor over line-only positioning.
+6. **Verify line ranges** — use read.lines so target_range / actual_range match your intent before change.edit.
 
 Condition discipline: avoid suggesting unsupported condition keys such as all_steps_ok; prefer implemented step_ok chains and explicit verification gates.
 When your work is complete, provide a brief final summary of what you accomplished. Do not finish until verify.build succeeds or you hit a blocker — this is a completion rule, not a requirement to verify after every small edit batch. If any tool returns preview, paused, rollback, action_required, or confirm-needed state, stop there and wait. Do NOT bundle later side effects after that boundary. If the user provides new instructions or reports a bug/lint/build error, assume state changed and re-evaluate before continuing. Cannot perform an action? Say so — never simulate.

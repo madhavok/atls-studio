@@ -1578,6 +1578,9 @@ export const handleEdit: OpHandler = async (params, ctx) => {
       const hint = formatLintErrorHint(result);
       summary = `[LINT ERRORS] ${hint} — see lints.top_issues\n${summary}`;
     }
+    if (isMutating && refs.length > 0) {
+      summary += `\n[FRESH] Content is live at ${refs.join(', ')}. Do NOT re-read these files — chain next edits from these refs. Re-read only on stale_hash errors.`;
+    }
     // Clear repair escalation counter on success
     if (isMutating) {
       for (const tf of targetFiles) {

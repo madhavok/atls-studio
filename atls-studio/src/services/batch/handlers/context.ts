@@ -123,7 +123,7 @@ export const handleLoad: OpHandler = async (params, ctx) => {
       const reused = ctx.store().findReusableRead({ filePath: filePaths[0], sourceRevision: backendHash });
       if (reused) {
         useRetentionStore.getState().incrementReadsReused();
-        lines.push(`load: ${filePaths[0]} → h:${reused} (reused, same rev)`);
+        lines.push(`load: NOTE redundant — ${filePaths[0]} already at h:${reused} (same rev, content is live). Chain from this ref; do not full-read again.`);
         return { kind: 'file_refs', ok: true, refs: [`h:${reused}`], summary: lines.join('\n'), tokens: 0 };
       }
     }
@@ -250,7 +250,7 @@ export const handleRead: OpHandler = async (params, ctx) => {
                 useRetentionStore.getState().incrementReadsReused();
                 allRefs.push(`h:${reusedRead}`);
                 readResults.push({ file: src, h: `h:${reusedRead}`, ...(backendHash ? { snapshot_hash: backendHash } : {}) });
-                lines.push(`read: ${src} → h:${reusedRead} (reused, same rev)`);
+                lines.push(`read: NOTE redundant — ${src} already at h:${reusedRead} (same rev, content is live). Use read.lines(ref:"h:${reusedRead}:LL-LL") for a different span; do not full-read again.`);
                 continue;
               }
             }
@@ -437,7 +437,7 @@ export const handleReadLines: OpHandler = async (params, ctx) => {
             formatLineRanges(actualRange) || formatLineRanges(targetRange) || (typeof rlLines === 'string' ? rlLines.trim() : '');
           const baseRef = normalizeHashRefToken(`h:${reusedLines}`);
           const refWithLines = lineSpecForRef ? `${baseRef}:${lineSpecForRef}` : baseRef;
-          const reuseSummary = `read_lines: ${rlFile}:${targetLabel} → h:${reusedLines} (reused, same rev)`;
+          const reuseSummary = `read_lines: NOTE redundant — ${rlFile}:${targetLabel} already at h:${reusedLines} (same rev, content is live). Chain from this ref.`;
           return {
             kind: 'file_refs', ok: true, refs: [refWithLines],
             summary: reuseSummary, tokens: 0,
