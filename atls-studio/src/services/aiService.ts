@@ -202,14 +202,8 @@ export interface ChatMessage {
   content: string | ContentBlock[];
 }
 
-interface TaskCompleteRequest {
-  summary: string;
-  filesChanged: string[];
-}
-
 interface ToolExecutionMeta {
   pendingAction?: AgentPendingActionState;
-  taskCompleteRequest?: TaskCompleteRequest;
   completionBlocker?: string | null;
   syntheticChildren?: ToolCallEvent[];
 }
@@ -447,10 +441,6 @@ export function deriveMutationCompletionBlocker(result: UnifiedBatchResult): str
     return 'Final verification is still required before task completion.';
   }
   return undefined;
-}
-
-function formatTaskCompleteAssistantSummary(request: TaskCompleteRequest): string {
-  return excerptText(request.summary, 1200);
 }
 
 /**
@@ -1085,8 +1075,6 @@ async function streamChatViaTauri(
   const maxRounds = settingsMaxIterations === 0 ? maxToolRounds : settingsMaxIterations;
   const maxAutoContinues = maxRounds;
   let autoContinueCount = 0;
-  let endTurnNudgeCount = 0; // Gentle nudges sent when stop_reason=end_turn (max 1)
-  let taskCompleteRequest: TaskCompleteRequest | null = null;
   let runtimeCompletionBlocker: string | null = null;
   let totalToolsCompleted = 0;
   let totalToolsQueued = 0;
@@ -1613,7 +1601,7 @@ async function streamChatViaTauri(
         const hasBlockingPendingAction = currentPendingAction.kind !== 'none'
           || completionOnlyBlocked;
 
-        // Detect st:done marker as implicit completion (Gemini often skips task_complete)
+        // Detect st:done marker as implicit completion
         const hasDoneMarker = /«?st:\s*done»?/i.test(assistantTextContent);
         if (hasDoneMarker) {
           if (completionOnlyBlocked) {
@@ -1629,7 +1617,7 @@ async function streamChatViaTauri(
               }
               conversationHistory.push({
                 role: 'user',
-                content: 'You are not ready to finish yet. If planned implementation work remains, continue it now. If the implementation is complete, run final verification before finishing, then provide a brief summary or call task_complete.',
+                content: 'You are not ready to finish yet. If planned implementation work remains, continue it now. If the implementation is complete, run final verification before finishing.',
               });
               continue;
             }
@@ -1643,7 +1631,7 @@ async function streamChatViaTauri(
           if (hasBlockingPendingAction) {
             useAppStore.getState().setAgentProgress({
               status: 'stopped',
-                stoppedReason: runtimeCompletionBlocker ?? getPendingActionStopReason(currentPendingAction),
+              stoppedReason: runtimeCompletionBlocker ?? getPendingActionStopReason(currentPendingAction),
             });
             useAppStore.getState().setAgentCanContinue(canAutoContinuePendingAction(currentPendingAction));
             break;
@@ -1661,17 +1649,17 @@ async function streamChatViaTauri(
           break;
         }
 
-        // Retriever mode: completion is bb_write + reply, no task_complete needed
+        // Retriever mode: completion is bb_write + reply
         if (mode === 'retriever') {
           useAppStore.getState().clearAgentPendingAction();
           useAppStore.getState().setAgentProgress({ status: 'stopped', stoppedReason: 'completed' });
           break;
         }
 
-        // --- Two-tier continuation logic based on stop_reason ---
+        // --- Continuation logic based on stop_reason ---
 
         if (stopReason === 'max_tokens') {
-          // TIER 1: Model was cut off mid-output — always auto-continue
+          // Model was cut off mid-output — always auto-continue
           if (autoContinueCount < maxAutoContinues) {
             autoContinueCount++;
             console.log(`[aiService] max_tokens truncation, auto-continuing (${autoContinueCount}/${maxAutoContinues})`);
@@ -1686,13 +1674,12 @@ async function streamChatViaTauri(
             }
             conversationHistory.push({
               role: 'user',
-              content: 'Your response was truncated. Continue from where you left off. When fully done, either provide a brief final summary or call task_complete with a summary.',
+              content: 'Your response was truncated. Continue from where you left off.',
             });
             continue;
           }
         } else if (stopReason === 'end_turn' || stopReason === null) {
-          // TIER 2: Model chose to stop — respect its intent with 1 gentle nudge max
-          if (looksLikeNaturalStop(assistantTextContent)) {
+          // Model chose to stop — check for blocking conditions, then accept
           if (completionOnlyBlocked) {
             if (autoContinueCount < maxAutoContinues) {
               autoContinueCount++;
@@ -1706,7 +1693,7 @@ async function streamChatViaTauri(
               }
               conversationHistory.push({
                 role: 'user',
-                content: 'You paused before finishing. Continue any remaining implementation first. When the work is actually complete, run final verification and then provide a brief summary or call task_complete.',
+                content: 'You paused before finishing. Continue any remaining implementation first. When the work is actually complete, run final verification and then provide a brief summary.',
               });
               continue;
             }
@@ -1718,48 +1705,26 @@ async function streamChatViaTauri(
             break;
           }
           if (hasBlockingPendingAction) {
-              useAppStore.getState().setAgentProgress({
-                status: 'stopped',
-                stoppedReason: runtimeCompletionBlocker ?? getPendingActionStopReason(currentPendingAction),
-              });
-              useAppStore.getState().setAgentCanContinue(canAutoContinuePendingAction(currentPendingAction));
-              break;
-            }
-            console.log('[aiService] Content heuristics indicate natural stop — not continuing');
-            useAppStore.getState().clearAgentPendingAction();
-            useAppStore.getState().setAgentProgress({ status: 'stopped', stoppedReason: 'completed' });
-            useAppStore.getState().setAgentCanContinue(false);
+            useAppStore.getState().setAgentProgress({
+              status: 'stopped',
+              stoppedReason: runtimeCompletionBlocker ?? getPendingActionStopReason(currentPendingAction),
+            });
+            useAppStore.getState().setAgentCanContinue(canAutoContinuePendingAction(currentPendingAction));
             break;
           }
-
-          if (endTurnNudgeCount === 0) {
-            endTurnNudgeCount++;
-            autoContinueCount++;
-            console.log(`[aiService] end_turn without task_complete, gentle nudge (1/1)`);
-
-            useAppStore.getState().setAgentProgress({
-              status: 'auto_continuing',
-              autoContinueCount,
-            });
-
-            if (assistantTextContent) {
-              conversationHistory.push({ role: 'assistant', content: assistantTextContent });
-            }
-            conversationHistory.push({
-              role: 'user',
-              content: 'You stopped before clearly finishing. If you are done, provide a brief final summary now. If structured task closure is useful, you may call task_complete({summary}). If you have more work, continue.',
-            });
-            continue;
-          }
+          // Natural end_turn — accept as completion
+          console.log('[aiService] Model ended turn naturally — accepting as completion');
+          useAppStore.getState().clearAgentPendingAction();
+          useAppStore.getState().setAgentProgress({ status: 'stopped', stoppedReason: 'completed' });
+          useAppStore.getState().setAgentCanContinue(false);
+          break;
         }
 
-        // Exhausted all tiers — stop and enable manual continue
+        // Exhausted auto-continues — stop and enable manual continue
         console.log('[aiService] Continuation logic exhausted, enabling manual continue');
         useAppStore.getState().setAgentProgress({
           status: 'stopped',
-          stoppedReason: stopReason === 'max_tokens'
-            ? `Auto-continue limit (${maxAutoContinues}) reached`
-            : 'Model ended turn — final summary not detected',
+          stoppedReason: `Auto-continue limit (${maxAutoContinues}) reached`,
         });
         useAppStore.getState().setAgentCanContinue(true);
         break;
@@ -1851,10 +1816,7 @@ async function streamChatViaTauri(
           recentTools: [...currentProgress.recentTools, toolSummary],
         });
         
-        const isTaskComplete = tc.name === 'task_complete';
-        if (!isTaskComplete) {
-          roundObservedNonCompletionTool = true;
-        }
+        roundObservedNonCompletionTool = true;
         
         // Check for session.plan inside batch - update current task display.
         if (tc.name === 'batch') {
@@ -1894,7 +1856,7 @@ async function streamChatViaTauri(
         let result: string;
         let toolStatus: 'completed' | 'failed' = 'completed';
         try {
-          const execution = await executeToolCallDetailed(tc.name, tc.args, { deferTaskComplete: true });
+          const execution = await executeToolCallDetailed(tc.name, tc.args);
           result = execution.displayText;
           if (tc.name === 'batch') {
             const steps = coerceBatchSteps((tc.args as Record<string, unknown>).steps);
@@ -1935,9 +1897,6 @@ async function streamChatViaTauri(
           if (execution.meta && 'completionBlocker' in execution.meta) {
             runtimeCompletionBlocker = execution.meta.completionBlocker ?? null;
             useAppStore.getState().setAgentProgress({ canTaskComplete: runtimeCompletionBlocker == null });
-          }
-          if (execution.meta?.taskCompleteRequest) {
-            taskCompleteRequest = execution.meta.taskCompleteRequest;
           }
           safeCallbacks.onToolResult(tc.id, result);
           safeCallbacks.onToolCall({
@@ -2004,35 +1963,6 @@ async function streamChatViaTauri(
 
       useAppStore.getState().clearAgentPendingAction();
       useAppStore.getState().setAgentProgress({ canTaskComplete: runtimeCompletionBlocker == null });
-
-      if (taskCompleteRequest) {
-        const completionProgress = useAppStore.getState().agentProgress;
-        const completionPendingAction = completionProgress.pendingAction;
-        const completionBlocked = completionPendingAction.kind !== 'none'
-          || runtimeCompletionBlocker != null
-          || !completionProgress.canTaskComplete;
-        if (completionBlocked) {
-          const blockedReason = runtimeCompletionBlocker ?? (completionPendingAction.kind !== 'none'
-            ? getPendingActionStopReason(completionPendingAction)
-            : 'Awaiting runtime validation before finalizing.');
-          useAppStore.getState().setAgentProgress({
-            status: 'stopped',
-            stoppedReason: blockedReason,
-          });
-          useAppStore.getState().setAgentCanContinue(canAutoContinuePendingAction(completionPendingAction));
-          console.log('[aiService] task_complete blocked by pending action/completion gate');
-          taskCompleteRequest = null;
-          break;
-        }
-        const finalSummary = await finalizeTaskCompleteRequest(taskCompleteRequest);
-        console.log('[aiService] Task completed via validated task_complete tool - exiting loop');
-        safeCallbacks.onToken(formatTaskCompleteAssistantSummary(taskCompleteRequest));
-        useAppStore.getState().setAgentCanContinue(false);
-        useAppStore.getState().setAgentProgress({ status: 'stopped', stoppedReason: 'completed' });
-        taskCompleteRequest = null;
-        console.log(finalSummary);
-        break;
-      }
       
       // Refresh entry manifest + project tree so next round/chat sees current state
       if (_roundHadMutations) {
@@ -2077,6 +2007,15 @@ async function streamChatViaTauri(
 
     if (shouldNotifyDone) {
       callbacks.onDone();
+    }
+
+    // Prune low-value context chunks on natural completion
+    const finalStatus = useAppStore.getState().agentProgress.stoppedReason;
+    if (shouldNotifyDone && finalStatus === 'completed') {
+      const pruned = useContextStore.getState().pruneObsoleteTaskArtifacts();
+      if (pruned.compacted > 0 || pruned.dropped > 0) {
+        console.log(`[aiService] Post-completion prune: compacted=${pruned.compacted} dropped=${pruned.dropped} freed=${pruned.freedTokens}tk`);
+      }
     }
 
     // Only clear global state if this session is still active (prevents race where
@@ -2272,67 +2211,6 @@ function normalizeToolParams(args: Record<string, unknown>): void {
   }
 }
 
-/**
- * Execute a native tool call.
- * Public surface: batch + task_complete.
- */
-async function finalizeTaskCompleteRequest(request: TaskCompleteRequest): Promise<string> {
-  const summary = request.summary || 'Task completed';
-  const filesList = request.filesChanged.length > 0 ? `\nFiles: ${request.filesChanged.join(', ')}` : '';
-
-  // Freshness gate: block completion if touched files changed externally
-  const freshnessCheck = useContextStore.getState().assertFreshForClaim('complete', request.filesChanged);
-  if (!freshnessCheck.ok) {
-    return `task_complete: FRESHNESS_GATE_BLOCKED — ${freshnessCheck.reason}. State invalidated by external changes; re-read and re-verify required before completion.`;
-  }
-
-  // Record structured task_complete record for invalidation tracking
-  useContextStore.getState().setTaskCompleteRecord({
-    summary,
-    filesChanged: request.filesChanged,
-    createdAtRev: useContextStore.getState().getCurrentRev(),
-    status: 'valid',
-    createdAt: Date.now(),
-  });
-
-  useContextStore.getState().setBlackboardEntry('task_complete', `${summary}${filesList}`);
-
-  const appStore = useAppStore.getState();
-  if (appStore.chatMode === 'designer' && appStore.designPreviewContent.length > 0) {
-    const projectPath = appStore.projectPath;
-    if (projectPath) {
-      try {
-        const writtenPath = await invoke<string>('write_design_file', {
-          projectRoot: projectPath,
-          contents: appStore.designPreviewContent,
-        });
-        appStore.addToast({
-          type: 'success',
-          message: `Plan saved to ${writtenPath}`,
-          duration: 4000,
-        });
-        const fullPath = `${projectPath.replace(/\\/g, '/')}/${writtenPath}`.replace(/\/\//g, '/');
-        appStore.openFile(fullPath);
-        appStore.clearDesignPreview();
-      } catch (err) {
-        appStore.addToast({
-          type: 'error',
-          message: `Failed to save plan: ${err}`,
-          duration: 5000,
-        });
-      }
-    } else {
-      appStore.addToast({
-        type: 'warning',
-        message: 'No project open – plan not saved',
-        duration: 3000,
-      });
-    }
-  }
-
-  return `✓ Task complete: ${summary}${filesList}`;
-}
-
 function buildBatchSyntheticToolCalls(result: UnifiedBatchResult, batchArgs: Record<string, unknown>): ToolCallEvent[] {
   return result.step_results.map((step, index) => ({
     id: `batch:${typeof batchArgs.id === 'string' ? batchArgs.id : 'batch'}:${step.id}:${index}`,
@@ -2351,7 +2229,7 @@ function buildBatchSyntheticToolCalls(result: UnifiedBatchResult, batchArgs: Rec
 async function executeToolCallDetailed(
   toolName: string,
   args: Record<string, unknown>,
-  options?: { deferTaskComplete?: boolean; swarmTerminalId?: string },
+  options?: { swarmTerminalId?: string },
 ): Promise<ToolExecutionResult> {
   console.log(`[aiService] Tool: ${toolName}`, args);
   
@@ -2361,7 +2239,7 @@ async function executeToolCallDetailed(
     if (!toolName || typeof toolName !== 'string' || toolName.trim().length < 2) {
       const nearest = findNearestValidTool(toolName);
       const hint = nearest ? ` Did you mean: ${nearest}?` : '';
-      return { displayText: `Invalid or empty tool name "${toolName}".${hint} Valid tools: batch, task_complete` };
+      return { displayText: `Invalid or empty tool name "${toolName}".${hint} Valid tools: batch` };
     }
 
     normalizeToolParams(args);
@@ -2417,34 +2295,23 @@ async function executeToolCallDetailed(
       }
 
       case 'task_complete': {
+        // Swarm agents still call task_complete via executeToolCall.
+        // In main chat mode this is a no-op passthrough — the model just stops naturally.
         const summary = args.summary as string || 'Task completed';
         const rawFilesChanged = Array.isArray(args.files_changed)
-  ? args.files_changed
-  : Array.isArray(args.filesChanged)
-    ? args.filesChanged
-    : [];
-const filesChanged = rawFilesChanged.filter((f): f is string => typeof f === 'string');
-        const request: TaskCompleteRequest = { summary, filesChanged };
-        if (options?.deferTaskComplete) {
-          return {
-            displayText: `Task complete requested: ${summary}. Awaiting runtime validation before finalizing.`,
-            meta: {
-              taskCompleteRequest: request,
-            },
-          };
-        }
-        return {
-          displayText: await finalizeTaskCompleteRequest(request),
-          meta: {
-            taskCompleteRequest: request,
-          },
-        };
+          ? args.files_changed
+          : Array.isArray(args.filesChanged)
+            ? args.filesChanged
+            : [];
+        const filesChanged = rawFilesChanged.filter((f): f is string => typeof f === 'string');
+        const filesList = filesChanged.length > 0 ? `\nFiles: ${filesChanged.join(', ')}` : '';
+        return { displayText: `✓ Task complete: ${summary}${filesList}` };
       }
 
       default: {
         const nearest = findNearestValidTool(toolName);
         const hint = nearest ? ` Did you mean: ${nearest}?` : '';
-        return { displayText: `Unsupported tool: ${toolName}.${hint} The tool surface was collapsed. Use batch() for execution. task_complete is available for structured task closure, but a clean final summary can also end normal agent chat.` };
+        return { displayText: `Unsupported tool: ${toolName}.${hint} Use batch() for execution.` };
       }
     }
   } catch (error) {
@@ -2893,8 +2760,7 @@ function _buildStaticSystemPrompt(
   let toolRef = atlsReady 
     ? (mode === 'designer' ? DESIGNER_TOOL_REF : BATCH_TOOL_REF)
     : `## Terminal Only (ATLS not initialized - open a project first)
-batch({version:"1.0",steps:[{id:"exec",use:"system.exec",with:{cmd:"..."}}]}) → run command
-task_complete({summary, files_changed:[...]}) → optional structured finish signal`;
+batch({version:"1.0",steps:[{id:"exec",use:"system.exec",with:{cmd:"..."}}]}) → run command`;
 
   // Append subagent tool ref when subagent enabled
   if (subagentEnabled) {
@@ -2915,7 +2781,7 @@ task_complete({summary, files_changed:[...]}) → optional structured finish sig
 
   // Designer uses slim context control + inline response hint; others use full COGNITIVE_CORE_V1.
   const contextControl = mode === 'designer'
-    ? `\n${CONTEXT_CONTROL_DESIGNER}\n## Output: 1 sentence between tool calls. End with a concise final summary; task_complete is optional structured closure.`
+    ? `\n${CONTEXT_CONTROL_DESIGNER}\n## Output: 1 sentence between tool calls. End with a concise final summary.`
     : `\n${CONTEXT_CONTROL_V4}`;
   const hppSection = (atlsReady && mode !== 'designer') ? `\n${HASH_PROTOCOL_SPEC}` : '';
   const providerReinforcement = (provider === 'google' || provider === 'vertex')

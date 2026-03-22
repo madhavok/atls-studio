@@ -7,7 +7,7 @@ export const GEMINI_REINFORCEMENT = `## FORMAT RULES (CRITICAL — you MUST foll
 
 ### Tool Call Format
 You have native function calling. Use it. NEVER emit tool calls as text, JSON code blocks, or markdown.
-- CORRECT: Use the batch() or task_complete() function call mechanism provided by the API.
+- CORRECT: Use the batch() function call mechanism provided by the API.
 - WRONG: Writing \`\`\`json [{"name":"batch","args":{...}}] \`\`\` in your text output.
 - WRONG: Writing batch({...}) as plain text in your response.
 If you find yourself typing a tool call as text, STOP and use the native function call instead.

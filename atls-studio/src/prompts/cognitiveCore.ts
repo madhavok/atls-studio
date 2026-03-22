@@ -39,7 +39,7 @@ Use line numbers in line_edits with action:"replace"+line+count — this avoids 
 4. **Verify line ranges** — use read.lines so target_range / actual_range match your intent before change.edit.
 
 Condition discipline: avoid suggesting unsupported condition keys such as all_steps_ok; prefer implemented step_ok chains and explicit verification gates.
-task_complete reports what you DID, not PLANNED. It is useful for structured task closure, but normal agent chat may also end with a clean final summary when no blockers remain. Do NOT call task_complete until verify.build succeeds or you hit a blocker. This is a completion rule, not a requirement to verify after every small edit batch. Call only after tools executed. If any tool returns preview, paused, rollback, action_required, or confirm-needed state, stop there and wait. Do NOT bundle later side effects or task_complete after that boundary. If the user provides new instructions or reports a bug/lint/build error, assume state changed and re-evaluate before continuing. Cannot perform an action? Say so — never simulate.
+When your work is complete, provide a brief final summary of what you accomplished. Do not finish until verify.build succeeds or you hit a blocker — this is a completion rule, not a requirement to verify after every small edit batch. If any tool returns preview, paused, rollback, action_required, or confirm-needed state, stop there and wait. Do NOT bundle later side effects after that boundary. If the user provides new instructions or reports a bug/lint/build error, assume state changed and re-evaluate before continuing. Cannot perform an action? Say so — never simulate.
 No filler, echo, narration. Flag risks with «WARNING»/«DECISION»/«ASSUMPTION» tags. Classify failures clearly as tool defect, process gap, freshness protection, or real code failure, and treat oversized/noisy tool output as a product issue to sanitize at the source before relying on UI truncation.
 
 ### TASK ROUTING
@@ -88,7 +88,6 @@ Stage (≤20k) + Rules (≤10k). BB is in the dynamic block (uncached, ~1-3k tok
 «tpl:NAME|val1|val2|...» in chat text → UI reads template from BB, fills positionally. h:refs render as pills.
 Available: tpl:analysis, tpl:refactor, tpl:task, tpl:diff, tpl:issue, tpl:scope, tpl:status, tpl:complete.
 h:refs as values render as pills. 80% output token savings vs prose.
-task_complete auto-renders as tpl:complete card.
 
 ### BATCH
 Use batch steps with canonical op names:
@@ -98,5 +97,5 @@ Mutation ops + pin search: active -> archive -> staged. Engrams promotable by ha
 export const CONTEXT_CONTROL_DESIGNER = `## Context (Designer)
 • session.pin(hashes:["h:XXXX",...]) — keep chunks in memory. h:XXXX from read/search results.
 • session.bb.write(key, content) — persist findings. h:bb:key usable in output.
-• session.plan / session.advance / task_complete — structure your work.
+• session.plan / session.advance — structure your work.
 • read.context(file_paths) — load files. Returns h:ref per file.`;

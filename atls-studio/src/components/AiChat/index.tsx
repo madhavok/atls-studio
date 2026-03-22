@@ -1327,17 +1327,6 @@ const MessageBubble = memo(function MessageBubble({ message, isEditing, onStartE
           <div className="space-y-2">
             {parts.map((part, idx, arr) => {
               if (part.type === 'text') {
-                // Skip text parts whose content duplicates the task_complete summary
-                const tcPart = arr.find((p): p is Extract<MessagePart, { type: 'tool' }> =>
-                  p.type === 'tool' && isTaskCompleteCall(p.toolCall)
-                );
-                if (tcPart) {
-                  const tcSum = getTaskCompleteArgs(tcPart.toolCall).summary.trim();
-                  const cleaned = cleanStreamingContent(part.content).trim();
-                  if (cleaned && tcSum && (cleaned === tcSum || tcSum.includes(cleaned) || cleaned.includes(tcSum))) {
-                    return null;
-                  }
-                }
                 const next = arr[idx + 1];
                 const nextTool = next?.type === 'tool' ? next.toolCall : undefined;
                 const nextToolHint = nextTool ? getToolDisplayInfo(nextTool).friendly.replace(/^[^\w]*/, '') : undefined;
