@@ -32,9 +32,17 @@ impl LineMap {
     }
 }
 
+/// Maximum changed lines in the middle portion (after prefix/suffix strip) before
+/// we bail out. Beyond this threshold the file has drifted too much for line-number
+/// remapping to be reliable — the model should re-read instead.
+/// At 150×150 the DP table is ~22K cells (microseconds). Real stale-edit scenarios
+/// rarely exceed 50 changed lines in the middle.
+const MAX_MIDDLE_LINES: usize = 150;
+
 /// Compute a line map from old content to new content using LCS diff.
 /// Only lines in equal (Keep) hunks get mappings; lines in changed/inserted/deleted
-/// regions get `None`.
+/// regions get `None`. Bails out with an all-None map if the middle portion
+/// (after prefix/suffix stripping) exceeds MAX_MIDDLE_LINES on either side.
 pub fn compute_line_map(old_content: &str, new_content: &str) -> LineMap {
     let old_lines: Vec<&str> = old_content.lines().collect();
     let new_lines: Vec<&str> = new_content.lines().collect();
@@ -118,6 +126,11 @@ fn compute_lcs_diff<'a>(old: &[&'a str], new: &[&'a str]) -> Vec<LcsOp> {
     let new_mid = &new[prefix..m - suffix];
     let nm = old_mid.len();
     let mm = new_mid.len();
+
+    // Bail out if the middle portion is too large — file drifted too much
+    if nm > MAX_MIDDLE_LINES || mm > MAX_MIDDLE_LINES {
+        return Vec::new();
+    }
 
     let mut ops = Vec::with_capacity(n + m);
 
@@ -420,6 +433,40 @@ mod tests {
         // Should have fuzzy resolution notice
         let has_fuzzy = warnings.iter().any(|w| w.contains("fuzzy_resolved"));
         assert!(has_fuzzy, "expected fuzzy resolution notice, got: {:?}", warnings);
+    }
+
+    #[test]
+    fn large_middle_bails_out() {
+        // When the middle portion exceeds MAX_MIDDLE_LINES, compute_line_map
+        // returns an all-None map (no remapping attempted).
+        let old: Vec<String> = (0..200).map(|i| format!("old_{}", i)).collect();
+        let new: Vec<String> = (0..200).map(|i| format!("new_{}", i)).collect();
+        let map = compute_line_map(&old.join("\n"), &new.join("\n"));
+
+        // All lines should be None (no common prefix/suffix, middle too large)
+        for i in 1..=200 {
+            assert_eq!(map.remap(i), None, "line {} should be None when middle exceeds cap", i);
+        }
+    }
+
+    #[test]
+    fn large_file_small_diff_still_works() {
+        // 500-line file with 5 lines inserted at line 10 — prefix/suffix strip
+        // reduces the middle to ~5 lines, well under the cap.
+        let old: Vec<String> = (1..=500).map(|i| format!("line {}", i)).collect();
+        let mut new_lines: Vec<String> = old[..9].to_vec();
+        for i in 0..5 {
+            new_lines.push(format!("inserted {}", i));
+        }
+        new_lines.extend_from_slice(&old[9..]);
+
+        let map = compute_line_map(&old.join("\n"), &new_lines.join("\n"));
+
+        // Lines before insertion unchanged
+        assert_eq!(map.remap(5), Some(5));
+        // Lines after insertion shifted +5
+        assert_eq!(map.remap(100), Some(105));
+        assert_eq!(map.remap(500), Some(505));
     }
 
     #[test]
