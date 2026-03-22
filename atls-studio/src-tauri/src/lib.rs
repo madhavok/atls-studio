@@ -17,6 +17,7 @@ pub(crate) mod snapshot;
 pub(crate) mod edit_session;
 pub(crate) mod ast_query;
 pub(crate) mod stream_protocol;
+pub(crate) mod line_remap;
 
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;

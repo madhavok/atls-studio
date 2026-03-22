@@ -11175,6 +11175,38 @@ pub async fn atls_batch_query(
                             },
                         }
                     }
+                    // Shadow diff line remapping: when the model's content_hash doesn't match
+                    // the current file, look up the model's preimage in the hash registry and
+                    // compute a line map to shift stale line numbers to current positions.
+                    if let Some(expected_hash) = params.get("content_hash").and_then(|v| v.as_str()) {
+                        let shadow_content = {
+                            let hr_state = app.state::<hash_resolver::HashRegistryState>();
+                            let registry = hr_state.registry.lock().await;
+                            let canonical = crate::snapshot::canonicalize_hash(expected_hash);
+                            registry.get_original(&canonical)
+                                .map(|entry| entry.content.clone())
+                        };
+                        if let Some(shadow) = shadow_content {
+                            let actual_hash = content_hash(&base);
+                            let expected_canonical = crate::snapshot::canonicalize_hash(expected_hash);
+                            if actual_hash != expected_canonical {
+                                let line_map = crate::line_remap::compute_line_map(&shadow, &base);
+                                if !line_map.is_identity() {
+                                    let short = if expected_canonical.len() >= 6 { &expected_canonical[..6] } else { &expected_canonical };
+                                    let notices = crate::line_remap::remap_edits(&mut le, &line_map, short);
+                                    for n in notices {
+                                        edit_warnings.push(serde_json::json!({
+                                            "file": file_path,
+                                            "warning": "line_edit_notice",
+                                            "error_class": "line_edit_notice",
+                                            "hint": n,
+                                        }));
+                                    }
+                                }
+                            }
+                        }
+                    }
+
                     let (new_content, anchor_warnings) = match apply_line_edits(&base, &le) {
                         Ok(result) => result,
                         Err(edit_err) => {
