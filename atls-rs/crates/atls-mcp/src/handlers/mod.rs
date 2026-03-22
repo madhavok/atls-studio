@@ -167,8 +167,8 @@ impl Handlers {
                         "root_path": { "type": "string", "description": "Project root path" },
                         "policy": {
                             "type": "object",
+                            "description": "Optional constraints (verify_after_change, max_steps, etc.). Execution mode is app-controlled — omit mode.",
                             "properties": {
-                                "mode": { "type": "string", "enum": ["readonly", "mutable", "safe-mutable"] },
                                 "verify_after_change": { "type": "boolean" },
                                 "rollback_on_failure": { "type": "boolean" },
                                 "max_steps": { "type": "integer" },

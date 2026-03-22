@@ -201,9 +201,9 @@ describe('provider tool enablement', () => {
   const providers: AIProvider[] = ['anthropic', 'openai', 'google', 'vertex', 'lmstudio'];
   const toolModes: ChatMode[] = ['agent', 'designer', 'reviewer', 'retriever', 'custom', 'swarm', 'refactor', 'planner'];
 
-  it('enables tools for every provider in all modes including ask', () => {
+  it('disables tools for Ask mode; enables for all other modes', () => {
     for (const provider of providers) {
-      expect(areToolsEnabledForProvider(provider, 'ask')).toBe(true);
+      expect(areToolsEnabledForProvider(provider, 'ask')).toBe(false);
       for (const mode of toolModes) {
         expect(areToolsEnabledForProvider(provider, mode)).toBe(true);
       }

@@ -134,7 +134,13 @@ import { getShellGuide } from '../prompts/shellGuide';
 import { GEMINI_REINFORCEMENT, GEMINI_RECENCY_BOOST } from '../prompts/providerOverrides';
 import { advanceTurn, resetProtocol, dematerialize, getAllRefs, getRef, shouldMaterialize, getTurn, setRoundRefreshHook } from './hashProtocol';
 import { useRoundHistoryStore, type VerificationConfidence } from '../stores/roundHistoryStore';
-import { executeUnifiedBatch, type HandlerContext, type UnifiedBatchRequest, type UnifiedBatchResult } from './batch';
+import {
+  executeUnifiedBatch,
+  normalizeBatchPolicyForExecution,
+  type HandlerContext,
+  type UnifiedBatchRequest,
+  type UnifiedBatchResult,
+} from './batch';
 import { resetMainAgentTerminal } from './batch/handlers/system';
 import type { ExpandedFilePath } from './batch/types';
 import { formatBatchResult } from './batch/resultFormatter';
@@ -2371,9 +2377,10 @@ async function executeToolCallDetailed(
         if (!request.version) (request as unknown as Record<string, unknown>).version = '1.0';
         if (!request.steps) return { displayText: 'batch: ERROR missing steps array' };
 
-        if (useAppStore.getState().chatMode === 'ask') {
-          request.policy = { ...request.policy, mode: 'readonly' };
-        }
+        request.policy = normalizeBatchPolicyForExecution(
+          useAppStore.getState().chatMode === 'ask',
+          request.policy,
+        );
 
         const result = await executeUnifiedBatch(request, ctx);
         if (result.step_results.some(step => step.ok && step.use.startsWith('change.'))) {
@@ -2772,8 +2779,9 @@ function buildDynamicContextBlock(
 
 export type ChatMode = 'ask' | 'designer' | 'agent' | 'reviewer' | 'retriever' | 'custom' | 'swarm' | 'refactor' | 'planner';
 
-export function areToolsEnabledForProvider(_provider: AIProvider, _mode: ChatMode): boolean {
-  return true;
+export function areToolsEnabledForProvider(_provider: AIProvider, mode: ChatMode): boolean {
+  // Ask = simple Q&A without batch/task tools (matches UI); other modes are fully agentic.
+  return mode !== 'ask';
 }
 
 

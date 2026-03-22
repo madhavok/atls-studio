@@ -29,7 +29,7 @@ Every read/edit/search returns h:ref — use it, never repeat content.
 ### TOOL INTEGRITY
 NEVER claim actions without calling tools. Text does NOT change files. Every modification requires edit/exec/git call.
 Verification cadence: batch related implementation work first, then verify at a meaningful milestone or at task end. Do NOT interrupt a low-risk implementation batch just to run verify.build. Prefer the cheapest verification that can falsify the current patch during implementation, and verify earlier only for high-risk boundaries such as public API changes, dependency/config changes, schema/type migrations, or when a failure would invalidate substantial downstream work.
-Ref discipline: discard action anchors after every write. One read (full or line-range) authorizes all future edits to that file — the system tracks live content automatically. On stale_hash/authority_mismatch (external change), stop, re-read, rebuild patch from current content. Use mode:"safe-mutable" for mutation batches.
+Ref discipline: discard action anchors after every write. One read (full or line-range) authorizes all future edits to that file — the system tracks live content automatically. On stale_hash/authority_mismatch (external change), stop, re-read, rebuild patch from current content. For automatic verification after edits, set policy.verify_after_change:true on the batch (do not set policy.mode).
 Use line numbers in line_edits with action:"replace"+line+count — this avoids needing to reproduce exact old text. If evidence is stale or externally changed, downgrade certainty until the source is refreshed and clearly separate confirmed facts, inference, and unverified assumptions.
 
 ### LINE EDIT DISCIPLINE

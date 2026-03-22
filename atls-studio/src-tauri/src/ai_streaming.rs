@@ -975,13 +975,12 @@ pub(crate) fn get_tool_definitions() -> Vec<ToolDef> {
                     "goal": { "type": "string", "description": "Semantic intent for this batch run" },
                     "policy": {
                         "type": "object",
-                        "description": "Execution constraints",
+                        "description": "Optional execution constraints. Do not set execution mode here — the app enforces read-only batches only in Ask chat; agent modes always run mutable.",
                         "properties": {
-                            "mode": { "type": "string", "enum": ["readonly", "mutable", "safe-mutable"], "description": "Execution mode — readonly blocks change.* ops" },
                             "verify_after_change": { "type": "boolean", "description": "Auto-insert verify step after change.* ops" },
                             "auto_stage_refs": { "type": "boolean", "description": "Auto-stage refs produced by each step" },
                             "rollback_on_failure": { "type": "boolean", "description": "Rollback successful change.* steps if a later step fails" },
-                            "max_steps": { "type": "integer", "description": "Maximum step count" },
+                            "max_steps": { "type": "integer", "description": "Maximum user step count (server-capped)" },
                             "stop_on_verify_failure": { "type": "boolean", "description": "Halt if a verify step fails" }
                         }
                     },

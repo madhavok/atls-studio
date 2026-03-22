@@ -10,6 +10,35 @@ import { isMutatingOp, isReadonlyOp } from './opMap';
 // Mode gating
 // ---------------------------------------------------------------------------
 
+/** Upper bound for model-supplied max_steps (reduces runaway / stuck batches). */
+export const MAX_BATCH_POLICY_STEPS = 100;
+
+/**
+ * Chat/tool-layer policy normalization. Ask mode is read-only (app-enforced).
+ * All other chat modes ignore model-supplied `policy.mode` and run as mutable.
+ */
+export function normalizeBatchPolicyForExecution(
+  isAskMode: boolean,
+  policy: ExecutionPolicy | undefined,
+): ExecutionPolicy | undefined {
+  if (isAskMode) {
+    return { ...policy, mode: 'readonly' };
+  }
+  if (!policy) {
+    return undefined;
+  }
+  const next: ExecutionPolicy = { ...policy, mode: 'mutable' };
+  if (next.max_steps !== undefined) {
+    if (next.max_steps > MAX_BATCH_POLICY_STEPS) {
+      next.max_steps = MAX_BATCH_POLICY_STEPS;
+    }
+    if (next.max_steps < 1) {
+      next.max_steps = 1;
+    }
+  }
+  return next;
+}
+
 export function isStepAllowed(
   step: Step,
   policy: ExecutionPolicy | undefined,

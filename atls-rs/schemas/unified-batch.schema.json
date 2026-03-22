@@ -51,13 +51,8 @@
     },
     "ExecutionPolicy": {
       "type": "object",
-      "description": "Execution constraints for the batch run",
+      "description": "Optional execution constraints. In ATLS Studio, mutability is chat-mode controlled (Ask is read-only); omit legacy mode when authoring from agents.",
       "properties": {
-        "mode": {
-          "type": "string",
-          "enum": ["readonly", "mutable", "safe-mutable"],
-          "description": "readonly blocks change.* ops. safe-mutable auto-verifies after changes."
-        },
         "verify_after_change": {
           "type": "boolean",
           "description": "Auto-insert verify.typecheck after each change.* step"
