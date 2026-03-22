@@ -4,7 +4,20 @@
 
 import type { OpHandler, HandlerContext, StepOutput } from '../types';
 import { estimateTokens, SHORT_HASH_LEN, sliceContentByLines } from '../../../utils/contextHash';
+import { parseHashRef } from '../../../utils/hashRefParsers';
 import { invoke } from '@tauri-apps/api/core';
+
+/** If ref is `h:HASH:7-10` / `h:HASH:1-3,5-7`, extract line spec for staged snippet metadata (drift rebase). */
+function lineSpecFromHashRef(rawRef: string): string | undefined {
+  const p = parseHashRef(rawRef);
+  const mod = p?.modifier;
+  if (!mod || typeof mod !== 'object' || !('lines' in mod)) return undefined;
+  const ranges = mod.lines as Array<[number, number | null]>;
+  if (!Array.isArray(ranges)) return undefined;
+  return ranges
+    .map(([start, end]) => (end == null || end === start ? `${start}` : `${start}-${end}`))
+    .join(',');
+}
 
 const RECALL_MAX_CHARS = 50_000;
 const RECALL_BATCH_MAX_CHARS = 100_000;
@@ -196,7 +209,16 @@ export const handleStage: OpHandler = async (params, ctx) => {
         });
         if (resolved?.content) {
           const stageKey = rawRef;
-          const result = ctx.store().stageSnippet(stageKey, resolved.content, resolved.source || rawRef, undefined, undefined, undefined, 'derived');
+          const lineSpec = lineSpecFromHashRef(rawRef);
+          const result = ctx.store().stageSnippet(
+            stageKey,
+            resolved.content,
+            resolved.source || rawRef,
+            lineSpec,
+            undefined,
+            undefined,
+            'derived',
+          );
           if (result.ok) {
             totalTokens += result.tokens;
             staged.push(rawRef);

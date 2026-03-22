@@ -5,7 +5,14 @@
 import { beforeEach, describe, it, expect, vi } from 'vitest';
 import { invoke } from '@tauri-apps/api/core';
 import { useContextStore } from '../../../stores/contextStore';
-import { handleCreate, handleDelete, handleEdit, normalizeEditParams, validateAnchorReplaceContent } from './change';
+import {
+  estimateLineDeltaForSource,
+  handleCreate,
+  handleDelete,
+  handleEdit,
+  normalizeEditParams,
+  validateAnchorReplaceContent,
+} from './change';
 
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: vi.fn(),
@@ -17,6 +24,32 @@ function resetContextStore() {
   useContextStore.getState().resetSession();
   useContextStore.setState({ hashStack: [], editHashStack: [] });
 }
+
+describe('estimateLineDeltaForSource', () => {
+  it('computes delta from line_edits when file_path matches (change.edit uses file_path)', () => {
+    const params = {
+      file_path: 'atls-studio/src/main.tsx',
+      line_edits: [{ action: 'insert_after', content: '// a\n// b', line: 5 }],
+    };
+    expect(estimateLineDeltaForSource(params, 'atls-studio/src/main.tsx')).toBe(2);
+  });
+
+  it('still works when file matches', () => {
+    const params = {
+      file: 'src/a.ts',
+      line_edits: [{ action: 'insert_before', content: 'x', line: 1 }],
+    };
+    expect(estimateLineDeltaForSource(params, 'src/a.ts')).toBe(1);
+  });
+
+  it('returns 0 when target path does not match', () => {
+    const params = {
+      file_path: 'a.ts',
+      line_edits: [{ action: 'insert_before', content: 'x', line: 1 }],
+    };
+    expect(estimateLineDeltaForSource(params, 'b.ts')).toBe(0);
+  });
+});
 
 describe('normalizeEditParams', () => {
   it('promotes edits: [{ file, line_edits }] to top-level { file, line_edits } and strips edits', () => {

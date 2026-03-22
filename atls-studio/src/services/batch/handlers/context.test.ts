@@ -87,8 +87,8 @@ describe('context handlers snapshot authority', () => {
     const ctx = makeCtx({
       atlsBatchQuery: vi.fn().mockResolvedValue({
         file: 'src/demo.ts',
-        h: 'h:canon1',
-        snapshot_hash: 'canon1234',
+        h: 'h:deadbeefcafe',
+        snapshot_hash: 'deadbeefcafe1234567890abcdef',
         target_range: [[2, 3]],
         actual_range: [[2, 3]],
         context_lines: 2,
@@ -96,13 +96,13 @@ describe('context handlers snapshot authority', () => {
       }),
     });
 
-    const result = await handleReadLines({ hash: 'h:canon1234', lines: '2-3' }, ctx);
+    const result = await handleReadLines({ hash: 'h:deadbeefcafe1234567890abcdef', lines: '2-3' }, ctx);
 
     expect(result.ok).toBe(true);
-    expect(result.refs).toEqual(['h:canon1']);
+    expect(result.refs).toEqual(['h:deadbeefcafe:2-3']);
     expect(result.content).toMatchObject({
       file: 'src/demo.ts',
-      snapshot_hash: 'canon1234',
+      snapshot_hash: 'deadbeefcafe1234567890abcdef',
     });
   });
 });

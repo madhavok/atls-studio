@@ -3353,14 +3353,13 @@ export const useContextStore = create<ContextStoreState>()(
 
   rebaseStagedLineNumbers: (sourcePath: string, lineDelta: number) => {
     if (lineDelta === 0) return 0;
-    const pathNorm = sourcePath.replace(/\\/g, '/').toLowerCase();
     let rebased = 0;
     set(state => {
       let changed = false;
       const nextStaged = new Map<string, StagedSnippet>();
       state.stagedSnippets.forEach((snippet, key) => {
-        const sNorm = snippet.source?.replace(/\\/g, '/').toLowerCase();
-        if (sNorm && sNorm === pathNorm && snippet.lines) {
+        const src = snippet.source;
+        if (src && sourcePathsMatch(sourcePath, src) && snippet.lines) {
           const newLines = snippet.lines.split(',').map(part => {
             const t = part.trim();
             const dash = t.indexOf('-');

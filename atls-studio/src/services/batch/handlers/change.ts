@@ -156,9 +156,16 @@ function estimateLineDeltaFromLineEdits(lineEdits: unknown): number {
   return delta;
 }
 
-function estimateLineDeltaForSource(params: Record<string, unknown>, source: string): number {
+/** Exported for tests — computes net line count delta for a single-file edit (staged snippet rebase). */
+export function estimateLineDeltaForSource(params: Record<string, unknown>, source: string): number {
   const normalizedSource = normalizeSourcePath(source);
-  if (typeof params.file === 'string' && normalizeSourcePath(params.file) === normalizedSource) {
+  const paramFile =
+    typeof params.file_path === 'string'
+      ? params.file_path
+      : typeof params.file === 'string'
+        ? params.file
+        : undefined;
+  if (paramFile && normalizeSourcePath(paramFile) === normalizedSource) {
     if (Array.isArray(params.line_edits)) return estimateLineDeltaFromLineEdits(params.line_edits);
     if (typeof params.old === 'string' && typeof params.new === 'string') {
       return params.new.split(/\r?\n/).length - params.old.split(/\r?\n/).length;

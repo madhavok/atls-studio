@@ -433,9 +433,13 @@ export const handleReadLines: OpHandler = async (params, ctx) => {
         const reusedLines = ctx.store().findReusableRead({ filePath: rlFile, startLine: rangeStart, endLine: rangeEnd, sourceRevision: rlSnapshotHash });
         if (reusedLines) {
           useRetentionStore.getState().incrementReadsReused();
+          const lineSpecForRef =
+            formatLineRanges(actualRange) || formatLineRanges(targetRange) || (typeof rlLines === 'string' ? rlLines.trim() : '');
+          const baseRef = normalizeHashRefToken(`h:${reusedLines}`);
+          const refWithLines = lineSpecForRef ? `${baseRef}:${lineSpecForRef}` : baseRef;
           const reuseSummary = `read_lines: ${rlFile}:${targetLabel} → h:${reusedLines} (reused, same rev)`;
           return {
-            kind: 'file_refs', ok: true, refs: [`h:${reusedLines}`],
+            kind: 'file_refs', ok: true, refs: [refWithLines],
             summary: reuseSummary, tokens: 0,
             content: { file: rlFile, hash: reusedLines, ...(rlSnapshotHash ? { snapshot_hash: rlSnapshotHash } : {}), target_range: targetRange, actual_range: actualRange, context_lines: usedContextLines, content: rlContent },
           };
@@ -447,7 +451,10 @@ export const handleReadLines: OpHandler = async (params, ctx) => {
       ctx.store().reconcileSourceRevision(rlFile, rlSnapshotHash);
       ctx.store().recordMemoryEvent({ action: 'read', reason: 'read_lines', source: rlFile, newRevision: rlSnapshotHash, refs: [normalizeHashRefToken(rlH)] });
     }
-    const rlRefs = [normalizeHashRefToken(rlH)];
+    const lineSpecForRef =
+      formatLineRanges(actualRange) || formatLineRanges(targetRange) || (typeof rlLines === 'string' ? rlLines.trim() : '');
+    const baseRef = normalizeHashRefToken(rlH);
+    const rlRefs = lineSpecForRef ? [`${baseRef}:${lineSpecForRef}`] : [baseRef];
     const rlStore = ctx.store();
     const rlFreshnessHint = getFreshnessHintForRefs(rlStore, rlRefs);
     const rlSummary = `read_lines: ${rlFile}:${targetLabel} → ${rlH} (${tk}tk, ctx:${usedContextLines}${actualLabel ? ` actual:${actualLabel}` : ''})${prevSuffix}\n${rlContent}`;
