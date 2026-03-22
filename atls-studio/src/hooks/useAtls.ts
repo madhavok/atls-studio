@@ -4,6 +4,7 @@ import { type UnlistenFn } from '@tauri-apps/api/event';
 import { safeListen } from '../utils/tauri';
 import { useAppStore, FileNode, Issue, ProjectProfile, FocusMatrix, IssueCounts, ALL_CATEGORIES } from '../stores/appStore';
 import { useContextStore, setBulkRevisionResolver } from '../stores/contextStore';
+import { useRetentionStore } from '../stores/retentionStore';
 import { useRef, useCallback, useEffect } from 'react';
 import { transformIssues } from './useAtlsTransforms';
 import { normPath } from './useAtlsPaths';
@@ -350,10 +351,12 @@ export function useAtls() {
           ctxState.markEngramsSuspect(changedPaths, 'watcher_event');
           ctxState.bumpWorkspaceRev(changedPaths);
           ctxState.invalidateArtifactsForPaths(changedPaths);
+          useRetentionStore.getState().evictMutationSensitive();
         } else {
           pendingCoarseRefreshRef.current = true;
           ctxState.markEngramsSuspect(undefined, 'unknown');
           ctxState.bumpWorkspaceRev();
+          useRetentionStore.getState().evictMutationSensitive();
           console.warn('[useAtls] file_tree_changed missing exact paths; falling back to coarse suspect marking');
         }
         if (refreshTimeoutRef.current) clearTimeout(refreshTimeoutRef.current);

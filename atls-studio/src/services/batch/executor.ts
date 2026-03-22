@@ -829,8 +829,8 @@ export async function executeUnifiedBatch(
       if (step.use === 'change.edit') {
         rebaseSubsequentSteps(mergedParams, stepsToRun, i + 1);
       }
-      // Evict cached verify results so verify.build re-runs against the updated files
-      useRetentionStore.getState().evictByPrefix('verify:');
+      // Evict cached verify/exec/analysis results so they re-run against the updated files
+      useRetentionStore.getState().evictMutationSensitive();
       // Refresh engram/snippet content so context reflects post-edit state
       if (output.content && typeof output.content === 'object' && !Array.isArray(output.content)) {
         refreshContextAfterEdit(output.content as Record<string, unknown>, ctx)

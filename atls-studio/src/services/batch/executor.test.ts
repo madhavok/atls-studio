@@ -857,4 +857,26 @@ describe('executeUnifiedBatch ref contamination prevention', () => {
 
     expect(receivedParams[0]._binding_warning_ref).toMatch(/resolved to nothing/);
   });
+
+  it('evicts mutation-sensitive retention entries after successful change.edit', async () => {
+    const { useRetentionStore } = await import('../../stores/retentionStore');
+    useRetentionStore.getState().reset();
+    useRetentionStore.getState().recordResult('verify:verify.build', 'h1', true);
+    useRetentionStore.getState().recordResult('exec:npm run build', 'h2', true);
+    useRetentionStore.getState().recordResult('search.code:auth', 'h3', true);
+
+    handlers.set('change.edit', async () => raw('applied', { drafts: [{ file: 'src/x.ts', h: 'h:new1' }] }));
+
+    await executeUnifiedBatch({
+      version: '1.0',
+      steps: [
+        { id: 'e1', use: 'change.edit', with: { file: 'src/x.ts', line_edits: [{ line: 1, action: 'delete' }] } },
+      ],
+    }, makeCtx());
+
+    expect(useRetentionStore.getState().getEntry('verify:verify.build')).toBeNull();
+    expect(useRetentionStore.getState().getEntry('exec:npm run build')).toBeNull();
+    // search.code is NOT mutation-sensitive — should survive
+    expect(useRetentionStore.getState().getEntry('search.code:auth')).not.toBeNull();
+  });
 });
