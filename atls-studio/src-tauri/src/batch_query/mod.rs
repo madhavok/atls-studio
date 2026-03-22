@@ -11178,6 +11178,7 @@ pub async fn atls_batch_query(
                     // Shadow diff line remapping: when the model's content_hash doesn't match
                     // the current file, look up the model's preimage in the hash registry and
                     // compute a line map to shift stale line numbers to current positions.
+                    // Runs on spawn_blocking to avoid stalling the async executor.
                     if let Some(expected_hash) = params.get("content_hash").and_then(|v| v.as_str()) {
                         let shadow_content = {
                             let hr_state = app.state::<hash_resolver::HashRegistryState>();
@@ -11190,17 +11191,23 @@ pub async fn atls_batch_query(
                             let actual_hash = content_hash(&base);
                             let expected_canonical = crate::snapshot::canonicalize_hash(expected_hash);
                             if actual_hash != expected_canonical {
-                                let line_map = crate::line_remap::compute_line_map(&shadow, &base);
-                                if !line_map.is_identity() {
-                                    let short = if expected_canonical.len() >= 6 { &expected_canonical[..6] } else { &expected_canonical };
-                                    let notices = crate::line_remap::remap_edits(&mut le, &line_map, short);
-                                    for n in notices {
-                                        edit_warnings.push(serde_json::json!({
-                                            "file": file_path,
-                                            "warning": "line_edit_notice",
-                                            "error_class": "line_edit_notice",
-                                            "hint": n,
-                                        }));
+                                let base_clone = base.clone();
+                                let remap_result = tokio::task::spawn_blocking(move || {
+                                    let line_map = crate::line_remap::compute_line_map(&shadow, &base_clone);
+                                    (line_map, expected_canonical)
+                                }).await.ok();
+                                if let Some((line_map, exp_canonical)) = remap_result {
+                                    if !line_map.is_identity() {
+                                        let short = if exp_canonical.len() >= 6 { &exp_canonical[..6] } else { &exp_canonical };
+                                        let notices = crate::line_remap::remap_edits(&mut le, &line_map, short);
+                                        for n in notices {
+                                            edit_warnings.push(serde_json::json!({
+                                                "file": file_path,
+                                                "warning": "line_edit_notice",
+                                                "error_class": "line_edit_notice",
+                                                "hint": n,
+                                            }));
+                                        }
                                     }
                                 }
                             }
