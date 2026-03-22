@@ -101,6 +101,7 @@ on_error: "stop"|"continue"|"rollback" per step.
 - deletes, delete (rollback): paths or h:refs — resolve to path
 - hashes (session.pin/unpin/compact/unload/drop/recall): h:refs pass-through
 - restore items: file and hash accept h:refs
+- system.exec: Windows agent shell is PowerShell — tail/cat may be missing; prefer verify.build / verify.typecheck for checks, or Select-Object -Last N to trim logs; empty (no output) often means a bad pipeline or trim-to-nothing
 - line_edits discipline: read exact lines first (read.lines or read.context), then build the patch — never guess ranges from memory. Verify the span with read.lines (target_range + actual_range) before editing. Count braces in braced languages so replacement blocks balance. For complex nested / scope-sensitive edits, prefer anchor on line_edits over line numbers alone. For simple spans after a fresh read, line+count+action:"replace" with numbers from that read — no old text needed. For 200+ line files, always derive line numbers from read.lines output.
 - use refactor, not edit, for cross-file extract/move/rename flows
 - hash-building refactor: read.shaped(shape:"sig") → h:SOURCE; change.create file body = imports + h:XXXX:sym(Name):dedent + exports (compose from pointers, no pasted bodies); strip source with change.edit line_edits delete (or refactor) on extracted span; verify.typecheck

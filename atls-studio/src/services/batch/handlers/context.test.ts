@@ -99,6 +99,7 @@ describe('context handlers snapshot authority', () => {
     const result = await handleReadLines({ hash: 'h:canon1234', lines: '2-3' }, ctx);
 
     expect(result.ok).toBe(true);
+    expect(result.refs).toEqual(['h:canon1']);
     expect(result.content).toMatchObject({
       file: 'src/demo.ts',
       snapshot_hash: 'canon1234',

@@ -45,6 +45,14 @@ function validatePathParam(value: unknown, paramName: string): string | null {
   return null;
 }
 
+/** Single `h:TOKEN` ref — backend read_lines often returns `h` already prefixed; do not double-wrap. */
+function normalizeHashRefToken(h: string): string {
+  let s = h.trim();
+  while (s.startsWith('h:h:')) s = s.slice(2);
+  if (!s) return h;
+  return s.startsWith('h:') ? s : `h:${s}`;
+}
+
 function ok(summary: string, refs: string[] = [], tokens?: number, content?: unknown): StepOutput {
   return { kind: 'file_refs', ok: true, refs, summary, tokens, content };
 }
@@ -437,9 +445,9 @@ export const handleReadLines: OpHandler = async (params, ctx) => {
 
     if (rlFile && rlSnapshotHash) {
       ctx.store().reconcileSourceRevision(rlFile, rlSnapshotHash);
-      ctx.store().recordMemoryEvent({ action: 'read', reason: 'read_lines', source: rlFile, newRevision: rlSnapshotHash, refs: [`h:${rlH}`] });
+      ctx.store().recordMemoryEvent({ action: 'read', reason: 'read_lines', source: rlFile, newRevision: rlSnapshotHash, refs: [normalizeHashRefToken(rlH)] });
     }
-    const rlRefs = [`h:${rlH}`];
+    const rlRefs = [normalizeHashRefToken(rlH)];
     const rlStore = ctx.store();
     const rlFreshnessHint = getFreshnessHintForRefs(rlStore, rlRefs);
     const rlSummary = `read_lines: ${rlFile}:${targetLabel} → ${rlH} (${tk}tk, ctx:${usedContextLines}${actualLabel ? ` actual:${actualLabel}` : ''})${prevSuffix}\n${rlContent}`;
