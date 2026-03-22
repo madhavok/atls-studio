@@ -1697,7 +1697,7 @@ const ReasoningBlock = memo(function ReasoningBlock({
   }, [isStreaming]);
   
   return (
-    <details open={isOpen} className="group">
+    <details open={isOpen || undefined} className="group">
       <summary 
         className="flex items-center gap-2 cursor-pointer select-none text-xs text-studio-text-secondary hover:text-studio-text-primary transition-colors py-1"
         onClick={(e) => { e.preventDefault(); setIsOpen(!isOpen); }}

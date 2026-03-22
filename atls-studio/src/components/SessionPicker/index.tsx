@@ -32,6 +32,9 @@ export function SessionPicker({
   useEffect(() => {
     if (!isOpen) return;
     
+    // Reset selection when modal re-opens (avoid stale selection from previous project)
+    setSelectedId(null);
+    
     async function loadSessions() {
       setLoading(true);
       try {

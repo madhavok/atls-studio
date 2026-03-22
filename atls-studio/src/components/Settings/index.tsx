@@ -56,8 +56,8 @@ export function Settings({ isOpen, onClose }: SettingsProps) {
     setShowKeys(prev => ({ ...prev, [key]: !prev[key] }));
   };
 
-  const isProviderEnabled = (provider: AIProvider) =>
-    !localSettings.disabledProviders?.includes(provider);
+  const isProviderEnabled = useCallback((provider: AIProvider) =>
+    !localSettings.disabledProviders?.includes(provider), [localSettings.disabledProviders]);
   const toggleProviderEnabled = (provider: AIProvider) => {
     const disabled = localSettings.disabledProviders ?? [];
     const next = disabled.includes(provider)

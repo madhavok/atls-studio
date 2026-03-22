@@ -115,11 +115,11 @@ export function QuickActions({ isOpen, onClose, actions, mode = 'actions' }: Qui
     switch (e.key) {
       case 'ArrowDown':
         e.preventDefault();
-        setSelectedIndex(i => Math.min(i + 1, filteredActions.length - 1));
+        if (filteredActions.length > 0) setSelectedIndex(i => Math.min(i + 1, filteredActions.length - 1));
         break;
       case 'ArrowUp':
         e.preventDefault();
-        setSelectedIndex(i => Math.max(i - 1, 0));
+        if (filteredActions.length > 0) setSelectedIndex(i => Math.max(i - 1, 0));
         break;
       case 'Enter':
         e.preventDefault();
