@@ -693,6 +693,8 @@ interface ContextStoreState {
   getStagedSnippetsForRefresh: (sourcePath: string) => Array<{ key: string; source: string; lines?: string; shapeSpec?: string; content: string; sourceRevision?: string; viewKind?: EngramViewKind }>;
   /** Update staged/chunk sourceRevision for a path after an edit completes with a new hash. */
   forwardStagedHash: (sourcePath: string, newRevision: string) => number;
+  /** Synchronously rebase staged snippet line numbers after an edit shifts lines. */
+  rebaseStagedLineNumbers: (sourcePath: string, lineDelta: number) => number;
 
   // Freshness gates — workspace revision tracking & artifact management
   bumpWorkspaceRev: (changedPaths?: string[]) => number;
@@ -3347,6 +3349,40 @@ export const useContextStore = create<ContextStoreState>()(
       return { stagedSnippets: nextStaged, chunks: nextChunks };
     });
     return updated;
+  },
+
+  rebaseStagedLineNumbers: (sourcePath: string, lineDelta: number) => {
+    if (lineDelta === 0) return 0;
+    const pathNorm = sourcePath.replace(/\\/g, '/').toLowerCase();
+    let rebased = 0;
+    set(state => {
+      let changed = false;
+      const nextStaged = new Map<string, StagedSnippet>();
+      state.stagedSnippets.forEach((snippet, key) => {
+        const sNorm = snippet.source?.replace(/\\/g, '/').toLowerCase();
+        if (sNorm && sNorm === pathNorm && snippet.lines) {
+          const newLines = snippet.lines.split(',').map(part => {
+            const t = part.trim();
+            const dash = t.indexOf('-');
+            if (dash >= 0) {
+              const s = Math.max(1, parseInt(t.slice(0, dash), 10) + lineDelta);
+              const e = Math.max(s, parseInt(t.slice(dash + 1), 10) + lineDelta);
+              return `${s}-${e}`;
+            }
+            const n = Math.max(1, parseInt(t, 10) + lineDelta);
+            return String(n);
+          }).join(',');
+          nextStaged.set(key, { ...snippet, lines: newLines });
+          rebased++;
+          changed = true;
+        } else {
+          nextStaged.set(key, snippet);
+        }
+      });
+      if (!changed) return {};
+      return { stagedSnippets: nextStaged };
+    });
+    return rebased;
   },
 
   pruneStagedSnippets: (reason = 'overBudget') => {

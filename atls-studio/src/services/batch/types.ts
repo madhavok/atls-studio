@@ -359,6 +359,7 @@ export interface ContextStoreApi {
   getStagedEntries: () => ReadonlyMap<string, { source: string; tokens: number }>;
   getStagedSnippetsForRefresh: (sourcePath: string) => Array<{ key: string; source: string; lines?: string; shapeSpec?: string; content: string; sourceRevision?: string; viewKind?: 'latest' | 'snapshot' | 'derived' }>;
   forwardStagedHash: (sourcePath: string, newRevision: string) => number;
+  rebaseStagedLineNumbers: (sourcePath: string, lineDelta: number) => number;
 
   // Blackboard
   setBlackboardEntry: (key: string, content: string, opts?: { derivedFrom?: string[] }) => { tokens: number; warning?: string };

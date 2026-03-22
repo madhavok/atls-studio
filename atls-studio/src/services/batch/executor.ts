@@ -29,6 +29,7 @@ import { useRetentionStore } from '../../stores/retentionStore';
 import { useAppStore } from '../../stores/appStore';
 import { invoke } from '@tauri-apps/api/core';
 import { getFreshnessJournal } from '../freshnessJournal';
+import { registerOwnWrite } from '../../hooks/useAtls';
 import './intents/index';
 
 interface BatchResolvedEntry {
@@ -880,6 +881,20 @@ export async function executeUnifiedBatch(
         if (Array.isArray(written)) {
           for (const w of written) {
             if (typeof w === 'string') batchEditedPaths.add(w);
+          }
+        }
+      }
+      // Register paths as own writes to suppress spurious intel:file_change from watcher
+      registerOwnWrite([...batchEditedPaths]);
+      // Synchronously rebase staged snippet line numbers from the freshness journal.
+      // This must happen before the async content refresh so the model sees
+      // correct line references in the next round's context.
+      if (output.content && typeof output.content === 'object') {
+        const editedInStep = collectEditedFiles(output.content as Record<string, unknown>);
+        for (const ef of editedInStep) {
+          const journal = getFreshnessJournal(ef.filePath);
+          if (journal?.lineDelta) {
+            ctx.store().rebaseStagedLineNumbers(ef.filePath, journal.lineDelta);
           }
         }
       }

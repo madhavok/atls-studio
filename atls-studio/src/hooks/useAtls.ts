@@ -10,6 +10,28 @@ import { transformIssues } from './useAtlsTransforms';
 import { normPath } from './useAtlsPaths';
 
 // ---------------------------------------------------------------------------
+// Own-write suppression: paths recently written by ATLS edits are excluded
+// from file_tree_changed processing to prevent spurious intel:file_change.
+// ---------------------------------------------------------------------------
+const OWN_WRITE_TTL_MS = 3000;
+const ownWritePaths = new Map<string, number>();
+
+export function registerOwnWrite(paths: string[]): void {
+  const now = Date.now();
+  for (const p of paths) ownWritePaths.set(normPath(p).toLowerCase(), now);
+}
+
+function filterOwnWrites(paths: string[]): string[] {
+  if (ownWritePaths.size === 0) return paths;
+  const now = Date.now();
+  // Prune expired entries
+  for (const [k, t] of ownWritePaths) {
+    if (now - t > OWN_WRITE_TTL_MS) ownWritePaths.delete(k);
+  }
+  return paths.filter(p => !ownWritePaths.has(normPath(p).toLowerCase()));
+}
+
+// ---------------------------------------------------------------------------
 // Shared helpers (module-level, no React dependency)
 // ---------------------------------------------------------------------------
 
@@ -345,12 +367,13 @@ export function useAtls() {
           ).values()]
           : [];
         const ctxState = useContextStore.getState();
-        if (changedPaths.length > 0) {
+        const externalPaths = filterOwnWrites(changedPaths);
+        if (externalPaths.length > 0) {
           pendingCoarseRefreshRef.current = false;
-          changedPaths.forEach((path) => pendingChangedPathsRef.current.set(path.toLowerCase(), path));
-          ctxState.markEngramsSuspect(changedPaths, 'watcher_event');
-          ctxState.bumpWorkspaceRev(changedPaths);
-          ctxState.invalidateArtifactsForPaths(changedPaths);
+          externalPaths.forEach((path) => pendingChangedPathsRef.current.set(path.toLowerCase(), path));
+          ctxState.markEngramsSuspect(externalPaths, 'watcher_event');
+          ctxState.bumpWorkspaceRev(externalPaths);
+          ctxState.invalidateArtifactsForPaths(externalPaths);
           useRetentionStore.getState().evictMutationSensitive();
         } else {
           pendingCoarseRefreshRef.current = true;
