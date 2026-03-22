@@ -3,7 +3,7 @@
  * Includes edit post-processing (hash registration, stale invalidation, diff injection, lesson extraction).
  */
 
-import type { OpHandler, StepOutput } from '../types';
+import type { HandlerContext, OpHandler, StepOutput } from '../types';
 import { useContextStore } from '../../../stores/contextStore';
 import { getPreflightAutomationDecision, runFreshnessPreflight } from '../../../services/freshnessPreflight';
 import { recordFreshnessJournal } from '../../../services/freshnessJournal';
@@ -1710,11 +1710,47 @@ export const handleRollback: OpHandler = async (params, ctx) => {
   try {
     const result = await ctx.atlsBatchQuery('refactor', merged);
     const refs = extractRefs(result);
+    clearEditLessonsForRollback(params, ctx);
     return ok(JSON.stringify(result), refs, result);
   } catch (rbErr) {
     return err(`rollback: ERROR ${rbErr instanceof Error ? rbErr.message : String(rbErr)}`);
   }
 };
+
+/**
+ * After rollback, remove stale `edit:` / `err:` BB entries for rolled-back
+ * files so the DAMAGED EDIT banner doesn't persist.
+ */
+function clearEditLessonsForRollback(
+  params: Record<string, unknown>,
+  ctx: HandlerContext,
+): void {
+  try {
+    const restoreEntries = params.restore as Array<{ file?: string }> | undefined;
+    const deleteEntries = params.delete as string[] | undefined;
+    const filePaths: string[] = [];
+    if (Array.isArray(restoreEntries)) {
+      for (const entry of restoreEntries) {
+        if (typeof entry?.file === 'string') filePaths.push(entry.file);
+      }
+    }
+    if (Array.isArray(deleteEntries)) {
+      filePaths.push(...deleteEntries.filter((p): p is string => typeof p === 'string'));
+    }
+    if (filePaths.length === 0) return;
+
+    const store = ctx.store();
+    for (const fp of filePaths) {
+      const basename = fp.split('/').pop() ?? fp;
+      store.removeBlackboardEntry(`edit:${basename}`);
+      store.removeBlackboardEntry(`err:${basename}`);
+      store.removeBlackboardEntry(`fix:${basename}`);
+      store.removeBlackboardEntry(`repair:${basename}`);
+    }
+  } catch {
+    // Non-fatal
+  }
+}
 
 // ---------------------------------------------------------------------------
 // change.split_module

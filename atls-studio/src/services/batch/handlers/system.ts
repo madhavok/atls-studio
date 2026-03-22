@@ -215,6 +215,11 @@ export const handleSystemGit: OpHandler = async (params, ctx) => {
   try {
     const result = await ctx.atlsBatchQuery('git', params);
     const content = typeof result === 'string' ? result : JSON.stringify(result);
+
+    if (action === 'restore' && result && typeof result === 'object') {
+      clearEditLessonsForRestoredFiles(result as Record<string, unknown>, params, ctx);
+    }
+
     return ok(content, result);
   } catch (error) {
     return err(`system.git: ERROR ${error instanceof Error ? error.message : String(error)}`);
@@ -238,3 +243,32 @@ export const handleSystemHelp: OpHandler = async (params, ctx) => {
     return err(`system.help: ERROR ${error instanceof Error ? error.message : String(error)}`);
   }
 };
+
+/**
+ * After git restore, remove stale `edit:` and `err:` BB entries for
+ * restored files so the DAMAGED EDIT banner doesn't persist and
+ * trap the model in a fix-loop.
+ */
+function clearEditLessonsForRestoredFiles(
+  result: Record<string, unknown>,
+  params: Record<string, unknown>,
+  ctx: HandlerContext,
+): void {
+  try {
+    const restored = result.files_restored as string[] | undefined;
+    const paramFiles = (params.files ?? params.file_paths ?? params.paths) as string[] | undefined;
+    const filePaths = restored ?? paramFiles;
+    if (!Array.isArray(filePaths) || filePaths.length === 0) return;
+
+    const store = ctx.store();
+    for (const fp of filePaths) {
+      const basename = String(fp).split('/').pop() ?? String(fp);
+      store.removeBlackboardEntry(`edit:${basename}`);
+      store.removeBlackboardEntry(`err:${basename}`);
+      store.removeBlackboardEntry(`fix:${basename}`);
+      store.removeBlackboardEntry(`repair:${basename}`);
+    }
+  } catch {
+    // Non-fatal: stale BB entries are annoying but not dangerous
+  }
+}
