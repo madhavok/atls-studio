@@ -1902,13 +1902,6 @@ pub fn batch_edits(
         }
 
         let (new_content, warnings) = apply_line_edits(&content, &entry.line_edits)?;
-        if !warnings.is_empty() {
-            return Err(format!(
-                "anchor_not_found for {}: {}. Perform a fresh canonical full read and retry with current anchors.",
-                file_path,
-                warnings.join(" | ")
-            ));
-        }
 
         // Use EditSession for validation and atomic commit
         let mut session = crate::edit_session::EditSession::begin_from_snapshot(&snap, resolved_path.clone());
@@ -1954,13 +1947,16 @@ pub fn batch_edits(
 
         all_written.push((file_path.clone(), final_content));
 
-        let result_entry = serde_json::json!({
+        let mut result_entry = serde_json::json!({
             "f": file_path,
             "h": format!("h:{}", &new_hash[..SHORT_HASH_LEN]),
             "snapshot_hash": new_hash,
             "old_h": format!("h:{}", &old_hash[..SHORT_HASH_LEN]),
             "ok": entry.line_edits.len(),
         });
+        if !warnings.is_empty() {
+            result_entry["line_edit_notices"] = serde_json::json!(warnings);
+        }
         results.push(result_entry);
     }
 

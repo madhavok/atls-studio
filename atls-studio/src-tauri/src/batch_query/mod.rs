@@ -11197,24 +11197,14 @@ pub async fn atls_batch_query(
                             }));
                         }
                     };
-                    if !anchor_warnings.is_empty() {
-                        let error_class = if anchor_warnings.iter().any(|w| w.contains("invalid multiline anchor")) {
-                            "anchor_shape_invalid"
-                        } else if anchor_warnings.iter().any(|w| w.contains("anchor is ambiguous")) {
-                            "anchor_ambiguous"
-                        } else {
-                            "anchor_not_found"
-                        };
-                        return Ok(serde_json::json!({
-                            "mode": "draft",
-                            "error": anchor_warnings.join(" | "),
-                            "error_class": error_class,
-                            "anchor_warnings": anchor_warnings,
-                            "_next": "Re-read the target file, then retry with exact current anchors or narrower line_edits",
-                            "_retry_payload": {
-                                "file_paths": [file_path],
-                                "strategy": "read_shaped_sig_then_retry",
-                            }
+                    // Successful apply_line_edits may still emit informational strings (fuzzy anchor,
+                    // hint delta, count-overlap extension). Those are not failures — only Err(...) is.
+                    for w in anchor_warnings {
+                        edit_warnings.push(serde_json::json!({
+                            "file": file_path,
+                            "warning": "line_edit_notice",
+                            "error_class": "line_edit_notice",
+                            "hint": w,
                         }));
                     }
                     let to_insert = if is_js_ts_path(&file_path) && new_content.contains("export ") {
