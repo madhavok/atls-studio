@@ -313,8 +313,9 @@ export function formatWorkingMemory(input: FormatterInput): string {
           ? (shapedPin ? `[P:${ref.pinnedShape}] ` : '[P] ')
           : '';
         const compactIndicator = chunk.compacted ? '[C] ' : '';
+        const liveIndicator = chunk.origin === 'edit-refresh' ? '[LIVE] ' : '';
         const summaryHint = chunk.summary ? ` — ${chunk.summary}` : '';
-        const tag = `${compactIndicator}${pinIndicator}<<h:${chunk.shortHash} tk:${chunk.tokens} ${chunk.type}>> ${chunk.source || ''}${formatSuspectHint(chunk.suspectSince, chunk.freshness, chunk.freshnessCause)}${formatRebindHint(chunk.lastRebind)}${summaryHint}`;
+        const tag = `${compactIndicator}${liveIndicator}${pinIndicator}<<h:${chunk.shortHash} tk:${chunk.tokens} ${chunk.type}>> ${chunk.source || ''}${formatSuspectHint(chunk.suspectSince, chunk.freshness, chunk.freshnessCause)}${formatRebindHint(chunk.lastRebind)}${summaryHint}`;
         lines.push(tag.trim());
         const metaLines = formatEngramMeta(chunk);
         if (metaLines.length > 0) lines.push(...metaLines);

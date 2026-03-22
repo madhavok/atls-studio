@@ -2579,11 +2579,37 @@ function buildDynamicContextBlock(
 
   // Edit-awareness steering: ATLS is live — the hash tracker and edit journal
   // already reflect current file state. Tell the model not to re-read.
-  const editBBKeys = useContextStore.getState().listBlackboardEntries()
-    .filter(e => e.key.startsWith('edit:'))
-      .map(e => `${e.key.slice(5)} (${e.preview})`);
-  if (editBBKeys.length > 0) {
-    parts.push(`<<RECENT EDITS: ${editBBKeys.join(', ')}. ATLS tracks live file state — do not re-read, re-search, or re-stage these files unless verifying a specific change. Use h:refs from edit results directly.>>`);
+  // Cross-reference edit: and err: BB entries to surface verify failures.
+  const bbEntries = useContextStore.getState().listBlackboardEntries();
+  const errBasenames = new Set(
+    bbEntries.filter(e => e.key.startsWith('err:')).map(e => e.key.slice(4)),
+  );
+  const damagedEdits: string[] = [];
+  const healthyEdits: string[] = [];
+  for (const e of bbEntries) {
+    if (!e.key.startsWith('edit:')) continue;
+    const basename = e.key.slice(5);
+    if (errBasenames.has(basename)) {
+      const errEntry = bbEntries.find(b => b.key === `err:${basename}`);
+      const errPreview = errEntry?.preview ?? 'verify.build FAILED';
+      damagedEdits.push(`${basename} (${e.preview}) -- ${errPreview}`);
+    } else {
+      healthyEdits.push(`${basename} (${e.preview})`);
+    }
+  }
+  if (damagedEdits.length > 0) {
+    parts.push(`<<DAMAGED EDIT: ${damagedEdits.join('; ')}. Content is live in context. Fix the error.>>`);
+  }
+  if (healthyEdits.length > 0) {
+    parts.push(`<<RECENT EDITS: ${healthyEdits.join(', ')}. ATLS tracks live file state — do not re-read, re-search, or re-stage these files unless verifying a specific change. Use h:refs from edit results directly.>>`);
+  }
+
+  // Repair escalation: surface files with repeated failures
+  const escalatedRepairs = bbEntries
+    .filter(e => e.key.startsWith('repair:') && parseInt(e.preview, 10) >= 2)
+    .map(e => `${e.key.slice(7)} (${e.preview} attempts)`);
+  if (escalatedRepairs.length > 0) {
+    parts.push(`<<ESCALATED REPAIR: ${escalatedRepairs.join(', ')}. Multiple failed repairs. Full scope in context. Review holistically before editing.>>`);
   }
 
   // Context pressure hint: only nudge distillation when stale engrams outweigh active ones

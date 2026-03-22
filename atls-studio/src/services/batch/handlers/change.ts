@@ -356,15 +356,19 @@ function recordEditSummary(result: unknown, params: Record<string, unknown>): vo
       const hash = (entry.h ?? entry.hash) as string | undefined;
       const shortHash = hash ? `h:${hash.replace(/^h:/, '').slice(0, SHORT_HASH_LEN)}` : '';
 
-      // Build a one-line summary: "h:abc123 lines 40-60 (+5/-2)"
+      // Build a one-line summary: "h:abc123 40L (+5) diff:h:OLD..h:NEW"
       const linesChanged = (entry.lines_changed ?? entry.line_count) as number | undefined;
       const lineDelta = estimateLineDeltaForSource(params, file);
       const lineInfo = linesChanged ? ` ${linesChanged}L` : '';
       const deltaInfo = lineDelta !== 0 ? ` (${lineDelta > 0 ? '+' : ''}${lineDelta})` : '';
+      const oldHash = (entry.old_h ?? entry.old_hash) as string | undefined;
+      const diffRef = (oldHash && hash)
+        ? ` diff:h:${oldHash.replace(/^h:/, '').slice(0, SHORT_HASH_LEN)}..${shortHash}`
+        : '';
 
       store.setBlackboardEntry(
         `edit:${basename}`,
-        `${shortHash}${lineInfo}${deltaInfo} @${Date.now()}`,
+        `${shortHash}${lineInfo}${deltaInfo}${diffRef} @${Date.now()}`,
       );
     }
 
@@ -1621,6 +1625,14 @@ export const handleEdit: OpHandler = async (params, ctx) => {
         reason: String(errorPayload.error_class ?? 'edit_error'),
         refs: targetFiles,
       });
+      // Repair escalation: track failure count per file
+      for (const tf of targetFiles) {
+        const basename = tf.split('/').pop() ?? tf;
+        const repairKey = `repair:${basename}`;
+        const prev = useContextStore.getState().getBlackboardEntry(repairKey);
+        const count = prev ? parseInt(prev, 10) + 1 : 1;
+        useContextStore.getState().setBlackboardEntry(repairKey, String(count));
+      }
       return errWithContent(formatEditErrorSummary(enrichedErrorPayload), enrichedErrorPayload);
     }
     const refs = extractRefs(result);
@@ -1628,6 +1640,13 @@ export const handleEdit: OpHandler = async (params, ctx) => {
     if (isMutating && hasLintErrorsInResult(result)) {
       const hint = formatLintErrorHint(result);
       summary = `[LINT ERRORS] ${hint} — see lints.top_issues\n${summary}`;
+    }
+    // Clear repair escalation counter on success
+    if (isMutating) {
+      for (const tf of targetFiles) {
+        const basename = tf.split('/').pop() ?? tf;
+        useContextStore.getState().removeBlackboardEntry(`repair:${basename}`);
+      }
     }
     return ok(summary, refs, result);
   } catch (editErr) {

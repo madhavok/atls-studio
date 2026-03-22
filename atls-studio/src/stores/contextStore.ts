@@ -689,6 +689,8 @@ interface ContextStoreState {
   getStagedTokenCount: () => number;
   markStagedSnippetsUsed: () => void;
   pruneStagedSnippets: (reason?: StageEvictionReason) => { freed: number; removed: number; reliefAction: PromptReliefAction };
+  /** Return staged snippets matching a source path, with fields needed for post-edit content refresh. */
+  getStagedSnippetsForRefresh: (sourcePath: string) => Array<{ key: string; source: string; lines?: string; shapeSpec?: string; content: string; sourceRevision?: string; viewKind?: EngramViewKind }>;
   /** Update staged/chunk sourceRevision for a path after an edit completes with a new hash. */
   forwardStagedHash: (sourcePath: string, newRevision: string) => number;
 
@@ -1878,7 +1880,16 @@ export const useContextStore = create<ContextStoreState>()(
           const archived = findChunkByRef(newArchived, h);
           if (archived) {
             newArchived.delete(archived[0]);
-            const recalled = { ...archived[1], pinned: true, lastAccessed: Date.now() };
+            const recalled = { ...archived[1], pinned: true, lastAccessed: Date.now() } as typeof archived[1];
+            // Freshness check: if file-backed and sourceRevision is stale, mark suspect
+            if (recalled.source && isFileBackedType(recalled.type) && recalled.sourceRevision) {
+              const awareness = get().getAwareness(recalled.source);
+              if (awareness && awareness.snapshotHash !== recalled.sourceRevision) {
+                recalled.suspectSince = Date.now();
+                recalled.freshness = 'suspect' as FreshnessState;
+                recalled.freshnessCause = 'unknown' as FreshnessCause;
+              }
+            }
             newChunks.set(archived[0], recalled);
             // HPP: transition from archived → materialized, then pin
             hppMaterialize(recalled.hash, recalled.type, recalled.source, recalled.tokens, (recalled.content.match(/\n/g) || []).length + 1, recalled.editDigest || recalled.digest || '');
@@ -3284,6 +3295,27 @@ export const useContextStore = create<ContextStoreState>()(
       });
       return { stagedSnippets };
     });
+  },
+
+  getStagedSnippetsForRefresh: (sourcePath: string) => {
+    const pathNorm = sourcePath.replace(/\\/g, '/').toLowerCase();
+    const results: Array<{ key: string; source: string; lines?: string; shapeSpec?: string; content: string; sourceRevision?: string; viewKind?: EngramViewKind }> = [];
+    get().stagedSnippets.forEach((snippet, key) => {
+      if (snippet.viewKind === 'snapshot') return;
+      const sNorm = snippet.source?.replace(/\\/g, '/').toLowerCase();
+      if (sNorm && sNorm === pathNorm) {
+        results.push({
+          key,
+          source: snippet.source,
+          lines: snippet.lines,
+          shapeSpec: snippet.shapeSpec,
+          content: snippet.content,
+          sourceRevision: snippet.sourceRevision,
+          viewKind: snippet.viewKind,
+        });
+      }
+    });
+    return results;
   },
 
   forwardStagedHash: (sourcePath: string, newRevision: string) => {

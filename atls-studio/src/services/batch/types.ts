@@ -357,6 +357,7 @@ export interface ContextStoreApi {
   unstageSnippet: (key: string) => { freed: number };
   getStagedTokenCount: () => number;
   getStagedEntries: () => ReadonlyMap<string, { source: string; tokens: number }>;
+  getStagedSnippetsForRefresh: (sourcePath: string) => Array<{ key: string; source: string; lines?: string; shapeSpec?: string; content: string; sourceRevision?: string; viewKind?: 'latest' | 'snapshot' | 'derived' }>;
   forwardStagedHash: (sourcePath: string, newRevision: string) => number;
 
   // Blackboard
@@ -475,7 +476,7 @@ export type FreshnessCause =
   | 'external_file_change'
   | 'watcher_event'
   | 'unknown';
-export type EngramOrigin = 'read' | 'edit' | 'stage' | 'derived';
+export type EngramOrigin = 'read' | 'edit' | 'edit-refresh' | 'stage' | 'derived';
 
 export interface ChunkEntry {
   hash: string;

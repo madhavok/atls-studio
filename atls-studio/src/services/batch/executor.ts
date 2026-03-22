@@ -26,7 +26,15 @@ import { SnapshotTracker, AwarenessLevel } from './snapshotTracker';
 import type { LineRegion } from './snapshotTracker';
 import { buildIntentContext, resolveIntents, isPressured } from './intents';
 import { useRetentionStore } from '../../stores/retentionStore';
+import { invoke } from '@tauri-apps/api/core';
+import { getFreshnessJournal } from '../freshnessJournal';
 import './intents/index';
+
+interface BatchResolvedEntry {
+  source: string | null;
+  content: string;
+  tokens: number;
+}
 
 // ---------------------------------------------------------------------------
 // Cross-step line-number rebasing
@@ -272,6 +280,172 @@ function recordSnapshotFromOutput(
         if (path && hash) {
           ctx.store().forwardStagedHash(path, hash);
         }
+      }
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Post-edit content refresh — keep engrams & snippets live after mutations
+// ---------------------------------------------------------------------------
+
+function normalizePath(p: string): string {
+  return p.replace(/\\/g, '/').toLowerCase();
+}
+
+function collectEditedFiles(artifact: Record<string, unknown>): Array<{ filePath: string; newHash: string }> {
+  const results: Array<{ filePath: string; newHash: string }> = [];
+  const seen = new Set<string>();
+  for (const arr of [artifact.results, artifact.drafts, artifact.batch]) {
+    if (!Array.isArray(arr)) continue;
+    for (const entry of arr) {
+      if (!entry || typeof entry !== 'object') continue;
+      const rec = entry as Record<string, unknown>;
+      const fp = SnapshotTracker.extractFilePath(rec);
+      const sh = SnapshotTracker.extractHash(rec);
+      if (fp && sh) {
+        const key = normalizePath(fp);
+        if (!seen.has(key)) {
+          seen.add(key);
+          results.push({ filePath: fp, newHash: sh });
+        }
+      }
+    }
+  }
+  const topFp = SnapshotTracker.extractFilePath(artifact);
+  const topSh = SnapshotTracker.extractHash(artifact);
+  if (topFp && topSh && !seen.has(normalizePath(topFp))) {
+    results.push({ filePath: topFp, newHash: topSh });
+  }
+  return results;
+}
+
+function hasEngramForSource(ctx: HandlerContext, sourcePath: string): boolean {
+  const pathNorm = normalizePath(sourcePath);
+  for (const [, chunk] of ctx.store().chunks) {
+    if (chunk.compacted || !chunk.source) continue;
+    if (normalizePath(chunk.source) === pathNorm) return true;
+  }
+  return false;
+}
+
+function parseLineSpec(spec: string): Array<[number, number]> {
+  const ranges: Array<[number, number]> = [];
+  for (const part of spec.split(',')) {
+    const t = part.trim();
+    if (!t) continue;
+    const dash = t.indexOf('-');
+    if (dash >= 0) {
+      const s = parseInt(t.slice(0, dash).trim(), 10);
+      const e = parseInt(t.slice(dash + 1).trim(), 10);
+      if (Number.isFinite(s) && Number.isFinite(e)) ranges.push([s, e]);
+    } else {
+      const n = parseInt(t, 10);
+      if (Number.isFinite(n)) ranges.push([n, n]);
+    }
+  }
+  return ranges;
+}
+
+function applyLineDelta(lineSpec: string, delta: number): string {
+  const ranges = parseLineSpec(lineSpec);
+  if (ranges.length === 0) return lineSpec;
+  return ranges.map(([s, e]) => {
+    const ns = Math.max(1, s + delta);
+    const ne = Math.max(ns, e + delta);
+    return `${ns}-${ne}`;
+  }).join(',');
+}
+
+/**
+ * After a change step, refresh engram and snippet content so the context
+ * window reflects the post-edit file state. Resolves h:NEW from the hash
+ * registry (content already indexed after the write) and replaces content
+ * in-place. Hash forwarding in addChunk compacts the old engram.
+ */
+async function refreshContextAfterEdit(
+  artifact: Record<string, unknown>,
+  ctx: HandlerContext,
+): Promise<void> {
+  const editedFiles = collectEditedFiles(artifact);
+  if (editedFiles.length === 0) return;
+
+  const store = ctx.store();
+
+  // Partition: files with full-file engrams vs snippet-only
+  const fullFileRefs: string[] = [];
+  const fullFileMap = new Map<string, { filePath: string; newHash: string }>();
+  const snippetFiles: Array<{ filePath: string; newHash: string }> = [];
+
+  for (const ef of editedFiles) {
+    if (hasEngramForSource(ctx, ef.filePath)) {
+      const ref = ef.newHash.startsWith('h:') ? ef.newHash : `h:${ef.newHash}`;
+      fullFileRefs.push(ref);
+      fullFileMap.set(ref, ef);
+    }
+    const snippets = store.getStagedSnippetsForRefresh(ef.filePath);
+    if (snippets.length > 0) {
+      snippetFiles.push(ef);
+    }
+  }
+
+  // 1. Full-file engram refresh via batch resolve (single IPC)
+  if (fullFileRefs.length > 0) {
+    try {
+      const resolved = await invoke<Array<BatchResolvedEntry | null>>('batch_resolve_hash_refs', { refs: fullFileRefs });
+      for (let i = 0; i < fullFileRefs.length; i++) {
+        const entry = resolved[i];
+        const ef = fullFileMap.get(fullFileRefs[i]);
+        if (!entry?.content || !ef) continue;
+        store.addChunk(entry.content, 'smart', ef.filePath, undefined, undefined, undefined, {
+          sourceRevision: ef.newHash.replace(/^h:/, ''),
+          origin: 'edit-refresh',
+        });
+      }
+    } catch (e) {
+      console.warn('[executor] full-file content refresh failed:', e);
+    }
+  }
+
+  // 2. Line-range snippet refresh + 3. Shaped snippet re-derive
+  for (const ef of snippetFiles) {
+    const snippets = store.getStagedSnippetsForRefresh(ef.filePath);
+    const bareHash = ef.newHash.replace(/^h:/, '');
+
+    for (const snippet of snippets) {
+      try {
+        if (snippet.shapeSpec) {
+          // Shaped snippet: re-derive via h:NEW:{shape}
+          const rawRef = `h:${bareHash}:${snippet.shapeSpec}`;
+          const resolved = await invoke<{ content: string; source?: string | null }>('resolve_hash_ref', { rawRef });
+          if (resolved?.content) {
+            store.stageSnippet(snippet.key, resolved.content, snippet.source, undefined, bareHash, snippet.shapeSpec, 'derived');
+          } else {
+            store.unstageSnippet(snippet.key);
+          }
+        } else if (snippet.lines) {
+          // Line-range snippet: relocate lines then re-slice
+          const journal = getFreshnessJournal(ef.filePath);
+          const delta = journal?.lineDelta ?? 0;
+          const relocatedLines = delta !== 0 ? applyLineDelta(snippet.lines, delta) : snippet.lines;
+
+          const rawRef = `h:${bareHash}:${relocatedLines}`;
+          const resolved = await invoke<{ content: string; source?: string | null }>('resolve_hash_ref', { rawRef });
+          if (resolved?.content) {
+            store.stageSnippet(snippet.key, resolved.content, snippet.source, relocatedLines, bareHash, undefined, 'latest');
+          } else {
+            store.markEngramsSuspect([ef.filePath], 'same_file_prior_edit' as 'unknown', 'content');
+          }
+        } else {
+          // Full-file staged snippet (no lines, no shape): resolve full content
+          const rawRef = `h:${bareHash}`;
+          const resolved = await invoke<{ content: string; source?: string | null }>('resolve_hash_ref', { rawRef });
+          if (resolved?.content) {
+            store.stageSnippet(snippet.key, resolved.content, snippet.source, undefined, bareHash, undefined, 'latest');
+          }
+        }
+      } catch (e) {
+        console.warn(`[executor] snippet refresh failed for ${snippet.key}:`, e);
       }
     }
   }
@@ -657,6 +831,11 @@ export async function executeUnifiedBatch(
       }
       // Evict cached verify results so verify.build re-runs against the updated files
       useRetentionStore.getState().evictByPrefix('verify:');
+      // Refresh engram/snippet content so context reflects post-edit state
+      if (output.content && typeof output.content === 'object' && !Array.isArray(output.content)) {
+        refreshContextAfterEdit(output.content as Record<string, unknown>, ctx)
+          .catch(e => console.warn('[executor] content refresh error:', e));
+      }
     }
 
     // Named bindings
