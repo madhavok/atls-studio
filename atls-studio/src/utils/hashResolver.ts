@@ -706,7 +706,6 @@ async function _resolveInner(
     } else if (val !== null && typeof val === 'object') {
       result[key] = await _resolveInner(val, lookup, key, setLookup, expansions, childSkipInline, warnings, _depth + 1);
     }
-    }
   }
   return result;
 }
