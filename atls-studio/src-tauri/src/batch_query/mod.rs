@@ -3200,7 +3200,7 @@ pub async fn atls_batch_query(
                             (cmd, cd)
                         } else if let Some(ref td) = ts_dir {
                             // Fallback: TypeScript-only dir (e.g. Nest integration leaf with tsconfig but no package.json at leaf)
-                            ("npx tsc --noEmit".to_string(), td.clone())
+                            ("npx tsc -b".to_string(), td.clone())
                         } else {
                             let mut err = serde_json::json!({
                                 "error": "Could not detect project type for building",
@@ -3495,7 +3495,7 @@ pub async fn atls_batch_query(
                             let work_dir = node_dir.clone()
                                 .or_else(|| ts_dir.clone())
                                 .unwrap_or_else(|| project_root.to_path_buf());
-                            let output = run_shell_cmd_async("npx -p typescript tsc --noEmit --pretty false".to_string(), work_dir.clone(), timeout_seconds).await?;
+                            let output = run_shell_cmd_async("npx -p typescript tsc -b --pretty false".to_string(), work_dir.clone(), timeout_seconds).await?;
 
                             let stdout = String::from_utf8_lossy(&output.stdout).to_string();
                             let stderr = String::from_utf8_lossy(&output.stderr).to_string();
@@ -3571,7 +3571,7 @@ pub async fn atls_batch_query(
                                     "Fix type errors using batch({version:\"1.0\",steps:[{id:\"e1\",use:\"change.edit\",with:{line_edits:[...]}}]}), then re-run: batch({version:\"1.0\",steps:[{id:\"v1\",use:\"verify.typecheck\"}]})"
                                 }
                             });
-                            result["_metadata"] = verify_metadata(&work_dir, &manifest_file, &"npx -p typescript tsc --noEmit --pretty false", &selection_reason);
+                            result["_metadata"] = verify_metadata(&work_dir, &manifest_file, &"npx -p typescript tsc -b --pretty false", &selection_reason);
                             if let Some(ref err) = tool_error {
                                 result.as_object_mut().unwrap().insert("tool_error".to_string(), serde_json::json!(err));
                             }

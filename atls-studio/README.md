@@ -71,6 +71,12 @@ npm run tauri build
 
 Creates platform-specific installers in `src-tauri/target/release/bundle/`.
 
+### TypeScript
+
+```bash
+npm run typecheck   # tsc -b — checks src/ + vite.config.ts (matches verify.typecheck for this package)
+```
+
 ### Testing
 
 ```bash
