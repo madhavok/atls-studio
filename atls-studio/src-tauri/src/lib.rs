@@ -479,21 +479,20 @@ fn infer_block_extent(lines: &[String]) -> Option<usize> {
 
 
 /// Find up to `limit` lines most similar to `anchor` by substring or normalized match.
-fn find_fuzzy_anchor_matches(lines: &[String], anchor: &str, limit: usize) -> Vec<(usize, String)> {
+/// Returns (1-based line number, score, preview). Score: 1=case-insensitive, 2=prefix, 3=token overlap.
+fn find_fuzzy_anchor_matches_scored(lines: &[String], anchor: &str, limit: usize) -> Vec<(usize, u32, String)> {
     let norm_anchor = anchor.trim().to_lowercase();
     let mut candidates: Vec<(usize, u32, String)> = Vec::new();
     for (i, line) in lines.iter().enumerate() {
         let norm_line = line.trim().to_lowercase();
-        // Score: lower is better. 0 = impossible (excluded — would be an exact match)
         let score = if norm_line.contains(&norm_anchor) {
             1 // case-insensitive substring match
         } else if norm_anchor.len() >= 8 {
             let prefix_len = norm_anchor.len().min(norm_line.len().max(1));
             let prefix = &norm_anchor[..prefix_len];
             if prefix.chars().any(|c| c.is_alphanumeric()) && norm_line.contains(prefix) {
-                2 // prefix match
+                2
             } else {
-                // Fall through to token overlap
                 let anchor_tokens: std::collections::HashSet<&str> = norm_anchor.split(|c: char| !c.is_alphanumeric() && c != '_').filter(|s| s.len() > 2).collect();
                 let line_tokens: std::collections::HashSet<&str> = norm_line.split(|c: char| !c.is_alphanumeric() && c != '_').filter(|s| s.len() > 2).collect();
                 let overlap = anchor_tokens.intersection(&line_tokens).count();
@@ -505,7 +504,6 @@ fn find_fuzzy_anchor_matches(lines: &[String], anchor: &str, limit: usize) -> Ve
                 }
             }
         } else {
-            // Token overlap: split on non-alphanumeric, count shared tokens
             let anchor_tokens: std::collections::HashSet<&str> = norm_anchor.split(|c: char| !c.is_alphanumeric() && c != '_').filter(|s| s.len() > 2).collect();
             let line_tokens: std::collections::HashSet<&str> = norm_line.split(|c: char| !c.is_alphanumeric() && c != '_').filter(|s| s.len() > 2).collect();
             let overlap = anchor_tokens.intersection(&line_tokens).count();
@@ -521,7 +519,58 @@ fn find_fuzzy_anchor_matches(lines: &[String], anchor: &str, limit: usize) -> Ve
     }
     candidates.sort_by_key(|&(_, score, _)| score);
     candidates.truncate(limit);
-    candidates.into_iter().map(|(i, _, preview)| (i + 1, preview)).collect()
+    candidates.into_iter().map(|(i, score, preview)| (i + 1, score, preview)).collect()
+}
+
+fn find_fuzzy_anchor_matches(lines: &[String], anchor: &str, limit: usize) -> Vec<(usize, String)> {
+    find_fuzzy_anchor_matches_scored(lines, anchor, limit)
+        .into_iter()
+        .map(|(ln, _, preview)| (ln, preview))
+        .collect()
+}
+
+/// Try to resolve an anchor via fuzzy matching when exact `contains` found nothing.
+/// Only accepts score=1 (case-insensitive substring) for safety. If `hint_line` > 0,
+/// prefers candidates within FUZZY_HINT_WINDOW lines of the hint; if multiple score-1
+/// candidates exist, picks the one closest to hint. Returns None if ambiguous or no
+/// score-1 match exists.
+const FUZZY_HINT_WINDOW: usize = 15;
+
+fn try_fuzzy_anchor_resolve(
+    lines: &[String],
+    anchor: &str,
+    hint_line: u32,
+) -> Option<(usize, String)> {
+    let candidates = find_fuzzy_anchor_matches_scored(lines, anchor, 20);
+    let score1: Vec<&(usize, u32, String)> = candidates.iter().filter(|(_, s, _)| *s == 1).collect();
+    if score1.is_empty() {
+        return None;
+    }
+    if score1.len() == 1 {
+        let (ln, _, preview) = score1[0];
+        return Some((*ln, preview.clone()));
+    }
+    // Multiple score-1 matches: use hint_line to disambiguate
+    if hint_line == 0 {
+        return None;
+    }
+    let hint = hint_line as usize;
+    let in_window: Vec<&&(usize, u32, String)> = score1.iter()
+        .filter(|(ln, _, _)| (*ln as isize - hint as isize).unsigned_abs() <= FUZZY_HINT_WINDOW)
+        .collect();
+    if in_window.len() == 1 {
+        let (ln, _, preview) = in_window[0];
+        return Some((*ln, preview.clone()));
+    }
+    // Pick closest to hint if any are in window
+    if !in_window.is_empty() {
+        let closest = in_window.iter()
+            .min_by_key(|(ln, _, _)| (*ln as isize - hint as isize).unsigned_abs())
+            .unwrap();
+        let (ln, _, preview) = closest;
+        return Some((*ln, preview.clone()));
+    }
+    None
 }
 
 /// Reindent a block of content to match a target indentation string.
@@ -582,6 +631,14 @@ fn resolve_single_edit_line(
         };
 
         if matches.is_empty() {
+            // Fuzzy fallback: try case-insensitive resolution before giving up
+            if let Some((fuzzy_ln, fuzzy_preview)) = try_fuzzy_anchor_resolve(lines, anchor, edit.line) {
+                anchor_warnings.push(format!(
+                    "anchor_fuzzy_resolved: {:?} not found exactly, resolved via case-insensitive match to L{}:{:?}",
+                    anchor, fuzzy_ln, fuzzy_preview
+                ));
+                return Ok(fuzzy_ln as u32);
+            }
             let content_preview = edit.content.as_deref()
                 .map(|c| c.chars().take(80).collect::<String>())
                 .unwrap_or_default();
@@ -706,10 +763,43 @@ pub(crate) fn apply_line_edits(content: &str, edits: &[LineEdit]) -> Result<(Str
             }
             "replace" => {
                 let effective = compute_effective_replace_count(edit, &lines, idx);
-                let count = effective
+                let mut count = effective
                     .unwrap_or_else(|| edit.count.unwrap_or(1) as usize);
-                let end = std::cmp::min(idx + count, lines.len());
                 let replacement: Vec<String> = edit.content.as_deref().unwrap_or("").lines().map(String::from).collect();
+
+                // Count overlap guard: when the model's replacement content ends with
+                // lines that also exist immediately after the replaced span, the model
+                // set count too short. Auto-extend count to consume those duplicates.
+                //
+                // Check: does lines[span_end+0] == replacement.last(),
+                //        lines[span_end+1] == replacement[len-2], etc.?
+                // Only contiguous matches from the boundary count. Cap at 8 lines.
+                if replacement.len() >= 1 {
+                    let span_end = idx + count;
+                    let mut confirmed = 0usize;
+                    for k in 0..replacement.len().min(8) {
+                        let file_idx = span_end + k;
+                        let repl_idx = replacement.len() - 1 - k;
+                        if file_idx >= lines.len() { break; }
+                        let ft = lines[file_idx].trim();
+                        let rt = replacement[repl_idx].trim();
+                        if ft.is_empty() || rt.is_empty() { break; }
+                        if ft == rt {
+                            confirmed += 1;
+                        } else {
+                            break;
+                        }
+                    }
+                    if confirmed > 0 {
+                        anchor_warnings.push(format!(
+                            "count_overlap_extended: replace at L{} extended count by {} (from {} to {}) to avoid duplicate trailing lines",
+                            idx + 1, confirmed, count, count + confirmed
+                        ));
+                        count += confirmed;
+                    }
+                }
+
+                let end = std::cmp::min(idx + count, lines.len());
                 lines.splice(idx..end, replacement);
             }
             "replace_body" => {
@@ -2612,6 +2702,107 @@ mod hard_line_edit_tests {
         let edits = vec![lea(0, "insert_before", Some("NEW_LINE"), None, "NONEXISTENT")];
         let err = apply_line_edits(content, &edits).unwrap_err();
         assert!(err.contains("not found"), "should error on anchor miss: {}", err);
+    }
+
+    // ── fuzzy anchor fallback ──
+
+    #[test]
+    fn fuzzy_resolves_case_insensitive_anchor() {
+        let content = "function Foo() {\n  return 1;\n}\n";
+        // Anchor has wrong case — exact match fails, fuzzy score=1 resolves it
+        let edits = vec![lea(1, "replace", Some("function Foo() {"), Some(1), "Function foo() {")];
+        let (result, warnings) = apply_line_edits(content, &edits).unwrap();
+        assert!(result.starts_with("function Foo() {"), "should have replaced line 1");
+        assert!(warnings.iter().any(|w| w.contains("anchor_fuzzy_resolved")),
+            "should emit fuzzy resolution warning: {:?}", warnings);
+    }
+
+    #[test]
+    fn fuzzy_rejects_ambiguous_case_insensitive() {
+        // Two lines both match case-insensitively, no hint → should fail
+        let content = "Case 'ArrowDown':\ncase 'arrowdown':\nother\n";
+        let edits = vec![lea(0, "replace", Some("REPLACED"), Some(1), "CASE 'ARROWDOWN':")];
+        let result = apply_line_edits(content, &[edits.into_iter().next().unwrap()]);
+        assert!(result.is_err(), "ambiguous fuzzy should still error");
+    }
+
+    #[test]
+    fn fuzzy_prefers_hint_window() {
+        // Two case-insensitive matches; hint_line=8 should pick the one near L8
+        let mut lines_vec: Vec<String> = Vec::new();
+        for i in 1..=20 {
+            if i == 3 || i == 10 {
+                lines_vec.push("case 'ArrowDown':".to_string());
+            } else {
+                lines_vec.push(format!("line {}", i));
+            }
+        }
+        let content = lines_vec.join("\n") + "\n";
+        // Anchor with wrong case, hint near L10
+        let edits = vec![lea(8, "replace", Some("REPLACED"), Some(1), "Case 'arrowdown':")];
+        let (result, warnings) = apply_line_edits(&content, &edits).unwrap();
+        let result_lines: Vec<&str> = result.lines().collect();
+        assert_eq!(result_lines[2], "case 'ArrowDown':", "L3 should be untouched");
+        assert_eq!(result_lines[9], "REPLACED", "L10 (near hint 8) should be replaced");
+        assert!(warnings.iter().any(|w| w.contains("anchor_fuzzy_resolved")));
+    }
+
+    #[test]
+    fn fuzzy_does_not_fire_on_total_mismatch() {
+        let content = "alpha\nbeta\ngamma\n";
+        let edits = vec![lea(2, "replace", Some("X"), Some(1), "ZZZZZ_TOTALLY_UNRELATED")];
+        let result = apply_line_edits(content, &edits);
+        assert!(result.is_err(), "completely unrelated anchor should still fail");
+    }
+
+    #[test]
+    fn exact_match_still_preferred_over_fuzzy() {
+        let content = "case 'ArrowDown':\nCASE 'ARROWDOWN':\nother\n";
+        // Exact match exists on L1, should use it without fuzzy warning
+        let edits = vec![lea(1, "replace", Some("REPLACED"), Some(1), "case 'ArrowDown':")];
+        let (result, warnings) = apply_line_edits(content, &edits).unwrap();
+        let result_lines: Vec<&str> = result.lines().collect();
+        assert_eq!(result_lines[0], "REPLACED");
+        assert!(!warnings.iter().any(|w| w.contains("fuzzy")),
+            "exact match should not trigger fuzzy: {:?}", warnings);
+    }
+
+    // ── count overlap guard ──
+
+    #[test]
+    fn count_overlap_extends_to_consume_duplicate_trailing() {
+        // Simulates the exact bug from the transcript: replacement includes "break;"
+        // but count was 1 short, leaving a duplicate "break;" below the span
+        let content = "      case 'ArrowDown':\n        e.preventDefault();\n        setSelectedIndex(i => Math.min(i + 1, results.length - 1));\n        break;\n      case 'ArrowUp':\n";
+        let replacement = "      case 'ArrowDown':\n        e.preventDefault();\n        if (results.length > 0) setSelectedIndex(i => Math.min(i + 1, results.length - 1));\n        break;";
+        // count=3 covers lines 1-3, but line 4 ("break;") duplicates the last line of replacement
+        let edits = vec![lea(1, "replace", Some(replacement), Some(3), "case 'ArrowDown':")];
+        let (result, warnings) = apply_line_edits(content, &edits).unwrap();
+        let break_count = result.lines().filter(|l| l.trim() == "break;").count();
+        assert_eq!(break_count, 1, "should have exactly one break; not a duplicate: {}", result);
+        assert!(warnings.iter().any(|w| w.contains("count_overlap_extended")),
+            "should warn about count extension: {:?}", warnings);
+    }
+
+    #[test]
+    fn count_overlap_no_false_positive_on_clean_replace() {
+        let content = "a\nb\nc\nd\n";
+        let edits = vec![le(2, "replace", Some("X\nY"), Some(2))];
+        let (result, warnings) = apply_line_edits(content, &edits).unwrap();
+        assert_eq!(result, "a\nX\nY\nd\n");
+        assert!(!warnings.iter().any(|w| w.contains("count_overlap")),
+            "clean replace should not trigger overlap guard: {:?}", warnings);
+    }
+
+    #[test]
+    fn count_overlap_does_not_extend_on_empty_lines() {
+        // Empty trailing lines should not trigger overlap (too common, too noisy)
+        let content = "a\nb\n\n\nd\n";
+        let edits = vec![le(2, "replace", Some("X\n"), Some(1))];
+        let (result, warnings) = apply_line_edits(content, &edits).unwrap();
+        assert!(!warnings.iter().any(|w| w.contains("count_overlap")),
+            "empty line overlap should not trigger: {:?}", warnings);
+        assert!(result.contains("X\n"), "replacement should be applied");
     }
 
     #[test]
