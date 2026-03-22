@@ -112,7 +112,7 @@ pub async fn atls_batch_query(
                         "edit_modes": {
                             "creates": "Create files [{path, content}] â†’ auto-lint â†’ auto-write on success",
                             "edits": "Text replacement [{file, old, new}] â†’ auto-lint â†’ auto-write on success",
-                            "line_edits": "Line-level editing [{line, action, content?, count?, symbol?, position?, anchor?}] actions: insert_before|insert_after|replace|delete. For brace languages, replace with anchor+multiline content auto-infers block extent; set count explicitly for Python/non-brace",
+                            "line_edits": "Line-level editing [{line, action, content?, count?, symbol?, position?, anchor?}] actions: insert_before|insert_after|replace|delete. For brace languages, replace with anchor+multiline content auto-infers block extent; set count explicitly for Python/non-brace. Multi-edit in one call: default is sequential (each line is after prior edits). Pass line_numbering:'snapshot' so every line is relative to the same pre-edit read; the batch executor rebases to sequential before apply. Prefer anchors for shift immunity.",
                             "revise": "Chain edits (revise:'hash', line_edits:[...]) â†’ patch content â†’ auto-write",
                             "undo": "Rollback (undo:'hash') â†’ restores file to state before the edit",
                             "deletes": "Delete files [path|h:ref, ...]",
@@ -170,7 +170,7 @@ pub async fn atls_batch_query(
                         "edit_mode": {
                             "new_file": "creates:[{path,content}]",
                             "text_replace": "edits:[{file,old,new}] â€” flexible whitespace matching",
-                            "by_line": "line_edits:[{line,action,content,anchor?}] â€” use anchor for shift immunity",
+                            "by_line": "line_edits:[{line,action,content,anchor?}] â€” use anchor for shift immunity; or line_numbering:'snapshot' for multiple numeric line edits from one read",
                             "multi_file": "mode:'batch_edits' edits:[{file,content_hash,line_edits},...] â€” atomic multi-file",
                             "lint_fix": "revise:'hash' line_edits:[...] â€” fix buffered lint errors",
                             "rollback": "undo:'hash' â€” restore file to pre-edit state"

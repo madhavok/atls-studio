@@ -228,6 +228,111 @@ describe('executeUnifiedBatch snapshot propagation', () => {
   });
 });
 
+describe('executeUnifiedBatch intra-step snapshot line rebasing', () => {
+  beforeEach(() => {
+    handlers.clear();
+  });
+
+  it('shifts snapshot line numbers when line_numbering is snapshot', async () => {
+    const editSpy = vi.fn(async (params: Record<string, unknown>) => {
+      expect(params.line_numbering).toBeUndefined();
+      const le = params.line_edits as Array<Record<string, unknown>>;
+      expect(le).toHaveLength(2);
+      expect(le[0].line).toBe(5);
+      expect(le[1].line).toBe(17); // 15 + 2 from insert at 5 with two lines
+      return raw('applied', { status: 'ok' });
+    });
+
+    handlers.set('change.edit', editSpy as unknown as OpHandler);
+
+    await executeUnifiedBatch({
+      version: '1.0',
+      steps: [
+        {
+          id: 'edit',
+          use: 'change.edit',
+          with: {
+            file: 'src/a.ts',
+            line_numbering: 'snapshot',
+            line_edits: [
+              { line: 5, action: 'insert_before', content: 'a\nb' },
+              { line: 15, action: 'replace', content: 'x', count: 1 },
+            ],
+          },
+        },
+      ],
+    }, makeCtx());
+
+    expect(editSpy).toHaveBeenCalledOnce();
+  });
+
+  it('does not shift when line_numbering is omitted (sequential coords)', async () => {
+    const editSpy = vi.fn(async (params: Record<string, unknown>) => {
+      const le = params.line_edits as Array<Record<string, unknown>>;
+      expect(le[1].line).toBe(17);
+      return raw('applied', { status: 'ok' });
+    });
+
+    handlers.set('change.edit', editSpy as unknown as OpHandler);
+
+    await executeUnifiedBatch({
+      version: '1.0',
+      steps: [
+        {
+          id: 'edit',
+          use: 'change.edit',
+          with: {
+            file: 'src/a.ts',
+            line_edits: [
+              { line: 5, action: 'insert_before', content: 'a\nb' },
+              { line: 17, action: 'replace', content: 'x', count: 1 },
+            ],
+          },
+        },
+      ],
+    }, makeCtx());
+
+    expect(editSpy).toHaveBeenCalledOnce();
+  });
+
+  it('rebases each file line_edits in batch_edits mode when snapshot', async () => {
+    const editSpy = vi.fn(async (params: Record<string, unknown>) => {
+      expect(params.line_numbering).toBeUndefined();
+      const edits = params.edits as Array<Record<string, unknown>>;
+      const le = edits[0].line_edits as Array<Record<string, unknown>>;
+      expect(le[1].line).toBe(12); // 10 + 2 from prior insert at 5
+      return raw('applied', { status: 'ok', mode: 'batch_edits' });
+    });
+
+    handlers.set('change.edit', editSpy as unknown as OpHandler);
+
+    await executeUnifiedBatch({
+      version: '1.0',
+      steps: [
+        {
+          id: 'edit',
+          use: 'change.edit',
+          with: {
+            mode: 'batch_edits',
+            line_numbering: 'snapshot',
+            edits: [
+              {
+                file: 'src/a.ts',
+                line_edits: [
+                  { line: 5, action: 'insert_before', content: 'a\nb' },
+                  { line: 10, action: 'replace', content: 'x', count: 1 },
+                ],
+              },
+            ],
+          },
+        },
+      ],
+    }, makeCtx());
+
+    expect(editSpy).toHaveBeenCalledOnce();
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Multiedit / multibatch stress tests — exercises snapshot propagation,
 // in-bindings, conditionals, rollback, max_steps, and path normalization.

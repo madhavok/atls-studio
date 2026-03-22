@@ -97,6 +97,25 @@ interface PositionalDelta {
 }
 
 /**
+ * Net line-count change from a single line edit (matches Rust apply_line_edits semantics
+ * for insert/delete/replace). Used for positional rebase math.
+ */
+function computeSingleEditNetDelta(e: Record<string, unknown>): number {
+  const action = typeof e.action === 'string' ? e.action : '';
+  const count = typeof e.count === 'number' && Number.isFinite(e.count) ? e.count : 1;
+  const contentLines = typeof e.content === 'string' && e.content.length > 0
+    ? countContentLines(e.content as string)
+    : 0;
+  if (action === 'insert_before' || action === 'insert_after' || action === 'prepend' || action === 'append') {
+    return contentLines;
+  }
+  if (action === 'delete') return -count;
+  if (action === 'replace') return contentLines - count;
+  // replace_body/move and unknown actions: delta not modeled here (same as legacy computePositionalDeltas)
+  return 0;
+}
+
+/**
  * Compute per-edit positional deltas from a completed line_edits array.
  * Each entry records the **original-file** line where the edit occurred and
  * the net line change.  Because line_edits are applied sequentially (top-down),
@@ -113,16 +132,8 @@ function computePositionalDeltas(lineEdits: unknown): PositionalDelta[] {
   for (const edit of lineEdits) {
     if (!edit || typeof edit !== 'object') continue;
     const e = edit as Record<string, unknown>;
-    const action = typeof e.action === 'string' ? e.action : '';
     const line = typeof e.line === 'number' && Number.isFinite(e.line) ? e.line : 0;
-    const count = typeof e.count === 'number' && Number.isFinite(e.count) ? e.count : 1;
-    const contentLines = typeof e.content === 'string' && e.content.length > 0
-      ? countContentLines(e.content as string)
-      : 0;
-    let d = 0;
-    if (action === 'insert_before' || action === 'insert_after' || action === 'prepend' || action === 'append') d = contentLines;
-    else if (action === 'delete') d = -count;
-    else if (action === 'replace') d = contentLines - count;
+    const d = computeSingleEditNetDelta(e);
     const originalLine = line > 0 ? line - cumulativeDelta : 0;
     if (d !== 0 && originalLine > 0) deltas.push({ line: originalLine, delta: d });
     cumulativeDelta += d;
@@ -142,6 +153,62 @@ function estimateLineDeltaFromEdits(lineEdits: unknown): number {
  * Uses positional deltas: each future line is shifted only by edits that
  * occurred at or before that line, not by a single global delta.
  */
+/**
+ * When `line_numbering: 'snapshot'`, every numeric `line` in the array is relative to the
+ * file **before** any edit in this step. Convert to sequential coordinates (what Rust expects)
+ * by shifting each entry i>0 by the sum of net deltas from prior edits j<i whose snapshot line
+ * is strictly before this entry's snapshot line (same rule as `rebaseSubsequentSteps`).
+ * Mutates `line_edits` in place. Skips anchor/symbol-only entries.
+ */
+function rebaseIntraStepSnapshotLineEdits(lineEdits: unknown[]): void {
+  if (lineEdits.length < 2) return;
+  const snapshotLines: number[] = lineEdits.map((edit) => {
+    if (!edit || typeof edit !== 'object') return 0;
+    const o = edit as Record<string, unknown>;
+    const line = typeof o.line === 'number' && Number.isFinite(o.line) ? o.line : 0;
+    const hasAnchor = o.anchor != null && typeof o.anchor === 'string';
+    const hasSymbol = o.symbol != null && typeof o.symbol === 'string';
+    if (line > 0 && !hasAnchor && !hasSymbol) return line;
+    return 0;
+  });
+  for (let i = 1; i < lineEdits.length; i++) {
+    const targetSnap = snapshotLines[i];
+    if (targetSnap <= 0) continue;
+    let shift = 0;
+    for (let j = 0; j < i; j++) {
+      const origJ = snapshotLines[j];
+      if (origJ <= 0) continue;
+      const d = computeSingleEditNetDelta(lineEdits[j] as Record<string, unknown>);
+      if (origJ < targetSnap) shift += d;
+    }
+    const o = lineEdits[i] as Record<string, unknown>;
+    const hasAnchor = o.anchor != null && typeof o.anchor === 'string';
+    const hasSymbol = o.symbol != null && typeof o.symbol === 'string';
+    if (typeof o.line === 'number' && o.line > 0 && !hasAnchor && !hasSymbol) {
+      o.line = targetSnap + shift;
+    }
+  }
+}
+
+/**
+ * Apply intra-step snapshot rebasing when `line_numbering === 'snapshot'`.
+ * Strips `line_numbering` from params before dispatch (including explicit `sequential`).
+ */
+function applyIntraStepSnapshotRebaseIfNeeded(params: Record<string, unknown>): void {
+  if (params.line_numbering === 'snapshot') {
+    const top = params.line_edits;
+    if (Array.isArray(top)) rebaseIntraStepSnapshotLineEdits(top);
+    if (params.mode === 'batch_edits' && Array.isArray(params.edits)) {
+      for (const ed of params.edits) {
+        if (!ed || typeof ed !== 'object') continue;
+        const entry = ed as Record<string, unknown>;
+        if (Array.isArray(entry.line_edits)) rebaseIntraStepSnapshotLineEdits(entry.line_edits as unknown[]);
+      }
+    }
+  }
+  if (params.line_numbering !== undefined) delete params.line_numbering;
+}
+
 function rebaseSubsequentSteps(
   completedParams: Record<string, unknown>,
   stepsToRun: Array<{ id: string; use: string; with?: Record<string, unknown> }>,
@@ -830,6 +897,11 @@ export async function executeUnifiedBatch(
     // Auto-inject snapshot_hash for change ops from the tracker
     if (step.use.startsWith('change.') && snapshotTracker.size > 0) {
       injectSnapshotHashes(mergedParams, snapshotTracker);
+    }
+
+    // Optional: all line numbers in one change.edit are relative to the same pre-edit snapshot
+    if (step.use === 'change.edit') {
+      applyIntraStepSnapshotRebaseIfNeeded(mergedParams);
     }
 
     // Auto-inject workspace for verify steps when not specified and files were edited

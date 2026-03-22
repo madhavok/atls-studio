@@ -714,6 +714,8 @@ export interface CreateEntry {
 
 export interface ChangeEditParams {
   file_path?: string;
+  /** When set to `snapshot`, all numeric `line` values in `line_edits` are relative to the file before any edit in this step; the batch executor rebases them to sequential coordinates before apply. Default is sequential (Rust behavior). */
+  line_numbering?: 'snapshot' | 'sequential';
   line_edits?: LineEdit[];
   edits?: LegacyEdit[];
   creates?: CreateEntry[];

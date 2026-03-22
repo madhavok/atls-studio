@@ -37,9 +37,12 @@ export function getMessageParts(msg: Message | { parts?: MessagePart[]; segments
     );
   }
   if (msg.toolCalls && msg.toolCalls.length > 0) {
-    const parts: MessagePart[] = msg.toolCalls.map((tc) => ({ type: 'tool' as const, toolCall: tc }));
+    const parts: MessagePart[] = [];
     if (typeof msg.content === 'string' && msg.content.trim()) {
       parts.push({ type: 'text', content: msg.content });
+    }
+    for (const tc of msg.toolCalls) {
+      parts.push({ type: 'tool' as const, toolCall: tc });
     }
     return parts;
   }
@@ -1000,7 +1003,10 @@ export const useAppStore = create<AppState>((set) => ({
   addToolCall: (call) => {
     const id = call.id || crypto.randomUUID();
     set((state) => {
-      const existingCalls = state.toolCalls.slice(-19);
+      const MAX_TOOL_CALLS = 20;
+      const existingCalls = state.toolCalls.length >= MAX_TOOL_CALLS
+        ? state.toolCalls.slice(-(MAX_TOOL_CALLS - 1))
+        : state.toolCalls;
       const raw = call as unknown as Record<string, unknown>;
       const startTime = raw.startTime !== undefined ? rehydrateDate(raw.startTime) : new Date();
       return {
@@ -1008,7 +1014,7 @@ export const useAppStore = create<AppState>((set) => ({
           ...call,
           id,
           startTime,
-        }]
+        } as ToolCall],
       };
     });
     return id;
@@ -1035,13 +1041,12 @@ export const useAppStore = create<AppState>((set) => ({
         };
       }
       const MAX_TOOL_CALLS = 20;
-      const startTime2 = call.startTime !== undefined ? rehydrateDate(call.startTime) : new Date();
       const newCall: ToolCall = {
         ...call,
         id,
         name: call.name || 'unknown',
         status: call.status || 'pending',
-        startTime: startTime2,
+        startTime,
       } as ToolCall;
       const calls = [...state.toolCalls, newCall];
       return {
