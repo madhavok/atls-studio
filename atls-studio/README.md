@@ -6,6 +6,17 @@ AI-First IDE powered by ATLS - where the AI is the developer and you are the dir
 
 ATLS Studio is a minimal, purpose-built development environment where ATLS provides the intelligence and Claude provides the conversation. The four-panel layout gives you everything you need to understand and improve your codebase.
 
+## Documentation
+
+- **Freshness & edits** (snapshot hashes, sequential `line_edits`, staged snippet refresh, cross-step rebase): [`../docs/freshness.md`](../docs/freshness.md)
+- **Batch executor** (`batch()` tool, intents, snapshot injection): [`../docs/batch-executor.md`](../docs/batch-executor.md)
+- **Docs index**: [`../docs/README.md`](../docs/README.md)
+- **Architecture overview**: [`../ARCHITECTURE.md`](../ARCHITECTURE.md)
+
+### `line_edits` semantics
+
+Edits in `change.edit` / `line_edits` apply **sequentially in array order** (top-down). Each `line` / `anchor` resolves against the file **after** all prior edits in the same array. Multi-step batches that edit the same file with numeric lines are adjusted between steps by the executor (see `docs/freshness.md`).
+
 ## Architecture
 
 ```

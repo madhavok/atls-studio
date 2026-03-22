@@ -101,6 +101,11 @@ function injectSnapshotHashes(params, tracker) {
 
 The Rust backend verifies this hash against the current file — if the file changed, the edit is rejected with `stale_hash`.
 
+### `line_edits` order and multi-step batches
+
+- **Within one `change.edit`**: `line_edits` apply **sequentially in array order** (top-down). Each edit’s `line` / `anchor` targets the file **after** prior edits in the same array. See **Sequential `line_edits`** in [freshness.md](./freshness.md).
+- **Across steps**: If a later step edits the same file with numeric `line` values, the executor **rebases** those lines using cumulative deltas from the completed step (model-authored steps usually assume pre-batch coordinates). See **Cross-step line rebase** in [freshness.md](./freshness.md).
+
 ## Intent System
 
 Intents are macros that expand to primitive steps before the main loop. The executor never dispatches `intent.*` directly.

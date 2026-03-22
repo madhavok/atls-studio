@@ -148,4 +148,73 @@ When `reconcileSourceRevision` runs, it consumes this record to determine whethe
 
 ---
 
+## Edit Freshness Protocol (Cursor / Agent)
+
+These rules live in `.cursor/rules/edit-freshness.mdc` and are enforced for agent edits:
+
+| Rule | Meaning |
+|------|---------|
+| **Read once, edit forever** | One `read.context`, `read.file`, or `read.lines` on a file authorizes later edits without re-reading between batches. |
+| **Automatic hash injection** | The batch executor injects `snapshot_hash` into `change.*` steps from the snapshot tracker. Do **not** manually pass `content_hash` / `edit_target_hash` unless you have a deliberate reason. |
+| **Backend enforcement** | If the file changed externally, the backend returns `stale_hash` or `authority_mismatch` — abandon the patch, re-read, rebuild from current content. |
+| **Batch discipline** | Do not explore multiple candidate files and mutate in the same batch. |
+| **Edit style** | Prefer exact preimage edits; for multiline TS/TSX or syntax-sensitive code, prefer whole-file replacement when appropriate. |
+
+---
+
+## Sequential `line_edits` (Top-Down Application)
+
+`apply_line_edits` in the Rust backend applies edits **in array order**. Each edit resolves its `line` / `anchor` against the *current* file content **after all prior edits in the same array**.
+
+- **Why**: Models reason sequentially (“insert at L10, then L50 is now L53”). The old bottom-up / snapshot-resolved-all-lines model fought that mental model and could target wrong lines.
+- **Prompts**: `src/prompts/toolRef.ts` and `src/prompts/cognitiveCore.ts` document sequential semantics for the model.
+- **Validation**: The TS `change.edit` path no longer sorts, merges, or rejects “overlapping” explicit line edits — those heuristics assumed a single coordinate frame. Overlaps in *original* line numbers can be valid when edits are sequential.
+
+---
+
+## Cross-Step Line Rebase (Batch Executor)
+
+When a batch contains **multiple steps** that edit the same file with **numeric** `line` fields, the model typically authored later steps against the **pre-batch** file. After step *N* runs, line numbers in steps *N+1…* must be shifted by the net effect of completed edits.
+
+- **`computePositionalDeltas`** (`executor.ts`): Walks `line_edits` in order, tracks a **running cumulative line delta**, and records each edit’s effect at its **original-file** line (`originalLine = sequentialLine - cumulativeDelta` before applying that edit’s delta). This produces a list `{ line, delta }` in original coordinates.
+- **`rebaseSubsequentSteps`**: For each future `change.*` step on the same file, adds to each explicit `line` the sum of `delta` where `d.line < targetLine` (same “BUG5” rule as before).
+
+Anchor/symbol edits (`line <= 0`) are skipped — they resolve at apply time on the backend.
+
+---
+
+## Post-Edit Context Refresh (`refreshContextAfterEdit`)
+
+After a successful `change.*`, the executor keeps the UI / next-round context aligned with disk:
+
+1. **Full-file engrams**: Resolve `h:NEW` via `batch_resolve_hash_refs` and `addChunk` with `origin: 'edit-refresh'`.
+2. **Staged snippets**:
+   - **Shaped**: Re-resolve `h:NEW:{shapeSpec}`.
+   - **Line-range**: `getFreshnessJournal` → `lineDelta` → `applyLineDelta` on the line spec, then `resolve_hash_ref` with `h:NEW:lines`.
+   - **Full-file staged** (no lines/shape): Resolve `h:NEW` only.
+
+**Order**: `registerOwnWrite` and **synchronous** `rebaseStagedLineNumbers` (from journal) run **before** the async `refreshContextAfterEdit` so the next model sees correct line refs.
+
+---
+
+## Own-Write Suppression (`intel:file_change`)
+
+Successful edits register paths as **own writes** so the file watcher does not emit spurious `intel:file_change` events for ATLS’s own writes. That avoids false “external change” / suspect freshness and races with git restore (external writes still flow normally).
+
+---
+
+## Source Files (Quick Reference)
+
+| Concern | Primary files |
+|--------|----------------|
+| Snapshot tracking + injection | [`snapshotTracker.ts`](../atls-studio/src/services/batch/snapshotTracker.ts), [`executor.ts`](../atls-studio/src/services/batch/executor.ts) |
+| `line_edits` apply (Rust) | [`lib.rs`](../atls-studio/src-tauri/src/lib.rs) (`apply_line_edits`) |
+| `line_edits` dispatch (no TS overlap/coalesce) | [`change.ts`](../atls-studio/src/services/batch/handlers/change.ts) |
+| Cross-step rebase | [`executor.ts`](../atls-studio/src/services/batch/executor.ts) (`computePositionalDeltas`, `rebaseSubsequentSteps`) |
+| Post-edit refresh + staged rebase | [`executor.ts`](../atls-studio/src/services/batch/executor.ts) (`refreshContextAfterEdit`, `rebaseStagedLineNumbers` hook) |
+| Freshness preflight / journal | [`freshnessPreflight.ts`](../atls-studio/src/services/freshnessPreflight.ts), [`freshnessJournal.ts`](../atls-studio/src/services/freshnessJournal.ts) |
+| Reconciliation | [`contextStore.ts`](../atls-studio/src/stores/contextStore.ts) |
+
+---
+
 **Source**: [`snapshotTracker.ts`](../atls-studio/src/services/batch/snapshotTracker.ts), [`freshnessPreflight.ts`](../atls-studio/src/services/freshnessPreflight.ts), [`freshnessJournal.ts`](../atls-studio/src/services/freshnessJournal.ts), [`contextStore.ts`](../atls-studio/src/stores/contextStore.ts) (reconciliation)

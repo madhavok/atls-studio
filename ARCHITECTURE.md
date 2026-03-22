@@ -73,6 +73,9 @@ The architecture has four layers:
 
 For subsystem-oriented overviews that complement this runtime-focused architecture doc, see:
 
+- [Freshness & Hash-Safe Edits](docs/freshness.md) — snapshot tracking, sequential `line_edits`, cross-step rebase, post-edit refresh, own-write suppression
+- [Batch Executor](docs/batch-executor.md)
+- [Docs Index](docs/README.md)
 - [Studio App Shell](docs/studio-app-shell.md)
 - [Tauri Backend](docs/tauri-backend.md)
 - [Session Persistence](docs/session-persistence.md)
