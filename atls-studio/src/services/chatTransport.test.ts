@@ -1,15 +1,18 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const listenMock = vi.fn();
-vi.mock('@tauri-apps/api/event', () => ({
-  listen: (...args: unknown[]) => listenMock(...args),
+const { safeListenMock } = vi.hoisted(() => ({
+  safeListenMock: vi.fn(),
+}));
+
+vi.mock('../utils/tauri', () => ({
+  safeListen: (...args: unknown[]) => safeListenMock(...args),
 }));
 
 import { createTauriChatStream } from './chatTransport';
 
 describe('createTauriChatStream', () => {
   beforeEach(() => {
-    listenMock.mockReset();
+    safeListenMock.mockReset();
   });
 
   it('returns empty stream when abortSignal is already aborted', async () => {
@@ -24,13 +27,13 @@ describe('createTauriChatStream', () => {
     const { value, done } = await reader.read();
     expect(done).toBe(true);
     expect(value).toBeUndefined();
-    expect(listenMock).not.toHaveBeenCalled();
+    expect(safeListenMock).not.toHaveBeenCalled();
   });
 
   it('registers listener and starts invoke', async () => {
     const invokeFn = vi.fn().mockResolvedValue(undefined);
     let eventHandler: ((e: { payload: unknown }) => void) | null = null;
-    listenMock.mockImplementation((_: string, fn: (e: { payload: unknown }) => void) => {
+    safeListenMock.mockImplementation((_: string, fn: (e: { payload: unknown }) => void) => {
       eventHandler = fn;
       return Promise.resolve(() => {});
     });
@@ -39,7 +42,7 @@ describe('createTauriChatStream', () => {
       streamId: 'sid',
       invoke: invokeFn,
     });
-    expect(listenMock).toHaveBeenCalledWith('chat-chunk-sid', expect.any(Function));
+    expect(safeListenMock).toHaveBeenCalledWith('chat-chunk-sid', expect.any(Function));
     expect(invokeFn).toHaveBeenCalled();
     expect(eventHandler).not.toBeNull();
 
