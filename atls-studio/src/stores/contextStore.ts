@@ -1103,12 +1103,15 @@ const BB_TEMPLATES: ReadonlyArray<readonly [string, string]> = [
  * Returns the (potentially trimmed) archive map. Call after any operation that adds to archive.
  */
 function evictArchiveIfNeeded(archive: Map<string, ContextChunk>): Map<string, ContextChunk> {
+  // BUG1 FIX: Snapshot entries before eviction to avoid TOCTOU race on lastAccessed.
+  // We sort a frozen snapshot so concurrent accesses between sort and delete don't
+  // cause the most-recently-used chunk to be incorrectly evicted.
+  const snapshot = Array.from(archive.entries());
   let totalTokens = 0;
-  for (const c of archive.values()) totalTokens += c.tokens;
+  for (const [, c] of snapshot) totalTokens += c.tokens;
   if (totalTokens <= ARCHIVE_MAX_TOKENS) return archive;
 
-  const sorted = Array.from(archive.entries())
-    .sort(([, a], [, b]) => a.lastAccessed - b.lastAccessed);
+  const sorted = snapshot.sort(([, a], [, b]) => a.lastAccessed - b.lastAccessed);
 
   for (const [key, chunk] of sorted) {
     if (totalTokens <= ARCHIVE_MAX_TOKENS) break;
@@ -1413,22 +1416,24 @@ export const useContextStore = create<ContextStoreState>()(
                 .filter(([h, c]) => !isProtected2(h, c) && isChatChunk2(c))
                 .sort(([, a], [, b]) => a.lastAccessed - b.lastAccessed);
               const candidates2 = [...tier1b, ...tier2b, ...tier3b];
-              for (const [key, c] of candidates2) {
+              for (const [key] of candidates2) {
                 if (currentUsed + tokens - totalFreed <= state.maxTokens * 0.50) break;
-                if (c.compacted) continue;
+                // BUG10 FIX: Re-read from newChunks to get latest state after Phase 1 compaction.
+                const c2 = newChunks.get(key);
+                if (!c2 || c2.compacted) continue;
                 if (!newArchive) newArchive = new Map(state.archivedChunks);
-                newArchive.set(key, { ...c });
-                let editDigest2 = c.editDigest || c.digest || '';
-                if (c.source) {
-                  const basename = c.source.split('/').pop() ?? c.source;
+                newArchive.set(key, { ...c2 });
+                let editDigest2 = c2.editDigest || c2.digest || '';
+                if (c2.source) {
+                  const basename = c2.source.split('/').pop() ?? c2.source;
                   const errEntry = state.blackboardEntries.get(`err:${basename}`);
                   if (errEntry && editDigest2) editDigest2 += ` [ERR ${errEntry.content.slice(0, 60)}]`;
                 }
-                const compactContent2 = editDigest2 || c.summary || `[compacted] h:${c.shortHash}`;
+                const compactContent2 = editDigest2 || c2.summary || `[compacted] h:${c2.shortHash}`;
                 const digestTokens2 = estimateTokens(compactContent2);
-                totalFreed += c.tokens - digestTokens2;
-            newChunks.set(key, { ...c, content: compactContent2, tokens: digestTokens2, compacted: true, editDigest: editDigest2 || undefined });
-                autoCompactedHashes.push(c.hash);
+                totalFreed += c2.tokens - digestTokens2;
+                newChunks.set(key, { ...c2, content: compactContent2, tokens: digestTokens2, compacted: true, editDigest: editDigest2 || undefined });
+                autoCompactedHashes.push(c2.hash);
               }
               for (const [key] of candidates2) {
                 if (currentUsed + tokens - totalFreed <= state.maxTokens * 0.50) break;

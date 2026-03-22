@@ -174,9 +174,12 @@ async function resolveInlineRefs(
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
         const isShapedError = msg.includes('shaped') || msg.includes('bodies stripped');
+        // BUG3 FIX: Always warn regardless of error kind so callers surface failures.
+        warnings?.push(`[HPP] inline ref ${match} (field: ${fieldName ?? '?'}): ${msg}`);
         if (isShapedError) {
-          warnings?.push(`[HPP] inline ref ${match} (field: ${fieldName ?? '?'}): ${msg}`);
           console.warn(`[HPP] inline ref unresolved (shaped content): ${match} in field '${fieldName ?? '?'}'`);
+        } else {
+          console.warn(`[HPP] inline ref unresolved: ${match} in field '${fieldName ?? '?'}':`, e);
         }
         result += match;
       }
@@ -573,6 +576,8 @@ export async function resolveHashRefsWithMeta(
   return { params: resolved, setRefExpansions: expansions, warnings };
 }
 
+const MAX_RESOLVE_DEPTH = 12;
+
 async function _resolveInner(
   params: unknown,
   lookup: HashLookup,
@@ -581,9 +586,14 @@ async function _resolveInner(
   expansions: SetRefExpansion[],
   skipInline: boolean,
   warnings: string[] = [],
+  _depth = 0,
 ): Promise<unknown> {
+  // BUG9 FIX: Guard against unbounded recursion from circular or deeply nested h:refs.
+  if (_depth > MAX_RESOLVE_DEPTH) {
+    warnings.push(`[HPP] max resolve depth (${MAX_RESOLVE_DEPTH}) exceeded — possible circular ref`);
+    return params;
+  }
   if (params === null || params === undefined) return params;
-
   if (typeof params === 'string') {
     // HPP v4: resolve recency refs (h:$last-N) before any other parsing
     const resolved = resolveRecencyInString(params);
@@ -650,8 +660,8 @@ async function _resolveInner(
           continue;
         }
       }
-      expanded.push(await _resolveInner(item, lookup, fieldName, setLookup, expansions, skipInline, warnings));
-    }
+      expanded.push(await _resolveInner(item, lookup, fieldName, setLookup, expansions, skipInline, warnings, _depth + 1));
+      expanded.push(await _resolveInner(item, lookup, fieldName, setLookup, expansions, skipInline, warnings, _depth + 1));
     return expanded;
   }
 
@@ -694,8 +704,8 @@ async function _resolveInner(
         result[key] = resolvedVal;
       }
     } else if (val !== null && typeof val === 'object') {
-      result[key] = await _resolveInner(val, lookup, key, setLookup, expansions, childSkipInline, warnings);
-    } else {
+      result[key] = await _resolveInner(val, lookup, key, setLookup, expansions, childSkipInline, warnings, _depth + 1);
+      result[key] = await _resolveInner(val, lookup, key, setLookup, expansions, childSkipInline, warnings, _depth + 1);
       result[key] = val;
     }
   }

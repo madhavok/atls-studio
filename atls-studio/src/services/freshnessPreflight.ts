@@ -538,7 +538,8 @@ export async function runFreshnessPreflight(
       if (!relocated && content) {
         if (symbolSpec) {
           const symbolRange = resolveSymbolToLines(content, symbolSpec.kind, symbolSpec.name);
-          relocated = symbolRange ? [[symbolRange[0], symbolRange[1]]] : null;
+          // Guard: resolveSymbolToLines returns null when symbol not found
+          relocated = (symbolRange != null) ? [[symbolRange[0], symbolRange[1]]] : null;
         }
         if (relocated && relocated.length > 0) {
           confidence = 'medium';

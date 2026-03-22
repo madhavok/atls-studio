@@ -120,11 +120,14 @@ function rebaseSubsequentSteps(
       if (!le || typeof le !== 'object') continue;
       const entry = le as Record<string, unknown>;
       if (typeof entry.line === 'number' && entry.line > 0 && !entry.anchor && !entry.symbol) {
+        const targetLine = entry.line as number;
         let shift = 0;
         for (const d of deltas) {
-          if (d.line <= (entry.line as number)) shift += d.delta;
+          // BUG5 FIX: Only apply delta if the completed edit started strictly before
+          // the future edit's target line. Edits at the same line or after don't shift it.
+          if (d.line < targetLine) shift += d.delta;
         }
-        if (shift !== 0) entry.line = (entry.line as number) + shift;
+        if (shift !== 0) entry.line = targetLine + shift;
       }
     }
   }
