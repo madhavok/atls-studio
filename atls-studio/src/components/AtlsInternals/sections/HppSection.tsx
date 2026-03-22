@@ -31,8 +31,8 @@ export function HppSection() {
   const setRefReplacements = useCostStore((s) => s.setRefReplacements);
   const setRefTokensSaved = useCostStore((s) => s.setRefTokensSaved);
 
-  const refs = useMemo(() => getAllRefs(), []);
   const turn = getTurn();
+  const refs = useMemo(() => getAllRefs(), [turn]);
 
   const types = useMemo(() => {
     const s = new Set(refs.map((r) => r.type));
@@ -135,7 +135,7 @@ export function HppSection() {
             <div
               key={i}
               className="flex-1 bg-studio-accent/60 rounded-t-sm min-w-[2px]"
-              style={{ height: `${Math.max(2, d * 100)}%` }}
+              style={{ height: `${Math.min(100, Math.max(2, d * 100))}%` }}
               title={`${(d * 100).toFixed(1)}%`}
             />
           ))}

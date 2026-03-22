@@ -15,9 +15,10 @@ export function ContextMetricsSection() {
   const contextTokens = stats.usedTokens || 0;
   const freeTokens = Math.max(0, maxTokens - contextTokens);
 
-  const overheadPct = (overheadTokens / maxTokens) * 100;
-  const contextPct = (contextTokens / maxTokens) * 100;
-  const freePct = (freeTokens / maxTokens) * 100;
+  const overheadPct = maxTokens > 0 ? (overheadTokens / maxTokens) * 100 : 0;
+  const activeContextTokens = Math.max(0, contextTokens - overheadTokens);
+  const contextPct = maxTokens > 0 ? (activeContextTokens / maxTokens) * 100 : 0;
+  const freePct = maxTokens > 0 ? (freeTokens / maxTokens) * 100 : 0;
 
   const cacheTotal = cacheMetrics.sessionCacheWrites + cacheMetrics.sessionCacheReads + cacheMetrics.sessionUncached;
   const cacheWritePct = cacheTotal > 0 ? (cacheMetrics.sessionCacheWrites / cacheTotal) * 100 : 0;
