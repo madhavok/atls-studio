@@ -26,6 +26,7 @@ import { SnapshotTracker, AwarenessLevel } from './snapshotTracker';
 import type { LineRegion } from './snapshotTracker';
 import { buildIntentContext, resolveIntents, isPressured } from './intents';
 import { useRetentionStore } from '../../stores/retentionStore';
+import { useAppStore } from '../../stores/appStore';
 import { invoke } from '@tauri-apps/api/core';
 import { getFreshnessJournal } from '../freshnessJournal';
 import './intents/index';
@@ -34,6 +35,36 @@ interface BatchResolvedEntry {
   source: string | null;
   content: string;
   tokens: number;
+}
+
+// ---------------------------------------------------------------------------
+// Auto-workspace inference for verify.* steps
+// ---------------------------------------------------------------------------
+
+/**
+ * Given a set of edited file paths from the current batch, infer the workspace
+ * name by matching against the project's workspace registry. Returns the workspace
+ * name if all paths belong to the same workspace, otherwise null.
+ */
+function inferWorkspaceFromPaths(editedPaths: Set<string>): string | null {
+  if (editedPaths.size === 0) return null;
+  const workspaces = useAppStore.getState().projectProfile?.workspaces ?? [];
+  if (workspaces.length === 0) return null;
+
+  const matchedNames = new Set<string>();
+  for (const fp of editedPaths) {
+    const norm = fp.replace(/\\/g, '/');
+    for (const ws of workspaces) {
+      if (ws.path === '.') continue;
+      const wsPrefix = ws.path.replace(/\\/g, '/');
+      if (norm.startsWith(wsPrefix + '/') || norm === wsPrefix) {
+        matchedNames.add(ws.name);
+        break;
+      }
+    }
+  }
+  if (matchedNames.size === 1) return [...matchedNames][0];
+  return null;
 }
 
 // ---------------------------------------------------------------------------
@@ -688,6 +719,7 @@ export async function executeUnifiedBatch(
   // Reset per-batch state
   resetRecallBudget();
   const snapshotTracker = new SnapshotTracker();
+  const batchEditedPaths = new Set<string>();
 
   // Seed from persistent awareness cache
   seedSnapshotTracker(snapshotTracker, ctx.store().getAwarenessCache());
@@ -791,6 +823,12 @@ export async function executeUnifiedBatch(
       injectSnapshotHashes(mergedParams, snapshotTracker);
     }
 
+    // Auto-inject workspace for verify steps when not specified and files were edited
+    if (step.use.startsWith('verify.') && !mergedParams.workspace && batchEditedPaths.size > 0) {
+      const inferred = inferWorkspaceFromPaths(batchEditedPaths);
+      if (inferred) mergedParams.workspace = inferred;
+    }
+
     // Dispatch
     const handler = getHandler(step.use);
     if (!handler) {
@@ -828,6 +866,22 @@ export async function executeUnifiedBatch(
       // Rebase line numbers in subsequent same-file change steps
       if (step.use === 'change.edit') {
         rebaseSubsequentSteps(mergedParams, stepsToRun, i + 1);
+      }
+      // Track edited file paths for auto-workspace inference on verify steps
+      if (output.content && typeof output.content === 'object') {
+        const drafts = (output.content as Record<string, unknown>).drafts;
+        if (Array.isArray(drafts)) {
+          for (const d of drafts) {
+            const f = (d as Record<string, unknown>)?.file ?? (d as Record<string, unknown>)?.f;
+            if (typeof f === 'string') batchEditedPaths.add(f);
+          }
+        }
+        const written = (output.content as Record<string, unknown>).written;
+        if (Array.isArray(written)) {
+          for (const w of written) {
+            if (typeof w === 'string') batchEditedPaths.add(w);
+          }
+        }
       }
       // Evict cached verify/exec/analysis results so they re-run against the updated files
       useRetentionStore.getState().evictMutationSensitive();
