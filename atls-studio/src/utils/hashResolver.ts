@@ -661,7 +661,7 @@ async function _resolveInner(
         }
       }
       expanded.push(await _resolveInner(item, lookup, fieldName, setLookup, expansions, skipInline, warnings, _depth + 1));
-      expanded.push(await _resolveInner(item, lookup, fieldName, setLookup, expansions, skipInline, warnings, _depth + 1));
+    }
     return expanded;
   }
 
