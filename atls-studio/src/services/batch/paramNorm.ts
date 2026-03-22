@@ -57,6 +57,7 @@ const OP_ALIASES: Readonly<Partial<Record<OperationKind, Readonly<Record<string,
   'intent.test': { file: 'source_file', test: 'test_file' },
   'intent.search_replace': { query: 'search_query', old: 'old_text', new: 'new_text', glob: 'file_glob' },
   'intent.extract': { file: 'source_file', symbols: 'symbol_names', target: 'target_file' },
+  'system.git': { paths: 'files', file_paths: 'files' },
 };
 
 // ---------------------------------------------------------------------------

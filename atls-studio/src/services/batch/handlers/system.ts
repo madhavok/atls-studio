@@ -111,7 +111,7 @@ export const handleSystemExec: OpHandler = async (params, ctx) => {
 
   try {
     const result = await terminalStore.executeCommand(cmd, targetId);
-    const sanitizedOutput = sanitizeExecOutput(result.output);
+    const sanitizedOutput = sanitizeExecOutput(result.output) || '(no output)';
     const normalizedResult = {
       ...result,
       output: sanitizedOutput,
@@ -152,19 +152,19 @@ export function buildGitCommand(params: Record<string, unknown>, ctx: HandlerCon
     case 'diff': {
       parts.push('diff');
       if (params.staged || params.cached) parts.push('--cached');
-      const files = params.files ?? params.file_paths;
+      const files = params.files ?? params.file_paths ?? params.paths;
       if (Array.isArray(files)) parts.push('--', ...prefixFiles(files.map(String)));
       break;
     }
     case 'stage': {
-      const files = params.files ?? params.file_paths;
+      const files = params.files ?? params.file_paths ?? params.paths;
       if (params.all) { parts.push('add', '-A'); }
       else if (Array.isArray(files) && files.length > 0) { parts.push('add', '--', ...prefixFiles(files.map(String))); }
       else return null;
       break;
     }
     case 'unstage': {
-      const files = params.files ?? params.file_paths;
+      const files = params.files ?? params.file_paths ?? params.paths;
       parts.push('restore', '--staged');
       if (Array.isArray(files) && files.length > 0) parts.push('--', ...prefixFiles(files.map(String)));
       else parts.push('.');
@@ -207,7 +207,7 @@ export const handleSystemGit: OpHandler = async (params, ctx) => {
 
     try {
       const result = await terminalStore.executeCommand(gitCmd, targetId);
-      const sanitizedOutput = sanitizeExecOutput(result.output);
+      const sanitizedOutput = sanitizeExecOutput(result.output) || '(no output)';
       const content = toTOON({ exitCode: result.exitCode, output: sanitizedOutput, success: result.success });
       const retained = checkRetention('system.git', params, content, result.success, 'raw', `git: ${action}`);
       if (retained.reused) return retained.output;

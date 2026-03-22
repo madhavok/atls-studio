@@ -54,6 +54,8 @@ export function buildRetentionFingerprint(
     }
     case 'system.git': {
       const action = typeof params.action === 'string' ? params.action : '';
+      const mutating = ['stage', 'unstage', 'commit', 'push', 'reset'];
+      if (mutating.includes(action)) return null;
       return `git:${action}`;
     }
     case 'system.workspaces':

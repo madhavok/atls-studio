@@ -288,11 +288,8 @@ export function useChatPersistence() {
       // Update store
       useAppStore.setState({ 
         chatSessions: newSessions,
-      useAppStore.setState({ 
-        chatSessions: newSessions,
         currentSessionId: sessionId,
       });
-      // Clear the pending ref now that the store has the canonical ID
       pendingSessionIdRef.current = null;
       console.log('[ChatPersistence] Session saved:', sessionId);
     } catch (error) {
