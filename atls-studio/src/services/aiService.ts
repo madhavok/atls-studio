@@ -1639,6 +1639,7 @@ async function streamChatViaTauri(
           console.log('[aiService] Detected st:done marker - treating as implicit completion');
           useAppStore.getState().clearAgentPendingAction();
           useAppStore.getState().setAgentProgress({ status: 'stopped', stoppedReason: 'completed' });
+          useAppStore.getState().setAgentCanContinue(false);
           break;
         }
 
@@ -1646,6 +1647,7 @@ async function streamChatViaTauri(
         if (mode === 'ask') {
           useAppStore.getState().clearAgentPendingAction();
           useAppStore.getState().setAgentProgress({ status: 'stopped', stoppedReason: 'completed' });
+          useAppStore.getState().setAgentCanContinue(false);
           break;
         }
 
@@ -1653,6 +1655,7 @@ async function streamChatViaTauri(
         if (mode === 'retriever') {
           useAppStore.getState().clearAgentPendingAction();
           useAppStore.getState().setAgentProgress({ status: 'stopped', stoppedReason: 'completed' });
+          useAppStore.getState().setAgentCanContinue(false);
           break;
         }
 
@@ -1678,8 +1681,16 @@ async function streamChatViaTauri(
             });
             continue;
           }
-        } else if (stopReason === 'end_turn' || stopReason === null) {
+        } else if (
+          stopReason === 'end_turn'
+          || stopReason === null
+          || (stopReason !== 'max_tokens' && stopReason !== 'end_turn' && stopReason !== null)
+        ) {
+          // Natural stop (end_turn, null, or provider quirks e.g. tool_use with no parsed tools).
           // Model chose to stop — check for blocking conditions, then accept
+          if (stopReason != null && stopReason !== 'end_turn' && stopReason !== 'max_tokens') {
+            console.log(`[aiService] No-tools round with stop_reason=${stopReason} — using same completion path as end_turn`);
+          }
           if (completionOnlyBlocked) {
             if (autoContinueCount < maxAutoContinues) {
               autoContinueCount++;
@@ -1897,6 +1908,10 @@ async function streamChatViaTauri(
           if (execution.meta && 'completionBlocker' in execution.meta) {
             runtimeCompletionBlocker = execution.meta.completionBlocker ?? null;
             useAppStore.getState().setAgentProgress({ canTaskComplete: runtimeCompletionBlocker == null });
+          }
+          if (tc.name === 'task_complete') {
+            runtimeCompletionBlocker = null;
+            useAppStore.getState().setAgentProgress({ canTaskComplete: true });
           }
           safeCallbacks.onToolResult(tc.id, result);
           safeCallbacks.onToolCall({
@@ -2278,19 +2293,14 @@ async function executeToolCallDetailed(
         const displayText = formatBatchResult(result);
         const pendingAction = analyzeBatchPendingAction(result);
         const completionBlocker = deriveMutationCompletionBlocker(result);
+        const syntheticChildren = buildBatchSyntheticToolCalls(result, args);
         return {
           displayText,
-          meta: (() => {
-            const syntheticChildren = buildBatchSyntheticToolCalls(result, args);
-            if (pendingAction || completionBlocker !== undefined || syntheticChildren.length > 0) {
-              return {
-                ...(pendingAction ? { pendingAction } : {}),
-                ...(syntheticChildren.length > 0 ? { syntheticChildren } : {}),
-                completionBlocker,
-              };
-            }
-            return undefined;
-          })(),
+          meta: {
+            ...(pendingAction ? { pendingAction } : {}),
+            ...(syntheticChildren.length > 0 ? { syntheticChildren } : {}),
+            completionBlocker,
+          },
         };
       }
 

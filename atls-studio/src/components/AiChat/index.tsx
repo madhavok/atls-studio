@@ -3199,6 +3199,9 @@ export function AiChat() {
           seenToolCallIds.current.clear();
           setIsGenerating(false);
           clearToolCalls();
+          if (useAppStore.getState().agentProgress.stoppedReason === 'completed') {
+            setAgentCanContinue(false);
+          }
         },
       }, workspaceContext, chatMode as ChatMode);
     } catch (error) {
@@ -3470,6 +3473,9 @@ export function AiChat() {
           seenToolCallIds.current.clear();
           setIsGenerating(false);
           clearToolCalls();
+          if (useAppStore.getState().agentProgress.stoppedReason === 'completed') {
+            setAgentCanContinue(false);
+          }
         },
       }, workspaceContext, chatMode as ChatMode);
     } catch (error) {
