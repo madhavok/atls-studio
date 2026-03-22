@@ -46,12 +46,14 @@ pub(crate) async fn run_git_command(args: Vec<String>, cwd: String) -> Result<st
         let result = tokio::time::timeout(
             std::time::Duration::from_secs(GIT_CMD_TIMEOUT_SECS),
             tokio::task::spawn_blocking(move || {
-                std::process::Command::new("git")
-                    .args(&a)
+                let mut cmd = std::process::Command::new("git");
+                cmd.args(&a)
                     .current_dir(&c)
                     .env("GIT_TERMINAL_PROMPT", "0")
-                    .env("GIT_PAGER", "")
-                    .output()
+                    .env("GIT_PAGER", "");
+                #[cfg(windows)]
+                cmd.creation_flags(0x08000000);
+                cmd.output()
             }),
         )
         .await;

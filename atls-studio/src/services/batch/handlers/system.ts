@@ -14,8 +14,6 @@ export function prefixFilePath(path: string, relPath: string): string {
   if (p === r || p.startsWith(r + '/')) return path;
   return `${r}/${p}`;
 }
-import { checkRetention } from './retention';
-
 function sanitizeExecOutput(output: string): string {
   const normalized = output.replace(/\r\n/g, '\n').trim();
   if (!normalized) return '';
@@ -121,8 +119,6 @@ export const handleSystemExec: OpHandler = async (params, ctx) => {
       output: sanitizedOutput,
       success: result.success,
     });
-    const retained = checkRetention('system.exec', params, content, result.success, 'raw', `exec: ${cmd.slice(0, 60)}`);
-    if (retained.reused) return retained.output;
     return ok(content, normalizedResult);
   } catch (error) {
     const content = toTOON({
@@ -209,8 +205,6 @@ export const handleSystemGit: OpHandler = async (params, ctx) => {
       const result = await terminalStore.executeCommand(gitCmd, targetId);
       const sanitizedOutput = sanitizeExecOutput(result.output) || '(no output)';
       const content = toTOON({ exitCode: result.exitCode, output: sanitizedOutput, success: result.success });
-      const retained = checkRetention('system.git', params, content, result.success, 'raw', `git: ${action}`);
-      if (retained.reused) return retained.output;
       return ok(content, { ...result, output: sanitizedOutput });
     } catch (error) {
       return err(`system.git: ERROR ${error instanceof Error ? error.message : String(error)}`);
@@ -221,8 +215,6 @@ export const handleSystemGit: OpHandler = async (params, ctx) => {
   try {
     const result = await ctx.atlsBatchQuery('git', params);
     const content = typeof result === 'string' ? result : JSON.stringify(result);
-    const retained = checkRetention('system.git', params, content, true, 'raw', `git: ${action}`);
-    if (retained.reused) return retained.output;
     return ok(content, result);
   } catch (error) {
     return err(`system.git: ERROR ${error instanceof Error ? error.message : String(error)}`);

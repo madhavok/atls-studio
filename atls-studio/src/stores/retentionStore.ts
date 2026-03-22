@@ -150,7 +150,7 @@ export const useRetentionStore = create<RetentionState>()((set, get) => ({
   },
 
   evictMutationSensitive: (): number => {
-    const PREFIXES = ['verify:', 'exec:', 'search.issues', 'analyze:'];
+    const PREFIXES = ['verify:', 'exec:', 'git:', 'search.issues', 'analyze:'];
     const state = get();
     const toDelete: string[] = [];
     for (const key of state.entries.keys()) {

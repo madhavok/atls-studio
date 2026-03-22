@@ -11,7 +11,6 @@ import { useAppStore } from '../../../stores/appStore';
 import { getTerminalStore } from '../../../stores/terminalStore';
 import { resolveTerminalTarget } from './system';
 import type { OpHandler, StepOutput, VerifyClassification } from '../types';
-import { checkRetention } from './retention';
 
 const VALID_STATUSES: readonly string[] = ['pass', 'pass-with-warnings', 'fail', 'tool-error'];
 
@@ -88,12 +87,7 @@ function makeVerifyHandler(mode: string): OpHandler {
       const { passed, classification } = classifyVerifyResult(raw);
       const r = (raw && typeof raw === 'object') ? raw as Record<string, unknown> : {};
       const summary = typeof r.summary === 'string' ? r.summary : `verify.${mode}: ${passed ? 'passed' : 'failed'}`;
-      const resultStr = typeof raw === 'string' ? raw : JSON.stringify(raw);
-      const retained = checkRetention(`verify.${mode}` as any, params, resultStr, passed, 'verify_result', `verify.${mode}`, classification);
-      if (retained.reused) return retained.output;
-
       echoVerifyToTerminal(ctx, raw, mode, passed);
-
       return verifyResult(passed, summary, raw, classification);
     } catch (caught) {
       return verifyErr(`verify.${mode}: ERROR ${caught instanceof Error ? caught.message : String(caught)}`, 'tool-error');

@@ -46,18 +46,9 @@ export function buildRetentionFingerprint(
     case 'verify.test':
     case 'verify.lint':
     case 'verify.typecheck':
-      return `verify:${use}`;
-
-    case 'system.exec': {
-      const cmd = typeof params.cmd === 'string' ? params.cmd : '';
-      return `exec:${cmd}`;
-    }
-    case 'system.git': {
-      const action = typeof params.action === 'string' ? params.action : '';
-      const mutating = ['stage', 'unstage', 'commit', 'push', 'reset'];
-      if (mutating.includes(action)) return null;
-      return `git:${action}`;
-    }
+    case 'system.exec':
+    case 'system.git':
+      return null;
     case 'system.workspaces':
       return 'system.workspaces';
     case 'system.help':
