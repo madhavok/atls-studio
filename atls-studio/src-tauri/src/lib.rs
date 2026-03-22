@@ -477,23 +477,6 @@ fn infer_block_extent(lines: &[String]) -> Option<usize> {
     None
 }
 
-/// Returns (start, end) for replace/delete edits (0-based exclusive end). None for insert actions.
-fn edit_removal_range(
-    edit: &LineEdit,
-    resolved_line: u32,
-    content_len: usize,
-    count_override: Option<usize>,
-) -> Option<(usize, usize)> {
-    match edit.action.as_str() {
-        "replace" | "delete" | "replace_body" => {
-            let idx = (resolved_line as usize).saturating_sub(1);
-            let count = count_override.unwrap_or_else(|| edit.count.unwrap_or(1) as usize);
-            let end = std::cmp::min(idx + count, content_len);
-            Some((idx, end))
-        }
-        _ => None,
-    }
-}
 
 /// Find up to `limit` lines most similar to `anchor` by substring or normalized match.
 fn find_fuzzy_anchor_matches(lines: &[String], anchor: &str, limit: usize) -> Vec<(usize, String)> {
@@ -574,8 +557,110 @@ fn detect_indent(line: &str) -> &str {
     &line[..line.len() - trimmed.len()]
 }
 
+/// Resolve the target line number for a single edit against the current state of `lines`.
+fn resolve_single_edit_line(
+    edit: &LineEdit,
+    lines: &[String],
+    anchor_warnings: &mut Vec<String>,
+) -> Result<u32, String> {
+    if let Some(ref anchor) = edit.anchor {
+        if anchor.contains('\n') || anchor.contains('\r') {
+            return Err(format!("invalid multiline anchor {:?} for action {}", anchor, edit.action));
+        }
+        let all_matches: Vec<usize> = lines.iter().enumerate()
+            .filter(|(_, l)| l.contains(anchor.as_str()))
+            .map(|(i, _)| i)
+            .collect();
+
+        let matches: Vec<usize> = if all_matches.len() > 1 {
+            let filtered: Vec<usize> = all_matches.iter().copied()
+                .filter(|&i| !anchor_in_string_or_comment(&lines[i], anchor))
+                .collect();
+            if filtered.is_empty() { all_matches.clone() } else { filtered }
+        } else {
+            all_matches.clone()
+        };
+
+        if matches.is_empty() {
+            let content_preview = edit.content.as_deref()
+                .map(|c| c.chars().take(80).collect::<String>())
+                .unwrap_or_default();
+            let fuzzy = find_fuzzy_anchor_matches(lines, anchor, 3);
+            let fuzzy_desc = if fuzzy.is_empty() {
+                String::new()
+            } else {
+                let parts: Vec<String> = fuzzy.iter()
+                    .map(|(ln, preview)| format!("L{}:{:?}", ln, preview))
+                    .collect();
+                format!(", near_matches=[{}]", parts.join(", "))
+            };
+            return Err(format!(
+                "anchor {:?} not found (action: {}, content: {:?}, total_lines: {}{}). Re-read the file and retry with current anchors",
+                anchor, edit.action, content_preview, lines.len(), fuzzy_desc
+            ));
+        } else if matches.len() == 1 {
+            let chosen = (matches[0] + 1) as u32;
+            if edit.line > 0 {
+                let delta = (chosen as i64 - edit.line as i64).unsigned_abs();
+                if delta > 5 {
+                    anchor_warnings.push(format!(
+                        "anchor_miss: {:?} matched at L{} but line hint was L{} (delta {})",
+                        anchor, chosen, edit.line, delta
+                    ));
+                }
+            }
+            Ok(chosen)
+        } else {
+            let hint = edit.line as usize;
+            let hint_exact = matches.iter().find(|&&m| m + 1 == hint).copied();
+            let Some(chosen_idx) = hint_exact else {
+                let match_lines: Vec<usize> = matches.iter().map(|&m| m + 1).collect();
+                return Err(format!(
+                    "anchor is ambiguous {:?}; matched lines {:?} and no exact line hint was provided",
+                    anchor, match_lines
+                ));
+            };
+            let chosen = (chosen_idx + 1) as u32;
+
+            if edit.line > 0 {
+                let delta = (chosen as i64 - edit.line as i64).unsigned_abs();
+                if delta > 5 {
+                    anchor_warnings.push(format!(
+                        "anchor_miss: {:?} best match L{} differs from hint L{} by {} lines",
+                        anchor, chosen, edit.line, delta
+                    ));
+                }
+            }
+            Ok(chosen)
+        }
+    } else {
+        Ok(edit.line)
+    }
+}
+
+/// For anchored multi-line replace without explicit count, infer block extent.
+fn compute_effective_replace_count(
+    edit: &LineEdit,
+    lines: &[String],
+    idx: usize,
+) -> Option<usize> {
+    if edit.anchor.is_some()
+        && edit.content.as_ref().map(|c| c.lines().count()).unwrap_or(0) > 1
+        && edit.count.unwrap_or(1) <= 1
+    {
+        let slice = if idx < lines.len() { &lines[idx..] } else { &lines[lines.len()..] };
+        infer_block_extent(slice)
+    } else {
+        None
+    }
+}
+
 /// Returns (new_content, anchor_miss_warnings). Warnings are non-fatal: the edit
 /// still applies using the hint line, but callers can surface misses to the model.
+///
+/// Edits are applied **sequentially in array order** (top-down). Each edit resolves
+/// its line/anchor against the current state of `lines` after all prior edits, which
+/// matches the sequential mental model LLMs use when generating multi-edit batches.
 ///
 /// **DEPRECATED as a direct write path.** Callers should route through `EditSession`
 /// for atomic writes and preimage validation. `apply_line_edits` may still be used
@@ -589,147 +674,11 @@ pub(crate) fn apply_line_edits(content: &str, edits: &[LineEdit]) -> Result<(Str
 
     let mut anchor_warnings: Vec<String> = Vec::new();
 
-    let resolved_lines: Vec<u32> = edits.iter().map(|edit| {
-        Ok(if let Some(ref anchor) = edit.anchor {
-            if anchor.contains('\n') || anchor.contains('\r') {
-                return Err(format!("invalid multiline anchor {:?} for action {}", anchor, edit.action));
-            }
-            let all_matches: Vec<usize> = lines.iter().enumerate()
-                .filter(|(_, l)| l.contains(anchor.as_str()))
-                .map(|(i, _)| i)
-                .collect();
-
-            // Filter out matches that appear only inside string literals or comments.
-            let matches: Vec<usize> = if all_matches.len() > 1 {
-                let filtered: Vec<usize> = all_matches.iter().copied()
-                    .filter(|&i| !anchor_in_string_or_comment(&lines[i], anchor))
-                    .collect();
-                if filtered.is_empty() { all_matches.clone() } else { filtered }
-            } else {
-                all_matches.clone()
-            };
-
-            if matches.is_empty() {
-                let content_preview = edit.content.as_deref()
-                    .map(|c| c.chars().take(80).collect::<String>())
-                    .unwrap_or_default();
-                let fuzzy = find_fuzzy_anchor_matches(&lines, anchor, 3);
-                let fuzzy_desc = if fuzzy.is_empty() {
-                    String::new()
-                } else {
-                    let parts: Vec<String> = fuzzy.iter()
-                        .map(|(ln, preview)| format!("L{}:{:?}", ln, preview))
-                        .collect();
-                    format!(", near_matches=[{}]", parts.join(", "))
-                };
-                // Anchor miss is always a hard error — no fallback to line hint.
-                // anchor_miss_policy:"warn" is no longer honored in write paths.
-                return Err(format!(
-                    "anchor {:?} not found (action: {}, content: {:?}, total_lines: {}{}). Re-read the file and retry with current anchors",
-                    anchor, edit.action, content_preview, lines.len(), fuzzy_desc
-                ));
-            } else if matches.len() == 1 {
-                let chosen = (matches[0] + 1) as u32;
-                if edit.line > 0 {
-                    let delta = (chosen as i64 - edit.line as i64).unsigned_abs();
-                    if delta > 5 {
-                        anchor_warnings.push(format!(
-                            "anchor_miss: {:?} matched at L{} but line hint was L{} (delta {})",
-                            anchor, chosen, edit.line, delta
-                        ));
-                    }
-                }
-                chosen
-            } else {
-                // Multiple matches — prefer exact line-hint match when available.
-                let hint = edit.line as usize;
-                let hint_exact = matches.iter().find(|&&m| m + 1 == hint).copied();
-                let Some(chosen_idx) = hint_exact else {
-                let match_lines: Vec<usize> = matches.iter().map(|&m| m + 1).collect();
-                    return Err(format!(
-                        "anchor is ambiguous {:?}; matched lines {:?} and no exact line hint was provided",
-                        anchor, match_lines
-                    ));
-                };
-                let chosen = (chosen_idx + 1) as u32;
-
-                if edit.line > 0 {
-                    let delta = (chosen as i64 - edit.line as i64).unsigned_abs();
-                    if delta > 5 {
-                        anchor_warnings.push(format!(
-                            "anchor_miss: {:?} best match L{} differs from hint L{} by {} lines",
-                            anchor, chosen, edit.line, delta
-                        ));
-                    }
-                }
-                chosen
-            }
-        } else {
-            edit.line
-        })
-    }).collect::<Result<Vec<u32>, String>>()?;
-
-    // For replace_body actions, resolve (body_start_offset, body_line_count) relative
-    // to the resolved line. Stored separately so the action dispatch can use them.
-    let mut body_bounds_cache: Vec<Option<(usize, usize)>> = vec![None; edits.len()];
-    let mut effective_counts: Vec<Option<usize>> = vec![None; edits.len()];
-
-    for (i, edit) in edits.iter().enumerate() {
-        if edit.action != "replace" && edit.action != "delete" && edit.action != "replace_body" {
-            continue;
-        }
-        let idx = (resolved_lines[i] as usize).saturating_sub(1);
-        if edit.action == "replace_body" {
-            if idx >= lines.len() { continue; }
-            let slice = &lines[idx..];
-            let refs: Vec<&str> = slice.iter().map(|s| s.as_str()).collect();
-            if let Some((body_start, body_end)) = find_body_bounds(&refs) {
-                let count = body_end - body_start;
-                body_bounds_cache[i] = Some((body_start, count));
-                effective_counts[i] = Some(count);
-            }
-        } else if edit.action == "replace"
-            && edit.anchor.is_some()
-            && edit.content.as_ref().map(|c| c.lines().count()).unwrap_or(0) > 1
-            && edit.count.unwrap_or(1) <= 1
-        {
-            let slice = if idx < lines.len() {
-                &lines[idx..]
-            } else {
-                &lines[lines.len()..]
-            };
-            effective_counts[i] = infer_block_extent(slice);
-        }
-    }
-
-    // Reject overlapping replace/delete ranges — splice order would corrupt output
-    for i in 0..edits.len() {
-        let count_a = effective_counts[i];
-        if let Some((start_a, end_a)) = edit_removal_range(&edits[i], resolved_lines[i], lines.len(), count_a) {
-            for j in (i + 1)..edits.len() {
-                let count_b = effective_counts[j];
-                if let Some((start_b, end_b)) = edit_removal_range(&edits[j], resolved_lines[j], lines.len(), count_b) {
-                    if start_a < end_b && start_b < end_a {
-                        return Err(format!(
-                            "Overlapping line_edits: edit {} (L{}-L{}) overlaps edit {} (L{}-L{}). Use non-overlapping ranges.",
-                            i + 1, start_a + 1, end_a, j + 1, start_b + 1, end_b
-                        ));
-                    }
-                }
-            }
-        }
-    }
-
-    let mut indexed: Vec<(usize, &LineEdit)> = edits.iter().enumerate().collect();
-    indexed.sort_by(|(ai, _), (bi, _)| {
-        let a_line = resolved_lines[*ai];
-        let b_line = resolved_lines[*bi];
-        b_line.cmp(&a_line).then_with(|| bi.cmp(ai))
-    });
-    for (orig_idx, edit) in &indexed {
-        let idx = (resolved_lines[*orig_idx] as usize).saturating_sub(1);
+    for edit in edits.iter() {
+        let resolved_line = resolve_single_edit_line(edit, &lines, &mut anchor_warnings)?;
+        let idx = (resolved_line as usize).saturating_sub(1);
         if idx > lines.len() {
-            return Err(format!("Line {} out of range (file has {} lines)", resolved_lines[*orig_idx], lines.len()));
+            return Err(format!("Line {} out of range (file has {} lines)", resolved_line, lines.len()));
         }
         match edit.action.as_str() {
             "insert_before" | "prepend" => {
@@ -756,17 +705,26 @@ pub(crate) fn apply_line_edits(content: &str, edits: &[LineEdit]) -> Result<(Str
                 }
             }
             "replace" => {
-                let count = effective_counts[*orig_idx]
+                let effective = compute_effective_replace_count(edit, &lines, idx);
+                let count = effective
                     .unwrap_or_else(|| edit.count.unwrap_or(1) as usize);
                 let end = std::cmp::min(idx + count, lines.len());
                 let replacement: Vec<String> = edit.content.as_deref().unwrap_or("").lines().map(String::from).collect();
                 lines.splice(idx..end, replacement);
             }
             "replace_body" => {
-                let (body_offset, body_count) = body_bounds_cache[*orig_idx]
+                if idx >= lines.len() {
+                    return Err(format!(
+                        "replace_body at L{}: line out of range",
+                        resolved_line
+                    ));
+                }
+                let slice = &lines[idx..];
+                let refs: Vec<&str> = slice.iter().map(|s| s.as_str()).collect();
+                let (body_offset, body_count) = find_body_bounds(&refs)
                     .ok_or_else(|| format!(
                         "replace_body at L{}: could not find body bounds (no matching {{ }} block)",
-                        resolved_lines[*orig_idx]
+                        resolved_line
                     ))?;
                 let body_start = idx + body_offset;
                 let body_end = std::cmp::min(body_start + body_count, lines.len());
@@ -2684,22 +2642,24 @@ mod hard_line_edit_tests {
 
     #[test]
     fn insert_before_and_after_same_line() {
+        // Sequential: insert_before L2 places "BEFORE" at L2, pushing "B" to L3.
+        // Then insert_after L2 inserts after "BEFORE" (current L2), not after "B".
         let content = "A\nB\nC\n";
         let edits = vec![
             le(2, "insert_before", Some("BEFORE"), None),
             le(2, "insert_after", Some("AFTER"), None),
         ];
         let (result, _) = apply_line_edits(content, &edits).unwrap();
-        assert!(result.contains("BEFORE"), "insert_before should apply");
-        assert!(result.contains("AFTER"), "insert_after should apply");
+        assert_eq!(result, "A\nBEFORE\nAFTER\nB\nC\n");
     }
 
     #[test]
     fn two_deletes_at_bottom_and_top() {
+        // Sequential: after deleting L1 ("1"), "5" shifts from L5 to L4.
         let content = "1\n2\n3\n4\n5\n";
         let edits = vec![
             le(1, "delete", None, Some(1)),
-            le(5, "delete", None, Some(1)),
+            le(4, "delete", None, Some(1)),
         ];
         let (result, _) = apply_line_edits(content, &edits).unwrap();
         assert_eq!(result, "2\n3\n4\n");
@@ -2727,6 +2687,35 @@ mod hard_line_edit_tests {
         let (result, _) = apply_line_edits(&content, &[le(2, "replace", Some("B"), Some(1))]).unwrap();
         assert_eq!(result, "a\nB\nc\n");
         assert!(!result.contains('\r'));
+    }
+
+    // ── sequential: insert shifts subsequent line targets ──
+
+    #[test]
+    fn insert_then_replace_at_shifted_line() {
+        // Motivating case: model inserts a line at L4, then targets L19
+        // expecting the line that was originally at L18 (shifted by +1).
+        let content = "L1\nL2\nL3\nL4\nL5\nL6\n";
+        let edits = vec![
+            le(4, "insert_after", Some("NEW"), None),
+            le(6, "replace", Some("REPLACED"), Some(1)),
+        ];
+        let (result, _) = apply_line_edits(content, &edits).unwrap();
+        // After insert_after L4: L1,L2,L3,L4,NEW,L5,L6
+        // L6 in post-edit state is at position 6 → replace it
+        assert_eq!(result, "L1\nL2\nL3\nL4\nNEW\nREPLACED\nL6\n");
+    }
+
+    #[test]
+    fn insert_then_delete_at_shifted_line() {
+        let content = "a\nb\nc\nd\ne\n";
+        let edits = vec![
+            le(1, "insert_before", Some("z"), None),
+            le(4, "delete", None, Some(1)),
+        ];
+        let (result, _) = apply_line_edits(content, &edits).unwrap();
+        // After insert_before L1: z,a,b,c,d,e  (L4 is "c")
+        assert_eq!(result, "z\na\nb\nd\ne\n");
     }
 
     // ── edge: empty file ──

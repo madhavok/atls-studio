@@ -256,24 +256,33 @@ describe('line_edits validation', () => {
     expect((out.content as { error_class?: string })?.error_class).toBe('invalid_line_edit');
   });
 
-  it('rejects overlapping explicit line edits before dispatch', async () => {
+  it('passes sequential line edits through without overlap rejection', async () => {
+    // Sequential semantics: replace L3 count=2, then delete L4 is valid
+    // (the delete targets the post-replace state, not the original).
+    const atlsBatchQuery = vi.fn().mockResolvedValue({ h: 'h:after1234', old_h: 'h:before1234' });
+    const ctx = {
+      atlsBatchQuery,
+      store: () => ({ getStats: () => ({}), getPinnedCount: () => 0, recordMemoryEvent: () => {}, recordRebindOutcomes: () => {} }),
+    } as unknown as Parameters<typeof handleEdit>[1];
+
     const out = await handleEdit(
       {
         file: 'a.ts',
+        snapshot_hash: 'feedface',
         line_edits: [
           { line: 3, action: 'replace', count: 2, content: 'alpha' },
           { line: 4, action: 'delete', count: 1 },
         ],
       },
-      mockCtx
+      ctx,
     );
-    expect(out.ok).toBe(false);
-    expect(out.summary ?? (out as { error?: string }).error).toMatch(/overlap/i);
-    expect((out.content as { error_class?: string })?.error_class).toBe('overlapping_line_edits');
-    expect((out.content as { repro_pack?: { target_files?: string[] } })?.repro_pack?.target_files).toEqual(['a.ts']);
+    expect(out.ok).toBe(true);
+    const [, payload] = atlsBatchQuery.mock.calls.at(-1)! as [string, Record<string, unknown>];
+    expect((payload.line_edits as unknown[]).length).toBe(2);
   });
 
-  it('coalesces adjacent explicit replace edits before dispatch', async () => {
+  it('preserves sequential edit order without coalescing', async () => {
+    // Sequential semantics: edits pass through in array order without merging.
     const atlsBatchQuery = vi.fn().mockResolvedValue({ h: 'h:after1234', old_h: 'h:before1234' });
     const ctx = {
       atlsBatchQuery,
@@ -295,9 +304,7 @@ describe('line_edits validation', () => {
     const [, payload] = atlsBatchQuery.mock.calls.at(-1)! as [string, Record<string, unknown>];
     expect(payload.snapshot_hash).toBe('feedface');
     expect(payload.content_hash).toBe('feedface');
-    expect(payload.line_edits).toEqual([
-      { line: 3, action: 'replace', count: 2, content: 'alpha\nbeta' },
-    ]);
+    expect((payload.line_edits as unknown[]).length).toBe(2);
   });
 
   it('rejects move without destination', async () => {

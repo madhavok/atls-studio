@@ -98,12 +98,18 @@ interface PositionalDelta {
 
 /**
  * Compute per-edit positional deltas from a completed line_edits array.
- * Each entry records the line where the edit occurred and the net line change.
+ * Each entry records the **original-file** line where the edit occurred and
+ * the net line change.  Because line_edits are applied sequentially (top-down),
+ * each edit's `line` is relative to the post-prior-edits state.  We track a
+ * running cumulative delta to convert back to original-file coordinates so that
+ * `rebaseSubsequentSteps` can compare against pre-execution line numbers.
+ *
  * Anchor/symbol edits (line <= 0) are excluded — they can't inform positional rebase.
  */
 function computePositionalDeltas(lineEdits: unknown): PositionalDelta[] {
   if (!Array.isArray(lineEdits)) return [];
   const deltas: PositionalDelta[] = [];
+  let cumulativeDelta = 0;
   for (const edit of lineEdits) {
     if (!edit || typeof edit !== 'object') continue;
     const e = edit as Record<string, unknown>;
@@ -117,7 +123,9 @@ function computePositionalDeltas(lineEdits: unknown): PositionalDelta[] {
     if (action === 'insert_before' || action === 'insert_after' || action === 'prepend' || action === 'append') d = contentLines;
     else if (action === 'delete') d = -count;
     else if (action === 'replace') d = contentLines - count;
-    if (d !== 0 && line > 0) deltas.push({ line, delta: d });
+    const originalLine = line > 0 ? line - cumulativeDelta : 0;
+    if (d !== 0 && originalLine > 0) deltas.push({ line: originalLine, delta: d });
+    cumulativeDelta += d;
   }
   return deltas;
 }

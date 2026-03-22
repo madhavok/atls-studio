@@ -38,6 +38,7 @@ change.edit file_path:"" line_edits:[{line:N, action:"replace", count:M, content
   also: line_edits:[{line:N, action:"delete", count:M}] — spans must keep valid syntax; partial deletes may fail with syntax_error_after_edit
   also: line_edits:[{line:N, action:"move", count:M, destination:D, reindent?:true}]
   also: line_edits:[{anchor:"unique text", action:"replace", count:M, content:"..."}] — anchor resolves to line
+  **sequential**: edits apply top-down in array order; each edit's line refers to the file state AFTER all prior edits. Insert +3 lines at L10 → next edit targeting original L50 should use L53.
   legacy: edits:[{file,old,new}] — exact text match, use only for short unambiguous replacements
   also: creates:[{path,content}] | revise:"hash" | undo:"h:$last_edit" | deletes:["path"|"h:X",...]
 change.create creates:[{path,content}]
@@ -102,7 +103,7 @@ on_error: "stop"|"continue"|"rollback" per step.
 - hashes (session.pin/unpin/compact/unload/drop/recall): h:refs pass-through
 - restore items: file and hash accept h:refs
 - system.exec: Windows agent shell is PowerShell — tail/cat may be missing; prefer verify.build / verify.typecheck for checks, or Select-Object -Last N to trim logs; empty (no output) often means a bad pipeline or trim-to-nothing
-- line_edits discipline: read exact lines first (read.lines or read.context), then build the patch — never guess ranges from memory. Verify the span with read.lines (target_range + actual_range) before editing. Count braces in braced languages so replacement blocks balance. For complex nested / scope-sensitive edits, prefer anchor on line_edits over line numbers alone. For simple spans after a fresh read, line+count+action:"replace" with numbers from that read — no old text needed. For 200+ line files, always derive line numbers from read.lines output.
+- line_edits discipline: read exact lines first (read.lines or read.context), then build the patch — never guess ranges from memory. Edits apply **sequentially in array order** — each line number targets the file state after all prior edits (insert +N shifts subsequent targets by +N). Count braces in braced languages so replacement blocks balance. Prefer anchor for nested / scope-sensitive edits. For simple spans after a fresh read, line+count+action:"replace" — no old text needed. For 200+ line files, always derive line numbers from read.lines output.
 - use refactor, not edit, for cross-file extract/move/rename flows
 - hash-building refactor: read.shaped(shape:"sig") → h:SOURCE; change.create file body = imports + h:XXXX:sym(Name):dedent + exports (compose from pointers, no pasted bodies); strip source with change.edit line_edits delete (or refactor) on extracted span; verify.typecheck
 - each successful edit returns fresh refs; chain from the newest refs

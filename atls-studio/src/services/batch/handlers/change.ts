@@ -1157,80 +1157,10 @@ function effectiveExplicitLineEditCount(edit: Record<string, unknown>): number {
 }
 
 function coalesceExplicitLineEdits(lineEdits: Array<Record<string, unknown>>): Array<Record<string, unknown>> {
-  const explicit = lineEdits.map((edit, index) => ({ edit: { ...edit }, index }));
-  explicit.sort((a, b) => ((a.edit.line as number) ?? 0) - ((b.edit.line as number) ?? 0) || a.index - b.index);
-
-  const out: Array<Record<string, unknown>> = [];
-
-  const pushOrMerge = (entry: Record<string, unknown>, index: number) => {
-    const action = entry.action;
-    const line = entry.line;
-    const hasExplicitLine = typeof line === 'number' && Number.isInteger(line) && line > 0;
-    const explicitOnly = hasExplicitLine && entry.anchor == null && entry.symbol == null;
-    const count = explicitOnly && (action === 'replace' || action === 'delete')
-      ? effectiveExplicitLineEditCount(entry)
-      : null;
-    const prev = out[out.length - 1];
-
-    if (!prev || !explicitOnly || count == null) {
-      out.push(entry);
-      return;
-    }
-
-    const prevExplicitOnly = typeof prev.line === 'number'
-      && Number.isInteger(prev.line)
-      && (prev.line as number) > 0
-      && prev.anchor == null
-      && prev.symbol == null;
-    const prevAction = prev.action;
-    const prevCount = prevExplicitOnly && (prevAction === 'replace' || prevAction === 'delete')
-      ? effectiveExplicitLineEditCount(prev)
-      : null;
-
-    if (prevCount == null || prevAction == null) {
-      out.push(entry);
-      return;
-    }
-
-    const prevStart = (prev.line as number) - 1;
-    const prevEnd = prevStart + prevCount;
-    const start = (line as number) - 1;
-    const end = start + count;
-    const overlaps = start < prevEnd && prevStart < end;
-    const adjacent = start === prevEnd;
-
-    if (prevAction === 'delete' && action === 'delete' && (overlaps || adjacent)) {
-      prev.count = Math.max(prevEnd, end) - prevStart;
-      return;
-    }
-
-    if (prevAction === 'replace' && action === 'replace' && adjacent) {
-      const prevContent = typeof prev.content === 'string' ? prev.content : '';
-      const nextContent = typeof entry.content === 'string' ? entry.content : '';
-      prev.count = prevCount + count;
-      prev.content = [prevContent, nextContent].filter(Boolean).join('\n');
-      return;
-    }
-
-    if (overlaps) {
-      throwEditValidationError(
-        `line_edits overlap: edit ${index} conflicts with a prior explicit edit and could not be auto-coalesced`,
-        'overlapping_line_edits',
-        {
-          prior: { line_start: prevStart + 1, line_end: prevEnd, action: prevAction },
-          current: { line_start: start + 1, line_end: end, action },
-        },
-      );
-    }
-
-    out.push(entry);
-  };
-
-  for (const { edit, index } of explicit) {
-    pushOrMerge(edit, index + 1);
-  }
-
-  return out;
+  // line_edits are applied sequentially (top-down): each edit's line number
+  // refers to the file state after all prior edits.  Sorting or overlap
+  // detection would break sequential semantics — edits stay in array order.
+  return lineEdits.map(edit => ({ ...edit }));
 }
 
 function formatDisplayOnlyRefError(refs: string[]): StepOutput {
