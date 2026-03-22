@@ -43,17 +43,26 @@ export async function executeWithConcurrency<T>(
     .map(() => runNext());
   
   if (abortPromise) {
+    // Race to detect abort early, then still await runners so results[]/errors[] are fully populated.
+    // Runners check abortSignal.aborted and bail quickly, so this won't block long.
     await Promise.race([Promise.all(runners), abortPromise]);
+    await Promise.all(runners);
   } else {
     await Promise.all(runners);
   }
 
-  // If any task failed, throw the first error (after all runners complete)
+  // If aborted, return the sparse results array preserving index correspondence.
+  // Slots for incomplete/aborted tasks remain undefined.
+  if (abortSignal?.aborted) {
+    return results as T[];
+  }
+
+  // If any task failed, throw the first error (all runners have completed at this point)
   if (errors.length > 0) {
     const firstErr = errors[0].error;
     throw firstErr instanceof Error ? firstErr : new Error(String(firstErr));
   }
 
-  // Filter out undefined slots from aborted tasks
-  return results.filter((r): r is T => r !== undefined);
+  // All tasks completed successfully — no undefined slots possible
+  return results as T[];
 }

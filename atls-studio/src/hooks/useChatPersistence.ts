@@ -143,6 +143,8 @@ export function useChatPersistence() {
   
   const lastSaveRef = useRef<number>(0);
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Track the session ID across debounced saves to avoid re-creating on each invocation
+  const pendingSessionIdRef = useRef<string | null>(null);
 
   /**
    * Initialize chat database when project opens.
@@ -216,11 +218,12 @@ export function useChatPersistence() {
     lastSaveRef.current = now;
     
     try {
-      let sessionId = currentSessionId;
+      let sessionId = currentSessionId || pendingSessionIdRef.current;
       
       // Create session if new (or verify it exists)
       if (!sessionId) {
         sessionId = crypto.randomUUID();
+        pendingSessionIdRef.current = sessionId;
         const title = messages.find(m => m.role === 'user')?.content.slice(0, 50) || 'New Chat';
         // Pass sessionId to ensure we use the same ID we'll save with
         await chatDb.createSession('agent', title, sessionId);
@@ -285,9 +288,12 @@ export function useChatPersistence() {
       // Update store
       useAppStore.setState({ 
         chatSessions: newSessions,
+      useAppStore.setState({ 
+        chatSessions: newSessions,
         currentSessionId: sessionId,
       });
-      
+      // Clear the pending ref now that the store has the canonical ID
+      pendingSessionIdRef.current = null;
       console.log('[ChatPersistence] Session saved:', sessionId);
     } catch (error) {
       console.error('[ChatPersistence] Failed to save session:', error);
