@@ -705,6 +705,10 @@ async function _resolveInner(
       }
     } else if (val !== null && typeof val === 'object') {
       result[key] = await _resolveInner(val, lookup, key, setLookup, expansions, childSkipInline, warnings, _depth + 1);
+    } else {
+      // Preserve numbers/booleans/null — otherwise line_edits.line, read.lines start_line/end_line,
+      // count, destination, etc. are dropped and validators see "missing line".
+      result[key] = val as unknown;
     }
   }
   return result;

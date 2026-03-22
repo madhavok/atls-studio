@@ -352,8 +352,39 @@ describe('resolveHashRefsWithMeta pipeline', () => {
       { line_edits: [{ line: 1, action: 'replace', content: 'h:aabb1122 stays literal' }] },
       mockLookup,
     );
-    const edits = (params as Record<string, Array<Record<string, string>>>).line_edits;
+    const edits = (params as Record<string, Array<Record<string, string | number>>>).line_edits;
+    expect(edits[0].line).toBe(1);
     expect(edits[0].content).toBe('h:aabb1122 stays literal');
+  });
+
+  it('preserves numeric fields in nested batch step with (line_edits)', async () => {
+    const { params } = await resolveHashRefsWithMeta(
+      {
+        steps: [
+          {
+            id: 'e1',
+            use: 'change.edit',
+            with: {
+              file_path: 'src/x.ts',
+              line_edits: [{ line: 6, action: 'replace', count: 4, content: 'ok' }],
+            },
+          },
+        ],
+      },
+      mockLookup,
+    );
+    const steps = (params as { steps: Array<{ with: { line_edits: Array<{ line: number }> } }> }).steps;
+    expect(steps[0].with.line_edits[0].line).toBe(6);
+  });
+
+  it('preserves read.lines start_line and end_line numbers', async () => {
+    const { params } = await resolveHashRefsWithMeta(
+      { file_path: 'src/x.ts', start_line: 9, end_line: 16 },
+      mockLookup,
+    );
+    const p = params as { start_line: number; end_line: number };
+    expect(p.start_line).toBe(9);
+    expect(p.end_line).toBe(16);
   });
 
   it('creates[].content expands inline UHPP with modifier (CONTENT-AS-REF)', async () => {
