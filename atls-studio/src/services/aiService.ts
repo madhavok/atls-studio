@@ -2805,7 +2805,7 @@ batch({version:"1.0",steps:[{id:"exec",use:"system.exec",with:{cmd:"..."}}]}) â†
 
   // Mode-specific rules
   const modeRules = mode === 'designer'
-    ? 'Read-only: Output plans via design_write. Do not edit files.'
+    ? 'Read-only: Output plans via annotate.design. Do not edit files.'
     : mode === 'reviewer'
     ? 'Review mode: Find and report issues. Suggest fixes but do not apply them.'
     : mode === 'refactor'

@@ -3040,9 +3040,40 @@ export const useContextStore = create<ContextStoreState>()(
     if (!found) return { ok: false, error: `engram not found: ${hashRef}` };
     const [, oldChunk] = found;
 
-    const lines = oldChunk.content.split('\n');
-    if (atLine < 1 || atLine > lines.length - 1) {
-      return { ok: false, error: `split line ${atLine} out of range (1-${Math.max(1, lines.length - 1)})` };
+    // Compacted chunks store a one-line digest; split needs full text from archive (same as getChunkForHashRef).
+    let splitContent: string;
+    if (oldChunk.compacted) {
+      const archived =
+        findChunkByRef(state.archivedChunks, hashRef) ??
+        findChunkByRef(state.archivedChunks, oldChunk.hash) ??
+        findChunkByRef(state.archivedChunks, oldChunk.shortHash);
+      if (archived) {
+        splitContent = archived[1].content;
+      } else if (findInDroppedManifest(hashRef, state.droppedManifest)) {
+        return {
+          ok: false,
+          error: 'split: full content was dropped for this engram; re-read the source file before split',
+        };
+      } else {
+        return {
+          ok: false,
+          error: 'split: full content unavailable for compacted engram; re-read or session.recall before split',
+        };
+      }
+    } else {
+      splitContent = oldChunk.content;
+    }
+
+    const lines = splitContent.split('\n');
+    const maxAt = lines.length - 1;
+    if (lines.length < 2 || atLine < 1 || atLine > maxAt) {
+      return {
+        ok: false,
+        error:
+          maxAt < 1
+            ? `split line ${atLine} out of range — content has only one line (nothing to split)`
+            : `split line ${atLine} out of range (1-${maxAt})`,
+      };
     }
 
     const contentA = lines.slice(0, atLine).join('\n');

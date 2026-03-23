@@ -319,6 +319,8 @@ Shadow versions enable:
 - **Diff trail**: `h:OLD..h:NEW` diffs resolved from shadow version content
 - **Audit**: Full edit history for a file within a session
 
+**Rollback recency**: For `restore[].hash`, use `h:$last_edit` / `h:$last_edit-N` (edit stack) or explicit hashes from a paused execute’s `_rollback`. Prefer **not** `h:$last` / `h:$last-N` here — those resolve from the **global** hash stack (reads, search, edits, etc.) and may not match a registry-backed restore target.
+
 ---
 
 ## HPP Version History

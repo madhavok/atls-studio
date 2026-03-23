@@ -59,6 +59,33 @@ pub(crate) fn resolve_project_path(project_root: &std::path::Path, file_path: &s
     resolved.canonicalize().unwrap_or(resolved)
 }
 
+/// Resolve a directory path for `read.context` tree when the path is relative to a sub-workspace
+/// (e.g. `src/foo` exists under `atls-studio/` but not at the monorepo root).
+/// Returns `(resolved_path, effective_relative_path)` for display and tree building.
+pub(crate) fn resolve_tree_directory_path(
+    project_root: &std::path::Path,
+    file_path: &str,
+    workspace_rel_paths: &[String],
+) -> (PathBuf, String) {
+    let direct = resolve_project_path(project_root, file_path);
+    if direct.is_dir() {
+        return (direct, file_path.to_string());
+    }
+    let norm = file_path.trim_start_matches("./").replace('\\', "/");
+    for rp in workspace_rel_paths {
+        let rp = rp.replace('\\', "/");
+        if rp.is_empty() || rp == "." {
+            continue;
+        }
+        let combined = format!("{}/{}", rp.trim_end_matches('/'), norm);
+        let alt = resolve_project_path(project_root, &combined);
+        if alt.is_dir() {
+            return (alt, combined);
+        }
+    }
+    (direct, file_path.to_string())
+}
+
 /// Try to find a source file with fallback strategies when the direct path fails.
 /// Searches the project directory for a file matching the given path's filename,
 /// checking common project structures (src/, lib/, etc.).

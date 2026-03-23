@@ -45,7 +45,7 @@ change.edit file_path:"" line_edits:[{line:N, action:"replace", count:M, content
 change.create creates:[{path,content}]
 change.delete file_paths:["path"|"h:X",...] confirm?:true dry_run?:false (defaults to confirm:true — pass dry_run:true for preview only)
 change.refactor action:inventory|impact_analysis|execute|rollback file_paths?:[] symbol_names?:[]
-change.rollback restore:[{file,hash}] delete?:["path"|"h:X",...] (file, hash, delete accept h:refs)
+change.rollback restore:[{file,hash}] delete?:["path"|"h:X",...] (file, hash, delete accept h:refs) — restore.hash: prefer h:$last_edit / h:$last_edit-N or hashes from execute _rollback; h:$last is generic recency (reads/search), not last file version
 change.split_module source_file:"" target_dir:"" plan:[{module,symbols:[]}] dry_run?:true mod_style?:""
 verify.build|test|lint|typecheck target_dir?:"" workspace?:"" runner?:""
 system.git action:status|diff|stage|commit|push|log|reset workspace?:""

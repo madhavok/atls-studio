@@ -1716,7 +1716,12 @@ export const handleRollback: OpHandler = async (params, ctx) => {
     clearEditLessonsForRollback(params, ctx);
     return ok(JSON.stringify(result), refs, result);
   } catch (rbErr) {
-    return err(`rollback: ERROR ${rbErr instanceof Error ? rbErr.message : String(rbErr)}`);
+    const msg = rbErr instanceof Error ? rbErr.message : String(rbErr);
+    const hint =
+      /not found|unknown hash|no such hash|registry|evict/i.test(msg)
+        ? ' For restore.hash use h:$last_edit / explicit _rollback hashes, not h:$last (global recency).'
+        : '';
+    return err(`rollback: ERROR ${msg}${hint}`);
   }
 };
 

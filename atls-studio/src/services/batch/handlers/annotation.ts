@@ -1,5 +1,5 @@
 /**
- * Annotation/engram operation handlers — rule, annotate, link, retype, split, merge, engram_edit, design_write.
+ * Annotation/engram operation handlers — rule, annotate, link, retype, split, merge, engram_edit, annotate.design.
  */
 
 import type { OpHandler, StepOutput, ContextStoreApi } from '../types';
@@ -169,15 +169,17 @@ export const handleMerge: OpHandler = async (params, ctx) => {
 export const handleDesignWrite: OpHandler = async (params, _ctx) => {
   const { useAppStore } = await import('../../../stores/appStore');
   const appStore = useAppStore.getState();
-  if (appStore.chatMode !== 'designer') return err('design_write: ERROR only available in Designer mode');
+  if (appStore.chatMode !== 'designer') {
+    return err('annotate.design: ERROR only available in Designer chat mode (switch mode to Designer)');
+  }
 
   const content = params.content as string;
-  if (!content || typeof content !== 'string') return err('design_write: ERROR missing content');
+  if (!content || typeof content !== 'string') return err('annotate.design: ERROR missing content');
 
   const append = params.append === true;
   const sessionId = appStore.currentSessionId;
   const prev = appStore.designPreviewContent;
   const next = append ? (prev + content) : content;
   appStore.setDesignPreview(next, sessionId);
-  return ok(`design_write: preview updated (${next.length} chars)`);
+  return ok(`annotate.design: preview updated (${next.length} chars)`);
 };

@@ -8,7 +8,7 @@ use crate::git_ops::{run_git_command, run_shell_cmd_async, index_modified_files,
 use crate::code_intel::expand_concept;
 use crate::path_utils::{
     detect_format, find_manifest_nearest, normalize_line_endings, read_file_with_format,
-    serialize_with_format, FileFormat, ManifestKind,
+    resolve_tree_directory_path, serialize_with_format, FileFormat, ManifestKind,
 };
 /// batch_query - THE primary ATLS interface (33+ operations)
 /// This is the main entry point for all code analysis and editing
@@ -556,6 +556,18 @@ pub async fn atls_batch_query(
                 if file_paths.is_empty() {
                     return Err("file_path or file_paths required for context operation".to_string());
                 }
+
+                let tree_workspace_rel_paths: Vec<String> = if context_type == "tree" {
+                    let roots_lock = state.roots.lock().await;
+                    roots_lock
+                        .iter()
+                        .flat_map(|r| r.sub_workspaces.iter())
+                        .map(|w| w.rel_path.clone())
+                        .filter(|s| !s.is_empty() && s != ".")
+                        .collect()
+                } else {
+                    Vec::new()
+                };
                 
                 let mut results = Vec::new();
                 for file_path in file_paths {
@@ -1036,11 +1048,14 @@ pub async fn atls_batch_query(
                             let include_ignored = params.get("include_ignored")
                                 .and_then(|v| v.as_bool())
                                 .unwrap_or(false);
-                            let resolved = resolve_project_path(project_root, &file_path);
+                            let (resolved, tree_root_display) =
+                                resolve_tree_directory_path(project_root, &file_path, &tree_workspace_rel_paths);
                             if !resolved.is_dir() {
                                 results.push(serde_json::json!({
                                     "root": file_path,
-                                    "error": "Not a directory"
+                                    "error": "Not a directory",
+                                    "resolved_path": resolved.to_string_lossy(),
+                                    "hint": "Path may be under a sub-workspace: try prefixing with the package folder (see system.workspaces list) or open that folder as the project root."
                                 }));
                                 continue;
                             }
@@ -1055,7 +1070,7 @@ pub async fn atls_batch_query(
                             );
 
                             results.push(serde_json::json!({
-                                "root": file_path,
+                                "root": tree_root_display,
                                 "files": file_count,
                                 "dirs": dir_count,
                                 "tree": tree_text

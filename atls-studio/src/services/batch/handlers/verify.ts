@@ -9,6 +9,7 @@
 
 import { useAppStore } from '../../../stores/appStore';
 import { getTerminalStore } from '../../../stores/terminalStore';
+import { buildWorkspaceVerifyHint } from '../../toolHelpers';
 import { resolveTerminalTarget } from './system';
 import type { OpHandler, StepOutput, VerifyClassification } from '../types';
 
@@ -79,6 +80,35 @@ export function didVerifyPass(raw: unknown): boolean {
   return false;
 }
 
+/** Fold backend `error`, `hint`, `_hint`, and monorepo workspace hints into one line for the model/UI. */
+function buildVerifyStepSummary(mode: string, passed: boolean, r: Record<string, unknown>, base: string): string {
+  const extras: string[] = [];
+  if (typeof r.error === 'string' && r.error.trim()) {
+    extras.push(r.error.trim());
+  }
+  if (typeof r.message === 'string' && r.message.trim() && !base.includes(r.message.trim())) {
+    extras.push(r.message.trim());
+  }
+  const hint =
+    (typeof r.hint === 'string' && r.hint.trim() ? r.hint.trim() : null)
+    ?? (typeof r._hint === 'string' && r._hint.trim() ? r._hint.trim() : null);
+  if (hint) {
+    extras.push(hint);
+  }
+  if (typeof r.resolved_path === 'string' && r.resolved_path.trim()) {
+    extras.push(`resolved_path: ${r.resolved_path.trim()}`);
+  }
+  const out = typeof r.output === 'string' ? r.output : '';
+  const wsHint = !passed && out ? buildWorkspaceVerifyHint(out) : null;
+  if (wsHint) {
+    extras.push(wsHint);
+  }
+  if (extras.length === 0) {
+    return base;
+  }
+  return `${base} — ${extras.join(' — ')}`;
+}
+
 function makeVerifyHandler(mode: string): OpHandler {
   return async (params, ctx) => {
     const merged = { ...params, type: mode };
@@ -86,7 +116,9 @@ function makeVerifyHandler(mode: string): OpHandler {
       const raw = await ctx.atlsBatchQuery('verify', merged);
       const { passed, classification } = classifyVerifyResult(raw);
       const r = (raw && typeof raw === 'object') ? raw as Record<string, unknown> : {};
-      const summary = typeof r.summary === 'string' ? r.summary : `verify.${mode}: ${passed ? 'passed' : 'failed'}`;
+      const baseSummary =
+        typeof r.summary === 'string' ? r.summary : `verify.${mode}: ${passed ? 'passed' : 'failed'}`;
+      const summary = buildVerifyStepSummary(mode, passed, r, baseSummary);
       echoVerifyToTerminal(ctx, raw, mode, passed);
       return verifyResult(passed, summary, raw, classification);
     } catch (caught) {

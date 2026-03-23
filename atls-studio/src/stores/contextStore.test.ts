@@ -615,6 +615,18 @@ describe('findReusableRead and getChunkContent', () => {
     const content = store.getChunkContent(`h:${shortHash}`);
     expect(content).toBe(fullContent);
   });
+
+  it('splitEngram uses archived full content when active chunk is compacted', () => {
+    const store = useContextStore.getState();
+    const multiline = 'line one\nline two\nline three';
+    const shortHash = store.addChunk(multiline, 'file', 'src/split-compact.ts');
+    const { compacted } = store.compactChunks([`h:${shortHash}`]);
+    expect(compacted).toBe(1);
+
+    const result = store.splitEngram(`h:${shortHash}`, 2);
+    expect(result.ok).toBe(true);
+    expect(result.hashes).toHaveLength(2);
+  });
 });
 
 describe('staged lifecycle policy', () => {
