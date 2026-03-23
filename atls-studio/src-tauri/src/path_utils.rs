@@ -477,6 +477,27 @@ mod tests {
     }
 
     #[test]
+    fn read_then_serialize_roundtrips_crlf_for_edited_normalized_content() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("sample.ts");
+        std::fs::write(&p, b"line1\r\nline2\r\n").unwrap();
+        let (normalized, fmt) = read_file_with_format(&p).unwrap();
+        assert_eq!(normalized, "line1\nline2\n");
+        assert_eq!(fmt.newline, NewlineMode::CrLf);
+        let edited = normalized.replace("line2", "edited");
+        let out = serialize_with_format(&edited, &fmt);
+        assert_eq!(out, b"line1\r\nedited\r\n");
+    }
+
+    #[test]
+    fn atomic_write_returns_err_for_unwritable_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let bad = dir.path().join("missing_parent_chain").join("f.txt");
+        let res = crate::snapshot::atomic_write(&bad, b"z");
+        assert!(res.is_err(), "expected atomic_write to fail: {:?}", res);
+    }
+
+    #[test]
     fn find_manifest_nearest_monorepo_prefers_nearest() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();

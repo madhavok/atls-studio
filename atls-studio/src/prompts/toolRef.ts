@@ -101,6 +101,7 @@ on_error: "stop"|"continue"|"rollback" per step.
 - fn(name)/cls(name) wrappers auto-stripped from symbol_names entries
 
 ### Rules
+- **Project root vs monorepo:** \`file_path\` / \`file_paths\` are resolved from the **active workspace root** (the folder opened in ATLS). A path like \`src/foo.ts\` writes to \`{root}/src/foo.ts\`. If the real app lives in a subfolder (e.g. \`atls-studio/src/...\`), use that prefix (\`atls-studio/src/foo.ts\`) or open the inner folder as the project root so bare \`src/...\` targets the correct package.
 - file_paths: actual paths or h:refs, not query strings
 - deletes, delete (rollback): paths or h:refs — resolve to path
 - hashes (session.pin/unpin/compact/unload/drop/recall): h:refs pass-through

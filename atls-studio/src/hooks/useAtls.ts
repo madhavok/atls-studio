@@ -458,7 +458,15 @@ export function useAtls() {
   };
 
   const writeFile = async (path: string, contents: string): Promise<boolean> => {
-    try { await invoke('write_file_contents', { path, contents }); return true; }
+    try {
+      const projectRoot = useAppStore.getState().rootFolders[0];
+      await invoke('write_file_contents', {
+        path,
+        contents,
+        ...(projectRoot !== undefined ? { projectRoot } : {}),
+      });
+      return true;
+    }
     catch (e) { console.error('Failed to write file:', e); return false; }
   };
 

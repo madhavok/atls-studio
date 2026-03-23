@@ -11437,6 +11437,7 @@ pub async fn atls_batch_query(
                         }
                     }
                     let mut written: Vec<String> = Vec::new();
+                    let mut write_errors: Vec<serde_json::Value> = Vec::new();
                     let mut formatted_updates: std::collections::HashMap<String, (String, String)> = std::collections::HashMap::new();
                     let mut behavior_warnings: Vec<String> = Vec::new();
                     let strict_validation = params.get("refactor_validation_mode").and_then(|v| v.as_str()) == Some("strict");
@@ -11455,13 +11456,30 @@ pub async fn atls_batch_query(
                         let bytes_to_write = file_format_map
                             .get(file_path)
                             .map(|fmt| serialize_with_format(content, fmt))
+                            .or_else(|| {
+                                if resolved_path.exists() {
+                                    read_file_with_format(&resolved_path)
+                                        .ok()
+                                        .map(|(_, fmt)| serialize_with_format(content, &fmt))
+                                } else {
+                                    None
+                                }
+                            })
                             .unwrap_or_else(|| content.as_bytes().to_vec());
-                        if crate::snapshot::atomic_write(&resolved_path, &bytes_to_write).is_ok() {
-                            if let Some(formatted) = maybe_format_go_after_write(&resolved_path).await {
-                                let formatted_hash = content_hash(&formatted);
-                                formatted_updates.insert(file_path.clone(), (formatted_hash, formatted));
+                        match crate::snapshot::atomic_write(&resolved_path, &bytes_to_write) {
+                            Ok(()) => {
+                                if let Some(formatted) = maybe_format_go_after_write(&resolved_path).await {
+                                    let formatted_hash = content_hash(&formatted);
+                                    formatted_updates.insert(file_path.clone(), (formatted_hash, formatted));
+                                }
+                                written.push(file_path.clone());
                             }
-                            written.push(file_path.clone());
+                            Err(e) => {
+                                write_errors.push(serde_json::json!({
+                                    "file": file_path,
+                                    "error": e,
+                                }));
+                            }
                         }
                     }
                     if !formatted_updates.is_empty() {
@@ -11498,8 +11516,12 @@ pub async fn atls_batch_query(
                             }
                         }
                     }
-                    // Mark flushed entries (retain for undo)
+                    // Mark flushed entries (retain for undo) — only files that actually wrote
+                    let written_set: std::collections::HashSet<&String> = written.iter().collect();
                     for (_, fp) in &all_hashes {
+                        if !written_set.contains(fp) {
+                            continue;
+                        }
                         if let Some(stack) = undo_store.get_mut(fp) {
                             if let Some(entry) = stack.last_mut() {
                                 if let Some((formatted_hash, formatted_content)) = formatted_updates.get(fp) {
@@ -11518,9 +11540,22 @@ pub async fn atls_batch_query(
                     } else {
                         serde_json::json!(null)
                     };
-                    let has_errors = lint_summary.as_ref()
+                    let mut has_errors = lint_summary.as_ref()
                         .map(|s| s.by_severity.get("error").copied().unwrap_or(0) > 0)
                         .unwrap_or(false);
+                    if !write_errors.is_empty() {
+                        has_errors = true;
+                    }
+                    let next_hint = if !write_errors.is_empty() && written.is_empty() {
+                        format!(
+                            "{} file write(s) failed. See write_errors.",
+                            write_errors.len()
+                        )
+                    } else if !write_errors.is_empty() {
+                        "Some files failed to write — see write_errors. Others written. Run verify when ready.".to_string()
+                    } else {
+                        "Written to disk. Run batch({version:\"1.0\",steps:[{id:\"v1\",use:\"verify.typecheck\"}]}) to validate".to_string()
+                    };
                     let mut result = serde_json::json!({
                         "mode": "draft+written",
                         "drafts": draft_results,
@@ -11528,8 +11563,25 @@ pub async fn atls_batch_query(
                         "has_errors": has_errors,
                         "written": written,
                         "index": index_result,
-                        "_next": "Written to disk. Run batch({version:\"1.0\",steps:[{id:\"v1\",use:\"verify.typecheck\"}]}) to validate"
+                        "_next": next_hint
                     });
+                    if !write_errors.is_empty() {
+                        result["write_errors"] = serde_json::json!(write_errors);
+                    }
+                    if !write_errors.is_empty() && written.is_empty() {
+                        let msg = write_errors
+                            .iter()
+                            .filter_map(|v| v.get("error").and_then(|e| e.as_str()))
+                            .take(3)
+                            .collect::<Vec<_>>()
+                            .join("; ");
+                        result["error"] = serde_json::json!(format!(
+                            "All {} file write(s) failed. {}",
+                            write_errors.len(),
+                            if msg.is_empty() { "See write_errors.".to_string() } else { msg }
+                        ));
+                        result["error_class"] = serde_json::json!("write_failed");
+                    }
                     if !symbol_errors.is_empty() {
                         result["symbol_errors"] = serde_json::json!(symbol_errors);
                         result["_symbol_hint"] = serde_json::json!("symbol_edits are deprecated. Use line_edits with symbol anchors instead.");
@@ -11651,9 +11703,15 @@ pub async fn atls_batch_query(
                     if let Some(parent) = resolved_path.parent() {
                         let _ = std::fs::create_dir_all(parent);
                     }
-                    let fmt = old_previous_format.unwrap_or_default();
+                    let fmt = old_previous_format.unwrap_or_else(|| {
+                        read_file_with_format(&resolved_path)
+                            .map(|(_, f)| f)
+                            .unwrap_or_default()
+                    });
                     let bytes_to_write = serialize_with_format(&written_content, &fmt);
-                    let write_ok = crate::snapshot::atomic_write(&resolved_path, &bytes_to_write).is_ok();
+                    let write_result = crate::snapshot::atomic_write(&resolved_path, &bytes_to_write);
+                    let write_err_msg = write_result.err();
+                    let write_ok = write_err_msg.is_none();
                     if write_ok {
                         if let Some(formatted) = maybe_format_go_after_write(&resolved_path).await {
                             written_content = formatted;
@@ -11670,7 +11728,7 @@ pub async fn atls_batch_query(
                             parent_hash: Some(old_hash.clone()),
                             previous_content: old_previous_content.clone(),
                             previous_format: old_previous_format,
-                            flushed_to_disk: true,
+                            flushed_to_disk: write_ok,
                             created_at: Instant::now(),
                         });
                         if stack.len() > UNDO_STORE_MAX_ENTRIES_PER_FILE {
@@ -11708,14 +11766,14 @@ pub async fn atls_batch_query(
                     let new_short = format!("h:{}", &new_hash[..std::cmp::min(8, new_hash.len())]);
                     let old_short = format!("h:{}", &old_hash[..std::cmp::min(8, old_hash.len())]);
                     let diff_ref = format!("{}..{}", old_short, new_short);
-                    return Ok(serde_json::json!({
+                    let mut revise_obj = serde_json::json!({
                         "mode": "revise+written",
                         "hash": new_hash.clone(),
                         "parent_hash": old_hash.clone(),
                         "file": file_path,
                         "lines": line_count,
                         "lints": lint_summary,
-                        "written": true,
+                        "written": write_ok,
                         "content_hash": new_hash.clone(),
                         "snapshot_hash": new_hash.clone(),
                         "source_revision": new_hash.clone(),
@@ -11723,8 +11781,23 @@ pub async fn atls_batch_query(
                         "old_h": old_short,
                         "diff_ref": diff_ref,
                         "index": index_result,
-                        "_next": "Written to disk. Run batch({version:\"1.0\",steps:[{id:\"v1\",use:\"verify.typecheck\"}]}) to validate"
-                    }));
+                        "_next": if write_ok {
+                            "Written to disk. Run batch({version:\"1.0\",steps:[{id:\"v1\",use:\"verify.typecheck\"}]}) to validate"
+                        } else {
+                            "Disk write failed — see write_errors"
+                        }
+                    });
+                    if !write_ok {
+                        if let Some(ref err) = write_err_msg {
+                            revise_obj["error"] = serde_json::json!(format!("Failed to write {}: {}", file_path, err));
+                            revise_obj["error_class"] = serde_json::json!("write_failed");
+                            revise_obj["write_errors"] = serde_json::json!(vec![serde_json::json!({
+                                "file": file_path,
+                                "error": err,
+                            })]);
+                        }
+                    }
+                    return Ok(revise_obj);
                 }
 
                 // Errors present or auto_flush disabled: keep in undo store for revision

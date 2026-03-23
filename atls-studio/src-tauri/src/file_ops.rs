@@ -1,5 +1,7 @@
 use super::*;
-use crate::path_utils::to_relative_path;
+use crate::path_utils::{
+    detect_format, normalize_line_endings, read_file_with_format, serialize_with_format, to_relative_path,
+};
 
 fn path_modified_ns(metadata: &std::fs::Metadata) -> u128 {
     metadata.modified().ok()
@@ -378,16 +380,28 @@ pub async fn write_file_contents(
     app: tauri::AppHandle,
 ) -> Result<(), String> {
     use crate::error::IoResultExt;
+    let normalized = normalize_line_endings(&contents);
     let root_opt = project_root.clone();
     let path_for_emit = path.clone();
-    let contents_for_write = contents.clone();
+    let normalized_for_spawn = normalized.clone();
     tokio::task::spawn_blocking(move || {
         let resolved_path = if let Some(ref root) = project_root {
             resolve_project_path(std::path::Path::new(root), &path)
         } else {
             PathBuf::from(&path)
         };
-        std::fs::write(&resolved_path, contents_for_write)
+        let bytes: Vec<u8> = if resolved_path.exists() {
+            read_file_with_format(&resolved_path)
+                .map(|(_, fmt)| serialize_with_format(&normalized_for_spawn, &fmt))
+                .unwrap_or_else(|_| {
+                    let fmt = detect_format(normalized_for_spawn.as_bytes());
+                    serialize_with_format(&normalized_for_spawn, &fmt)
+                })
+        } else {
+            let fmt = detect_format(normalized_for_spawn.as_bytes());
+            serialize_with_format(&normalized_for_spawn, &fmt)
+        };
+        std::fs::write(&resolved_path, bytes)
             .with_path(resolved_path.display().to_string())
     })
     .await
@@ -399,7 +413,7 @@ pub async fn write_file_contents(
     } else {
         PathBuf::from(&path_for_emit)
     };
-    register_written_file(&app, &path_for_emit, &resolved_path, &contents).await;
+    register_written_file(&app, &path_for_emit, &resolved_path, &normalized).await;
 
     // When .atlsignore is written, refresh file tree and scan filter so both UI and scan respect changes
     let is_atlsignore = path_for_emit.ends_with(".atlsignore") || path_for_emit.replace('\\', "/").ends_with(".atls/.atlsignore");
