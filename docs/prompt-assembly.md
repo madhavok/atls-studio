@@ -66,7 +66,7 @@ Contents (in order):
 
 Each round of the tool loop:
 
-1. **`advanceTurn()`** (round > 0): Dematerialize prior engrams, compact dormant chunks
+1. **`advanceTurn()`** (round > 0): Dematerialize prior engrams, compact dormant chunks; the hash-protocol hook also runs **`refreshRoundEnd`** here (not before round 0 — see [freshness.md](./freshness.md) round-end sweep).
 2. **Middleware pipeline**:
    - History compression (round 0 only, threshold-based)
    - Context hygiene (after 20+ rounds, aggressive compression)

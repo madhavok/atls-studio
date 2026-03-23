@@ -6,7 +6,7 @@ Subsystem docs for the Studio app and batch runtime. Start here for orientation.
 
 | Doc | Topics |
 |-----|--------|
-| **[freshness.md](./freshness.md)** | Snapshot tracker, awareness levels, hash injection, freshness states, preflight/rebase, reconciliation, **sequential `line_edits`**, **cross-step line rebase**, **post-edit context refresh**, **own-write suppression** |
+| **[freshness.md](./freshness.md)** | Snapshot tracker, awareness levels, hash injection, freshness states, preflight (`context` full + `refreshRoundEnd`), **round-end bulk revisions** (`get_current_revisions`, staged + WM + archive), reconciliation, **sequential `line_edits`**, **cross-step line rebase**, **post-edit context refresh**, **own-write suppression** |
 
 Related:
 
@@ -23,7 +23,7 @@ Related:
 | [atls-engine.md](./atls-engine.md) | ATLS engine integration |
 | [history-compression.md](./history-compression.md) | Chat / context compression |
 | [prompt-assembly.md](./prompt-assembly.md) | How prompts are built |
-| [session-persistence.md](./session-persistence.md) | Session save/restore |
+| [session-persistence.md](./session-persistence.md) | Session save/restore, auto-resume, freshness-after-restore timing, Tauri close flush |
 | [api-economics.md](./api-economics.md) | Token / API considerations |
 | [studio-app-shell.md](./studio-app-shell.md) | UI shell |
 | [tauri-backend.md](./tauri-backend.md) | Rust / Tauri layer |

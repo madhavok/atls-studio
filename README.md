@@ -57,14 +57,14 @@ See [Architecture Document](ARCHITECTURE.md) for the full technical description,
 | [Architecture Overview](ARCHITECTURE.md) | Complete technical architecture (start here) |
 | [Engrams & Memory](docs/engrams.md) | Hash-addressed knowledge units, activation states, memory regions |
 | [Batch Executor](docs/batch-executor.md) | Unified tool surface, operation families, dataflow, intents, error recovery |
-| [Freshness System](docs/freshness.md) | Staleness detection, snapshot tracking, preflight, rebase strategies |
+| [Freshness System](docs/freshness.md) | Staleness detection, snapshot tracking, preflight (`context` full + store refresh), round-end sweep of chunks/archive/**staged** via bulk `get_current_revisions`, rebase strategies |
 | [Hash Protocol](docs/hash-protocol.md) | HPP visibility tracking and UHPP reference syntax |
 | [Prompt Assembly](docs/prompt-assembly.md) | Cache-aware prompt construction and middleware pipeline |
 | [History Compression](docs/history-compression.md) | Hash-reference deflation and conversation management |
 | [API Economics](docs/api-economics.md) | The caching problem and what would fix it |
 | [Studio App Shell](docs/studio-app-shell.md) | Desktop UI structure, panel layout, and shell-level responsibilities |
 | [Tauri Backend](docs/tauri-backend.md) | Native Rust service layer, command groups, and backend boundaries |
-| [Session Persistence](docs/session-persistence.md) | Per-project chat DB, session restore, memory snapshots, and swarm persistence |
+| [Session Persistence](docs/session-persistence.md) | Per-project chat DB, auto-resume last session, cold restore vs deferred freshness reconcile, Tauri close flush, memory snapshots, swarm persistence |
 | [Swarm And Orchestration](docs/swarm-orchestration.md) | Multi-agent research, planning, execution, and task coordination |
 | [ATLS Engine](docs/atls-engine.md) | Shared Rust engine for indexing, parsing, queries, and project state |
 | [MCP Integration](docs/mcp-integration.md) | External MCP server surface and how it differs from the Studio host |

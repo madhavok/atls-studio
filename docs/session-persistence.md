@@ -28,6 +28,8 @@ Without a persistence layer, the runtime would lose continuity whenever the app 
 - Persist full memory snapshots so the context store can be rehydrated.
 - Store swarm tasks, agent stats, archived chunks, staged snippets, and hash registry entries.
 - Support restore points for edit-and-resend flows.
+- Remember the **last active session id per project** (localStorage) and **auto-resume** that session after a cold start when the DB loads, if the chat is empty and no session is selected (fallback: most recently updated session).
+- On **Tauri** desktop builds, **await a final save** when the window close is requested so debounced or in-flight writes are less likely to be lost (browser `beforeunload` alone is unreliable for async IO).
 
 ## Key Code Locations
 
@@ -50,7 +52,7 @@ The persistence layer stores several kinds of session state:
 
 ## Restore Flow
 
-When a session is loaded, persistence restores more than just messages:
+When a session is loaded (manually or via auto-resume), persistence restores more than just messages:
 
 1. The selected session and message list are loaded.
 2. The app store is updated with session metadata and context usage.
@@ -60,13 +62,28 @@ When a session is loaded, persistence restores more than just messages:
 
 This fallback path matters because it lets the system recover gracefully from older formats or partial persistence failures.
 
+**Auto-resume (cold start):** After `chatDb` initializes for a project, if there is no current session and the message list is empty, the hook loads the session list and picks the **last active session id** for that project path (stored under `atls:last-active-session-by-project-v1` via [`lastActiveSession.ts`](../atls-studio/src/services/lastActiveSession.ts)). If that id is missing or invalid, it falls back to the **newest** session in the list. Users can still switch sessions in the UI afterward.
+
+### Freshness after restore
+
+`loadSession` does **not** run a `read.context` full pass or `refreshRoundEnd` at the end of restore. Rehydrated engrams and staged snippets keep their persisted **`sourceRevision`** fields until the runtime reconciles against disk — for example through **freshness preflight** before a mutation, **`refreshRoundEnd`** after the first `advanceTurn` in a tool loop (`round > 0`), or an **intelligence / scan** refresh. See [freshness.md](./freshness.md) (round-end sweep, preflight).
+
+### Shutdown and save reliability
+
+- **Debounced autosave** runs as messages and context change.
+- **`beforeunload`** triggers a best-effort save in web-style environments.
+- **Tauri `onCloseRequested`**: the app **awaits** `saveSession` before allowing the window to close, reducing the chance of losing the last transcript or snapshot on exit.
+
 ```mermaid
 flowchart TD
   ProjectOpen[Project Open] --> InitDb[chatDb init]
   InitDb --> LoadSessions[Load Session List]
-  LoadSessions --> SelectSession[Select Session]
-  SelectSession --> RestoreMessages[Restore Messages]
-  RestoreMessages --> RestoreSnapshot[Restore Memory Snapshot]
+  LoadSessions --> Branch{Empty chat and no current session?}
+  Branch -->|yes| AutoResume[Auto-resume last active or newest session]
+  Branch -->|no| ManualPick[Keep current selection or user picks session]
+  AutoResume --> RestoreMessages[Restore Messages]
+  ManualPick --> RestoreMessages
+  RestoreMessages --> RestoreSnapshot[Restore Memory Snapshot or fallback]
   RestoreSnapshot --> ContextStore[Rehydrate Context Store]
   ContextStore --> ResumeRuntime[Resume Chat Runtime]
 ```
@@ -87,6 +104,7 @@ That project scoping is important because memory, hashes, and chat history are o
 ## Related Documents
 
 - `ARCHITECTURE.md`
+- [freshness.md](./freshness.md) — round-end reconciliation, preflight, timing vs restore
 - `docs/studio-app-shell.md`
 - `docs/tauri-backend.md`
 - `docs/swarm-orchestration.md`

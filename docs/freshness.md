@@ -68,7 +68,7 @@ Each engram carries a freshness classification:
 
 ## Freshness Preflight
 
-Before any mutation operation, the preflight system classifies every target:
+Before any mutation operation, the preflight system classifies every target. For file-backed targets it first runs a **batched** `context` request with `{ type: 'full', file_paths }` so the backend returns current content and hashes for those paths. It then calls **`refreshRoundEnd`** for the same file set (with per-path revisions derived from that result) so the context store’s `sourceRevision` metadata matches disk before relocation and gating run. Classification then proceeds:
 
 ```
 Fresh          → PROCEED (no action needed)
@@ -129,8 +129,16 @@ When files change, `reconcileSourceRevision` sweeps all memory regions:
 |---------|--------|
 | File read | `context.ts` handler calls `reconcileSourceRevision` after read |
 | Edit completion | `executor.ts` calls `forwardStagedHash` after successful edit |
-| Round end | `refreshRoundEnd` sweeps all file-backed chunks against current revisions |
+| Round end | `refreshRoundEnd` sweeps file-backed **working** and **archived** chunks and **staged snippets** (latest view) against current revisions — see below |
 | File watcher | External changes trigger `markEngramsSuspect` |
+
+### Round-end revision sweep (`refreshRoundEnd`)
+
+`refreshRoundEnd` gathers normalized source paths from every **latest** file-backed engram in working memory and **archived** chunks, plus **staged snippet** sources (skipping `viewKind: 'snapshot'`). It resolves **current** content hashes for those paths in bulk via the Tauri command **`get_current_revisions`** (registered at app startup from [`useAtls.ts`](../atls-studio/src/hooks/useAtls.ts) as `setBulkRevisionResolver` — one IPC round-trip for the whole path set). For each path it calls **`reconcileSourceRevision`**. Paths that cannot be resolved are passed to **`markEngramsSuspect`**.
+
+The hash-protocol **`advanceTurn`** hook invokes `refreshRoundEnd` (via [`aiService.ts`](../atls-studio/src/services/aiService.ts) `setRoundRefreshHook`). In the main chat tool loop, **`advanceTurn` runs only when `round > 0`**, so the **first** round of a user turn does **not** run this sweep before the model step; reconciliation for restored sessions is therefore **deferred** until the next round boundary, preflight, or other triggers (see [session-persistence.md](./session-persistence.md)).
+
+Other call sites: **`refreshRoundEnd()`** with no path filter after intelligence refresh ([`useAtls.ts`](../atls-studio/src/hooks/useAtls.ts)), and **preflight** with explicit paths after a `context` full pass ([`freshnessPreflight.ts`](../atls-studio/src/services/freshnessPreflight.ts)).
 
 ## Recent Revision Tracking
 
@@ -199,6 +207,7 @@ Successful edits register paths as **own writes** so the file watcher does not e
 | Cross-step rebase | [`executor.ts`](../atls-studio/src/services/batch/executor.ts) (`computePositionalDeltas`, `rebaseSubsequentSteps`) |
 | Post-edit refresh + staged rebase | [`executor.ts`](../atls-studio/src/services/batch/executor.ts) (`refreshContextAfterEdit`, `rebaseStagedLineNumbers` hook) |
 | Freshness preflight / journal | [`freshnessPreflight.ts`](../atls-studio/src/services/freshnessPreflight.ts), [`freshnessJournal.ts`](../atls-studio/src/services/freshnessJournal.ts) |
+| Round-end sweep + bulk revisions | [`contextStore.ts`](../atls-studio/src/stores/contextStore.ts) (`refreshRoundEnd`), [`useAtls.ts`](../atls-studio/src/hooks/useAtls.ts) (`setBulkRevisionResolver` → `get_current_revisions`) |
 | Reconciliation | [`contextStore.ts`](../atls-studio/src/stores/contextStore.ts) |
 
 ---
