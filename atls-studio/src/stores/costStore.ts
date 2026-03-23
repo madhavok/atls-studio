@@ -210,6 +210,10 @@ export function calculateCost(
     console.warn(`[CostStore] No pricing for provider: ${provider}`);
     return 0;
   }
+  if (!model || typeof model !== 'string') {
+    console.warn(`[CostStore] Invalid model value: ${model} (provider: ${provider})`);
+    return 0;
+  }
 
   const normalizedModel = model.toLowerCase();
   const modelPricing = providerPricing.find(p => normalizedModel.startsWith(p.prefix));
@@ -271,7 +275,7 @@ function loadCostData(): DailyUsage[] {
       return parsed.filter((entry: unknown) => {
         if (typeof entry !== 'object' || entry === null) return false;
         const e = entry as Record<string, unknown>;
-        if (typeof e.date !== 'string' || typeof e.provider !== 'string') return false;
+        if (typeof e.date !== 'string' || typeof e.provider !== 'string' || typeof e.model !== 'string') return false;
         // Validate numeric fields — reject entries with non-finite numbers
         for (const key of ['inputTokens', 'outputTokens', 'costCents', 'apiCalls']) {
           if (key in e && (typeof e[key] !== 'number' || !Number.isFinite(e[key] as number))) return false;

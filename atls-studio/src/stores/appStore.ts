@@ -70,23 +70,20 @@ const TITLE_MAX_LENGTH = 50;
 
 // Generate chat title from first user message (handles multimodal/segmented)
 function generateTitle(messages: Message[]): string {
-  const truncate = (text: string) => {
-    const chars = Array.from(text);
-    const truncated = chars.slice(0, TITLE_MAX_LENGTH).join('');
-    return chars.length > TITLE_MAX_LENGTH ? truncated + '...' : truncated;
-  };
-  const firstUser = messages.find(m => m.role === 'user');
-  if (firstUser) {
-    const text = extractFirstTextFromMessage(firstUser);
-    if (text) return truncate(text);
-  }
-  // Fallback: use first assistant message text (e.g. tool-only conversations)
-  const firstAssistant = messages.find(m => m.role === 'assistant');
-  if (firstAssistant) {
-    const text = extractFirstTextFromMessage(firstAssistant);
-    if (text) return truncate(text);
-  }
-  return 'New Chat';
+  // Find first user message with actual text content
+  const userMsg = messages.find(m => m.role === 'user');
+  if (!userMsg) return 'New Conversation';
+  
+  const text = extractFirstTextFromMessage(userMsg).trim();
+  if (!text) return 'New Conversation';
+  
+  // Take first line, then truncate to reasonable length
+  const firstLine = text.split('\n')[0] || text;
+  const words = firstLine.split(' ').filter(w => w.length > 0);
+  if (words.length === 0) return 'New Conversation';
+  
+  const title = words.slice(0, 6).join(' ');
+  return title.length > 50 ? title.substring(0, 47) + '...' : title;
 }
 
 export interface FileNode {
@@ -697,8 +694,10 @@ export const useAppStore = create<AppState>((set) => ({
         }
         return { selectedFiles: newSelected, lastSelectedFile: path, selectedFile: path };
       }
-      // Target path not in visible list — no-op, preserve current selection
-      return { selectedFiles: newSelected, lastSelectedFile, selectedFile: state.selectedFile };
+      // Target path not in visible list — fall through to single-select
+      newSelected.clear();
+      newSelected.add(path);
+      return { selectedFiles: newSelected, lastSelectedFile: path, selectedFile: path };
     }
 
     if (ctrlKey) {

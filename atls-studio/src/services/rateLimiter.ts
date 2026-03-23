@@ -220,13 +220,13 @@ class RateLimiterService {
     
     // If at minute limit, return time until window resets
     if (state.minuteRequests >= state.config.requestsPerMinute) {
-      return this.MINUTE_MS - (now - state.minuteWindowStart);
+      return Math.max(0, this.MINUTE_MS - (now - state.minuteWindowStart));
     }
     
     // If at day limit, return time until day resets
     if (state.config.requestsPerDay && 
         state.dayRequests >= state.config.requestsPerDay) {
-      return this.DAY_MS - (now - state.dayWindowStart);
+      return Math.max(0, this.DAY_MS - (now - state.dayWindowStart));
     }
     
     return 0;
@@ -396,7 +396,7 @@ class RateLimiterService {
 
       if (this.canProceed(provider, request.estimatedTokens)) {
         state.queue.shift();
-        state.activeRequests++;
+        // Don't increment activeRequests here — resolve(true) callback does it
         request.resolve(true);
       } else {
         // Can't proceed, schedule retry

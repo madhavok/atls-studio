@@ -59,6 +59,10 @@ export function SessionPicker({
     const diffMs = now.getTime() - date.getTime();
     const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
     
+    if (diffDays < 0) {
+      // Future date — just show the date
+      return date.toLocaleDateString();
+    }
     if (diffDays === 0) {
       return `Today at ${date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
     }

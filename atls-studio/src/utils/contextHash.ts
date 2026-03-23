@@ -87,6 +87,7 @@ export function estimateTokens(content: string): number {
   let hasCode = false;
   let newlineCount = 0;
   let wsCount = 0;
+  let cjkCount = 0;
 
   for (let i = 0; i < len; i++) {
     const c = content.charCodeAt(i);
@@ -94,6 +95,10 @@ export function estimateTokens(content: string): number {
     if (c === 32 || c === 9 || c === 10 || c === 13) wsCount++;
     if (!hasCode && (c === 123 || c === 125 || c === 91 || c === 93 || c === 40 || c === 41 || c === 59)) {
       hasCode = true;
+    }
+    // CJK Unified Ideographs + common CJK ranges
+    if ((c >= 0x4E00 && c <= 0x9FFF) || (c >= 0x3400 && c <= 0x4DBF) || (c >= 0x3000 && c <= 0x303F)) {
+      cjkCount++;
     }
   }
 
@@ -116,21 +121,11 @@ export function estimateTokens(content: string): number {
     charsPerToken = 3.8;
   }
 
-  return Math.max(1, Math.ceil(len / charsPerToken));
-}
-
-/**
- * Format a chunk for working memory display
- * Includes pin indicator and source on same line as tag
- * Format: [📌] «h:{hash8} tk:{tokens} {type}» {source}
- */
-export function formatWorkingMemoryChunk(
-  shortHash: string,
-  tokens: number,
-  type: ChunkType,
-  source?: string,
-  pinned?: boolean
-): string {
+  // CJK characters typically tokenize to ~1.5 tokens each (not 3-4 chars/token)
+  // Adjust: subtract CJK chars from general pool, add their token estimate separately
+  const nonCjkLen = len - cjkCount;
+  const cjkTokens = Math.ceil(cjkCount * 1.5);
+  return Math.max(1, Math.ceil(nonCjkLen / charsPerToken) + cjkTokens);
   const pinIndicator = pinned ? '📌 ' : '';
   return `${pinIndicator}${formatChunkTag(shortHash, tokens, type, source)}`;
 }

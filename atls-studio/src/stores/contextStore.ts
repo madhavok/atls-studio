@@ -121,6 +121,8 @@ function sourcePathsMatch(a: string, b: string): boolean {
   const aNorm = normalizePathForLink(a);
   const bNorm = normalizePathForLink(b);
   if (aNorm === bNorm) return true;
+  // Batch sources (comma-separated) should only match exactly — skip suffix check
+  if (aNorm.includes(',') || bNorm.includes(',')) return false;
   // Check if one is a suffix of the other (handles relative vs absolute)
   return aNorm.endsWith('/' + bNorm) || bNorm.endsWith('/' + aNorm);
 }
@@ -440,7 +442,10 @@ function pruneLowValueChunks(
   for (const [key, chunk] of chunks) {
     if (shouldAutoDropChunk(chunk)) {
       nextChunks.delete(key);
-      nextArchived.delete(key);
+      // Preserve in archive for potential recall — only remove from active chunks
+      if (!nextArchived.has(key)) {
+        nextArchived.set(key, { ...chunk });
+      }
       dropped.push(chunk.hash);
       freedTokens += chunk.tokens;
       continue;
