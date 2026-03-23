@@ -25,12 +25,18 @@ import { CONVERSATION_HISTORY_BUDGET_TOKENS, PROTECTED_RECENT_ROUNDS } from './p
 /** Results smaller than this are kept inline (tokens) */
 export const COMPRESSION_THRESHOLD_TOKENS = 500;
 
-/** Per-tool overrides — tools whose output is needed immediately get higher limits */
-export const TOOL_COMPRESSION_OVERRIDES: Record<string, number> = {
-  exec: 800,
-  verify: 800,
-  git: 800,
-};
+/** Per-op overrides — ops whose output is needed immediately get higher limits.
+ *  Derived from families: all system.* and verify.* ops get a higher threshold. */
+import { OPERATION_FAMILIES } from './batch/families';
+
+const HIGHER_THRESHOLD_FAMILIES = ['system', 'verify'] as const;
+const HIGHER_THRESHOLD = 800;
+
+export const TOOL_COMPRESSION_OVERRIDES: Record<string, number> = Object.fromEntries(
+  HIGHER_THRESHOLD_FAMILIES.flatMap(f =>
+    OPERATION_FAMILIES[f].ops.map(e => [e.op, HIGHER_THRESHOLD]),
+  ),
+);
 
 export const HISTORY_TEXT_REPLACEMENT_THRESHOLD_TOKENS = 350;
 

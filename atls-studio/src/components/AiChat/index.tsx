@@ -826,54 +826,15 @@ function formatLabelSegment(segment: string): string {
     .join(' ');
 }
 
-function getFriendlyToolName(toolName: string): string {
-  const friendlyNames: Record<string, string> = {
-    exec: '⌨️ Terminal',
-    exec_output: '📤 Get Output',
-    exec_kill: '🛑 Kill Process',
-    find_issues: '🔍 Find Issues',
-    find_similar: '🔎 Find Similar',
-    read_file: '📖 Read File',
-    write_file: '✏️ Write File',
-    context: '📋 Get Context',
-    code_search: '🔎 Search Code',
-    symbol_usage: '🎯 Symbol Usage',
-    call_hierarchy: '📊 Call Hierarchy',
-    ast_query: '🌳 AST Query',
-    edit: '✏️ Edit Code',
-    refactor: '🔄 Refactor',
-    dependencies: '📦 Dependencies',
-    batch_query: '⚡ Query',
-    batch: '⚡ ATLS',
-    task_complete: '✅ Task Complete',
-    manage: '📋 Manage',
-    search: '🔍 Search',
-    read: '📖 Read',
-    deps: '📦 Dependencies',
-    git: '🔀 Git',
-    verify: '✔️ Verify',
-    pin_context: '📌 Pin Context',
-    subagent: '🤖 SubAgent',
-  };
+import { FAMILY_ICONS } from '../../services/batch/families';
 
-  if (friendlyNames[toolName]) {
-    return friendlyNames[toolName];
-  }
+function getFriendlyToolName(toolName: string): string {
+  if (toolName === 'batch') return '⚡ ATLS';
+  if (toolName === 'task_complete') return '✅ Task Complete';
 
   if (toolName.includes('.')) {
     const [family, action] = toolName.split('.', 2);
-    const familyIcons: Record<string, string> = {
-      search: '🔍',
-      read: '📖',
-      analyze: '📊',
-      change: '✏️',
-      verify: '✔️',
-      session: '⚡',
-      annotate: '📝',
-      delegate: '🤖',
-      system: '⌨️',
-    };
-    const icon = familyIcons[family] || '🔧';
+    const icon = FAMILY_ICONS[family] || '🔧';
     const label = [family, action]
       .filter(Boolean)
       .map(formatLabelSegment)
@@ -885,27 +846,6 @@ function getFriendlyToolName(toolName: string): string {
 }
 
 function getToolDetail(toolName: string, params: Record<string, unknown>): string {
-  if (toolName === 'subagent') {
-    const subType = String(params.type || 'retriever');
-    const query = String(params.query || '');
-    return `${subType}: ${query}`;
-  }
-  if (toolName === 'exec' && params.cmd) {
-    return String(params.cmd);
-  }
-  if (toolName === 'refactor' && params.action) {
-    return String(params.action);
-  }
-  if (toolName === 'verify' && params.type) {
-    return String(params.type);
-  }
-  if (toolName === 'find_similar' && params.type) {
-    return String(params.type);
-  }
-  if (toolName === 'manage' && params.ops && Array.isArray(params.ops) && params.ops.length > 0) {
-    const firstOp = asRecord(params.ops[0]);
-    return String(firstOp?.do ?? 'ops');
-  }
   if (params.file_paths && Array.isArray(params.file_paths) && params.file_paths[0]) {
     return String(params.file_paths[0]);
   }

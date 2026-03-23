@@ -2,19 +2,13 @@
  * Tool reference for the collapsed batch-only surface.
  */
 
+import { generateFamilyLines } from '../services/batch/families';
+
 export const BATCH_TOOL_REF = `## Batch Tool (shell = builds/git/packages ONLY; h:XXXX = universal pointer)
 Use one native execution surface: batch({version:"1.0",steps:[...]}).
 
 ### Operation Families
-discover: search.code, search.symbol, search.usage, search.similar, search.issues, search.patterns
-understand: read.context, read.shaped, read.lines, read.file, analyze.deps, analyze.calls, analyze.structure, analyze.impact, analyze.blast_radius, analyze.extract_plan
-change: change.edit, change.create, change.delete, change.refactor, change.rollback
-verify: verify.build, verify.test, verify.lint, verify.typecheck
-session: session.plan, session.advance, session.status, session.pin (hashes:["h:X",...]), session.unpin, session.stage, session.unstage, session.compact, session.unload, session.drop, session.recall, session.stats, session.bb.write, session.bb.read, session.bb.delete, session.bb.list, session.rule, session.emit, session.shape, session.load, session.compact_history
-annotate: annotate.engram (hash, fields:{...}), annotate.note, annotate.link (from:"h:X" to:"h:Y"), annotate.retype, annotate.split, annotate.merge, annotate.design
-delegate: delegate.retrieve, delegate.design
-system: system.exec, system.git, system.workspaces, system.help
-intent: intent.understand, intent.edit, intent.edit_multi, intent.investigate, intent.diagnose, intent.survey, intent.refactor, intent.create, intent.test, intent.search_replace, intent.extract
+${generateFamilyLines()}
 
 ### Common Params (canonical names — aliases auto-resolved)
 session.advance subtask:optional (omit to advance to next) summary:required
@@ -44,12 +38,12 @@ change.edit file_path:"" line_edits:[{line:N, action:"replace", count:M, content
   also: creates:[{path,content}] | revise:"hash" | undo:"h:$last_edit" | deletes:["path"|"h:X",...]
 change.create creates:[{path,content}]
 change.delete file_paths:["path"|"h:X",...] confirm?:true dry_run?:false (defaults to confirm:true — pass dry_run:true for preview only)
-change.refactor action:inventory|impact_analysis|execute|rollback file_paths?:[] symbol_names?:[]
+change.refactor action:inventory|impact_analysis|execute|rollback|rename|move|extract file_paths?:[] symbol_names?:[]
 change.rollback restore:[{file,hash}] delete?:["path"|"h:X",...] (file, hash, delete accept h:refs) — restore.hash: prefer h:$last_edit / h:$last_edit-N or hashes from execute _rollback; h:$last is generic recency (reads/search), not last file version
 change.split_module source_file:"" target_dir:"" plan:[{module,symbols:[]}] dry_run?:true mod_style?:""
 verify.build|test|lint|typecheck target_dir?:"" workspace?:"" runner?:""
-system.git action:status|diff|stage|commit|push|log|reset workspace?:""
-system.workspaces action:list|search|add|remove|rescan
+system.git action:status|diff|stage|unstage|commit|push|log|reset|restore workspace?:"" files?:[] message?:"" all?:bool
+system.workspaces action:list|search|add|remove|set_active|rescan
 system.exec cmd:"" terminal_id?:""
 delegate.retrieve query:"" focus_files?:[] max_tokens?:N
 delegate.design query:"" focus_files?:[] max_tokens?:N
@@ -57,6 +51,14 @@ session.bb.write key:"" content:"" derived_from?:[]
 session.bb.read keys:[]
 session.bb.delete keys:[]
 session.rule action?:set|delete|list key:"" content?:""
+session.emit content:"" type?:""
+session.shape file_paths:[]
+session.load file_path:""
+session.debug (no params — dumps internal session state for diagnostics)
+annotate.note hash:"" note:""
+annotate.retype hash:"" type:""
+annotate.split hash:"" at:N
+annotate.merge hashes:[] summary?:""
 intent.understand file_paths:[] force?:bool — reads, analyzes deps, stages, pins; skips steps already done (staged/pinned/BB/awareness)
 intent.edit file_path:"" line_edits:[...] verify?:bool force?:bool — reads if needed, edits, auto-retries on stale_hash, verifies
 intent.edit_multi edits:[{file_path:"",line_edits:[...]}] verify?:bool force?:bool — per-file read/edit/retry, single verify.build at end; AI must know exact edits for all files
@@ -104,31 +106,23 @@ on_error: "stop"|"continue"|"rollback" per step.
 - hashes (session.pin/unpin/compact/unload/drop/recall): h:refs pass-through
 - restore items: file and hash accept h:refs
 - system.exec: Windows agent shell is PowerShell — tail/cat may be missing; prefer verify.build / verify.typecheck for checks, or Select-Object -Last N to trim logs; empty (no output) often means a bad pipeline or trim-to-nothing
-- line_edits discipline: the system tracks live file state and injects fresh hashes automatically — reads are for **content grounding** (seeing what's at which lines), not for hash currency. If the file is already in context (prior read, edit, search hit, or staged engram), no additional read is needed before editing. Read only when you have **no content visibility** for the target range, or on stale_hash / authority_mismatch errors. Never guess ranges from memory. Edits apply **sequentially in array order** — each line number targets the file state after all prior edits (insert +N shifts subsequent targets by +N). Count braces in braced languages so replacement blocks balance. Prefer anchor for nested / scope-sensitive edits. For simple spans with visible content, line+count+action:"replace" — no old text needed. For 200+ line files, always derive line numbers from visible engram content or read.lines output.
+- line_edits discipline: the system tracks live file state and injects fresh hashes automatically — reads are for **content grounding** (seeing what's at which lines), not for hash currency. If the file is already in context (prior read, edit, search hit, or staged engram), no additional read is needed before editing. Read only when you have **no content visibility** for the target range, or on stale_hash / authority_mismatch errors. Never guess ranges from memory. After any interaction, chain from h:NEW. Edits apply **sequentially in array order** — each line number targets the file state after all prior edits (insert +N shifts subsequent targets by +N). Count braces in braced languages so replacement blocks balance. Prefer anchor for nested / scope-sensitive edits; use anchors when nesting/scope makes line math unsafe. For simple spans with visible content, line+count+action:"replace" — no old text needed. For 200+ line files, always derive line numbers from visible engram content or read.lines output.
 - use refactor, not edit, for cross-file extract/move/rename flows
 - hash-building refactor: read.shaped(shape:"sig") → h:SOURCE; change.create file body = imports + h:XXXX:sym(Name):dedent + exports (compose from pointers, no pasted bodies); strip source with change.edit line_edits delete (or refactor) on extracted span; verify.typecheck
 - each successful edit returns fresh refs; chain from the newest refs
-- default cadence: batch related change.* steps first, then run one verify.build at a milestone or task end unless the change is high risk
+- default cadence: batch related change.* steps first, then run one verify.build at a milestone or task end unless the change is high risk; exception: public API / schema / dependency changes verify immediately
+- batch size discipline: max 8-10 steps per batch; split into discovery -> mutation -> verify batches
 - use delegate.retrieve or delegate.design when cheap research is enough before a bigger reasoning pass
-- intents are macros — they expand to primitives before execution; the executor never sees intent.* at dispatch time
-- intents skip steps already done: staged files skip re-read, pinned files skip re-pin, BB-cached results skip re-search
-- use force:true on any intent to bypass state checks and emit all steps
-- intents compose: intent.understand + intent.edit in one batch works — edit reuses understand's staged/pinned refs via from_step wiring
+- prefer the cheapest tool: signatures? read.shaped; one symbol? search.symbol; types? verify.typecheck; file list? read.context(tree)
+- intents are macros — they expand to primitives, automating plumbing (reads, retries, verify) not thinking. If you don't know the inputs, use primitives to explore first
+- intents skip steps already done: staged files skip re-read, pinned files skip re-pin, BB-cached results skip re-search. Use force:true to bypass state checks
+- never call an intent you haven't prepared for: read files before intent.edit, have exact line_edits before intent.edit_multi
+- don't use intents for exploration: read.context then reason, then intent.edit with confident changes
+- don't chain intents unless outputs feed inputs: intent.understand + intent.edit OK; intent.investigate + intent.edit BAD (needs reasoning between)
+- two-turn rule for fix workflows: turn 1 = intent.diagnose or intent.investigate (gather), turn 2 = intent.edit or intent.edit_multi (apply)
 - intent.edit and intent.edit_multi auto-retry once on stale_hash via conditional steps — no manual retry needed
 - intent.diagnose and intent.test are read-only — they prepare context but never mutate; follow with intent.edit or intent.create
 - intent.search_replace is literal only — old_text must be exact, no regex, no semantic transforms
-
-### Model Discipline
-- line edits: the system injects fresh hashes and keeps engrams current after every edit — no read is needed for freshness. Read only when the target range has **no content visibility** (never seen in this session). After any interaction, chain from h:NEW. Brace-check replacements in \`{\`/\`}\` languages; use anchors when nesting/scope makes line math unsafe
-- never call an intent you haven't prepared for: read files before intent.edit, have exact line_edits before intent.edit_multi
-- intents automate plumbing (reads, retries, verify), not thinking — if you don't know the inputs, use primitives to explore first
-- don't use intents for exploration: read.context then reason, then intent.edit with confident changes
-- two-turn rule for fix workflows: turn 1 = intent.diagnose or intent.investigate (gather), turn 2 = intent.edit or intent.edit_multi (apply)
-- batch size discipline: max 8-10 steps per batch; split into discovery -> mutation -> verify batches
-- verify cadence: batch related edits, verify at milestones; exception: public API / schema / dependency changes verify immediately
-- content grounding before edit: the system handles hash freshness automatically (snapshot injection, preflight refresh, edit-chain forwarding). Reads are purely for **grounding** — seeing file content so you can target edits. If the file is already visible (engram, staged snippet, search result), skip the read. Re-read only on stale_hash / authority_mismatch errors or suspect refs
-- don't chain intents in one batch unless outputs feed inputs: intent.understand + intent.edit OK; intent.investigate + intent.edit BAD (needs reasoning between)
-- prefer the cheapest tool: signatures? read.shaped; one symbol? search.symbol; types? verify.typecheck; file list? read.context(tree)
 - use primitives when the workflow is non-standard: 3 well-chosen primitives > 1 intent that does the wrong thing`;
 
 export const SUBAGENT_TOOL_REF = `

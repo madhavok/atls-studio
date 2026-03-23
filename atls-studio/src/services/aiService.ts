@@ -1940,7 +1940,7 @@ async function streamChatViaTauri(
         });
         
         // Per-tool result size limits (chars) — prevents token budget blowouts
-        const truncatedResult = truncateToolResult(result, tc.args);
+        const truncatedResult = truncateToolResult(result);
         
         console.log(`[aiService] Tool ${tc.name}: ${truncatedResult.length} chars`);
         
@@ -2195,32 +2195,6 @@ function createHandlerContext(options?: { isSwarmAgent?: boolean; swarmTerminalI
 // ============================================================================
 
 function normalizeToolParams(args: Record<string, unknown>): void {
-  // path -> file_path (single file)
-  if (args.path !== undefined && args.file_path === undefined) {
-    args.file_path = args.path;
-  }
-  // command -> cmd
-  if (args.command !== undefined && args.cmd === undefined) {
-    args.cmd = args.command;
-  }
-  // contents -> content
-  if (args.contents !== undefined && args.content === undefined) {
-    args.content = args.contents;
-  }
-  // file -> file_path (for edit tool compat — only when not inside edits array)
-  if (args.file !== undefined && args.file_path === undefined && !Array.isArray(args.edits)) {
-    args.file_path = args.file;
-  }
-  // query (string) -> queries (array) for code_search — local models often pass singular
-  if (args.query !== undefined && args.queries === undefined) {
-    const q = args.query as string;
-    if (q) args.queries = [q];
-  }
-  // symbol_name (string) -> symbol_names (array) — local models often pass singular
-  if (args.symbol_name !== undefined && args.symbol_names === undefined) {
-    const s = args.symbol_name as string;
-    if (s) args.symbol_names = [s];
-  }
   if (args.steps !== undefined) {
     args.steps = coerceBatchSteps(args.steps);
   }
@@ -2347,32 +2321,11 @@ export async function executeToolCall(
 
 // toTOON and formatResult imported from '../utils/toon'
 
-/** Per-sub-tool result size limits (chars). Higher for tools that return full file content. */
-const TOOL_RESULT_LIMITS: Record<string, number> = {
-  context: 400000, // type:full can return large files (e.g. cJSON.c 3200 lines); backend cap 50k lines
-  code_search: 10000,
-  find_symbol: 10000,
-  exec: 15000,
-  verify: 15000,
-  git: 15000,
-  find_issues: 12000,
-  manage: 400000, // can include context load ops with type:full; align with context limit
-  ast_query: 12000,
-  workspaces: 8000,
-  subagent: 200000, // pinned code blocks from retriever; budget-enforced internally
-};
-const DEFAULT_TOOL_RESULT_LIMIT = 20000;
+const TOOL_RESULT_CHAR_LIMIT = 400000;
 
-const FILTERABLE_TOOLS = new Set(['call_hierarchy', 'symbol_usage', 'dependencies']);
-
-function truncateToolResult(result: string, args: Record<string, unknown>): string {
-  const subTool = String(args?.tool || '');
-  const limit = TOOL_RESULT_LIMITS[subTool] ?? DEFAULT_TOOL_RESULT_LIMIT;
-  if (result.length <= limit) return result;
-  const hint = FILTERABLE_TOOLS.has(subTool)
-    ? `\n[results capped — use filter:"keyword" to drill down, or verbose:true for full output]`
-    : '\n[truncated — narrow query or use type:smart]';
-  return result.substring(0, limit) + hint;
+function truncateToolResult(result: string): string {
+  if (result.length <= TOOL_RESULT_CHAR_LIMIT) return result;
+  return result.substring(0, TOOL_RESULT_CHAR_LIMIT) + '\n[truncated]';
 }
 
 /**

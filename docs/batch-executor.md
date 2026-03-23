@@ -13,7 +13,7 @@ All model-initiated actions flow through a single tool: `batch()`. This collapse
     {"id": "e1", "use": "change.edit", "with": {"file_path": "src/auth.ts", "line_edits": [...]}, "if": {"step_ok": "r1"}},
     {"id": "v1", "use": "verify.typecheck", "if": {"step_ok": "e1"}}
   ],
-  "policy": {"mode": "safe-mutable", "verify_after_change": true}
+  "policy": {"verify_after_change": true}
 }
 ```
 
