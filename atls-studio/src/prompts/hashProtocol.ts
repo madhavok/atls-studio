@@ -6,7 +6,7 @@
 
 export const HASH_PROTOCOL_SPEC = `## UHPP — Universal Hash Pointer Protocol (v6)
 h:XXXX = stable pointer for recall, discovery, review, and tool dataflow. Use anywhere appropriate: file params, content, content_hash, query, message, description, create.content, from_ref.
-**Mutation authority:** Hashes locate the latest target. One prior read (full or line-range) is sufficient — the system tracks live content. Forwarded or non-canonical hashes trigger backend errors; re-read on stale_hash. Diff trail: h:OLD..h:NEW.
+**Mutation authority:** Hashes locate the latest target. The system injects fresh snapshot_hash automatically — no manual hash wiring needed. Any prior content interaction (read, edit, search) grounds the file for mutation. Forwarded or non-canonical hashes trigger backend errors; re-read on stale_hash. Diff trail: h:OLD..h:NEW.
 Core: h:XXXX:source (path), h:XXXX:content (text), h:XXXX:15-22 (lines), h:XXXX:15-22,40-55 (ranges).
 Shape: h:XXXX:sig, h:XXXX:fold, h:XXXX:dedent, h:XXXX:imports, h:XXXX:exports, h:XXXX:head(N), h:XXXX:tail(N), h:XXXX:grep(pat).
 Semantic: h:XXXX:concept(auth), h:XXXX:pattern(error-handling), h:XXXX:if(has(TODO)).
