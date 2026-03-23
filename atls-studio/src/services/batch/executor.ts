@@ -719,6 +719,13 @@ function isBlockingSystemExec(
   );
 }
 
+/** End batch after this step; no `interruption` — chat keeps going (rollback covers real edits). */
+function shouldStopBatchAfterDryRunPreview(artifact: Record<string, unknown>): boolean {
+  if (artifact.dry_run === true) return true;
+  const st = typeof artifact.status === 'string' ? artifact.status.toLowerCase() : '';
+  return st === 'preview' || st === 'dry_run_preview';
+}
+
 function detectBatchInterruption(stepId: string, stepIndex: number, stepUse: string, output: StepOutput): BatchInterruption | null {
   const artifact = getArtifact(output);
   if (!artifact) return null;
@@ -727,9 +734,6 @@ function detectBatchInterruption(stepId: string, stepIndex: number, stepUse: str
   const status = typeof artifact.status === 'string' ? artifact.status.toLowerCase() : '';
   const hasRollback = Boolean(artifact._rollback);
   const hasResumeAfter = artifact.resume_after !== undefined;
-  const actionRequired = typeof artifact.action_required === 'string' ? artifact.action_required.toLowerCase() : '';
-  const next = typeof artifact._next === 'string' ? artifact._next.toLowerCase() : '';
-  const dryRun = artifact.dry_run === true;
 
   const reason = typeof artifact.reason === 'string' ? artifact.reason : undefined;
   const isSuspectExternal = reason === 'suspect_external_change';
@@ -751,26 +755,7 @@ function detectBatchInterruption(stepId: string, stepIndex: number, stepUse: str
     };
   }
 
-  const isConfirmationRequired =
-    dryRun
-    || status === 'preview'
-    || status === 'dry_run_preview'
-    || actionRequired.includes('confirm')
-    || next.includes('confirm:true')
-    || next.includes('dry_run:false')
-    || next.includes('preview complete')
-    || next.includes('awaiting review')
-    || next.includes('review and confirm');
-  if (isConfirmationRequired) {
-    return {
-      kind: 'confirmation_required',
-      step_id: stepId,
-      step_index: stepIndex,
-      tool_name: stepUse,
-      summary: summarizeInterruption(artifact, `${stepId}: confirmation required before continuing`),
-    };
-  }
-
+  // Dry-run / preview no longer emit confirmation_required — rollback covers apply; agent chat should not halt.
   return null;
 }
 
@@ -1014,6 +999,15 @@ export async function executeUnifiedBatch(
     if (stepInterruption && !shouldTreatBlockedSystemExecAsNonFatal) {
       interruption = stepInterruption;
       batchOk = false;
+      break;
+    }
+    // Stop after change.* dry-run / preview so later steps are not run, but do not set `interruption` (chat/swarm keep going).
+    if (
+      output.ok
+      && stepArtifact
+      && step.use.startsWith('change.')
+      && shouldStopBatchAfterDryRunPreview(stepArtifact)
+    ) {
       break;
     }
     // Error handling

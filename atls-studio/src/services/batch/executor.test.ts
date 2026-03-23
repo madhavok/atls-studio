@@ -72,7 +72,7 @@ describe('executeUnifiedBatch interruption handling', () => {
     handlers.clear();
   });
 
-  it('interrupts the batch at the first preview/confirmation boundary', async () => {
+  it('ends the batch after change.* dry-run/preview without interruption (later steps skipped)', async () => {
     const applySpy = vi.fn();
 
     handlers.set('change.edit', async () =>
@@ -95,14 +95,8 @@ describe('executeUnifiedBatch interruption handling', () => {
       makeCtx(),
     );
 
-    expect(result.ok).toBe(false);
-    expect(result.interruption).toEqual({
-      kind: 'confirmation_required',
-      step_id: 'preview',
-      step_index: 0,
-      tool_name: 'change.edit',
-      summary: 'Preview complete. Set dry_run:false to apply',
-    });
+    expect(result.ok).toBe(true);
+    expect(result.interruption).toBeUndefined();
     expect(result.step_results).toHaveLength(1);
     expect(applySpy).not.toHaveBeenCalled();
   });
