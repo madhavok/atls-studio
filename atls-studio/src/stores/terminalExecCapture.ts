@@ -71,10 +71,23 @@ export function tryParseAgentExecPtyBuffer(
   const endIdx = cleanBuf.indexOf(match[0]);
   if (endIdx === -1) return null;
 
-  let startIdx = cleanBuf.indexOf(startMarker);
-  if (startIdx === -1 || startIdx >= endIdx) {
-    startIdx = cleanBuf.lastIndexOf(startMarker, endIdx - 1);
+  // Find the first start marker that appears as a standalone line (not embedded
+  // inside the echoed command). The echo line looks like:
+  //   Write-Host "##ATLS_START_XX##"; cmd | Out-String; ...
+  // The actual Write-Host output is just the marker on its own line.
+  // Strategy: split by lines, find first line whose trimmed content === startMarker.
+  const bufLines = cleanBuf.split('\n');
+  let startIdx = -1;
+  let charOffset = 0;
+  for (let i = 0; i < bufLines.length; i++) {
+    if (bufLines[i].trim() === startMarker) {
+      startIdx = charOffset;
+      break;
+    }
+    charOffset += bufLines[i].length + 1; // +1 for \n
   }
+  // Fallback: if no standalone line found, use first indexOf
+  if (startIdx === -1) startIdx = cleanBuf.indexOf(startMarker);
 
   let output = '';
   if (startIdx !== -1 && endIdx > startIdx) {

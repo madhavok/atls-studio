@@ -733,7 +733,7 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
 
     // PowerShell command with markers
     // Note: $LASTEXITCODE may be null for cmdlets, so we default to 0
-    const wrapped = `Write-Host "${startMarker}"; ${command} | Out-String; $__ec = if ($?) { if ($LASTEXITCODE) { $LASTEXITCODE } else { 0 } } else { if ($LASTEXITCODE) { $LASTEXITCODE } else { 1 } }; Write-Host "${endMarker}$__ec##"`;
+    const wrapped = `Write-Host "${startMarker}"; & { ${command} } 2>&1 | Out-String; $__ec = if ($?) { if ($LASTEXITCODE) { $LASTEXITCODE } else { 0 } } else { if ($LASTEXITCODE) { $LASTEXITCODE } else { 1 } }; Write-Host "${endMarker}$__ec##"`;
 
     // Write to PTY — use \r only; \r\n causes a double-Enter on Windows ConPTY
     try {

@@ -21,21 +21,30 @@ function sanitizeExecOutput(output: string): string {
   const lines = normalized.split('\n');
   let start = 0;
 
-  if (lines[0]?.startsWith('"; ') && lines[0].includes(' | Out-String; $__ec = if ($?) {')) {
+  // Strip the echoed wrapped command line (starts with "; " from the quote after the start marker)
+  if (lines[0]?.startsWith('"; ') && lines[0].includes('Out-String')) {
     start = 1;
   }
+  // Also strip lines that look like the full wrapped command echo (starts with & { or Write-Host)
+  while (start < lines.length) {
+    const trimmed = lines[start]?.trim() ?? '';
+    if (trimmed.startsWith('& {') && trimmed.includes('Out-String')) { start++; continue; }
+    if (trimmed.startsWith('Write-Host "##ATLS_')) { start++; continue; }
+    break;
+  }
 
+  // Strip PowerShell "cd : Cannot find path" error blocks
   while (start < lines.length && lines[start]?.startsWith('cd : Cannot find path ')) {
     start += 1;
+    // Skip the structured error continuation lines (At line:, + CategoryInfo, etc.)
     while (start < lines.length) {
       const line = lines[start]?.trim() ?? '';
       if (
         line === '' ||
         line.startsWith('At line:') ||
-        line.startsWith('+') ||
-        line.startsWith('~') ||
         line.startsWith('+ CategoryInfo') ||
-        line.startsWith('+ FullyQualifiedErrorId')
+        line.startsWith('+ FullyQualifiedErrorId') ||
+        /^[~\s^]+$/.test(line)
       ) {
         start += 1;
         continue;

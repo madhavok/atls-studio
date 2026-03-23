@@ -91,4 +91,15 @@ Write-Host only
     expect(r!.exitCode).toBe(0);
     expect(r!.output).toBe('actual output');
   });
+
+  it('skips start marker embedded in echoed command line', () => {
+    // Real PTY buffer: first line is the echoed command containing the marker in quotes,
+    // second occurrence is the standalone Write-Host output.
+    const echo = `Write-Host "${startMarker}"; echo hello | Out-String; $__ec = 0; Write-Host "##ATLS_END_${marker}_$__ec##"`;
+    const buf = `${echo}\n${startMarker}\nhello\n##ATLS_END_${marker}_0##`;
+    const r = tryParseAgentExecPtyBuffer(buf, marker, startMarker);
+    expect(r).not.toBeNull();
+    expect(r!.exitCode).toBe(0);
+    expect(r!.output).toBe('hello');
+  });
 });
