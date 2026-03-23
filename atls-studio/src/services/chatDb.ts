@@ -11,6 +11,7 @@ import { extractFirstTextFromMessage, getMessageParts } from '../stores/appStore
 import type { ContextChunk, ChunkType, BlackboardEntry, CognitiveRule, ManifestEntry, ReconcileStats, StagedSnippet, TaskPlan, TransitionBridge, MemoryEvent } from '../stores/contextStore';
 import type { GeminiCacheSnapshot } from './aiService';
 import type { RoundSnapshot } from '../stores/roundHistoryStore';
+import type { RollingSummary } from './historyDistiller';
 
 // ============================================================================
 // Database Types
@@ -937,6 +938,8 @@ export interface PersistedPromptMetrics {
   totalOverheadTokens: number;
   compressionSavings: number;
   compressionCount: number;
+  rollingSavings?: number;
+  rolledRounds?: number;
   roundCount: number;
   cumulativeInputSaved: number;
   bp2ToolDefTokens?: number;
@@ -978,7 +981,7 @@ export interface PersistedCostChat {
 }
 
 export interface PersistedMemorySnapshot {
-  version: 2 | 3 | 4;
+  version: 2 | 3 | 4 | 5;
   savedAt: string;
   chunks: ContextChunk[];
   archivedChunks: ContextChunk[];
@@ -1003,6 +1006,8 @@ export interface PersistedMemorySnapshot {
   cacheMetrics?: PersistedCacheMetrics;
   roundHistorySnapshots?: RoundSnapshot[];
   costChat?: PersistedCostChat;
+  /** v5+: distilled rolling history (API-only; not in chat messages) */
+  rollingSummary?: RollingSummary;
 }
 
 export interface DbHashRegistryEntry {

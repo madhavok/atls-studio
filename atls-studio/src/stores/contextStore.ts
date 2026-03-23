@@ -44,6 +44,7 @@ import { useRoundHistoryStore } from './roundHistoryStore';
 import { formatAge } from '../utils/formatHelpers';
 import { commonPrefixLen } from './contextHelpers';
 import { canonicalizeSnapshotHash } from '../services/batch/snapshotTracker';
+import { emptyRollingSummary, type RollingSummary } from '../services/historyDistiller';
 
 // Minimum chars required for prefix-based hash resolution (reduces collision risk)
 /** Match SHORT_HASH_LEN (6) so h:abcdef-style refs resolve (annotate.link, synapses). */
@@ -608,6 +609,9 @@ interface ContextStoreState {
   stageVersion: number;                        // Incremented on any stage/unstage change
   transitionBridge: TransitionBridge | null;   // Auto-surface after subtask advance (1-2 turns)
   batchMetrics: { toolCalls: number; manageOps: number }; // Per-turn batch compliance
+  /** Distilled facts for API-only rolling summary (not in chat UI messages) */
+  rollingSummary: RollingSummary;
+  setRollingSummary: (summary: RollingSummary) => void;
   memoryEvents: MemoryEvent[];
 
   // Freshness gates — workspace revision tracking
@@ -1170,6 +1174,8 @@ export const useContextStore = create<ContextStoreState>()(
   stageVersion: 0,
   transitionBridge: null,
   batchMetrics: { toolCalls: 0, manageOps: 0 },
+  rollingSummary: emptyRollingSummary(),
+  setRollingSummary: (summary) => set({ rollingSummary: summary }),
   memoryEvents: [],
   reconcileStats: null,
   hashStack: [] as string[],
@@ -3912,6 +3918,7 @@ export const useContextStore = create<ContextStoreState>()(
       verifyArtifacts: new Map(),
       taskCompleteRecord: null,
       awarenessCache: new Map(),
+      rollingSummary: emptyRollingSummary(),
     });
   },
   

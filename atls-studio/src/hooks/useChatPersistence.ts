@@ -23,6 +23,7 @@ import {
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { getGeminiCacheSnapshot, restoreGeminiCacheSnapshot, type GeminiCacheSnapshot } from '../services/aiService';
 import { classifyStageSnippet, MAX_PERSISTENT_STAGE_ENTRY_TOKENS } from '../services/promptMemory';
+import { emptyRollingSummary } from '../services/historyDistiller';
 
 // Reserved blackboard note keys for per-session context state
 const RESERVED_NOTE_PREFIX = '__ctx_';
@@ -85,11 +86,19 @@ function rehydrateSubAgentRows(rows: PersistedSubAgentUsageRow[] | undefined): S
   }));
 }
 
-/** Apply v4-only fields (prompt/cache metrics, round history, chat cost) after context snapshot. */
+/** Apply v4+ fields (prompt/cache metrics, round history, chat cost, v5 rolling summary) after context snapshot. */
 export function applyV4SessionExtras(snapshot: PersistedMemorySnapshot): void {
-  if (snapshot.version !== 4) return;
+  if (snapshot.version !== 4 && snapshot.version !== 5) return;
   if (snapshot.promptMetrics) {
-    useAppStore.setState({ promptMetrics: { ...useAppStore.getState().promptMetrics, ...snapshot.promptMetrics } });
+    const pm = snapshot.promptMetrics;
+    useAppStore.setState({
+      promptMetrics: {
+        ...useAppStore.getState().promptMetrics,
+        ...pm,
+        rollingSavings: pm.rollingSavings ?? 0,
+        rolledRounds: pm.rolledRounds ?? 0,
+      },
+    });
   }
   if (snapshot.cacheMetrics) {
     useAppStore.setState({ cacheMetrics: { ...useAppStore.getState().cacheMetrics, ...snapshot.cacheMetrics } });
@@ -102,6 +111,11 @@ export function applyV4SessionExtras(snapshot: PersistedMemorySnapshot): void {
       chatSubAgentCostCents: snapshot.costChat.chatSubAgentCostCents ?? 0,
       subAgentUsages: rehydrateSubAgentRows(snapshot.costChat.subAgentUsages),
     });
+  }
+  if (snapshot.version === 5) {
+    useContextStore.getState().setRollingSummary(snapshot.rollingSummary ?? emptyRollingSummary());
+  } else {
+    useContextStore.getState().setRollingSummary(emptyRollingSummary());
   }
 }
 
@@ -116,7 +130,7 @@ export function serializeMemorySnapshot(
   const cost = useCostStore.getState();
   const rounds = useRoundHistoryStore.getState();
   return {
-    version: 4,
+    version: 5,
     savedAt: new Date().toISOString(),
     chunks: Array.from(ctxState.chunks.values()),
     archivedChunks: Array.from(ctxState.archivedChunks.values()),
@@ -144,6 +158,13 @@ export function serializeMemorySnapshot(
       chatApiCalls: cost.chatApiCalls,
       chatSubAgentCostCents: cost.chatSubAgentCostCents,
       subAgentUsages: subAgentUsagesToRows(cost.subAgentUsages),
+    },
+    rollingSummary: {
+      decisions: [...ctxState.rollingSummary.decisions],
+      filesChanged: [...ctxState.rollingSummary.filesChanged],
+      userPreferences: [...ctxState.rollingSummary.userPreferences],
+      workDone: [...ctxState.rollingSummary.workDone],
+      errors: [...ctxState.rollingSummary.errors],
     },
   };
 }
@@ -429,7 +450,7 @@ export function useChatPersistence() {
           nativeToolTokens: 0, primerTokens: 0, contextControlTokens: 0,
           workspaceContextTokens: 0, entryManifestTokens: 0,
           totalOverheadTokens: 0, compressionSavings: 0,
-          compressionCount: 0, roundCount: 0, cumulativeInputSaved: 0,
+          compressionCount: 0, rollingSavings: 0, rolledRounds: 0, roundCount: 0, cumulativeInputSaved: 0,
         },
         cacheMetrics: {
           sessionCacheWrites: 0, sessionCacheReads: 0, sessionUncached: 0,
@@ -446,7 +467,7 @@ export function useChatPersistence() {
       let memorySnapshot: PersistedMemorySnapshot | null = null;
       try {
         memorySnapshot = await chatDb.getMemorySnapshot(sessionId);
-        if (memorySnapshot && (memorySnapshot.version === 2 || memorySnapshot.version === 3 || memorySnapshot.version === 4)) {
+        if (memorySnapshot && (memorySnapshot.version === 2 || memorySnapshot.version === 3 || memorySnapshot.version === 4 || memorySnapshot.version === 5)) {
           const normalizedStagedSnippets = normalizePersistedStagedEntries(memorySnapshot.stagedSnippets);
           useContextStore.setState({
             chunks: new Map(rehydrateChunkDates(memorySnapshot.chunks).map(chunk => [chunk.hash, chunk])),
@@ -478,7 +499,7 @@ export function useChatPersistence() {
       }
 
       const dbCostCents = result.session.context_usage?.cost_cents ?? 0;
-      if (memorySnapshot?.version === 4) {
+      if (memorySnapshot?.version === 4 || memorySnapshot?.version === 5) {
         applyV4SessionExtras(memorySnapshot);
         if (!memorySnapshot.costChat) {
           useCostStore.getState().restorePersistedChatTotals({ chatCostCents: dbCostCents });
@@ -674,7 +695,7 @@ export function useChatPersistence() {
           nativeToolTokens: 0, primerTokens: 0, contextControlTokens: 0,
           workspaceContextTokens: 0,
           totalOverheadTokens: 0, compressionSavings: 0,
-          compressionCount: 0, roundCount: 0, cumulativeInputSaved: 0,
+          compressionCount: 0, rollingSavings: 0, rolledRounds: 0, roundCount: 0, cumulativeInputSaved: 0,
         },
         cacheMetrics: {
           sessionCacheWrites: 0, sessionCacheReads: 0, sessionUncached: 0,
@@ -728,7 +749,7 @@ export function useChatPersistence() {
             nativeToolTokens: 0, primerTokens: 0, contextControlTokens: 0,
             workspaceContextTokens: 0,
             totalOverheadTokens: 0, compressionSavings: 0,
-            compressionCount: 0, roundCount: 0, cumulativeInputSaved: 0,
+            compressionCount: 0, rollingSavings: 0, rolledRounds: 0, roundCount: 0, cumulativeInputSaved: 0,
           },
           cacheMetrics: {
             sessionCacheWrites: 0, sessionCacheReads: 0, sessionUncached: 0,
@@ -808,7 +829,7 @@ export function useChatPersistence() {
                 nativeToolTokens: 0, primerTokens: 0, contextControlTokens: 0,
                 workspaceContextTokens: 0,
                 totalOverheadTokens: 0, compressionSavings: 0,
-                compressionCount: 0, roundCount: 0, cumulativeInputSaved: 0,
+                compressionCount: 0, rollingSavings: 0, rolledRounds: 0, roundCount: 0, cumulativeInputSaved: 0,
               },
               cacheMetrics: {
                 sessionCacheWrites: 0, sessionCacheReads: 0, sessionUncached: 0,

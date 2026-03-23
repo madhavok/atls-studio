@@ -39,6 +39,12 @@ export interface RoundSnapshot {
   costCents: number;
   // Savings
   compressionSavings: number;
+  /** Tokens removed by rolling window (not hash compression) */
+  rollingSavings: number;
+  /** Rounds distilled into rolling summary */
+  rolledRounds: number;
+  /** Token size of formatted rolling summary message */
+  rollingSummaryTokens: number;
   freedTokens: number;
   cumulativeSaved: number;
   // Batch efficiency

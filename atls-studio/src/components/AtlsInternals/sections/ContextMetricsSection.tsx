@@ -72,8 +72,9 @@ export function ContextMetricsSection() {
       </div>
 
       {/* Savings */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
         <SavingStat label="Compression Savings" value={promptMetrics.compressionSavings.toLocaleString()} sub={`${promptMetrics.compressionCount} ops`} />
+        <SavingStat label="Rolling Savings" value={(promptMetrics.rollingSavings ?? 0).toLocaleString()} sub={`${promptMetrics.rolledRounds ?? 0} rounds distilled`} />
         <SavingStat label="Freed Tokens" value={freedTokens.toLocaleString()} sub="lifetime relieved, excluded from active CTX" />
         <SavingStat label="Rounds" value={promptMetrics.roundCount} />
         <SavingStat label="Cumulative Saved" value={promptMetrics.cumulativeInputSaved.toLocaleString()} accent />

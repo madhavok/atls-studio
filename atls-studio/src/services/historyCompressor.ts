@@ -16,7 +16,22 @@ import { useContextStore } from '../stores/contextStore';
 import { useAppStore } from '../stores/appStore';
 import { formatChunkRef, estimateTokens, hashContentSync, SHORT_HASH_LEN } from '../utils/contextHash';
 import { dematerialize, getRef } from './hashProtocol';
-import { CONVERSATION_HISTORY_BUDGET_TOKENS, PROTECTED_RECENT_ROUNDS } from './promptMemory';
+import {
+  CONVERSATION_HISTORY_BUDGET_TOKENS,
+  PROTECTED_RECENT_ROUNDS,
+  ROLLING_WINDOW_ROUNDS,
+  ROLLING_SUMMARY_MAX_TOKENS,
+} from './promptMemory';
+import {
+  distillRound,
+  emptyRollingSummary,
+  formatSummaryMessage,
+  isRollingSummaryEmpty,
+  isRollingSummaryMessage,
+  trimSummaryToTokenBudget,
+  updateRollingSummary,
+  type RollingSummary,
+} from './historyDistiller';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -41,8 +56,133 @@ export const TOOL_COMPRESSION_OVERRIDES: Record<string, number> = Object.fromEnt
 export const HISTORY_TEXT_REPLACEMENT_THRESHOLD_TOKENS = 350;
 
 // ---------------------------------------------------------------------------
-// Description Extraction
+// Assistant round map (tool-loop rounds; rolling summary excluded)
 // ---------------------------------------------------------------------------
+
+/**
+ * Map message index -> assistant round index. Skips the API-only rolling summary message.
+ */
+export function buildAssistantRoundMap(
+  history: Array<{ role: string; content: unknown }>,
+  startIdx: number,
+): Map<number, number> {
+  let roundIndex = 0;
+  const messageRounds = new Map<number, number>();
+  for (let i = startIdx; i < history.length; i++) {
+    const msg = history[i];
+    if (msg.role === 'assistant') {
+      if (isRollingSummaryMessage(msg)) continue;
+      messageRounds.set(i, roundIndex);
+      if (i + 1 < history.length && history[i + 1].role === 'user') {
+        messageRounds.set(i + 1, roundIndex);
+      }
+      roundIndex++;
+    }
+  }
+  return messageRounds;
+}
+
+function getLeadingOrphanUserIndices(
+  history: Array<{ role: string; content: unknown }>,
+  messageRounds: Map<number, number>,
+  summaryAt: number,
+): number[] {
+  const orphans: number[] = [];
+  if (!history[summaryAt] || !isRollingSummaryMessage(history[summaryAt])) return orphans;
+  let i = summaryAt + 1;
+  while (i < history.length && history[i].role === 'user' && !messageRounds.has(i)) {
+    orphans.push(i);
+    i++;
+  }
+  return orphans;
+}
+
+function syncRollingSummaryMessage(
+  history: Array<{ role: string; content: unknown }>,
+  summary: RollingSummary,
+  insertAt: number,
+): void {
+  const trimmed = trimSummaryToTokenBudget(summary, ROLLING_SUMMARY_MAX_TOKENS);
+  const ctx = useContextStore.getState();
+  if (isRollingSummaryEmpty(trimmed)) {
+    if (history[insertAt] && isRollingSummaryMessage(history[insertAt])) {
+      history.splice(insertAt, 1);
+    }
+    ctx.setRollingSummary(emptyRollingSummary());
+    return;
+  }
+  ctx.setRollingSummary(trimmed);
+  const msg = formatSummaryMessage(trimmed);
+  if (history[insertAt] && isRollingSummaryMessage(history[insertAt])) {
+    history[insertAt] = msg;
+  } else {
+    history.splice(insertAt, 0, msg);
+  }
+}
+
+/**
+ * Remove oldest rounds into rolling summary; update context store + summary row at insertAt.
+ */
+function applyRollingHistoryWindow(
+  history: Array<{ role: string; content: unknown }>,
+  startIdx: number,
+): void {
+  const ctx = useContextStore.getState();
+  const messageRounds = buildAssistantRoundMap(history, startIdx);
+  let maxR = -1;
+  for (const r of messageRounds.values()) maxR = Math.max(maxR, r);
+  const totalRounds = maxR + 1;
+
+  const summaryAt = startIdx;
+  const orphans = getLeadingOrphanUserIndices(history, messageRounds, summaryAt);
+
+  if (totalRounds <= ROLLING_WINDOW_ROUNDS) {
+    syncRollingSummaryMessage(history, ctx.rollingSummary, summaryAt);
+    return;
+  }
+
+  let rolling: RollingSummary = {
+    ...ctx.rollingSummary,
+    decisions: [...ctx.rollingSummary.decisions],
+    filesChanged: [...ctx.rollingSummary.filesChanged],
+    userPreferences: [...ctx.rollingSummary.userPreferences],
+    workDone: [...ctx.rollingSummary.workDone],
+    errors: [...ctx.rollingSummary.errors],
+  };
+
+  const excess = totalRounds - ROLLING_WINDOW_ROUNDS;
+  let tokensSaved = 0;
+
+  for (let r = 0; r < excess; r++) {
+    const roundIndices = [...messageRounds.entries()]
+      .filter(([, rr]) => rr === r)
+      .map(([i]) => i)
+      .sort((a, b) => a - b);
+    const extra = r === 0 ? orphans : [];
+    const allIdx = [...new Set([...roundIndices, ...extra])].sort((a, b) => a - b);
+    if (allIdx.length === 0) continue;
+    const slice = allIdx.map((i) => history[i]);
+    tokensSaved += estimateHistoryTokens(slice);
+    rolling = updateRollingSummary(rolling, distillRound(slice));
+  }
+
+  const removeSet = new Set<number>();
+  for (const [idx, rr] of messageRounds) {
+    if (rr < excess) removeSet.add(idx);
+  }
+  if (excess > 0) {
+    for (const o of orphans) removeSet.add(o);
+  }
+
+  for (const idx of [...removeSet].sort((a, b) => b - a)) {
+    history.splice(idx, 1);
+  }
+
+  if (tokensSaved > 0) {
+    useAppStore.getState().addRollingSavings(tokensSaved, excess);
+  }
+  syncRollingSummaryMessage(history, rolling, summaryAt);
+}
 
 /**
  * Build a descriptive label for a compressed tool result.
@@ -149,19 +289,9 @@ export function compressToolLoopHistory(
   let totalSavedTokens = 0;
   const startIdx = priorTurnBoundary ?? 0;
 
-  // Assign round numbers to assistant/user pairs in the tool loop
-  let roundIndex = 0;
-  const messageRounds = new Map<number, number>();
-  for (let i = startIdx; i < history.length; i++) {
-    const msg = history[i];
-    if (msg.role === 'assistant') {
-      messageRounds.set(i, roundIndex);
-      if (i + 1 < history.length && history[i + 1].role === 'user') {
-        messageRounds.set(i + 1, roundIndex);
-      }
-      roundIndex++;
-    }
-  }
+  applyRollingHistoryWindow(history, startIdx);
+
+  const messageRounds = buildAssistantRoundMap(history, startIdx);
 
   const skipThreshold = currentRound !== undefined ? Math.max(0, currentRound - PROTECTED_RECENT_ROUNDS) : Infinity;
 
@@ -391,6 +521,8 @@ export interface HistoryBreakdown {
   total: number;
   /** Already-compressed hash refs ([-> h:XXXX, ...]) */
   compressed: number;
+  /** Rolling summary assistant message ([Rolling Summary] ...) */
+  rolled: number;
   /** tool_result blocks not yet compressed */
   toolResults: number;
   /** tool_use input blocks not yet compressed */
@@ -414,7 +546,7 @@ export function analyzeHistoryBreakdown(
   startIdx = 0,
 ): HistoryBreakdown {
   const breakdown: HistoryBreakdown = {
-    total: 0, compressed: 0, toolResults: 0, toolUse: 0,
+    total: 0, compressed: 0, rolled: 0, toolResults: 0, toolUse: 0,
     assistantText: 0, userText: 0, compressibleCount: 0, compressibleTokens: 0,
   };
 
@@ -424,6 +556,10 @@ export function analyzeHistoryBreakdown(
     if (typeof msg.content === 'string') {
       const tokens = estimateTokens(msg.content);
       breakdown.total += tokens;
+      if (msg.role === 'assistant' && isRollingSummaryMessage(msg)) {
+        breakdown.rolled += tokens;
+        continue;
+      }
       if (msg.content.startsWith('[->')) {
         breakdown.compressed += tokens;
       } else if (msg.role === 'assistant') {
@@ -504,5 +640,6 @@ export function formatHistoryBreakdown(b: HistoryBreakdown): string {
   if (b.toolResults > 0) parts.push(`results:${k(b.toolResults)}`);
   if (b.toolUse > 0) parts.push(`calls:${k(b.toolUse)}`);
   if (b.compressed > 0) parts.push(`refs:${k(b.compressed)}`);
+  if (b.rolled > 0) parts.push(`rolled:${k(b.rolled)}`);
   return parts.join(' ');
 }

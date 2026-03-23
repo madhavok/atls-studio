@@ -594,7 +594,7 @@ const ContextMetrics = memo(function ContextMetrics() {
   const userContentTokens = chunkTokens;
 
   // Per-round savings = what we avoid sending each time the API is called
-  const perRoundSavings = pm.compressionSavings + freedTokens;
+  const perRoundSavings = pm.compressionSavings + (pm.rollingSavings ?? 0) + freedTokens;
   // Cumulative = sum of perRoundSavings across all rounds (compounding effect)
   const { cumulativeInputSaved, roundCount } = pm;
   const hasData = pm.totalOverheadTokens > 0 || perRoundSavings > 0 || cumulativeInputSaved > 0;
@@ -694,6 +694,9 @@ const ContextMetrics = memo(function ContextMetrics() {
                 <span className="text-studio-text-secondary">per round:</span>
                 {pm.compressionSavings > 0 && (
                   <span>compression {formatTokens(pm.compressionSavings)} ({pm.compressionCount} items)</span>
+                )}
+                {(pm.rollingSavings ?? 0) > 0 && (
+                  <span>rolling {formatTokens(pm.rollingSavings ?? 0)} ({pm.rolledRounds ?? 0} rounds distilled)</span>
                 )}
                 {freedTokens > 0 && (
                   <span>freed {formatTokens(freedTokens)}</span>

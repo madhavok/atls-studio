@@ -149,6 +149,7 @@ import {
   BLACKBOARD_BUDGET_TOKENS,
   STAGED_BUDGET_TOKENS,
   CONVERSATION_HISTORY_BUDGET_TOKENS,
+  ROLLING_SUMMARY_MAX_TOKENS,
   WORKSPACE_CONTEXT_BUDGET_TOKENS,
   WM_BUDGET_TOKENS,
   createPromptLayerBudgets,
@@ -160,6 +161,7 @@ import {
   type PromptReliefAction,
 } from './promptMemory';
 import { compressToolLoopHistory, deflateToolResults, estimateHistoryTokens } from './historyCompressor';
+import { formatSummaryMessage, isRollingSummaryEmpty, trimSummaryToTokenBudget } from './historyDistiller';
 import { createGuardrailCallbacks, runBeforeRoundMiddlewares, setPromptBudgetEstimates } from './chatMiddleware';
 import { createTauriChatStream } from './chatTransport';
 
@@ -1062,6 +1064,13 @@ async function streamChatViaTauri(
   // =========================================================================
 
   const conversationHistory = normalizeConversationHistory(messages);
+  const rs = useContextStore.getState().rollingSummary;
+  if (!isRollingSummaryEmpty(rs)) {
+    const trimmed = trimSummaryToTokenBudget(rs, ROLLING_SUMMARY_MAX_TOKENS);
+    if (!isRollingSummaryEmpty(trimmed)) {
+      conversationHistory.unshift(formatSummaryMessage(trimmed));
+    }
+  }
   const priorTurnBoundary = 0;
 
   await setPromptBudgetEstimates(config, conversationHistory);
@@ -1490,6 +1499,11 @@ async function streamChatViaTauri(
           : roundCostCents;
         const verifyArtifacts = Array.from(useContextStore.getState().verifyArtifacts.values());
         const latestVerifyArtifact = verifyArtifacts.length > 0 ? verifyArtifacts[verifyArtifacts.length - 1] : undefined;
+        const rsSnap = useContextStore.getState().rollingSummary;
+        const trimmedRs = trimSummaryToTokenBudget(rsSnap, ROLLING_SUMMARY_MAX_TOKENS);
+        const rollingSummaryTokens = isRollingSummaryEmpty(trimmedRs)
+          ? 0
+          : estimateTokens(formatSummaryMessage(trimmedRs).content);
         useRoundHistoryStore.getState().pushSnapshot({
           round: round + 1,
           timestamp: Date.now(),
@@ -1517,6 +1531,9 @@ async function streamChatViaTauri(
           cacheWriteTokens: roundCacheWriteTokens,
           costCents: roundCostCents,
           compressionSavings: appState.promptMetrics.compressionSavings,
+          rollingSavings: appState.promptMetrics.rollingSavings ?? 0,
+          rolledRounds: appState.promptMetrics.rolledRounds ?? 0,
+          rollingSummaryTokens,
           freedTokens: ctxState.freedTokens,
           cumulativeSaved: appState.promptMetrics.cumulativeInputSaved,
           toolCalls: bm.toolCalls,

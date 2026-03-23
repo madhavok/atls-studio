@@ -5,6 +5,8 @@ node_modules/
 dist/
 target/
 /src-tauri/
+# Accidental agent/workspace writes at monorepo root (real app lives under atls-studio/)
+/src/
 
 # IDE
 .vscode/

@@ -312,8 +312,12 @@ export interface PromptMetrics {
   // Per-round delta: tokens not sent due to compression (cumulative across compressions)
   compressionSavings: number;
   compressionCount: number;
+  /** Tokens not sent because old rounds were removed into rolling summary (cumulative) */
+  rollingSavings: number;
+  /** Rounds distilled into rolling summary this session */
+  rolledRounds: number;
   // Per-round delta: tokens freed from working memory (mirrors contextStore.freedTokens)
-  // => total per-round savings = compressionSavings + freedTokens (from contextStore)
+  // => total per-round savings = compressionSavings + rollingSavings + freedTokens (from contextStore)
   // Compounding: each API round re-sends everything, so savings multiply across rounds
   roundCount: number;
   cumulativeInputSaved: number; // sum of perRoundSavings across all rounds
@@ -576,6 +580,7 @@ interface AppState {
   promptMetrics: PromptMetrics;
   setPromptMetrics: (metrics: Partial<PromptMetrics>) => void;
   addCompressionSavings: (tokensSaved: number, count: number) => void;
+  addRollingSavings: (tokensSaved: number, roundsRolled: number) => void;
   recordRound: () => void;
   cacheMetrics: CacheMetrics;
   addCacheMetrics: (metrics: { cacheWrite: number; cacheRead: number; uncached: number; lastRequestCachedTokens?: number }) => void;
@@ -833,7 +838,7 @@ export const useAppStore = create<AppState>((set) => ({
         nativeToolTokens: 0, primerTokens: 0, contextControlTokens: 0,
         workspaceContextTokens: 0, entryManifestTokens: 0,
         totalOverheadTokens: 0, compressionSavings: 0,
-        compressionCount: 0, roundCount: 0, cumulativeInputSaved: 0,
+        compressionCount: 0, rollingSavings: 0, rolledRounds: 0, roundCount: 0, cumulativeInputSaved: 0,
       },
       // Reset cache metrics for new session
       cacheMetrics: {
@@ -873,7 +878,7 @@ export const useAppStore = create<AppState>((set) => ({
           nativeToolTokens: 0, primerTokens: 0, contextControlTokens: 0,
           workspaceContextTokens: 0, entryManifestTokens: 0,
           totalOverheadTokens: 0, compressionSavings: 0,
-          compressionCount: 0, roundCount: 0, cumulativeInputSaved: 0,
+          compressionCount: 0, rollingSavings: 0, rolledRounds: 0, roundCount: 0, cumulativeInputSaved: 0,
         },
         cacheMetrics: {
           sessionCacheWrites: 0, sessionCacheReads: 0, sessionUncached: 0,
@@ -1083,6 +1088,8 @@ export const useAppStore = create<AppState>((set) => ({
     totalOverheadTokens: 0,
     compressionSavings: 0,
     compressionCount: 0,
+    rollingSavings: 0,
+    rolledRounds: 0,
     roundCount: 0,
     cumulativeInputSaved: 0,
   },
@@ -1103,10 +1110,17 @@ export const useAppStore = create<AppState>((set) => ({
       compressionCount: state.promptMetrics.compressionCount + count,
     },
   })),
+  addRollingSavings: (tokensSaved, roundsRolled) => set((state) => ({
+    promptMetrics: {
+      ...state.promptMetrics,
+      rollingSavings: state.promptMetrics.rollingSavings + tokensSaved,
+      rolledRounds: state.promptMetrics.rolledRounds + roundsRolled,
+    },
+  })),
   recordRound: () => set((state) => {
-    const { compressionSavings } = state.promptMetrics;
+    const { compressionSavings, rollingSavings } = state.promptMetrics;
     const freedTokens = useContextStore.getState().freedTokens;
-    const perRoundSavings = compressionSavings + freedTokens;
+    const perRoundSavings = compressionSavings + rollingSavings + freedTokens;
     return {
       promptMetrics: {
         ...state.promptMetrics,

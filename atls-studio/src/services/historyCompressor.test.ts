@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { compressToolLoopHistory, deflateToolResults, estimateHistoryTokens } from './historyCompressor';
+import { ROLLING_SUMMARY_MARKER } from './historyDistiller';
 import { useContextStore } from '../stores/contextStore';
+import { useAppStore } from '../stores/appStore';
 
 function resetStore() {
   useContextStore.getState().resetSession();
@@ -24,7 +26,7 @@ describe('compressToolLoopHistory', () => {
     ];
 
     const before = estimateHistoryTokens(history);
-    const count = compressToolLoopHistory(history, 3, 0);
+    const count = compressToolLoopHistory(history, 5, 0);
     const after = estimateHistoryTokens(history);
 
     expect(count).toBeGreaterThan(0);
@@ -60,7 +62,7 @@ describe('compressToolLoopHistory', () => {
     ];
 
     const before = estimateHistoryTokens(history);
-    const count = compressToolLoopHistory(history, 4, 0);
+    const count = compressToolLoopHistory(history, 6, 0);
     const textBlock = (history[1].content as Array<{ type: string; text?: string }>)[0];
 
     expect(count).toBeGreaterThan(0);
@@ -82,7 +84,7 @@ describe('compressToolLoopHistory', () => {
       { role: 'user', content: 'ok' },
     ];
 
-    const count = compressToolLoopHistory(history, 4, 0);
+    const count = compressToolLoopHistory(history, 6, 0);
     const textBlock = (history[1].content as Array<{ type: string; content?: string }>)[0];
 
     expect(count).toBeGreaterThan(0);
@@ -98,8 +100,8 @@ describe('compressToolLoopHistory dedup', () => {
     useContextStore.getState().addChunk(bigContent, 'smart', 'src/data.ts');
     const chunkCountBefore = useContextStore.getState().chunks.size;
 
-    // The target tool_result is in round 0. With PROTECTED_RECENT_ROUNDS=2
-    // and currentRound=4, skipThreshold=2, so round 0 is eligible.
+    // The target tool_result is in round 0. With PROTECTED_RECENT_ROUNDS=4
+    // and currentRound=6, skipThreshold=2, so round 0 is eligible.
     const toolUseId = 'tu_ctx';
     const history: Array<{ role: string; content: unknown }> = [
       { role: 'user', content: 'do something' },
@@ -124,7 +126,7 @@ describe('compressToolLoopHistory dedup', () => {
       { role: 'user', content: 'ok' },
     ];
 
-    const count = compressToolLoopHistory(history, 4, 0);
+    const count = compressToolLoopHistory(history, 6, 0);
     expect(count).toBeGreaterThan(0);
 
     const toolResult = (history[2].content as Array<{ content: string }>)[0];
@@ -165,7 +167,7 @@ describe('compressToolLoopHistory dedup', () => {
       { role: 'user', content: 'ok' },
     ];
 
-    const count = compressToolLoopHistory(history, 4, 0);
+    const count = compressToolLoopHistory(history, 6, 0);
     expect(count).toBeGreaterThan(0);
 
     const toolResult = (history[2].content as Array<{ content: string }>)[0];
@@ -299,5 +301,24 @@ describe('deflateToolResults', () => {
     const count2 = deflateToolResults(toolResults2, history);
     expect(count2).toBe(1);
     expect(toolResults2[0].content).toContain('[->');
+  });
+});
+
+describe('compressToolLoopHistory rolling window', () => {
+  beforeEach(() => resetStore());
+
+  it('removes oldest round into rolling summary when rounds exceed ROLLING_WINDOW_ROUNDS', () => {
+    const history: Array<{ role: string; content: unknown }> = [{ role: 'user', content: 'start' }];
+    for (let i = 0; i < 17; i++) {
+      history.push({ role: 'assistant', content: `assistant round ${i}` });
+      history.push({ role: 'user', content: `user round ${i}` });
+    }
+    const beforeLen = history.length;
+    const beforeRolling = useAppStore.getState().promptMetrics.rollingSavings;
+    compressToolLoopHistory(history, 30, 0);
+    expect(history.length).toBeLessThan(beforeLen);
+    expect(history[0].role).toBe('assistant');
+    expect(String(history[0].content)).toContain(ROLLING_SUMMARY_MARKER);
+    expect(useAppStore.getState().promptMetrics.rollingSavings).toBeGreaterThan(beforeRolling);
   });
 });
