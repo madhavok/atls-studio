@@ -3,6 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { type UnlistenFn } from '@tauri-apps/api/event';
 import { safeListen } from '../utils/tauri';
 import { useAppStore } from './appStore';
+import { tryParseAgentExecPtyBuffer } from './terminalExecCapture';
 
 // Strip ANSI escape sequences from PTY output for AI consumption
 const ANSI_RE = /\x1b\[[0-9;]*[a-zA-Z]|\x1b\][^\x07]*\x07|\x1b\[\??[0-9;]*[hl]|\x1b[()][0-9A-B]|\x1b\[[\d;]*m|\x1b/g;
@@ -274,41 +275,10 @@ function checkPendingCompletions(terminalId: string): void {
   
   for (let i = 0; i < pending.length; i++) {
     const p = pending[i];
-    // Strip ANSI codes before matching — ConPTY can insert cursor-movement
-    // sequences mid-token when the line wraps, breaking literal matches.
-    const cleanBuf = stripAnsi(p.buffer);
-    // Accept digits OR literal $__ec (PowerShell sometimes fails to interpolate
-    // the variable when ConPTY line-wrapping corrupts the one-liner parsing).
-    const endPattern = new RegExp(`##ATLS_END_${p.marker}_((?:-?\\d+|\\$__ec)?)##`);
-    const match = cleanBuf.match(endPattern);
-    
-    if (match) {
+    const parsed = tryParseAgentExecPtyBuffer(p.buffer, p.marker, p.startMarker);
+    if (parsed) {
       clearTimeout(p.timeoutId);
-      
-      const raw = match[1] || '';
-      const exitCode = /^-?\d+$/.test(raw) ? parseInt(raw, 10) : 0;
-      const startIdx = cleanBuf.indexOf(p.startMarker);
-      const endIdx = cleanBuf.indexOf(match[0]);
-      
-      let output = '';
-      if (startIdx !== -1 && endIdx !== -1 && endIdx > startIdx) {
-        output = cleanBuf.slice(startIdx + p.startMarker.length, endIdx).trim();
-        const lines = output.split('\n');
-        const cleanLines = lines.filter(line => {
-          const trimmed = line.trim();
-          return !trimmed.startsWith('Write-Host') && 
-                 !trimmed.startsWith('$__ec') &&
-                 !trimmed.includes(p.startMarker) &&
-                 !trimmed.includes(`##ATLS_END_${p.marker}`) &&
-                 !trimmed.includes('NativeCommandError') &&
-                 !trimmed.startsWith('+ CategoryInfo') &&
-                 !trimmed.startsWith('+ FullyQualifiedErrorId') &&
-                 !(trimmed.startsWith("Program '") && trimmed.includes("failed to run:"));
-        });
-        output = cleanLines.join('\n').trim();
-      }
-      
-      p.resolve({ exitCode, output, success: exitCode === 0 });
+      p.resolve(parsed);
       toRemove.push(i);
     }
   }

@@ -7,8 +7,8 @@ use crate::refactor_engine::*;
 use crate::git_ops::{run_git_command, run_shell_cmd_async, index_modified_files, index_deleted_files};
 use crate::code_intel::expand_concept;
 use crate::path_utils::{
-    find_manifest_nearest, serialize_with_format, read_file_with_format,
-    FileFormat, ManifestKind,
+    detect_format, find_manifest_nearest, normalize_line_endings, read_file_with_format,
+    serialize_with_format, FileFormat, ManifestKind,
 };
 /// batch_query - THE primary ATLS interface (33+ operations)
 /// This is the main entry point for all code analysis and editing
@@ -13694,7 +13694,17 @@ pub async fn atls_batch_query(
                     match registry.resolve_content_original(hash) {
                         Some(content) => {
                             let resolved = resolve_project_path(project_root, file_path);
-                            match std::fs::write(&resolved, &content) {
+                            // Registry stores LF-normalized text; preserve on-disk CRLF/LF like other writes.
+                            let fmt = if resolved.exists() {
+                                std::fs::read(&resolved)
+                                    .map(|raw| detect_format(&raw))
+                                    .unwrap_or_else(|_| FileFormat::default())
+                            } else {
+                                FileFormat::default()
+                            };
+                            let normalized = normalize_line_endings(&content);
+                            let bytes = serialize_with_format(&normalized, &fmt);
+                            match std::fs::write(&resolved, &bytes) {
                                 Ok(()) => {
                                     modified_files.push(file_path.to_string());
                                     restored.push(serde_json::json!({
@@ -13723,7 +13733,16 @@ pub async fn atls_batch_query(
                             match undo_content {
                                 Some(content) => {
                                     let resolved = resolve_project_path(project_root, file_path);
-                                    match std::fs::write(&resolved, &content) {
+                                    let fmt = if resolved.exists() {
+                                        std::fs::read(&resolved)
+                                            .map(|raw| detect_format(&raw))
+                                            .unwrap_or_else(|_| FileFormat::default())
+                                    } else {
+                                        FileFormat::default()
+                                    };
+                                    let normalized = normalize_line_endings(&content);
+                                    let bytes = serialize_with_format(&normalized, &fmt);
+                                    match std::fs::write(&resolved, &bytes) {
                                         Ok(()) => {
                                             modified_files.push(file_path.to_string());
                                             restored.push(serde_json::json!({
