@@ -3549,7 +3549,6 @@ export function AiChat() {
                       setEditingMessageId(null);
                       clearRestoreUndo();
                       await loadSession(session.id);
-                      useCostStore.getState().resetChat();
                       setShowHistory(false);
                     }}
                   >

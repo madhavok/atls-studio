@@ -12,8 +12,15 @@
 import { useEffect, useCallback, useRef } from 'react';
 import { useAppStore, type Message, type ChatSession } from '../stores/appStore';
 import { useContextStore, type ContextChunk, type TaskPlan, type ManifestEntry, type TransitionBridge, type StagedSnippet } from '../stores/contextStore';
-import { useCostStore } from '../stores/costStore';
-import { chatDb, type PersistedMemorySnapshot } from '../services/chatDb';
+import { useCostStore, type SubAgentUsage, type AIProvider } from '../stores/costStore';
+import { chatDb, type PersistedMemorySnapshot, type PersistedSubAgentUsageRow } from '../services/chatDb';
+import { useRoundHistoryStore } from '../stores/roundHistoryStore';
+import {
+  readLastActiveSessionId,
+  writeLastActiveSessionId,
+  syncCurrentSessionIdToLocalStorage,
+} from '../services/lastActiveSession';
+import { getCurrentWindow } from '@tauri-apps/api/window';
 import { getGeminiCacheSnapshot, restoreGeminiCacheSnapshot, type GeminiCacheSnapshot } from '../services/aiService';
 import { classifyStageSnippet, MAX_PERSISTENT_STAGE_ENTRY_TOKENS } from '../services/promptMemory';
 
@@ -51,6 +58,53 @@ function migrateLocalStorage(): void {
   }
 }
 
+function subAgentUsagesToRows(usages: SubAgentUsage[]): PersistedSubAgentUsageRow[] {
+  return usages.map((u) => ({
+    invocationId: u.invocationId,
+    type: u.type,
+    provider: u.provider,
+    model: u.model,
+    inputTokens: u.inputTokens,
+    outputTokens: u.outputTokens,
+    cacheReadTokens: u.cacheReadTokens,
+    cacheWriteTokens: u.cacheWriteTokens,
+    costCents: u.costCents,
+    rounds: u.rounds,
+    toolCalls: u.toolCalls,
+    pinTokens: u.pinTokens,
+    timestamp: u.timestamp instanceof Date ? u.timestamp.toISOString() : String(u.timestamp),
+  }));
+}
+
+function rehydrateSubAgentRows(rows: PersistedSubAgentUsageRow[] | undefined): SubAgentUsage[] {
+  if (!rows?.length) return [];
+  return rows.map((r) => ({
+    ...r,
+    provider: r.provider as AIProvider,
+    timestamp: new Date(r.timestamp),
+  }));
+}
+
+/** Apply v4-only fields (prompt/cache metrics, round history, chat cost) after context snapshot. */
+export function applyV4SessionExtras(snapshot: PersistedMemorySnapshot): void {
+  if (snapshot.version !== 4) return;
+  if (snapshot.promptMetrics) {
+    useAppStore.setState({ promptMetrics: { ...useAppStore.getState().promptMetrics, ...snapshot.promptMetrics } });
+  }
+  if (snapshot.cacheMetrics) {
+    useAppStore.setState({ cacheMetrics: { ...useAppStore.getState().cacheMetrics, ...snapshot.cacheMetrics } });
+  }
+  useRoundHistoryStore.setState({ snapshots: snapshot.roundHistorySnapshots ?? [] });
+  if (snapshot.costChat) {
+    useCostStore.getState().restorePersistedChatTotals({
+      chatCostCents: snapshot.costChat.chatCostCents,
+      chatApiCalls: snapshot.costChat.chatApiCalls,
+      chatSubAgentCostCents: snapshot.costChat.chatSubAgentCostCents ?? 0,
+      subAgentUsages: rehydrateSubAgentRows(snapshot.costChat.subAgentUsages),
+    });
+  }
+}
+
 export function serializeMemorySnapshot(
   ctxState: ReturnType<typeof useContextStore.getState>,
   geminiCache: GeminiCacheSnapshot,
@@ -58,8 +112,11 @@ export function serializeMemorySnapshot(
   const persistedStaged = Array.from(ctxState.stagedSnippets.entries())
     .filter(([, snippet]) => snippet.persistencePolicy !== 'doNotPersist')
     .map(([key, snippet]) => [key, normalizePersistedSnippet(key, snippet) ?? snippet] as [string, StagedSnippet]);
+  const app = useAppStore.getState();
+  const cost = useCostStore.getState();
+  const rounds = useRoundHistoryStore.getState();
   return {
-    version: 3,
+    version: 4,
     savedAt: new Date().toISOString(),
     chunks: Array.from(ctxState.chunks.values()),
     archivedChunks: Array.from(ctxState.archivedChunks.values()),
@@ -79,6 +136,15 @@ export function serializeMemorySnapshot(
     memoryEvents: ctxState.memoryEvents,
     reconcileStats: ctxState.reconcileStats,
     geminiCache,
+    promptMetrics: { ...app.promptMetrics },
+    cacheMetrics: { ...app.cacheMetrics },
+    roundHistorySnapshots: [...rounds.snapshots],
+    costChat: {
+      chatCostCents: cost.chatCostCents,
+      chatApiCalls: cost.chatApiCalls,
+      chatSubAgentCostCents: cost.chatSubAgentCostCents,
+      subAgentUsages: subAgentUsagesToRows(cost.subAgentUsages),
+    },
   };
 }
 
@@ -291,6 +357,11 @@ export function useChatPersistence() {
         currentSessionId: sessionId,
       });
       pendingSessionIdRef.current = null;
+      const pp = useAppStore.getState().projectPath;
+      if (pp) {
+        writeLastActiveSessionId(pp, sessionId);
+        syncCurrentSessionIdToLocalStorage(sessionId);
+      }
       console.log('[ChatPersistence] Session saved:', sessionId);
     } catch (error) {
       console.error('[ChatPersistence] Failed to save session:', error);
@@ -335,7 +406,7 @@ export function useChatPersistence() {
       const result = await chatDb.loadFullSession(sessionId);
       if (!result) return false;
       
-      // Restore messages to appStore; reset metrics since they aren't persisted
+      // Restore messages; prompt/cache/cost filled from snapshot v4 or DB below
       useAppStore.setState({
         currentSessionId: sessionId,
         messages: result.messages,
@@ -345,6 +416,7 @@ export function useChatPersistence() {
           totalTokens: result.session.context_usage.total_tokens,
           maxTokens: contextUsage.maxTokens,
           percentage: Math.min(100, (result.session.context_usage.total_tokens / contextUsage.maxTokens) * 100),
+          costCents: result.session.context_usage.cost_cents,
         } : {
           inputTokens: 0,
           outputTokens: 0,
@@ -355,13 +427,14 @@ export function useChatPersistence() {
         promptMetrics: {
           modePromptTokens: 0, toolRefTokens: 0, shellGuideTokens: 0,
           nativeToolTokens: 0, primerTokens: 0, contextControlTokens: 0,
-          workspaceContextTokens: 0,
+          workspaceContextTokens: 0, entryManifestTokens: 0,
           totalOverheadTokens: 0, compressionSavings: 0,
           compressionCount: 0, roundCount: 0, cumulativeInputSaved: 0,
         },
         cacheMetrics: {
           sessionCacheWrites: 0, sessionCacheReads: 0, sessionUncached: 0,
           sessionRequests: 0, lastRequestHitRate: 0, sessionHitRate: 0,
+          lastRequestCachedTokens: undefined,
         },
       });
       
@@ -370,37 +443,48 @@ export function useChatPersistence() {
       contextStore.resetSession(); // Clear existing chunks
 
       let restoredFromSnapshot = false;
+      let memorySnapshot: PersistedMemorySnapshot | null = null;
       try {
-        const snapshot = await chatDb.getMemorySnapshot(sessionId);
-        if (snapshot && (snapshot.version === 2 || snapshot.version === 3)) {
-          const normalizedStagedSnippets = normalizePersistedStagedEntries(snapshot.stagedSnippets);
+        memorySnapshot = await chatDb.getMemorySnapshot(sessionId);
+        if (memorySnapshot && (memorySnapshot.version === 2 || memorySnapshot.version === 3 || memorySnapshot.version === 4)) {
+          const normalizedStagedSnippets = normalizePersistedStagedEntries(memorySnapshot.stagedSnippets);
           useContextStore.setState({
-            chunks: new Map(rehydrateChunkDates(snapshot.chunks).map(chunk => [chunk.hash, chunk])),
-            archivedChunks: new Map(rehydrateChunkDates(snapshot.archivedChunks).map(chunk => [chunk.hash, chunk])),
-            droppedManifest: new Map(snapshot.droppedManifest),
+            chunks: new Map(rehydrateChunkDates(memorySnapshot.chunks).map(chunk => [chunk.hash, chunk])),
+            archivedChunks: new Map(rehydrateChunkDates(memorySnapshot.archivedChunks).map(chunk => [chunk.hash, chunk])),
+            droppedManifest: new Map(memorySnapshot.droppedManifest),
             stagedSnippets: new Map(normalizedStagedSnippets),
-            blackboardEntries: new Map(snapshot.blackboardEntries.map(([key, entry]) => [key, { ...entry, createdAt: new Date(entry.createdAt) }])),
-            cognitiveRules: new Map(snapshot.cognitiveRules.map(([key, rule]) => [key, { ...rule, createdAt: new Date(rule.createdAt) }])),
-            taskPlan: snapshot.taskPlan,
-            task: snapshot.taskPlan,
-            freedTokens: snapshot.freedTokens,
-            stageVersion: snapshot.stageVersion,
-            transitionBridge: snapshot.transitionBridge,
-            batchMetrics: snapshot.batchMetrics,
-            hashStack: snapshot.hashStack,
-            editHashStack: snapshot.editHashStack,
-            readHashStack: snapshot.readHashStack,
-            stageHashStack: snapshot.stageHashStack,
-            memoryEvents: snapshot.memoryEvents ?? [],
-            reconcileStats: snapshot.reconcileStats ?? null,
+            blackboardEntries: new Map(memorySnapshot.blackboardEntries.map(([key, entry]) => [key, { ...entry, createdAt: new Date(entry.createdAt) }])),
+            cognitiveRules: new Map(memorySnapshot.cognitiveRules.map(([key, rule]) => [key, { ...rule, createdAt: new Date(rule.createdAt) }])),
+            taskPlan: memorySnapshot.taskPlan,
+            task: memorySnapshot.taskPlan,
+            freedTokens: memorySnapshot.freedTokens,
+            stageVersion: memorySnapshot.stageVersion,
+            transitionBridge: memorySnapshot.transitionBridge,
+            batchMetrics: memorySnapshot.batchMetrics,
+            hashStack: memorySnapshot.hashStack,
+            editHashStack: memorySnapshot.editHashStack,
+            readHashStack: memorySnapshot.readHashStack,
+            stageHashStack: memorySnapshot.stageHashStack,
+            memoryEvents: memorySnapshot.memoryEvents ?? [],
+            reconcileStats: memorySnapshot.reconcileStats ?? null,
           });
-          if (snapshot.geminiCache) restoreGeminiCacheSnapshot(snapshot.geminiCache);
+          if (memorySnapshot.geminiCache) restoreGeminiCacheSnapshot(memorySnapshot.geminiCache);
           restoredFromSnapshot = true;
-          console.log('[ChatPersistence] Restored memory snapshot');
+          console.log('[ChatPersistence] Restored memory snapshot v' + memorySnapshot.version);
         }
       } catch (e) {
         console.warn('[ChatPersistence] Failed to restore memory snapshot:', e);
         contextStore.setBlackboardEntry('persistence:restore_error', 'Memory snapshot restore failed; falling back to legacy partial restore.');
+      }
+
+      const dbCostCents = result.session.context_usage?.cost_cents ?? 0;
+      if (memorySnapshot?.version === 4) {
+        applyV4SessionExtras(memorySnapshot);
+        if (!memorySnapshot.costChat) {
+          useCostStore.getState().restorePersistedChatTotals({ chatCostCents: dbCostCents });
+        }
+      } else {
+        useCostStore.getState().restorePersistedChatTotals({ chatCostCents: dbCostCents });
       }
 
       if (!restoredFromSnapshot) {
@@ -529,6 +613,10 @@ export function useChatPersistence() {
         }
       }
       
+      const pp = useAppStore.getState().projectPath;
+      if (pp) writeLastActiveSessionId(pp, sessionId);
+      syncCurrentSessionIdToLocalStorage(sessionId);
+
       console.log('[ChatPersistence] Session loaded:', sessionId, 
         `${result.messages.length} messages, ${result.blackboard.length} context chunks`);
       return true;
@@ -537,6 +625,12 @@ export function useChatPersistence() {
       return false;
     }
   }, [contextUsage.maxTokens, saveSession]);
+
+  const loadSessionRef = useRef(loadSession);
+  loadSessionRef.current = loadSession;
+
+  const saveSessionRef = useRef(saveSession);
+  saveSessionRef.current = saveSession;
 
   /**
    * Create a new session
@@ -590,7 +684,14 @@ export function useChatPersistence() {
       
       // Clear context store (includes blackboard entries)
       useContextStore.getState().resetSession();
-      
+      useCostStore.getState().resetChat();
+
+      const pp = useAppStore.getState().projectPath;
+      if (pp) {
+        writeLastActiveSessionId(pp, sessionId);
+        syncCurrentSessionIdToLocalStorage(sessionId);
+      }
+
       console.log('[ChatPersistence] New session created:', sessionId);
       return sessionId;
     } catch (error) {
@@ -616,6 +717,9 @@ export function useChatPersistence() {
       
       // If deleting current session, clear state and metrics
       if (currentSessionId === sessionId) {
+        const pp = useAppStore.getState().projectPath;
+        if (pp) writeLastActiveSessionId(pp, null);
+        syncCurrentSessionIdToLocalStorage(null);
         useAppStore.setState({
           currentSessionId: null,
           messages: [],
@@ -632,6 +736,7 @@ export function useChatPersistence() {
           },
         });
         useContextStore.getState().resetSession();
+        useCostStore.getState().resetChat();
       }
       
       console.log('[ChatPersistence] Session deleted:', sessionId);
@@ -713,13 +818,26 @@ export function useChatPersistence() {
             useContextStore.getState().resetSession();
           }
 
-          // Load sessions from the new project's database
-          loadSessions();
+          // Load sessions and auto-resume last active (or most recent)
+          const sessions = await loadSessions();
+          if (sessions.length > 0) {
+            const st = useAppStore.getState();
+            if (st.messages.length === 0 && !st.currentSessionId) {
+              const lastId = readLastActiveSessionId(projectPath);
+              const targetId = lastId && sessions.some(s => s.id === lastId) ? lastId : sessions[0].id;
+              try {
+                await loadSessionRef.current(targetId);
+              } catch (e) {
+                console.warn('[ChatPersistence] Auto-resume failed:', e);
+              }
+            }
+          }
         }
       };
-      init();
+      void init();
     } else {
       chatDb.close();
+      syncCurrentSessionIdToLocalStorage(null);
       // Clear everything when no project
       useAppStore.setState({
         chatSessions: [],
@@ -735,7 +853,7 @@ export function useChatPersistence() {
         saveSession();
       }
     };
-  }, [projectPath, initChatDb, loadSessions]);
+  }, [projectPath, initChatDb, loadSessions, contextUsage.maxTokens, messages.length]);
 
   // Best-effort save on window close / refresh
   useEffect(() => {
@@ -748,6 +866,39 @@ export function useChatPersistence() {
     window.addEventListener('beforeunload', handleBeforeUnload);
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
   }, [messages.length, saveSession]);
+
+  // Tauri: await final save before window closes (beforeunload cannot reliably flush async IO)
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    let cancelled = false;
+    const run = async () => {
+      try {
+        const w = getCurrentWindow();
+        let finishing = false;
+        unlisten = await w.onCloseRequested(async (event) => {
+          if (finishing) return;
+          event.preventDefault();
+          finishing = true;
+          try {
+            await saveSessionRef.current();
+          } catch (err) {
+            console.warn('[ChatPersistence] Final save on close failed:', err);
+          } finally {
+            unlisten?.();
+            unlisten = undefined;
+            if (!cancelled) await w.close();
+          }
+        });
+      } catch {
+        /* Web dev / non-Tauri */
+      }
+    };
+    void run();
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, []);
 
   // Auto-save on message changes (debounced)
   useEffect(() => {
@@ -827,6 +978,7 @@ export function useChatPersistence() {
       reconcileStats: snapshot.reconcileStats ?? null,
     });
     if (snapshot.geminiCache) restoreGeminiCacheSnapshot(snapshot.geminiCache);
+    applyV4SessionExtras(snapshot);
   }, []);
 
   /**

@@ -47,7 +47,11 @@ describe('memory snapshot helpers', () => {
       vertexCachedMessageCount: 0,
     });
 
-    expect(snapshot.version).toBe(3);
+    expect(snapshot.version).toBe(4);
+    expect(snapshot.promptMetrics).toBeDefined();
+    expect(snapshot.cacheMetrics).toBeDefined();
+    expect(snapshot.costChat).toBeDefined();
+    expect(snapshot.roundHistorySnapshots).toEqual([]);
     expect(snapshot.chunks).toHaveLength(1);
     expect(snapshot.stagedSnippets).toHaveLength(1);
     expect(snapshot.chunks[0]?.lastRebind).toMatchObject({

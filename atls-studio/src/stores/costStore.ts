@@ -340,6 +340,13 @@ interface CostState {
   recordRefDensity: (ratio: number) => void;
   recordSetRefReplacement: (tokensSaved: number) => void;
   resetChat: () => void;
+  /** Restore per-conversation totals after loading a session from persistence (cold start / history). */
+  restorePersistedChatTotals: (payload: {
+    chatCostCents: number;
+    chatApiCalls?: number;
+    chatSubAgentCostCents?: number;
+    subAgentUsages?: SubAgentUsage[];
+  }) => void;
   resetSession: () => void;
   setLimits: (daily: number | null, monthly: number | null) => void;
   clearAllData: () => void;
@@ -500,6 +507,15 @@ export const useCostStore = create<CostState>((set, get) => {
         refDensityHistory: [],
         setRefReplacements: 0,
         setRefTokensSaved: 0,
+      });
+    },
+
+    restorePersistedChatTotals: (payload) => {
+      set({
+        chatCostCents: Math.max(0, payload.chatCostCents),
+        chatApiCalls: Math.max(0, payload.chatApiCalls ?? 0),
+        chatSubAgentCostCents: Math.max(0, payload.chatSubAgentCostCents ?? 0),
+        subAgentUsages: payload.subAgentUsages ?? [],
       });
     },
 

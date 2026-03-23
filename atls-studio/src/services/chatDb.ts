@@ -10,6 +10,7 @@ import type { Message, MessageSegment, ChatSession } from '../stores/appStore';
 import { extractFirstTextFromMessage, getMessageParts } from '../stores/appStore';
 import type { ContextChunk, ChunkType, BlackboardEntry, CognitiveRule, ManifestEntry, ReconcileStats, StagedSnippet, TaskPlan, TransitionBridge, MemoryEvent } from '../stores/contextStore';
 import type { GeminiCacheSnapshot } from './aiService';
+import type { RoundSnapshot } from '../stores/roundHistoryStore';
 
 // ============================================================================
 // Database Types
@@ -923,8 +924,61 @@ export interface StagedSnippetData {
   viewKind?: 'latest' | 'snapshot' | 'derived';
 }
 
+/** Mirrors PromptMetrics / CacheMetrics for JSON snapshots (avoids circular imports). */
+export interface PersistedPromptMetrics {
+  modePromptTokens: number;
+  toolRefTokens: number;
+  shellGuideTokens: number;
+  nativeToolTokens: number;
+  primerTokens: number;
+  contextControlTokens: number;
+  workspaceContextTokens: number;
+  entryManifestTokens?: number;
+  totalOverheadTokens: number;
+  compressionSavings: number;
+  compressionCount: number;
+  roundCount: number;
+  cumulativeInputSaved: number;
+  bp2ToolDefTokens?: number;
+  bp3PriorTurnsTokens?: number;
+}
+
+export interface PersistedCacheMetrics {
+  sessionCacheWrites: number;
+  sessionCacheReads: number;
+  sessionUncached: number;
+  sessionRequests: number;
+  lastRequestHitRate: number;
+  sessionHitRate: number;
+  lastRequestCachedTokens?: number;
+}
+
+/** SubAgent usage row as stored in JSON (timestamp ISO string). */
+export interface PersistedSubAgentUsageRow {
+  invocationId: string;
+  type: 'retriever' | 'design';
+  provider: string;
+  model: string;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  costCents: number;
+  rounds: number;
+  toolCalls: number;
+  pinTokens: number;
+  timestamp: string;
+}
+
+export interface PersistedCostChat {
+  chatCostCents: number;
+  chatApiCalls: number;
+  chatSubAgentCostCents?: number;
+  subAgentUsages?: PersistedSubAgentUsageRow[];
+}
+
 export interface PersistedMemorySnapshot {
-  version: 2 | 3;
+  version: 2 | 3 | 4;
   savedAt: string;
   chunks: ContextChunk[];
   archivedChunks: ContextChunk[];
@@ -944,6 +998,11 @@ export interface PersistedMemorySnapshot {
   memoryEvents: MemoryEvent[];
   reconcileStats: ReconcileStats | null;
   geminiCache?: GeminiCacheSnapshot | null;
+  /** v4+: session-scoped UI/runtime parity */
+  promptMetrics?: PersistedPromptMetrics;
+  cacheMetrics?: PersistedCacheMetrics;
+  roundHistorySnapshots?: RoundSnapshot[];
+  costChat?: PersistedCostChat;
 }
 
 export interface DbHashRegistryEntry {
