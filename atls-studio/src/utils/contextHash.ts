@@ -81,9 +81,8 @@ export function hashContentSync(content: string): string {
  *   - Whitespace-heavy (padding, blank lines): ~5 chars/token
  */
 export function estimateTokens(content: string): number {
-  if (!content) return 0;
+  if (!content || content.length === 0) return 0;
   const len = content.length;
-  if (len === 0) return 0;
 
   let hasCode = false;
   let newlineCount = 0;

@@ -490,7 +490,17 @@ export const useCostStore = create<CostState>((set, get) => {
     },
 
     resetChat: () => {
-      set({ chatCostCents: 0, chatApiCalls: 0, subAgentUsages: [], chatSubAgentCostCents: 0 });
+      set({
+        chatCostCents: 0,
+        chatApiCalls: 0,
+        subAgentUsages: [],
+        chatSubAgentCostCents: 0,
+        outputTokensSaved: 0,
+        outputDedupsApplied: 0,
+        refDensityHistory: [],
+        setRefReplacements: 0,
+        setRefTokensSaved: 0,
+      });
     },
 
     resetSession: () => {
@@ -611,13 +621,13 @@ export const useCostStore = create<CostState>((set, get) => {
 
 // Helper to format cost in dollars
 export function formatCost(cents: number): string {
-  if (cents < 1) {
+  if (cents === 0) return '$0.00';
+  if (Math.abs(cents) < 0.1) {
     return `$${(cents / 100).toFixed(4)}`;
-  } else if (cents < 100) {
-    return `$${(cents / 100).toFixed(2)}`;
-  } else {
-    return `$${(cents / 100).toFixed(2)}`;
+  } else if (Math.abs(cents) < 1) {
+    return `$${(cents / 100).toFixed(3)}`;
   }
+  return `$${(cents / 100).toFixed(2)}`;
 }
 
 // Helper to format token count

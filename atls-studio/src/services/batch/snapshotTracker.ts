@@ -88,7 +88,9 @@ export class SnapshotTracker {
     const existing = this.snapshots.get(key);
 
     if (existing && existing.readKind === 'canonical' && readKind !== 'canonical') {
-      // Don't downgrade readKind, but still accumulate readRegions and shapeHash
+      // Don't downgrade readKind, but still update snapshotHash and accumulate readRegions/shapeHash
+      existing.snapshotHash = bare;
+      existing.readAt = Date.now();
       if (opts?.readRegion) {
         const regions = existing.readRegions ? [...existing.readRegions, opts.readRegion] : [opts.readRegion];
         existing.readRegions = mergeRanges(regions);

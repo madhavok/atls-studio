@@ -70,24 +70,21 @@ const TITLE_MAX_LENGTH = 50;
 
 // Generate chat title from first user message (handles multimodal/segmented)
 function generateTitle(messages: Message[]): string {
+  const truncate = (text: string) => {
+    const chars = Array.from(text);
+    const truncated = chars.slice(0, TITLE_MAX_LENGTH).join('');
+    return chars.length > TITLE_MAX_LENGTH ? truncated + '...' : truncated;
+  };
   const firstUser = messages.find(m => m.role === 'user');
   if (firstUser) {
     const text = extractFirstTextFromMessage(firstUser);
-    if (text) {
-      const chars = Array.from(text);
-      const truncated = chars.slice(0, TITLE_MAX_LENGTH).join('');
-      return chars.length > TITLE_MAX_LENGTH ? truncated + '...' : truncated;
-    }
+    if (text) return truncate(text);
   }
   // Fallback: use first assistant message text (e.g. tool-only conversations)
   const firstAssistant = messages.find(m => m.role === 'assistant');
   if (firstAssistant) {
     const text = extractFirstTextFromMessage(firstAssistant);
-    if (text) {
-      const chars = Array.from(text);
-      const truncated = chars.slice(0, TITLE_MAX_LENGTH).join('');
-      return chars.length > TITLE_MAX_LENGTH ? truncated + '...' : truncated;
-    }
+    if (text) return truncate(text);
   }
   return 'New Chat';
 }
@@ -693,7 +690,7 @@ export const useAppStore = create<AppState>((set) => ({
         for (let i = from; i <= to; i++) {
           newSelected.add(allVisiblePaths[i]);
         }
-        return { selectedFiles: newSelected, lastSelectedFile, selectedFile: path };
+        return { selectedFiles: newSelected, lastSelectedFile: path, selectedFile: path };
       }
       // Target path not in visible list — no-op, preserve current selection
       return { selectedFiles: newSelected, lastSelectedFile, selectedFile: state.selectedFile };
@@ -834,7 +831,7 @@ export const useAppStore = create<AppState>((set) => ({
       promptMetrics: {
         modePromptTokens: 0, toolRefTokens: 0, shellGuideTokens: 0,
         nativeToolTokens: 0, primerTokens: 0, contextControlTokens: 0,
-        workspaceContextTokens: 0,
+        workspaceContextTokens: 0, entryManifestTokens: 0,
         totalOverheadTokens: 0, compressionSavings: 0,
         compressionCount: 0, roundCount: 0, cumulativeInputSaved: 0,
       },
@@ -878,12 +875,12 @@ export const useAppStore = create<AppState>((set) => ({
           totalOverheadTokens: 0, compressionSavings: 0,
           compressionCount: 0, roundCount: 0, cumulativeInputSaved: 0,
         },
-      cacheMetrics: {
-        sessionCacheWrites: 0, sessionCacheReads: 0, sessionUncached: 0,
-        sessionRequests: 0, lastRequestHitRate: 0, sessionHitRate: 0,
-        lastRequestCachedTokens: undefined,
-      },
-    };
+        cacheMetrics: {
+          sessionCacheWrites: 0, sessionCacheReads: 0, sessionUncached: 0,
+          sessionRequests: 0, lastRequestHitRate: 0, sessionHitRate: 0,
+          lastRequestCachedTokens: undefined,
+        },
+      };
     }
     return { chatSessions: newSessions };
   }),
