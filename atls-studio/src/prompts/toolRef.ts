@@ -44,7 +44,7 @@ change.split_module source_file:"" target_dir:"" plan:[{module,symbols:[]}] dry_
 verify.build|test|lint|typecheck target_dir?:"" workspace?:"" runner?:""
 system.git action:status|diff|stage|unstage|commit|push|log|reset|restore workspace?:"" files?:[] message?:"" all?:bool
 system.workspaces action:list|search|add|remove|set_active|rescan
-system.exec cmd:"" terminal_id?:""
+system.exec cmd:"" terminal_id?:"" — cmd is written to a temp .ps1 and run via call with a single-quoted path in the agent shell; ATLS wraps with markers and capture. Valid PowerShell (stray closing braces can still break the inner scriptblock).
 delegate.retrieve query:"" focus_files?:[] max_tokens?:N
 delegate.design query:"" focus_files?:[] max_tokens?:N
 session.bb.write key:"" content:"" derived_from?:[]
@@ -106,7 +106,7 @@ on_error: "stop"|"continue"|"rollback" per step.
 - deletes, delete (rollback): paths or h:refs — resolve to path
 - hashes (session.pin/unpin/compact/unload/drop/recall): h:refs pass-through
 - restore items: file and hash accept h:refs
-- system.exec: Windows agent shell is PowerShell — tail/cat may be missing; prefer verify.build / verify.typecheck for checks, or Select-Object -Last N to trim logs; empty (no output) often means a bad pipeline or trim-to-nothing
+- system.exec: Windows agent shell is PowerShell — cmd is saved to a temp .ps1 file then executed (not a pasted one-liner); prefer system.git for read-only git; tail/cat may be missing; prefer verify.build / verify.typecheck for checks, or Select-Object -Last N to trim logs; empty (no output) often means a bad pipeline or trim-to-nothing
 - line_edits discipline: the system tracks live file state and injects fresh hashes automatically — reads are for **content grounding** (seeing what's at which lines), not for hash currency. If the file is already in context (prior read, edit, search hit, or staged engram), no additional read is needed before editing. Read only when you have **no content visibility** for the target range, or on stale_hash / authority_mismatch errors. Never guess ranges from memory. After any interaction, chain from h:NEW. Edits apply **sequentially in array order** — each line number targets the file state after all prior edits (insert +N shifts subsequent targets by +N). Count braces in braced languages so replacement blocks balance. Prefer anchor for nested / scope-sensitive edits; use anchors when nesting/scope makes line math unsafe. For simple spans with visible content, line+count+action:"replace" — no old text needed. For 200+ line files, always derive line numbers from visible engram content or read.lines output.
 - use refactor, not edit, for cross-file extract/move/rename flows
 - hash-building refactor: read.shaped(shape:"sig") → h:SOURCE; change.create file body = imports + h:XXXX:sym(Name):dedent + exports (compose from pointers, no pasted bodies); strip source with change.edit line_edits delete (or refactor) on extracted span; verify.typecheck

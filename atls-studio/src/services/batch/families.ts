@@ -125,7 +125,7 @@ export const OPERATION_FAMILIES = {
   system: {
     icon: '⌨️',
     ops: [
-      { op: 'system.exec' },
+      { op: 'system.exec', hint: 'cmd → temp .ps1' },
       { op: 'system.git' },
       { op: 'system.workspaces' },
       { op: 'system.help' },

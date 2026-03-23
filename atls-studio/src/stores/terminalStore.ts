@@ -102,6 +102,43 @@ interface TerminalStore {
 // Sleep helper
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
+const PS1_NL = '\r\n';
+
+/**
+ * Temp `.ps1` body: user command is opaque text (multi-line OK). No JS template on user text.
+ * Executed via `& 'path'` in the PTY — short line, no giant one-liner / wrap issues.
+ */
+export function buildAgentExecPs1Content(
+  userCommand: string,
+  startMarker: string,
+  endMarker: string,
+): string {
+  return (
+    '$ErrorActionPreference = "Continue"'
+    + PS1_NL
+    + 'Write-Host "'
+    + startMarker
+    + '"'
+    + PS1_NL
+    + '$__atlsOut = & { '
+    + userCommand
+    + ' } 2>&1 | Out-String'
+    + PS1_NL
+    + 'if ($__atlsOut) { Write-Output $__atlsOut }'
+    + PS1_NL
+    + '$__ec = if ($?) { if ($LASTEXITCODE) { $LASTEXITCODE } else { 0 } } else { if ($LASTEXITCODE) { $LASTEXITCODE } else { 1 } }'
+    + PS1_NL
+    + 'Write-Host "'
+    + endMarker
+    + '$__ec##"'
+  );
+}
+
+/** PowerShell single-quoted literal: double each embedded `'`. */
+export function escapePsSingleQuotedPath(path: string): string {
+  return path.replace(/'/g, "''");
+}
+
 // Maximum output buffer size (chunks)
 const MAX_OUTPUT_BUFFER_SIZE = 1000;
 
@@ -201,8 +238,7 @@ function processAgentDisplayChunk(terminalId: string, data: string): void {
         }
         break;
       case 'streaming': {
-        // END marker can appear mid-line (PowerShell concatenates output
-        // with the next Write-Host when | Out-String flushes).
+        // END marker can appear mid-line (streaming stdout + Write-Host end on same visual line).
         const endIdx = endTag ? clean.indexOf(endTag) : -1;
         if (endIdx !== -1) {
           // Capture any output text before the marker on this line
@@ -728,25 +764,41 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
       scheduleAgentLogFlush();
     }
 
-    // Register completion handler BEFORE sending command (event-driven, no polling)
-    const completionPromise = registerPendingCompletion(terminalId, marker, startMarker, 30000);
+    const ps1Content = buildAgentExecPs1Content(command, startMarker, endMarker);
+    let ps1Path: string | null = null;
 
-    // PowerShell command with markers
-    // Note: $LASTEXITCODE may be null for cmdlets, so we default to 0
-    const wrapped = `Write-Host "${startMarker}"; & { ${command} } 2>&1 | Out-String; $__ec = if ($?) { if ($LASTEXITCODE) { $LASTEXITCODE } else { 0 } } else { if ($LASTEXITCODE) { $LASTEXITCODE } else { 1 } }; Write-Host "${endMarker}$__ec##"`;
-
-    // Write to PTY — use \r only; \r\n causes a double-Enter on Windows ConPTY
     try {
-      await invoke('write_pty', { id: terminalId, data: wrapped + '\r' });
+      ps1Path = await invoke<string>('write_agent_exec_ps1', { content: ps1Content });
     } catch (error) {
       if (terminal.isAgent && agentEntryId) {
         finalizeAgentEntry(terminalId, agentEntryId, -1, 'error');
       }
+      return { exitCode: -1, output: `Failed to write agent exec script: ${error}`, success: false };
+    }
+
+    // Register completion after script is on disk; before PTY runs it
+    const completionPromise = registerPendingCompletion(terminalId, marker, startMarker, 30000);
+
+    const invokeLine = '& ' + "'" + escapePsSingleQuotedPath(ps1Path) + "'";
+
+    // Write to PTY — use \r only; \r\n causes a double-Enter on Windows ConPTY
+    try {
+      await invoke('write_pty', { id: terminalId, data: invokeLine + '\r' });
+    } catch (error) {
+      if (terminal.isAgent && agentEntryId) {
+        finalizeAgentEntry(terminalId, agentEntryId, -1, 'error');
+      }
+      await invoke('remove_temp_file', { path: ps1Path }).catch(() => {});
       return { exitCode: -1, output: `Failed to write to terminal: ${error}`, success: false };
     }
 
     // Wait for completion (event-driven - resolves when marker detected in output)
-    const result = await completionPromise;
+    let result: ExecutionResult;
+    try {
+      result = await completionPromise;
+    } finally {
+      await invoke('remove_temp_file', { path: ps1Path }).catch(() => {});
+    }
 
     // Finalize agent display entry
     if (terminal.isAgent && agentEntryId) {
@@ -837,6 +889,48 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
     });
   },
 }));
+
+// ---------------------------------------------------------------------------
+// Main-agent terminal session cache (system.exec / system.git reuse one PTY)
+// ---------------------------------------------------------------------------
+
+let _mainAgentTerminalId: string | null = null;
+
+/** Clear cached main-agent terminal. Called when a new AI session starts. */
+export function resetMainAgentTerminal(): void {
+  _mainAgentTerminalId = null;
+}
+
+export function resolveTerminalTarget(
+  explicitId: string | undefined,
+  ctx: { swarmTerminalId?: string; isSwarmAgent?: boolean },
+): string | null {
+  if (explicitId) return explicitId;
+  if (ctx.swarmTerminalId) return ctx.swarmTerminalId;
+  if (_mainAgentTerminalId) {
+    const t = useTerminalStore.getState().terminals.get(_mainAgentTerminalId);
+    if (t?.isAlive) return _mainAgentTerminalId;
+    _mainAgentTerminalId = null;
+  }
+  return null;
+}
+
+export async function ensureTerminalTarget(
+  explicitId: string | undefined,
+  ctx: { swarmTerminalId?: string; isSwarmAgent?: boolean },
+): Promise<string> {
+  const id = resolveTerminalTarget(explicitId, ctx);
+  if (id) return id;
+  const terminalStore = useTerminalStore.getState();
+  const newId = await terminalStore.createTerminal(undefined, {
+    background: true,
+    isAgent: true,
+    name: ctx.isSwarmAgent ? undefined : 'Agent',
+  });
+  await new Promise(resolve => setTimeout(resolve, 150));
+  if (!ctx.isSwarmAgent) _mainAgentTerminalId = newId;
+  return newId;
+}
 
 // Export singleton accessor for non-React contexts
 export const getTerminalStore = () => useTerminalStore.getState();

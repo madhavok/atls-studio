@@ -2,8 +2,7 @@
  * System operation handlers — terminal exec and backend utility passthroughs.
  */
 
-import { useAppStore } from '../../../stores/appStore';
-import { getTerminalStore } from '../../../stores/terminalStore';
+import { ensureTerminalTarget, getTerminalStore } from '../../../stores/terminalStore';
 import { toTOON } from '../../../utils/toon';
 import type { HandlerContext, OpHandler, StepOutput } from '../types';
 
@@ -14,37 +13,58 @@ export function prefixFilePath(path: string, relPath: string): string {
   if (p === r || p.startsWith(r + '/')) return path;
   return `${r}/${p}`;
 }
-function sanitizeExecOutput(output: string): string {
+/** Strip PTY echo noise and PowerShell cd error blocks; exported for unit tests. */
+export function sanitizeExecOutput(output: string): string {
   const normalized = output.replace(/\r\n/g, '\n').trim();
   if (!normalized) return '';
 
   const lines = normalized.split('\n');
   let start = 0;
 
-  // Strip the echoed wrapped command line (starts with "; " from the quote after the start marker)
-  if (lines[0]?.startsWith('"; ') && lines[0].includes('Out-String')) {
-    start = 1;
-  }
-  // Also strip lines that look like the full wrapped command echo (starts with & { or Write-Host)
+  // Strip echoed wrapper — ConPTY often splits so the next line starts with `"; ` (continuation of Write-Host "...")
   while (start < lines.length) {
     const trimmed = lines[start]?.trim() ?? '';
-    if (trimmed.startsWith('& {') && trimmed.includes('Out-String')) { start++; continue; }
-    if (trimmed.startsWith('Write-Host "##ATLS_')) { start++; continue; }
+    if (trimmed.startsWith('Write-Host "##ATLS_')) {
+      start++;
+      continue;
+    }
+    if (
+      (trimmed.startsWith('";') || trimmed.startsWith(';'))
+      && (trimmed.includes('& {') || trimmed.includes('2>&1') || trimmed.includes('$__ec'))
+    ) {
+      start++;
+      continue;
+    }
+    if (
+      trimmed.startsWith('& {')
+      && (trimmed.includes('2>&1') || trimmed.includes('$__ec'))
+    ) {
+      start++;
+      continue;
+    }
+    // Echoed `& '...\atls-agent-exec-....ps1'` invoke line
+    if (
+      trimmed.startsWith('& ')
+      && trimmed.includes('atls-agent-exec-')
+      && trimmed.includes('.ps1')
+    ) {
+      start++;
+      continue;
+    }
     break;
   }
 
   // Strip PowerShell "cd : Cannot find path" error blocks
   while (start < lines.length && lines[start]?.startsWith('cd : Cannot find path ')) {
     start += 1;
-    // Skip the structured error continuation lines (At line:, + CategoryInfo, etc.)
     while (start < lines.length) {
       const line = lines[start]?.trim() ?? '';
       if (
-        line === '' ||
-        line.startsWith('At line:') ||
-        line.startsWith('+ CategoryInfo') ||
-        line.startsWith('+ FullyQualifiedErrorId') ||
-        /^[~\s^]+$/.test(line)
+        line === ''
+        || line.startsWith('At line:')
+        || line.startsWith('+ CategoryInfo')
+        || line.startsWith('+ FullyQualifiedErrorId')
+        || /^[~\s^]+$/.test(line)
       ) {
         start += 1;
         continue;
@@ -53,7 +73,12 @@ function sanitizeExecOutput(output: string): string {
     }
   }
 
-  return lines.slice(start).join('\n').trim();
+  let rest = lines.slice(start).join('\n').trim();
+  // Strip any leaked ATLS markers (8-char id from randomUUID().slice(0, 8))
+  rest = rest.replace(/##ATLS_START_[a-fA-F0-9]{8}##/g, '');
+  rest = rest.replace(/##ATLS_END_[a-fA-F0-9]{8}_(?:-?\d+|\$__ec)##/g, '');
+  rest = rest.replace(/##ATLS_END_[a-fA-F0-9]{8}[^#\n]*##/g, '');
+  return rest.replace(/\n{3,}/g, '\n\n').trim();
 }
 
 function ok(summary: string, content?: unknown): StepOutput {
@@ -64,57 +89,12 @@ function err(summary: string): StepOutput {
   return { kind: 'raw', ok: false, refs: [], summary, error: summary };
 }
 
-// Session-scoped agent terminal for the main (non-swarm) agent.
-// Reused across exec calls within the same AI session to avoid spawning
-// a new PTY for every command. Reset via resetMainAgentTerminal().
-let _mainAgentTerminalId: string | null = null;
-
-/** Clear cached main-agent terminal. Called when a new AI session starts. */
-export function resetMainAgentTerminal(): void {
-  _mainAgentTerminalId = null;
-}
-
-export function resolveTerminalTarget(
-  explicitId: string | undefined,
-  ctx: { swarmTerminalId?: string; isSwarmAgent?: boolean },
-): string | null {
-  if (explicitId) return explicitId;
-  if (ctx.swarmTerminalId) return ctx.swarmTerminalId;
-  // Reuse cached main-agent terminal if still alive
-  if (_mainAgentTerminalId) {
-    const t = getTerminalStore().terminals.get(_mainAgentTerminalId);
-    if (t?.isAlive) return _mainAgentTerminalId;
-    _mainAgentTerminalId = null;
-  }
-  return null;
-}
-
-async function ensureTerminalTarget(
-  explicitId: string | undefined,
-  ctx: { swarmTerminalId?: string; isSwarmAgent?: boolean },
-): Promise<string> {
-  const id = resolveTerminalTarget(explicitId, ctx);
-  if (id) return id;
-  // All AI-driven commands use agent terminals
-  const terminalStore = getTerminalStore();
-  const newId = await terminalStore.createTerminal(undefined, {
-    background: true,
-    isAgent: true,
-    name: ctx.isSwarmAgent ? undefined : 'Agent',
-  });
-  await new Promise(resolve => setTimeout(resolve, 150));
-  // Cache for the main (non-swarm) agent session
-  if (!ctx.isSwarmAgent) _mainAgentTerminalId = newId;
-  return newId;
-}
-
 export const handleSystemExec: OpHandler = async (params, ctx) => {
   const cmd = params.cmd as string | undefined;
   if (!cmd) return err('system.exec: ERROR missing cmd');
 
   const terminalStore = getTerminalStore();
   const targetId = await ensureTerminalTarget(params.terminal_id as string | undefined, ctx);
-  useAppStore.getState().setTerminalOpen(true);
 
   try {
     const result = await terminalStore.executeCommand(cmd, targetId);
@@ -207,8 +187,6 @@ export const handleSystemGit: OpHandler = async (params, ctx) => {
   if (gitCmd && mutatingActions.includes(action)) {
     const terminalStore = getTerminalStore();
     const targetId = await ensureTerminalTarget(params.terminal_id as string | undefined, ctx);
-
-    useAppStore.getState().setTerminalOpen(true);
 
     try {
       const result = await terminalStore.executeCommand(gitCmd, targetId);

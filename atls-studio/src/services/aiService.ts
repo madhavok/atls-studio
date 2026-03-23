@@ -141,7 +141,7 @@ import {
   type UnifiedBatchRequest,
   type UnifiedBatchResult,
 } from './batch';
-import { resetMainAgentTerminal } from './batch/handlers/system';
+import { resetMainAgentTerminal } from '../stores/terminalStore';
 import type { ExpandedFilePath } from './batch/types';
 import { formatBatchResult } from './batch/resultFormatter';
 import { coerceBatchSteps } from './batch/coerceBatchSteps';
@@ -2766,7 +2766,7 @@ function _buildStaticSystemPrompt(
   let toolRef = atlsReady 
     ? (mode === 'designer' ? DESIGNER_TOOL_REF : BATCH_TOOL_REF)
     : `## Terminal Only (ATLS not initialized - open a project first)
-batch({version:"1.0",steps:[{id:"exec",use:"system.exec",with:{cmd:"..."}}]}) → run command`;
+batch({version:"1.0",steps:[{id:"exec",use:"system.exec",with:{cmd:"..."}}]}) → write cmd to temp .ps1 and run in agent shell`;
 
   // Append subagent tool ref when subagent enabled
   if (subagentEnabled) {

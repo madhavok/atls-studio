@@ -80,7 +80,7 @@ Ex: {file:"h:def456", line:3, anchor:"import { fetchData } from '../api'", actio
 
 ## VERIFY AND STOP
 - Trust the \`status\` field: \`pass-with-warnings\` is success. \`tool-error\` is retryable — not a code failure.
-- If system.exec shows exit code 0, that overrides a wrapper "failed" label unless there are parsed compiler errors.
+- If system.exec shows exit code 0, that overrides an ATLS instrumentation "failed" label unless there are parsed compiler errors.
 - Once verify returns \`pass\` or \`pass-with-warnings\` and requested edits are complete, stop. Do not re-verify the same evidence.
 - On \`tool-error\`, stop and address the cause (bad path, missing toolchain) before retrying. Do not loop.
 - Hard stop signals: status:"paused", preview, dry_run, action_required, confirm:true, resume_after. Do not queue later side effects while any are unresolved.

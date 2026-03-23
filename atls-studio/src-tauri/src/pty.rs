@@ -265,6 +265,38 @@ fn is_busy_unix_from_pgid(pgid: Option<i32>, shell_pid: u32) -> Result<bool, Str
     }
 }
 
+const UTF8_BOM: &[u8] = &[0xEF, 0xBB, 0xBF];
+
+/// Write a UTF-8 (with BOM) temp `.ps1` for agent exec; returns absolute path.
+/// Caller runs `& 'path'` in the PTY and deletes the file when done.
+#[tauri::command]
+pub async fn write_agent_exec_ps1(content: String) -> Result<String, String> {
+    let dir = std::env::temp_dir();
+    let id = format!(
+        "{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|e| e.to_string())?
+            .as_nanos()
+    );
+    let path = dir.join(format!("atls-agent-exec-{id}.ps1"));
+    let mut bytes: Vec<u8> = Vec::with_capacity(UTF8_BOM.len() + content.len());
+    bytes.extend_from_slice(UTF8_BOM);
+    bytes.extend_from_slice(content.as_bytes());
+    std::fs::write(&path, bytes).map_err(|e| e.to_string())?;
+    Ok(path.to_string_lossy().into_owned())
+}
+
+#[tauri::command]
+pub async fn remove_temp_file(path: String) -> Result<(), String> {
+    let p = std::path::Path::new(&path);
+    if p.exists() {
+        std::fs::remove_file(p).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 /// Kill PTY terminal, reaping the child process to prevent zombies and FD leaks.
 #[tauri::command]
 pub async fn kill_pty(app: AppHandle, id: String) -> Result<(), String> {

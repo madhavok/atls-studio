@@ -7,6 +7,7 @@ const POWERSHELL_DOCS = `## SHELL: PowerShell (Windows)
 Shell is for system operations ONLY: builds, packages, git, process management.
 For ALL code operations (read, search, edit, refactor): use ATLS tools.
 NEVER use Get-Content, Select-String, or regex scripts on code files.
+system.exec: your command is written to a temp **.ps1** and run with \`& 'path'\`; the file wraps it in \`& { … } 2>&1 | Out-String\` plus markers. Valid PowerShell; stray \`}\` can still break the inner block.
 | Task | Command |
 |------|---------|
 | Build | cargo build, npm run build |

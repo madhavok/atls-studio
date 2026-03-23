@@ -102,4 +102,10 @@ Write-Host only
     expect(r!.exitCode).toBe(0);
     expect(r!.output).toBe('hello');
   });
+
+  it('does not complete on embedded end marker in echoed wrapper only (premature parse)', () => {
+    // Same echoed line as real PTY — ##ATLS_END inside Write-Host "..." is preceded by " and must not finish the parse.
+    const echoOnly = `Write-Host "${startMarker}"; echo hello; Write-Host "##ATLS_END_${marker}_$__ec##"`;
+    expect(tryParseAgentExecPtyBuffer(echoOnly, marker, startMarker)).toBeNull();
+  });
 });

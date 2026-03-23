@@ -126,8 +126,6 @@ export function estimateTokens(content: string): number {
   const nonCjkLen = len - cjkCount;
   const cjkTokens = Math.ceil(cjkCount * 1.5);
   return Math.max(1, Math.ceil(nonCjkLen / charsPerToken) + cjkTokens);
-  const pinIndicator = pinned ? '📌 ' : '';
-  return `${pinIndicator}${formatChunkTag(shortHash, tokens, type, source)}`;
 }
 
 /**

@@ -7,10 +7,8 @@
  * see what ran.
  */
 
-import { useAppStore } from '../../../stores/appStore';
-import { getTerminalStore } from '../../../stores/terminalStore';
+import { getTerminalStore, resolveTerminalTarget } from '../../../stores/terminalStore';
 import { buildWorkspaceVerifyHint } from '../../toolHelpers';
-import { resolveTerminalTarget } from './system';
 import type { OpHandler, StepOutput, VerifyClassification } from '../types';
 
 const VALID_STATUSES: readonly string[] = ['pass', 'pass-with-warnings', 'fail', 'tool-error'];
@@ -45,7 +43,6 @@ async function echoVerifyToTerminal(
       return;
     }
 
-    useAppStore.getState().setTerminalOpen(true);
     const statusIcon = passed ? '\x1b[32m\u2713\x1b[0m' : '\x1b[31m\u2717\x1b[0m';
     const line = `\r\n\x1b[90m[verify.${mode}]\x1b[0m ${statusIcon} ${command}\r\n`;
     await terminalStore.writeRaw(targetId, `echo "${line.replace(/"/g, '`"')}"\r`);

@@ -2124,6 +2124,8 @@ pub fn run() {
             pty::resize_pty,
             pty::kill_pty,
             pty::is_pty_busy,
+            pty::write_agent_exec_ps1,
+            pty::remove_temp_file,
             // AI Execution API (Structured Output)
             ai_execute::ai_execute,
             ai_execute::ai_execute_background,
