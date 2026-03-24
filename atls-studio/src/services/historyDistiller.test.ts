@@ -21,6 +21,7 @@ describe('historyDistiller', () => {
       filesChanged: ['a.ts'],
       userPreferences: [],
       workDone: [],
+      findings: [],
       errors: [],
     });
     expect(b.decisions).toEqual(['Use X']);
@@ -117,12 +118,14 @@ describe('historyDistiller', () => {
         filesChanged: [`file${i}.ts`],
         userPreferences: [],
         workDone: [`work item ${i}`],
+        findings: [`finding ${i}`],
         errors: [`error ${i}`],
       });
     }
     expect(summary.decisions.length).toBeLessThanOrEqual(MAX_SUMMARY_ITEMS_PER_ARRAY);
     expect(summary.filesChanged.length).toBeLessThanOrEqual(MAX_SUMMARY_ITEMS_PER_ARRAY);
     expect(summary.workDone.length).toBeLessThanOrEqual(MAX_SUMMARY_ITEMS_PER_ARRAY);
+    expect(summary.findings.length).toBeLessThanOrEqual(MAX_SUMMARY_ITEMS_PER_ARRAY);
     expect(summary.errors.length).toBeLessThanOrEqual(MAX_SUMMARY_ITEMS_PER_ARRAY);
     expect(summary.decisions[0]).toContain('decision 12');
   });
@@ -134,9 +137,73 @@ describe('historyDistiller', () => {
       filesChanged: [],
       userPreferences: [],
       workDone: ['[-> h:fff00000, 200tk | done]'],
+      findings: [],
       errors: [],
     });
     expect(withPointers.decisions).toEqual([]);
     expect(withPointers.workDone).toEqual([]);
+  });
+
+  it('distillRound extracts findings from assistant text', () => {
+    const facts = distillRound([
+      {
+        role: 'assistant',
+        content: 'I found that c.tokens is stale after compression at line 255.',
+      },
+      { role: 'user', content: 'ok' },
+    ]);
+    expect(facts.findings.length).toBe(1);
+    expect(facts.findings[0]).toContain('stale after compression');
+  });
+
+  it('distillRound extracts multiple finding patterns', () => {
+    const facts = distillRound([
+      {
+        role: 'assistant',
+        content: [
+          { type: 'text', text: 'The root cause is a missing cache invalidation step.' },
+          { type: 'text', text: 'I also noticed the handler skips null checks.' },
+          { type: 'text', text: 'The fix is straightforward.' },
+        ],
+      },
+      { role: 'user', content: 'sounds right' },
+    ]);
+    expect(facts.findings.length).toBe(2);
+    expect(facts.findings[0]).toContain('root cause');
+    expect(facts.findings[1]).toContain('noticed');
+  });
+
+  it('distillRound does not extract findings from empty content', () => {
+    const facts = distillRound([
+      { role: 'assistant', content: '' },
+      { role: 'user', content: 'ok' },
+    ]);
+    expect(facts.findings).toEqual([]);
+  });
+
+  it('formatSummaryMessage includes findings section', () => {
+    const m = formatSummaryMessage({
+      ...emptyRollingSummary(),
+      findings: ['c.tokens is stale at line 255'],
+    });
+    expect(m.content).toContain('**Findings**');
+    expect(m.content).toContain('c.tokens is stale');
+  });
+
+  it('isRollingSummaryEmpty returns false when only findings present', () => {
+    expect(
+      isRollingSummaryEmpty({ ...emptyRollingSummary(), findings: ['a finding'] }),
+    ).toBe(false);
+  });
+
+  it('trimSummaryToTokenBudget preserves findings over other fields', () => {
+    const summary = emptyRollingSummary();
+    for (let i = 0; i < 50; i++) {
+      summary.userPreferences.push(`preference ${i} with enough text to count`);
+      summary.filesChanged.push(`file${i}.ts`);
+    }
+    summary.findings = ['critical finding about stale tokens'];
+    const trimmed = trimSummaryToTokenBudget(summary, 200);
+    expect(trimmed.findings).toContain('critical finding about stale tokens');
   });
 });

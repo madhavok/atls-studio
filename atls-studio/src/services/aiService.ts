@@ -2639,6 +2639,12 @@ function buildDynamicContextBlock(
     // Fail-safe: skip pressure hint if store/chunks unavailable
   }
 
+  // BB-write nudge: after discovery batches that read files but wrote nothing to BB
+  const bm = useContextStore.getState().batchMetrics;
+  if (bm.hadReads && !bm.hadBbWrite) {
+    parts.push('<<FINDINGS: batch read files with no BB write — consider session.bb.write to persist key findings before they go dormant.>>');
+  }
+
   const pendingActionBlock = buildPendingActionBlock();
   if (pendingActionBlock) {
     parts.push(pendingActionBlock);
@@ -2925,7 +2931,12 @@ function _buildDormantBlock(): string {
   ctxState.chunks.forEach(c => {
     if (c.compacted && c.type !== 'msg:user' && c.type !== 'msg:asst') {
       const src = c.source ? c.source.split(/[/\\]/).pop() || c.source : c.shortHash;
-      dormantLines.push(`h:${c.shortHash} ${src} ${c.tokens}tk`);
+      let line = `h:${c.shortHash} ${src} ${c.tokens}tk`;
+      const finding = c.annotations?.[0]?.content || c.summary || '';
+      if (finding) {
+        line += ` — ${finding.length > 80 ? finding.slice(0, 77) + '...' : finding}`;
+      }
+      dormantLines.push(line);
     }
   });
   if (dormantLines.length === 0) return '';

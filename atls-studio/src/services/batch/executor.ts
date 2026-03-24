@@ -991,6 +991,10 @@ export async function executeUnifiedBatch(
     // Record result
     results.push(stepOutputToResult(step.id, step.use, output, Date.now() - stepStart));
 
+    // Track op kinds for BB-write nudge
+    if (output.ok && output.kind === 'file_refs') ctx.store().recordBatchRead();
+    if (output.ok && step.use === 'session.bb.write') ctx.store().recordBatchBbWrite();
+
     if (!isAutoStep) userStepIndex += 1;
     const stepInterruption = detectBatchInterruption(step.id, i, step.use, output);
     const stepArtifact = getArtifact(output);
@@ -1060,6 +1064,38 @@ export async function executeUnifiedBatch(
           with: { hashes: output.refs },
           on_error: 'continue',
         });
+      }
+
+      // Auto-stage on repeated reads: when a file is read 2+ times, stage its
+      // signature to break the dormant re-read loop. Only triggers for file_refs
+      // outputs and skips already-staged sources.
+      if (output.kind === 'file_refs' && output.refs.length > 0 && !request.policy?.auto_stage_refs) {
+        const store = ctx.store();
+        const staged = store.getStagedEntries();
+        const refsToStage: string[] = [];
+        for (const ref of output.refs) {
+          for (const [, chunk] of store.chunks) {
+            if (chunk.shortHash === ref || chunk.hash === ref || `h:${chunk.shortHash}` === ref) {
+              if ((chunk.readCount || 0) >= 2 && chunk.source) {
+                const srcNorm = normalizePath(chunk.source);
+                let alreadyStaged = false;
+                for (const [, s] of staged) {
+                  if (s.source && normalizePath(s.source) === srcNorm) { alreadyStaged = true; break; }
+                }
+                if (!alreadyStaged) refsToStage.push(ref);
+              }
+              break;
+            }
+          }
+        }
+        if (refsToStage.length > 0) {
+          stepsToRun.splice(i + 1, 0, {
+            id: `${step.id}__auto_stage_repeat`,
+            use: 'session.stage',
+            with: { hashes: refsToStage },
+            on_error: 'continue',
+          });
+        }
       }
     }
 

@@ -993,7 +993,7 @@ export interface PersistedMemorySnapshot {
   freedTokens: number;
   stageVersion: number;
   transitionBridge: TransitionBridge | null;
-  batchMetrics: { toolCalls: number; manageOps: number };
+  batchMetrics: { toolCalls: number; manageOps: number; hadReads?: boolean; hadBbWrite?: boolean };
   hashStack: string[];
   editHashStack: string[];
   readHashStack: string[];

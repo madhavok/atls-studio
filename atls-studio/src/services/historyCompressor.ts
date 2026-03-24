@@ -148,6 +148,7 @@ function applyRollingHistoryWindow(
     filesChanged: [...ctx.rollingSummary.filesChanged],
     userPreferences: [...ctx.rollingSummary.userPreferences],
     workDone: [...ctx.rollingSummary.workDone],
+    findings: [...(ctx.rollingSummary.findings ?? [])],
     errors: [...ctx.rollingSummary.errors],
   };
 

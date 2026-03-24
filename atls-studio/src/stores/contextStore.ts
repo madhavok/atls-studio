@@ -260,6 +260,7 @@ export interface ContextChunk {
   boundDuringPlanning?: boolean; // Pre-bound during research/planning phase
   fullHash?: string;            // Back-reference to h:FULL in registry (for shaped chunks)
   referenceCount?: number;      // How many times the model cited this hash
+  readCount?: number;           // How many times this file was read into the store
   editCount?: number;           // How many edits targeted this hash
   annotations?: EngramAnnotation[]; // Notes attached to this engram
   synapses?: Synapse[];             // Typed connections to other engrams
@@ -613,7 +614,7 @@ interface ContextStoreState {
   stagedSnippets: Map<string, StagedSnippet>;  // Staged cached editor viewport
   stageVersion: number;                        // Incremented on any stage/unstage change
   transitionBridge: TransitionBridge | null;   // Auto-surface after subtask advance (1-2 turns)
-  batchMetrics: { toolCalls: number; manageOps: number }; // Per-turn batch compliance
+  batchMetrics: { toolCalls: number; manageOps: number; hadReads: boolean; hadBbWrite: boolean };
   /** Distilled facts for API-only rolling summary (not in chat UI messages) */
   rollingSummary: RollingSummary;
   setRollingSummary: (summary: RollingSummary) => void;
@@ -1178,7 +1179,7 @@ export const useContextStore = create<ContextStoreState>()(
   stagedSnippets: new Map(),
   stageVersion: 0,
   transitionBridge: null,
-  batchMetrics: { toolCalls: 0, manageOps: 0 },
+  batchMetrics: { toolCalls: 0, manageOps: 0, hadReads: false, hadBbWrite: false },
   rollingSummary: emptyRollingSummary(),
   setRollingSummary: (summary) => set({ rollingSummary: summary }),
   memoryEvents: [],
@@ -1276,7 +1277,7 @@ export const useContextStore = create<ContextStoreState>()(
               tokens: digestTokens,
               compacted: true,
             });
-            // Transfer pin state, annotations, and synapses to the new chunk
+            // Transfer pin state, annotations, synapses, and readCount to the new chunk
             if (c.pinned) {
               chunk.pinned = true;
             }
@@ -1286,6 +1287,7 @@ export const useContextStore = create<ContextStoreState>()(
             if (c.synapses?.length) {
               chunk.synapses = [...(chunk.synapses || []), ...c.synapses];
             }
+            chunk.readCount = (c.readCount || 0) + 1;
           }
         }
       }
@@ -1551,12 +1553,11 @@ export const useContextStore = create<ContextStoreState>()(
         }
       }
     }
-    // Update lastAccessed outside the iteration loop to avoid mid-iteration re-renders
     if (matchHash) {
       set(s => {
         const nc = new Map(s.chunks);
         const c = nc.get(matchHash!);
-        if (c) nc.set(matchHash!, { ...c, lastAccessed: Date.now() });
+        if (c) nc.set(matchHash!, { ...c, lastAccessed: Date.now(), readCount: (c.readCount || 0) + 1 });
         return { chunks: nc };
       });
     }
@@ -3938,21 +3939,22 @@ export const useContextStore = create<ContextStoreState>()(
   },
 
   getPromptTokens: () => {
-    const DORMANT_DIGEST_LINE_TOKENS = 15;
+    const DORMANT_BASE_TOKENS = 15;
+    const DORMANT_FINDING_TOKENS = 20;
     let total = 0;
     get().chunks.forEach(c => {
       // Transcript lives in BP3 (conversation history); counting msg:user/msg:asst
       // here double-counts the same tokens against WM pressure and Internals totals.
       if (CHAT_TYPES.has(c.type)) return;
-      if (c.compacted) {
-        total += DORMANT_DIGEST_LINE_TOKENS;
-      } else {
+      const isDormant = c.compacted || (() => {
         const ref = hppGetRef(c.hash);
-        if (ref && !hppShouldMaterialize(ref)) {
-          total += DORMANT_DIGEST_LINE_TOKENS;
-        } else {
-          total += c.tokens;
-        }
+        return ref && !hppShouldMaterialize(ref);
+      })();
+      if (isDormant) {
+        const hasFinding = (c.annotations?.length ?? 0) > 0 || !!c.summary;
+        total += DORMANT_BASE_TOKENS + (hasFinding ? DORMANT_FINDING_TOKENS : 0);
+      } else {
+        total += c.tokens;
       }
     });
     return total;
@@ -4098,10 +4100,16 @@ export const useContextStore = create<ContextStoreState>()(
   recordManageOps: (count: number) => {
     set(state => ({ batchMetrics: { ...state.batchMetrics, manageOps: state.batchMetrics.manageOps + count } }));
   },
+  recordBatchRead: () => {
+    set(state => ({ batchMetrics: { ...state.batchMetrics, hadReads: true } }));
+  },
+  recordBatchBbWrite: () => {
+    set(state => ({ batchMetrics: { ...state.batchMetrics, hadBbWrite: true } }));
+  },
   resetBatchMetrics: () => {
     const state = get();
     if (state.batchMetrics.toolCalls === 0 && state.batchMetrics.manageOps === 0) return;
-    set({ batchMetrics: { toolCalls: 0, manageOps: 0 } });
+    set({ batchMetrics: { toolCalls: 0, manageOps: 0, hadReads: false, hadBbWrite: false } });
   },
   getBatchMetrics: () => get().batchMetrics,
 

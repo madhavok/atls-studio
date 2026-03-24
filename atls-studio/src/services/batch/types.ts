@@ -395,6 +395,8 @@ export interface ContextStoreApi {
   // Compliance
   recordToolCall: () => void;
   recordManageOps: (count: number) => void;
+  recordBatchRead: () => void;
+  recordBatchBbWrite: () => void;
 
   // Hash registration
   registerEditHash: (hash: string, source: string) => { registered: boolean; reason?: string };
@@ -490,6 +492,7 @@ export interface ChunkEntry {
   type: string;
   pinned?: boolean;
   compacted?: boolean;
+  readCount?: number;
   suspectSince?: number;
   lastAccessed: number;
   // Freshness taxonomy

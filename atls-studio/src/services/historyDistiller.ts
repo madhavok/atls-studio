@@ -14,6 +14,7 @@ export interface RollingSummary {
   filesChanged: string[];
   userPreferences: string[];
   workDone: string[];
+  findings: string[];
   errors: string[];
 }
 
@@ -25,6 +26,7 @@ export function emptyRollingSummary(): RollingSummary {
     filesChanged: [],
     userPreferences: [],
     workDone: [],
+    findings: [],
     errors: [],
   };
 }
@@ -106,6 +108,7 @@ function extractUserText(content: unknown): string {
 }
 
 const WORK_DONE_HINTS = /\b(done|fixed|implemented|completed|added|removed|refactor|merged|resolved)\b/i;
+const FINDING_HINTS = /\b(found|discovered|noticed|problem is|root cause|because|stale|incorrect|bug|issue is|caused by|due to|the reason|turns out|actually)\b/i;
 const ERROR_HINTS = /\b(error|failed|exception|traceback|panic|undefined|null ref)\b/i;
 
 /**
@@ -126,6 +129,9 @@ export function distillRound(messages: Array<{ role: string; content: unknown }>
         }
         if (WORK_DONE_HINTS.test(t)) {
           dedupePush(facts.workDone, line.slice(0, 220));
+        }
+        if (FINDING_HINTS.test(t)) {
+          dedupePush(facts.findings, line.slice(0, 220));
         }
       }
       if (Array.isArray(msg.content)) {
@@ -171,14 +177,16 @@ export function updateRollingSummary(existing: RollingSummary, newFacts: RoundFa
     filesChanged: [...existing.filesChanged],
     userPreferences: [...existing.userPreferences],
     workDone: [...existing.workDone],
+    findings: [...(existing.findings ?? [])],
     errors: [...existing.errors],
   };
   merge(next.decisions, newFacts.decisions);
   merge(next.filesChanged, newFacts.filesChanged);
   merge(next.userPreferences, newFacts.userPreferences);
   merge(next.workDone, newFacts.workDone);
+  merge(next.findings, newFacts.findings);
   merge(next.errors, newFacts.errors);
-  for (const key of ['decisions', 'filesChanged', 'userPreferences', 'workDone', 'errors'] as const) {
+  for (const key of ['decisions', 'filesChanged', 'userPreferences', 'workDone', 'findings', 'errors'] as const) {
     while (next[key].length > MAX_SUMMARY_ITEMS_PER_ARRAY) next[key].shift();
   }
   return next;
@@ -198,6 +206,7 @@ export function formatSummaryMessage(summary: RollingSummary): { role: 'assistan
   const parts = [
     ROLLING_SUMMARY_MARKER,
     section('Decisions', trimmed.decisions),
+    section('Findings', trimmed.findings),
     section('Files', trimmed.filesChanged),
     section('User preferences', trimmed.userPreferences),
     section('Work done', trimmed.workDone),
@@ -211,13 +220,14 @@ export function formatSummaryMessage(summary: RollingSummary): { role: 'assistan
  * Drop oldest entries across arrays until formatted content is under maxTokens.
  */
 export function trimSummaryToTokenBudget(summary: RollingSummary, maxTokens: number): RollingSummary {
-  let s = { ...summary, decisions: [...summary.decisions], filesChanged: [...summary.filesChanged], userPreferences: [...summary.userPreferences], workDone: [...summary.workDone], errors: [...summary.errors] };
+  let s = { ...summary, decisions: [...summary.decisions], filesChanged: [...summary.filesChanged], userPreferences: [...summary.userPreferences], workDone: [...summary.workDone], findings: [...(summary.findings ?? [])], errors: [...summary.errors] };
   let body = formatSummaryBody(s);
   let tok = estimateTokens(body);
   let guard = 0;
+  // Trim order: expendable first, findings last (most valuable for continuity)
   while (tok > maxTokens && guard++ < 500) {
     let cut = false;
-    for (const key of ['decisions', 'filesChanged', 'userPreferences', 'workDone', 'errors'] as const) {
+    for (const key of ['userPreferences', 'filesChanged', 'errors', 'workDone', 'decisions', 'findings'] as const) {
       if (s[key].length > 0) {
         s[key].shift();
         cut = true;
@@ -234,6 +244,7 @@ export function trimSummaryToTokenBudget(summary: RollingSummary, maxTokens: num
 function formatSummaryBody(summary: RollingSummary): string {
   const parts = [
     section('Decisions', summary.decisions),
+    section('Findings', summary.findings),
     section('Files', summary.filesChanged),
     section('User preferences', summary.userPreferences),
     section('Work done', summary.workDone),
@@ -248,6 +259,7 @@ export function isRollingSummaryEmpty(s: RollingSummary): boolean {
     && s.filesChanged.length === 0
     && s.userPreferences.length === 0
     && s.workDone.length === 0
+    && (s.findings ?? []).length === 0
     && s.errors.length === 0
   );
 }
