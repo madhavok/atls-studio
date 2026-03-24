@@ -159,6 +159,23 @@ describe('compressToolLoopHistory orphaned compressed rolling summaries', () => 
     );
     expect(hasOrphan).toBe(false);
   });
+
+  it('increments orphanSummaryRemovals in appStore when orphans are removed', () => {
+    const orphanedRef = '[-> h:a1b2c3d4, 969tk | history:assistant:[Rolling Summary] decisions...files...]';
+    const history: Array<{ role: string; content: unknown }> = [
+      { role: 'assistant', content: orphanedRef },
+      { role: 'user', content: 'start' },
+      { role: 'assistant', content: 'round 0' },
+      { role: 'user', content: 'ok' },
+      { role: 'assistant', content: 'round 1' },
+      { role: 'user', content: 'ok' },
+    ];
+
+    const before = useAppStore.getState().promptMetrics.orphanSummaryRemovals;
+    compressToolLoopHistory(history, 3, 0);
+    const after = useAppStore.getState().promptMetrics.orphanSummaryRemovals;
+    expect(after).toBeGreaterThan(before);
+  });
 });
 
 describe('compressToolLoopHistory dedup', () => {

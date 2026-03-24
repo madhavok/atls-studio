@@ -31,6 +31,7 @@ export function CacheCompositionSection() {
   const selectedProvider = useAppStore((s) => s.settings.selectedProvider);
   const promptMetrics = useAppStore((s) => s.promptMetrics);
   const cacheMetrics = useAppStore((s) => s.cacheMetrics);
+  const logicalCache = useAppStore((s) => s.logicalCache);
   const getStagedTokenCount = useContextStore((s) => s.getStagedTokenCount);
   const getUsedTokens = useContextStore((s) => s.getUsedTokens);
   const getBlackboardTokenCount = useContextStore((s) => s.getBlackboardTokenCount);
@@ -173,8 +174,18 @@ export function CacheCompositionSection() {
           >
             {block.pct > 0.08 && (
               <>
-                <div className="px-1.5 pt-1 text-[10px] font-medium text-white/90 truncate" style={{ textShadow: '0 1px 2px rgba(0,0,0,0.5)' }}>
+                <div className="px-1.5 pt-1 text-[10px] font-medium text-white/90 truncate flex items-center gap-1" style={{ textShadow: '0 1px 2px rgba(0,0,0,0.5)' }}>
                   {block.label}
+                  {selectedProvider === 'anthropic' && block.key === 'static' && logicalCache.staticHit !== null && (
+                    <span className={`text-[8px] font-bold px-1 py-px rounded ${logicalCache.staticHit ? 'bg-green-500/40 text-green-100' : 'bg-red-500/40 text-red-100'}`}>
+                      {logicalCache.staticHit ? 'HIT' : 'MISS'}
+                    </span>
+                  )}
+                  {selectedProvider === 'anthropic' && block.key === 'bp3' && logicalCache.bp3Hit !== null && (
+                    <span className={`text-[8px] font-bold px-1 py-px rounded ${logicalCache.bp3Hit ? 'bg-green-500/40 text-green-100' : 'bg-red-500/40 text-red-100'}`}>
+                      {logicalCache.bp3Hit ? 'HIT' : 'MISS'}
+                    </span>
+                  )}
                 </div>
                 <div className="px-1.5 text-[9px] text-white/60" style={{ textShadow: '0 1px 2px rgba(0,0,0,0.5)' }}>
                   {fmtK(block.tokens)} ({block.pct.toFixed(1)}%)

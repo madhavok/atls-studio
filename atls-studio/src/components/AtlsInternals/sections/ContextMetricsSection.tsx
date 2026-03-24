@@ -4,6 +4,8 @@ import { useContextStore } from '../../../stores/contextStore';
 export function ContextMetricsSection() {
   const promptMetrics = useAppStore((s) => s.promptMetrics);
   const cacheMetrics = useAppStore((s) => s.cacheMetrics);
+  const logicalCache = useAppStore((s) => s.logicalCache);
+  const selectedProvider = useAppStore((s) => s.settings.selectedProvider);
   const contextUsage = useAppStore((s) => s.contextUsage);
   const emDepth = useAppStore((s) => s.settings.entryManifestDepth) ?? 'sigs';
   const getStats = useContextStore((s) => s.getStats);
@@ -78,6 +80,9 @@ export function ContextMetricsSection() {
         <SavingStat label="Freed Tokens" value={freedTokens.toLocaleString()} sub="lifetime relieved, excluded from active CTX" />
         <SavingStat label="Rounds" value={promptMetrics.roundCount} />
         <SavingStat label="Cumulative Saved" value={promptMetrics.cumulativeInputSaved.toLocaleString()} accent />
+        {promptMetrics.orphanSummaryRemovals > 0 && (
+          <SavingStat label="Orphan Removals" value={promptMetrics.orphanSummaryRemovals} sub="stale summary pointers cleaned" />
+        )}
       </div>
 
       {/* Cache performance */}
@@ -99,6 +104,25 @@ export function ContextMetricsSection() {
           <span>Requests: <span className="text-studio-text font-medium">{cacheMetrics.sessionRequests}</span></span>
         </div>
       </div>
+
+      {/* Logical cache (expected) — Anthropic only */}
+      {selectedProvider === 'anthropic' && logicalCache.staticHit !== null && (
+        <div>
+          <div className="text-xs text-studio-muted mb-2 font-medium">Logical Cache (expected)</div>
+          <div className="flex gap-4 text-xs">
+            <span className="text-studio-muted">
+              Static: <HitMissBadge hit={logicalCache.staticHit} reason={logicalCache.staticReason} />
+            </span>
+            <span className="text-studio-muted">
+              BP3: <HitMissBadge hit={logicalCache.bp3Hit} reason={logicalCache.bp3Reason} />
+            </span>
+          </div>
+          <div className="flex gap-4 text-[10px] text-studio-muted mt-1">
+            <span>Static: {logicalCache.sessionStaticHits}/{logicalCache.sessionStaticHits + logicalCache.sessionStaticMisses} hit</span>
+            <span>BP3: {logicalCache.sessionBp3Hits}/{logicalCache.sessionBp3Hits + logicalCache.sessionBp3Misses} hit</span>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -123,5 +147,18 @@ function SavingStat({ label, value, sub, accent }: { label: string; value: strin
       <div className={`text-sm font-semibold ${accent ? 'text-studio-accent' : 'text-studio-text'}`}>{value}</div>
       {sub && <div className="text-[10px] text-studio-muted">{sub}</div>}
     </div>
+  );
+}
+
+function HitMissBadge({ hit, reason }: { hit: boolean | null; reason: string }) {
+  if (hit === null) return <span className="text-studio-muted">--</span>;
+  return (
+    <span
+      className={`font-semibold ${hit ? 'text-green-400' : 'text-red-400'}`}
+      title={reason}
+    >
+      {hit ? 'HIT' : 'MISS'}
+      {reason && <span className="font-normal text-studio-muted ml-1">({reason})</span>}
+    </span>
   );
 }

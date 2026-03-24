@@ -247,16 +247,39 @@ export function formatWorkingMemory(input: FormatterInput): string {
     lines.push('');
   }
 
-  // Chat context summary — shows chat turns as manageable hashes
+  // Chat context summary — compact overview instead of per-turn listing
   const chatChunks = Array.from(chunks.values())
     .filter(c => c.type === 'msg:user' || c.type === 'msg:asst')
     .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
 
   if (chatChunks.length > 0) {
+    // Use historyTokens (actual compressed size) if available; fall back to chunk sum
+    const actualHistoryTokens = input.historyTokens;
     let chatTokens = 0;
     for (const c of chatChunks) chatTokens += c.tokens;
-    lines.push(`## CHAT CONTEXT (${chatChunks.length} turns, ${(chatTokens / 1000).toFixed(1)}k tk — compact/drop old turns to free tokens)`);
+    const displayTokens = actualHistoryTokens != null && actualHistoryTokens > 0
+      ? actualHistoryTokens
+      : chatTokens;
+    const displayK = (displayTokens / 1000).toFixed(1);
+
+    // Count by type
+    let userCount = 0, asstCount = 0, rollingCount = 0, compactedCount = 0;
     for (const c of chatChunks) {
+      if (c.type === 'msg:user') userCount++;
+      else asstCount++;
+      if (c.content.startsWith('[Rolling Summary]') || c.content.startsWith('[-> h:')) rollingCount++;
+      if (c.compacted) compactedCount++;
+    }
+
+    lines.push(`## CHAT CONTEXT (${chatChunks.length} turns, ${displayK}k tk actual | user:${userCount} asst:${asstCount} rolling:${rollingCount} compacted:${compactedCount})`);
+
+    // Show only the most recent 6 entries to save prompt tokens
+    const recentCount = 6;
+    const recent = chatChunks.slice(-recentCount);
+    if (chatChunks.length > recentCount) {
+      lines.push(`  ... ${chatChunks.length - recentCount} older turns (use h:refs to recall)`);
+    }
+    for (const c of recent) {
       const preview = c.content.slice(0, 60).replace(/\n/g, ' ');
       if (c.compacted) {
         const digest = c.digest || c.summary || 'compacted';

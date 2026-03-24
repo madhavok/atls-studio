@@ -321,6 +321,8 @@ export interface PromptMetrics {
   /** Cache composition estimates (for CacheCompositionSection) */
   bp2ToolDefTokens?: number;
   bp3PriorTurnsTokens?: number;
+  /** Orphaned compressed rolling summary pointers removed */
+  orphanSummaryRemovals: number;
 }
 
 // Provider-level cache metrics (Anthropic cache_creation/cache_read tokens)
@@ -333,6 +335,17 @@ export interface CacheMetrics {
   sessionHitRate: number;
   /** Last request cached tokens (OpenAI cached_tokens or Gemini cachedContentTokenCount) */
   lastRequestCachedTokens?: number;
+}
+
+export interface LogicalCacheState {
+  staticHit: boolean | null;
+  bp3Hit: boolean | null;
+  staticReason: string;
+  bp3Reason: string;
+  sessionStaticHits: number;
+  sessionStaticMisses: number;
+  sessionBp3Hits: number;
+  sessionBp3Misses: number;
 }
 
 // AI Model info
@@ -578,10 +591,14 @@ interface AppState {
   setPromptMetrics: (metrics: Partial<PromptMetrics>) => void;
   addCompressionSavings: (tokensSaved: number, count: number) => void;
   addRollingSavings: (tokensSaved: number, roundsRolled: number) => void;
+  addOrphanRemovals: (count: number) => void;
   recordRound: () => void;
   cacheMetrics: CacheMetrics;
   addCacheMetrics: (metrics: { cacheWrite: number; cacheRead: number; uncached: number; lastRequestCachedTokens?: number }) => void;
   resetCacheMetrics: () => void;
+  logicalCache: LogicalCacheState;
+  updateLogicalCache: (state: Partial<LogicalCacheState>) => void;
+  resetLogicalCache: () => void;
 
   // Settings
   settings: Settings;
@@ -838,6 +855,7 @@ export const useAppStore = create<AppState>((set) => ({
         workspaceContextTokens: 0, entryManifestTokens: 0,
         totalOverheadTokens: 0, compressionSavings: 0,
         compressionCount: 0, rollingSavings: 0, rolledRounds: 0, roundCount: 0, cumulativeInputSaved: 0,
+        orphanSummaryRemovals: 0,
       },
       // Reset cache metrics for new session
       cacheMetrics: {
@@ -878,6 +896,7 @@ export const useAppStore = create<AppState>((set) => ({
           workspaceContextTokens: 0, entryManifestTokens: 0,
           totalOverheadTokens: 0, compressionSavings: 0,
           compressionCount: 0, rollingSavings: 0, rolledRounds: 0, roundCount: 0, cumulativeInputSaved: 0,
+          orphanSummaryRemovals: 0,
         },
         cacheMetrics: {
           sessionCacheWrites: 0, sessionCacheReads: 0, sessionUncached: 0,
@@ -1091,6 +1110,7 @@ export const useAppStore = create<AppState>((set) => ({
     rolledRounds: 0,
     roundCount: 0,
     cumulativeInputSaved: 0,
+    orphanSummaryRemovals: 0,
   },
   setPromptMetrics: (metrics) => set((state) => {
     const updated = { ...state.promptMetrics, ...metrics };
@@ -1114,6 +1134,12 @@ export const useAppStore = create<AppState>((set) => ({
       ...state.promptMetrics,
       rollingSavings: state.promptMetrics.rollingSavings + tokensSaved,
       rolledRounds: state.promptMetrics.rolledRounds + roundsRolled,
+    },
+  })),
+  addOrphanRemovals: (count) => set((state) => ({
+    promptMetrics: {
+      ...state.promptMetrics,
+      orphanSummaryRemovals: state.promptMetrics.orphanSummaryRemovals + count,
     },
   })),
   recordRound: () => set((state) => {
@@ -1166,7 +1192,25 @@ export const useAppStore = create<AppState>((set) => ({
       lastRequestCachedTokens: undefined,
     },
   }),
-  
+
+  logicalCache: {
+    staticHit: null, bp3Hit: null,
+    staticReason: '', bp3Reason: '',
+    sessionStaticHits: 0, sessionStaticMisses: 0,
+    sessionBp3Hits: 0, sessionBp3Misses: 0,
+  },
+  updateLogicalCache: (update) => set((state) => ({
+    logicalCache: { ...state.logicalCache, ...update },
+  })),
+  resetLogicalCache: () => set({
+    logicalCache: {
+      staticHit: null, bp3Hit: null,
+      staticReason: '', bp3Reason: '',
+      sessionStaticHits: 0, sessionStaticMisses: 0,
+      sessionBp3Hits: 0, sessionBp3Misses: 0,
+    },
+  }),
+
   // Settings - load from localStorage on init
   settings: (() => {
     const saved = typeof localStorage !== 'undefined' 

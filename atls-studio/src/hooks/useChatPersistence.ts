@@ -451,6 +451,7 @@ export function useChatPersistence() {
           workspaceContextTokens: 0, entryManifestTokens: 0,
           totalOverheadTokens: 0, compressionSavings: 0,
           compressionCount: 0, rollingSavings: 0, rolledRounds: 0, roundCount: 0, cumulativeInputSaved: 0,
+          orphanSummaryRemovals: 0,
         },
         cacheMetrics: {
           sessionCacheWrites: 0, sessionCacheReads: 0, sessionUncached: 0,
@@ -696,6 +697,7 @@ export function useChatPersistence() {
           workspaceContextTokens: 0,
           totalOverheadTokens: 0, compressionSavings: 0,
           compressionCount: 0, rollingSavings: 0, rolledRounds: 0, roundCount: 0, cumulativeInputSaved: 0,
+          orphanSummaryRemovals: 0,
         },
         cacheMetrics: {
           sessionCacheWrites: 0, sessionCacheReads: 0, sessionUncached: 0,
@@ -750,6 +752,7 @@ export function useChatPersistence() {
             workspaceContextTokens: 0,
             totalOverheadTokens: 0, compressionSavings: 0,
             compressionCount: 0, rollingSavings: 0, rolledRounds: 0, roundCount: 0, cumulativeInputSaved: 0,
+            orphanSummaryRemovals: 0,
           },
           cacheMetrics: {
             sessionCacheWrites: 0, sessionCacheReads: 0, sessionUncached: 0,
@@ -830,6 +833,7 @@ export function useChatPersistence() {
                 workspaceContextTokens: 0,
                 totalOverheadTokens: 0, compressionSavings: 0,
                 compressionCount: 0, rollingSavings: 0, rolledRounds: 0, roundCount: 0, cumulativeInputSaved: 0,
+                orphanSummaryRemovals: 0,
               },
               cacheMetrics: {
                 sessionCacheWrites: 0, sessionCacheReads: 0, sessionUncached: 0,

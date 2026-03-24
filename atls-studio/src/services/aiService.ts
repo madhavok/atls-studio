@@ -142,6 +142,7 @@ import {
   type UnifiedBatchResult,
 } from './batch';
 import { resetMainAgentTerminal } from '../stores/terminalStore';
+import { hashBp3Prefix, computeLogicalBp3Hit, computeLogicalStaticHit, type Bp3Snapshot } from './logicalCacheMetrics';
 import type { ExpandedFilePath } from './batch/types';
 import { formatBatchResult } from './batch/resultFormatter';
 import { coerceBatchSteps } from './batch/coerceBatchSteps';
@@ -1158,6 +1159,32 @@ async function streamChatViaTauri(
       );
       let { geminiDynamicContext } = assembledRound;
       lastReliefAction = reliefAction;
+
+      if (config.provider === 'anthropic') {
+        const currStaticKey = _cachedStaticPrompt?.key ?? '';
+        const currBp3: Bp3Snapshot = {
+          hash: hashBp3Prefix(conversationHistory, roundLastUserIndex),
+          length: roundLastUserIndex,
+        };
+        const staticResult = computeLogicalStaticHit(_prevStaticKey, currStaticKey);
+        const subPrefixHash = _prevBp3Snapshot && currBp3.length > _prevBp3Snapshot.length
+          ? hashBp3Prefix(conversationHistory, roundLastUserIndex, _prevBp3Snapshot.length)
+          : undefined;
+        const bp3Result = computeLogicalBp3Hit(_prevBp3Snapshot, currBp3, subPrefixHash);
+        const store = useAppStore.getState();
+        store.updateLogicalCache({
+          staticHit: staticResult.hit,
+          bp3Hit: bp3Result.hit,
+          staticReason: staticResult.reason,
+          bp3Reason: bp3Result.reason,
+          sessionStaticHits: store.logicalCache.sessionStaticHits + (staticResult.hit ? 1 : 0),
+          sessionStaticMisses: store.logicalCache.sessionStaticMisses + (staticResult.hit ? 0 : 1),
+          sessionBp3Hits: store.logicalCache.sessionBp3Hits + (bp3Result.hit ? 1 : 0),
+          sessionBp3Misses: store.logicalCache.sessionBp3Misses + (bp3Result.hit ? 0 : 1),
+        });
+        _prevStaticKey = currStaticKey;
+        _prevBp3Snapshot = currBp3;
+      }
 
       if (!isSessionValid() || abortSignal.aborted) {
         if (isSessionValid()) useAppStore.getState().setAgentProgress({ status: 'stopped', stoppedReason: 'aborted' });
@@ -2673,7 +2700,13 @@ let _cachedStaticPrompt: {
 /** Reset static system prompt cache (call on settings/mode change or newChat) */
 export function resetStaticPromptCache(): void {
   _cachedStaticPrompt = null;
+  _prevStaticKey = null;
+  _prevBp3Snapshot = null;
+  useAppStore.getState().resetLogicalCache();
 }
+
+let _prevStaticKey: string | null = null;
+let _prevBp3Snapshot: Bp3Snapshot | null = null;
 
 // Cached project tree for static prompt injection — stable across rounds for prompt caching
 let _cachedProjectTree: { root: string; text: string } | null = null;

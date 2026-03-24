@@ -194,15 +194,19 @@ function applyRollingHistoryWindow(
 function removeOrphanedCompressedSummaries(
   history: Array<{ role: string; content: unknown }>,
   startIdx: number,
-): void {
+): number {
+  let removed = 0;
   for (let i = history.length - 1; i >= startIdx; i--) {
     const msg = history[i];
     if (isRollingSummaryMessage(msg)) continue;
     if (msg.role !== 'assistant' || typeof msg.content !== 'string') continue;
     if (msg.content.startsWith('[->') && msg.content.includes('[Rolling Summary]')) {
       history.splice(i, 1);
+      removed++;
     }
   }
+  if (removed > 0) useAppStore.getState().addOrphanRemovals(removed);
+  return removed;
 }
 
 /**

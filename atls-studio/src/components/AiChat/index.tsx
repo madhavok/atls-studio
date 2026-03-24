@@ -569,6 +569,7 @@ type OverheadSegment = { label: string; tokens: number; color: string };
 const ContextMetrics = memo(function ContextMetrics() {
   const pm = useAppStore(state => state.promptMetrics);
   const cacheMetrics = useAppStore(state => state.cacheMetrics);
+  const logicalCache = useAppStore(state => state.logicalCache);
   const freedTokens = useContextStore(state => state.freedTokens);
   const chunks = useContextStore(state => state.chunks);
   const availableModels = useAppStore(state => state.availableModels);
@@ -643,6 +644,11 @@ const ContextMetrics = memo(function ContextMetrics() {
         {cacheMetrics.sessionRequests > 0 && (
           <span className="shrink-0 text-studio-success">cache:{Math.round(cacheMetrics.sessionHitRate * 100)}%</span>
         )}
+        {provider === 'anthropic' && logicalCache.bp3Hit !== null && (
+          <span className={`shrink-0 ${logicalCache.bp3Hit ? 'text-green-400' : 'text-red-400'}`}>
+            bp3:{logicalCache.bp3Hit ? 'hit' : 'miss'}
+          </span>
+        )}
           </>
         ) : (
           <span className="shrink-0 text-studio-muted">no data yet</span>
@@ -701,6 +707,9 @@ const ContextMetrics = memo(function ContextMetrics() {
                 {freedTokens > 0 && (
                   <span>freed {formatTokens(freedTokens)}</span>
                 )}
+                {pm.orphanSummaryRemovals > 0 && (
+                  <span>orphans {pm.orphanSummaryRemovals} removed</span>
+                )}
                 {perRoundSavings > 0 && (
                   <span className="text-studio-text-secondary">= {formatTokens(perRoundSavings)}/call</span>
                 )}
@@ -750,6 +759,18 @@ const ContextMetrics = memo(function ContextMetrics() {
                       : (provider === 'google' || provider === 'vertex') ? 0.75
                       : 0.9
                     ))} saved via cache
+                  </span>
+                </div>
+              )}
+              {provider === 'anthropic' && logicalCache.staticHit !== null && (
+                <div className="flex flex-wrap gap-x-3 gap-y-0 mt-0.5">
+                  <span className="text-studio-text-secondary">expected:</span>
+                  <span className={logicalCache.staticHit ? 'text-green-400' : 'text-red-400'}>
+                    Static {logicalCache.staticHit ? 'HIT' : 'MISS'}
+                  </span>
+                  <span className={logicalCache.bp3Hit ? 'text-green-400' : 'text-red-400'}>
+                    BP3 {logicalCache.bp3Hit ? 'HIT' : 'MISS'}
+                    {logicalCache.bp3Reason && <span className="text-studio-muted"> ({logicalCache.bp3Reason})</span>}
                   </span>
                 </div>
               )}
