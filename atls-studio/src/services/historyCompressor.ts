@@ -138,6 +138,7 @@ function applyRollingHistoryWindow(
 
   if (totalRounds <= ROLLING_WINDOW_ROUNDS) {
     syncRollingSummaryMessage(history, ctx.rollingSummary, summaryAt);
+    removeOrphanedCompressedSummaries(history, startIdx);
     return;
   }
 
@@ -182,6 +183,26 @@ function applyRollingHistoryWindow(
     useAppStore.getState().addRollingSavings(tokensSaved, excess);
   }
   syncRollingSummaryMessage(history, rolling, summaryAt);
+  removeOrphanedCompressedSummaries(history, startIdx);
+}
+
+/**
+ * Remove stale compressed rolling summaries — old summaries that were replaced
+ * then compressed into `[-> h:... | ...[Rolling Summary]...]` pointers.
+ * These are invisible to `isRollingSummaryMessage` and accumulate indefinitely.
+ */
+function removeOrphanedCompressedSummaries(
+  history: Array<{ role: string; content: unknown }>,
+  startIdx: number,
+): void {
+  for (let i = history.length - 1; i >= startIdx; i--) {
+    const msg = history[i];
+    if (isRollingSummaryMessage(msg)) continue;
+    if (msg.role !== 'assistant' || typeof msg.content !== 'string') continue;
+    if (msg.content.startsWith('[->') && msg.content.includes('[Rolling Summary]')) {
+      history.splice(i, 1);
+    }
+  }
 }
 
 /**
@@ -298,8 +319,13 @@ export function compressToolLoopHistory(
   const skipThreshold = currentRound !== undefined ? Math.max(0, currentRound - protectedCount) : Infinity;
 
   const recordReplacement = (content: string, role: string, description: string): string => {
-    const chunkType = role === 'assistant' ? 'msg:asst' : 'msg:user';
     const tokens = estimateTokens(content);
+    const existingByDesc = findExistingChunkBySource(contextStore, description);
+    if (existingByDesc) {
+      dematerialize(existingByDesc.hash);
+      return formatChunkRef(existingByDesc.shortHash, tokens, undefined, description, existingByDesc.digest);
+    }
+    const chunkType = role === 'assistant' ? 'msg:asst' : 'msg:user';
     const hash = contextStore.addChunk(content, chunkType, description, undefined, `history: ${description}`);
     const shortHash = hash.slice(0, SHORT_HASH_LEN);
     const chunk = contextStore.chunks.get(hash);
@@ -400,8 +426,9 @@ export function compressToolLoopHistory(
               ? tb.content
               : '';
         if (!raw || raw.startsWith('[->')) continue;
+        const isStopped = raw.includes('[Stopped]');
         const tokens = estimateTokens(raw);
-        if (tokens <= HISTORY_TEXT_REPLACEMENT_THRESHOLD_TOKENS) continue;
+        if (!isStopped && tokens <= HISTORY_TEXT_REPLACEMENT_THRESHOLD_TOKENS) continue;
         const description = `history:assistant:${raw.slice(0, 60).replace(/\s+/g, ' ').trim()}`;
         const ref = recordReplacement(raw, 'assistant', description);
         totalSavedTokens += tokens - estimateTokens(ref);
@@ -413,8 +440,9 @@ export function compressToolLoopHistory(
 
     if (typeof msg.content === 'string') {
       if (isRollingSummaryMessage(msg)) continue;
+      const isStopped = msg.role === 'assistant' && msg.content.includes('[Stopped]');
       const tokens = estimateTokens(msg.content);
-      if (tokens <= HISTORY_TEXT_REPLACEMENT_THRESHOLD_TOKENS) continue;
+      if (!isStopped && tokens <= HISTORY_TEXT_REPLACEMENT_THRESHOLD_TOKENS) continue;
       const description = `history:${msg.role}:${msg.content.slice(0, 60).replace(/\s+/g, ' ').trim()}`;
       const ref = recordReplacement(msg.content, msg.role, description);
       totalSavedTokens += tokens - estimateTokens(ref);

@@ -5,6 +5,7 @@ import {
   formatSummaryMessage,
   isRollingSummaryEmpty,
   isRollingSummaryMessage,
+  MAX_SUMMARY_ITEMS_PER_ARRAY,
   ROLLING_SUMMARY_MARKER,
   trimSummaryToTokenBudget,
   updateRollingSummary,
@@ -106,6 +107,24 @@ describe('historyDistiller', () => {
       { role: 'user', content: 'sounds good' },
     ]);
     expect(facts.decisions).toEqual(['This is a real decision about architecture']);
+  });
+
+  it('updateRollingSummary caps each array at MAX_SUMMARY_ITEMS_PER_ARRAY', () => {
+    let summary = emptyRollingSummary();
+    for (let i = 0; i < 20; i++) {
+      summary = updateRollingSummary(summary, {
+        decisions: [`decision ${i}`],
+        filesChanged: [`file${i}.ts`],
+        userPreferences: [],
+        workDone: [`work item ${i}`],
+        errors: [`error ${i}`],
+      });
+    }
+    expect(summary.decisions.length).toBeLessThanOrEqual(MAX_SUMMARY_ITEMS_PER_ARRAY);
+    expect(summary.filesChanged.length).toBeLessThanOrEqual(MAX_SUMMARY_ITEMS_PER_ARRAY);
+    expect(summary.workDone.length).toBeLessThanOrEqual(MAX_SUMMARY_ITEMS_PER_ARRAY);
+    expect(summary.errors.length).toBeLessThanOrEqual(MAX_SUMMARY_ITEMS_PER_ARRAY);
+    expect(summary.decisions[0]).toContain('decision 12');
   });
 
   it('updateRollingSummary rejects pointer strings via dedupePush', () => {

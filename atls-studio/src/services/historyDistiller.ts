@@ -7,6 +7,7 @@ import { estimateTokens } from '../utils/contextHash';
 import { ROLLING_SUMMARY_MAX_TOKENS } from './promptMemory';
 
 export const ROLLING_SUMMARY_MARKER = '[Rolling Summary]';
+export const MAX_SUMMARY_ITEMS_PER_ARRAY = 8;
 
 export interface RollingSummary {
   decisions: string[];
@@ -177,6 +178,9 @@ export function updateRollingSummary(existing: RollingSummary, newFacts: RoundFa
   merge(next.userPreferences, newFacts.userPreferences);
   merge(next.workDone, newFacts.workDone);
   merge(next.errors, newFacts.errors);
+  for (const key of ['decisions', 'filesChanged', 'userPreferences', 'workDone', 'errors'] as const) {
+    while (next[key].length > MAX_SUMMARY_ITEMS_PER_ARRAY) next[key].shift();
+  }
   return next;
 }
 

@@ -92,6 +92,75 @@ describe('compressToolLoopHistory', () => {
   });
 });
 
+describe('compressToolLoopHistory [Stopped] fragments', () => {
+  beforeEach(() => resetStore());
+
+  it('compresses small [Stopped] assistant messages below the normal threshold', () => {
+    const stoppedContent = 'Let me check\n\n*[Stopped]*';
+    const history: Array<{ role: string; content: unknown }> = [
+      { role: 'user', content: 'start' },
+      { role: 'assistant', content: stoppedContent },
+      { role: 'user', content: 'ok continue' },
+      { role: 'assistant', content: 'r2' },
+      { role: 'user', content: 'ok' },
+      { role: 'assistant', content: 'r3' },
+      { role: 'user', content: 'ok' },
+    ];
+
+    const count = compressToolLoopHistory(history, 5, 0);
+    expect(count).toBeGreaterThan(0);
+    expect(String(history[1].content)).toContain('[->');
+  });
+
+  it('compresses [Stopped] text blocks in array-shaped assistant messages', () => {
+    const stoppedText = 'Partial output\n\n*[Stopped]*';
+    const toolUseId = 'tu_stop';
+    const history: Array<{ role: string; content: unknown }> = [
+      { role: 'user', content: 'go' },
+      {
+        role: 'assistant',
+        content: [
+          { type: 'text', text: stoppedText },
+          { type: 'tool_use', id: toolUseId, name: 'batch', input: { version: '1.0', steps: [] } },
+        ],
+      },
+      { role: 'user', content: [{ type: 'tool_result', tool_use_id: toolUseId, content: 'ok' }] },
+      { role: 'assistant', content: 'r2' },
+      { role: 'user', content: 'ok' },
+      { role: 'assistant', content: 'r3' },
+      { role: 'user', content: 'ok' },
+    ];
+
+    const count = compressToolLoopHistory(history, 5, 0);
+    expect(count).toBeGreaterThan(0);
+    const textBlock = (history[1].content as Array<{ type: string; text?: string }>)[0];
+    expect(String(textBlock.text)).toContain('[->');
+  });
+});
+
+describe('compressToolLoopHistory orphaned compressed rolling summaries', () => {
+  beforeEach(() => resetStore());
+
+  it('removes compressed rolling summary pointers from history', () => {
+    const orphanedRef = '[-> h:a1b2c3d4, 969tk | history:assistant:[Rolling Summary] decisions...files...]';
+    const history: Array<{ role: string; content: unknown }> = [
+      { role: 'assistant', content: orphanedRef },
+      { role: 'user', content: 'start' },
+      { role: 'assistant', content: 'round 0' },
+      { role: 'user', content: 'ok' },
+      { role: 'assistant', content: 'round 1' },
+      { role: 'user', content: 'ok' },
+    ];
+
+    compressToolLoopHistory(history, 3, 0);
+
+    const hasOrphan = history.some(
+      (m) => typeof m.content === 'string' && m.content === orphanedRef,
+    );
+    expect(hasOrphan).toBe(false);
+  });
+});
+
 describe('compressToolLoopHistory dedup', () => {
   beforeEach(() => resetStore());
 
