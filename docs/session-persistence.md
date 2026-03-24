@@ -50,6 +50,18 @@ The persistence layer stores several kinds of session state:
 - `Swarm Tasks And Agent Stats`: task execution records for swarm sessions.
 - `Session State And Hash Registry`: keyed metadata and hash bookkeeping used by the runtime.
 
+### Memory snapshot format versions (`PersistedMemorySnapshot`)
+
+Serialized memory state uses a `version` field on [`PersistedMemorySnapshot`](../atls-studio/src/services/chatDb.ts). This is **not** the same as UHPP “v5” in [hash-protocol.md](./hash-protocol.md) (reference syntax).
+
+| Version | Role |
+|--------|------|
+| **2–3** | Earlier snapshot layouts; still loadable. Core fields: chunks, archive, staged, blackboard, task plan, hash stacks, etc. |
+| **4** | Adds session-scoped UI/runtime extras: optional `promptMetrics`, `cacheMetrics`, `roundHistorySnapshots`, `costChat` (see `applyV4SessionExtras` in [`useChatPersistence.ts`](../atls-studio/src/hooks/useChatPersistence.ts)). |
+| **5** | Current write format. Everything in v4 plus optional **`rollingSummary`** — the distilled **rolling history** facts used for the API-only `[Rolling Summary]` message ([history-compression.md](./history-compression.md)). New saves use **snapshot format v5** with `rollingSummary` populated from the context store when present. |
+
+If a snapshot has no `rollingSummary` (older save) or is below v5, restore clears rolling summary to empty; v4+ extras still apply when `version` is 4 or 5.
+
 ## Restore Flow
 
 When a session is loaded (manually or via auto-resume), persistence restores more than just messages:
@@ -104,6 +116,7 @@ That project scoping is important because memory, hashes, and chat history are o
 ## Related Documents
 
 - `ARCHITECTURE.md`
+- [history-compression.md](./history-compression.md) — rolling window, distilled summary, snapshot format v5
 - [freshness.md](./freshness.md) — round-end reconciliation, preflight, timing vs restore
 - `docs/studio-app-shell.md`
 - `docs/tauri-backend.md`

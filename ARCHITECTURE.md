@@ -359,6 +359,10 @@ The compressed content remains accessible — the model can recall it by hash re
 
 Additionally, `deflateToolResults` runs immediately after tool execution, replacing inline tool results with hash references when a matching engram already exists in working memory. This prevents duplicate content from accumulating between the history and working memory.
 
+### 7.1 Rolling window and distilled summary
+
+A **rolling verbatim window** (see `ROLLING_WINDOW_ROUNDS` in `promptMemory.ts`) keeps only the most recent rounds in full in the history array used for compression. When older rounds age out, `historyDistiller.ts` extracts facts into a structured `RollingSummary` in the context store. For the API payload, the runtime prepends a **synthetic** assistant message beginning with `[Rolling Summary]` — it is not a row in the saved chat transcript. The distilled summary is persisted on disk as part of **snapshot format v5** (`rollingSummary` on the memory snapshot). Details: [docs/history-compression.md](docs/history-compression.md), [docs/session-persistence.md](docs/session-persistence.md).
+
 ---
 
 ## 8. Prompt Assembly and Cache Strategy
@@ -394,9 +398,9 @@ History compression is deferred to round 0 (between user turns), so within a mul
 
 ### 8.1 The Middleware Pipeline
 
-Before each round, three middlewares run in sequence:
+Before each round, middleware runs in sequence:
 
-1. **History compression**: On round 0, compress old tool results and long messages into hash references
+1. **History compression**: On round 0, compress old tool results and long messages into hash references; apply the **rolling window** so excess rounds are distilled into `RollingSummary` rather than kept verbatim (see §7.1)
 2. **Context hygiene**: After 20+ rounds, aggressive compression if history exceeds 15k tokens
 3. **Prompt budget**: Prune staged snippets if over budget
 

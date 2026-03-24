@@ -45,6 +45,10 @@ interface Step {
 | **intent** | `intent.understand`, `intent.edit`, `intent.edit_multi`, `intent.investigate`, `intent.diagnose`, `intent.survey`, `intent.refactor`, `intent.create`, `intent.test`, `intent.search_replace`, `intent.extract` | Macro operations that expand to primitives |
 | **system** | `system.exec`, `system.git`, `system.workspaces`, `system.help` | Shell execution, git operations, workspace management |
 
+### `system.exec` (Windows, PTY, output)
+
+On Windows, commands are run via a **temporary PowerShell script** (`.ps1`) so the shell can execute reliably in the PTY path. Output is captured from the terminal integration and passed through **`sanitizeExecOutput`** in [`system.ts`](../atls-studio/src/services/batch/handlers/system.ts), which strips echoed wrapper lines (including script invocation echoes), `##ATLS_*##` markers, and common PowerShell noise (e.g. `cd` error blocks) so the model sees clean stdout/stderr text.
+
 ## Dataflow
 
 Steps wire outputs to subsequent step inputs through binding expressions:

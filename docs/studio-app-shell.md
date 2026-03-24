@@ -16,6 +16,7 @@ The runtime docs describe how ATLS manages memory, freshness, and prompt assembl
 - Manage shell-level UI state such as active files, panel sizes, theme, quick actions, search, and window controls.
 - Route user actions into hooks and services that talk to the Tauri backend.
 - Host session selection and swarm-specific views without embedding backend logic directly in the UI.
+- Surface prompt metrics in chat (including **rolling** token savings and distilled-round counts when the rolling history window is active); see [history-compression.md](./history-compression.md).
 
 ## Key Code Locations
 

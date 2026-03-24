@@ -334,6 +334,8 @@ Shadow versions enable:
 | **v5** | Semantic modifiers, search selectors, composite set operations |
 | **v6** | Symbol kind catalog, content-as-ref, extract/refactor integration, temporal refs |
 
+These rows are **UHPP reference-syntax** versions (how `h:` refs are parsed and resolved). They are **not** the same as **persisted memory snapshot** format versions (v4/v5) in [session-persistence.md](./session-persistence.md).
+
 ---
 
 **Source**: [`hashProtocol.ts`](../atls-studio/src/services/hashProtocol.ts), [`hashRefParsers.ts`](../atls-studio/src/utils/hashRefParsers.ts), [`hashModifierParser.ts`](../atls-studio/src/utils/hashModifierParser.ts), [`uhppTypes.ts`](../atls-studio/src/utils/uhppTypes.ts), [`uhppExpansion.ts`](../atls-studio/src/services/uhppExpansion.ts), [`hash_resolver.rs`](../atls-studio/src-tauri/src/hash_resolver.rs), [`hash_commands.rs`](../atls-studio/src-tauri/src/hash_commands.rs), [`hashProtocol.ts` (prompt)](../atls-studio/src/prompts/hashProtocol.ts)

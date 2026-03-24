@@ -51,6 +51,36 @@ Runs right after tool execution completes, before the next round. This is a ligh
 - Replaces tool result content with hash references **only when a matching engram already exists** in working memory (matched by content hash or source description)
 - Prevents duplicate content between history and working memory
 
+## Rolling history window
+
+Beyond hash deflation, the compressor maintains a **verbatim window** of the most recent tool-loop rounds in history. Constants live in [`promptMemory.ts`](../atls-studio/src/services/promptMemory.ts): `ROLLING_WINDOW_ROUNDS` (10) and `ROLLING_SUMMARY_MAX_TOKENS` (500).
+
+When the number of **rounds** in history exceeds the window, the **oldest** round is removed from the verbatim transcript and **distilled** into structured facts by [`historyDistiller.ts`](../atls-studio/src/services/historyDistiller.ts). The distiller fills a [`RollingSummary`](../atls-studio/src/services/historyDistiller.ts) in the context store (`decisions`, `filesChanged`, `userPreferences`, `workDone`, `findings`, `errors`).
+
+### API-only rolling summary message
+
+The distilled summary is **not** appended as a normal chat UI message. When building the provider request, [`aiService.ts`](../atls-studio/src/services/aiService.ts) **prepends** a synthetic assistant message whose body starts with the marker `[Rolling Summary]` (see `formatSummaryMessage` / `ROLLING_SUMMARY_MARKER` in the distiller). That message exists only in the **in-memory history** sent to the API. The visible transcript stays append-only for user/assistant turns; BP3 still treats the history prefix as stable for caching **within** a tool loop (see [Prompt Assembly](./prompt-assembly.md) for synthetic prefix vs UI transcript).
+
+### Interaction with compression
+
+- The rolling summary message is **not** compressed into a hash pointer (`[-> h:…]`), so distilled facts are not replaced by stale pointers.
+- When compressed history would leave **orphaned** hash pointers that referenced the rolling summary, those pointers are **removed** to avoid incoherent references.
+
+```mermaid
+flowchart LR
+  verbatim[Verbatim_history_window]
+  distill[historyDistiller]
+  rsStore[rollingSummary_in_contextStore]
+  apiHist[Provider_message_list]
+  persist[Snapshot_format_v5_on_disk]
+  verbatim -->|rounds_age_out| distill
+  distill --> rsStore
+  rsStore --> apiHist
+  rsStore --> persist
+```
+
+Distilled state is persisted with the memory snapshot as **snapshot format v5** (`rollingSummary` on [`PersistedMemorySnapshot`](../atls-studio/src/services/chatDb.ts)); see [session-persistence.md](./session-persistence.md).
+
 ## Digest Format
 
 Compressed entries include an edit-ready digest when available:
@@ -71,7 +101,7 @@ The digest provides structural context — function names, line ranges, class de
 
 History compression is deliberately deferred to round 0 to maintain cache stability:
 
-- **Within a tool loop** (rounds 1, 2, 3...): History is strictly append-only. No compression, no mutation of prior messages. This ensures the BP3 cache prefix stays byte-identical, giving cache reads at 0.1x cost.
+- **Within a tool loop** (rounds 1, 2, 3...): The **saved chat transcript** is strictly append-only. No compression, no mutation of prior messages. This ensures the BP3 cache prefix stays byte-identical for that transcript, giving cache reads at 0.1x cost. The API may still **prepend** the synthetic `[Rolling Summary]` message (see above); logical BP3 hit/miss is modeled in [`logicalCacheMetrics.ts`](../atls-studio/src/services/logicalCacheMetrics.ts) — see [prompt-assembly.md](./prompt-assembly.md).
 - **Between user turns** (round 0): Compression runs, potentially modifying old messages. This invalidates the BP3 cache, but a new cache write happens at the start of the next tool loop.
 
 ## Context Hygiene Middleware
@@ -96,4 +126,4 @@ The Cognitive Core prompt advises: "Call when `history_tokens > 15k` or round co
 
 ---
 
-**Source**: [`historyCompressor.ts`](../atls-studio/src/services/historyCompressor.ts), [`chatMiddleware.ts`](../atls-studio/src/services/chatMiddleware.ts), [`contextHash.ts`](../atls-studio/src/utils/contextHash.ts) (`formatChunkRef`)
+**Source**: [`historyCompressor.ts`](../atls-studio/src/services/historyCompressor.ts), [`historyDistiller.ts`](../atls-studio/src/services/historyDistiller.ts), [`chatMiddleware.ts`](../atls-studio/src/services/chatMiddleware.ts), [`contextHash.ts`](../atls-studio/src/utils/contextHash.ts) (`formatChunkRef`)

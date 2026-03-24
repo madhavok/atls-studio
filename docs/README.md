@@ -21,9 +21,9 @@ Related:
 | Doc | Topics |
 |-----|--------|
 | [atls-engine.md](./atls-engine.md) | ATLS engine integration |
-| [history-compression.md](./history-compression.md) | Chat / context compression |
+| [history-compression.md](./history-compression.md) | Hash deflation, rolling verbatim window, `[Rolling Summary]` API-only message, distiller, ties to **snapshot format v5** (`rollingSummary`) |
 | [prompt-assembly.md](./prompt-assembly.md) | How prompts are built |
-| [session-persistence.md](./session-persistence.md) | Session save/restore, auto-resume, freshness-after-restore timing, Tauri close flush |
+| [session-persistence.md](./session-persistence.md) | Session save/restore, auto-resume, memory snapshot versions (incl. v5 `rollingSummary`), freshness-after-restore timing, Tauri close flush |
 | [api-economics.md](./api-economics.md) | Token / API considerations |
 | [studio-app-shell.md](./studio-app-shell.md) | UI shell |
 | [tauri-backend.md](./tauri-backend.md) | Rust / Tauri layer |

@@ -124,6 +124,8 @@ Persistent session knowledge — plans, analysis results, decisions, extracted p
 
 Blackboard entries are referenced as `h:bb:key` and appear in the dynamic block of the prompt, separate from working memory.
 
+**Long-horizon facts**: When rounds age out of the verbatim history window, the distiller can record **findings** (and other fields) in the rolling summary — an API-only `[Rolling Summary]` block distinct from dormant per-engram digests. See [history-compression.md](./history-compression.md).
+
 ## Emergency Eviction
 
 When estimated prompt pressure exceeds 90%, `addChunk` triggers emergency eviction:

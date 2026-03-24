@@ -18,7 +18,7 @@ Through the ATLS runtime, the model gets structured control over its active work
 - **Freshness tracking** with a five-state taxonomy and a cascade of recovery strategies (edit journal, shape match, symbol identity, fingerprint, line relocation)
 - **Unified batch executor** — one tool surface (`batch()`) with 60+ operations, step-to-step dataflow, intent macros, and multi-level error recovery
 - **Universal Hash Pointer Protocol (UHPP)** — rich reference syntax with shapes, line ranges, set selectors, diffs, and boolean operations
-- **History compression** via hash-reference deflation — large tool results replaced with hash pointers, recallable on demand
+- **History compression** via hash-reference deflation, a **rolling verbatim window**, and a **distilled rolling summary** (`[Rolling Summary]`) for API assembly — large tool results replaced with hash pointers, older rounds summarized into structured facts, recallable on demand
 - **Prompt cache optimization** — append-only history within tool loops, mutable content isolated to the uncached dynamic block
 - **Blackboard architecture** for persistent session knowledge (plans, analysis results, decisions)
 - **Cognitive rules** — the model writes rules that shape its own reasoning across turns
@@ -60,7 +60,7 @@ See [Architecture Document](ARCHITECTURE.md) for the full technical description,
 | [Freshness System](docs/freshness.md) | Staleness detection, snapshot tracking, preflight (`context` full + store refresh), round-end sweep of chunks/archive/**staged** via bulk `get_current_revisions`, rebase strategies |
 | [Hash Protocol](docs/hash-protocol.md) | HPP visibility tracking and UHPP reference syntax |
 | [Prompt Assembly](docs/prompt-assembly.md) | Cache-aware prompt construction and middleware pipeline |
-| [History Compression](docs/history-compression.md) | Hash-reference deflation and conversation management |
+| [History Compression](docs/history-compression.md) | Hash-reference deflation, rolling window, distilled summary, snapshot format v5 persistence |
 | [API Economics](docs/api-economics.md) | The caching problem and what would fix it |
 | [Studio App Shell](docs/studio-app-shell.md) | Desktop UI structure, panel layout, and shell-level responsibilities |
 | [Tauri Backend](docs/tauri-backend.md) | Native Rust service layer, command groups, and backend boundaries |

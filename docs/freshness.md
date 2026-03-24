@@ -197,6 +197,8 @@ Successful edits register paths as **own writes** so the file watcher does not e
 
 ---
 
+**History compression (orthogonal)**: Per-file freshness and round-end sweeps are unrelated to the **rolling verbatim window** and distilled `[Rolling Summary]` message used to cap history size. See [history-compression.md](./history-compression.md).
+
 ## Source Files (Quick Reference)
 
 | Concern | Primary files |

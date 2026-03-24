@@ -55,6 +55,15 @@ ATLS runtime architecture:
 
 The more sophisticated the memory system, the less cacheable the prompt. A simple chatbot with a static system prompt gets 85% cache reads. An agent workflow with living working memory gets 30-40% because the interesting part — the cognitive state — is mutable.
 
+## Logical vs provider-reported cache behavior
+
+The UI and dev tooling expose **logical** cache expectations from [`logicalCacheMetrics.ts`](../atls-studio/src/services/logicalCacheMetrics.ts):
+
+- **BP3 (history)**: Treats a **cache read** as likely when the conversation prefix before the last user message is unchanged except for **appending** new messages (same JSON-serialized prefix hash). A **miss** is expected after round-0 compression, in-place edits to earlier messages, or a shrinking prefix.
+- **Static block**: Compared via the assembled static prompt cache key.
+
+These are **heuristic expectations** aligned with Anthropic’s prefix rules; they help explain behavior and debug surprises. **Billing** still follows provider-reported `cache_read_input_tokens` / `cache_creation_input_tokens` from each API response. The synthetic `[Rolling Summary]` prepended to the provider message list is part of the assembled history for that model; see [prompt-assembly.md](./prompt-assembly.md) and [history-compression.md](./history-compression.md).
+
 ## The Staged Content Paradox
 
 The Rust backend already supports a fourth breakpoint (`<<STAGED_CONTEXT_BOUNDARY>>`) for caching staged snippets. But the staged block is unstable because:
@@ -102,4 +111,4 @@ These are mitigations, not solutions. The structural problem remains: living mem
 
 ---
 
-**Source**: [`aiService.ts`](../atls-studio/src/services/aiService.ts) (cache breakpoints, prompt assembly), [`ai_streaming.rs`](../atls-studio/src-tauri/src/ai_streaming.rs) (BP3/BP4 marker handling), [`appStore.ts`](../atls-studio/src/stores/appStore.ts) (cache metrics tracking)
+**Source**: [`aiService.ts`](../atls-studio/src/services/aiService.ts) (cache breakpoints, prompt assembly), [`logicalCacheMetrics.ts`](../atls-studio/src/services/logicalCacheMetrics.ts) (logical hit model), [`ai_streaming.rs`](../atls-studio/src-tauri/src/ai_streaming.rs) (BP3/BP4 marker handling), [`appStore.ts`](../atls-studio/src/stores/appStore.ts) (cache metrics tracking)
