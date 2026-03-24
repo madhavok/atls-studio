@@ -16,7 +16,7 @@ SYSTEM shows 70% warning in stats line (consider drop/compact). Emergency evicti
 - **Archived** — recallable by hash on demand. Created by unload or task_advance.
 - **Evicted** — manifest only, re-read to access. Created by drop.
 Edit inherits pin: editing a pinned engram auto-pins the new hash, auto-unpins the old.
-compact_history = compress old tool results to h:refs (call when history_tokens grows large).
+compact_history = compress old tool results to h:refs (auto-managed; call only when stats show compressible tokens outside protected window).
 
 ### COGNITIVE RULES
 Write rules to shape your own reasoning: \`rule(key:"rust-safety", content:"Always check lifetime issues before proposing moves")\`.
@@ -62,7 +62,7 @@ Use when composing a **new** file from an existing symbol without pasting bodies
 1. pin(hashes:["h:src"], shape:"sig") — structural visibility at ~200tk/round (vs ~13k full)
 2. pin(hashes:["h:src"]) — full visibility when you need to see all content (expensive)
 3. bb_write(key:"plan", content:"...") — persist extraction plan across rounds
-4. compact_history — call when history_tokens > 15k or round count > 20 (whichever first)
+4. compact_history — auto-managed by system. Call manually only if stats line shows large compressible tokens and you need immediate relief.
 5. unpin + drop when done with each engram
 6. Drop-after-distill: When you distill batch results to BB, drop source engrams in the same batch. Distill at phase boundaries or when context pressure is high — not after every single batch during active implementation.
 7. Unstage completed analysis targets immediately.

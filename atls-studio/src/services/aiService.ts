@@ -1462,7 +1462,7 @@ async function streamChatViaTauri(
         let historyBreakdownLabel: string | undefined;
         if (conversationHistoryTokens > 5000) {
           const { analyzeHistoryBreakdown, formatHistoryBreakdown } = await import('./historyCompressor');
-          const breakdown = analyzeHistoryBreakdown(conversationHistory, priorTurnBoundary ?? 0);
+          const breakdown = analyzeHistoryBreakdown(conversationHistory, priorTurnBoundary ?? 0, round);
           historyBreakdownLabel = formatHistoryBreakdown(breakdown) || undefined;
         }
         const stagedTokensBucket = getStagedTokens(appState.promptMetrics, stagedTokens);
@@ -2023,7 +2023,7 @@ async function streamChatViaTauri(
         ? CONVERSATION_HISTORY_BUDGET_TOKENS
         : CONVERSATION_HISTORY_BUDGET_TOKENS * 3;
       if (estimatedHistoryTokens > safetyThreshold) {
-        const count = compressToolLoopHistory(conversationHistory, round, priorTurnBoundary);
+        const count = compressToolLoopHistory(conversationHistory, round, priorTurnBoundary, { emergency: true });
         if (count > 0) {
           console.log(`[aiService] SAFETY: auto-compressed ${count} history entries (history at ${(estimatedHistoryTokens / 1000).toFixed(1)}k / ${(safetyThreshold / 1000).toFixed(1)}k threshold${round > 0 ? ', mid-loop emergency' : ''})`);
         }

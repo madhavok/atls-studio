@@ -4,6 +4,7 @@
 
 import type { OpHandler, HandlerContext, StepOutput } from '../types';
 import { estimateTokens, SHORT_HASH_LEN, sliceContentByLines } from '../../../utils/contextHash';
+import { PROTECTED_RECENT_ROUNDS } from '../../promptMemory';
 import { parseHashRef } from '../../../utils/hashRefParsers';
 import { invoke } from '@tauri-apps/api/core';
 
@@ -543,11 +544,12 @@ export const handleCompactHistory: OpHandler = async (_params, ctx) => {
       const breakdown = analyzeHistoryBreakdown(
         ctx.toolLoopState.conversationHistory,
         ctx.toolLoopState.priorTurnBoundary ?? 0,
+        ctx.toolLoopState.round,
       );
       const detail = formatHistoryBreakdown(breakdown);
       const hint = breakdown.compressibleCount === 0
-        ? ' — nothing above threshold; history bloat is from recent/protected turns'
-        : ` — ${breakdown.compressibleCount} items (${(breakdown.compressibleTokens / 1000).toFixed(1)}k) above threshold but in protected window`;
+        ? ' — nothing above threshold; all content is small or already compressed'
+        : ` — ${breakdown.compressibleCount} items (${(breakdown.compressibleTokens / 1000).toFixed(1)}k) above threshold but in protected window (last ${PROTECTED_RECENT_ROUNDS} rounds)`;
       return ok(`compact_history: compressed 0 tool results | history:${(breakdown.total / 1000).toFixed(0)}k (${detail})${hint}`);
     }
     return ok(`compact_history: compressed ${count} tool results`);

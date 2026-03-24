@@ -283,6 +283,7 @@ export function compressToolLoopHistory(
   history: Array<{ role: string; content: unknown }>,
   currentRound?: number,
   priorTurnBoundary?: number,
+  opts?: { emergency?: boolean },
 ): number {
   const contextStore = useContextStore.getState();
   let compressedCount = 0;
@@ -293,7 +294,8 @@ export function compressToolLoopHistory(
 
   const messageRounds = buildAssistantRoundMap(history, startIdx);
 
-  const skipThreshold = currentRound !== undefined ? Math.max(0, currentRound - PROTECTED_RECENT_ROUNDS) : Infinity;
+  const protectedCount = opts?.emergency ? 0 : PROTECTED_RECENT_ROUNDS;
+  const skipThreshold = currentRound !== undefined ? Math.max(0, currentRound - protectedCount) : Infinity;
 
   const recordReplacement = (content: string, role: string, description: string): string => {
     const chunkType = role === 'assistant' ? 'msg:asst' : 'msg:user';
@@ -537,23 +539,33 @@ export interface HistoryBreakdown {
   compressibleCount: number;
   /** Tokens in compressible messages */
   compressibleTokens: number;
+  /** Tokens in compressible messages that sit inside the protected window (not actionable) */
+  protectedTokens: number;
 }
 
 /**
  * Analyze history token distribution by category.
  * Returns a breakdown showing where tokens are spent and how much is compressible.
+ * When `currentRound` is provided, also computes how many compressible tokens are
+ * inside the protected window (not actionable by normal compression).
  */
 export function analyzeHistoryBreakdown(
   history: Array<{ role: string; content: unknown }>,
   startIdx = 0,
+  currentRound?: number,
 ): HistoryBreakdown {
   const breakdown: HistoryBreakdown = {
     total: 0, compressed: 0, rolled: 0, toolResults: 0, toolUse: 0,
     assistantText: 0, userText: 0, compressibleCount: 0, compressibleTokens: 0,
+    protectedTokens: 0,
   };
+
+  const messageRounds = currentRound !== undefined ? buildAssistantRoundMap(history, startIdx) : undefined;
+  const skipThreshold = currentRound !== undefined ? Math.max(0, currentRound - PROTECTED_RECENT_ROUNDS) : -1;
 
   for (let i = startIdx; i < history.length; i++) {
     const msg = history[i];
+    const isProtected = messageRounds ? (messageRounds.get(i) ?? -1) >= skipThreshold : false;
 
     if (typeof msg.content === 'string') {
       const tokens = estimateTokens(msg.content);
@@ -569,12 +581,14 @@ export function analyzeHistoryBreakdown(
         if (tokens > HISTORY_TEXT_REPLACEMENT_THRESHOLD_TOKENS) {
           breakdown.compressibleCount++;
           breakdown.compressibleTokens += tokens;
+          if (isProtected) breakdown.protectedTokens += tokens;
         }
       } else {
         breakdown.userText += tokens;
         if (tokens > HISTORY_TEXT_REPLACEMENT_THRESHOLD_TOKENS) {
           breakdown.compressibleCount++;
           breakdown.compressibleTokens += tokens;
+          if (isProtected) breakdown.protectedTokens += tokens;
         }
       }
       continue;
@@ -594,6 +608,7 @@ export function analyzeHistoryBreakdown(
             if (tokens > COMPRESSION_THRESHOLD_TOKENS) {
               breakdown.compressibleCount++;
               breakdown.compressibleTokens += tokens;
+              if (isProtected) breakdown.protectedTokens += tokens;
             }
           }
         } else if (block.type === 'tool_use' && block.input) {
@@ -607,6 +622,7 @@ export function analyzeHistoryBreakdown(
             if (tokens > COMPRESSION_THRESHOLD_TOKENS) {
               breakdown.compressibleCount++;
               breakdown.compressibleTokens += tokens;
+              if (isProtected) breakdown.protectedTokens += tokens;
             }
           }
         } else {
@@ -643,5 +659,6 @@ export function formatHistoryBreakdown(b: HistoryBreakdown): string {
   if (b.toolUse > 0) parts.push(`calls:${k(b.toolUse)}`);
   if (b.compressed > 0) parts.push(`refs:${k(b.compressed)}`);
   if (b.rolled > 0) parts.push(`rolled:${k(b.rolled)}`);
+  if (b.protectedTokens > 0) parts.push(`protected:${k(b.protectedTokens)}`);
   return parts.join(' ');
 }

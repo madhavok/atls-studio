@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { compressToolLoopHistory, deflateToolResults, estimateHistoryTokens } from './historyCompressor';
+import { compressToolLoopHistory, deflateToolResults, estimateHistoryTokens, analyzeHistoryBreakdown } from './historyCompressor';
 import { ROLLING_SUMMARY_MARKER } from './historyDistiller';
 import { useContextStore } from '../stores/contextStore';
 import { useAppStore } from '../stores/appStore';
@@ -357,5 +357,148 @@ describe('compressToolLoopHistory rolling window', () => {
     expect(summaryIdx).toBeGreaterThanOrEqual(0);
     const content = String(history[summaryIdx].content);
     expect(content).not.toContain('[-> h:');
+  });
+});
+
+describe('compressToolLoopHistory emergency mode', () => {
+  beforeEach(() => resetStore());
+
+  it('emergency mode compresses round 0 tool result when called at round 1', () => {
+    const bigResult = 'x'.repeat(6000);
+    const toolUseId = 'tu_big';
+    const history: Array<{ role: string; content: unknown }> = [
+      { role: 'user', content: 'start' },
+      {
+        role: 'assistant',
+        content: [
+          { type: 'tool_use', id: toolUseId, name: 'read', input: { path: 'big.ts' } },
+        ],
+      },
+      {
+        role: 'user',
+        content: [
+          { type: 'tool_result', tool_use_id: toolUseId, content: bigResult },
+        ],
+      },
+      { role: 'assistant', content: 'round 1 response' },
+      { role: 'user', content: 'ok' },
+    ];
+
+    const count = compressToolLoopHistory(history, 1, 0, { emergency: true });
+    expect(count).toBeGreaterThan(0);
+    const toolResult = (history[2].content as Array<{ content: string }>)[0];
+    expect(toolResult.content).toContain('[->');
+  });
+
+  it('normal mode does NOT compress round 0 tool result when called at round 1', () => {
+    const bigResult = 'y'.repeat(6000);
+    const toolUseId = 'tu_big2';
+    const history: Array<{ role: string; content: unknown }> = [
+      { role: 'user', content: 'start' },
+      {
+        role: 'assistant',
+        content: [
+          { type: 'tool_use', id: toolUseId, name: 'read', input: { path: 'big2.ts' } },
+        ],
+      },
+      {
+        role: 'user',
+        content: [
+          { type: 'tool_result', tool_use_id: toolUseId, content: bigResult },
+        ],
+      },
+      { role: 'assistant', content: 'round 1 response' },
+      { role: 'user', content: 'ok' },
+    ];
+
+    compressToolLoopHistory(history, 1, 0);
+    const toolResult = (history[2].content as Array<{ content: string }>)[0];
+    expect(toolResult.content).toBe(bigResult);
+  });
+});
+
+describe('analyzeHistoryBreakdown protectedTokens', () => {
+  it('reports protectedTokens for compressible items in the protected window', () => {
+    const bigResult = 'z'.repeat(6000);
+    const toolUseId = 'tu_analyze';
+    const history: Array<{ role: string; content: unknown }> = [
+      { role: 'user', content: 'start' },
+      {
+        role: 'assistant',
+        content: [
+          { type: 'tool_use', id: toolUseId, name: 'read', input: { path: 'file.ts' } },
+        ],
+      },
+      {
+        role: 'user',
+        content: [
+          { type: 'tool_result', tool_use_id: toolUseId, content: bigResult },
+        ],
+      },
+      { role: 'assistant', content: 'done' },
+      { role: 'user', content: 'ok' },
+    ];
+
+    const breakdown = analyzeHistoryBreakdown(history, 0, 1);
+    expect(breakdown.compressibleTokens).toBeGreaterThan(0);
+    expect(breakdown.protectedTokens).toBe(breakdown.compressibleTokens);
+  });
+
+  it('reports zero protectedTokens when compressible items are outside the window', () => {
+    const bigResult = 'w'.repeat(6000);
+    const toolUseId = 'tu_old';
+    const history: Array<{ role: string; content: unknown }> = [
+      { role: 'user', content: 'start' },
+      {
+        role: 'assistant',
+        content: [
+          { type: 'tool_use', id: toolUseId, name: 'read', input: { path: 'old.ts' } },
+        ],
+      },
+      {
+        role: 'user',
+        content: [
+          { type: 'tool_result', tool_use_id: toolUseId, content: bigResult },
+        ],
+      },
+      { role: 'assistant', content: 'r1' },
+      { role: 'user', content: 'ok' },
+      { role: 'assistant', content: 'r2' },
+      { role: 'user', content: 'ok' },
+      { role: 'assistant', content: 'r3' },
+      { role: 'user', content: 'ok' },
+      { role: 'assistant', content: 'r4' },
+      { role: 'user', content: 'ok' },
+      { role: 'assistant', content: 'r5' },
+      { role: 'user', content: 'ok' },
+    ];
+
+    const breakdown = analyzeHistoryBreakdown(history, 0, 5);
+    expect(breakdown.compressibleTokens).toBeGreaterThan(0);
+    expect(breakdown.protectedTokens).toBe(0);
+  });
+
+  it('reports zero protectedTokens when currentRound is not provided', () => {
+    const bigResult = 'v'.repeat(6000);
+    const toolUseId = 'tu_noround';
+    const history: Array<{ role: string; content: unknown }> = [
+      { role: 'user', content: 'start' },
+      {
+        role: 'assistant',
+        content: [
+          { type: 'tool_use', id: toolUseId, name: 'read', input: { path: 'any.ts' } },
+        ],
+      },
+      {
+        role: 'user',
+        content: [
+          { type: 'tool_result', tool_use_id: toolUseId, content: bigResult },
+        ],
+      },
+    ];
+
+    const breakdown = analyzeHistoryBreakdown(history, 0);
+    expect(breakdown.compressibleTokens).toBeGreaterThan(0);
+    expect(breakdown.protectedTokens).toBe(0);
   });
 });
