@@ -410,6 +410,7 @@ export function compressToolLoopHistory(
     }
 
     if (typeof msg.content === 'string') {
+      if (isRollingSummaryMessage(msg)) continue;
       const tokens = estimateTokens(msg.content);
       if (tokens <= HISTORY_TEXT_REPLACEMENT_THRESHOLD_TOKENS) continue;
       const description = `history:${msg.role}:${msg.content.slice(0, 60).replace(/\s+/g, ' ').trim()}`;
@@ -427,6 +428,7 @@ export function compressToolLoopHistory(
       const msgRound = messageRounds.get(i) ?? -1;
       if (msgRound >= skipThreshold) continue;
       if (typeof msg.content !== 'string' || msg.content.startsWith('[->')) continue;
+      if (isRollingSummaryMessage(msg)) continue;
       const tokens = estimateTokens(msg.content);
       if (tokens <= 0) continue;
       const description = `history:${msg.role}:budget-relief`;

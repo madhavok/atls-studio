@@ -81,4 +81,43 @@ describe('historyDistiller', () => {
     expect(isRollingSummaryEmpty(emptyRollingSummary())).toBe(true);
     expect(isRollingSummaryEmpty({ ...emptyRollingSummary(), decisions: ['x'] })).toBe(false);
   });
+
+  it('distillRound skips compressed hash pointer lines in assistant text', () => {
+    const facts = distillRound([
+      {
+        role: 'assistant',
+        content: '[-> h:a1b2c3d4, 969tk | history:assistant:some previous text that was compressed]',
+      },
+      { role: 'user', content: 'ok' },
+    ]);
+    expect(facts.decisions).toEqual([]);
+    expect(facts.workDone).toEqual([]);
+  });
+
+  it('distillRound skips pointer lines in array-shaped assistant content', () => {
+    const facts = distillRound([
+      {
+        role: 'assistant',
+        content: [
+          { type: 'text', text: '[-> h:deadbeef, 512tk | history:assistant:compressed block]' },
+          { type: 'text', text: 'This is a real decision about architecture' },
+        ],
+      },
+      { role: 'user', content: 'sounds good' },
+    ]);
+    expect(facts.decisions).toEqual(['This is a real decision about architecture']);
+  });
+
+  it('updateRollingSummary rejects pointer strings via dedupePush', () => {
+    const base = emptyRollingSummary();
+    const withPointers = updateRollingSummary(base, {
+      decisions: ['[-> h:abc12345, 400tk | history:assistant:[Rolling Summary]...]'],
+      filesChanged: [],
+      userPreferences: [],
+      workDone: ['[-> h:fff00000, 200tk | done]'],
+      errors: [],
+    });
+    expect(withPointers.decisions).toEqual([]);
+    expect(withPointers.workDone).toEqual([]);
+  });
 });

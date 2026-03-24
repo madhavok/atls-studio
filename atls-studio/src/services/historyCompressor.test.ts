@@ -321,4 +321,41 @@ describe('compressToolLoopHistory rolling window', () => {
     expect(String(history[0].content)).toContain(ROLLING_SUMMARY_MARKER);
     expect(useAppStore.getState().promptMetrics.rollingSavings).toBeGreaterThan(beforeRolling);
   });
+
+  it('never compresses the rolling summary message to a hash pointer', () => {
+    const history: Array<{ role: string; content: unknown }> = [{ role: 'user', content: 'start' }];
+    for (let i = 0; i < 20; i++) {
+      history.push({ role: 'assistant', content: `Round ${i} decision about architecture and implementation approach` });
+      history.push({ role: 'user', content: `acknowledged round ${i}` });
+    }
+
+    compressToolLoopHistory(history, 30, 0);
+
+    const summaryIdx = history.findIndex(
+      (m) => m.role === 'assistant' && typeof m.content === 'string' && String(m.content).includes(ROLLING_SUMMARY_MARKER),
+    );
+    expect(summaryIdx).toBeGreaterThanOrEqual(0);
+    const content = String(history[summaryIdx].content);
+    expect(content).not.toMatch(/^\[->/);
+    expect(content).toContain(ROLLING_SUMMARY_MARKER);
+  });
+
+  it('rolling summary does not contain hash pointer strings after repeated compression', () => {
+    const history: Array<{ role: string; content: unknown }> = [{ role: 'user', content: 'start' }];
+    for (let i = 0; i < 20; i++) {
+      history.push({ role: 'assistant', content: `Decision ${i}: chose approach that optimizes for performance and clarity` });
+      history.push({ role: 'user', content: `acknowledged decision ${i}` });
+    }
+
+    for (let pass = 0; pass < 3; pass++) {
+      compressToolLoopHistory(history, 30 + pass, 0);
+    }
+
+    const summaryIdx = history.findIndex(
+      (m) => m.role === 'assistant' && typeof m.content === 'string' && String(m.content).includes(ROLLING_SUMMARY_MARKER),
+    );
+    expect(summaryIdx).toBeGreaterThanOrEqual(0);
+    const content = String(history[summaryIdx].content);
+    expect(content).not.toContain('[-> h:');
+  });
 });

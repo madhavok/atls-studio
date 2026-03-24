@@ -36,7 +36,7 @@ export function isRollingSummaryMessage(msg: { role: string; content: unknown })
 
 function dedupePush(arr: string[], item: string): void {
   const t = item.trim();
-  if (!t) return;
+  if (!t || t.startsWith('[->')) return;
   const key = t.toLowerCase();
   if (arr.some((x) => x.toLowerCase() === key)) return;
   arr.push(t.length > 400 ? `${t.slice(0, 397)}...` : t);
@@ -119,6 +119,7 @@ export function distillRound(messages: Array<{ role: string; content: unknown }>
       const texts = extractTextFromAssistantContent(msg.content);
       for (const t of texts) {
         const line = t.replace(/\s+/g, ' ').trim();
+        if (line.startsWith('[->')) continue;
         if (line.length > 20 && line.length < 500) {
           dedupePush(facts.decisions, line.slice(0, 280));
         }
