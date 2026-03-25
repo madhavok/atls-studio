@@ -1,5 +1,8 @@
+import { useMemo } from 'react';
 import { useAppStore } from '../../../stores/appStore';
 import { useContextStore } from '../../../stores/contextStore';
+import { useRoundHistoryStore } from '../../../stores/roundHistoryStore';
+import { getEffectiveContextWindow } from '../../../utils/modelCapabilities';
 
 export function ContextMetricsSection() {
   const promptMetrics = useAppStore((s) => s.promptMetrics);
@@ -7,20 +10,38 @@ export function ContextMetricsSection() {
   const logicalCache = useAppStore((s) => s.logicalCache);
   const selectedProvider = useAppStore((s) => s.settings.selectedProvider);
   const contextUsage = useAppStore((s) => s.contextUsage);
+  const availableModels = useAppStore((s) => s.availableModels);
+  const selectedModel = useAppStore((s) => s.settings.selectedModel);
+  const extendedContext = useAppStore((s) => s.settings.extendedContext) ?? {};
   const emDepth = useAppStore((s) => s.settings.entryManifestDepth) ?? 'sigs';
   const getStats = useContextStore((s) => s.getStats);
+  const chunks = useContextStore((s) => s.chunks);
+  const getPromptTokens = useContextStore((s) => s.getPromptTokens);
   const freedTokens = useContextStore((s) => s.freedTokens);
 
-  const stats = getStats();
-  const maxTokens = stats.maxTokens || contextUsage.maxTokens || 200000;
-  const overheadTokens = promptMetrics.totalOverheadTokens;
-  const contextTokens = stats.usedTokens || 0;
-  const freeTokens = Math.max(0, maxTokens - contextTokens);
+  const latestSnapshot = useRoundHistoryStore((s) =>
+    s.snapshots.length > 0 ? s.snapshots[s.snapshots.length - 1] : undefined,
+  );
 
-  const overheadPct = maxTokens > 0 ? (overheadTokens / maxTokens) * 100 : 0;
-  const activeContextTokens = Math.max(0, contextTokens - overheadTokens);
-  const contextPct = maxTokens > 0 ? (activeContextTokens / maxTokens) * 100 : 0;
-  const freePct = maxTokens > 0 ? (freeTokens / maxTokens) * 100 : 0;
+  const stats = getStats();
+  const currentModel = availableModels.find((m) => m.id === selectedModel);
+  const maxTokens =
+    stats.maxTokens
+    || (currentModel
+      ? (getEffectiveContextWindow(currentModel.id, currentModel.provider, currentModel.contextWindow, extendedContext) ?? null)
+      : null)
+    || contextUsage.maxTokens
+    || 200000;
+
+  const overheadTokens = promptMetrics.totalOverheadTokens;
+  const wmTokens = useMemo(() => getPromptTokens(), [chunks, getPromptTokens]);
+  const fallbackPromptUsed = wmTokens + overheadTokens;
+  const estimatedPromptUsed = latestSnapshot?.estimatedTotalPromptTokens;
+  const usedTokens = estimatedPromptUsed ?? fallbackPromptUsed;
+  const freeTokens = Math.max(0, maxTokens - usedTokens);
+
+  const usedPct = maxTokens > 0 ? Math.min(100, (usedTokens / maxTokens) * 100) : 0;
+  const freePct = maxTokens > 0 ? Math.min(100, (freeTokens / maxTokens) * 100) : 0;
 
   const cacheTotal = cacheMetrics.sessionCacheWrites + cacheMetrics.sessionCacheReads + cacheMetrics.sessionUncached;
   const cacheWritePct = cacheTotal > 0 ? (cacheMetrics.sessionCacheWrites / cacheTotal) * 100 : 0;
@@ -37,14 +58,9 @@ export function ContextMetricsSection() {
         </div>
         <div className="h-4 bg-studio-border/30 rounded-full overflow-hidden flex">
           <div
-            className="h-full bg-red-500/70"
-            style={{ width: `${overheadPct}%` }}
-            title={`Overhead: ${overheadTokens.toLocaleString()}tk (${overheadPct.toFixed(1)}%)`}
-          />
-          <div
             className="h-full bg-studio-accent/70"
-            style={{ width: `${contextPct}%` }}
-            title={`Context: ${contextTokens.toLocaleString()}tk (${contextPct.toFixed(1)}%)`}
+            style={{ width: `${usedPct}%` }}
+            title={`Estimated prompt: ${usedTokens.toLocaleString()}tk (${usedPct.toFixed(1)}%)`}
           />
           <div
             className="h-full bg-green-500/30"
@@ -52,11 +68,21 @@ export function ContextMetricsSection() {
             title={`Free: ${freeTokens.toLocaleString()}tk (${freePct.toFixed(1)}%)`}
           />
         </div>
-        <div className="flex gap-3 text-[10px] text-studio-muted mt-1">
-          <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-sm bg-red-500/70" /> Overhead {overheadPct.toFixed(1)}%</span>
-          <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-sm bg-studio-accent/70" /> Active CTX {contextPct.toFixed(1)}%</span>
-          <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-sm bg-green-500/30" /> Free {freePct.toFixed(1)}%</span>
+        <div className="flex gap-3 text-[10px] text-studio-muted mt-1 flex-wrap">
+          <span className="flex items-center gap-1">
+            <span className="w-2 h-2 rounded-sm bg-studio-accent/70" />
+            Used {usedPct.toFixed(1)}% ({usedTokens.toLocaleString()}tk)
+          </span>
+          <span className="flex items-center gap-1">
+            <span className="w-2 h-2 rounded-sm bg-green-500/30" />
+            Free {freePct.toFixed(1)}% ({freeTokens.toLocaleString()}tk)
+          </span>
         </div>
+        {!latestSnapshot && (
+          <p className="text-[10px] text-studio-muted mt-1">
+            Full prompt estimate after the first completed round; until then WM + overhead ({wmTokens.toLocaleString()} + {overheadTokens.toLocaleString()}tk).
+          </p>
+        )}
       </div>
 
       {/* Prompt overhead breakdown */}

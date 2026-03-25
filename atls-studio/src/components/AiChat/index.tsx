@@ -167,19 +167,25 @@ const ContextPanel = memo(function ContextPanel() {
   const bbEntries = useContextStore((s) => s.blackboardEntries);
   const maxTokens = useContextStore((s) => s.maxTokens);
   const freedTokens = useContextStore((s) => s.freedTokens);
+  const getPromptTokens = useContextStore((s) => s.getPromptTokens);
+  const getBlackboardTokenCount = useContextStore((s) => s.getBlackboardTokenCount);
   const [expanded, setExpanded] = useState(false);
   
-  // Compute stats
-  let usedTokens = 0;
-  let pinnedCount = 0;
-  chunks.forEach(c => { usedTokens += c.tokens; if (c.pinned) pinnedCount++; });
-  let bbTokens = 0;
-  bbEntries.forEach(e => bbTokens += e.tokens);
+  const wmTokens = useMemo(() => getPromptTokens(), [chunks, getPromptTokens]);
+  const bbTokens = useMemo(() => getBlackboardTokenCount(), [bbEntries, getBlackboardTokenCount]);
+  const pinnedCount = useMemo(() => {
+    let n = 0;
+    chunks.forEach((c) => {
+      if (c.pinned) n++;
+    });
+    return n;
+  }, [chunks]);
   
   const hasContent = chunks.size > 0 || bbEntries.size > 0 || taskPlan !== null;
   if (!hasContent) return null;
   
-  const totalTokens = usedTokens + bbTokens;
+  // Align with prompt pressure: WM via getPromptTokens (excludes chat chunks, dormant rules) + blackboard
+  const totalTokens = wmTokens + bbTokens;
   const percentage = Math.min(100, (totalTokens / maxTokens) * 100);
   const barColor = percentage >= 90 ? 'bg-red-500' : percentage >= 70 ? 'bg-yellow-500' : 'bg-blue-500';
   
@@ -450,13 +456,10 @@ const ContextMeter = memo(function ContextMeter() {
     : 200000;
   
   const chunkCount = chunks.size;
+  const getPromptTokens = useContextStore((s) => s.getPromptTokens);
+  const wmTokens = useMemo(() => getPromptTokens(), [chunks, getPromptTokens]);
   const latestSnapshot = useRoundHistoryStore(s => s.snapshots.length > 0 ? s.snapshots[s.snapshots.length - 1] : undefined);
-  const chunkTokens = useMemo(() => {
-    let total = 0;
-    chunks.forEach(c => total += c.tokens);
-    return total;
-  }, [chunks]);
-  const fallbackUsedTokens = chunkTokens + (pm.totalOverheadTokens || 0);
+  const fallbackUsedTokens = wmTokens + (pm.totalOverheadTokens || 0);
   const usedTokens = latestSnapshot?.estimatedTotalPromptTokens ?? fallbackUsedTokens;
   const percentage = Math.min(100, (usedTokens / maxTokens) * 100);
   
@@ -503,7 +506,7 @@ const ContextMeter = memo(function ContextMeter() {
   const promptOverhead = (pm.totalOverheadTokens || 0) - (pm.entryManifestTokens ?? 0);
   const hoverBreakdown = [
     'Context window budget:',
-    `• Working memory: ${chunkCount} chunks → ${formatTokens(chunkTokens)}`,
+    `• Working memory: ${chunkCount} chunks → ${formatTokens(wmTokens)} (prompt WM)`,
     ...((pm.entryManifestTokens ?? 0) > 0
       ? [`• Entry manifest: ${formatTokens(pm.entryManifestTokens ?? 0)}`]
       : []),
@@ -566,12 +569,14 @@ const ContextMeter = memo(function ContextMeter() {
 
 // Compact context metrics — prompt overhead breakdown + cumulative savings
 type OverheadSegment = { label: string; tokens: number; color: string };
+type BudgetBucket = { label: string; tokens: number; color: string };
 const ContextMetrics = memo(function ContextMetrics() {
   const pm = useAppStore(state => state.promptMetrics);
   const cacheMetrics = useAppStore(state => state.cacheMetrics);
   const logicalCache = useAppStore(state => state.logicalCache);
   const freedTokens = useContextStore(state => state.freedTokens);
   const chunks = useContextStore(state => state.chunks);
+  const getPromptTokens = useContextStore((s) => s.getPromptTokens);
   const availableModels = useAppStore(state => state.availableModels);
   const selectedModel = useAppStore(state => state.settings.selectedModel);
   const extendedContext = useAppStore(state => state.settings.extendedContext) ?? {};
@@ -585,24 +590,36 @@ const ContextMetrics = memo(function ContextMetrics() {
   const provider = currentModel?.provider || getProviderFromModel(selectedModel);
 
   const latestSnapshot = useRoundHistoryStore(s => s.snapshots.length > 0 ? s.snapshots[s.snapshots.length - 1] : undefined);
-  const chunkTokens = useMemo(() => {
-    let total = 0;
-    chunks.forEach(c => total += c.tokens);
-    return total;
-  }, [chunks]);
-  const fallbackUsedTokens = chunkTokens + (pm.totalOverheadTokens || 0);
+  const wmTokens = useMemo(() => getPromptTokens(), [chunks, getPromptTokens]);
+  const fallbackUsedTokens = wmTokens + (pm.totalOverheadTokens || 0);
   const usedTokens = latestSnapshot?.estimatedTotalPromptTokens ?? fallbackUsedTokens;
-  const userContentTokens = chunkTokens;
+
+  const budgetSplitBuckets = useMemo((): BudgetBucket[] => {
+    if (!latestSnapshot) return [];
+    const s = latestSnapshot;
+    return [
+      { label: 'System', tokens: s.staticSystemTokens, color: 'bg-purple-500/70' },
+      { label: 'History', tokens: s.conversationHistoryTokens, color: 'bg-violet-500/70' },
+      { label: 'Staged', tokens: s.stagedBucketTokens, color: 'bg-fuchsia-500/70' },
+      { label: 'WM', tokens: s.wmTokens, color: 'bg-studio-accent' },
+      { label: 'Workspace', tokens: s.workspaceContextTokens, color: 'bg-amber-500/70' },
+    ].filter((b) => b.tokens > 0);
+  }, [latestSnapshot]);
 
   // Per-round savings = what we avoid sending each time the API is called
   const perRoundSavings = pm.compressionSavings + (pm.rollingSavings ?? 0) + freedTokens;
   // Cumulative = sum of perRoundSavings across all rounds (compounding effect)
   const { cumulativeInputSaved, roundCount } = pm;
-  const hasData = pm.totalOverheadTokens > 0 || perRoundSavings > 0 || cumulativeInputSaved > 0;
+  const hasData =
+    pm.totalOverheadTokens > 0
+    || perRoundSavings > 0
+    || cumulativeInputSaved > 0
+    || chunks.size > 0
+    || latestSnapshot != null;
 
   const overheadPct = Math.min(100, (pm.totalOverheadTokens / maxTokens) * 100);
   const efficiency = usedTokens > 0
-    ? Math.round((userContentTokens / usedTokens) * 100)
+    ? Math.round((wmTokens / usedTokens) * 100)
     : 100;
 
   // Cost estimate using real model pricing on cumulative input tokens avoided
@@ -777,38 +794,59 @@ const ContextMetrics = memo(function ContextMetrics() {
             </div>
           )}
 
-          {/* Context budget split */}
+          {/* Context budget split — buckets match aiService RoundSnapshot / getEstimatedTotalPromptTokens */}
           <div className="border-t border-studio-border pt-1">
             <div className="flex items-center justify-between mb-0.5">
               <span className="text-studio-text-secondary">Budget Split</span>
               <span>{formatTokens(usedTokens)} / {formatTokens(maxTokens)}</span>
             </div>
-            <div className="flex h-1.5 rounded-full overflow-hidden bg-studio-border">
-              <div
-                className="bg-purple-500/70 transition-all"
-                style={{ width: `${(pm.totalOverheadTokens / maxTokens) * 100}%` }}
-                title={`Overhead: ${formatTokens(pm.totalOverheadTokens)}`}
-              />
-              <div
-                className="bg-studio-accent transition-all"
-                style={{ width: `${(userContentTokens / maxTokens) * 100}%` }}
-                title={`User content: ${formatTokens(userContentTokens)}`}
-              />
-            </div>
-            <div className="flex gap-3 mt-0.5">
-              <span className="flex items-center gap-0.5">
-                <span className="inline-block w-1.5 h-1.5 rounded-full bg-purple-500/70" />
-                overhead {formatTokens(pm.totalOverheadTokens)}
-              </span>
-              <span className="flex items-center gap-0.5">
-                <span className="inline-block w-1.5 h-1.5 rounded-full bg-studio-accent" />
-                content {formatTokens(userContentTokens)}
-              </span>
-              <span className="flex items-center gap-0.5">
-                <span className="inline-block w-1.5 h-1.5 rounded-full bg-studio-border" />
-                free {formatTokens(maxTokens - usedTokens)}
-              </span>
-            </div>
+            {latestSnapshot && budgetSplitBuckets.length > 0 ? (
+              <>
+                <div className="flex h-1.5 rounded-full overflow-hidden bg-studio-border">
+                  {budgetSplitBuckets.map((b) => (
+                    <div
+                      key={b.label}
+                      className={`${b.color} transition-all`}
+                      style={{ width: `${Math.min(100, (b.tokens / maxTokens) * 100)}%` }}
+                      title={`${b.label}: ${formatTokens(b.tokens)}`}
+                    />
+                  ))}
+                </div>
+                <div className="flex flex-wrap gap-x-2 gap-y-0 mt-0.5">
+                  {budgetSplitBuckets.map((b) => (
+                    <span key={b.label} className="flex items-center gap-0.5">
+                      <span className={`inline-block w-1.5 h-1.5 rounded-full ${b.color}`} />
+                      {b.label.toLowerCase()} {formatTokens(b.tokens)}
+                    </span>
+                  ))}
+                  <span className="flex items-center gap-0.5">
+                    <span className="inline-block w-1.5 h-1.5 rounded-full bg-studio-border" />
+                    free {formatTokens(Math.max(0, maxTokens - usedTokens))}
+                  </span>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="flex h-1.5 rounded-full overflow-hidden bg-studio-border">
+                  <div
+                    className="bg-studio-accent/80 transition-all"
+                    style={{ width: `${Math.min(100, maxTokens > 0 ? (usedTokens / maxTokens) * 100 : 0)}%` }}
+                    title={`WM + overhead estimate: ${formatTokens(usedTokens)}`}
+                  />
+                </div>
+                <div className="text-[9px] text-studio-text-muted mt-0.5">
+                  {latestSnapshot
+                    ? 'Bucket segments are zero; total above still reflects last round estimate.'
+                    : 'No round snapshot yet — bar is WM + overhead estimate; bucketed split after the first completed round.'}
+                </div>
+                <div className="flex flex-wrap gap-x-2 gap-y-0 mt-0.5">
+                  <span className="flex items-center gap-0.5">
+                    <span className="inline-block w-1.5 h-1.5 rounded-full bg-studio-border" />
+                    free {formatTokens(Math.max(0, maxTokens - usedTokens))}
+                  </span>
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}
