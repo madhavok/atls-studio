@@ -1087,6 +1087,7 @@ async function streamChatViaTauri(
   let autoContinueCount = 0;
   let runtimeCompletionBlocker: string | null = null;
   let totalToolsCompleted = 0;
+  let taskCompleteCalled = false;
   let totalToolsQueued = 0;
   let lastReliefAction: PromptReliefAction = 'none';
   
@@ -1956,6 +1957,7 @@ async function streamChatViaTauri(
           if (tc.name === 'task_complete') {
             runtimeCompletionBlocker = null;
             useAppStore.getState().setAgentProgress({ canTaskComplete: true });
+            taskCompleteCalled = true;
           }
           safeCallbacks.onToolResult(tc.id, result);
           safeCallbacks.onToolCall({
@@ -2041,6 +2043,16 @@ async function streamChatViaTauri(
       // Add messages to conversation for next round
       conversationHistory.push({ role: 'assistant', content: assistantContent });
       conversationHistory.push({ role: 'user', content: toolResults });
+
+      // task_complete was called — stop the loop after recording tool results
+      // so the model doesn't get another round to generate more text.
+      if (taskCompleteCalled) {
+        console.log('[aiService] task_complete called — stopping tool loop');
+        useAppStore.getState().clearAgentPendingAction();
+        useAppStore.getState().setAgentProgress({ status: 'stopped', stoppedReason: 'completed' });
+        useAppStore.getState().setAgentCanContinue(false);
+        break;
+      }
       
       // Safety compression deferred to round 0 to keep history append-only
       // within a tool loop (preserves prefix cache stability). Only compress
