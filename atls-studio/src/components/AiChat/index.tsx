@@ -3043,7 +3043,15 @@ export function AiChat() {
           
           if (toolCall.status === 'running' && toolCall.args) {
             const callContent = `${toolCall.name}(${JSON.stringify(toolCall.args)})`;
-            contextStore.addChunk(callContent, 'call', toolCall.name);
+            const tcArgs = toolCall.args as Record<string, unknown> | undefined;
+            const tcGoal = tcArgs?.goal as string | undefined;
+            const tcSteps = Array.isArray(tcArgs?.steps) ? tcArgs.steps as unknown[] : undefined;
+            const callSummary = tcGoal
+              ? `${toolCall.name}: ${tcGoal.slice(0, 80)}`
+              : tcSteps
+                ? `${toolCall.name} (${tcSteps.length} steps)`
+                : toolCall.name;
+            contextStore.addChunk(callContent, 'call', toolCall.name, undefined, callSummary);
           }
           
           pendingToolCallsRef.current.set(toolCall.id, {
@@ -3361,7 +3369,15 @@ export function AiChat() {
           
           if (toolCall.status === 'running' && toolCall.args) {
             const callContent = `${toolCall.name}(${JSON.stringify(toolCall.args)})`;
-            contextStore.addChunk(callContent, 'call', toolCall.name);
+            const tcArgs2 = toolCall.args as Record<string, unknown> | undefined;
+            const tcGoal2 = tcArgs2?.goal as string | undefined;
+            const tcSteps2 = Array.isArray(tcArgs2?.steps) ? tcArgs2.steps as unknown[] : undefined;
+            const callSummary2 = tcGoal2
+              ? `${toolCall.name}: ${tcGoal2.slice(0, 80)}`
+              : tcSteps2
+                ? `${toolCall.name} (${tcSteps2.length} steps)`
+                : toolCall.name;
+            contextStore.addChunk(callContent, 'call', toolCall.name, undefined, callSummary2);
           }
           
           upsertToolCall(toolCall.id, {

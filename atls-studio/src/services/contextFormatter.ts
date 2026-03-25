@@ -346,8 +346,13 @@ export function formatWorkingMemory(input: FormatterInput): string {
         const metaLines = formatEngramMeta(chunk);
         if (metaLines.length > 0) lines.push(...metaLines);
         if (chunk.compacted) {
-          const digest = chunk.editDigest || chunk.digest || chunk.summary || `[compacted — use h:${chunk.shortHash} in tool params]`;
-          lines.push(digest);
+          const isToolType = chunk.type === 'call' || chunk.type === 'result' || chunk.type === 'search';
+          const digest = isToolType
+            ? (chunk.summary || `[compacted — use h:${chunk.shortHash} in tool params]`)
+            : (chunk.editDigest || chunk.digest || chunk.summary || `[compacted — use h:${chunk.shortHash} in tool params]`);
+          if (digest !== chunk.summary || !summaryHint) {
+            lines.push(digest);
+          }
         } else if (shapedPin) {
           const shapedContent = chunk.editDigest || chunk.digest || chunk.summary || chunk.content.slice(0, 500);
           lines.push(shapedContent);
@@ -358,7 +363,11 @@ export function formatWorkingMemory(input: FormatterInput): string {
             chunk.editDigest || chunk.digest || '',
           );
         } else {
-          lines.push(chunk.content);
+          if (chunk.type === 'call' && chunk.summary) {
+            lines.push(chunk.summary);
+          } else {
+            lines.push(chunk.content);
+          }
           const totalLines = chunk.content.split('\n').length;
           materialize(
             chunk.hash, chunk.type, chunk.source,

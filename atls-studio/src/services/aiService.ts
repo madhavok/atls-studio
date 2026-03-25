@@ -2931,7 +2931,7 @@ function _buildDormantBlock(): string {
   ctxState.chunks.forEach(c => {
     if (c.compacted && c.type !== 'msg:user' && c.type !== 'msg:asst') {
       const ref = getRef(c.hash);
-      if (ref && shouldMaterialize(ref)) return;
+      if (!ref || shouldMaterialize(ref)) return;
       const src = c.source ? c.source.split(/[/\\]/).pop() || c.source : c.shortHash;
       let line = `h:${c.shortHash} ${src} ${c.tokens}tk`;
       const finding = c.annotations?.[0]?.content || c.summary || '';

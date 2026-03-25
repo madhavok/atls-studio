@@ -1260,6 +1260,7 @@ export const useContextStore = create<ContextStoreState>()(
     
     set(state => {
       const newChunks = new Map(state.chunks);
+      let newArchive: Map<string, ContextChunk> | undefined;
       
       // Check for hash collision with different content (rare but possible)
       const existing = newChunks.get(hash);
@@ -1274,10 +1275,25 @@ export const useContextStore = create<ContextStoreState>()(
       // Hash forwarding: auto-compress previous version of the same file.
       // When a file-sourced chunk is re-read/re-edited, the old chunk is
       // immediately compressed to its digest. One full-content chunk per path.
-      if (source && isFileBackedType(type)) {
+      // Already-compacted stubs for the same source are evicted when a new
+      // full "latest" read supersedes them.
+      const incomingViewKind = chunk.viewKind ?? defaultViewKindForChunk(type);
+      const incomingIsLatest = incomingViewKind === 'latest' || incomingViewKind == null;
+      if (source && isFileBackedType(type) && incomingIsLatest) {
         for (const [key, c] of newChunks) {
           if (key === hash) continue;
-          if (c.source && sourcesMatch(c.source, source) && isFileBackedType(c.type) && !c.compacted) {
+          if (!c.source || !sourcesMatch(c.source, source) || !isFileBackedType(c.type)) continue;
+          if (c.viewKind === 'snapshot' || c.viewKind === 'derived') continue;
+
+          if (c.compacted) {
+            if (!c.pinned) {
+              newChunks.delete(key);
+              if (!newArchive) newArchive = new Map(state.archivedChunks);
+              newArchive.set(key, { ...c });
+              autoEvictedHashes.push(c.hash);
+            }
+            chunk.readCount = Math.max(chunk.readCount ?? 0, (c.readCount || 0) + 1);
+          } else {
             const compactContent = pickCompactContent(c, `[forwarded] h:${c.shortHash} → h:${shortHash}`);
             const digestTokens = estimateTokens(compactContent);
             newChunks.set(key, {
@@ -1315,7 +1331,6 @@ export const useContextStore = create<ContextStoreState>()(
       for (const c of newChunks.values()) currentUsed += c.tokens;
 
       let totalFreed = 0;
-      let newArchive: Map<string, ContextChunk> | undefined;
       let nextStagedSnippets = state.stagedSnippets;
       let stageVersionBump = 0;
       let stagedReliefFreed = 0;
