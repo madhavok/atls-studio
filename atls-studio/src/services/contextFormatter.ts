@@ -83,8 +83,10 @@ function formatSuspectHint(
   suspectSince?: number,
   freshness?: string,
   freshnessCause?: string,
+  origin?: string,
 ): string {
   if (suspectSince == null && !freshness && !freshnessCause) return '';
+  if (origin === 'edit-refresh') return '';
   if (freshness === 'shifted' || freshnessCause === 'same_file_prior_edit') {
     return ' (safe positional drift after your previous edit)';
   }
@@ -338,7 +340,8 @@ export function formatWorkingMemory(input: FormatterInput): string {
         const compactIndicator = chunk.compacted ? '[C] ' : '';
         const liveIndicator = chunk.origin === 'edit-refresh' ? '[LIVE] ' : '';
         const summaryHint = chunk.summary ? ` — ${chunk.summary}` : '';
-        const tag = `${compactIndicator}${liveIndicator}${pinIndicator}<<h:${chunk.shortHash} tk:${chunk.tokens} ${chunk.type}>> ${chunk.source || ''}${formatSuspectHint(chunk.suspectSince, chunk.freshness, chunk.freshnessCause)}${formatRebindHint(chunk.lastRebind)}${summaryHint}`;
+        const suspectHint = chunk.compacted ? '' : formatSuspectHint(chunk.suspectSince, chunk.freshness, chunk.freshnessCause, chunk.origin);
+        const tag = `${compactIndicator}${liveIndicator}${pinIndicator}<<h:${chunk.shortHash} tk:${chunk.tokens} ${chunk.type}>> ${chunk.source || ''}${suspectHint}${formatRebindHint(chunk.lastRebind)}${summaryHint}`;
         lines.push(tag.trim());
         const metaLines = formatEngramMeta(chunk);
         if (metaLines.length > 0) lines.push(...metaLines);
@@ -383,19 +386,9 @@ export function formatWorkingMemory(input: FormatterInput): string {
     lines.push('');
   }
 
-  // Dropped manifest — compact: count + top 5 most recent
   if (droppedManifest.size > 0) {
-    const sorted = Array.from(droppedManifest.values())
-      .sort((a, b) => b.droppedAt - a.droppedAt);
-    const shown = sorted.slice(0, 5);
-    const totalTokens = sorted.reduce((sum, e) => sum + e.tokens, 0);
-    lines.push(`## DROPPED (${droppedManifest.size} total, ${(totalTokens / 1000).toFixed(1)}k tokens freed, re-read to access)`);
-    for (const entry of shown) {
-      lines.push(`  ${entry.shortHash} ${entry.source || entry.type} ${entry.tokens}tk`);
-    }
-    if (droppedManifest.size > 5) {
-      lines.push(`  +${droppedManifest.size - 5} more`);
-    }
+    const totalTokens = Array.from(droppedManifest.values()).reduce((sum, e) => sum + e.tokens, 0);
+    lines.push(`Dropped: ${droppedManifest.size} engrams (${(totalTokens / 1000).toFixed(1)}k freed) — re-read to access`);
     lines.push('');
   }
 

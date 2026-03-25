@@ -424,6 +424,15 @@ function shouldAutoDropChunk(chunk: ContextChunk): boolean {
   return chunk.type === 'result' || chunk.type === 'call';
 }
 
+const TOOL_CHUNK_TYPES: ReadonlySet<string> = new Set(['call', 'result', 'search']);
+
+function pickCompactContent(chunk: ContextChunk, fallback: string): string {
+  if (TOOL_CHUNK_TYPES.has(chunk.type)) {
+    return chunk.summary || fallback;
+  }
+  return chunk.editDigest || chunk.digest || chunk.summary || fallback;
+}
+
 function pruneLowValueChunks(
   chunks: Map<string, ContextChunk>,
   archivedChunks: Map<string, ContextChunk>,
@@ -454,7 +463,7 @@ function pruneLowValueChunks(
 
     if (!chunk.compacted && shouldAutoCompactChunk(chunk)) {
       nextArchived.set(key, { ...chunk });
-      const compactContent = chunk.editDigest || chunk.digest || chunk.summary || `[compacted] h:${chunk.shortHash}`;
+      const compactContent = pickCompactContent(chunk, `[compacted] h:${chunk.shortHash}`);
       const compactTokens = estimateTokens(compactContent);
       nextChunks.set(key, {
         ...chunk,
@@ -1269,14 +1278,19 @@ export const useContextStore = create<ContextStoreState>()(
         for (const [key, c] of newChunks) {
           if (key === hash) continue;
           if (c.source && sourcesMatch(c.source, source) && isFileBackedType(c.type) && !c.compacted) {
-            const compactContent = c.editDigest || c.digest || c.summary || `[forwarded] h:${c.shortHash} → h:${shortHash}`;
+            const compactContent = pickCompactContent(c, `[forwarded] h:${c.shortHash} → h:${shortHash}`);
             const digestTokens = estimateTokens(compactContent);
             newChunks.set(key, {
               ...c,
               content: compactContent,
               tokens: digestTokens,
               compacted: true,
+              suspectSince: undefined,
+              freshness: undefined,
+              freshnessCause: undefined,
+              suspectKind: undefined,
             });
+            autoCompactedHashes.push(c.hash);
             // Transfer pin state, annotations, synapses, and readCount to the new chunk
             if (c.pinned) {
               chunk.pinned = true;
@@ -1369,15 +1383,21 @@ export const useContextStore = create<ContextStoreState>()(
             if (!newArchive) newArchive = new Map(state.archivedChunks);
             newArchive.set(key, { ...c });
 
-            let editDigest = c.editDigest || c.digest || '';
-            if (c.source) {
-              const basename = c.source.split('/').pop() ?? c.source;
-              const errEntry = state.blackboardEntries.get(`err:${basename}`);
-              if (errEntry && editDigest) {
-                editDigest = editDigest + ` [ERR ${errEntry.content.slice(0, 60)}]`;
+            let compactContent: string;
+            let editDigest: string | undefined;
+            if (TOOL_CHUNK_TYPES.has(c.type)) {
+              compactContent = c.summary || `[compacted] h:${c.shortHash}`;
+            } else {
+              editDigest = c.editDigest || c.digest || '';
+              if (c.source) {
+                const basename = c.source.split('/').pop() ?? c.source;
+                const errEntry = state.blackboardEntries.get(`err:${basename}`);
+                if (errEntry && editDigest) {
+                  editDigest = editDigest + ` [ERR ${errEntry.content.slice(0, 60)}]`;
+                }
               }
+              compactContent = editDigest || c.summary || `[compacted] h:${c.shortHash}`;
             }
-            const compactContent = editDigest || c.summary || `[compacted] h:${c.shortHash}`;
             const digestTokens = estimateTokens(compactContent);
             totalFreed += c.tokens - digestTokens;
 
@@ -1614,7 +1634,9 @@ export const useContextStore = create<ContextStoreState>()(
 
         const tier = opts?.tier ?? 'pointer';
         let compactContent: string;
-        if (tier === 'sig' && opts?.sigContentByRef) {
+        if (TOOL_CHUNK_TYPES.has(chunk.type)) {
+          compactContent = chunk.summary || `[compacted] h:${chunk.shortHash}`;
+        } else if (tier === 'sig' && opts?.sigContentByRef) {
           const sigContent = opts.sigContentByRef.get(`h:${chunk.shortHash}`) ?? opts.sigContentByRef.get(chunk.shortHash);
           compactContent = sigContent ?? (chunk.editDigest || chunk.digest || chunk.summary || `[compacted] h:${chunk.shortHash}`);
         } else {
@@ -3979,7 +4001,7 @@ export const useContextStore = create<ContextStoreState>()(
 
         newArchive.set(key, { ...chunk });
 
-        const compactContent = chunk.editDigest || chunk.digest || chunk.summary || `[compacted] h:${chunk.shortHash}`;
+        const compactContent = pickCompactContent(chunk, `[compacted] h:${chunk.shortHash}`);
         const compactTokens = estimateTokens(compactContent);
         const saved = Math.max(0, chunk.tokens - compactTokens);
         freedTokens += saved;

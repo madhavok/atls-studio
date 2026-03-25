@@ -63,6 +63,18 @@ export const handleBbWrite: OpHandler = async (params, ctx) => {
     ctx.store().removeBlackboardEntry(key);
     return err('bb_write: ERROR could not persist note to database');
   }
+
+  const stem = key.replace(/[-_]?\d+$|[-_]?(final|latest|v\d+)$/i, '');
+  if (stem && stem !== key) {
+    const allEntries = ctx.store().listBlackboardEntries();
+    const superseded = allEntries
+      .filter(e => e.key !== key && e.key.startsWith(stem))
+      .map(e => e.key);
+    if (superseded.length > 0) {
+      line += ` | NOTE: ${superseded.length} older version(s) may be superseded: ${superseded.join(', ')} — consider session.bb.delete`;
+    }
+  }
+
   return ok(line, [`h:bb:${key}`]);
 };
 
