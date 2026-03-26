@@ -785,6 +785,9 @@ pub(crate) fn apply_line_edits(content: &str, edits: &[LineEdit]) -> Result<(Str
                         let ft = lines[file_idx].trim();
                         let rt = replacement[repl_idx].trim();
                         if ft.is_empty() || rt.is_empty() { break; }
+                        // Skip single-char structural tokens — too ambiguous
+                        // to auto-extend (prevents eating closing brackets)
+                        if ft.len() <= 2 && (ft == "}" || ft == "{" || ft == ")" || ft == "(" || ft == "]" || ft == "[") { break; }
                         if ft == rt {
                             confirmed += 1;
                         } else {
