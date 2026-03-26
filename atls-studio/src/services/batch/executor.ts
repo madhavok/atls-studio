@@ -558,6 +558,116 @@ async function refreshContextAfterEdit(
   }
 }
 
+// ---------------------------------------------------------------------------
+// Impact-driven section-level auto-staging
+// ---------------------------------------------------------------------------
+
+function mergeLineRanges(ranges: Array<[number, number]>): Array<[number, number]> {
+  if (ranges.length === 0) return [];
+  const sorted = [...ranges].sort((a, b) => a[0] - b[0]);
+  const merged: Array<[number, number]> = [sorted[0]];
+  for (let i = 1; i < sorted.length; i++) {
+    const prev = merged[merged.length - 1];
+    const cur = sorted[i];
+    if (cur[0] <= prev[1] + 3) {
+      prev[1] = Math.max(prev[1], cur[1]);
+    } else {
+      merged.push(cur);
+    }
+  }
+  return merged;
+}
+
+/**
+ * After a change step, query impact analysis for the edited files and
+ * directly stage the dependent symbol line ranges. Uses affected_symbols
+ * with line/end_line from the Rust change_impact query.
+ *
+ * Pipeline: change_impact → group symbols by file → merge ranges →
+ * read_lines per file → stageSnippet. Caps at 5 dependent files and
+ * 5k tokens total to avoid bloating the staged block.
+ */
+async function runImpactAutoStage(
+  editedPaths: string[],
+  ctx: HandlerContext,
+): Promise<{ staged: number; files: number; tokens: number }> {
+  if (editedPaths.length === 0) return { staged: 0, files: 0, tokens: 0 };
+
+  const result = await ctx.atlsBatchQuery('change_impact', { file_paths: editedPaths });
+  const impact = result as {
+    affected_symbols?: Array<{ name: string; file: string; kind: string; line: number; end_line?: number }>;
+  };
+
+  const symbols = impact.affected_symbols;
+  if (!symbols || symbols.length === 0) return { staged: 0, files: 0, tokens: 0 };
+
+  const store = ctx.store();
+  const staged = store.getStagedEntries();
+  const stageByFile = new Map<string, Array<[number, number]>>();
+
+  for (const sym of symbols) {
+    if (!sym.file || !sym.line) continue;
+    if (editedPaths.some(ep => normalizePath(ep) === normalizePath(sym.file))) continue;
+
+    const endLine = sym.end_line ?? (sym.line + 20);
+    const existing = stageByFile.get(sym.file) ?? [];
+    existing.push([sym.line, endLine]);
+    stageByFile.set(sym.file, existing);
+  }
+
+  const MAX_FILES = 5;
+  const MAX_TOTAL_TOKENS = 5_000;
+  let totalTokens = 0;
+  let stagedCount = 0;
+  let fileCount = 0;
+
+  for (const [filePath, ranges] of stageByFile) {
+    if (fileCount >= MAX_FILES || totalTokens >= MAX_TOTAL_TOKENS) break;
+
+    const srcNorm = normalizePath(filePath);
+    let alreadyStaged = false;
+    for (const [, s] of staged) {
+      if (s.source && normalizePath(s.source) === srcNorm) { alreadyStaged = true; break; }
+    }
+    if (alreadyStaged) continue;
+
+    const merged = mergeLineRanges(ranges);
+    const lineSpec = merged.map(([s, e]) => `${s}-${e}`).join(',');
+
+    try {
+      const ctxResult = await ctx.atlsBatchQuery('context', { type: 'full', file_paths: [filePath] });
+      const ctxResults = (ctxResult as Record<string, unknown>)?.results as Array<Record<string, unknown>> | undefined;
+      const first = ctxResults?.[0];
+      const fileHash = (first?.snapshot_hash ?? first?.content_hash ?? first?.hash) as string | undefined;
+      if (!fileHash) continue;
+
+      const cleanHash = fileHash.startsWith('h:') ? fileHash : `h:${fileHash}`;
+      const readResult = await ctx.atlsBatchQuery('read_lines', {
+        hash: cleanHash,
+        lines: lineSpec,
+        file_path: filePath,
+        context_lines: 2,
+      }) as Record<string, unknown>;
+
+      const content = readResult.content as string | undefined;
+      if (!content) continue;
+
+      const label = `impact:${filePath.split(/[/\\]/).pop()}:${lineSpec}`;
+      const bareHash = fileHash.replace(/^h:/, '');
+      const stageResult = store.stageSnippet(label, content, filePath, lineSpec, bareHash, undefined, 'derived');
+      if (stageResult.ok) {
+        totalTokens += stageResult.tokens;
+        stagedCount++;
+        fileCount++;
+      }
+    } catch (e) {
+      console.warn(`[executor] impact stage read failed for ${filePath}:`, e);
+    }
+  }
+
+  return { staged: stagedCount, files: fileCount, tokens: totalTokens };
+}
+
 /**
  * Build and record a VerifyArtifact from a verify step's output.
  */
@@ -969,6 +1079,14 @@ export async function executeUnifiedBatch(
       if (output.content && typeof output.content === 'object' && !Array.isArray(output.content)) {
         refreshContextAfterEdit(output.content as Record<string, unknown>, ctx)
           .catch(e => console.warn('[executor] content refresh error:', e));
+      }
+
+      // Impact-driven section-level auto-staging: query change_impact for
+      // edited files, extract affected symbol line ranges in dependent files,
+      // and stage just those sections (not whole files).
+      if (batchEditedPaths.size > 0 && !step.id.includes('__')) {
+        runImpactAutoStage([...batchEditedPaths], ctx)
+          .catch(e => console.warn('[executor] impact auto-stage failed:', e));
       }
     }
 

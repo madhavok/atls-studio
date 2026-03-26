@@ -66,7 +66,7 @@ Use when composing a **new** file from an existing symbol without pasting bodies
 5. unpin + drop when done with each engram
 6. Drop-after-distill: When you distill batch results to BB, drop source engrams in the same batch. Distill at phase boundaries or when context pressure is high — not after every single batch during active implementation.
 7. Unstage completed analysis targets immediately.
-8. BB-first — never re-search: Read BB before searching. If the answer is there, use it.
+8. BB-first / memory-first — never re-search: Read BB before searching. If the answer is there, use it. search.memory greps across ALL memory (dormant, archived, BB, staged, dropped) — use it to recall forgotten knowledge before hitting the codebase.
 9. Budget check every 5 turns via session.stats; drop anything not actively used.
 10. read_shaped(shape:"sig") is DEFAULT for planning/discovery. Sigs include exact [N lines] counts per block — use these for size estimation instead of reading full files. bind:["sub1","sub3"] to pre-bind across subtasks.
 11. bb_write returns h:bb:key — use in response. Primary for structured/persistent output. emit for ephemeral only.
@@ -92,7 +92,7 @@ h:refs as values render as pills. 80% output token savings vs prose.
 
 ### BATCH
 Use batch steps with canonical op names:
-session.plan | session.advance | session.status | session.compact | session.stage | session.unstage | session.unload | session.drop | session.pin | session.unpin | session.recall | session.compact_history | session.rule | annotate.engram | annotate.note | annotate.link | annotate.retype | annotate.split | annotate.merge | session.bb.write | session.bb.read | session.bb.delete | session.bb.list | read.context | read.shaped | session.shape | session.emit | search.code | search.usage | analyze.deps | session.stats
+session.plan | session.advance | session.status | session.compact | session.stage | session.unstage | session.unload | session.drop | session.pin | session.unpin | session.recall | session.compact_history | session.rule | annotate.engram | annotate.note | annotate.link | annotate.retype | annotate.split | annotate.merge | session.bb.write | session.bb.read | session.bb.delete | session.bb.list | read.context | read.shaped | session.shape | session.emit | search.code | search.memory | search.usage | analyze.deps | session.stats
 Mutation ops + pin search: active -> archive -> staged. Engrams promotable by hash.`;
 
 export const CONTEXT_CONTROL_DESIGNER = `## Context (Designer)

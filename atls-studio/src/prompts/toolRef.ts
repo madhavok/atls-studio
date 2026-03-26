@@ -21,6 +21,7 @@ search.usage symbol_names:[] filter?:"" limit?:N
 search.similar type?:code|function|concept|pattern query?:"" threshold?:N limit?:N
 search.issues file_paths?:[] severity_filter?:high|medium|low|all category?:"" limit?:N
 search.patterns file_paths?:[] patterns?:[]
+search.memory query:"" regions?:[active,archived,dormant,bb,staged,dropped] case_sensitive?:bool max_results?:N — grep across all memory (active, archived, dormant digests, BB, staged, dropped manifests); BB-first: check BB before re-searching codebase
 analyze.deps mode:graph|related|impact file_paths:[] filter?:"" limit?:N
 analyze.calls symbol_names:[] depth?:N filter?:"" limit?:N
 analyze.structure file_paths:[] kinds?:[] hub_threshold?:N exclude_hubs?:bool

@@ -325,6 +325,21 @@ export interface TaskPlan {
 // Legacy type alias for backward compatibility
 export type TaskState = TaskPlan;
 
+// Memory search hit — returned by searchMemory full-text grep
+export interface MemorySearchHit {
+  line: string;
+  lineNumber: number;
+}
+
+export interface MemorySearchResult {
+  region: 'active' | 'archived' | 'dormant' | 'bb' | 'staged' | 'dropped';
+  ref: string;
+  source?: string;
+  type?: string;
+  tokens?: number;
+  hits: MemorySearchHit[];
+}
+
 // Blackboard entry - persistent session knowledge
 export interface BlackboardEntry {
   content: string;
@@ -769,6 +784,12 @@ interface ContextStoreState {
   recordManageOps: (count: number) => void;
   resetBatchMetrics: () => void;
   getBatchMetrics: () => { toolCalls: number; manageOps: number };
+
+  // Full-memory grep — searches across all regions (active, archive, dormant, BB, staged, dropped)
+  searchMemory: (
+    query: string,
+    opts?: { regions?: Array<'active' | 'archived' | 'dormant' | 'bb' | 'staged' | 'dropped'>; caseSensitive?: boolean; maxResults?: number }
+  ) => MemorySearchResult[];
 
   // HPP v3 Set-Ref Queries
   queryBySetSelector: (
@@ -4149,6 +4170,108 @@ export const useContextStore = create<ContextStoreState>()(
     set({ batchMetrics: { toolCalls: 0, manageOps: 0, hadReads: false, hadBbWrite: false } });
   },
   getBatchMetrics: () => get().batchMetrics,
+
+  // -----------------------------------------------------------------------
+  // Full-memory grep — search across all regions
+  // -----------------------------------------------------------------------
+
+  searchMemory: (query, opts) => {
+    const state = get();
+    const caseSensitive = opts?.caseSensitive ?? false;
+    const maxResults = Math.min(opts?.maxResults ?? 50, 200);
+    const allRegions = new Set<string>(opts?.regions ?? ['active', 'archived', 'dormant', 'bb', 'staged', 'dropped']);
+
+    const needle = caseSensitive ? query : query.toLowerCase();
+    const results: MemorySearchResult[] = [];
+
+    function grepContent(text: string, maxHits: number): MemorySearchHit[] {
+      const hits: MemorySearchHit[] = [];
+      const lines = text.split('\n');
+      for (let i = 0; i < lines.length && hits.length < maxHits; i++) {
+        const haystack = caseSensitive ? lines[i] : lines[i].toLowerCase();
+        if (haystack.includes(needle)) {
+          hits.push({ line: lines[i].slice(0, 200), lineNumber: i + 1 });
+        }
+      }
+      return hits;
+    }
+
+    const hitsPerEntry = 5;
+    const seen = new Set<string>();
+
+    if (allRegions.has('active')) {
+      for (const [key, chunk] of state.chunks) {
+        if (results.length >= maxResults) break;
+        if (chunk.compacted) continue;
+        seen.add(key);
+        const hits = grepContent(chunk.content, hitsPerEntry);
+        if (hits.length > 0) {
+          results.push({ region: 'active', ref: `h:${chunk.shortHash}`, source: chunk.source, type: chunk.type, tokens: chunk.tokens, hits });
+        }
+      }
+    }
+
+    if (allRegions.has('dormant')) {
+      for (const [key, chunk] of state.chunks) {
+        if (results.length >= maxResults) break;
+        if (!chunk.compacted) continue;
+        seen.add(key);
+        const text = chunk.digest || chunk.editDigest || chunk.content;
+        const hits = grepContent(text, hitsPerEntry);
+        if (hits.length > 0) {
+          results.push({ region: 'dormant', ref: `h:${chunk.shortHash}`, source: chunk.source, type: chunk.type, tokens: chunk.tokens, hits });
+        }
+      }
+    }
+
+    if (allRegions.has('archived')) {
+      for (const [key, chunk] of state.archivedChunks) {
+        if (results.length >= maxResults) break;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        const hits = grepContent(chunk.content, hitsPerEntry);
+        if (hits.length > 0) {
+          results.push({ region: 'archived', ref: `h:${chunk.shortHash}`, source: chunk.source, type: chunk.type, tokens: chunk.tokens, hits });
+        }
+      }
+    }
+
+    if (allRegions.has('bb')) {
+      for (const [key, entry] of state.blackboardEntries) {
+        if (results.length >= maxResults) break;
+        const hits = grepContent(entry.content, hitsPerEntry);
+        if (hits.length > 0) {
+          results.push({ region: 'bb', ref: `h:bb:${key}`, source: key, tokens: entry.tokens, hits });
+        }
+      }
+    }
+
+    if (allRegions.has('staged')) {
+      for (const [key, snippet] of state.stagedSnippets) {
+        if (results.length >= maxResults) break;
+        if (seen.has(key)) continue;
+        const hits = grepContent(snippet.content, hitsPerEntry);
+        if (hits.length > 0) {
+          results.push({ region: 'staged', ref: key.startsWith('h:') ? key : `h:${key.slice(0, SHORT_HASH_LEN)}`, source: snippet.source, tokens: snippet.tokens, hits });
+        }
+      }
+    }
+
+    if (allRegions.has('dropped')) {
+      for (const [, entry] of state.droppedManifest) {
+        if (results.length >= maxResults) break;
+        const manifest = entry as { shortHash: string; source?: string; type?: string; digest?: string };
+        if (manifest.digest) {
+          const hits = grepContent(manifest.digest, hitsPerEntry);
+          if (hits.length > 0) {
+            results.push({ region: 'dropped', ref: `h:${manifest.shortHash}`, source: manifest.source, type: manifest.type, hits });
+          }
+        }
+      }
+    }
+
+    return results;
+  },
 
   // -----------------------------------------------------------------------
   // HPP v3 Set-Ref Queries

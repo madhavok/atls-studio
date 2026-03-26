@@ -2,7 +2,7 @@
  * Query operation handlers — search, symbol, deps (proxy to atlsBatchQuery).
  */
 
-import type { OpHandler, StepOutput, SearchCodeParams, SearchSymbolParams, SearchUsageParams, AnalyzeDepsParams, AnalyzeImpactParams, AnalyzeBlastRadiusParams, AnalyzeStructureParams } from '../types';
+import type { OpHandler, StepOutput, SearchCodeParams, SearchSymbolParams, SearchUsageParams, AnalyzeDepsParams, AnalyzeImpactParams, AnalyzeBlastRadiusParams, AnalyzeStructureParams, SearchMemoryParams } from '../types';
 import { estimateTokens, extractSearchSummary, extractSymbolSummary, extractDepsSummary } from '../../../utils/contextHash';
 import { formatResult } from '../../../utils/toon';
 import { checkRetention } from './retention';
@@ -347,4 +347,54 @@ export const handleAnalyzeExtractPlan: OpHandler = async (params, ctx) => {
   } catch (extractErr) {
     return err('extract_plan', extractErr instanceof Error ? extractErr.message : String(extractErr));
   }
+};
+
+// ---------------------------------------------------------------------------
+// search.memory — full-text grep across all memory regions
+// ---------------------------------------------------------------------------
+
+export const handleSearchMemory: OpHandler = async (params, ctx) => {
+  const p = params as Partial<SearchMemoryParams>;
+  const query = p.query;
+  if (!query || typeof query !== 'string' || query.trim().length < 2) {
+    return err('search.memory', 'missing or too short query (min 2 chars)');
+  }
+
+  const regions = p.regions as Array<'active' | 'archived' | 'dormant' | 'bb' | 'staged' | 'dropped'> | undefined;
+  const caseSensitive = p.case_sensitive ?? false;
+  const maxResults = Math.min(p.max_results ?? 30, 100);
+
+  const results = ctx.store().searchMemory(query.trim(), { regions, caseSensitive, maxResults });
+
+  if (results.length === 0) {
+    return {
+      kind: 'search_results', ok: true, refs: [],
+      summary: `search.memory: "${query}" — 0 hits across memory`,
+    };
+  }
+
+  const regionCounts: Record<string, number> = {};
+  const refs: string[] = [];
+  const lines: string[] = [];
+
+  for (const r of results) {
+    regionCounts[r.region] = (regionCounts[r.region] || 0) + 1;
+    refs.push(r.ref);
+    const hitsPreview = r.hits
+      .map(h => `    L${h.lineNumber}: ${h.line}`)
+      .join('\n');
+    lines.push(`  [${r.region}] ${r.ref} (${r.source || 'unknown'}, ${r.type || '?'}, ${r.tokens ?? '?'}tk)\n${hitsPreview}`);
+  }
+
+  const regionSummary = Object.entries(regionCounts).map(([k, v]) => `${k}:${v}`).join(' ');
+  const resultStr = `search.memory: "${query}" — ${results.length} hits [${regionSummary}]\n${lines.join('\n')}`;
+  const hash = ctx.store().addChunk(resultStr, 'search', `memory: ${query}`);
+  const tk = estimateTokens(resultStr);
+
+  return {
+    kind: 'search_results', ok: true,
+    refs: [`h:${hash}`],
+    summary: `search.memory: "${query}" → h:${hash} (${results.length} hits, ${regionSummary}, ${(tk / 1000).toFixed(1)}k tk)`,
+    tokens: tk,
+  };
 };

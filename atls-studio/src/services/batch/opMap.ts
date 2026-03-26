@@ -31,6 +31,7 @@ import {
 import {
   handleSearchCode, handleSearchSymbol, handleSearchUsage,
   handleSearchSimilar, handleSearchIssues, handleSearchPatterns,
+  handleSearchMemory,
   handleAnalyzeDeps, handleAnalyzeCalls, handleAnalyzeStructure,
   handleAnalyzeImpact, handleAnalyzeBlastRadius, handleAnalyzeExtractPlan,
 } from './handlers/query';
@@ -64,6 +65,7 @@ const OP_MAP: ReadonlyMap<OperationKind, OpHandler> = new Map<OperationKind, OpH
   ['search.similar', handleSearchSimilar],
   ['search.issues', handleSearchIssues],
   ['search.patterns', handleSearchPatterns],
+  ['search.memory', handleSearchMemory],
 
   // understand
   ['read.context', handleRead],

@@ -39,6 +39,7 @@ export const OPERATION_FAMILIES = {
       { op: 'search.similar' },
       { op: 'search.issues' },
       { op: 'search.patterns' },
+      { op: 'search.memory' },
     ],
   },
   understand: {

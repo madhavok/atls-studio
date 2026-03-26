@@ -18,7 +18,7 @@ describe('BATCH_TOOL_REF drift detection', () => {
   });
 
   it('has the expected operation count', () => {
-    expect(ALL_OPERATIONS.length).toBe(72);
+    expect(ALL_OPERATIONS.length).toBe(73);
   });
 
   it('covers all 9 families', () => {

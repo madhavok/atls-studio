@@ -19,7 +19,8 @@ export type DiscoverOp =
   | 'search.usage'
   | 'search.similar'
   | 'search.issues'
-  | 'search.patterns';
+  | 'search.patterns'
+  | 'search.memory';
 
 export type UnderstandOp =
   | 'read.context'
@@ -398,6 +399,12 @@ export interface ContextStoreApi {
   recordBatchRead: () => void;
   recordBatchBbWrite: () => void;
 
+  // Memory search — full-text grep across all regions
+  searchMemory: (
+    query: string,
+    opts?: { regions?: Array<'active' | 'archived' | 'dormant' | 'bb' | 'staged' | 'dropped'>; caseSensitive?: boolean; maxResults?: number }
+  ) => Array<{ region: string; ref: string; source?: string; type?: string; tokens?: number; hits: Array<{ line: string; lineNumber: number }> }>;
+
   // Hash registration
   registerEditHash: (hash: string, source: string) => { registered: boolean; reason?: string };
   pushHash: (hash: string) => void;
@@ -627,6 +634,13 @@ export interface SearchIssuesParams {
 export interface SearchPatternsParams {
   file_paths?: string[];
   patterns?: string[];
+}
+
+export interface SearchMemoryParams {
+  query: string;
+  regions?: Array<'active' | 'archived' | 'dormant' | 'bb' | 'staged' | 'dropped'>;
+  case_sensitive?: boolean;
+  max_results?: number;
 }
 
 // -- understand -------------------------------------------------------------
