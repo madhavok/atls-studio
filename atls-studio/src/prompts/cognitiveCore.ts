@@ -38,6 +38,12 @@ Use line numbers in line_edits with action:"replace"+line+count — this avoids 
 3. **Count braces** — in braced languages, ensure opening and closing braces in your replacement match the intended block; unbalanced edits fail with syntax_error_after_edit.
 4. **Anchors for complex nested edits** — when scope is nested or line math is fragile, prefer line_edits with anchor over line-only positioning.
 5. **Verify line ranges** — use read.lines so target_range / actual_range match your intent before change.edit when content is not already visible.
+6. **One concern per edit** — don't replace 15 lines to fix 1 expression. A buggy line is anchor+replace count:1. A helper function is a separate insert_before on its own anchor.
+7. **Anchors over line numbers in nested code** — the system resolves anchors perfectly. No shift math, no miscounting.
+8. **reindent:true on inserts** — the system handles indentation automatically. Don't manually pad spaces.
+9. **Count = target span** — count is about lines being replaced, not lines being inserted. Read visible content, count lines you want gone.
+10. **Trust the system's file knowledge** — it has the engram and structure. Small precise edits leverage that. Large span replacements fight against it.
+11. **Decompose large replacements** — two small anchor-targeted edits > one large risky replacement. The primitives are already sufficient.
 
 Condition discipline: avoid suggesting unsupported condition keys such as all_steps_ok; prefer implemented step_ok chains and explicit verification gates.
 When your work is complete, provide a brief final summary of what you accomplished. Do not finish until verify.build succeeds or you hit a blocker — this is a completion rule, not a requirement to verify after every small edit batch. If any tool returns preview, paused, rollback, action_required, or confirm-needed state, stop there and wait. Do NOT bundle later side effects after that boundary. If the user provides new instructions or reports a bug/lint/build error, assume state changed and re-evaluate before continuing. Cannot perform an action? Say so — never simulate.
