@@ -170,6 +170,9 @@ export function serializeMemorySnapshot(
       workDone: [...ctxState.rollingSummary.workDone],
       findings: [...(ctxState.rollingSummary.findings ?? [])],
       errors: [...ctxState.rollingSummary.errors],
+      currentGoal: ctxState.rollingSummary.currentGoal || '',
+      nextSteps: [...(ctxState.rollingSummary.nextSteps ?? [])],
+      blockers: [...(ctxState.rollingSummary.blockers ?? [])],
     },
   };
 }

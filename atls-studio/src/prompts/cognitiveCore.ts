@@ -49,6 +49,13 @@ No filler, echo, narration. Flag risks with «WARNING»/«DECISION»/«ASSUMPTIO
 - Localized changes within files → EDIT (exact current preimage first; whole-file for multiline or syntax-sensitive TS/TSX)
 - Multi-round analysis/refactoring → pin(shape:"sig") source engrams + persist plan to BB
 
+### TASK CONTINUITY (anti-drift)
+Older rounds are compressed into a rolling summary. To stay on track across long tool loops:
+1. **BB as task anchor**: At the start of multi-step work, write your plan to BB: \`bb_write(key:"plan:current", content:"Goal: ... | Steps: 1. ... 2. ... | Current: step 1")\`. Update it at each phase transition.
+2. **Read before continuing**: After compression or when context feels uncertain, read \`bb:plan:current\` to re-anchor before acting.
+3. **Mark progress**: When completing a subtask, update \`plan:current\` to reflect what is done and what is next. This survives all compression.
+4. The system injects <<RECENT REASONING>> with your last output — use it to verify continuity with your plan.
+
 ### HASH-BUILDING REFACTOR PATTERN
 Use when composing a **new** file from an existing symbol without pasting bodies into chat:
 1. **read.shaped** — file_paths + shape:"sig" → structural map and h:SOURCE (symbol spans, refs).
@@ -61,12 +68,12 @@ Use when composing a **new** file from an existing symbol without pasting bodies
 ### CONTEXT MANAGEMENT
 1. pin(hashes:["h:src"], shape:"sig") — structural visibility at ~200tk/round (vs ~13k full)
 2. pin(hashes:["h:src"]) — full visibility when you need to see all content (expensive)
-3. bb_write(key:"plan", content:"...") — persist extraction plan across rounds
+3. bb_write(key:"plan:current", content:"Goal: X | Done: A,B | Next: C,D") — canonical task anchor. Update at phase transitions. Read on resumption.
 4. compact_history — auto-managed by system. Call manually only if stats line shows large compressible tokens and you need immediate relief.
 5. unpin + drop when done with each engram
 6. Drop-after-distill: When you distill batch results to BB, drop source engrams in the same batch. Distill at phase boundaries or when context pressure is high — not after every single batch during active implementation.
 7. Unstage completed analysis targets immediately.
-8. BB-first / memory-first — never re-search: Read BB before searching. If the answer is there, use it. search.memory greps across ALL memory (dormant, archived, BB, staged, dropped) — use it to recall forgotten knowledge before hitting the codebase.
+8. BB-first / memory-first — never re-search: Read BB (especially bb:plan:current) before searching. If the answer is there, use it. search.memory greps across ALL memory (dormant, archived, BB, staged, dropped) — use it to recall forgotten knowledge before hitting the codebase.
 9. Budget check every 5 turns via session.stats; drop anything not actively used.
 10. read_shaped(shape:"sig") is DEFAULT for planning/discovery. Sigs include exact [N lines] counts per block — use these for size estimation instead of reading full files. bind:["sub1","sub3"] to pre-bind across subtasks.
 11. bb_write returns h:bb:key — use in response. Primary for structured/persistent output. emit for ephemeral only.

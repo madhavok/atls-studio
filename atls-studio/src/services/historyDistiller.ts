@@ -16,6 +16,12 @@ export interface RollingSummary {
   workDone: string[];
   findings: string[];
   errors: string[];
+  /** What the model was working toward when rounds were distilled */
+  currentGoal: string;
+  /** Explicit next-step statements captured from model output */
+  nextSteps: string[];
+  /** Identified blockers or open questions */
+  blockers: string[];
 }
 
 export type RoundFacts = RollingSummary;
@@ -28,6 +34,9 @@ export function emptyRollingSummary(): RollingSummary {
     workDone: [],
     findings: [],
     errors: [],
+    currentGoal: '',
+    nextSteps: [],
+    blockers: [],
   };
 }
 
@@ -110,6 +119,9 @@ function extractUserText(content: unknown): string {
 const WORK_DONE_HINTS = /\b(done|fixed|implemented|completed|added|removed|refactor|merged|resolved)\b/i;
 const FINDING_HINTS = /\b(found|discovered|noticed|problem is|root cause|because|stale|incorrect|bug|issue is|caused by|due to|the reason|turns out|actually)\b/i;
 const ERROR_HINTS = /\b(error|failed|exception|traceback|panic|undefined|null ref)\b/i;
+const GOAL_HINTS = /\b(goal|objective|working on|task is|aim(?:ing)?|plan(?:ning)?|need to|going to|will now|let me|I'll)\b/i;
+const NEXT_STEP_HINTS = /\b(next|then|after that|following that|step \d|todo|remaining|still need|will then|should then)\b/i;
+const BLOCKER_HINTS = /\b(block(?:ed|er|ing)?|stuck|can't|cannot|waiting|depends on|need.*first|prerequisite|missing|unclear|question)\b/i;
 
 /**
  * Extract key facts from API messages for one tool-loop round (assistant + following user).
@@ -132,6 +144,15 @@ export function distillRound(messages: Array<{ role: string; content: unknown }>
         }
         if (FINDING_HINTS.test(t)) {
           dedupePush(facts.findings, line.slice(0, 220));
+        }
+        if (GOAL_HINTS.test(t) && line.length > 15) {
+          facts.currentGoal = line.slice(0, 300);
+        }
+        if (NEXT_STEP_HINTS.test(t) && line.length > 10) {
+          dedupePush(facts.nextSteps, line.slice(0, 220));
+        }
+        if (BLOCKER_HINTS.test(t) && line.length > 10) {
+          dedupePush(facts.blockers, line.slice(0, 220));
         }
       }
       if (Array.isArray(msg.content)) {
@@ -179,6 +200,9 @@ export function updateRollingSummary(existing: RollingSummary, newFacts: RoundFa
     workDone: [...existing.workDone],
     findings: [...(existing.findings ?? [])],
     errors: [...existing.errors],
+    currentGoal: newFacts.currentGoal || existing.currentGoal || '',
+    nextSteps: [...(existing.nextSteps ?? [])],
+    blockers: [...(existing.blockers ?? [])],
   };
   merge(next.decisions, newFacts.decisions);
   merge(next.filesChanged, newFacts.filesChanged);
@@ -186,7 +210,9 @@ export function updateRollingSummary(existing: RollingSummary, newFacts: RoundFa
   merge(next.workDone, newFacts.workDone);
   merge(next.findings, newFacts.findings);
   merge(next.errors, newFacts.errors);
-  for (const key of ['decisions', 'filesChanged', 'userPreferences', 'workDone', 'findings', 'errors'] as const) {
+  merge(next.nextSteps, newFacts.nextSteps);
+  merge(next.blockers, newFacts.blockers);
+  for (const key of ['decisions', 'filesChanged', 'userPreferences', 'workDone', 'findings', 'errors', 'nextSteps', 'blockers'] as const) {
     while (next[key].length > MAX_SUMMARY_ITEMS_PER_ARRAY) next[key].shift();
   }
   return next;
@@ -203,8 +229,12 @@ function section(title: string, items: string[]): string {
  */
 export function formatSummaryMessage(summary: RollingSummary): { role: 'assistant'; content: string } {
   const trimmed = trimSummaryToTokenBudget(summary, ROLLING_SUMMARY_MAX_TOKENS);
+  const goalLine = trimmed.currentGoal ? `**Current goal:** ${trimmed.currentGoal}` : '';
   const parts = [
     ROLLING_SUMMARY_MARKER,
+    goalLine,
+    section('Next steps', trimmed.nextSteps ?? []),
+    section('Blockers', trimmed.blockers ?? []),
     section('Decisions', trimmed.decisions),
     section('Findings', trimmed.findings),
     section('Files', trimmed.filesChanged),
@@ -220,19 +250,22 @@ export function formatSummaryMessage(summary: RollingSummary): { role: 'assistan
  * Drop oldest entries across arrays until formatted content is under maxTokens.
  */
 export function trimSummaryToTokenBudget(summary: RollingSummary, maxTokens: number): RollingSummary {
-  let s = { ...summary, decisions: [...summary.decisions], filesChanged: [...summary.filesChanged], userPreferences: [...summary.userPreferences], workDone: [...summary.workDone], findings: [...(summary.findings ?? [])], errors: [...summary.errors] };
+  let s = { ...summary, decisions: [...summary.decisions], filesChanged: [...summary.filesChanged], userPreferences: [...summary.userPreferences], workDone: [...summary.workDone], findings: [...(summary.findings ?? [])], errors: [...summary.errors], currentGoal: summary.currentGoal || '', nextSteps: [...(summary.nextSteps ?? [])], blockers: [...(summary.blockers ?? [])] };
   let body = formatSummaryBody(s);
   let tok = estimateTokens(body);
   let guard = 0;
-  // Trim order: expendable first, findings last (most valuable for continuity)
+  // Trim order: expendable first; goal/nextSteps/findings last (most valuable for continuity)
   while (tok > maxTokens && guard++ < 500) {
     let cut = false;
-    for (const key of ['userPreferences', 'filesChanged', 'errors', 'workDone', 'decisions', 'findings'] as const) {
+    for (const key of ['userPreferences', 'filesChanged', 'errors', 'workDone', 'decisions', 'blockers', 'nextSteps', 'findings'] as const) {
       if (s[key].length > 0) {
         s[key].shift();
         cut = true;
         break;
       }
+    }
+    if (!cut) {
+      if (s.currentGoal) { s.currentGoal = ''; cut = true; }
     }
     if (!cut) break;
     body = formatSummaryBody(s);
@@ -242,7 +275,11 @@ export function trimSummaryToTokenBudget(summary: RollingSummary, maxTokens: num
 }
 
 function formatSummaryBody(summary: RollingSummary): string {
+  const goalLine = summary.currentGoal ? `**Current goal:** ${summary.currentGoal}` : '';
   const parts = [
+    goalLine,
+    section('Next steps', summary.nextSteps ?? []),
+    section('Blockers', summary.blockers ?? []),
     section('Decisions', summary.decisions),
     section('Findings', summary.findings),
     section('Files', summary.filesChanged),
@@ -261,5 +298,8 @@ export function isRollingSummaryEmpty(s: RollingSummary): boolean {
     && s.workDone.length === 0
     && (s.findings ?? []).length === 0
     && s.errors.length === 0
+    && !s.currentGoal
+    && (s.nextSteps ?? []).length === 0
+    && (s.blockers ?? []).length === 0
   );
 }

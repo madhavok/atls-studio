@@ -2570,6 +2570,53 @@ function buildWorkingMemoryBlock(): string {
   return useContextStore.getState().getWorkingMemoryFormatted();
 }
 
+const REASONING_RECAP_MAX_CHARS = 800;
+
+/**
+ * Extract a condensed reasoning recap from the model's most recent assistant
+ * messages in the tool loop history. Gives the model continuity even after
+ * history compression has replaced older content with hash pointers.
+ */
+function _extractRecentReasoning(): string {
+  const history = _toolLoopState?.conversationHistory;
+  if (!history || history.length < 2) return '';
+
+  const textChunks: string[] = [];
+  let scanned = 0;
+  for (let i = history.length - 1; i >= 0 && scanned < 3; i--) {
+    const msg = history[i];
+    if (msg.role !== 'assistant') continue;
+    scanned++;
+    if (typeof msg.content === 'string') {
+      const t = msg.content.trim();
+      if (t && !t.startsWith('[->') && !t.startsWith('[Rolling Summary]')) {
+        textChunks.unshift(t);
+      }
+    } else if (Array.isArray(msg.content)) {
+      for (const block of msg.content) {
+        if (!block || typeof block !== 'object') continue;
+        const b = block as { type?: string; text?: string };
+        if (b.type === 'text' && b.text) {
+          const t = b.text.trim();
+          if (t && !t.startsWith('[->')) textChunks.unshift(t);
+        }
+      }
+    }
+  }
+
+  if (textChunks.length === 0) return '';
+
+  let combined = textChunks.join('\n').trim();
+  if (combined.length > REASONING_RECAP_MAX_CHARS) {
+    combined = combined.slice(combined.length - REASONING_RECAP_MAX_CHARS);
+    const firstNewline = combined.indexOf('\n');
+    if (firstNewline > 0 && firstNewline < 80) combined = combined.slice(firstNewline + 1);
+    combined = '...' + combined;
+  }
+
+  return `<<RECENT REASONING (your last output):\n${combined}\n>>`;
+}
+
 /**
  * Build the dynamic context block for injection into the last user message.
  * 
@@ -2680,6 +2727,11 @@ function buildDynamicContextBlock(
       : workspaceContext.selectedText;
     parts.push(`Sel:\n\`\`\`\n${text}\n\`\`\``);
   }
+
+  // Recent reasoning recap: extract the model's last text output from the most
+  // recent assistant message so it has continuity even after history compression.
+  const reasoningRecap = _extractRecentReasoning();
+  if (reasoningRecap) parts.push(reasoningRecap);
 
   // BB + dormant in the dynamic block (moved out of BP3 — mutable content
   // was invalidating the cached prefix every round).

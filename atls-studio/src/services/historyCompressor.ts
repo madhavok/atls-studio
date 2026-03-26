@@ -59,6 +59,20 @@ export const HISTORY_TEXT_REPLACEMENT_THRESHOLD_TOKENS = 350;
 // Assistant round map (tool-loop rounds; rolling summary excluded)
 // ---------------------------------------------------------------------------
 
+const SYNTHETIC_AUTO_CONTINUE_PATTERNS = [
+  'Your response was truncated',
+  'You paused before finishing',
+  'You are not ready to finish yet',
+  'Continue working.',
+];
+
+/** True when a user message is a system-injected auto-continue prompt, not real user input. */
+export function isSyntheticAutoContinue(msg: { role: string; content: unknown }): boolean {
+  if (msg.role !== 'user') return false;
+  const text = typeof msg.content === 'string' ? msg.content : '';
+  return SYNTHETIC_AUTO_CONTINUE_PATTERNS.some(p => text.startsWith(p));
+}
+
 /**
  * Map message index -> assistant round index. Skips the API-only rolling summary message.
  */
@@ -80,6 +94,26 @@ export function buildAssistantRoundMap(
     }
   }
   return messageRounds;
+}
+
+/**
+ * Count substantive (non-synthetic) rounds in the history.
+ * Auto-continue rounds triggered by the system are not counted toward
+ * the rolling window threshold so they don't push real work out.
+ */
+export function countSubstantiveRounds(
+  history: Array<{ role: string; content: unknown }>,
+  messageRounds: Map<number, number>,
+): number {
+  const syntheticRoundIndices = new Set<number>();
+  for (const [idx, roundIdx] of messageRounds) {
+    if (isSyntheticAutoContinue(history[idx])) {
+      syntheticRoundIndices.add(roundIdx);
+    }
+  }
+  let maxR = -1;
+  for (const r of messageRounds.values()) maxR = Math.max(maxR, r);
+  return (maxR + 1) - syntheticRoundIndices.size;
 }
 
 function getLeadingOrphanUserIndices(
@@ -136,7 +170,10 @@ function applyRollingHistoryWindow(
   const summaryAt = startIdx;
   const orphans = getLeadingOrphanUserIndices(history, messageRounds, summaryAt);
 
-  if (totalRounds <= ROLLING_WINDOW_ROUNDS) {
+  // Use substantive (non-synthetic) round count for the window threshold so
+  // auto-continue rounds don't push real work out of the verbatim window.
+  const substantiveRounds = countSubstantiveRounds(history, messageRounds);
+  if (substantiveRounds <= ROLLING_WINDOW_ROUNDS) {
     syncRollingSummaryMessage(history, ctx.rollingSummary, summaryAt);
     removeOrphanedCompressedSummaries(history, startIdx);
     return;
@@ -150,8 +187,14 @@ function applyRollingHistoryWindow(
     workDone: [...ctx.rollingSummary.workDone],
     findings: [...(ctx.rollingSummary.findings ?? [])],
     errors: [...ctx.rollingSummary.errors],
+    currentGoal: ctx.rollingSummary.currentGoal || '',
+    nextSteps: [...(ctx.rollingSummary.nextSteps ?? [])],
+    blockers: [...(ctx.rollingSummary.blockers ?? [])],
   };
 
+  // Evict oldest rounds to bring total back to ROLLING_WINDOW_ROUNDS.
+  // The threshold check uses substantive count (excluding synthetic auto-continues)
+  // but eviction uses totalRounds so the window stays bounded.
   const excess = totalRounds - ROLLING_WINDOW_ROUNDS;
   let tokensSaved = 0;
 

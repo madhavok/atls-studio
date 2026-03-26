@@ -17,12 +17,9 @@ describe('historyDistiller', () => {
   it('updateRollingSummary merges and dedupes', () => {
     const a = emptyRollingSummary();
     const b = updateRollingSummary(a, {
+      ...emptyRollingSummary(),
       decisions: ['Use X', 'use x'],
       filesChanged: ['a.ts'],
-      userPreferences: [],
-      workDone: [],
-      findings: [],
-      errors: [],
     });
     expect(b.decisions).toEqual(['Use X']);
     expect(b.filesChanged).toEqual(['a.ts']);
@@ -114,9 +111,9 @@ describe('historyDistiller', () => {
     let summary = emptyRollingSummary();
     for (let i = 0; i < 20; i++) {
       summary = updateRollingSummary(summary, {
+        ...emptyRollingSummary(),
         decisions: [`decision ${i}`],
         filesChanged: [`file${i}.ts`],
-        userPreferences: [],
         workDone: [`work item ${i}`],
         findings: [`finding ${i}`],
         errors: [`error ${i}`],
@@ -133,12 +130,9 @@ describe('historyDistiller', () => {
   it('updateRollingSummary rejects pointer strings via dedupePush', () => {
     const base = emptyRollingSummary();
     const withPointers = updateRollingSummary(base, {
+      ...emptyRollingSummary(),
       decisions: ['[-> h:abc12345, 400tk | history:assistant:[Rolling Summary]...]'],
-      filesChanged: [],
-      userPreferences: [],
       workDone: ['[-> h:fff00000, 200tk | done]'],
-      findings: [],
-      errors: [],
     });
     expect(withPointers.decisions).toEqual([]);
     expect(withPointers.workDone).toEqual([]);

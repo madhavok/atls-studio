@@ -25,6 +25,7 @@ import { formatTokens } from '../../utils/toolTokenMetrics';
 import { getEffectiveContextWindow, modelSupportsExtendedContext } from '../../utils/modelCapabilities';
 import { useRoundHistoryStore } from '../../stores/roundHistoryStore';
 import { parseTaskCompleteArgs } from '../../utils/structuredOutput';
+import { selectRecentHistory } from '../../services/historySelector';
 
 function isTaskCompleteCall(tc: { name: string; args?: Record<string, unknown> }): boolean {
   return tc.name === 'task_complete';
@@ -2918,8 +2919,9 @@ export function AiChat() {
       return;
     }
 
-    // Build chat history for API (limit to last 20 messages to prevent slowdown)
-    const recentMessages = messages.slice(-20);
+    // Build chat history for API — token-budget-aware selection that preserves the
+    // original task message and recent reasoning instead of a hard slice(-20) cap.
+    const recentMessages = selectRecentHistory(messages);
     const chatMessages: ChatMessage[] = recentMessages.map(m => ({
       role: m.role,
       content: m.content,
@@ -3270,8 +3272,8 @@ export function AiChat() {
       }
     }
 
-    // Build chat history for API
-    const recentMessages = [...messages.slice(-20), { id: crypto.randomUUID(), role: 'user' as const, content: continuationPrompt, timestamp: new Date() }];
+    // Build chat history for API — same budget-aware selection as handleSend
+    const recentMessages = [...selectRecentHistory(messages), { id: crypto.randomUUID(), role: 'user' as const, content: continuationPrompt, timestamp: new Date() }];
     const chatMessages: ChatMessage[] = recentMessages.map(m => ({
       role: m.role,
       content: m.content,
