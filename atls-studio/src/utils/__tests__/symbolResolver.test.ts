@@ -454,7 +454,7 @@ describe('findBlockEnd', () => {
       '',
       'def other():',
     ];
-    expect(findBlockEnd(lines, 0, lines.length)).toBe(1);
+    expect(findBlockEnd(lines, 0, lines.length)).toBe(2);
   });
 
   it('handles Python class with methods', () => {
@@ -468,7 +468,7 @@ describe('findBlockEnd', () => {
       '',
       'class Bar:',
     ];
-    expect(findBlockEnd(lines, 0, lines.length)).toBe(5);
+    expect(findBlockEnd(lines, 0, lines.length)).toBe(6);
   });
 
   it('handles Python method inside class', () => {
@@ -480,7 +480,7 @@ describe('findBlockEnd', () => {
       '    def run(self):',
       '        return self.x',
     ];
-    expect(findBlockEnd(lines, 1, lines.length)).toBe(2);
+    expect(findBlockEnd(lines, 1, lines.length)).toBe(3);
   });
 
   // ---- Ruby/Elixir keyword blocks ----
@@ -1347,5 +1347,208 @@ describe('all UHPP anchor prefixes', () => {
   it('supports overload syntax in anchor', () => {
     const r = parseSymbolAnchor('fn(process#2)');
     expect(r).toEqual({ symbol: { kind: 'fn', name: 'process#2', shape: undefined } });
+  });
+});
+
+// ---- Template literal ${} in findBlockEnd ----
+
+describe('findBlockEnd: template literal interpolation', () => {
+  it('does not miscount braces inside template literal ${}', () => {
+    const lines = [
+      'function render() {',
+      '  const msg = `Hello ${name}`;',
+      '  const html = `<div>${items.map(i => `<span>${i}</span>`).join("")}</div>`;',
+      '  return msg;',
+      '}',
+    ];
+    const result = findBlockEnd(lines, 0, lines.length);
+    expect(result).toBe(4);
+  });
+
+  it('handles nested template literal with object literal inside ${}', () => {
+    const lines = [
+      'function build() {',
+      '  return `result: ${JSON.stringify({ a: 1, b: 2 })}`;',
+      '}',
+    ];
+    const result = findBlockEnd(lines, 0, lines.length);
+    expect(result).toBe(2);
+  });
+});
+
+// ---- Python triple-quote strings in findBlockEnd ----
+
+describe('findBlockEnd: Python triple-quote strings', () => {
+  it('skips content inside triple-double-quote strings', () => {
+    const lines = [
+      'def example():',
+      '    """This is a docstring',
+      '    with { braces } inside',
+      '    """',
+      '    return 1',
+    ];
+    const result = findBlockEnd(lines, 0, lines.length);
+    expect(result).toBe(4);
+  });
+
+  it('skips content inside triple-single-quote strings', () => {
+    const lines = [
+      'def parse():',
+      "    '''Multi-line",
+      '    string with { and }',
+      "    '''",
+      '    pass',
+    ];
+    const result = findBlockEnd(lines, 0, lines.length);
+    expect(result).toBe(4);
+  });
+});
+
+// ---- Decorator/annotation rollback ----
+
+describe('Decorator/annotation rollback', () => {
+  it('includes Python decorator in symbol range', () => {
+    const content = [
+      '@app.route("/api")',
+      'def handler():',
+      '    return "ok"',
+    ].join('\n');
+    const result = resolveSymbolToLines(content, 'fn', 'handler');
+    expect(result).not.toBeNull();
+    expect(result![0]).toBe(1); // starts at decorator, not def
+    expect(result![1]).toBe(3);
+  });
+
+  it('includes multiple decorators', () => {
+    const content = [
+      '@login_required',
+      '@cache(timeout=60)',
+      'def view():',
+      '    pass',
+    ].join('\n');
+    const result = resolveSymbolToLines(content, 'fn', 'view');
+    expect(result).not.toBeNull();
+    expect(result![0]).toBe(1); // starts at first decorator
+  });
+
+  it('includes Rust #[derive] attribute', () => {
+    const content = [
+      '#[derive(Debug, Clone)]',
+      '#[serde(rename_all = "camelCase")]',
+      'pub struct Config {',
+      '    pub name: String,',
+      '}',
+    ].join('\n');
+    const result = resolveSymbolToLines(content, 'struct', 'Config');
+    expect(result).not.toBeNull();
+    expect(result![0]).toBe(1); // starts at #[derive]
+    expect(result![1]).toBe(5);
+  });
+
+  it('includes JSDoc comment above function', () => {
+    const content = [
+      '/**',
+      ' * Process the input data.',
+      ' * @param data - the input',
+      ' */',
+      'export function process(data: string) {',
+      '  return data.trim();',
+      '}',
+    ].join('\n');
+    const result = resolveSymbolToLines(content, 'fn', 'process');
+    expect(result).not.toBeNull();
+    expect(result![0]).toBe(1); // starts at /**
+    expect(result![1]).toBe(7);
+  });
+
+  it('includes Rust /// doc comments', () => {
+    const content = [
+      '/// Creates a new instance.',
+      '/// Returns None if invalid.',
+      'pub fn create() -> Option<Self> {',
+      '    Some(Self {})',
+      '}',
+    ].join('\n');
+    const result = resolveSymbolToLines(content, 'fn', 'create');
+    expect(result).not.toBeNull();
+    expect(result![0]).toBe(1); // starts at /// doc
+  });
+
+  it('does not roll back past unrelated code', () => {
+    const content = [
+      'const x = 1;',
+      '',
+      'function standalone() {',
+      '  return x;',
+      '}',
+    ].join('\n');
+    const result = resolveSymbolToLines(content, 'fn', 'standalone');
+    expect(result).not.toBeNull();
+    expect(result![0]).toBe(3); // does NOT include const x
+  });
+});
+
+// ---- Lua keyword blocks ----
+
+describe('Lua keyword blocks', () => {
+  it('resolves Lua function...end block', () => {
+    const content = [
+      'function greet(name)',
+      '    print("Hello " .. name)',
+      'end',
+    ].join('\n');
+    const result = resolveSymbolToLines(content, 'fn', 'greet');
+    expect(result).not.toBeNull();
+    expect(result![0]).toBe(1);
+    expect(result![1]).toBe(3);
+  });
+
+  it('resolves local function...end block', () => {
+    const content = [
+      'local function helper(x)',
+      '    if x > 0 then',
+      '        return x',
+      '    end',
+      '    return 0',
+      'end',
+    ].join('\n');
+    const result = resolveSymbolToLines(content, 'fn', 'helper');
+    expect(result).not.toBeNull();
+    expect(result![0]).toBe(1);
+    expect(result![1]).toBe(6);
+  });
+});
+
+// ---- Kotlin receiver functions ----
+
+describe('Kotlin receiver functions', () => {
+  it('resolves fun Type.extensionMethod()', () => {
+    const content = [
+      'fun String.isEmail(): Boolean {',
+      '    return this.contains("@")',
+      '}',
+    ].join('\n');
+    const result = resolveSymbolToLines(content, 'fn', 'isEmail');
+    expect(result).not.toBeNull();
+    expect(result![0]).toBe(1);
+    expect(result![1]).toBe(3);
+  });
+});
+
+// ---- Rust nested generics in impl ----
+
+describe('Rust nested generics in impl', () => {
+  it('resolves impl with nested angle brackets', () => {
+    const content = [
+      'impl<T: Into<Vec<u8>>> Parser<T> {',
+      '    pub fn parse(&self) -> Result<T, Error> {',
+      '        todo!()',
+      '    }',
+      '}',
+    ].join('\n');
+    const result = resolveSymbolToLines(content, 'impl', 'Parser');
+    expect(result).not.toBeNull();
+    expect(result![0]).toBe(1);
+    expect(result![1]).toBe(5);
   });
 });

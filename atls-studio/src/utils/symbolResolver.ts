@@ -53,8 +53,10 @@ export function resolveSymbolToLines(content: string, kind: string | undefined, 
     if (end === start) return [start + 1, start + 1]; // bodyless single-line declaration
   }
 
+  // Decorator/annotation rollback: include preceding @decorator, #[attr], /** doc */ lines
+  const adjustedStart = rollbackToDecorators(lines, start);
   const end = findBlockEnd(lines, start, total);
-  return [start + 1, end + 1];
+  return [adjustedStart + 1, end + 1];
 }
 
 /** Find lines matching a regex pattern, with cheap substring pre-filter. */
@@ -80,7 +82,7 @@ function escapeRegex(s: string): string {
 export function kindToRegexPrefix(kind: string | undefined): string {
   const prefixes: Record<string, string> = {
     // Functions: Rust fn, JS/TS function, Python def, Go func, Kotlin fun, Swift func, method
-    fn: '(?:pub(?:\\([^)]*\\))?\\s+)?(?:unsafe\\s+)?(?:const\\s+)?(?:async\\s+)?(?:extern\\s+\\S+\\s+)?(?:fn|fun|function|def|func(?:\\s+\\([^)]*\\))?|method)\\s+(?:self\\.)?',
+    fn: '(?:pub(?:\\([^)]*\\))?\\s+)?(?:unsafe\\s+)?(?:const\\s+)?(?:async\\s+)?(?:extern\\s+\\S+\\s+)?(?:fn|fun|function|def|func(?:\\s+\\([^)]*\\))?|method)\\s+(?:self\\.)?(?:\\w+\\.)*',
     // Classes
     cls: '(?:pub(?:\\([^)]*\\))?\\s+)?(?:export\\s+)?(?:abstract\\s+)?\\bclass\\s+',
     class: '(?:pub(?:\\([^)]*\\))?\\s+)?(?:export\\s+)?(?:abstract\\s+)?\\bclass\\s+',
@@ -104,7 +106,7 @@ export function kindToRegexPrefix(kind: string | undefined): string {
     // Type aliases
     type: '(?:pub(?:\\([^)]*\\))?\\s+)?(?:export\\s+)?(?:\\btype|\\btypedef)\\s+',
     // Impl blocks (Rust)
-    impl: '(?:pub(?:\\([^)]*\\))?\\s+)?impl(?:<[^>]*>)?\\s+(?:\\w+\\s+for\\s+)?',
+    impl: '(?:pub(?:\\([^)]*\\))?\\s+)?impl(?:\\s*<[^{]*>)?\\s+(?:\\w+\\s+for\\s+)?',
     // Constants
     const: '(?:pub(?:\\([^)]*\\))?\\s+)?(?:export\\s+)?(?:const|static|final)\\s+(?:\\w+\\s+)?',
     // Statics (same regex as const — Rust static, Java static final, etc.)
@@ -276,9 +278,65 @@ function tryGoTypeMatch(lines: string[], escapedName: string, kind: string | und
 }
 
 // ---------------------------------------------------------------------------
+// Decorator / Annotation Rollback
+// ---------------------------------------------------------------------------
+
+/**
+ * Scan backwards from a symbol's declaration line to include preceding
+ * decorators, annotations, and doc comments.
+ */
+function rollbackToDecorators(lines: string[], start: number): number {
+  let i = start - 1;
+  while (i >= 0) {
+    const trimmed = lines[i].trim();
+    if (trimmed === '') { i--; continue; }
+    // Python/Java/Kotlin/TS decorators: @something
+    if (trimmed.startsWith('@')) { i--; continue; }
+    // Rust attributes: #[...] or #![...]
+    if (trimmed.startsWith('#[') || trimmed.startsWith('#![')) { i--; continue; }
+    // C++ attributes: [[...]]
+    if (trimmed.startsWith('[[')) { i--; continue; }
+    // Doc comments: /// ..., //! ...
+    if (trimmed.startsWith('///') || trimmed.startsWith('//!')) { i--; continue; }
+    // JSDoc / block doc comment body and boundaries
+    if (trimmed.startsWith('*') || trimmed.startsWith('/**') || trimmed === '*/') { i--; continue; }
+    if (trimmed.startsWith('/*')) { i--; continue; }
+    break;
+  }
+  // Skip leading blank lines in the decorator block
+  let result = i + 1;
+  while (result < start && lines[result].trim() === '') result++;
+  return result;
+}
+
+// ---------------------------------------------------------------------------
 // Block End Detection — String/Comment Aware
 // ---------------------------------------------------------------------------
 
+/** Check if a line starts a Lua keyword block (function...end). */
+function isLuaBlock(trimmed: string): boolean {
+  // Lua: function name(...) or local function name(...)
+  return /^(?:local\s+)?function\b/.test(trimmed) && !trimmed.includes('{');
+}
+
+/** Track Lua function...end keyword blocks. */
+function findLuaBlockEnd(lines: string[], start: number, total: number): number {
+  const openers = /^\s*(?:(?:local\s+)?function\b|if\b|for\b|while\b|repeat\b)/;
+  const closers = /^\s*(?:end\b|until\b)/;
+  let depth = 0;
+  for (let i = start; i < total; i++) {
+    const trimmed = lines[i].trim();
+    if (openers.test(trimmed)) depth++;
+    if (closers.test(trimmed)) {
+      depth--;
+      if (depth <= 0) return i;
+    }
+  }
+  for (let i = total - 1; i >= start; i--) {
+    if (lines[i].trim().length > 0) return i;
+  }
+  return Math.max(0, total - 1);
+}
 /** Check if a line starts a Ruby/Elixir keyword block (def...end, not Python). */
 function isRubyLikeBlock(trimmed: string): boolean {
   const firstWord = trimmed.split(/\s/)[0] || '';
@@ -323,6 +381,11 @@ export function findBlockEnd(lines: string[], start: number, total: number): num
     return findKeywordBlockEnd(lines, start, total);
   }
 
+  // Lua: function...end keyword tracking
+  if (isLuaBlock(startTrimmed)) {
+    return findLuaBlockEnd(lines, start, total);
+  }
+
   // Python blocks end with ':' and use indentation, not braces.
   const indentOnly = startTrimmed.endsWith(':');
 
@@ -330,6 +393,7 @@ export function findBlockEnd(lines: string[], start: number, total: number): num
   let foundOpen = false;
   let inBlockComment = false;
   let inString: string | null = null;
+  let templateDepth = 0; // Track nested ${...} in template literals
   let inRawString: number | null = null; // hash count when inside r#"..."#
 
   for (let i = start; i < total; i++) {
@@ -377,6 +441,13 @@ export function findBlockEnd(lines: string[], start: number, total: number): num
 
       // Inside string literal
       if (inString !== null) {
+        // Template literal interpolation: ${...} — exit string, track depth
+        if (inString === '`' && c === '$' && j + 1 < len && chars[j + 1] === '{') {
+          inString = null;
+          templateDepth++;
+          j++; // skip $, next iteration picks up { as real brace
+          continue;
+        }
         if (c === '\\' && j + 1 < len) {
           j += 2;
           continue;
@@ -416,7 +487,6 @@ export function findBlockEnd(lines: string[], start: number, total: number): num
         while (k < len && chars[k] === '#') { hashes++; k++; }
         if (k < len && chars[k] === '"') {
           k++;
-          // Scan remainder of this line for closing pattern
           let closed = false;
           while (k < len) {
             if (chars[k] === '"') {
@@ -440,6 +510,33 @@ export function findBlockEnd(lines: string[], start: number, total: number): num
         }
       }
 
+      // Python triple-quote strings: \"\"\" or '''
+      if ((c === '"' || c === '\'') && j + 2 < len && chars[j + 1] === c && chars[j + 2] === c) {
+        const tq = c;
+        j += 3;
+        let closedTriple = false;
+        while (j + 2 < len) {
+          if (chars[j] === tq && chars[j + 1] === tq && chars[j + 2] === tq) {
+            j += 3;
+            closedTriple = true;
+            break;
+          }
+          j++;
+        }
+        if (!closedTriple) {
+          for (let ti = i + 1; ti < total; ti++) {
+            const cl = lines[ti].indexOf(tq.repeat(3));
+            if (cl >= 0) {
+              i = ti;
+              j = len;
+              break;
+            }
+          }
+          if (j < len) j = len;
+        }
+        continue;
+      }
+
       // String literals
       if (c === '"' || c === '\'' || c === '`') {
         inString = c;
@@ -460,6 +557,21 @@ export function findBlockEnd(lines: string[], start: number, total: number): num
           }
           depth++;
           foundOpen = true;
+        } else if (c === '}' && templateDepth > 0 && depth > 0) {
+          // Template literal: closing } of ${...} re-enters backtick string mode
+          depth--;
+          if (depth <= 0 && foundOpen) {
+            // This } closes the outer block, not a template interpolation
+            depth++; // undo
+            templateDepth--;
+            inString = '`';
+            j++;
+            continue;
+          }
+          templateDepth--;
+          inString = '`';
+          j++;
+          continue;
         } else if ((c === '}' || c === ']') && foundOpen) {
           depth--;
           if (depth <= 0) return i;
