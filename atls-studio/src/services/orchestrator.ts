@@ -14,6 +14,7 @@ import { getTerminalStore } from '../stores/terminalStore';
 import { chatDb, type TaskStatus as ChatTaskStatus } from './chatDb';
 import { rateLimiter } from './rateLimiter';
 import { streamChatForSwarm, BATCH_TOOL_REF, type AIConfig, type ChatMessage, type AIProvider } from './aiService';
+import { EDIT_DISCIPLINE } from '../prompts/editDiscipline';
 import { toTOON } from '../utils/toon';
 import { estimateTokens } from '../utils/contextHash';
 
@@ -176,87 +177,53 @@ CRITICAL: Output ONLY the raw JSON object. No markdown, no explanation, no code 
 
 const ROLE_TOOL_DOCS: Record<AgentRole, string> = {
   orchestrator: '',
-  
-  coder: `## Tools
-- batch read.context type:"smart"| "full" file_paths:[...] → understand code
-- batch search.code / search.symbol → locate code and symbols
-- batch change.edit / change.refactor / change.rollback → modify code
-- batch session.recall / session.stage / session.drop / session.compact → manage context
-- batch session.bb.write / session.bb.read → shared blackboard
-- batch system.exec / verify.build / verify.typecheck → run commands and verify (verify.build still required before task_complete)
-- task_complete({summary, files_changed:[]}) → REQUIRED when done (do NOT call until verify.build succeeds or blocker)
-- If any tool returns preview, paused, rollback, action_required, or confirm-needed state, STOP at that boundary. Resolve it, then continue the task if planned work remains. Do not call task_complete.
 
-## Workflow
-1. Review pre-loaded context + SHARED KNOWLEDGE below.
-2. If you need deeper understanding: use read.context type:"full" or session.recall.
-3. Plan the task, batch the related implementation work, and perform a canonical full read before any change.edit or manual refactor mutation inside batch.
-4. For large refactors: analyze.impact before execute; finish the current implementation batch, then verify; rollback on failure.
-5. Record key decisions with session.bb.write key:"impl-decisions".
-6. Run verify.build near task completion or at a meaningful milestone. Verify earlier only for risky boundaries that could invalidate later work.
-7. If the user gives new instructions or reports a bug/lint/build error, treat state as changed and re-evaluate before continuing.
-8. task_complete with summary and files_changed list.`,
+  coder: `## Role: Coder
+Tools: read.context, search.code, search.symbol, change.edit, change.refactor, change.rollback, session.bb.write/read, system.exec, verify.build/typecheck.
+task_complete({summary, files_changed:[]}) → REQUIRED when done (do NOT call until verify.build succeeds or blocker).
 
-  debugger: `## Tools
-- batch read.context type:"smart"| "full" file_paths:[...] → structural summary or full content
-- batch search.issues / search.code → static analysis and search
-- batch change.edit → targeted fixes
-- batch session.recall / session.stage / session.bb.write / session.bb.read → shared context
-- batch system.exec / verify.build → run and reproduce (verify.build still required before task_complete)
-- task_complete({summary, files_changed:[]}) → REQUIRED when done (do NOT call until verify.build succeeds or blocker)
-- If any tool returns preview, paused, rollback, action_required, or confirm-needed state, STOP at that boundary. Resolve it, then continue the task if planned work remains. Do not call task_complete.
+Workflow:
+1. Review pre-loaded context + SHARED KNOWLEDGE.
+2. Plan, batch implementation, full-read before change.edit mutations.
+3. Record key decisions: session.bb.write key:"impl-decisions".
+4. task_complete with summary and files_changed.`,
 
-## Workflow
-1. Reproduce the bug: read context + run tests via exec.
-2. Trace root cause: search.code + search.issues.
-3. Record root cause with session.bb.write key:"root-cause".
-4. Implement the full targeted fix before final verification when risk is low.
-5. Run verify.build after the fix is in place; verify earlier only if the bug hunt crosses a risky boundary.
-6. If the user reports a new bug or lint/build error, treat state as changed and re-evaluate before continuing.
-7. task_complete with root cause analysis and fix description.`,
+  debugger: `## Role: Debugger
+Tools: read.context, search.issues, search.code, change.edit, session.bb.write/read, system.exec, verify.build.
+task_complete({summary, files_changed:[]}) → REQUIRED when done.
 
-  reviewer: `## Tools
-- batch read.context type:"smart" file_paths:[...] → structural summary
-- batch search.issues / search.code → static analysis and pattern search
-- batch session.stage / session.recall / session.bb.write / session.bb.read → focused review context
-- task_complete({summary, issues_found:[]}) → REQUIRED: report findings
-- If the scope changes mid-review, stop and re-evaluate before reporting completion.
+Workflow:
+1. Reproduce: read context + run tests via exec.
+2. Trace root cause: search.code + search.issues. Record: session.bb.write key:"root-cause".
+3. Implement targeted fix, verify.build.
+4. task_complete with root cause analysis and fix.`,
 
-## Workflow (READ-ONLY — you cannot write files)
+  reviewer: `## Role: Reviewer (READ-ONLY)
+Tools: read.context, search.issues, search.code, session.bb.write/read.
+task_complete({summary, issues_found:[]}) → REQUIRED.
+
+Workflow:
 1. Review pre-loaded files for correctness, security, performance, style.
-2. Use search.issues for static analysis results.
-3. Record findings with session.bb.write key:"review-findings".
-4. task_complete with structured findings:
-   - summary: overall assessment
-   - issues_found: [{file, line, severity, description}]`,
+2. Record findings: session.bb.write key:"review-findings".
+3. task_complete with structured findings: [{file, line, severity, description}].`,
 
-  tester: `## Tools
-- batch read.context type:"smart"| "full" file_paths:[...] → understand code and read test targets
-- batch change.edit / change.create → write tests
-- batch session.bb.read / session.recall / session.stage → load implementation notes
-- batch system.exec / verify.build → run tests (verify.build still required before task_complete)
-- task_complete({summary, files_changed:[]}) → REQUIRED when done (do NOT call until verify.build succeeds or blocker)
-- If any tool returns preview, paused, rollback, action_required, or confirm-needed state, STOP at that boundary. Resolve it, then continue the task if planned work remains. Do not call task_complete.
+  tester: `## Role: Tester
+Tools: read.context, change.edit, change.create, session.bb.read, system.exec, verify.build.
+task_complete({summary, files_changed:[]}) → REQUIRED when done.
 
-## Workflow
-1. Read shared knowledge with session.bb.read key:"impl-decisions".
-2. Review pre-loaded context to understand the API/behavior to test.
-3. Write the planned test coverage first: happy path, edge cases, error conditions.
-4. Run verify.build after the test batch is ready; verify earlier only if the test harness or setup is risky.
-5. If the user reports new failures or changed requirements, re-evaluate before continuing.
-6. task_complete with coverage summary and any issues found.`,
+Workflow:
+1. Read shared knowledge: session.bb.read key:"impl-decisions".
+2. Write tests: happy path, edge cases, error conditions.
+3. verify.build, then task_complete with coverage summary.`,
 
-  documenter: `## Tools
-- batch read.context type:"smart" file_paths:[...] → understand structure
-- batch change.edit / change.create → write documentation
-- batch session.bb.read / session.recall / session.stage → load prior findings
-- task_complete({summary, files_changed:[]}) → REQUIRED when done (documenter: no build gate)
+  documenter: `## Role: Documenter (NO exec)
+Tools: read.context, change.edit, change.create, session.bb.read.
+task_complete({summary, files_changed:[]}) → REQUIRED (no build gate).
 
-## Workflow (NO exec — you cannot run commands)
-1. Read shared knowledge with session.bb.read keys:["impl-decisions","review-findings"].
-2. Review pre-loaded context for structure and API surface.
-3. Write clear documentation: purpose, API, examples, edge cases.
-4. task_complete with summary of what was documented.`,
+Workflow:
+1. Read shared knowledge: session.bb.read keys:["impl-decisions","review-findings"].
+2. Write clear documentation: purpose, API, examples, edge cases.
+3. task_complete with summary.`,
 };
 
 // Swarm tool surface: executeToolCall / executeToolCallDetailed (batch + task_complete only).
@@ -1989,28 +1956,21 @@ ${roleDocs}`;
 
     const ctx = research?.projectContext;
     let shellBlock = '';
-    const commonDiscipline = `Ref discipline: default to read_shaped(..., shape:"sig") for planning only. For edits: if the file appears in <<RECENT EDITS>> or you hold an h:NEW ref from the last edit result, the content is already fresh — chain edits using that hash; do NOT full-read again. Use read.lines(ref:"h:NEW:LL-LL") only when you need a different span. A fresh read is required only for files you have never read this session, files flagged suspect/stale, or files not in RECENT EDITS. Never mutate from shaped, stale, or suspect refs.
-Speed discipline: batch reconnaissance together, keep mutation batches single-target, use shell/system only for builds/git/packages or bulk mechanical moves, and verify once per structural phase or final milestone.
-Workflow discipline: BB entries are the source of truth for long-running task status and plans; if working-memory task headers conflict with BB or the latest verification result, BB plus latest verification win and stale headers must be regenerated or ignored.
-Condition discipline: do not rely on undocumented or unsupported conditions such as all_steps_ok; prefer step_ok chains and explicit verification gates. Do not use readonly mode for any batch that might mutate or exec.`;
     if (ctx?.shell === 'powershell' || ctx?.os === 'windows') {
       shellBlock = `OS: Windows | Shell: PowerShell | CWD: ${ctx?.cwd || projectPath}
 Shell rules: Use PowerShell cmdlets for system operations only.
-  Build → cargo build, npm run build
-  Packages → npm install, pip install
-  Git → git status, git diff, git log
-  Processes → Get-Process, Stop-Process
-  Env → $env:VAR        path sep → \\        newline → \`r\`n
+  Build → cargo build, npm run build | Packages → npm install, pip install
+  Git → git status, git diff, git log | Env → $env:VAR | path sep → \\
 Code operations: use ATLS tools for reads/search/edits; do not use Get-Content or Select-String on code files.
-${commonDiscipline}`;
+${EDIT_DISCIPLINE}`;
     } else if (ctx?.os === 'macos' || ctx?.shell === 'zsh') {
       shellBlock = `OS: macOS | Shell: zsh | CWD: ${ctx?.cwd || projectPath}
 Shell rules: Standard Unix commands (ls, cat, grep, cd, pwd).
-${commonDiscipline}`;
+${EDIT_DISCIPLINE}`;
     } else {
       shellBlock = `OS: Linux | Shell: bash | CWD: ${ctx?.cwd || projectPath}
 Shell rules: Standard Unix commands (ls, cat, grep, cd, pwd).
-${commonDiscipline}`;
+${EDIT_DISCIPLINE}`;
     }
     
     const patternsInfo = research?.patterns?.length 

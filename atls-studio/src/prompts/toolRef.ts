@@ -21,13 +21,8 @@ search.usage symbol_names:[] filter?:"" limit?:N
 search.similar type?:code|function|concept|pattern query?:"" threshold?:N limit?:N
 search.issues file_paths?:[] severity_filter?:high|medium|low|all category?:"" limit?:N
 search.patterns file_paths?:[] patterns?:[]
-search.memory query:"" regions?:[active,archived,dormant,bb,staged,dropped] case_sensitive?:bool max_results?:N — grep across all memory (active, archived, dormant digests, BB, staged, dropped manifests); BB-first: check BB before re-searching codebase
-analyze.deps mode:graph|related|impact file_paths:[] filter?:"" limit?:N
-analyze.calls symbol_names:[] depth?:N filter?:"" limit?:N
-analyze.structure file_paths:[] kinds?:[] hub_threshold?:N exclude_hubs?:bool
-analyze.impact file_paths:[] symbol_names?:[]
-analyze.blast_radius file_paths?:[] symbol_names?:[] action?:""
-analyze.extract_plan file_path:"" strategy:by_cluster|by_prefix|by_kind min_lines?:N min_complexity?:N
+search.memory query:"" regions?:[active,archived,dormant,bb,staged,dropped] case_sensitive?:bool max_results?:N
+analyze.deps|calls|structure|impact|blast_radius|extract_plan file_paths:[] — common: filter?:"" limit?:N symbol_names?:[] (system.help for full params per op)
 change.edit file_path:"" line_edits:[{line:N, action:"replace", count:M, content:"new code"}] — preferred: replaces lines N..N+M-1, no old text needed
   also: line_edits:[{line:N, action:"insert_before"|"insert_after", content:"...", reindent?:true}]
   also: line_edits:[{line:N, action:"delete", count:M}] — spans must keep valid syntax; partial deletes may fail with syntax_error_after_edit
@@ -38,14 +33,14 @@ change.edit file_path:"" line_edits:[{line:N, action:"replace", count:M, content
   legacy: edits:[{file,old,new}] — exact text match, use only for short unambiguous replacements
   also: creates:[{path,content}] | revise:"hash" | undo:"h:$last_edit" | deletes:["path"|"h:X",...]
 change.create creates:[{path,content}]
-change.delete file_paths:["path"|"h:X",...] confirm?:true dry_run?:false (defaults to confirm:true — pass dry_run:true for preview only)
+change.delete file_paths:["path"|"h:X",...] confirm?:true dry_run?:false
 change.refactor action:inventory|impact_analysis|execute|rollback|rename|move|extract file_paths?:[] symbol_names?:[]
-change.rollback restore:[{file,hash}] delete?:["path"|"h:X",...] (file, hash, delete accept h:refs) — restore.hash: prefer h:$last_edit / h:$last_edit-N or hashes from execute _rollback; h:$last is generic recency (reads/search), not last file version
+change.rollback restore:[{file,hash}] delete?:["path"|"h:X",...] — restore.hash: prefer h:$last_edit / h:$last_edit-N or hashes from execute _rollback
 change.split_module source_file:"" target_dir:"" plan:[{module,symbols:[]}] dry_run?:true mod_style?:""
 verify.build|test|lint|typecheck target_dir?:"" workspace?:"" runner?:""
 system.git action:status|diff|stage|unstage|commit|push|log|reset|restore workspace?:"" files?:[] message?:"" all?:bool
 system.workspaces action:list|search|add|remove|set_active|rescan
-system.exec cmd:"" terminal_id?:"" — cmd is written to a temp .ps1 and run via call with a single-quoted path in the agent shell; ATLS wraps with markers and capture. Valid PowerShell (stray closing braces can still break the inner scriptblock).
+system.exec cmd:"" terminal_id?:""
 delegate.retrieve query:"" focus_files?:[] max_tokens?:N
 delegate.design query:"" focus_files?:[] max_tokens?:N
 session.bb.write key:"" content:"" derived_from?:[]
@@ -53,32 +48,23 @@ session.bb.read keys:[]
 session.bb.delete keys:[]
 session.rule action?:set|delete|list key:"" content?:""
 session.emit content:"" type?:""
-session.shape file_paths:[]
-session.load file_path:""
-session.debug (no params — dumps internal session state for diagnostics)
-annotate.note hash:"" note:""
-annotate.retype hash:"" type:""
-annotate.split hash:"" at:N
-annotate.merge hashes:[] summary?:""
-intent.understand file_paths:[] force?:bool — reads, analyzes deps, stages, pins; skips steps already done (staged/pinned/BB/awareness)
+session.shape|load|debug|stage|unstage|compact|unload|drop|recall|stats|compact_history — session management (system.help for params)
+annotate.note|retype|split|merge — hash-targeted metadata ops (hash:"" + op-specific params)
+intent.understand file_paths:[] force?:bool — reads, analyzes deps, stages, pins; skips steps already done
 intent.edit file_path:"" line_edits:[...] verify?:bool force?:bool — reads if needed, edits, auto-retries on stale_hash, verifies
-intent.edit_multi edits:[{file_path:"",line_edits:[...]}] verify?:bool force?:bool — per-file read/edit/retry, single verify.build at end; AI must know exact edits for all files
-intent.investigate query:"" file_paths?:[] force?:bool — searches, reads results, stages, caches in BB; skips if BB has prior results
-intent.diagnose file_paths?:[] severity?:"" query?:"" force?:bool — search.issues, read context, analyze.impact, stage, cache; does NOT edit (read-only discovery)
-intent.survey directory:"" depth?:N force?:bool — reads tree, stages sigs, caches in BB; skips if tree already cached
-intent.refactor file_path:"" strategy?:"" symbol_names?:[] target_file?:"" force?:bool — reads, pins, analyzes, extracts plan, refactors, verifies; reuses prior understand/survey results
-intent.create target_path:"" content:"" ref_files?:[] verify?:bool force?:bool — reads ref_file sigs for dep context, creates file, verifies types; AI must provide full content
-intent.test source_file:"" test_file?:"" force?:bool — reads source sigs + existing test context, stages, caches in BB; does NOT write the test (context prep only)
-intent.search_replace search_query?:"" old_text:"" new_text:"" file_glob?:"" max_matches?:N verify?:bool force?:bool — searches, emits capped anchor-based edits, verifies; literal text only, no regex
-intent.extract source_file:"" symbol_names?:[] target_file:"" force?:bool — reads source, refactors via change.refactor, verifies; symbols must be self-contained
+intent.edit_multi edits:[{file_path:"",line_edits:[...]}] verify?:bool force?:bool — per-file read/edit/retry, single verify.build at end
+intent.investigate query:"" file_paths?:[] force?:bool — searches, reads results, stages, caches in BB
+intent.diagnose file_paths?:[] severity?:"" query?:"" force?:bool — search.issues + analyze.impact, read-only discovery
+intent.survey directory:"" depth?:N force?:bool — reads tree, stages sigs, caches in BB
+intent.refactor file_path:"" strategy?:"" symbol_names?:[] target_file?:"" force?:bool — reads, pins, analyzes, extracts plan, refactors, verifies
+intent.create target_path:"" content:"" ref_files?:[] verify?:bool force?:bool — creates file with dep context, verifies types
+intent.test source_file:"" test_file?:"" force?:bool — reads source sigs + test context, read-only prep
+intent.search_replace search_query?:"" old_text:"" new_text:"" file_glob?:"" max_matches?:N verify?:bool force?:bool — literal text only, no regex
+intent.extract source_file:"" symbol_names?:[] target_file:"" force?:bool — reads source, refactors, verifies
 
 ### Examples
 batch({version:"1.0",goal:"search then edit",steps:[{id:"s1",use:"search.code",with:{queries:["auth"]}},{id:"s2",use:"change.edit",with:{edits:[...]}},{id:"s3",use:"verify.typecheck",if:{step_ok:"s2"}}]})
-batch({version:"1.0",goal:"batch related implementation before verification",steps:[{id:"r1",use:"read.context",with:{type:"smart",file_paths:["src/auth.ts","src/session.ts"]}},{id:"c1",use:"change.edit",with:{edits:[...]}},{id:"c2",use:"change.edit",if:{step_ok:"c1"},with:{edits:[...]}},{id:"v1",use:"verify.build",if:{step_ok:"c2"}}]})
 batch({version:"1.0",steps:[{id:"r1",use:"read.context",with:{type:"smart",file_paths:["src/api.ts","src/db.ts"]}},{id:"p1",use:"session.pin",in:{hashes:{from_step:"r1",path:"refs"}}}]})
-batch({version:"1.0",steps:[{id:"plan",use:"analyze.extract_plan",with:{file_path:"src/lib.rs",strategy:"by_cluster"}},{id:"r1",use:"change.refactor",with:{action:"execute",file_paths:["src/lib.rs"],symbol_names:["dispatch"],to:"handlers.rs"}}]})
-batch({version:"1.0",steps:[{id:"git",use:"system.git",with:{action:"status"}},{id:"help",use:"system.help",with:{topic:"edit"}}]})
-batch({version:"1.0",steps:[{id:"u1",use:"intent.understand",with:{file_paths:["src/auth.ts","src/session.ts"]}}]})
 batch({version:"1.0",steps:[{id:"u1",use:"intent.understand",with:{file_paths:["src/api.ts"]}},{id:"e1",use:"intent.edit",with:{file_path:"src/api.ts",line_edits:[{line:10,action:"replace",count:1,content:"const x = 1;"}]}}]})
 
 ### Dataflow
@@ -90,42 +76,16 @@ Policy (optional): verify_after_change, rollback_on_failure, max_steps (capped s
 Do not set policy.mode — execution mode is app-controlled (Ask chat is read-only; Agent/Designer/Reviewer/etc. always run mutable). Use verify_after_change for automatic verify.build after change.* steps.
 on_error: "stop"|"continue"|"rollback" per step.
 
-### Param Aliases (auto-resolved — use canonical names above)
-- file_path aliases: file, f, path, target_file, source_file → file_path
-- file_paths: file_path (string) auto-promotes to file_paths:[file_path] for array ops
-- symbol_names aliases: symbol, symbol_name, name (search.symbol only) → symbol_names
-- queries aliases: query (search.code only) → queries
-- hashes aliases: refs → hashes
-- keys aliases: key → keys (bb.read/bb.delete only)
-- cmd aliases: command → cmd
-- content aliases: contents → content
-- fn(name)/cls(name) wrappers auto-stripped from symbol_names entries
+### Param Aliases (auto-resolved)
+file/f/path/target_file/source_file -> file_path (auto-promotes to file_paths:[] for array ops); query -> queries; symbol/symbol_name -> symbol_names; refs -> hashes; key -> keys; command -> cmd; contents -> content. fn()/cls() wrappers stripped.
 
 ### Rules
-- **Project root vs monorepo:** \`file_path\` / \`file_paths\` are resolved from the **active workspace root** (the folder opened in ATLS). A path like \`src/foo.ts\` writes to \`{root}/src/foo.ts\`. If the real app lives in a subfolder (e.g. \`atls-studio/src/...\`), use that prefix (\`atls-studio/src/foo.ts\`) or open the inner folder as the project root so bare \`src/...\` targets the correct package.
-- file_paths: actual paths or h:refs, not query strings
-- deletes, delete (rollback): paths or h:refs — resolve to path
-- hashes (session.pin/unpin/compact/unload/drop/recall): h:refs pass-through
-- restore items: file and hash accept h:refs
-- system.exec: Windows agent shell is PowerShell — cmd is saved to a temp .ps1 file then executed (not a pasted one-liner); prefer system.git for read-only git; tail/cat may be missing; prefer verify.build / verify.typecheck for checks, or Select-Object -Last N to trim logs; empty (no output) often means a bad pipeline or trim-to-nothing
-- line_edits discipline: the system tracks live file state and injects fresh hashes automatically — reads are for **content grounding** (seeing what's at which lines), not for hash currency. If the file is already in context (prior read, edit, search hit, or staged engram), no additional read is needed before editing. Read only when you have **no content visibility** for the target range, or on stale_hash / authority_mismatch errors. Never guess ranges from memory. After any interaction, chain from h:NEW. Edits apply **sequentially in array order** — each line number targets the file state after all prior edits (insert +N shifts subsequent targets by +N). Count braces in braced languages so replacement blocks balance. Prefer anchor for nested / scope-sensitive edits; use anchors when nesting/scope makes line math unsafe. For simple spans with visible content, line+count+action:"replace" — no old text needed. For 200+ line files, always derive line numbers from visible engram content or read.lines output.
-- use refactor, not edit, for cross-file extract/move/rename flows
-- hash-building refactor: read.shaped(shape:"sig") → h:SOURCE; change.create file body = imports + h:XXXX:sym(Name):dedent + exports (compose from pointers, no pasted bodies); strip source with change.edit line_edits delete (or refactor) on extracted span; verify.typecheck
-- each successful edit returns fresh refs; chain from the newest refs
-- default cadence: batch related change.* steps first, then run one verify.build at a milestone or task end unless the change is high risk; exception: public API / schema / dependency changes verify immediately
-- batch size discipline: max 8-10 steps per batch; split into discovery -> mutation -> verify batches
-- use delegate.retrieve or delegate.design when cheap research is enough before a bigger reasoning pass
-- prefer the cheapest tool: signatures? read.shaped; one symbol? search.symbol; types? verify.typecheck; file list? read.context(tree)
-- intents are macros — they expand to primitives, automating plumbing (reads, retries, verify) not thinking. If you don't know the inputs, use primitives to explore first
-- intents skip steps already done: staged files skip re-read, pinned files skip re-pin, BB-cached results skip re-search. Use force:true to bypass state checks
-- never call an intent you haven't prepared for: read files before intent.edit, have exact line_edits before intent.edit_multi
-- don't use intents for exploration: read.context then reason, then intent.edit with confident changes
-- don't chain intents unless outputs feed inputs: intent.understand + intent.edit OK; intent.investigate + intent.edit BAD (needs reasoning between)
-- two-turn rule for fix workflows: turn 1 = intent.diagnose or intent.investigate (gather), turn 2 = intent.edit or intent.edit_multi (apply)
-- intent.edit and intent.edit_multi auto-retry once on stale_hash via conditional steps — no manual retry needed
-- intent.diagnose and intent.test are read-only — they prepare context but never mutate; follow with intent.edit or intent.create
-- intent.search_replace is literal only — old_text must be exact, no regex, no semantic transforms
-- use primitives when the workflow is non-standard: 3 well-chosen primitives > 1 intent that does the wrong thing`;
+- file_path/file_paths resolve from active workspace root. Subfolder prefix if monorepo (e.g. \`atls-studio/src/foo.ts\`).
+- file_paths: actual paths or h:refs, not query strings. deletes/restore: paths or h:refs.
+- system.exec: PowerShell — cmd saved to temp .ps1; prefer system.git for git, verify.* for checks.
+- hash-building refactor: read.shaped(sig) -> h:SOURCE; change.create body = imports + h:XXXX:sym(Name):dedent + exports; strip source; verify.typecheck.
+- prefer cheapest tool: sigs -> read.shaped; one symbol -> search.symbol; types -> verify.typecheck; file list -> read.context(tree).
+- use delegate.retrieve/design when cheap research suffices before a bigger reasoning pass.`;
 
 export const SUBAGENT_TOOL_REF = `
 

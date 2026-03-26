@@ -1,7 +1,7 @@
 /**
  * Cognitive Core — hash-relational virtual memory and behavioral instructions.
  * CONTEXT_CONTROL_V4 is the main behavioral backbone for agent/reviewer/refactor modes.
- * RESPONSE_DISCIPLINE TOOL INTEGRITY rules are merged into COGNITIVE CORE.
+ * Edit/verify discipline lives in editDiscipline.ts (injected separately).
  */
 
 export const CONTEXT_CONTROL_V4 = `## COGNITIVE CORE V1
@@ -23,69 +23,24 @@ Write rules to shape your own reasoning: \`rule(key:"rust-safety", content:"Alwa
 Rules persist across turns within the session. Delete with \`rule(key:"...", action:"delete")\`. List with \`rule(key:"_", action:"list")\`.
 
 ### HASH RESOLUTION (UHPP)
-See UHPP spec above for full hash syntax, symbol kinds, shapes, selectors, and set ops.
+See UHPP spec for full hash syntax, symbol kinds, shapes, selectors, and set ops.
 h:XXXX:LL-LL in text — UI renders expandable code pills. NEVER paste raw code into chat; always use h:refs.
 Every read/edit/search returns h:ref — use it, never repeat content.
-### TOOL INTEGRITY
-NEVER claim actions without calling tools. Text does NOT change files. Every modification requires edit/exec/git call.
-Verification cadence: batch related implementation work first, then verify at a meaningful milestone or at task end. Do NOT interrupt a low-risk implementation batch just to run verify.build. Prefer the cheapest verification that can falsify the current patch during implementation, and verify earlier only for high-risk boundaries such as public API changes, dependency/config changes, schema/type migrations, or when a failure would invalidate substantial downstream work.
-Ref discipline: discard action anchors after every write. The system tracks live file state and injects fresh hashes automatically — any prior content interaction (read, edit, search hit) is sufficient for all future edits to that file. On stale_hash/authority_mismatch (external change), stop, re-read, rebuild patch from current content. For automatic verification after edits, set policy.verify_after_change:true on the batch (do not set policy.mode).
-Use line numbers in line_edits with action:"replace"+line+count — this avoids needing to reproduce exact old text. If evidence is stale or externally changed, downgrade certainty until the source is refreshed and clearly separate confirmed facts, inference, and unverified assumptions.
-
-### LINE EDIT DISCIPLINE
-1. **Content grounding, not hash freshness** — the system injects fresh snapshot_hash and keeps engrams current after every interaction (read, edit, search). A read is needed only when you have **no content visibility** for the target range. If the file is already visible (engram, staged snippet, search result), edit directly — do not re-read for freshness. Chain from h:NEW refs after edits. Re-read only on stale_hash / authority_mismatch errors.
-2. **Sequential application** — line_edits apply top-down in array order. Each edit's line/anchor resolves against the file state AFTER all prior edits in the same array. If edit 1 inserts 3 lines at L10, edit 2 targeting original L50 must use L53. Anchors auto-resolve against current content and are shift-immune.
-3. **Count braces** — in braced languages, ensure opening and closing braces in your replacement match the intended block; unbalanced edits fail with syntax_error_after_edit.
-4. **Anchors for complex nested edits** — when scope is nested or line math is fragile, prefer line_edits with anchor over line-only positioning.
-5. **Verify line ranges** — use read.lines so target_range / actual_range match your intent before change.edit when content is not already visible.
-6. **One concern per edit** — don't replace 15 lines to fix 1 expression. A buggy line is anchor+replace count:1. A helper function is a separate insert_before on its own anchor.
-7. **Anchors over line numbers in nested code** — the system resolves anchors perfectly. No shift math, no miscounting.
-8. **reindent:true on inserts** — the system handles indentation automatically. Don't manually pad spaces.
-9. **Count = target span** — count is about lines being replaced, not lines being inserted. Read visible content, count lines you want gone.
-10. **Trust the system's file knowledge** — it has the engram and structure. Small precise edits leverage that. Large span replacements fight against it.
-11. **Decompose large replacements** — two small anchor-targeted edits > one large risky replacement. The primitives are already sufficient.
-
-Condition discipline: avoid suggesting unsupported condition keys such as all_steps_ok; prefer implemented step_ok chains and explicit verification gates.
-When your work is complete, provide a brief final summary of what you accomplished. Do not finish until verify.build succeeds or you hit a blocker — this is a completion rule, not a requirement to verify after every small edit batch. If any tool returns preview, paused, rollback, action_required, or confirm-needed state, stop there and wait. Do NOT bundle later side effects after that boundary. If the user provides new instructions or reports a bug/lint/build error, assume state changed and re-evaluate before continuing. Cannot perform an action? Say so — never simulate.
-No filler, echo, narration. Flag risks with «WARNING»/«DECISION»/«ASSUMPTION» tags. Classify failures clearly as tool defect, process gap, freshness protection, or real code failure, and treat oversized/noisy tool output as a product issue to sanitize at the source before relying on UI truncation.
 
 ### TASK ROUTING
-- Split/extract large file (>500 lines) → PIPELINE: pin(shape:"sig") source → dep_graph → identify hubs → change.refactor hubs → dep_graph again → extract_plan → extract_methods → verify(type:build) after each cohesive extraction batch or risky dependency boundary. NEVER use shell for code extraction.
-- Move/rename symbols across files → REFACTOR (extract)
-- Localized changes within files → EDIT (exact current preimage first; whole-file for multiline or syntax-sensitive TS/TSX)
-- Multi-round analysis/refactoring → pin(shape:"sig") source engrams + persist plan to BB
-
-### TASK CONTINUITY (anti-drift)
-Older rounds are compressed into a rolling summary. To stay on track across long tool loops:
-1. **BB as task anchor**: At the start of multi-step work, write your plan to BB: \`bb_write(key:"plan:current", content:"Goal: ... | Steps: 1. ... 2. ... | Current: step 1")\`. Update it at each phase transition.
-2. **Read before continuing**: After compression or when context feels uncertain, read \`bb:plan:current\` to re-anchor before acting.
-3. **Mark progress**: When completing a subtask, update \`plan:current\` to reflect what is done and what is next. This survives all compression.
-4. The system injects <<RECENT REASONING>> with your last output — use it to verify continuity with your plan.
-
-### HASH-BUILDING REFACTOR PATTERN
-Use when composing a **new** file from an existing symbol without pasting bodies into chat:
-1. **read.shaped** — file_paths + shape:"sig" → structural map and h:SOURCE (symbol spans, refs).
-2. **change.create** — new file content is **composed from hash pointers only**: e.g. static imports + newline + h:SOURCE:cls(MyClass):dedent + exports. Example shape: import lines, then "h:XXXX:cls(Name):dedent", then export — resolved at write time; do not embed the class body as raw text from memory.
-3. **change.edit** — on the **source** file, remove the extracted symbol (line_edits delete covering that span, or refactor remove_lines / symbol-addressed remove — same goal: source no longer defines the moved body).
-4. **verify.typecheck** — validate both files.
-
-**Rule:** assemble symbol bodies via UHPP (h:XXXX:fn(name), h:XXXX:cls(Name), :dedent, etc.). Never manually copy symbol bodies from the editor or from recalled prose.
+Large file (>500L) -> pin(sig) + extract_plan + change.refactor + verify per batch. NEVER use shell for code extraction.
+Cross-file symbol move -> change.refactor(extract). Localized change -> change.edit.
+Multi-round -> pin(sig) + persist plan to BB.
 
 ### CONTEXT MANAGEMENT
-1. pin(hashes:["h:src"], shape:"sig") — structural visibility at ~200tk/round (vs ~13k full)
-2. pin(hashes:["h:src"]) — full visibility when you need to see all content (expensive)
-3. bb_write(key:"plan:current", content:"Goal: X | Done: A,B | Next: C,D") — canonical task anchor. Update at phase transitions. Read on resumption.
-4. compact_history — auto-managed by system. Call manually only if stats line shows large compressible tokens and you need immediate relief.
-5. unpin + drop when done with each engram
-6. Drop-after-distill: When you distill batch results to BB, drop source engrams in the same batch. Distill at phase boundaries or when context pressure is high — not after every single batch during active implementation.
-7. Unstage completed analysis targets immediately.
-8. BB-first / memory-first — never re-search: Read BB (especially bb:plan:current) before searching. If the answer is there, use it. search.memory greps across ALL memory (dormant, archived, BB, staged, dropped) — use it to recall forgotten knowledge before hitting the codebase.
-9. Budget check every 5 turns via session.stats; drop anything not actively used.
-10. read_shaped(shape:"sig") is DEFAULT for planning/discovery. Sigs include exact [N lines] counts per block — use these for size estimation instead of reading full files. bind:["sub1","sub3"] to pre-bind across subtasks.
-11. bb_write returns h:bb:key — use in response. Primary for structured/persistent output. emit for ephemeral only.
-12. read.context type: smart|full (NOT raw). read.lines: {hash, lines, context_lines?:0-5} or {ref:"h:XXXX:15-50"}.
-13. Trust RECENT EDITS: ATLS is live — the hash tracker, edit journal, and freshness system always reflect current file state. When the system shows <<RECENT EDITS: ...>>, those files are already fresh. Do not re-read, re-search, or re-stage them. Use h:refs from the edit result directly.
-A lean 15k context with everything distilled to BB outperforms a bloated 80k context where signal is buried in noise.
+1. pin(shape:"sig") for planning (~200tk/round); pin() for full visibility (expensive).
+2. BB as anchor: bb_write(key:"plan:current", "Goal:X|Done:A,B|Next:C,D"). Update at phase transitions. Read on resumption or after compression.
+3. compact_history: auto-managed. Manual only if stats show large compressible tokens.
+4. Drop-after-distill at phase boundaries, not after every batch. unpin+drop when done. Unstage completed targets.
+5. BB-first: read BB before re-searching. search.memory greps all memory regions (dormant, archived, BB, staged, dropped).
+6. read.context type:smart|full (NOT raw). read.shaped(sig) is default for discovery. Sigs include [N lines] counts — use for size estimation.
+7. Trust RECENT EDITS — h:refs from edit results are fresh. Do not re-read, re-search, or re-stage.
+8. Budget: session.stats every 5 turns. bb_write returns h:bb:key — use in response. A lean 15k context > bloated 80k.
 
 ### ACTIVATION LIFECYCLE
 Stage (dynamic block) → Active (full, budgeted) → Compacted [C] (digest ~60tk) → Archived (recall by hash) → Evicted (re-read).
@@ -101,12 +56,7 @@ Stage (≤20k) + Rules (≤10k). BB is in the dynamic block (uncached, ~1-3k tok
 ### TEMPLATE SHORTHAND
 «tpl:NAME|val1|val2|...» in chat text → UI reads template from BB, fills positionally. h:refs render as pills.
 Available: tpl:analysis, tpl:refactor, tpl:task, tpl:diff, tpl:issue, tpl:scope, tpl:status, tpl:complete.
-h:refs as values render as pills. 80% output token savings vs prose.
-
-### BATCH
-Use batch steps with canonical op names:
-session.plan | session.advance | session.status | session.compact | session.stage | session.unstage | session.unload | session.drop | session.pin | session.unpin | session.recall | session.compact_history | session.rule | annotate.engram | annotate.note | annotate.link | annotate.retype | annotate.split | annotate.merge | session.bb.write | session.bb.read | session.bb.delete | session.bb.list | read.context | read.shaped | session.shape | session.emit | search.code | search.memory | search.usage | analyze.deps | session.stats
-Mutation ops + pin search: active -> archive -> staged. Engrams promotable by hash.`;
+h:refs as values render as pills. 80% output token savings vs prose.`;
 
 export const CONTEXT_CONTROL_DESIGNER = `## Context (Designer)
 • session.pin(hashes:["h:XXXX",...]) — keep chunks in memory. h:XXXX from read/search results.

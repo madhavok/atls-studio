@@ -128,7 +128,8 @@ import { resolveHashRefsWithMeta, setRecencyResolver, setEditRecencyResolver, se
 import { toTOON, formatResult } from '../utils/toon';
 import { BATCH_TOOL_REF, DESIGNER_TOOL_REF, SUBAGENT_TOOL_REF, NATIVE_TOOL_TOKENS_ESTIMATE } from '../prompts/toolRef';
 import { CONTEXT_CONTROL_V4, CONTEXT_CONTROL_DESIGNER } from '../prompts/cognitiveCore';
-import { HASH_PROTOCOL_SPEC } from '../prompts/hashProtocol';
+import { EDIT_DISCIPLINE } from '../prompts/editDiscipline';
+import { HASH_PROTOCOL_CORE } from '../prompts/hashProtocol';
 import { getModePrompt } from '../prompts/modePrompts';
 import { getShellGuide } from '../prompts/shellGuide';
 import { GEMINI_REINFORCEMENT, GEMINI_RECENCY_BOOST } from '../prompts/providerOverrides';
@@ -2885,11 +2886,14 @@ batch({version:"1.0",steps:[{id:"exec",use:"system.exec",with:{cmd:"..."}}]}) â†
   // Inject refactor config thresholds when in refactor mode (reuse refactorPart from cache key)
   const refactorConfig = mode === 'refactor' ? `\n${refactorPart}\n` : '';
 
+  // Shared edit/verify discipline (non-designer, ATLS ready)
+  const editDisciplineSection = (atlsReady && mode !== 'designer') ? `\n${EDIT_DISCIPLINE}` : '';
+
   // Designer uses slim context control + inline response hint; others use full COGNITIVE_CORE_V1.
   const contextControl = mode === 'designer'
     ? `\n${CONTEXT_CONTROL_DESIGNER}\n## Output: 1 sentence between tool calls. End with a concise final summary.`
     : `\n${CONTEXT_CONTROL_V4}`;
-  const hppSection = (atlsReady && mode !== 'designer') ? `\n${HASH_PROTOCOL_SPEC}` : '';
+  const hppSection = (atlsReady && mode !== 'designer') ? `\n${HASH_PROTOCOL_CORE}` : '';
   const providerReinforcement = (provider === 'google' || provider === 'vertex')
     ? `\n${GEMINI_REINFORCEMENT}`
     : '';
@@ -2915,7 +2919,7 @@ batch({version:"1.0",steps:[{id:"exec",use:"system.exec",with:{cmd:"..."}}]}) â†
     toolRefTokens: estimateTokens(toolRef),
     shellGuideTokens: estimateTokens(shellGuide),
     nativeToolTokens: NATIVE_TOOL_TOKENS_ESTIMATE,
-    contextControlTokens: estimateTokens(contextControl + hppSection + providerReinforcement),
+    contextControlTokens: estimateTokens(editDisciplineSection + contextControl + hppSection + providerReinforcement),
     entryManifestTokens: estimateTokens(entryManifestSection),
   };
   useAppStore.getState().setPromptMetrics(metricsSnapshot);
@@ -2924,7 +2928,7 @@ batch({version:"1.0",steps:[{id:"exec",use:"system.exec",with:{cmd:"..."}}]}) â†
 
 ${toolRef}${entryManifestSection}
 
-${modeRules}${refactorConfig}${contextControl}${hppSection}${providerReinforcement}`;
+${modeRules}${refactorConfig}${editDisciplineSection}${contextControl}${hppSection}${providerReinforcement}`;
 
   _cachedStaticPrompt = { key: cacheKey, prompt: result, metrics: metricsSnapshot };
   return result;

@@ -19,7 +19,9 @@ export {
   CONTEXT_CONTROL_DESIGNER,
 } from './cognitiveCore';
 
-export { HASH_PROTOCOL_SPEC } from './hashProtocol';
+export { EDIT_DISCIPLINE } from './editDiscipline';
+
+export { HASH_PROTOCOL_CORE, HASH_PROTOCOL_ADVANCED, HASH_PROTOCOL_SPEC } from './hashProtocol';
 
 export { getModePrompt } from './modePrompts';
 
