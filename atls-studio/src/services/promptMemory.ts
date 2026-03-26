@@ -3,12 +3,12 @@ import type { PromptMetrics } from '../stores/appStore';
 export const PROTECTED_RECENT_ROUNDS = 4;
 
 /** Verbatim tool-loop rounds kept before older rounds roll into summary */
-export const ROLLING_WINDOW_ROUNDS = 15;
+export const ROLLING_WINDOW_ROUNDS = 20;
 
 /** Max tokens for the formatted rolling summary message */
-export const ROLLING_SUMMARY_MAX_TOKENS = 900;
+export const ROLLING_SUMMARY_MAX_TOKENS = 1500;
 
-export const CONVERSATION_HISTORY_BUDGET_TOKENS = 12000;
+export const CONVERSATION_HISTORY_BUDGET_TOKENS = 20000;
 export const STAGED_BUDGET_TOKENS = 4000;
 export const STAGED_ANCHOR_BUDGET_TOKENS = 1200;
 export const WM_BUDGET_TOKENS = 32000;

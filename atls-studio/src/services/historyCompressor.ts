@@ -38,7 +38,7 @@ import {
 // ---------------------------------------------------------------------------
 
 /** Results smaller than this are kept inline (tokens) */
-export const COMPRESSION_THRESHOLD_TOKENS = 500;
+export const COMPRESSION_THRESHOLD_TOKENS = 800;
 
 /** Per-op overrides — ops whose output is needed immediately get higher limits.
  *  Derived from families: all system.* and verify.* ops get a higher threshold. */
@@ -53,7 +53,7 @@ export const TOOL_COMPRESSION_OVERRIDES: Record<string, number> = Object.fromEnt
   ),
 );
 
-export const HISTORY_TEXT_REPLACEMENT_THRESHOLD_TOKENS = 350;
+export const HISTORY_TEXT_REPLACEMENT_THRESHOLD_TOKENS = 600;
 
 // ---------------------------------------------------------------------------
 // Assistant round map (tool-loop rounds; rolling summary excluded)
@@ -364,7 +364,12 @@ export function compressToolLoopHistory(
   const messageRounds = buildAssistantRoundMap(history, startIdx);
 
   const protectedCount = opts?.emergency ? 0 : PROTECTED_RECENT_ROUNDS;
-  const skipThreshold = currentRound !== undefined ? Math.max(0, currentRound - protectedCount) : Infinity;
+  // Use the max surviving round index (not the global loop counter) so that
+  // protection still works after applyRollingHistoryWindow evicts + reindexes.
+  let maxSurvivingRound = -1;
+  for (const r of messageRounds.values()) maxSurvivingRound = Math.max(maxSurvivingRound, r);
+  const skipThreshold = maxSurvivingRound >= 0
+    ? Math.max(0, maxSurvivingRound + 1 - protectedCount) : Infinity;
 
   const recordReplacement = (content: string, role: string, description: string): string => {
     const tokens = estimateTokens(content);

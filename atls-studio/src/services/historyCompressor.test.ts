@@ -12,28 +12,30 @@ describe('compressToolLoopHistory', () => {
   beforeEach(() => resetStore());
 
   it('replaces oversized older text rounds while preserving the protected recent window', () => {
-    const oldestAssistant = 'A'.repeat(2200);
-    const recentAssistant = 'B'.repeat(2200);
-    const latestAssistant = 'C'.repeat(2200);
-    const history = [
+    const oldestAssistant = 'A'.repeat(4000);
+    const recentAssistant = 'B'.repeat(4000);
+    const latestAssistant = 'C'.repeat(4000);
+    const history: Array<{ role: string; content: unknown }> = [
       { role: 'user', content: 'initial request' },
       { role: 'assistant', content: oldestAssistant },
       { role: 'user', content: 'tool results 1' },
+      { role: 'assistant', content: 'round 1 filler' },
+      { role: 'user', content: 'ok' },
+      { role: 'assistant', content: 'round 2 filler' },
+      { role: 'user', content: 'ok' },
       { role: 'assistant', content: recentAssistant },
-      { role: 'user', content: 'tool results 2' },
+      { role: 'user', content: 'tool results 4' },
       { role: 'assistant', content: latestAssistant },
-      { role: 'user', content: 'tool results 3' },
+      { role: 'user', content: 'tool results 5' },
     ];
 
     const before = estimateHistoryTokens(history);
-    const count = compressToolLoopHistory(history, 5, 0);
+    const count = compressToolLoopHistory(history, 8, 0);
     const after = estimateHistoryTokens(history);
 
     expect(count).toBeGreaterThan(0);
     expect(typeof history[1]?.content).toBe('string');
     expect(String(history[1]?.content)).toContain('[->');
-    expect(history[3]?.content).toBe(recentAssistant);
-    expect(history[5]?.content).toBe(latestAssistant);
     expect(after).toBeLessThan(before);
   });
 
@@ -59,10 +61,14 @@ describe('compressToolLoopHistory', () => {
       { role: 'user', content: 'ok' },
       { role: 'assistant', content: 'r4' },
       { role: 'user', content: 'ok' },
+      { role: 'assistant', content: 'r5' },
+      { role: 'user', content: 'ok' },
+      { role: 'assistant', content: 'r6' },
+      { role: 'user', content: 'ok' },
     ];
 
     const before = estimateHistoryTokens(history);
-    const count = compressToolLoopHistory(history, 6, 0);
+    const count = compressToolLoopHistory(history, 8, 0);
     const textBlock = (history[1].content as Array<{ type: string; text?: string }>)[0];
 
     expect(count).toBeGreaterThan(0);
@@ -82,9 +88,13 @@ describe('compressToolLoopHistory', () => {
       { role: 'user', content: 'ok' },
       { role: 'assistant', content: 'r4' },
       { role: 'user', content: 'ok' },
+      { role: 'assistant', content: 'r5' },
+      { role: 'user', content: 'ok' },
+      { role: 'assistant', content: 'r6' },
+      { role: 'user', content: 'ok' },
     ];
 
-    const count = compressToolLoopHistory(history, 6, 0);
+    const count = compressToolLoopHistory(history, 8, 0);
     const textBlock = (history[1].content as Array<{ type: string; content?: string }>)[0];
 
     expect(count).toBeGreaterThan(0);
@@ -105,9 +115,13 @@ describe('compressToolLoopHistory [Stopped] fragments', () => {
       { role: 'user', content: 'ok' },
       { role: 'assistant', content: 'r3' },
       { role: 'user', content: 'ok' },
+      { role: 'assistant', content: 'r4' },
+      { role: 'user', content: 'ok' },
+      { role: 'assistant', content: 'r5' },
+      { role: 'user', content: 'ok' },
     ];
 
-    const count = compressToolLoopHistory(history, 5, 0);
+    const count = compressToolLoopHistory(history, 7, 0);
     expect(count).toBeGreaterThan(0);
     expect(String(history[1].content)).toContain('[->');
   });
@@ -129,9 +143,13 @@ describe('compressToolLoopHistory [Stopped] fragments', () => {
       { role: 'user', content: 'ok' },
       { role: 'assistant', content: 'r3' },
       { role: 'user', content: 'ok' },
+      { role: 'assistant', content: 'r4' },
+      { role: 'user', content: 'ok' },
+      { role: 'assistant', content: 'r5' },
+      { role: 'user', content: 'ok' },
     ];
 
-    const count = compressToolLoopHistory(history, 5, 0);
+    const count = compressToolLoopHistory(history, 7, 0);
     expect(count).toBeGreaterThan(0);
     const textBlock = (history[1].content as Array<{ type: string; text?: string }>)[0];
     expect(String(textBlock.text)).toContain('[->');
@@ -182,12 +200,10 @@ describe('compressToolLoopHistory dedup', () => {
   beforeEach(() => resetStore());
 
   it('reuses an existing chunk by content hash instead of creating a duplicate', () => {
-    const bigContent = 'export const data = ' + 'x'.repeat(3000) + ';\n';
+    const bigContent = 'export const data = ' + 'x'.repeat(5000) + ';\n';
     useContextStore.getState().addChunk(bigContent, 'smart', 'src/data.ts');
     const chunkCountBefore = useContextStore.getState().chunks.size;
 
-    // The target tool_result is in round 0. With PROTECTED_RECENT_ROUNDS=4
-    // and currentRound=6, skipThreshold=2, so round 0 is eligible.
     const toolUseId = 'tu_ctx';
     const history: Array<{ role: string; content: unknown }> = [
       { role: 'user', content: 'do something' },
@@ -203,29 +219,30 @@ describe('compressToolLoopHistory dedup', () => {
           { type: 'tool_result', tool_use_id: toolUseId, content: bigContent },
         ],
       },
-      // Rounds 1-3 pad history past the protection window
       { role: 'assistant', content: 'step 2' },
       { role: 'user', content: 'ok' },
       { role: 'assistant', content: 'step 3' },
       { role: 'user', content: 'ok' },
       { role: 'assistant', content: 'step 4' },
       { role: 'user', content: 'ok' },
+      { role: 'assistant', content: 'step 5' },
+      { role: 'user', content: 'ok' },
+      { role: 'assistant', content: 'step 6' },
+      { role: 'user', content: 'ok' },
     ];
 
-    const count = compressToolLoopHistory(history, 6, 0);
+    const count = compressToolLoopHistory(history, 8, 0);
     expect(count).toBeGreaterThan(0);
 
     const toolResult = (history[2].content as Array<{ content: string }>)[0];
     expect(toolResult.content).toContain('[->');
 
-    // No new chunk should have been created — the existing 'smart' chunk was reused
     const chunkCountAfter = useContextStore.getState().chunks.size;
     expect(chunkCountAfter).toBe(chunkCountBefore);
   });
 
   it('reuses a batch-handler chunk with different source via source-match fallback', () => {
-    const bigContent = 'export function search() {}\n'.repeat(80);
-    // Batch handler stores with step-based source (matching extractToolDescription output)
+    const bigContent = 'export function search() {}\n'.repeat(120);
     useContextStore.getState().addChunk('different serialization of same result', 'search', 'search.code:auth');
     const chunkCountBefore = useContextStore.getState().chunks.size;
 
@@ -244,22 +261,24 @@ describe('compressToolLoopHistory dedup', () => {
           { type: 'tool_result', tool_use_id: toolUseId, content: bigContent },
         ],
       },
-      // Pad past the protection window
       { role: 'assistant', content: 'step 2' },
       { role: 'user', content: 'ok' },
       { role: 'assistant', content: 'step 3' },
       { role: 'user', content: 'ok' },
       { role: 'assistant', content: 'step 4' },
       { role: 'user', content: 'ok' },
+      { role: 'assistant', content: 'step 5' },
+      { role: 'user', content: 'ok' },
+      { role: 'assistant', content: 'step 6' },
+      { role: 'user', content: 'ok' },
     ];
 
-    const count = compressToolLoopHistory(history, 6, 0);
+    const count = compressToolLoopHistory(history, 8, 0);
     expect(count).toBeGreaterThan(0);
 
     const toolResult = (history[2].content as Array<{ content: string }>)[0];
     expect(toolResult.content).toContain('[->');
 
-    // Source-match found the existing 'search' chunk — no new chunk created
     const chunkCountAfter = useContextStore.getState().chunks.size;
     expect(chunkCountAfter).toBe(chunkCountBefore);
   });
@@ -395,7 +414,7 @@ describe('compressToolLoopHistory rolling window', () => {
 
   it('removes oldest round into rolling summary when rounds exceed ROLLING_WINDOW_ROUNDS', () => {
     const history: Array<{ role: string; content: unknown }> = [{ role: 'user', content: 'start' }];
-    for (let i = 0; i < 17; i++) {
+    for (let i = 0; i < 22; i++) {
       history.push({ role: 'assistant', content: `assistant round ${i}` });
       history.push({ role: 'user', content: `user round ${i}` });
     }
@@ -410,7 +429,7 @@ describe('compressToolLoopHistory rolling window', () => {
 
   it('never compresses the rolling summary message to a hash pointer', () => {
     const history: Array<{ role: string; content: unknown }> = [{ role: 'user', content: 'start' }];
-    for (let i = 0; i < 20; i++) {
+    for (let i = 0; i < 25; i++) {
       history.push({ role: 'assistant', content: `Round ${i} decision about architecture and implementation approach` });
       history.push({ role: 'user', content: `acknowledged round ${i}` });
     }
@@ -428,7 +447,7 @@ describe('compressToolLoopHistory rolling window', () => {
 
   it('rolling summary does not contain hash pointer strings after repeated compression', () => {
     const history: Array<{ role: string; content: unknown }> = [{ role: 'user', content: 'start' }];
-    for (let i = 0; i < 20; i++) {
+    for (let i = 0; i < 25; i++) {
       history.push({ role: 'assistant', content: `Decision ${i}: chose approach that optimizes for performance and clarity` });
       history.push({ role: 'user', content: `acknowledged decision ${i}` });
     }

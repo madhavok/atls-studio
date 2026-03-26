@@ -2570,7 +2570,7 @@ function buildWorkingMemoryBlock(): string {
   return useContextStore.getState().getWorkingMemoryFormatted();
 }
 
-const REASONING_RECAP_MAX_CHARS = 800;
+const REASONING_RECAP_MAX_CHARS = 1500;
 
 /**
  * Extract a condensed reasoning recap from the model's most recent assistant
@@ -2583,7 +2583,7 @@ function _extractRecentReasoning(): string {
 
   const textChunks: string[] = [];
   let scanned = 0;
-  for (let i = history.length - 1; i >= 0 && scanned < 3; i--) {
+  for (let i = history.length - 1; i >= 0 && scanned < 5; i--) {
     const msg = history[i];
     if (msg.role !== 'assistant') continue;
     scanned++;
@@ -2631,11 +2631,12 @@ function buildDynamicContextBlock(
 ): string {
   const parts: string[] = [];
 
-  // Task header + context stats (previously in system prompt dynamic suffix)
+  // -------------------------------------------------------------------------
+  // ORIENTATION — model reads these first to know where it is
+  // -------------------------------------------------------------------------
+
   const taskLine = useContextStore.getState().getTaskLine();
   const contextStatsLine = useContextStore.getState().getStatsLine();
-  
-  // Append cache hit rate to stats if available
   const cm = useAppStore.getState().cacheMetrics;
   const cacheTag = cm.sessionRequests > 0 ? ` | cache:${(cm.sessionHitRate * 100).toFixed(0)}%` : '';
   const header = taskLine
@@ -2643,9 +2644,21 @@ function buildDynamicContextBlock(
     : `${contextStatsLine}${cacheTag}`;
   parts.push(header);
 
-  // Edit-awareness steering: ATLS is live — the hash tracker and edit journal
-  // already reflect current file state. Tell the model not to re-read.
-  // Cross-reference edit: and err: BB entries to surface verify failures.
+  const reasoningRecap = _extractRecentReasoning();
+  if (reasoningRecap) parts.push(reasoningRecap);
+
+  const bbBlock = _buildBlackboardBlock();
+  if (bbBlock) parts.push(bbBlock);
+
+  const pendingActionBlock = buildPendingActionBlock();
+  if (pendingActionBlock) {
+    parts.push(pendingActionBlock);
+  }
+
+  // -------------------------------------------------------------------------
+  // STEERING — edit awareness, repair escalation, context pressure
+  // -------------------------------------------------------------------------
+
   const bbEntries = useContextStore.getState().listBlackboardEntries();
   const errBasenames = new Set(
     bbEntries.filter(e => e.key.startsWith('err:')).map(e => e.key.slice(4)),
@@ -2670,7 +2683,6 @@ function buildDynamicContextBlock(
     parts.push(`<<RECENT EDITS: ${healthyEdits.join(', ')}. ATLS tracks live file state — do not re-read, re-search, or re-stage these files unless verifying a specific change. Use h:refs from edit results directly.>>`);
   }
 
-  // Repair escalation: surface files with repeated failures
   const escalatedRepairs = bbEntries
     .filter(e => e.key.startsWith('repair:') && parseInt(e.preview, 10) >= 2)
     .map(e => `${e.key.slice(7)} (${e.preview} attempts)`);
@@ -2678,12 +2690,11 @@ function buildDynamicContextBlock(
     parts.push(`<<ESCALATED REPAIR: ${escalatedRepairs.join(', ')}. Multiple failed repairs. Full scope in context. Review holistically before editing.>>`);
   }
 
-  // Context pressure hint: only nudge distillation when stale engrams outweigh active ones
   try {
     const ctxChunks = useContextStore.getState().chunks;
     if (ctxChunks?.size > 0) {
       const now = Date.now();
-      const activeCutoff = now - 3 * 60_000; // ~3 turns at ~60s each
+      const activeCutoff = now - 3 * 60_000;
       let activeTkSum = 0, staleTkSum = 0;
       for (const c of ctxChunks.values()) {
         if (c.type === 'msg:user' || c.type === 'msg:asst') continue;
@@ -2698,29 +2709,24 @@ function buildDynamicContextBlock(
     // Fail-safe: skip pressure hint if store/chunks unavailable
   }
 
-  // BB-write nudge: after discovery batches that read files but wrote nothing to BB
   const bm = useContextStore.getState().batchMetrics;
   if (bm.hadReads && !bm.hadBbWrite) {
     parts.push('<<FINDINGS: batch read files with no BB write — consider session.bb.write to persist key findings before they go dormant.>>');
   }
 
-  const pendingActionBlock = buildPendingActionBlock();
-  if (pendingActionBlock) {
-    parts.push(pendingActionBlock);
-  }
+  // -------------------------------------------------------------------------
+  // BULK CONTEXT — workspace state, project tree, dormant engrams
+  // -------------------------------------------------------------------------
 
-  // Project structure tree (changes when files are created/deleted)
   if (projectTree && isFirstTurn) {
     parts.push(`## PROJECT STRUCTURE\n${projectTree}`);
   }
 
-  // Workspace context TOON (editor state, profile, etc.)
   const contextToon = workspaceContext ? buildContextTOON(workspaceContext, !isFirstTurn) : '';
   if (contextToon) {
     parts.push(`Ctx:${contextToon}`);
   }
 
-  // Selected text block
   if (workspaceContext?.selectedText) {
     const text = workspaceContext.selectedText.length > 500
       ? workspaceContext.selectedText.substring(0, 500) + '...'
@@ -2728,15 +2734,6 @@ function buildDynamicContextBlock(
     parts.push(`Sel:\n\`\`\`\n${text}\n\`\`\``);
   }
 
-  // Recent reasoning recap: extract the model's last text output from the most
-  // recent assistant message so it has continuity even after history compression.
-  const reasoningRecap = _extractRecentReasoning();
-  if (reasoningRecap) parts.push(reasoningRecap);
-
-  // BB + dormant in the dynamic block (moved out of BP3 — mutable content
-  // was invalidating the cached prefix every round).
-  const bbBlock = _buildBlackboardBlock();
-  if (bbBlock) parts.push(bbBlock);
   const dormantBlock = _buildDormantBlock();
   if (dormantBlock) parts.push(dormantBlock);
 

@@ -19,7 +19,7 @@ interface HasRoleAndContent {
 }
 
 const FALLBACK_HARD_CAP = 40;
-const MIN_RECENT_MESSAGES = 6;
+const MIN_RECENT_MESSAGES = 10;
 
 function estimateMessageTokens(msg: HasRoleAndContent): number {
   const c = msg.content;
