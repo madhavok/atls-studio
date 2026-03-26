@@ -215,9 +215,11 @@ async function runSubagentRound(
       accessToken: apiKey,
       projectId: projectId || '',
       region: region || null,
+      cachedContent: null,
+      dynamicContext: null,
     });
   } else if (provider === 'google') {
-    await invoke('stream_chat_google', { ...commonParams, apiKey });
+    await invoke('stream_chat_google', { ...commonParams, apiKey, cachedContent: null, dynamicContext: null });
   } else if (provider === 'lmstudio') {
     await invoke('stream_chat_lmstudio', { ...commonParams, baseUrl: baseUrl || 'http://localhost:1234' });
   } else {

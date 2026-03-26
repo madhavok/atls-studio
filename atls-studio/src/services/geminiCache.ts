@@ -103,20 +103,7 @@ export async function manageGeminiRollingCache(
 ): Promise<{ cacheName: string | null; cachedMessageCount: number }> {
   const isVertex = provider === 'vertex';
   const currentCache = isVertex ? geminiCacheState.vertexCacheName : geminiCacheState.googleCacheName;
-
-  if (currentCache) {
-    try {
-      await invoke('gemini_delete_cache', {
-        cacheName: currentCache,
-        provider,
-        apiKey,
-        projectId: projectId ?? null,
-        region: region ?? null,
-      });
-    } catch (err) {
-      console.warn('Failed to delete old cache:', err);
-    }
-  }
+  const prevCachedCount = isVertex ? geminiCacheState.vertexCachedMessageCount : geminiCacheState.googleCachedMessageCount;
 
   const totalChars = systemPrompt.length + messages.reduce((sum, m) => {
     const content = typeof m.content === 'string' ? m.content : JSON.stringify(m.content);
@@ -132,7 +119,7 @@ export async function manageGeminiRollingCache(
 
   if (currentCache && estimatedTokens >= ZONE_A_LIMIT && estimatedTokens < ZONE_B_LIMIT) {
     let uncachedChars = 0;
-    for (let i = (isVertex ? geminiCacheState.vertexCachedMessageCount : geminiCacheState.googleCachedMessageCount); i < messages.length; i++) {
+    for (let i = prevCachedCount; i < messages.length; i++) {
       const m = messages[i];
       const content = typeof m.content === 'string' ? m.content : JSON.stringify(m.content);
       uncachedChars += content.length;
@@ -168,45 +155,53 @@ Cache will be refreshed when significant new context is added.
   const effectiveSystemPrompt = `${systemPrompt}\n\n${cacheInstructions}`;
 
   try {
-    const oldCache = currentCache;
     const cacheName = await invoke<string>('gemini_create_cache', {
       provider,
       apiKey,
       model,
       systemPrompt: effectiveSystemPrompt,
       messages: hydratedMessages.slice(0, messagesToCache),
+      includeDefaultTools: true,
       ttlSeconds: 3600,
       projectId: projectId ?? null,
       region: region ?? null,
     });
 
-    if (oldCache) {
+    // Delete old cache only after new one is successfully created
+    if (currentCache) {
       try {
         await invoke('gemini_delete_cache', {
-          cacheName: oldCache,
+          cacheName: currentCache,
           provider,
           apiKey,
           projectId: projectId ?? null,
           region: region ?? null,
         });
       } catch (err) {
-        console.warn('Failed to delete old cache after creating new one:', err);
+        console.warn('Failed to delete old cache:', err);
       }
     }
 
-    const gName = isVertex ? null : cacheName;
-    const vName = isVertex ? cacheName : null;
     if (isVertex) {
-      geminiCacheState.vertexCacheName = vName;
+      geminiCacheState.vertexCacheName = cacheName;
       geminiCacheState.vertexCachedMessageCount = messagesToCache;
     } else {
-      geminiCacheState.googleCacheName = gName;
+      geminiCacheState.googleCacheName = cacheName;
       geminiCacheState.googleCachedMessageCount = messagesToCache;
     }
 
     return { cacheName, cachedMessageCount: messagesToCache };
   } catch (err) {
     console.error('Failed to create Gemini cache:', err);
+    // Creation failed — old cache was already deleted server-side or never existed.
+    // Clear in-memory state so we don't reference a stale name.
+    if (isVertex) {
+      geminiCacheState.vertexCacheName = null;
+      geminiCacheState.vertexCachedMessageCount = 0;
+    } else {
+      geminiCacheState.googleCacheName = null;
+      geminiCacheState.googleCachedMessageCount = 0;
+    }
     return { cacheName: null, cachedMessageCount: 0 };
   }
 }

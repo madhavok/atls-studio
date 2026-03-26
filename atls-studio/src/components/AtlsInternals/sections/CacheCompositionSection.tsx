@@ -78,19 +78,22 @@ export function CacheCompositionSection() {
     }
 
     if (provider === 'openai') {
-      const openaiCached = bp1 + bp2 + historyTokens + stagedTokens;
-      const openaiUncached = (promptMetrics.workspaceContextTokens ?? 0) + wmTokens + bbTokens;
+      const lastCached = cacheMetrics.lastRequestCachedTokens ?? 0;
+      const heuristicCached = bp1 + bp2 + historyTokens;
+      const cached = lastCached > 0 ? lastCached : heuristicCached;
+      const dynamicTail = stagedTokens + (promptMetrics.workspaceContextTokens ?? 0) + wmTokens + bbTokens;
+      const uncachedTotal = lastCached > 0 ? Math.max(0, heuristicCached + dynamicTail - lastCached) : dynamicTail;
       const result: Block[] = [];
-      if (openaiCached > 0) result.push({ key: 'cached', label: 'Cached prefix', tokens: openaiCached, pct: 0, color: PREFIX_COLORS.cached, sub: 'system+tools+prior+staged' });
-      if (openaiUncached > 0) result.push({ key: 'uncached', label: 'Uncached', tokens: openaiUncached, pct: 0, color: PREFIX_COLORS.uncached, sub: 'dynamic+WM+BB' });
+      if (cached > 0) result.push({ key: 'cached', label: 'Cached prefix', tokens: cached, pct: 0, color: PREFIX_COLORS.cached, sub: 'system+tools+history' });
+      if (uncachedTotal > 0) result.push({ key: 'uncached', label: 'Uncached', tokens: uncachedTotal, pct: 0, color: PREFIX_COLORS.uncached, sub: 'staged+WM+BB+ctx' });
       const total = result.reduce((s, b) => s + b.tokens, 0);
       result.forEach((b) => { b.pct = total > 0 ? (b.tokens / total) * 100 : 0; });
       return {
         blocks: result,
         providerLabel: 'OpenAI',
-        note: cacheMetrics.lastRequestCachedTokens != null && cacheMetrics.lastRequestCachedTokens > 0
-          ? `Last: ${fmtK(cacheMetrics.lastRequestCachedTokens)} from cache`
-          : undefined,
+        note: lastCached > 0
+          ? `Last: ${fmtK(lastCached)} from cache`
+          : 'Auto prefix cache (no API metrics yet)',
       };
     }
 

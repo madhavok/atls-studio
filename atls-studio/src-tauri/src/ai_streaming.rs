@@ -1592,7 +1592,6 @@ pub(crate) async fn stream_responses_openai_inner(
         "max_output_tokens": max_tokens,
         "stream": true,
         "store": false,
-        "prompt_cache_retention": "24h",
     });
     // Reasoning models (o1/o3/o4/gpt-5) don't support temperature; only set for non-reasoning
     let is_reasoning = model.starts_with("o1") || model.starts_with("o3")
@@ -2479,6 +2478,15 @@ pub async fn stream_chat_google(
     let tools_enabled = enable_tools.unwrap_or(true);
     if let Some(ref cache_name) = cached_content {
         body["cachedContent"] = serde_json::json!(cache_name);
+        // Tools are baked into cachedContent, but Gemini also accepts them alongside
+        // cachedContent for overrides. Send them so function calling works even if the
+        // cache was created without tools (backward compat).
+        if tools_enabled {
+            body["tools"] = get_atls_tools("google");
+            body["toolConfig"] = serde_json::json!({
+                "functionCallingConfig": { "mode": "AUTO" }
+            });
+        }
     } else {
         let mut system_text = system_prompt.unwrap_or_default();
         if let Some(ref dyn_ctx) = dynamic_context {

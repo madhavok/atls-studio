@@ -365,6 +365,12 @@ pub async fn stream_chat_vertex(
     let tools_enabled = enable_tools.unwrap_or(true);
     if let Some(ref cache_name) = cached_content {
         body["cachedContent"] = serde_json::json!(cache_name);
+        if tools_enabled {
+            body["tools"] = get_atls_tools("google");
+            body["toolConfig"] = serde_json::json!({
+                "functionCallingConfig": { "mode": "AUTO" }
+            });
+        }
     } else {
         let mut system_text = system_prompt.unwrap_or_default();
         if let Some(ref dyn_ctx) = dynamic_context {
