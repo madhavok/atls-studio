@@ -157,7 +157,7 @@ export function CodeViewer() {
     } finally {
       setSaving(prev => ({ ...prev, [path]: false, [path.replace(/\\/g, '/')]: false }));
     }
-  }, [fileContents, originalContents, projectPath, activeRoot]);
+  }, [fileContents, originalContents, projectPath, activeRoot, activeFile]);
 
   // Save active file
   const saveActiveFile = useCallback(() => {
@@ -431,7 +431,7 @@ export function CodeViewer() {
       return next;
     });
     closeFile(file);
-  }, [closeFile, isDirty]);
+  }, [closeFile, isDirty, normalizePath]);
 
   const hasDesignPreview = chatMode === 'designer' && designPreviewContent.length > 0;
   const showDesignPreview = hasDesignPreview && (openFiles.length === 0 || designPreviewTabActive);

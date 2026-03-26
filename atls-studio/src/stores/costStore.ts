@@ -642,12 +642,14 @@ export const useCostStore = create<CostState>((set, get) => {
 // Helper to format cost in dollars
 export function formatCost(cents: number): string {
   if (cents === 0) return '$0.00';
-  if (Math.abs(cents) < 0.1) {
-    return `$${(cents / 100).toFixed(4)}`;
-  } else if (Math.abs(cents) < 1) {
-    return `$${(cents / 100).toFixed(3)}`;
+  const sign = cents < 0 ? '-' : '';
+  const abs = Math.abs(cents);
+  if (abs < 0.1) {
+    return `${sign}$${(abs / 100).toFixed(4)}`;
+  } else if (abs < 1) {
+    return `${sign}$${(abs / 100).toFixed(3)}`;
   }
-  return `$${(cents / 100).toFixed(2)}`;
+  return `${sign}$${(abs / 100).toFixed(2)}`;
 }
 
 // Helper to format token count

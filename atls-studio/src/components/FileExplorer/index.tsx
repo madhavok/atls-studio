@@ -529,7 +529,18 @@ function FileTree({ nodes, level = 0, onContextMenu, allVisiblePaths, inlineEdit
                     : [node.path];
                   const payload = paths.map(p => {
                     const n = p.split(/[/\\]/).pop() || p;
-                    return { path: p, name: n, type: (selectedFiles.has(node.path) && selectedFiles.size > 1 ? (node.path === p ? node.type : 'file') : node.type) };
+                    // For the dragged node, use its known type; for other selected items, look up in tree
+                    const itemType = p === node.path ? node.type : (() => {
+                      const findType = (searchNodes: FileNode[]): string => {
+                        for (const nd of searchNodes) {
+                          if (nd.path === p) return nd.type;
+                          if (nd.children) { const f = findType(nd.children); if (f) return f; }
+                        }
+                        return '';
+                      };
+                      return findType(nodes) || 'file';
+                    })();
+                    return { path: p, name: n, type: itemType };
                   });
                   // Store in shared module-level variable (WebView2 blocks dataTransfer)
                   setInternalDragPayload(payload);

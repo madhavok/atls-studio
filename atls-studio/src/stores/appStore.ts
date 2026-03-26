@@ -769,12 +769,13 @@ export const useAppStore = create<AppState>((set) => ({
     const newOpenFiles = state.openFiles.filter((f) => f !== path);
     let newActiveFile = state.activeFile;
     if (state.activeFile === path) {
-      const idx = state.openFiles.indexOf(path);
-      if (idx === -1 || newOpenFiles.length === 0) {
-        // File already removed or last tab closed
-        newActiveFile = newOpenFiles.length > 0 ? newOpenFiles[0] : null;
+      if (newOpenFiles.length === 0) {
+        newActiveFile = null;
       } else {
-        // Prefer tab at same position (right neighbor), else left neighbor
+        // Find position of closed tab in original array, pick neighbor in filtered array
+        const idx = state.openFiles.indexOf(path);
+        // idx-1 maps to the same index in newOpenFiles since the closed tab is removed
+        // Use Math.min to clamp to the last valid index
         newActiveFile = newOpenFiles[Math.min(idx, newOpenFiles.length - 1)] ?? null;
       }
     }
