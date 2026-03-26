@@ -83,7 +83,7 @@ function generateTitle(messages: Message[]): string {
   if (words.length === 0) return 'New Conversation';
   
   const title = words.slice(0, 6).join(' ');
-  return title.length > 50 ? title.substring(0, 47) + '...' : title;
+  return title.length > TITLE_MAX_LENGTH ? title.substring(0, TITLE_MAX_LENGTH - 3) + '...' : title;
 }
 
 export interface FileNode {
@@ -829,7 +829,8 @@ export const useAppStore = create<AppState>((set) => ({
       id: crypto.randomUUID(),
       timestamp: new Date(),
     };
-    return { messages: [...state.messages, newMessage] };
+    const newMessages = [...state.messages, newMessage];
+    return { messages: newMessages };
   }),
   
   clearMessages: () => set({ messages: [] }),

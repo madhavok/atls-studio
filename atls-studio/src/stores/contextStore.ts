@@ -431,6 +431,7 @@ function shouldAutoCompactChunk(chunk: ContextChunk): boolean {
     || chunk.type === 'call'
     || chunk.type === 'symbol'
     || chunk.type === 'deps'
+    || chunk.type === 'search';
 }
 
 function shouldAutoDropChunk(chunk: ContextChunk): boolean {

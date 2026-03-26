@@ -109,7 +109,7 @@ function App() {
     document.addEventListener('gestureend', handleGesture);
 
     return () => {
-      document.removeEventListener('wheel', handleWheel);
+      document.removeEventListener('wheel', handleWheel, { passive: false } as EventListenerOptions);
       document.removeEventListener('gesturestart', handleGesture);
       document.removeEventListener('gesturechange', handleGesture);
       document.removeEventListener('gestureend', handleGesture);

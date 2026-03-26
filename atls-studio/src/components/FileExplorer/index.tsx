@@ -1393,7 +1393,7 @@ export function FileExplorer() {
     document.body.style.userSelect = 'none';
     document.addEventListener('mousemove', onMouseMove);
     document.addEventListener('mouseup', onMouseUp);
-  }, [workspacesSectionFirst, workspacesSectionHeight]);
+  }, [workspacesSectionFirst]);
 
   // Collapsed state: small tab on right edge with expand affordance
   if (explorerCollapsed) {
