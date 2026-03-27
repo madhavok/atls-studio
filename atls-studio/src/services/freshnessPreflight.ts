@@ -448,16 +448,33 @@ export async function runFreshnessPreflight(
   }
 
   if (suspectRefs.length > 0) {
-    return {
-      params,
-      warnings,
-      blocked: true,
-      error: `File changed externally since pinned; re-read required. Stale refs: ${suspectRefs.slice(0, 3).join(', ')}${suspectRefs.length > 3 ? ` +${suspectRefs.length - 3} more` : ''}`,
-      confidence: 'none',
-      strategy: 'blocked',
-      decisions,
-      refreshedHashes,
-    };
+    /** Allow context/read_lines to reach handlers that clear suspect + reconcile (see context.ts handleRead). */
+    const healingReadOps = operation === 'context' || operation === 'read_lines';
+    if (healingReadOps) {
+      if (refreshedHashes && refreshedHashes.size > 0) {
+        const store = useContextStore.getState();
+        for (const f of targetFiles) {
+          const h = refreshedHashes.get(normalizePathKey(f));
+          if (typeof h === 'string') {
+            store.reconcileSourceRevision(f, h);
+          }
+        }
+      }
+      warnings.push(
+        'Freshness: suspect engrams matched target paths; allowing context/read_lines to proceed so authority can refresh.',
+      );
+    } else {
+      return {
+        params,
+        warnings,
+        blocked: true,
+        error: `File changed externally since pinned; re-read required. Stale refs: ${suspectRefs.slice(0, 3).join(', ')}${suspectRefs.length > 3 ? ` +${suspectRefs.length - 3} more` : ''}`,
+        confidence: 'none',
+        strategy: 'blocked',
+        decisions,
+        refreshedHashes,
+      };
+    }
   }
 
   let nextParams = params;

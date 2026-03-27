@@ -8,6 +8,7 @@ import { useRetentionStore } from '../stores/retentionStore';
 import { useRef, useCallback, useEffect } from 'react';
 import { transformIssues } from './useAtlsTransforms';
 import { normPath } from './useAtlsPaths';
+import { freshnessTelemetry } from '../services/freshnessTelemetry';
 
 // ---------------------------------------------------------------------------
 // Own-write suppression: paths recently written by ATLS edits are excluded
@@ -370,6 +371,7 @@ export function useAtls() {
         const externalPaths = filterOwnWrites(changedPaths);
         if (externalPaths.length > 0) {
           pendingCoarseRefreshRef.current = false;
+          freshnessTelemetry.fileTreeChangedWithPaths++;
           externalPaths.forEach((path) => pendingChangedPathsRef.current.set(path.toLowerCase(), path));
           ctxState.markEngramsSuspect(externalPaths, 'watcher_event');
           ctxState.bumpWorkspaceRev(externalPaths);
@@ -377,10 +379,12 @@ export function useAtls() {
           useRetentionStore.getState().evictMutationSensitive();
         } else {
           pendingCoarseRefreshRef.current = true;
-          ctxState.markEngramsSuspect(undefined, 'unknown');
+          freshnessTelemetry.fileTreeChangedCoarseNoPaths++;
+          freshnessTelemetry.coarseAwarenessOnlyInvalidations++;
+          ctxState.invalidateAllAwarenessCache();
           ctxState.bumpWorkspaceRev();
           useRetentionStore.getState().evictMutationSensitive();
-          console.warn('[useAtls] file_tree_changed missing exact paths; falling back to coarse suspect marking');
+          console.warn('[useAtls] file_tree_changed missing exact paths; bounded invalidation (awareness + workspace rev) — not marking all engrams suspect');
         }
         if (refreshTimeoutRef.current) clearTimeout(refreshTimeoutRef.current);
         refreshTimeoutRef.current = setTimeout(async () => {
@@ -415,7 +419,7 @@ export function useAtls() {
               const rootName = ev.payload.root.split(/[/\\]/).pop() || ev.payload.root;
               currentCtxState.setBlackboardEntry(
                 'intel:file_change',
-                `[${ts}] ${ev.payload.count} files changed in ${rootName}. Exact paths were unavailable — freshness marked conservatively; re-read before edit.`,
+                `[${ts}] ${ev.payload.count} files changed in ${rootName}. Exact paths were unavailable — workspace revision bumped and awareness cache cleared; engrams were not bulk-marked suspect. Re-read before destructive edits.`,
               );
             }
           } catch (e) {

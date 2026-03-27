@@ -45,6 +45,7 @@ import { formatAge } from '../utils/formatHelpers';
 import { commonPrefixLen } from './contextHelpers';
 import { canonicalizeSnapshotHash } from '../services/batch/snapshotTracker';
 import { emptyRollingSummary, type RollingSummary } from '../services/historyDistiller';
+import { freshnessTelemetry } from '../services/freshnessTelemetry';
 
 // Minimum chars required for prefix-based hash resolution (reduces collision risk)
 /** Match SHORT_HASH_LEN (6) so h:abcdef-style refs resolve (annotate.link, synapses). */
@@ -827,6 +828,8 @@ interface ContextStoreState {
   setAwareness: (entry: AwarenessCacheEntry) => void;
   invalidateAwareness: (filePath: string) => void;
   invalidateAwarenessForPaths: (paths: string[]) => void;
+  /** Clear cross-batch awareness cache without marking engrams suspect (e.g. coarse file_tree_changed). */
+  invalidateAllAwarenessCache: () => void;
   getAwarenessCache: () => Map<string, AwarenessCacheEntry>;
 
   // Cache affinity tracking
@@ -2484,7 +2487,15 @@ export const useContextStore = create<ContextStoreState>()(
     let preserved = 0;
     const unresolvablePaths: string[] = [];
     for (const path of paths) {
-      const rev = revisionMap ? (revisionMap.get(path) ?? null) : await perPathResolver!(path);
+      let rev = revisionMap ? (revisionMap.get(path) ?? null) : await perPathResolver!(path);
+      if (rev == null && revisionMap) {
+        for (const [k, v] of revisionMap) {
+          if (v != null && normalizeSourcePath(k) === path) {
+            rev = v;
+            break;
+          }
+        }
+      }
       if (rev == null) {
         unresolvablePaths.push(path);
         continue;
@@ -2496,9 +2507,15 @@ export const useContextStore = create<ContextStoreState>()(
       preserved += stats.preserved;
     }
 
-    // Engrams whose source path couldn't be resolved (not in hash registry) — mark suspect
+    // Paths with no revision from bulk/IPC resolver — do not bulk-mark suspect (that caused
+    // refreshRoundEnd + preflight feedback loops for tree roots / directory keys). Observability only.
     if (unresolvablePaths.length > 0) {
-      get().markEngramsSuspect(unresolvablePaths, 'unknown', 'unknown');
+      get().recordMemoryEvent({
+        action: 'reconcile',
+        reason: 'refresh_unresolved_paths',
+        source: unresolvablePaths.slice(0, 3).join(', ') + (unresolvablePaths.length > 3 ? ` +${unresolvablePaths.length - 3}` : ''),
+        refs: [`unresolved:${unresolvablePaths.length}`],
+      });
     }
 
     return { total, updated, invalidated, preserved, pathsProcessed: paths.length };
@@ -2603,6 +2620,7 @@ export const useContextStore = create<ContextStoreState>()(
     });
     if (result.marked > 0 && sourcePaths && sourcePaths.length > 0) {
       get().invalidateAwarenessForPaths(sourcePaths);
+      freshnessTelemetry.engramsMarkedSuspectFromPaths += result.marked;
     } else if (result.marked > 0) {
       set({ awarenessCache: new Map() });
     }
@@ -3908,6 +3926,10 @@ export const useContextStore = create<ContextStoreState>()(
     });
   },
 
+  invalidateAllAwarenessCache: (): void => {
+    set({ awarenessCache: new Map() });
+  },
+
   getAwarenessCache: (): Map<string, AwarenessCacheEntry> => {
     return get().awarenessCache;
   },
@@ -4148,6 +4170,7 @@ export const useContextStore = create<ContextStoreState>()(
       batchReadNoBbStreak: 0,
       fileReadSpinByPath: {},
     });
+    freshnessTelemetry.reset();
   },
   
   clearLastFreed: () => {

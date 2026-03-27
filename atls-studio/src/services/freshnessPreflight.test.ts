@@ -224,6 +224,62 @@ describe('runFreshnessPreflight', () => {
     });
   });
 
+  it('allows context/read_lines preflight to proceed when refs are suspect (healing read path)', async () => {
+    const store = useContextStore.getState();
+    store.addChunk('export const x = 1;', 'smart', 'src/root.ts', undefined, undefined, 'rev-a', {
+      sourceRevision: 'rev-a',
+      viewKind: 'latest',
+    });
+    useContextStore.setState((state) => ({
+      chunks: new Map(
+        [...state.chunks].map(([key, chunk]) =>
+          chunk.source === 'src/root.ts'
+            ? [key, { ...chunk, suspectSince: Date.now(), freshnessCause: 'external_file_change' as const }]
+            : [key, chunk],
+        ),
+      ),
+    }));
+
+    const result = await runFreshnessPreflight(
+      'context',
+      { file_paths: ['src/root.ts'], type: 'smart' },
+      {
+        // Empty inner context — no revision to reconcile; suspect stays, healing path must still allow read
+        atlsBatchQuery: async () => ({ results: [] }),
+      },
+    );
+
+    expect(result.blocked).toBe(false);
+    expect(result.warnings.some((w) => w.includes('suspect'))).toBe(true);
+  });
+
+  it('still blocks draft when suspect refs match target files', async () => {
+    const store = useContextStore.getState();
+    store.addChunk('export const x = 1;', 'smart', 'src/root.ts', undefined, undefined, 'rev-a', {
+      sourceRevision: 'rev-a',
+      viewKind: 'latest',
+    });
+    useContextStore.setState((state) => ({
+      chunks: new Map(
+        [...state.chunks].map(([key, chunk]) =>
+          chunk.source === 'src/root.ts'
+            ? [key, { ...chunk, suspectSince: Date.now(), freshnessCause: 'external_file_change' as const }]
+            : [key, chunk],
+        ),
+      ),
+    }));
+
+    const result = await runFreshnessPreflight(
+      'draft',
+      { edits: [{ file: 'src/root.ts', old: 'a', new: 'b' }] },
+      {
+        atlsBatchQuery: async () => ({ results: [] }),
+      },
+    );
+
+    expect(result.blocked).toBe(true);
+  });
+
   it('preflight sees post-refresh state not stale pre-refresh state', async () => {
     const store = useContextStore.getState();
     store.addChunk('export const stale = 1;', 'smart', 'src/demo.ts', undefined, undefined, 'rev-old', { sourceRevision: 'rev-old', viewKind: 'latest' });

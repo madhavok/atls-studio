@@ -58,6 +58,19 @@ Steps wire outputs to subsequent step inputs through binding expressions:
 {"id": "p1", "use": "session.pin", "in": {"hashes": {"from_step": "r1", "path": "refs"}}}
 ```
 
+### `session.plan` and `session.advance`
+
+- **`session.advance`** only works when a task plan is active. Call **`session.plan`** first (or use another step that establishes the plan). Otherwise you will see: `task_advance: ERROR no active plan — call session.plan first`.
+
+### `session.pin` and `from_step`
+
+- **`session.pin`** needs a non-empty **`hashes`** (or **`refs`**) array after bindings resolve.
+- If you wire `in.hashes` from a prior step (e.g. `{ "from_step": "r1", "path": "refs" }`) and that step **failed** or produced **no `refs`**, pin will error with `missing hashes param`. Use conditions (`if: { step_has_refs: "r1" }`) or a fallback step so pin does not run on empty output.
+
+### Freshness: `search.issues` / `search.patterns` (`stale_policy`)
+
+- Tool calls that map to `find_issues` / `detect_patterns` may pass **`"stale_policy": "refresh_first"`** (client-side). When set, if the first freshness preflight blocks, the client runs an extra **`refreshRoundEnd`** for the request’s `file_paths` and retries preflight once before failing. This is optional; default remains strict.
+
 ### Binding Types
 
 | Type | Syntax | Resolves To |

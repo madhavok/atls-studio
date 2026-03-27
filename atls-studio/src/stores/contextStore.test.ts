@@ -437,7 +437,7 @@ describe('refreshRoundEnd', () => {
     expect(derived).toBeUndefined();
   });
 
-  it('bulk resolver: unresolvable paths get marked suspect', async () => {
+  it('bulk resolver: unresolvable paths record memory event without marking engrams suspect', async () => {
     const store = useContextStore.getState();
     const hash = store.addChunk('export const c = 1;', 'smart', 'src/c.ts', undefined, undefined, 'rev-1', { sourceRevision: 'rev-1', viewKind: 'latest' });
 
@@ -449,8 +449,11 @@ describe('refreshRoundEnd', () => {
     expect(stats.invalidated).toBe(0);
 
     const chunk = Array.from(useContextStore.getState().chunks.values()).find(c => c.shortHash === hash);
-    expect(chunk?.suspectSince).toBeTypeOf('number');
-    expect(chunk?.freshnessCause).toBe('unknown');
+    expect(chunk?.suspectSince).toBeUndefined();
+
+    const events = useContextStore.getState().memoryEvents;
+    const unresolved = events.filter(e => e.reason === 'refresh_unresolved_paths');
+    expect(unresolved.length).toBeGreaterThanOrEqual(1);
   });
 
   it('bulk resolver takes precedence over per-path resolver', async () => {

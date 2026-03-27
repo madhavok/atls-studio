@@ -14,6 +14,12 @@ import { getTurn } from './hashProtocol';
 
 const TOOL_TIMEOUT_MS = 120000;
 
+/** Client-only keys for atlsBatchQuery; never forwarded to Rust atls_batch_query. */
+function stripClientOnlyToolParams(p: Record<string, unknown>): Record<string, unknown> {
+  const { stale_policy: _sp, ...rest } = p;
+  return rest;
+}
+
 /** Ensures h:$last / h:$last_edit / h:$last_read resolvers point at contextStore.
  * Call before resolveHashRefsInParams — covers paths that load toolHelpers before aiService. */
 let _hppRecencyResolversWired = false;
@@ -324,12 +330,31 @@ export async function atlsBatchQuery(
       timeoutMs,
     );
 
-  const preflight = await runFreshnessPreflight(operation, resolved, {
+  let preflight = await runFreshnessPreflight(operation, resolved, {
     atlsBatchQuery: atlsBatchQueryForPreflight,
   });
   const store = useContextStore.getState();
   store.recordRebindOutcomes(preflight.decisions);
-  const automation = getPreflightAutomationDecision(preflight);
+  let automation = getPreflightAutomationDecision(preflight);
+
+  if (preflight.blocked) {
+    const retry =
+      resolved.stale_policy === 'refresh_first' &&
+      (operation === 'find_issues' || operation === 'detect_patterns');
+    if (retry) {
+      const fps = Array.isArray(resolved.file_paths)
+        ? resolved.file_paths.filter((x): x is string => typeof x === 'string' && x.length > 0)
+        : [];
+      if (fps.length > 0) {
+        await store.refreshRoundEnd({ paths: fps });
+        preflight = await runFreshnessPreflight(operation, resolved, {
+          atlsBatchQuery: atlsBatchQueryForPreflight,
+        });
+        store.recordRebindOutcomes(preflight.decisions);
+        automation = getPreflightAutomationDecision(preflight);
+      }
+    }
+  }
 
   if (preflight.blocked) {
     throw new Error(preflight.error ?? 'File changed externally; re-read required');
@@ -338,7 +363,7 @@ export async function atlsBatchQuery(
     throw new Error(`Low-confidence ${preflight.strategy} rebind detected; re-read the target file before editing`);
   }
 
-  const paramsToSend = preflight.params;
+  const paramsToSend = stripClientOnlyToolParams(preflight.params);
 
   return invokeWithTimeout(
     'atls_batch_query',
