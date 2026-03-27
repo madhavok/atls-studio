@@ -72,6 +72,11 @@ interface RoundHistoryState {
 
 export const MAX_SNAPSHOTS = 200;
 
+/** Primary chat agent rounds only (excludes subagent and swarm worker snapshots). */
+export function isMainChatRound(s: RoundSnapshot): boolean {
+  return !s.isSubagentRound && !s.isSwarmRound;
+}
+
 export const useRoundHistoryStore = create<RoundHistoryState>((set) => ({
   snapshots: [],
 

@@ -2,7 +2,7 @@ import { useMemo } from 'react';
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine,
 } from 'recharts';
-import { useRoundHistoryStore } from '../../../stores/roundHistoryStore';
+import { useRoundHistoryStore, isMainChatRound } from '../../../stores/roundHistoryStore';
 
 const COLORS = {
   staticSystem: '#ef4444',
@@ -23,8 +23,8 @@ function fmtK(v: number): string {
 export function ContextTimelineSection() {
   const snapshots = useRoundHistoryStore((s) => s.snapshots);
 
-  // Filter out subagent rounds from the main context timeline (they have their own context)
-  const mainSnapshots = useMemo(() => snapshots.filter((s) => !s.isSubagentRound), [snapshots]);
+  // Main chat agent only (excludes subagent + swarm worker snapshots)
+  const mainSnapshots = useMemo(() => snapshots.filter(isMainChatRound), [snapshots]);
   // Track which rounds had subagent invocations for event markers
   const subagentRounds = useMemo(() => {
     const rounds = new Set<number>();
@@ -116,17 +116,17 @@ export function ContextTimelineSection() {
               label={{ value: 'SA', fill: '#14b8a6', fontSize: 8, position: 'top' }}
             />
           ))}
-          <Area type="monotone" dataKey="Static/System" stackId="1" stroke={COLORS.staticSystem} fill={COLORS.staticSystem} fillOpacity={0.7} />
-          <Area type="monotone" dataKey="History" stackId="1" stroke={COLORS.history} fill={COLORS.history} fillOpacity={0.65} />
-          <Area type="monotone" dataKey="Staged" stackId="1" stroke={COLORS.staged} fill={COLORS.staged} fillOpacity={0.55} />
-          <Area type="monotone" dataKey="Workspace" stackId="1" stroke={COLORS.workspace} fill={COLORS.workspace} fillOpacity={0.5} />
-          <Area type="monotone" dataKey="Working Memory" stackId="1" stroke={COLORS.wm} fill={COLORS.wm} fillOpacity={0.5} />
-          <Area type="monotone" dataKey="Overhead" stackId="1" stroke={COLORS.overhead} fill={COLORS.overhead} fillOpacity={0.35} />
-          <Area type="monotone" dataKey="Free" stackId="1" stroke="transparent" fill={COLORS.free} fillOpacity={1} />
+          <Area type="monotone" dataKey="Static/System" stackId="1" stroke={COLORS.staticSystem} fill={COLORS.staticSystem} fillOpacity={0.7} isAnimationActive={false} />
+          <Area type="monotone" dataKey="History" stackId="1" stroke={COLORS.history} fill={COLORS.history} fillOpacity={0.65} isAnimationActive={false} />
+          <Area type="monotone" dataKey="Staged" stackId="1" stroke={COLORS.staged} fill={COLORS.staged} fillOpacity={0.55} isAnimationActive={false} />
+          <Area type="monotone" dataKey="Workspace" stackId="1" stroke={COLORS.workspace} fill={COLORS.workspace} fillOpacity={0.5} isAnimationActive={false} />
+          <Area type="monotone" dataKey="Working Memory" stackId="1" stroke={COLORS.wm} fill={COLORS.wm} fillOpacity={0.5} isAnimationActive={false} />
+          <Area type="monotone" dataKey="Overhead" stackId="1" stroke={COLORS.overhead} fill={COLORS.overhead} fillOpacity={0.35} isAnimationActive={false} />
+          <Area type="monotone" dataKey="Free" stackId="1" stroke="transparent" fill={COLORS.free} fillOpacity={1} isAnimationActive={false} />
         </AreaChart>
       </ResponsiveContainer>
       <div className="text-[10px] text-studio-muted">
-        Main rounds only. Staged and archived tokens are tracked memory-state metrics and are excluded here because they are not additive prompt slices.
+        Main chat rounds only (subagent and swarm worker rounds excluded). Staged and archived tokens are tracked memory-state metrics and are excluded here because they are not additive prompt slices.
       </div>
       <div className="flex flex-wrap gap-3 text-[10px] text-studio-muted">
         <Legend color={COLORS.staticSystem} label="Static/System" />

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { useRoundHistoryStore, type RoundSnapshot } from './roundHistoryStore';
+import { useRoundHistoryStore, isMainChatRound, type RoundSnapshot } from './roundHistoryStore';
 
 function makeSnapshot(round: number): RoundSnapshot {
   return {
@@ -75,6 +75,13 @@ describe('roundHistoryStore', () => {
       subagentProvider: 'test-provider',
       subagentInvocationId: 'invoke-1',
     });
+  });
+
+  it('isMainChatRound excludes subagent and swarm snapshots', () => {
+    expect(isMainChatRound(makeSnapshot(1))).toBe(true);
+    expect(isMainChatRound({ ...makeSnapshot(1), isSubagentRound: true })).toBe(false);
+    expect(isMainChatRound({ ...makeSnapshot(1), isSwarmRound: true })).toBe(false);
+    expect(isMainChatRound({ ...makeSnapshot(1), isSubagentRound: true, isSwarmRound: true })).toBe(false);
   });
 
   it('preserves false compatibility flags instead of dropping them', () => {

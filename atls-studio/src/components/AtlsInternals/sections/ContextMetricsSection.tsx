@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import { useAppStore } from '../../../stores/appStore';
 import { useContextStore } from '../../../stores/contextStore';
-import { useRoundHistoryStore } from '../../../stores/roundHistoryStore';
+import { useRoundHistoryStore, isMainChatRound } from '../../../stores/roundHistoryStore';
 import { getEffectiveContextWindow } from '../../../utils/modelCapabilities';
 
 export function ContextMetricsSection() {
@@ -14,19 +14,19 @@ export function ContextMetricsSection() {
   const selectedModel = useAppStore((s) => s.settings.selectedModel);
   const extendedContext = useAppStore((s) => s.settings.extendedContext) ?? {};
   const emDepth = useAppStore((s) => s.settings.entryManifestDepth) ?? 'sigs';
-  const getStats = useContextStore((s) => s.getStats);
+  const contextMaxTokens = useContextStore((s) => s.maxTokens);
   const chunks = useContextStore((s) => s.chunks);
   const getPromptTokens = useContextStore((s) => s.getPromptTokens);
   const freedTokens = useContextStore((s) => s.freedTokens);
 
-  const latestSnapshot = useRoundHistoryStore((s) =>
-    s.snapshots.length > 0 ? s.snapshots[s.snapshots.length - 1] : undefined,
-  );
+  const latestMainSnapshot = useRoundHistoryStore((s) => {
+    const main = s.snapshots.filter(isMainChatRound);
+    return main.length > 0 ? main[main.length - 1] : undefined;
+  });
 
-  const stats = getStats();
   const currentModel = availableModels.find((m) => m.id === selectedModel);
   const maxTokens =
-    stats.maxTokens
+    contextMaxTokens
     || (currentModel
       ? (getEffectiveContextWindow(currentModel.id, currentModel.provider, currentModel.contextWindow, extendedContext) ?? null)
       : null)
@@ -36,7 +36,7 @@ export function ContextMetricsSection() {
   const overheadTokens = promptMetrics.totalOverheadTokens;
   const wmTokens = useMemo(() => getPromptTokens(), [chunks, getPromptTokens]);
   const fallbackPromptUsed = wmTokens + overheadTokens;
-  const estimatedPromptUsed = latestSnapshot?.estimatedTotalPromptTokens;
+  const estimatedPromptUsed = latestMainSnapshot?.estimatedTotalPromptTokens;
   const usedTokens = estimatedPromptUsed ?? fallbackPromptUsed;
   const freeTokens = Math.max(0, maxTokens - usedTokens);
 
@@ -78,7 +78,7 @@ export function ContextMetricsSection() {
             Free {freePct.toFixed(1)}% ({freeTokens.toLocaleString()}tk)
           </span>
         </div>
-        {!latestSnapshot && (
+        {!latestMainSnapshot && (
           <p className="text-[10px] text-studio-muted mt-1">
             Full prompt estimate after the first completed round; until then WM + overhead ({wmTokens.toLocaleString()} + {overheadTokens.toLocaleString()}tk).
           </p>

@@ -2,7 +2,7 @@ import { useMemo } from 'react';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend as RLegend,
 } from 'recharts';
-import { useRoundHistoryStore } from '../../../stores/roundHistoryStore';
+import { useRoundHistoryStore, isMainChatRound } from '../../../stores/roundHistoryStore';
 import { useCostStore, formatCost } from '../../../stores/costStore';
 
 const COLORS = {
@@ -15,9 +15,16 @@ export function BatchEfficiencySection() {
   const snapshots = useRoundHistoryStore((s) => s.snapshots);
   const chatCostCents = useCostStore((s) => s.chatCostCents);
 
-  // Filter out subagent rounds — their batching is separate
-  const mainSnapshots = useMemo(() => snapshots.filter((s) => !s.isSubagentRound), [snapshots]);
-  const subagentRoundCount = snapshots.length - mainSnapshots.length;
+  // Main chat agent only (subagent + swarm batching is separate)
+  const mainSnapshots = useMemo(() => snapshots.filter(isMainChatRound), [snapshots]);
+  const subagentRoundCount = useMemo(
+    () => snapshots.filter((s) => s.isSubagentRound).length,
+    [snapshots],
+  );
+  const swarmRoundCount = useMemo(
+    () => snapshots.filter((s) => s.isSwarmRound).length,
+    [snapshots],
+  );
   const subagentToolCalls = useMemo(
     () => snapshots.filter((s) => s.isSubagentRound).reduce((sum, s) => sum + s.toolCalls, 0),
     [snapshots],
@@ -140,9 +147,22 @@ export function BatchEfficiencySection() {
         <MiniStat label="Avg Ops/Round" value={data.length > 0 ? (totalManageOps / data.length).toFixed(1) : '—'} />
       </div>
 
-      {subagentRoundCount > 0 && (
+      {(subagentRoundCount > 0 || swarmRoundCount > 0) && (
         <div className="text-[10px] text-teal-400/70 mt-1">
-          Excludes {subagentRoundCount} subagent round{subagentRoundCount !== 1 ? 's' : ''} ({subagentToolCalls} tool call{subagentToolCalls !== 1 ? 's' : ''})
+          Excludes
+          {subagentRoundCount > 0 && (
+            <span>
+              {' '}
+              {subagentRoundCount} subagent round{subagentRoundCount !== 1 ? 's' : ''} ({subagentToolCalls} tool call{subagentToolCalls !== 1 ? 's' : ''})
+            </span>
+          )}
+          {subagentRoundCount > 0 && swarmRoundCount > 0 && ';'}
+          {swarmRoundCount > 0 && (
+            <span>
+              {' '}
+              {swarmRoundCount} swarm worker round{swarmRoundCount !== 1 ? 's' : ''}
+            </span>
+          )}
         </div>
       )}
     </div>
