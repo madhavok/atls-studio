@@ -355,7 +355,7 @@ pub async fn expand_file_glob(project_root: String, pattern: String) -> Result<V
             .map_err(|e| format!("Invalid glob '{}': {}", pattern, e))?;
         let matcher = glob.compile_matcher();
         let mut hits: Vec<(String, String, usize)> = Vec::new();
-        glob_collect(root, root, &matcher, &mut hits, 0, None);
+        glob_collect(root, root, &matcher, &mut hits, 0, None, true);
         let paths: Vec<String> = hits
             .into_iter()
             .map(|(dir, name, _)| {

@@ -1060,6 +1060,21 @@ pub async fn atls_batch_query(
                             }
 
                             let gi = if include_ignored { None } else { load_atlsignore(&resolved) };
+                            let tree_format = match params.get("tree_format").and_then(|v| v.as_str()) {
+                                Some("indented") => crate::TreeFormat::Indented,
+                                Some("compact") | None => crate::TreeFormat::Compact,
+                                Some(other) => {
+                                    return Err(format!(
+                                        "Invalid tree_format '{}' — use compact (default) or indented",
+                                        other
+                                    ));
+                                }
+                            };
+                            let line_counts = params
+                                .get("line_counts")
+                                .and_then(|v| v.as_bool())
+                                .unwrap_or(true);
+
                             let (tree_text, file_count, dir_count, file_paths, file_paths_truncated) =
                                 build_compact_tree(
                                 &resolved,
@@ -1067,6 +1082,8 @@ pub async fn atls_batch_query(
                                 depth,
                                 glob_matcher.as_ref(),
                                 gi.as_ref(),
+                                tree_format,
+                                line_counts,
                             );
 
                             results.push(serde_json::json!({

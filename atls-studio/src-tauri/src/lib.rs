@@ -31,7 +31,7 @@ use regex::Regex;
 use tauri::{AppHandle, Emitter, Manager};
 use portable_pty::{CommandBuilder, PtySize, native_pty_system, MasterPty, Child};
 use chat_db::ChatDbState;
-use path_utils::{to_relative_path, resolve_project_path, resolve_source_file_with_workspace_hint, normalize_line_endings, FileFormat};
+use path_utils::{resolve_project_path, resolve_source_file_with_workspace_hint, normalize_line_endings, FileFormat};
 use crate::ast_query::parse_ast_condition;
 
 // ============================================================================
@@ -1687,6 +1687,15 @@ pub(crate) fn load_atlsignore(root: &std::path::Path) -> Option<ignore::gitignor
 /// Max relative file paths returned with tree context (downstream read.shaped / batch bindings).
 pub(crate) const MAX_TREE_FILE_PATHS: usize = 1500;
 
+/// Layout for `context` type `tree` text: compact (group-by-directory) vs legacy indented tree.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum TreeFormat {
+    /// Default: one `dir/` header per folder, then `  name: N` file lines.
+    Compact,
+    /// Legacy: depth-indented lines with `name (NL)`.
+    Indented,
+}
+
 fn rel_path_posix(base: &std::path::Path, path: &std::path::Path) -> String {
     path.strip_prefix(base)
         .unwrap_or(path)
@@ -1759,6 +1768,8 @@ pub(crate) fn build_compact_tree(
     max_depth: u32,
     glob_matcher: Option<&globset::GlobMatcher>,
     atlsignore: Option<&ignore::gitignore::Gitignore>,
+    format: TreeFormat,
+    line_counts: bool,
 ) -> (String, usize, usize, Vec<String>, bool) {
     let mut lines = Vec::new();
     let mut file_count = 0usize;
@@ -1766,7 +1777,7 @@ pub(crate) fn build_compact_tree(
 
     if let Some(gm) = glob_matcher {
         let mut hits: Vec<(String, String, usize)> = Vec::new();
-        glob_collect(root, base, gm, &mut hits, 0, atlsignore);
+        glob_collect(root, base, gm, &mut hits, 0, atlsignore, line_counts);
         file_count = hits.len();
 
         // Group by parent directory, emit dir path once then indented filenames
@@ -1778,7 +1789,23 @@ pub(crate) fn build_compact_tree(
                     lines.push(format!("{}/", dir_path));
                 }
             }
-            lines.push(format!("  {} ({}L)", name, lc));
+            let file_line = match format {
+                TreeFormat::Compact => {
+                    if line_counts {
+                        format!("  {}: {}", name, lc)
+                    } else {
+                        format!("  {}", name)
+                    }
+                }
+                TreeFormat::Indented => {
+                    if line_counts {
+                        format!("  {} ({}L)", name, lc)
+                    } else {
+                        format!("  {}", name)
+                    }
+                }
+            };
+            lines.push(file_line);
         }
 
         let mut file_paths: Vec<String> = hits
@@ -1798,16 +1825,34 @@ pub(crate) fn build_compact_tree(
         }
         (lines.join("\n"), file_count, dir_count, file_paths, truncated)
     } else {
-        tree_walk(
-            root,
-            base,
-            0,
-            max_depth,
-            &mut lines,
-            &mut file_count,
-            &mut dir_count,
-            atlsignore,
-        );
+        match format {
+            TreeFormat::Indented => {
+                tree_walk(
+                    root,
+                    base,
+                    0,
+                    max_depth,
+                    &mut lines,
+                    &mut file_count,
+                    &mut dir_count,
+                    atlsignore,
+                    line_counts,
+                );
+            }
+            TreeFormat::Compact => {
+                tree_walk_compact(
+                    root,
+                    base,
+                    "",
+                    max_depth,
+                    &mut lines,
+                    &mut file_count,
+                    &mut dir_count,
+                    atlsignore,
+                    line_counts,
+                );
+            }
+        }
         let mut file_paths = Vec::new();
         let truncated = collect_tree_file_paths(
             root,
@@ -1835,6 +1880,7 @@ pub(crate) fn glob_collect(
     hits: &mut Vec<(String, String, usize)>,
     recursion_depth: u32,
     atlsignore: Option<&ignore::gitignore::Gitignore>,
+    line_counts: bool,
 ) {
     if recursion_depth > 20 { return; }
     let entries: Vec<_> = match std::fs::read_dir(dir) {
@@ -1858,13 +1904,17 @@ pub(crate) fn glob_collect(
 
     for (name, path, is_dir) in &items {
         if *is_dir {
-            glob_collect(path, base, matcher, hits, recursion_depth + 1, atlsignore);
+            glob_collect(path, base, matcher, hits, recursion_depth + 1, atlsignore, line_counts);
         } else {
             let rel = path.strip_prefix(base).unwrap_or(path);
             if matcher.is_match(rel) {
-                let line_count = std::fs::read(path)
-                    .map(|b| bytecount_lines(&b))
-                    .unwrap_or(0);
+                let line_count = if line_counts {
+                    std::fs::read(path)
+                        .map(|b| bytecount_lines(&b))
+                        .unwrap_or(0)
+                } else {
+                    0
+                };
                 let parent = rel.parent()
                     .map(|p| p.to_string_lossy().replace('\\', "/"))
                     .unwrap_or_default();
@@ -1884,6 +1934,7 @@ pub(crate) fn tree_walk(
     file_count: &mut usize,
     dir_count: &mut usize,
     atlsignore: Option<&ignore::gitignore::Gitignore>,
+    line_counts: bool,
 ) {
     let entries: Vec<_> = match std::fs::read_dir(dir) {
         Ok(rd) => rd.filter_map(|e| e.ok()).collect(),
@@ -1917,7 +1968,7 @@ pub(crate) fn tree_walk(
             *dir_count += 1;
             if depth_remaining > 0 {
                 lines.push(format!("{}{}/", prefix, name));
-                tree_walk(path, base, indent + 1, depth_remaining - 1, lines, file_count, dir_count, atlsignore);
+                tree_walk(path, base, indent + 1, depth_remaining - 1, lines, file_count, dir_count, atlsignore, line_counts);
             } else {
                 let child_count = std::fs::read_dir(path)
                     .map(|rd| rd.filter_map(|e| e.ok())
@@ -1927,16 +1978,127 @@ pub(crate) fn tree_walk(
                 lines.push(format!("{}{}/  ({} items)", prefix, name, child_count));
             }
         } else {
-            let line_count = std::fs::read(path)
-                .map(|b| bytecount_lines(&b))
-                .unwrap_or(0);
             *file_count += 1;
-            lines.push(format!("{}{} ({}L)", prefix, name, line_count));
+            if line_counts {
+                let line_count = std::fs::read(path)
+                    .map(|b| bytecount_lines(&b))
+                    .unwrap_or(0);
+                lines.push(format!("{}{} ({}L)", prefix, name, line_count));
+            } else {
+                lines.push(format!("{}{}", prefix, name));
+            }
         }
     }
 
     if capped {
         lines.push(format!("{}... and {} more items", prefix, items.len() - 100));
+    }
+}
+
+/// Group-by-directory tree: dirs first (recursive), then a `dir/` block for files in this folder.
+pub(crate) fn tree_walk_compact(
+    dir: &std::path::Path,
+    base: &std::path::Path,
+    rel_prefix: &str,
+    depth_remaining: u32,
+    lines: &mut Vec<String>,
+    file_count: &mut usize,
+    dir_count: &mut usize,
+    atlsignore: Option<&ignore::gitignore::Gitignore>,
+    line_counts: bool,
+) {
+    let entries: Vec<_> = match std::fs::read_dir(dir) {
+        Ok(rd) => rd.filter_map(|e| e.ok()).collect(),
+        Err(_) => return,
+    };
+
+    let mut items: Vec<(String, std::path::PathBuf, bool)> = Vec::new();
+    for entry in &entries {
+        let name = entry.file_name().to_string_lossy().to_string();
+        if should_ignore_path(&name) { continue; }
+        let path = entry.path();
+        if let Some(gi) = atlsignore {
+            if let Ok(rel) = path.strip_prefix(base) {
+                if gi.matched(rel, path.is_dir()).is_ignore() { continue; }
+            }
+        }
+        items.push((name, path.clone(), path.is_dir()));
+    }
+    items.sort_by(|a, b| match (a.2, b.2) {
+        (true, false) => std::cmp::Ordering::Less,
+        (false, true) => std::cmp::Ordering::Greater,
+        _ => a.0.to_lowercase().cmp(&b.0.to_lowercase()),
+    });
+
+    let capped = items.len() > 100;
+    let display_items = if capped { &items[..100] } else { &items };
+
+    let mut dir_end = 0usize;
+    for (name, path, is_dir) in display_items.iter() {
+        if *is_dir {
+            dir_end += 1;
+        } else {
+            break;
+        }
+    }
+
+    for (name, path, _is_dir) in &display_items[..dir_end] {
+        *dir_count += 1;
+        if depth_remaining > 0 {
+            let child_rel = if rel_prefix.is_empty() {
+                name.clone()
+            } else {
+                format!("{}/{}", rel_prefix, name)
+            };
+            tree_walk_compact(path, base, &child_rel, depth_remaining - 1, lines, file_count, dir_count, atlsignore, line_counts);
+        } else {
+            let child_count = std::fs::read_dir(path)
+                .map(|rd| rd.filter_map(|e| e.ok())
+                    .filter(|e| !should_ignore_path(&e.file_name().to_string_lossy()))
+                    .count())
+                .unwrap_or(0);
+            let collapsed = if rel_prefix.is_empty() {
+                format!("{}/  ({} items)", name, child_count)
+            } else {
+                format!("{}/  ({} items)", child_rel_with(rel_prefix, name), child_count)
+            };
+            lines.push(collapsed);
+        }
+    }
+
+    let files = &display_items[dir_end..];
+    if !files.is_empty() {
+        let header = if rel_prefix.is_empty() {
+            "./".to_string()
+        } else {
+            format!("{}/", rel_prefix)
+        };
+        lines.push(header);
+        for (name, path, _is_dir) in files {
+            debug_assert!(!*_is_dir);
+            *file_count += 1;
+            if line_counts {
+                let line_count = std::fs::read(path)
+                    .map(|b| bytecount_lines(&b))
+                    .unwrap_or(0);
+                lines.push(format!("  {}: {}", name, line_count));
+            } else {
+                lines.push(format!("  {}", name));
+            }
+        }
+    }
+
+    if capped {
+        let prefix = if rel_prefix.is_empty() { "." } else { rel_prefix };
+        lines.push(format!("{} ... and {} more items", prefix, items.len() - 100));
+    }
+}
+
+fn child_rel_with(rel_prefix: &str, name: &str) -> String {
+    if rel_prefix.is_empty() {
+        name.to_string()
+    } else {
+        format!("{}/{}", rel_prefix, name)
     }
 }
 
