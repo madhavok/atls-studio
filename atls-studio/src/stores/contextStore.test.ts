@@ -64,7 +64,7 @@ describe('queryBySetSelector', () => {
     const shortHash = addTestChunk('fn foo() { return 1; }\nfn bar() { return 2; }', 'file', 'src/foo.ts');
     addTestChunk('other', 'file', 'src/other.ts');
 
-    const count = useContextStore.getState().pinChunks([`h:${shortHash}:15-50`]);
+    const { count } = useContextStore.getState().pinChunks([`h:${shortHash}:15-50`]);
 
     expect(count).toBe(1);
     const result = useContextStore.getState().queryBySetSelector({ kind: 'pinned' });

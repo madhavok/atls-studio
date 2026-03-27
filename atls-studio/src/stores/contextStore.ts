@@ -657,6 +657,10 @@ interface ContextStoreState {
   stageVersion: number;                        // Incremented on any stage/unstage change
   transitionBridge: TransitionBridge | null;   // Auto-surface after subtask advance (1-2 turns)
   batchMetrics: { toolCalls: number; manageOps: number; hadReads: boolean; hadBbWrite: boolean };
+  /** Consecutive agent-loop rounds with batch reads but no BB write (for escalating nudge). */
+  batchReadNoBbStreak: number;
+  /** Normalized path -> read count since last write/BB (circuit breaker). */
+  fileReadSpinByPath: Record<string, number>;
   /** Distilled facts for API-only rolling summary (not in chat UI messages) */
   rollingSummary: RollingSummary;
   setRollingSummary: (summary: RollingSummary) => void;
@@ -686,7 +690,7 @@ interface ContextStoreState {
   compactChunks: (hashes: string[], opts?: { confirmWildcard?: boolean; tier?: 'pointer' | 'sig'; sigContentByRef?: Map<string, string> }) => { compacted: number; freedTokens: number };
   unloadChunks: (hashes: string[], opts?: { confirmWildcard?: boolean }) => { freed: number; count: number; pinnedKept: number };
   dropChunks: (hashes: string[], opts?: { confirmWildcard?: boolean }) => { dropped: number; freedTokens: number };
-  pinChunks: (hashes: string[], shape?: string) => number;
+  pinChunks: (hashes: string[], shape?: string) => { count: number; alreadyPinned: number };
   unpinChunks: (hashes: string[]) => number;
   registerEditHash: (hash: string, source: string, editSessionId?: string) => { registered: boolean; reason?: string };
   invalidateStaleHashes: (shortHashes: string[]) => number;
@@ -802,6 +806,8 @@ interface ContextStoreState {
   recordManageOps: (count: number) => void;
   resetBatchMetrics: () => void;
   getBatchMetrics: () => { toolCalls: number; manageOps: number };
+  recordFileReadSpin: (paths: string[]) => string | null;
+  resetFileReadSpin: () => void;
 
   // Full-memory grep — searches across all regions (active, archive, dormant, BB, staged, dropped)
   searchMemory: (
@@ -1228,6 +1234,8 @@ export const useContextStore = create<ContextStoreState>()(
   stageVersion: 0,
   transitionBridge: null,
   batchMetrics: { toolCalls: 0, manageOps: 0, hadReads: false, hadBbWrite: false },
+  batchReadNoBbStreak: 0,
+  fileReadSpinByPath: {},
   rollingSummary: emptyRollingSummary(),
   setRollingSummary: (summary) => set({ rollingSummary: summary }),
   memoryEvents: [],
@@ -1957,6 +1965,7 @@ export const useContextStore = create<ContextStoreState>()(
    */
   pinChunks: (hashes: string[], shape?: string) => {
     let count = 0;
+    let alreadyPinned = 0;
     
     set(state => {
       const newChunks = new Map(state.chunks);
@@ -1968,12 +1977,13 @@ export const useContextStore = create<ContextStoreState>()(
           newChunks.set(found[0], { ...found[1], pinned: true });
           hppSetPinned(found[0], true, shape);
           count++;
+        } else if (found && found[1].pinned) {
+          alreadyPinned++;
         } else if (!found) {
           const archived = findChunkByRef(newArchived, h);
           if (archived) {
             newArchived.delete(archived[0]);
             const recalled = { ...archived[1], pinned: true, lastAccessed: Date.now() } as typeof archived[1];
-            // Freshness check: if file-backed and sourceRevision is stale, mark suspect
             if (recalled.source && isFileBackedType(recalled.type) && recalled.sourceRevision) {
               const awareness = get().getAwareness(recalled.source);
               if (awareness && awareness.snapshotHash !== recalled.sourceRevision) {
@@ -1983,7 +1993,6 @@ export const useContextStore = create<ContextStoreState>()(
               }
             }
             newChunks.set(archived[0], recalled);
-            // HPP: transition from archived → materialized, then pin
             hppMaterialize(recalled.hash, recalled.type, recalled.source, recalled.tokens, (recalled.content.match(/\n/g) || []).length + 1, recalled.editDigest || recalled.digest || '');
             hppSetPinned(archived[0], true, shape);
             count++;
@@ -2002,7 +2011,7 @@ export const useContextStore = create<ContextStoreState>()(
       return { chunks: newChunks, archivedChunks: newArchived };
     });
     
-    return count;
+    return { count, alreadyPinned };
   },
   
   /**
@@ -4007,6 +4016,8 @@ export const useContextStore = create<ContextStoreState>()(
       taskCompleteRecord: null,
       awarenessCache: new Map(),
       rollingSummary: emptyRollingSummary(),
+      batchReadNoBbStreak: 0,
+      fileReadSpinByPath: {},
     });
   },
   
@@ -4200,6 +4211,27 @@ export const useContextStore = create<ContextStoreState>()(
     set({ batchMetrics: { toolCalls: 0, manageOps: 0, hadReads: false, hadBbWrite: false } });
   },
   getBatchMetrics: () => get().batchMetrics,
+
+  recordFileReadSpin: (paths: string[]) => {
+    if (paths.length === 0) return null;
+    const SPIN_LIMIT = 3;
+    let breaker: string | null = null;
+    set(state => {
+      const next = { ...state.fileReadSpinByPath };
+      for (const p of paths) {
+        const k = p.replace(/\\/g, '/').toLowerCase();
+        next[k] = (next[k] ?? 0) + 1;
+        if (next[k] >= SPIN_LIMIT) {
+          breaker = `<<STOP: "${p}" has been read ${next[k]} times this session without a write or BB entry. Use the content you already have — session.bb.write key findings or apply an edit. Do NOT read the same file again.>>`;
+        }
+      }
+      return { fileReadSpinByPath: next };
+    });
+    return breaker;
+  },
+  resetFileReadSpin: () => {
+    set({ fileReadSpinByPath: {} });
+  },
 
   // -----------------------------------------------------------------------
   // Full-memory grep — search across all regions

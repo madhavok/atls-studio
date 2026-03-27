@@ -414,6 +414,23 @@ function normalizePath(p: string): string {
   return p.replace(/\\/g, '/').toLowerCase();
 }
 
+/** File paths embedded in file_refs step content (read.lines, read.context, etc.). */
+function extractFilePathsFromFileRefsContent(output: StepOutput): string[] {
+  if (output.kind !== 'file_refs' || !output.ok || !output.content || typeof output.content !== 'object') return [];
+  const c = output.content as Record<string, unknown>;
+  const paths: string[] = [];
+  if (typeof c.file === 'string') paths.push(c.file);
+  const results = c.results;
+  if (Array.isArray(results)) {
+    for (const item of results) {
+      if (item && typeof item === 'object' && typeof (item as Record<string, unknown>).file === 'string') {
+        paths.push((item as Record<string, unknown>).file as string);
+      }
+    }
+  }
+  return paths;
+}
+
 function collectEditedFiles(artifact: Record<string, unknown>): Array<{ filePath: string; newHash: string }> {
   const results: Array<{ filePath: string; newHash: string }> = [];
   const seen = new Set<string>();
@@ -900,9 +917,13 @@ export async function executeUnifiedBatch(
   const verifyResults: Array<{ step_id: string; passed: boolean; summary: string; classification?: VerifyClassification }> = [];
   let batchOk = true;
   let interruption: BatchInterruption | undefined;
+  let spinBreaker: string | undefined;
 
   // Expose step outputs to handlers (e.g. session.pin resolves step IDs to hashes)
   ctx.getStepOutput = (stepId: string) => stepOutputs.get(stepId);
+  ctx.forEachStepOutput = (fn: (stepId: string, output: StepOutput) => void) => {
+    for (const [id, out] of stepOutputs) fn(id, out);
+  };
 
   // Reset per-batch state
   resetRecallBudget();
@@ -1126,9 +1147,22 @@ export async function executeUnifiedBatch(
     // Record result
     results.push(stepOutputToResult(step.id, step.use, output, Date.now() - stepStart));
 
-    // Track op kinds for BB-write nudge
-    if (output.ok && output.kind === 'file_refs') ctx.store().recordBatchRead();
-    if (output.ok && step.use === 'session.bb.write') ctx.store().recordBatchBbWrite();
+    // Track op kinds for BB-write nudge + read-spin circuit breaker
+    if (output.ok && output.kind === 'file_refs') {
+      ctx.store().recordBatchRead();
+      const spinPaths = extractFilePathsFromFileRefsContent(output);
+      if (spinPaths.length > 0) {
+        const br = ctx.store().recordFileReadSpin(spinPaths);
+        if (br) spinBreaker = br;
+      }
+    }
+    if (output.ok && step.use === 'session.bb.write') {
+      ctx.store().recordBatchBbWrite();
+      ctx.store().resetFileReadSpin();
+    }
+    if (output.ok && step.use.startsWith('change.')) {
+      ctx.store().resetFileReadSpin();
+    }
 
     if (!isAutoStep) userStepIndex += 1;
     const stepInterruption = detectBatchInterruption(step.id, i, step.use, output);
@@ -1255,13 +1289,15 @@ export async function executeUnifiedBatch(
 
   const okCount = results.filter(r => r.ok).length;
   const totalCount = results.length;
-  const summary = request.goal
+  const summaryBase = request.goal
     ? `${request.goal}: ${okCount}/${totalCount} steps ok (${Date.now() - batchStart}ms)`
     : `batch: ${okCount}/${totalCount} steps ok (${Date.now() - batchStart}ms)`;
+  const summary = spinBreaker ? `${summaryBase}\n\n${spinBreaker}` : summaryBase;
 
   return {
     ok: batchOk,
     summary,
+    ...(spinBreaker ? { spin_breaker: spinBreaker } : {}),
     step_results: results,
     final_refs: allRefs.length > 0 ? allRefs : undefined,
     bb_refs: bbRefs.length > 0 ? bbRefs : undefined,

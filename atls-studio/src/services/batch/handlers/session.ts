@@ -2,7 +2,7 @@
  * Session operation handlers — task lifecycle, pin, stage, compact, drop, recall.
  */
 
-import type { OpHandler, HandlerContext, StepOutput } from '../types';
+import type { ContextStoreApi, OpHandler, HandlerContext, StepOutput } from '../types';
 import { estimateTokens, SHORT_HASH_LEN, sliceContentByLines } from '../../../utils/contextHash';
 import { PROTECTED_RECENT_ROUNDS } from '../../promptMemory';
 import { parseHashRef } from '../../../utils/hashRefParsers';
@@ -413,17 +413,81 @@ export const handleDrop: OpHandler = async (params, ctx) => {
 // pin / unpin
 // ---------------------------------------------------------------------------
 
+/** Base hash segment from h:XXXX or h:XXXX:lines (matches contextStore refToBaseHash). */
+function baseHashFromRefToken(h: string): string {
+  const rest = h.startsWith('h:') ? h.slice(2) : h;
+  return rest.includes(':') ? rest.split(':')[0]! : rest;
+}
+
+/**
+ * Ensure read_lines / file_refs step outputs exist as engrams before pinChunks.
+ * read.lines returns file_refs with embedded content but does not call addChunk until post-batch deflation;
+ * session.pin in the same batch must materialize first.
+ */
+function materializeFileRefsContentIfNeeded(out: StepOutput, store: ContextStoreApi): void {
+  if (out.kind !== 'file_refs' || !out.ok || !out.content || typeof out.content !== 'object') return;
+  const root = out.content as Record<string, unknown>;
+  const singles: Array<Record<string, unknown>> = [];
+
+  if (!Array.isArray(root.results) && typeof root.file === 'string' && typeof root.content === 'string') {
+    singles.push(root);
+  }
+  const results = root.results;
+  if (Array.isArray(results)) {
+    for (const item of results) {
+      if (!item || typeof item !== 'object') continue;
+      const row = item as Record<string, unknown>;
+      if (typeof row.file === 'string' && typeof row.content === 'string') {
+        singles.push(row);
+      }
+    }
+  }
+
+  for (const row of singles) {
+    const file = row.file as string;
+    const text = row.content as string;
+    const hashField = row.hash ?? row.h;
+    if (typeof hashField !== 'string') continue;
+    const testRef = hashField.startsWith('h:') ? hashField : `h:${hashField}`;
+    if (store.getChunkForHashRef(testRef)) continue;
+    const snap = typeof row.snapshot_hash === 'string' ? row.snapshot_hash : undefined;
+    const backendKey = baseHashFromRefToken(testRef);
+    const opts: Record<string, unknown> = {};
+    if (snap) opts.sourceRevision = snap;
+    const ar = row.actual_range;
+    if (Array.isArray(ar) && file && snap) {
+      const first = ar[0] as [number, number | null] | undefined;
+      const last = ar[ar.length - 1] as [number, number | null] | undefined;
+      if (first && last) {
+        opts.readSpan = {
+          filePath: file,
+          sourceRevision: snap,
+          startLine: first[0],
+          endLine: last[1] ?? last[0],
+        };
+      }
+    }
+    store.addChunk(text, 'result', file, undefined, undefined, backendKey, opts);
+  }
+}
+
 export const handlePin: OpHandler = async (params, ctx) => {
   const rawHashes = params.hashes as string[] | undefined;
   if (!rawHashes?.length) return err('pin: ERROR missing hashes param');
 
   const { expanded, notes } = ctx.expandSetRefsInHashes(rawHashes);
 
+  // Materialize any file_refs from prior steps so refs resolve in the store (same batch as read.lines).
+  ctx.forEachStepOutput?.((_, out) => {
+    materializeFileRefsContentIfNeeded(out, ctx.store());
+  });
+
   // Resolve step IDs to their output chunk hashes (pin-by-step-ID support)
   const resolved = expanded.flatMap(ref => {
     if (ref.startsWith('h:')) return [ref];
     const stepOutput = ctx.getStepOutput?.(ref);
     if (stepOutput?.refs?.length) {
+      materializeFileRefsContentIfNeeded(stepOutput, ctx.store());
       notes.push(`${ref} \u2192 ${stepOutput.refs.join(', ')}`);
       return stepOutput.refs;
     }
@@ -431,8 +495,13 @@ export const handlePin: OpHandler = async (params, ctx) => {
   });
 
   const pinShape = (params.shape as string) || undefined;
-  const count = ctx.store().pinChunks(resolved, pinShape);
-  let line = count > 0 ? `pin: ${count} chunk${count > 1 ? 's' : ''} pinned${pinShape ? ` (shape:${pinShape})` : ''}` : `pin: no matching chunks`;
+  const { count, alreadyPinned } = ctx.store().pinChunks(resolved, pinShape);
+  const shapeTag = pinShape ? ` (shape:${pinShape})` : '';
+  let line = count > 0
+    ? `pin: ${count} chunk${count > 1 ? 's' : ''} pinned${shapeTag}`
+    : alreadyPinned > 0
+      ? `pin: ${alreadyPinned} already pinned${shapeTag}`
+      : `pin: no matching chunks`;
   if (notes.length > 0) line += ` | ${notes.join('; ')}`;
   return ok(line);
 };

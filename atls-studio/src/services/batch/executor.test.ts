@@ -35,6 +35,8 @@ function makeCtx() {
       recordToolCall: () => {},
       recordBatchRead: () => {},
       recordBatchBbWrite: () => {},
+      recordFileReadSpin: () => null,
+      resetFileReadSpin: () => {},
       forwardStagedHash: () => 0,
       addVerifyArtifact: () => {},
       getCurrentRev: () => 0,

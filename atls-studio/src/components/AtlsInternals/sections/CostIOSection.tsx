@@ -60,13 +60,15 @@ export function CostIOSection() {
     <div className="space-y-3">
       {chartData.length > 0 && (
         <ResponsiveContainer width="100%" height={240}>
-          <ComposedChart data={chartData} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#262626" />
+          <ComposedChart data={chartData} margin={{ top: 4, right: 8, left: 4, bottom: 0 }} barCategoryGap="20%" barGap={1}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#262626" vertical={false} />
             <XAxis
               dataKey="round"
-              type="category"
+              type="number"
               tick={{ fill: '#737373', fontSize: 10 }}
               tickLine={false}
+              allowDecimals={false}
+              minTickGap={20}
               label={{ value: 'Round', position: 'insideBottomRight', offset: -4, fill: '#737373', fontSize: 10 }}
             />
             <YAxis
@@ -99,10 +101,10 @@ export function CostIOSection() {
               wrapperStyle={{ fontSize: 10, color: '#737373' }}
               iconSize={8}
             />
-            <Bar yAxisId="tokens" dataKey="Input" fill={COLORS.input} fillOpacity={0.8} radius={[2, 2, 0, 0]} />
-            <Bar yAxisId="tokens" dataKey="Output" fill={COLORS.output} fillOpacity={0.8} radius={[2, 2, 0, 0]} />
-            <Bar yAxisId="tokens" dataKey="Cache Read" fill={COLORS.cacheRead} radius={[2, 2, 0, 0]} />
-            <Line yAxisId="cost" type="monotone" dataKey="Cost" stroke={COLORS.cost} strokeWidth={2} dot={{ r: 3, fill: COLORS.cost }} />
+            <Bar yAxisId="tokens" dataKey="Input" stackId="io" fill={COLORS.input} fillOpacity={0.8} radius={[0, 0, 0, 0]} maxBarSize={36} />
+            <Bar yAxisId="tokens" dataKey="Cache Read" stackId="io" fill={COLORS.cacheRead} radius={[2, 2, 0, 0]} maxBarSize={36} />
+            <Bar yAxisId="tokens" dataKey="Output" fill={COLORS.output} fillOpacity={0.8} radius={[2, 2, 0, 0]} maxBarSize={36} />
+            <Line yAxisId="cost" type="monotone" dataKey="Cost" stroke={COLORS.cost} strokeWidth={2} dot={false} activeDot={{ r: 4, fill: COLORS.cost }} />
           </ComposedChart>
         </ResponsiveContainer>
       )}

@@ -279,6 +279,8 @@ export interface BatchInterruption {
 export interface UnifiedBatchResult {
   ok: boolean;
   summary: string;
+  /** When set, same-batch read loop circuit breaker text (appended to summary for the model). */
+  spin_breaker?: string;
   step_results: StepResult[];
   outputs?: Record<string, unknown>;
   final_refs?: string[];
@@ -315,6 +317,8 @@ export interface HandlerContext {
   toolLoopState?: ToolLoopState | null;
   /** Lookup a completed step's output by step ID (for pin-by-step-ID). */
   getStepOutput?: (stepId: string) => StepOutput | undefined;
+  /** Iterate all step outputs in the current batch (for session.pin materialization). */
+  forEachStepOutput?: (fn: (stepId: string, output: StepOutput) => void) => void;
 }
 
 export type ExpandedFilePath =
@@ -345,7 +349,7 @@ export interface ContextStoreApi {
   unloadChunks: (hashes: string[], opts?: { confirmWildcard?: boolean }) => { freed: number; count: number; pinnedKept: number };
   compactChunks: (hashes: string[], opts?: { confirmWildcard?: boolean; tier?: 'pointer' | 'sig'; sigContentByRef?: Map<string, string> }) => { compacted: number; freedTokens: number };
   dropChunks: (hashes: string[], opts?: { confirmWildcard?: boolean }) => { dropped: number; freedTokens: number };
-  pinChunks: (hashes: string[], shape?: string) => number;
+  pinChunks: (hashes: string[], shape?: string) => { count: number; alreadyPinned: number };
   unpinChunks: (hashes: string[]) => number;
   invalidateStaleHashes: (hashes: string[]) => void;
   markEngramsSuspect: (sourcePaths?: string[], cause?: FreshnessCause, suspectKind?: 'content' | 'structural' | 'unknown') => number;
@@ -400,6 +404,9 @@ export interface ContextStoreApi {
   recordManageOps: (count: number) => void;
   recordBatchRead: () => void;
   recordBatchBbWrite: () => void;
+  /** Track repeated reads of the same file path within a chat session; returns breaker text at threshold. */
+  recordFileReadSpin: (normalizedPaths: string[]) => string | null;
+  resetFileReadSpin: () => void;
 
   // Memory search — full-text grep across all regions
   searchMemory: (

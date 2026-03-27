@@ -2710,9 +2710,28 @@ function buildDynamicContextBlock(
     // Fail-safe: skip pressure hint if store/chunks unavailable
   }
 
-  const bm = useContextStore.getState().batchMetrics;
+  const ctxState = useContextStore.getState();
+  const bm = ctxState.batchMetrics;
+  let bbStreak = ctxState.batchReadNoBbStreak;
+  if (bm.hadBbWrite) {
+    bbStreak = 0;
+  } else if (bm.hadReads && !bm.hadBbWrite) {
+    bbStreak = bbStreak + 1;
+  } else {
+    bbStreak = 0;
+  }
+  useContextStore.setState({ batchReadNoBbStreak: bbStreak });
+
   if (bm.hadReads && !bm.hadBbWrite) {
-    parts.push('<<FINDINGS: batch read files with no BB write — consider session.bb.write to persist key findings before they go dormant.>>');
+    if (bbStreak >= 3) {
+      parts.push(
+        `<<STOP: You have read files for ${bbStreak} consecutive rounds without persisting findings. Write to session.bb.write or act on what you have. Do NOT read the same files again.>>`,
+      );
+    } else {
+      parts.push(
+        '<<FINDINGS: batch read files with no BB write — consider session.bb.write to persist key findings before they go dormant.>>',
+      );
+    }
   }
 
   // -------------------------------------------------------------------------
