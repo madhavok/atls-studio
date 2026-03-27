@@ -544,8 +544,9 @@ type ToolResultBlock = { type: string; tool_use_id: string; content: string; nam
  * the tool description) already exists in the context store, replace the
  * inline content with a hash-pointer ref.
  *
- * Unlike `compressToolLoopHistory`, this runs eagerly (no threshold / round
- * gating) and never creates new chunks — it only references existing ones.
+ * When no existing engram matches and the content exceeds the minimum
+ * threshold, a new engram is created so the receipt is always written at
+ * insertion time — history never carries large inline tool results.
  *
  * @returns number of tool_result entries deflated
  */
@@ -555,6 +556,9 @@ export function deflateToolResults(
 ): number {
   const store = useContextStore.getState();
   let deflated = 0;
+  // Minimum size to create a new engram — tiny results ("ok", short errors)
+  // are cheaper inline than as engram overhead.
+  const MIN_DEFLATE_TOKENS = 60;
 
   for (const tr of toolResults) {
     if (!tr.content || typeof tr.content !== 'string') continue;
@@ -562,7 +566,7 @@ export function deflateToolResults(
 
     // Try content-hash match first (exact content already in store)
     const contentHash = hashContentSync(tr.content);
-    const chunk = store.chunks.get(contentHash);
+    let chunk = store.chunks.get(contentHash);
     if (chunk) {
       const ref = formatChunkRef(chunk.shortHash, chunk.tokens, undefined, chunk.source, chunk.digest);
       tr.content = ref;
@@ -580,6 +584,23 @@ export function deflateToolResults(
       const ref = formatChunkRef(existing.shortHash, tokens, undefined, description, existing.digest);
       tr.content = ref;
       deflated++;
+      continue;
+    }
+
+    // No existing engram — create one if content is large enough.
+    // This closes the receipt gap: every tool result above threshold
+    // becomes an engram at insertion time, so history always gets a
+    // lightweight ref instead of inline content.
+    const tokens = estimateTokens(tr.content);
+    if (tokens >= MIN_DEFLATE_TOKENS) {
+      const hash = store.addChunk(tr.content, 'result', description, undefined, `result: ${description}`);
+      chunk = store.chunks.get(hash);
+      if (chunk) {
+        dematerialize(hash);
+        const ref = formatChunkRef(chunk.shortHash, chunk.tokens, undefined, description, chunk.digest);
+        tr.content = ref;
+        deflated++;
+      }
     }
   }
 
@@ -589,7 +610,6 @@ export function deflateToolResults(
 
   return deflated;
 }
-
 export function estimateHistoryTokens(history: Array<{ role: string; content: unknown }>): number {
   return history.reduce((sum, msg) => {
     if (typeof msg.content === 'string') return sum + estimateTokens(msg.content);
