@@ -15,6 +15,8 @@ vi.mock('../services/hashProtocol', () => ({
   resetProtocol: vi.fn(),
   evict: vi.fn(),
   setPinned: vi.fn(),
+  setRoundRefreshHook: vi.fn(),
+  getRoundRefreshHook: vi.fn(() => null),
   archive: vi.fn(),
   materialize: vi.fn(),
   dematerialize: vi.fn(),
@@ -37,7 +39,9 @@ vi.mock('./roundHistoryStore', () => ({
 }));
 
 import { useContextStore, type ContextChunk } from '../stores/contextStore';
-import { evict as hppEvict } from '../services/hashProtocol';
+import { evict as hppEvict, getRef, type ChunkRef } from '../services/hashProtocol';
+import { buildDormantBlock } from '../services/aiService';
+import { hashContentSync } from '../utils/contextHash';
 
 const SOURCE_PATH = 'src/components/Panel.tsx';
 const OLD_REV = 'rev_aaa111';
@@ -248,7 +252,8 @@ describe('reconcileSourceRevision: dormant eviction', () => {
 });
 
 describe('evictStaleDormantChunks: LRU order', () => {
-  const MAX_DORMANT_CHUNKS = 1000;
+  /** Must match MAX_DORMANT_CHUNKS in contextStore.ts */
+  const MAX_DORMANT_CHUNKS = 100;
 
   beforeEach(() => {
     useContextStore.getState().resetSession();
@@ -280,5 +285,123 @@ describe('evictStaleDormantChunks: LRU order', () => {
     expect(chunks.has(oldest[1].hash)).toBe(false);
     expect(chunks.has(oldest[2].hash)).toBe(false);
     for (const c of recent) expect(chunks.has(c.hash)).toBe(true);
+  });
+
+  it('evicts excess compacted stubs when count exceeds MAX_DORMANT_CHUNKS', () => {
+    const base = Date.now();
+    const many = Array.from({ length: 101 }, (_, i) =>
+      makeChunk({
+        hash: `srch_${i.toString().padStart(3, '0')}_1234567890ab`,
+        type: 'search',
+        compacted: true,
+        tokens: 30,
+        lastAccessed: base + i,
+      }),
+    );
+    seedChunks(many);
+
+    const result = useContextStore.getState().evictStaleDormantChunks();
+
+    expect(result.evicted).toBe(1);
+    expect(useContextStore.getState().chunks.size).toBe(100);
+  });
+});
+
+describe('pruneObsoleteTaskArtifacts: compacted stub auto-drop', () => {
+  beforeEach(() => {
+    useContextStore.getState().resetSession();
+    vi.clearAllMocks();
+  });
+
+  it('drops compacted search/symbol/deps/analysis stubs at or below 50tk', () => {
+    const searchStub = makeChunk({
+      hash: 'drop_srch_1234567890ab',
+      type: 'search',
+      compacted: true,
+      tokens: 40,
+    });
+    const analysisStub = makeChunk({
+      hash: 'drop_an_1234567890abc',
+      type: 'analysis',
+      compacted: true,
+      tokens: 50,
+    });
+    seedChunks([searchStub, analysisStub]);
+
+    const r = useContextStore.getState().pruneObsoleteTaskArtifacts();
+
+    expect(r.dropped).toBe(2);
+    expect(useContextStore.getState().chunks.has(searchStub.hash)).toBe(false);
+    expect(useContextStore.getState().chunks.has(analysisStub.hash)).toBe(false);
+  });
+
+  it('does not auto-drop compacted search stubs above 50tk', () => {
+    const big = makeChunk({
+      hash: 'keep_srch_1234567890a',
+      type: 'search',
+      compacted: true,
+      tokens: 51,
+    });
+    seedChunks([big]);
+
+    const r = useContextStore.getState().pruneObsoleteTaskArtifacts();
+
+    expect(r.dropped).toBe(0);
+    expect(useContextStore.getState().chunks.has(big.hash)).toBe(true);
+  });
+});
+
+describe('buildDormantBlock', () => {
+  const refStub = (hash: string, shortHash: string): ChunkRef => ({
+    hash,
+    shortHash,
+    type: 'search',
+    source: 'q',
+    totalLines: 1,
+    tokens: 10,
+    editDigest: '',
+    visibility: 'referenced',
+    seenAtTurn: 0,
+  });
+
+  beforeEach(() => {
+    useContextStore.getState().resetSession();
+    vi.clearAllMocks();
+    vi.mocked(getRef).mockImplementation((h: string) => refStub(h, h.slice(0, 6)));
+  });
+
+  it('caps dormant listing at 40 lines with overflow summary', () => {
+    const many = Array.from({ length: 45 }, (_, i) =>
+      makeChunk({
+        hash: `db_${i.toString().padStart(3, '0')}_1234567890ab`,
+        type: 'search',
+        compacted: true,
+        tokens: 12,
+        source: `hit${i}.ts`,
+      }),
+    );
+    seedChunks(many);
+
+    const block = buildDormantBlock();
+
+    const lines = block.split('\n');
+    expect(lines[0]).toBe('## DORMANT ENGRAMS');
+    expect(lines.length).toBe(42);
+    expect(lines[41]).toMatch(/^\.\.\. and 5 more dormant engrams/);
+  });
+});
+
+describe('addChunk: search TTL', () => {
+  beforeEach(() => {
+    useContextStore.getState().resetSession();
+    vi.clearAllMocks();
+  });
+
+  it('defaults ttl to 5 for search chunks', () => {
+    const content = `needle_ttl_${Date.now()}_${Math.random()}`;
+    const fullHash = hashContentSync(content);
+    useContextStore.getState().addChunk(content, 'search', 'workspace');
+    const c = useContextStore.getState().chunks.get(fullHash);
+    expect(c?.ttl).toBe(5);
   });
 });

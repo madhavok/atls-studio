@@ -138,7 +138,7 @@ const DORMANT_ARCHIVE_THRESHOLD = 1000;
 // Maximum dormant (compacted+unpinned) chunks before LRU eviction kicks in.
 // Search results, batch stubs, tree reads etc. don't have file-backed sources
 // so reconcileSourceRevision never evicts them — this count-based limit does.
-const MAX_DORMANT_CHUNKS = 1000;
+const MAX_DORMANT_CHUNKS = 100;
 
 // Engram annotation — a note attached without mutating content
 export interface EngramAnnotation {
@@ -433,13 +433,28 @@ function shouldAutoCompactChunk(chunk: ContextChunk): boolean {
     || chunk.type === 'call'
     || chunk.type === 'symbol'
     || chunk.type === 'deps'
-    || chunk.type === 'search';
+    || chunk.type === 'search'
+    || chunk.type === 'analysis';
 }
+
+const AUTO_DROP_COMPACTED_STUB_MAX_TOK = 50;
 
 function shouldAutoDropChunk(chunk: ContextChunk): boolean {
   if (chunk.pinned) return false;
   if (CHAT_TYPES.has(chunk.type)) return false;
-  return chunk.type === 'result' || chunk.type === 'call';
+  if (chunk.type === 'result' || chunk.type === 'call') return true;
+  // Auto-drop compacted low-value stubs (search, symbol lookups, dep graphs, batch analysis)
+  if (
+    chunk.compacted
+    && chunk.tokens <= AUTO_DROP_COMPACTED_STUB_MAX_TOK
+    && (chunk.type === 'search'
+      || chunk.type === 'symbol'
+      || chunk.type === 'deps'
+      || chunk.type === 'analysis')
+  ) {
+    return true;
+  }
+  return false;
 }
 
 const TOOL_CHUNK_TYPES: ReadonlySet<string> = new Set(['call', 'result', 'search']);
@@ -1279,7 +1294,7 @@ export const useContextStore = create<ContextStoreState>()(
       origin: opts?.origin ?? 'read',
       freshness: 'fresh',
       readSpan: opts?.readSpan,
-      ttl: opts?.ttl ?? (type === 'result' ? 3 : undefined),
+      ttl: opts?.ttl ?? (type === 'result' ? 3 : type === 'search' ? 5 : undefined),
     };
     
     set(state => {

@@ -2735,7 +2735,7 @@ function buildDynamicContextBlock(
     parts.push(`Sel:\n\`\`\`\n${text}\n\`\`\``);
   }
 
-  const dormantBlock = _buildDormantBlock();
+  const dormantBlock = buildDormantBlock();
   if (dormantBlock) parts.push(dormantBlock);
 
   return parts.length > 0 ? parts.join('\n') : '';
@@ -2986,11 +2986,13 @@ function _buildBlackboardBlock(): string {
   return bbLines.join('\n');
 }
 
+const MAX_DORMANT_LINES = 40;
+
 /**
  * Build the dormant engram digest block for the dynamic (uncached) user message.
  * Moved out of BP3 — dormant set mutates on compaction/eviction.
  */
-function _buildDormantBlock(): string {
+export function buildDormantBlock(): string {
   const ctxState = useContextStore.getState();
   const dormantLines: string[] = [];
   ctxState.chunks.forEach(c => {
@@ -3007,6 +3009,11 @@ function _buildDormantBlock(): string {
     }
   });
   if (dormantLines.length === 0) return '';
+  if (dormantLines.length > MAX_DORMANT_LINES) {
+    const overflow = dormantLines.length - MAX_DORMANT_LINES;
+    dormantLines.length = MAX_DORMANT_LINES;
+    dormantLines.push(`... and ${overflow} more dormant engrams (use session.drop to clean)`);
+  }
   return '## DORMANT ENGRAMS\n' + dormantLines.join('\n');
 }
 

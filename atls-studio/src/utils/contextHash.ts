@@ -28,7 +28,8 @@ export type ChunkType =
   | 'symbol'     // Symbol usage/definition
   | 'deps'       // Dependencies/call hierarchy
   | 'issues'     // Find issues results
-  | 'tree';      // Project structure tree
+  | 'tree'       // Project structure tree
+  | 'analysis';  // Batch analyze.* structured outputs (deps, extract_plan, etc.)
 
 const CHUNK_TAG_TYPES: ChunkType[] = [
   'msg:user',
@@ -45,6 +46,7 @@ const CHUNK_TAG_TYPES: ChunkType[] = [
   'deps',
   'issues',
   'tree',
+  'analysis',
 ];
 
 /**
