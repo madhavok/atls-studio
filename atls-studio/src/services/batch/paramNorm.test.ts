@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { normalizeStepParams } from './paramNorm';
+import { coerceFilePathsArray, normalizeHashRefsToStrings, normalizeStepParams } from './paramNorm';
 
 describe('normalizeStepParams', () => {
   // -----------------------------------------------------------------------
@@ -212,6 +212,16 @@ describe('normalizeStepParams', () => {
       expect(out.key).toBe('k');
       expect(out.keys).toBeUndefined();
     });
+
+    it('maps derivedFrom → derived_from for session.bb.write', () => {
+      const out = normalizeStepParams('session.bb.write', {
+        key: 'k',
+        content: 'x',
+        derivedFrom: [{ ref: 'h:aa' }, 'h:bb'],
+      });
+      expect(out.derived_from).toEqual([{ ref: 'h:aa' }, 'h:bb']);
+      expect((out as { derivedFrom?: unknown }).derivedFrom).toBeUndefined();
+    });
   });
 
   // -----------------------------------------------------------------------
@@ -339,6 +349,27 @@ describe('normalizeStepParams', () => {
       expect(out.symbol_names).toEqual(['AuthService']);
       expect(out.from).toBeUndefined();
       expect(out.symbol).toBeUndefined();
+    });
+  });
+
+  describe('coerceFilePathsArray', () => {
+    it('flattens nested arrays and ref/path objects', () => {
+      expect(coerceFilePathsArray([['a.ts'], { ref: 'h:abc' }, { path: 'b.ts' }, { file: 'c.ts' }])).toEqual([
+        'a.ts',
+        'h:abc',
+        'b.ts',
+        'c.ts',
+      ]);
+    });
+
+    it('dedupes paths case-insensitively', () => {
+      expect(coerceFilePathsArray(['Src/A.ts', 'src/a.ts'])).toEqual(['Src/A.ts']);
+    });
+  });
+
+  describe('normalizeHashRefsToStrings', () => {
+    it('accepts ref objects and nested arrays', () => {
+      expect(normalizeHashRefsToStrings([{ ref: 'h:aa' }, ['h:bb', { h: 'cc' }]])).toEqual(['h:aa', 'h:bb', 'cc']);
     });
   });
 

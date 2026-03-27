@@ -119,6 +119,9 @@ pub fn parse_symbol_anchor_str(s: &str) -> Option<(Option<&'static str>, &str)> 
     None
 }
 
+/// Cap line scan for symbol extraction — beyond this, prefer index-backed tools for huge files.
+const MAX_LINES_SYMBOL_EXTRACT: usize = 48_000;
+
 /// Extract symbol names from content (fn/def/class/etc declarations).
 /// Scans line-by-line so large files do not run catastrophic backtracking over the whole buffer.
 pub fn extract_symbol_names(content: &str, kind: Option<&str>) -> Vec<String> {
@@ -136,7 +139,10 @@ pub fn extract_symbol_names(content: &str, kind: Option<&str>) -> Vec<String> {
         Err(_) => return vec![],
     };
     let mut names = std::collections::HashSet::new();
-    for line in content.lines() {
+    for (idx, line) in content.lines().enumerate() {
+        if idx >= MAX_LINES_SYMBOL_EXTRACT {
+            break;
+        }
         // Skip extremely long lines (minified bundles) — regex cost is per-line.
         if line.len() > 16_384 {
             continue;

@@ -19,7 +19,7 @@ search.code queries:[] file_paths?:[] limit?:N compact?:bool
 search.symbol symbol_names:[] limit?:N
 search.usage symbol_names:[] filter?:"" limit?:N
 search.similar type?:code|function|concept|pattern query?:"" threshold?:N limit?:N
-search.issues file_paths?:[] severity_filter?:high|medium|low|all category?:"" limit?:N
+search.issues file_paths?:[] severity_filter?:high|medium|low|all category?:"" issue_mode?:correctness|all|security (default correctness — omits Style-category issues) limit?:N
 search.patterns file_paths?:[] patterns?:[]
 search.memory query:"" regions?:[active,archived,dormant,bb,staged,dropped] case_sensitive?:bool max_results?:N
 analyze.deps|calls|structure|impact|blast_radius|extract_plan file_paths:[] — common: filter?:"" limit?:N symbol_names?:[] (system.help for full params per op)
@@ -82,6 +82,8 @@ file/f/path/target_file/source_file -> file_path (auto-promotes to file_paths:[]
 ### Rules
 - file_path/file_paths resolve from active workspace root. Subfolder prefix if monorepo (e.g. \`atls-studio/src/foo.ts\`).
 - file_paths: actual paths or h:refs, not query strings. deletes/restore: paths or h:refs.
+- verify.build|test|lint|typecheck: subprocess uses PATH with ATLS_TOOLCHAIN_PATH prepended (set env to match nvm/fnm/volta bins). system.exec runs in the PTY and may see a different PATH — use _metadata.executable_probe on verify results to see resolved tools.
+- Do not nest OpenAI multi_tool_use.parallel (or similar) inside batch steps; use multiple batch steps instead.
 - system.exec: PowerShell — cmd saved to temp .ps1; prefer system.git for git, verify.* for checks.
 - hash-building refactor: read.shaped(sig) -> h:SOURCE; change.create body = imports + h:XXXX:sym(Name):dedent + exports; strip source; verify.typecheck.
 - prefer cheapest tool: sigs -> read.shaped; one symbol -> search.symbol; types -> verify.typecheck; file list -> read.context(tree).

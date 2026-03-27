@@ -4,6 +4,7 @@
 
 import type { OpHandler, StepOutput } from '../types';
 import { estimateTokens } from '../../../utils/contextHash';
+import { normalizeHashRefsToStrings } from '../paramNorm';
 
 function ok(summary: string, refs: string[] = []): StepOutput {
   return { kind: 'bb_ref', ok: true, refs, summary };
@@ -54,11 +55,12 @@ export const handleBbWrite: OpHandler = async (params, ctx) => {
     return ok(removed ? `bb_write: ${key} deleted (empty content)` : `bb_write: ${key} not found`);
   }
 
-  const derivedFrom = params.derived_from as string[] | undefined;
-  const { tokens } = ctx.store().setBlackboardEntry(key, content, derivedFrom?.length ? { derivedFrom } : undefined);
+  const derivedFrom = normalizeHashRefsToStrings(params.derived_from ?? params.derivedFrom);
+  const derivedOpt = derivedFrom.length > 0 ? derivedFrom : undefined;
+  const { tokens } = ctx.store().setBlackboardEntry(key, content, derivedOpt?.length ? { derivedFrom: derivedOpt } : undefined);
   const entryMeta = ctx.store().getBlackboardEntryWithMeta(key);
   let line = `bb_write: h:bb:${key} (${tokens}tk) — use h:bb:${key} in response`;
-  if (derivedFrom?.length) line += ` | derived_from: ${derivedFrom.join(', ')}`;
+  if (derivedOpt?.length) line += ` | derived_from: ${derivedOpt.join(', ')}`;
   const persisted = await persistBlackboardNote(key, content, ctx.sessionId, 'active', entryMeta?.filePath);
   if (!persisted) {
     ctx.store().removeBlackboardEntry(key);

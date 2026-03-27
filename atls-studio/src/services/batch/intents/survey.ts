@@ -30,8 +30,17 @@ export const resolveSurvey: IntentResolver = (
   const sigReadId = makeStepId(intentId, 'sig_read');
   const stageId = makeStepId(intentId, 'stage');
   const bbWriteId = makeStepId(intentId, 'bb_write');
+  const bbInvalidateId = makeStepId(intentId, 'bb_invalidate');
 
   if (!hasTree) {
+    if (force) {
+      steps.push({
+        id: bbInvalidateId,
+        use: 'session.bb.delete',
+        with: { keys: [treeKey] },
+      });
+    }
+
     steps.push({
       id: treeReadId,
       use: 'read.context',

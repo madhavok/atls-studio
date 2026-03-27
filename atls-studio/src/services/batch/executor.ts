@@ -15,10 +15,11 @@ import type {
   HandlerContext,
   BatchInterruption,
   VerifyClassification,
+  OperationKind,
 } from './types';
 
 import { getHandler } from './opMap';
-import { normalizeStepParams } from './paramNorm';
+import { coerceFilePathsArray, normalizeStepParams } from './paramNorm';
 import { isStepAllowed, getAutoVerifySteps, isStepCountExceeded, evaluateCondition, isBlockedForSwarm } from './policy';
 import { stepOutputToResult } from './resultFormatter';
 import { resetRecallBudget } from './handlers/session';
@@ -31,6 +32,16 @@ import { invoke } from '@tauri-apps/api/core';
 import { getFreshnessJournal } from '../freshnessJournal';
 import { registerOwnWrite } from '../../hooks/useAtls';
 import './intents/index';
+
+/** Ops that require a non-empty `file_paths` array after binding coercion. */
+const FILE_PATH_REQUIRED_OPS = new Set<OperationKind>([
+  'read.context',
+  'read.shaped',
+  'analyze.deps',
+  'analyze.impact',
+  'analyze.blast_radius',
+  'analyze.structure',
+]);
 
 interface BatchResolvedEntry {
   source: string | null;
@@ -1021,6 +1032,32 @@ export async function executeUnifiedBatch(
 
     // Merge with and resolved inputs (resolved inputs override with)
     let mergedParams: Record<string, unknown> = normalizeStepParams(step.use, { ...step.with, ...resolvedInputs });
+
+    if (FILE_PATH_REQUIRED_OPS.has(step.use)) {
+      const rawFp = mergedParams.file_paths;
+      const coerced = coerceFilePathsArray(rawFp);
+      if (coerced.length === 0) {
+        const preview =
+          rawFp === undefined
+            ? 'undefined'
+            : typeof rawFp === 'string'
+              ? rawFp.slice(0, 120)
+              : JSON.stringify(rawFp).slice(0, 240);
+        const output: StepOutput = {
+          kind: 'raw',
+          ok: false,
+          refs: [],
+          summary: `${step.id}: ERROR file_paths must resolve to a non-empty string[] (paths or h: refs). Got: ${preview}`,
+          error: 'invalid file_paths binding',
+        };
+        stepOutputs.set(step.id, output);
+        results.push(stepOutputToResult(step.id, step.use, output, Date.now() - stepStart));
+        batchOk = false;
+        if (step.on_error === 'stop') break;
+        continue;
+      }
+      mergedParams.file_paths = coerced;
+    }
 
     // Merge policy options for change ops (e.g. refactor_validation_mode)
     if (request.policy?.refactor_validation_mode && step.use.startsWith('change.')) {

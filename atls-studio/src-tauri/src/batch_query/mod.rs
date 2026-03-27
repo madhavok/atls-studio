@@ -4,11 +4,14 @@ mod helpers;
 use helpers::*;
 
 use crate::refactor_engine::*;
-use crate::git_ops::{run_git_command, run_shell_cmd_async, index_modified_files, index_deleted_files};
+use crate::git_ops::{
+    index_deleted_files, index_modified_files, probe_executable, run_git_command, run_shell_cmd_async,
+};
 use crate::code_intel::expand_concept;
 use crate::path_utils::{
-    detect_format, find_manifest_nearest, normalize_line_endings, read_file_with_format,
-    resolve_tree_directory_path, serialize_with_format, FileFormat, ManifestKind,
+    detect_format, find_manifest_candidates_under, find_manifest_nearest, normalize_line_endings,
+    read_file_with_format, resolve_project_path, resolve_tree_directory_path, serialize_with_format,
+    to_relative_path, FileFormat, ManifestKind,
 };
 /// batch_query - THE primary ATLS interface (33+ operations)
 /// This is the main entry point for all code analysis and editing
@@ -1395,7 +1398,9 @@ pub async fn atls_batch_query(
                     .unwrap_or(true);
                 let mut results = Vec::new();
                 for fp in &file_paths {
-                    let relative_path = fp.replace('\\', "/");
+                    let resolved = resolve_project_path(project_root, fp);
+                    let relative_path = to_relative_path(project_root, resolved.to_string_lossy().as_ref())
+                        .replace('\\', "/");
                     match project.query().get_file_symbol_deps(
                         &relative_path, kind_refs.as_deref(), hub_threshold, exclude_hubs,
                     ) {
@@ -2493,6 +2498,7 @@ pub async fn atls_batch_query(
                     java_dirs: Vec<PathBuf>,
                     csharp_dirs: Vec<PathBuf>,
                     swift_dirs: Vec<PathBuf>,
+                    dart_dirs: Vec<PathBuf>,
                 }
                 
                 let (detect_base, selection_reason, manifest_file) = if let Some(ref ws_name) = workspace_name {
@@ -2522,15 +2528,27 @@ pub async fn atls_batch_query(
                             ManifestKind::Python => {
                                 if manifest_dir.join("pyproject.toml").exists() { "pyproject.toml" } else { "requirements.txt" }
                             }
+                            ManifestKind::Dart => "pubspec.yaml",
                             _ => "manifest",
                         };
                         (manifest_dir.clone(), "target_dir specified".to_string(), manifest_dir.join(manifest).to_string_lossy().to_string())
                     } else {
+                        let manifest_candidates: Vec<serde_json::Value> = find_manifest_candidates_under(&resolved, 5)
+                            .into_iter()
+                            .take(16)
+                            .map(|(k, d)| {
+                                serde_json::json!({
+                                    "kind": format!("{:?}", k),
+                                    "directory": d.to_string_lossy(),
+                                })
+                            })
+                            .collect();
                         return Ok(serde_json::json!({
-                            "error": format!("target_dir '{}' has no package.json, Cargo.toml, go.mod, pyproject.toml, or other supported manifest. Specify a directory containing a manifest.",
+                            "error": format!("target_dir '{}' has no package.json, Cargo.toml, go.mod, pyproject.toml, pubspec.yaml, or other supported manifest. Specify a directory containing a manifest.",
                                 td),
                             "resolved_path": resolved.to_string_lossy(),
-                            "hint": "Use target_dir to point to a subdirectory with package.json, Cargo.toml, go.mod, etc."
+                            "hint": "Use target_dir to point to a subdirectory with package.json, Cargo.toml, go.mod, pubspec.yaml, or a .sln/.csproj folder.",
+                            "manifest_candidates": manifest_candidates
                         }));
                     }
                 } else {
@@ -2554,7 +2572,9 @@ pub async fn atls_batch_query(
                         "workspace_root": workspace_root.to_string_lossy(),
                         "manifest_file": manifest,
                         "command": cmd,
-                        "selection_reason": reason
+                        "selection_reason": reason,
+                        "executable_probe": probe_executable(cmd),
+                        "path_note": "Verify/build prepends ATLS_TOOLCHAIN_PATH to PATH for subprocesses (GUI apps often lack nvm/fnm paths). system.exec uses the terminal PTY and may differ."
                     })
                 };
 
@@ -2573,7 +2593,7 @@ pub async fn atls_batch_query(
                     {
                         (
                             "HostMissingToolchain".to_string(),
-                            "Toolchain not found on PATH. Install the required tool (cargo/npm/go/python) or use runner:'<absolute-path>'.".to_string(),
+                            "Toolchain not found on PATH for verify/build subprocesses. Install the tool, set ATLS_TOOLCHAIN_PATH to extra bin dirs (same as your shell), or use runner:'<absolute-path>'.".to_string(),
                         )
                     } else if lower.contains("no module")
                         || lower.contains("module not found")
@@ -2606,7 +2626,7 @@ pub async fn atls_batch_query(
                     } else {
                         (
                             "BaselineProjectFailure".to_string(),
-                            "Project has baseline failures. Fix existing errors before refactoring.".to_string(),
+                            "Build/typecheck ran and reported failures. See diagnostic_preview and tool output (not a missing-toolchain guard).".to_string(),
                         )
                     }
                 };
@@ -2624,6 +2644,7 @@ pub async fn atls_batch_query(
                         java_dirs: Vec::new(),
                         csharp_dirs: Vec::new(),
                         swift_dirs: Vec::new(),
+                        dart_dirs: Vec::new(),
                     };
                     
                     let check_dir = |dir: &std::path::Path, r: &mut DetectedProjects| {
@@ -2654,21 +2675,20 @@ pub async fn atls_batch_query(
                         if dir.join("build.gradle").exists() || dir.join("build.gradle.kts").exists() || dir.join("pom.xml").exists() {
                             r.java_dirs.push(dir.to_path_buf());
                         }
-                        if dir.join("*.sln").exists() || dir.join("*.csproj").exists() {
+                        let has_sln = std::fs::read_dir(dir).ok().map_or(false, |entries| {
+                            entries.filter_map(|e| e.ok()).any(|e| {
+                                let n = e.file_name().to_string_lossy().to_string();
+                                n.ends_with(".sln") || n.ends_with(".csproj")
+                            })
+                        });
+                        if has_sln {
                             r.csharp_dirs.push(dir.to_path_buf());
-                        } else {
-                            let has_sln = std::fs::read_dir(dir).ok().map_or(false, |entries| {
-                                entries.filter_map(|e| e.ok()).any(|e| {
-                                    let n = e.file_name().to_string_lossy().to_string();
-                                    n.ends_with(".sln") || n.ends_with(".csproj")
-                                })
-                            });
-                            if has_sln {
-                                r.csharp_dirs.push(dir.to_path_buf());
-                            }
                         }
                         if dir.join("Package.swift").exists() {
                             r.swift_dirs.push(dir.to_path_buf());
+                        }
+                        if dir.join("pubspec.yaml").exists() {
+                            r.dart_dirs.push(dir.to_path_buf());
                         }
                     };
                     
@@ -2699,6 +2719,23 @@ pub async fn atls_batch_query(
                         }
                     }
                     
+                    if result.dart_dirs.is_empty() {
+                        if let Some((_, d)) = find_manifest_candidates_under(&detect_base, 5)
+                            .into_iter()
+                            .find(|(k, _)| *k == ManifestKind::Dart)
+                        {
+                            result.dart_dirs.push(d);
+                        }
+                    }
+                    if result.csharp_dirs.is_empty() {
+                        if let Some((_, d)) = find_manifest_candidates_under(&detect_base, 5)
+                            .into_iter()
+                            .find(|(k, _)| *k == ManifestKind::CSharp)
+                        {
+                            result.csharp_dirs.push(d);
+                        }
+                    }
+
                     result
                 }).await.map_err(|e| format!("Project detection failed: {}", e))?;
                 
@@ -2713,6 +2750,7 @@ pub async fn atls_batch_query(
                 let java_dir = detected.java_dirs.first().cloned();
                 let csharp_dir = detected.csharp_dirs.first().cloned();
                 let swift_dir = detected.swift_dirs.first().cloned();
+                let dart_dir = detected.dart_dirs.first().cloned();
                 
                 let has_package_json = node_dir.is_some();
                 let has_cargo_toml = rust_dir.is_some();
@@ -2724,6 +2762,7 @@ pub async fn atls_batch_query(
                 let has_java = java_dir.is_some();
                 let has_csharp = csharp_dir.is_some();
                 let has_swift = swift_dir.is_some();
+                let has_dart = dart_dir.is_some();
                 let ts_dir = detected.ts_dirs.first().cloned();
                 let has_tsconfig = ts_dir.is_some()
                     || node_dir.as_ref().map_or(false, |d| d.join("tsconfig.json").exists())
@@ -2790,6 +2829,7 @@ pub async fn atls_batch_query(
                                 ManifestKind::Rust => "Cargo.toml",
                                 ManifestKind::Go => "go.mod",
                                 ManifestKind::Python => if d.join("pyproject.toml").exists() { "pyproject.toml" } else { "requirements.txt" },
+                                ManifestKind::Dart => "pubspec.yaml",
                                 _ => return Some(d.to_string_lossy().to_string()),
                             };
                             Some(d.join(name).to_string_lossy().to_string())
@@ -3204,6 +3244,8 @@ pub async fn atls_batch_query(
                             ("dotnet build".to_string(), csharp_dir.clone().unwrap())
                         } else if has_swift {
                             ("swift build".to_string(), swift_dir.clone().unwrap())
+                        } else if has_dart {
+                            ("dart analyze".to_string(), dart_dir.clone().unwrap())
                         } else if has_c_cpp {
                             let cd = c_cpp_dir.clone().unwrap();
                             let cmd = if cd.join("CMakeLists.txt").exists() {
@@ -3216,12 +3258,24 @@ pub async fn atls_batch_query(
                             // Fallback: TypeScript-only dir (e.g. Nest integration leaf with tsconfig but no package.json at leaf)
                             ("npx tsc -b".to_string(), td.clone())
                         } else {
+                            let manifest_candidates: Vec<serde_json::Value> =
+                                find_manifest_candidates_under(&detect_base_root, 5)
+                                    .into_iter()
+                                    .take(16)
+                                    .map(|(k, d)| {
+                                        serde_json::json!({
+                                            "kind": format!("{:?}", k),
+                                            "directory": d.to_string_lossy(),
+                                        })
+                                    })
+                                    .collect();
                             let mut err = serde_json::json!({
                                 "error": "Could not detect project type for building",
                                 "detected_projects": detected_info(),
+                                "manifest_candidates": manifest_candidates,
                             });
                             err["_hint"] = serde_json::json!(
-                                "Use target_dir to scope to a subdirectory with package.json/Cargo.toml, or runner to run a custom build command."
+                                "Use target_dir to scope to a subdirectory with package.json/Cargo.toml/pubspec.yaml, or runner to run a custom build command."
                             );
                             return Ok(err);
                         };
@@ -3342,7 +3396,11 @@ pub async fn atls_batch_query(
                             let (cat, hint) = classify_verify_failure(&combined);
                             build_result["failure_category"] = serde_json::json!(cat);
                             build_result["_hint"] = serde_json::json!(hint);
+                            let preview: String = combined.chars().take(4000).collect();
+                            build_result["diagnostic_preview"] = serde_json::json!(preview);
+                            build_result["baseline_confirmed"] = serde_json::json!(cat == "BaselineProjectFailure");
                         }
+                        build_result["build_executed"] = serde_json::json!(true);
                         build_result["_metadata"] = verify_metadata(&work_dir, &manifest_file, &cmd_str, &selection_reason);
                         Ok(build_result)
                     }
@@ -4981,6 +5039,22 @@ pub async fn atls_batch_query(
             "find_issues" => {
                 // Find issues in the codebase with optional filtering
                 use atls_core::{types::IssueSeverity, IssueFilterOptions};
+
+                fn filter_issues_by_mode(
+                    issues: Vec<atls_core::Issue>,
+                    mode: &str,
+                ) -> Vec<atls_core::Issue> {
+                    if mode == "all" {
+                        return issues;
+                    }
+                    if mode == "correctness" || mode == "security" {
+                        return issues
+                            .into_iter()
+                            .filter(|i| !i.category.eq_ignore_ascii_case("style"))
+                            .collect();
+                    }
+                    issues
+                }
                 
                 let file_paths: Option<Vec<String>> = params
                     .get("file_paths")
@@ -4999,6 +5073,11 @@ pub async fn atls_batch_query(
                 let severity_str = params.get("severity").and_then(|v| v.as_str());
                 let limit = params.get("limit").and_then(|v| v.as_u64()).map(|v| v as u32);
                 let offset = params.get("offset").and_then(|v| v.as_u64()).map(|v| v as u32);
+                let issue_mode = params
+                    .get("issue_mode")
+                    .or_else(|| params.get("mode"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("correctness");
                 
                 let mut filter = IssueFilterOptions::default();
                 if let Some(cat) = category {
@@ -5039,6 +5118,7 @@ pub async fn atls_batch_query(
                 
                 match project.query().find_issues(&filter) {
                     Ok(issues) => {
+                        let issues = filter_issues_by_mode(issues, issue_mode);
                         let matching_total =
                             matching_total_res.unwrap_or_else(|_| issues.len() as u64);
                         // Get file path mapping

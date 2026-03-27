@@ -457,6 +457,7 @@ pub async fn find_issues(
     _include_snippets: Option<bool>,
     file_paths: Option<Vec<String>>,
     target_directory: Option<String>,
+    issue_mode: Option<String>,
 ) -> Result<Vec<Issue>, String> {
     let state = app.state::<AtlsProjectState>();
     let (project, _root_path_resolved) = {
@@ -509,9 +510,13 @@ pub async fn find_issues(
             filter.file_patterns = Some(patterns);
         }
         
-        let issues = project.query().find_issues(&filter)
+        let mut issues = project.query().find_issues(&filter)
             .map_err(|e| format!("Failed to query issues: {}", e))?;
-        
+        let mode = issue_mode.as_deref().unwrap_or("correctness");
+        if mode == "correctness" || mode == "security" {
+            issues.retain(|i| !i.category.eq_ignore_ascii_case("style"));
+        }
+
         // Preload file ID -> path mapping to avoid repeated DB locks
         let file_path_map: std::collections::HashMap<i64, String> = {
             let conn = project.query().db().conn();

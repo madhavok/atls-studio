@@ -7,6 +7,7 @@ import { estimateTokens, SHORT_HASH_LEN, sliceContentByLines } from '../../../ut
 import { PROTECTED_RECENT_ROUNDS } from '../../promptMemory';
 import { parseHashRef } from '../../../utils/hashRefParsers';
 import { invoke } from '@tauri-apps/api/core';
+import { normalizeHashRefsToStrings } from '../paramNorm';
 
 /** If ref is `h:HASH:7-10` / `h:HASH:1-3,5-7`, extract line spec for staged snippet metadata (drift rebase). */
 function lineSpecFromHashRef(rawRef: string): string | undefined {
@@ -472,8 +473,10 @@ function materializeFileRefsContentIfNeeded(out: StepOutput, store: ContextStore
 }
 
 export const handlePin: OpHandler = async (params, ctx) => {
-  const rawHashes = params.hashes as string[] | undefined;
-  if (!rawHashes?.length) return err('pin: ERROR missing hashes param');
+  const rawHashes = normalizeHashRefsToStrings(params.hashes ?? params.refs);
+  if (!rawHashes.length) {
+    return err('pin: ERROR missing hashes param (expected string[], h:… strings, or {ref}/{hash}/{h} objects)');
+  }
 
   const { expanded, notes } = ctx.expandSetRefsInHashes(rawHashes);
 
@@ -484,14 +487,15 @@ export const handlePin: OpHandler = async (params, ctx) => {
 
   // Resolve step IDs to their output chunk hashes (pin-by-step-ID support)
   const resolved = expanded.flatMap(ref => {
-    if (ref.startsWith('h:')) return [ref];
-    const stepOutput = ctx.getStepOutput?.(ref);
+    const token = typeof ref === 'string' ? ref : String(ref);
+    if (token.startsWith('h:')) return [token];
+    const stepOutput = ctx.getStepOutput?.(token);
     if (stepOutput?.refs?.length) {
       materializeFileRefsContentIfNeeded(stepOutput, ctx.store());
-      notes.push(`${ref} \u2192 ${stepOutput.refs.join(', ')}`);
+      notes.push(`${token} \u2192 ${stepOutput.refs.join(', ')}`);
       return stepOutput.refs;
     }
-    return [ref];
+    return [token];
   });
 
   const pinShape = (params.shape as string) || undefined;

@@ -36,6 +36,9 @@ interface BackendContextEntry {
 
 const READ_TIMEOUT_MS = 5000;
 
+/** Max paths per backend `context` full query to avoid timeouts on large trees (e.g. intent.survey). */
+const READ_SHAPED_CONTEXT_CHUNK = 400;
+
 /** Reject values that are clearly content, not file paths or refs. */
 function validatePathParam(value: unknown, paramName: string): string | null {
   if (value == null) return null;
@@ -525,17 +528,29 @@ export const handleReadShaped: OpHandler = async (params, ctx) => {
 
   for (const note of shapedNotes) lines.push(`read_shaped: ${note}`);
 
+  let chunkLoadErrors = 0;
   try {
     const fileBacked = shapedItems.filter((item): item is ExpandedFilePath & { kind: 'path' } => item.kind === 'path');
     const backendFullByPath = new Map<string, BackendContextEntry>();
     if (fileBacked.length > 0) {
-      const fullResult = await ctx.atlsBatchQuery('context', { type: 'full', file_paths: fileBacked.map(item => item.path) }) as Record<string, unknown>;
-      const items = Array.isArray(fullResult.results) ? fullResult.results : [];
-      for (const item of items) {
-        if (!item || typeof item !== 'object') continue;
-        const entry = item as BackendContextEntry;
-        const source = extractFilePath(entry as unknown as Record<string, unknown>);
-        if (source) backendFullByPath.set(source, entry);
+      const allPaths = fileBacked.map(item => item.path);
+      for (let off = 0; off < allPaths.length; off += READ_SHAPED_CONTEXT_CHUNK) {
+        const slice = allPaths.slice(off, off + READ_SHAPED_CONTEXT_CHUNK);
+        try {
+          const fullResult = await ctx.atlsBatchQuery('context', { type: 'full', file_paths: slice }) as Record<string, unknown>;
+          const items = Array.isArray(fullResult.results) ? fullResult.results : [];
+          for (const item of items) {
+            if (!item || typeof item !== 'object') continue;
+            const entry = item as BackendContextEntry;
+            const source = extractFilePath(entry as unknown as Record<string, unknown>);
+            if (source) backendFullByPath.set(source, entry);
+          }
+        } catch (chunkErr) {
+          chunkLoadErrors += 1;
+          lines.push(
+            `read_shaped: context full chunk [${off}..${off + slice.length}) → ERROR ${chunkErr instanceof Error ? chunkErr.message : String(chunkErr)}`,
+          );
+        }
       }
     }
     for (const item of shapedItems) {
@@ -558,17 +573,29 @@ export const handleReadShaped: OpHandler = async (params, ctx) => {
       }
     }
   } catch (readErr) {
-    return err(`read_shaped: ERROR ${readErr instanceof Error ? readErr.message : String(readErr)}`);
+    if (allRefs.length === 0) {
+      return err(`read_shaped: ERROR ${readErr instanceof Error ? readErr.message : String(readErr)}`);
+    }
+    lines.push(`read_shaped: ERROR (after partial progress) ${readErr instanceof Error ? readErr.message : String(readErr)}`);
   }
 
   const store = ctx.store();
   const freshnessHint = getFreshnessHintForRefs(store, allRefs);
-  const summary = lines.join('\n');
+  const partialNote =
+    chunkLoadErrors > 0 && allRefs.length > 0
+      ? `\nread_shaped: NOTE partial success — ${chunkLoadErrors} context chunk(s) failed; ${allRefs.length} ref(s) staged.`
+      : '';
+  const summary = lines.join('\n') + partialNote;
+  const shapedOk = allRefs.length > 0;
   return {
-    kind: 'file_refs', ok: true, refs: allRefs, summary: freshnessHint ? `${summary}\n${freshnessHint}` : summary,
+    kind: 'file_refs',
+    ok: shapedOk,
+    refs: allRefs,
+    summary: freshnessHint ? `${summary}\n${freshnessHint}` : summary,
     tokens: totalTokensDelta,
     content: { results: shapedResults },
     ...(freshnessHint ? { _hash_warnings: [freshnessHint] } : {}),
+    ...(!shapedOk ? { error: 'read_shaped: no files staged (context chunks and/or per-file reads failed)' } : {}),
   };
 };
 

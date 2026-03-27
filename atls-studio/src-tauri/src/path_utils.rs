@@ -295,24 +295,13 @@ pub(crate) enum ManifestKind {
     Java,
     CSharp,
     Swift,
+    Dart,
 }
 
-/// Find the nearest manifest file by walking up from `path`.
-/// Returns (ManifestKind, directory containing manifest).
-/// Priority order: package.json, Cargo.toml, go.mod, pyproject.toml, requirements.txt,
-/// pom.xml, build.gradle.kts, build.gradle, CMakeLists.txt, Makefile, Package.swift,
-/// *.sln/*.csproj, composer.json, Gemfile.
-pub(crate) fn find_manifest_nearest(
-    path: &std::path::Path,
+/// Manifest files in `dir` only (no parent walk). Same priority as `find_manifest_nearest`.
+pub(crate) fn manifest_files_in_dir(
+    current: &std::path::Path,
 ) -> Option<(ManifestKind, std::path::PathBuf)> {
-    let mut current = if path.is_file() {
-        path.parent()?.to_path_buf()
-    } else if path.is_dir() {
-        path.to_path_buf()
-    } else {
-        path.parent()?.to_path_buf()
-    };
-
     let manifest_checkers: &[(&str, ManifestKind)] = &[
         ("package.json", ManifestKind::Node),
         ("Cargo.toml", ManifestKind::Rust),
@@ -327,22 +316,93 @@ pub(crate) fn find_manifest_nearest(
         ("Package.swift", ManifestKind::Swift),
         ("composer.json", ManifestKind::Php),
         ("Gemfile", ManifestKind::Ruby),
+        ("pubspec.yaml", ManifestKind::Dart),
     ];
 
-    loop {
-        for (manifest_file, kind) in manifest_checkers {
-            if current.join(manifest_file).exists() {
-                return Some((*kind, current.clone()));
+    for (manifest_file, kind) in manifest_checkers {
+        if current.join(manifest_file).exists() {
+            return Some((*kind, current.to_path_buf()));
+        }
+    }
+    if let Ok(entries) = std::fs::read_dir(current) {
+        for e in entries.flatten() {
+            let n = e.file_name().to_string_lossy().to_string();
+            if n.ends_with(".sln") || n.ends_with(".csproj") {
+                return Some((ManifestKind::CSharp, current.to_path_buf()));
             }
         }
-        // C#: check for *.sln or *.csproj in directory
-        if let Ok(entries) = std::fs::read_dir(&current) {
+    }
+    None
+}
+
+/// Bounded depth-first scan for manifests when the project root has no upward match (nested packages).
+pub(crate) fn find_manifest_candidates_under(
+    root: &std::path::Path,
+    max_depth: usize,
+) -> Vec<(ManifestKind, std::path::PathBuf)> {
+    use std::collections::HashSet;
+    let mut results = Vec::new();
+    let mut seen = HashSet::<String>::new();
+
+    fn walk(
+        dir: &std::path::Path,
+        depth: usize,
+        max_depth: usize,
+        results: &mut Vec<(ManifestKind, std::path::PathBuf)>,
+        seen: &mut HashSet<String>,
+    ) {
+        if depth > max_depth {
+            return;
+        }
+        let name = dir.file_name().and_then(|s| s.to_str()).unwrap_or("");
+        if matches!(
+            name,
+            "node_modules" | "target" | "dist" | "build" | ".git" | "vendor" | "__pycache__" | ".dart_tool"
+        ) {
+            return;
+        }
+        if let Some((k, d)) = manifest_files_in_dir(dir) {
+            let key = d.to_string_lossy().to_string();
+            if seen.insert(key) {
+                results.push((k, d));
+            }
+        }
+        if depth == max_depth {
+            return;
+        }
+        if let Ok(entries) = std::fs::read_dir(dir) {
             for e in entries.flatten() {
-                let n = e.file_name().to_string_lossy().to_string();
-                if n.ends_with(".sln") || n.ends_with(".csproj") {
-                    return Some((ManifestKind::CSharp, current.clone()));
+                let p = e.path();
+                if p.is_dir() {
+                    walk(&p, depth + 1, max_depth, results, seen);
                 }
             }
+        }
+    }
+
+    walk(root, 0, max_depth, &mut results, &mut seen);
+    results
+}
+
+/// Find the nearest manifest file by walking up from `path`.
+/// Returns (ManifestKind, directory containing manifest).
+/// Priority order: package.json, Cargo.toml, go.mod, pyproject.toml, requirements.txt,
+/// pom.xml, build.gradle.kts, build.gradle, CMakeLists.txt, Makefile, Package.swift,
+/// pubspec.yaml, *.sln/*.csproj, composer.json, Gemfile.
+pub(crate) fn find_manifest_nearest(
+    path: &std::path::Path,
+) -> Option<(ManifestKind, std::path::PathBuf)> {
+    let mut current = if path.is_file() {
+        path.parent()?.to_path_buf()
+    } else if path.is_dir() {
+        path.to_path_buf()
+    } else {
+        path.parent()?.to_path_buf()
+    };
+
+    loop {
+        if let Some(m) = manifest_files_in_dir(&current) {
+            return Some(m);
         }
         if !current.pop() {
             break;
@@ -507,6 +567,31 @@ mod tests {
         std::fs::create_dir_all(&sub).unwrap();
         let found = find_manifest_nearest(&sub);
         assert!(found.is_none());
+    }
+
+    #[test]
+    fn find_manifest_nearest_finds_pubspec() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::write(root.join("pubspec.yaml"), "name: x\n").unwrap();
+        let found = find_manifest_nearest(root);
+        assert!(found.is_some());
+        let (kind, path) = found.unwrap();
+        assert_eq!(kind, ManifestKind::Dart);
+        assert_eq!(path, root);
+    }
+
+    #[test]
+    fn find_manifest_candidates_under_finds_nested_pubspec() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let pkg = root.join("packages").join("bloc");
+        std::fs::create_dir_all(&pkg).unwrap();
+        std::fs::write(pkg.join("pubspec.yaml"), "name: bloc\n").unwrap();
+        let c = find_manifest_candidates_under(root, 4);
+        assert!(c
+            .iter()
+            .any(|(k, p)| *k == ManifestKind::Dart && p.to_string_lossy().contains("bloc")));
     }
 
     #[test]

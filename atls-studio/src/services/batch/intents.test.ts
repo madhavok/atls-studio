@@ -414,6 +414,14 @@ describe('intent.survey resolver', () => {
     const result = resolveSurvey({ ...params, force: true }, ctx);
     expect(result.steps.length).toBeGreaterThan(0);
   });
+
+  it('force:true → prepends session.bb.delete to invalidate cached tree key', () => {
+    const bbKeys = new Map([['tree:src/services', { tokens: 200 }]]);
+    const ctx = emptyContext({ bbKeys });
+    const result = resolveSurvey({ ...params, force: true }, ctx);
+    expect(result.steps[0]?.use).toBe('session.bb.delete');
+    expect(result.steps[0]?.with).toEqual({ keys: ['tree:src/services'] });
+  });
 });
 
 // ---------------------------------------------------------------------------

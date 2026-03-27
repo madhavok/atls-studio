@@ -1,3 +1,6 @@
+use std::ffi::OsString;
+use std::path::PathBuf;
+
 use super::*;
 pub(crate) const GIT_CMD_TIMEOUT_SECS: u64 = 30;
 
@@ -79,6 +82,51 @@ pub(crate) async fn run_git_command(args: Vec<String>, cwd: String) -> Result<st
     Err(format!("Git index.lock contention after {} retries: {}", GIT_INDEX_LOCK_RETRIES + 1, last_err))
 }
 
+/// Prepends `ATLS_TOOLCHAIN_PATH` to `PATH` so verify/build subprocesses see the same tools as a
+/// configured shell (GUI apps often lack nvm/fnm/volta paths). `system.exec` uses the PTY and may
+/// still differ; see tool docs.
+pub(crate) fn path_for_atls_subprocess() -> OsString {
+    let base = std::env::var_os("PATH").unwrap_or_default();
+    match std::env::var("ATLS_TOOLCHAIN_PATH") {
+        Ok(extra) if !extra.is_empty() => {
+            let sep: &str = if cfg!(windows) { ";" } else { ":" };
+            let mut merged = OsString::from(extra);
+            merged.push(std::ffi::OsStr::new(sep));
+            merged.push(&base);
+            merged
+        }
+        _ => base,
+    }
+}
+
+/// First token of `cmd_str` resolved with the same PATH as `run_shell_cmd_async` (where/which).
+pub(crate) fn probe_executable(cmd_str: &str) -> Option<String> {
+    let first = cmd_str.split_whitespace().next()?;
+    let token = first
+        .trim_matches('"')
+        .trim_matches('\'')
+        .trim();
+    if token.is_empty() {
+        return None;
+    }
+    if PathBuf::from(token).is_absolute() || token.contains('/') || token.contains('\\') {
+        return Some(format!("{}", token));
+    }
+    let path = path_for_atls_subprocess();
+    let mut cmd = std::process::Command::new(if cfg!(windows) { "where.exe" } else { "which" });
+    cmd.arg(token).env("PATH", &path);
+    #[cfg(windows)]
+    cmd.creation_flags(0x08000000);
+    let output = cmd.output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .find(|l| !l.trim().is_empty())
+        .map(|s| s.trim().to_string())
+}
+
 /// Run a shell command with timeout, async-safe via spawn_blocking.
 /// Mirrors `run_git_command` pattern to avoid blocking the tokio runtime.
 pub(crate) async fn run_shell_cmd_async(
@@ -86,6 +134,7 @@ pub(crate) async fn run_shell_cmd_async(
     working_dir: PathBuf,
     timeout_secs: u64,
 ) -> Result<std::process::Output, String> {
+    let path_env = path_for_atls_subprocess();
     let result = tokio::time::timeout(
         std::time::Duration::from_secs(timeout_secs),
         tokio::task::spawn_blocking(move || {
@@ -94,6 +143,7 @@ pub(crate) async fn run_shell_cmd_async(
             cmd.arg(shell_arg)
                 .arg(&cmd_str)
                 .current_dir(&working_dir)
+                .env("PATH", &path_env)
                 .stdout(std::process::Stdio::piped())
                 .stderr(std::process::Stdio::piped());
             #[cfg(windows)]

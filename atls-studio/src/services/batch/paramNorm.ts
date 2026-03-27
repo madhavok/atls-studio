@@ -43,6 +43,7 @@ const GLOBAL_ALIASES: Readonly<Record<string, string>> = {
  */
 const OP_ALIASES: Readonly<Partial<Record<OperationKind, Readonly<Record<string, string>>>>> = {
   'search.code': { query: 'queries' },
+  'search.issues': { mode: 'issue_mode' },
   'search.symbol': { name: 'symbol_names', query: 'symbol_names' },
   'analyze.impact': { from: 'file_paths' },
   'analyze.blast_radius': { from: 'file_paths' },
@@ -122,6 +123,101 @@ const KEY_TO_KEYS_OPS = new Set<OperationKind>([
   'session.bb.delete',
 ]);
 
+const BB_WRITE_ALIASES: Readonly<Record<string, string>> = {
+  derivedFrom: 'derived_from',
+};
+
+// ---------------------------------------------------------------------------
+// file_paths coercion (batch bindings, model JSON)
+// ---------------------------------------------------------------------------
+
+/**
+ * Coerce `file_paths` from bindings / nested batch JSON into deduped path/ref strings.
+ * Accepts: string, string[], nested arrays, `{ ref }`, `{ path }`, `{ file }`, `{ file_path }`.
+ */
+export function coerceFilePathsArray(value: unknown): string[] {
+  const out: string[] = [];
+  const walk = (v: unknown): void => {
+    if (v == null) return;
+    if (typeof v === 'string') {
+      const t = v.trim();
+      if (t) out.push(t);
+      return;
+    }
+    if (Array.isArray(v)) {
+      for (const x of v) walk(x);
+      return;
+    }
+    if (typeof v === 'object') {
+      const o = v as Record<string, unknown>;
+      if (typeof o.ref === 'string' && o.ref.trim()) {
+        out.push(o.ref.trim());
+        return;
+      }
+      if (typeof o.path === 'string' && o.path.trim()) {
+        out.push(o.path.trim());
+        return;
+      }
+      if (typeof o.file === 'string' && o.file.trim()) {
+        out.push(o.file.trim());
+        return;
+      }
+      if (typeof o.file_path === 'string' && o.file_path.trim()) {
+        out.push(o.file_path.trim());
+        return;
+      }
+    }
+  };
+  walk(value);
+  const seen = new Set<string>();
+  const dedup: string[] = [];
+  for (const p of out) {
+    const k = p.replace(/\\/g, '/').toLowerCase();
+    if (!seen.has(k)) {
+      seen.add(k);
+      dedup.push(p);
+    }
+  }
+  return dedup;
+}
+
+/**
+ * Coerce `hashes` / `refs` for session.pin (and similar) from batch JSON:
+ * strings, nested arrays, `{ ref }`, `{ hash }`, `{ h }`.
+ */
+export function normalizeHashRefsToStrings(value: unknown): string[] {
+  const out: string[] = [];
+  const walk = (v: unknown): void => {
+    if (v == null) return;
+    if (typeof v === 'string') {
+      const t = v.trim();
+      if (t) out.push(t);
+      return;
+    }
+    if (Array.isArray(v)) {
+      for (const x of v) walk(x);
+      return;
+    }
+    if (typeof v === 'object') {
+      const o = v as Record<string, unknown>;
+      if (typeof o.ref === 'string' && o.ref.trim()) {
+        out.push(o.ref.trim());
+        return;
+      }
+      if (typeof o.hash === 'string' && o.hash.trim()) {
+        out.push(o.hash.trim());
+        return;
+      }
+      if (typeof o.h === 'string' && o.h.trim()) {
+        out.push(o.h.trim());
+        return;
+      }
+    }
+  };
+  walk(value);
+  return out;
+}
+
 // ---------------------------------------------------------------------------
 // normalizeStepParams — the single entry point
 // ---------------------------------------------------------------------------
@@ -147,6 +243,7 @@ export function normalizeStepParams(
 
     const canonical =
       opAliases?.[key] ??
+      (op === 'session.bb.write' ? BB_WRITE_ALIASES[key] : undefined) ??
       GLOBAL_ALIASES[key] ??
       key;
 
