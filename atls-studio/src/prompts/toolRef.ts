@@ -24,6 +24,7 @@ search.patterns file_paths?:[] patterns?:[]
 search.memory query:"" regions?:[active,archived,dormant,bb,staged,dropped] case_sensitive?:bool max_results?:N
 analyze.deps|calls|structure|impact|blast_radius|extract_plan file_paths:[] — common: filter?:"" limit?:N symbol_names?:[] (system.help for full params per op)
 change.edit file_path:"" line_edits:[{line:N, action:"replace", count:M, content:"new code"}] — preferred: replaces lines N..N+M-1, no old text needed
+  line: "end" | -1 (last line, no prior read) | symbol:"fn(name)" + position — Rust resolves; replace/replace_body get end_line from symbol span when omitted
   also: line_edits:[{line:N, action:"insert_before"|"insert_after", content:"...", reindent?:true}]
   also: line_edits:[{line:N, action:"delete", count:M}] — spans must keep valid syntax; partial deletes may fail with syntax_error_after_edit
   also: line_edits:[{line:N, action:"move", count:M, destination:D, reindent?:true}]

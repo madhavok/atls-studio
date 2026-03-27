@@ -709,7 +709,8 @@ export interface AnalyzeExtractPlanParams {
 // -- change -----------------------------------------------------------------
 
 export interface LineEdit {
-  line?: number;
+  /** 1-based line, or `"end"` / negative index (resolved in Rust against file lines). */
+  line?: number | string;
   /** If set, overrides count: 1-based inclusive end line for replace/delete/move spans. */
   end_line?: number;
   symbol?: string;

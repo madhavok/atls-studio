@@ -10372,61 +10372,13 @@ pub async fn atls_batch_query(
                     return Err("line_edits requires non-empty line_edits array with {line, action, content?, count?}".to_string());
                 }
 
-                // Resolve symbol-relative positions to line numbers
-                let file_lookup = normalize_for_lookup(&file_path, project_root);
-                for edit in &mut edits {
-                    if let Some(ref sym_name) = edit.symbol {
-                        let pos = edit.position.as_deref().unwrap_or("before");
-                        let range = project.query().get_symbol_line_range(&file_lookup, sym_name)
-                            .or_else(|_| project.query().get_symbol_line_range(&file_path, sym_name))
-                            .map_err(|e| format!("Failed to resolve symbol '{}': {}", sym_name, e))?
-                            .ok_or_else(|| format!("Symbol '{}' not found in {}", sym_name, file_path))?;
-
-                        edit.line = match pos {
-                            "before" => range.start_line,
-                            "after" => range.end_line + 1,
-                            "body_start" => {
-                                let resolved_path = resolve_project_path(project_root, &file_path);
-                                let fc = std::fs::read_to_string(&resolved_path)
-                                    .map(|c| normalize_line_endings(&c))
-                                    .unwrap_or_default();
-                                let lines: Vec<&str> = fc.lines().collect();
-                                let s = (range.start_line as usize).saturating_sub(1);
-                                let e = std::cmp::min(range.end_line as usize, lines.len());
-                                let sym_lines: Vec<&str> = lines[s..e].to_vec();
-                                if let Some((body_start, _)) = find_body_bounds(&sym_lines) {
-                                    range.start_line + body_start as u32
-                                } else {
-                                    range.start_line + 1
-                                }
-                            }
-                            "body_end" => {
-                                let resolved_path = resolve_project_path(project_root, &file_path);
-                                let fc = std::fs::read_to_string(&resolved_path)
-                                    .map(|c| normalize_line_endings(&c))
-                                    .unwrap_or_default();
-                                let lines: Vec<&str> = fc.lines().collect();
-                                let s = (range.start_line as usize).saturating_sub(1);
-                                let e = std::cmp::min(range.end_line as usize, lines.len());
-                                let sym_lines: Vec<&str> = lines[s..e].to_vec();
-                                if let Some((_, body_end)) = find_body_bounds(&sym_lines) {
-                                    range.start_line + body_end as u32 - 1
-                                } else {
-                                    range.end_line.saturating_sub(1)
-                                }
-                            }
-                            _ => {
-                                return Err(format!("Unknown position '{}'. Use: before, after, body_start, body_end", pos));
-                            }
-                        };
-                        // Adjust action based on position
-                        if edit.action == "insert_before" || edit.action == "prepend" {
-                            // keep as-is
-                        } else if pos == "after" || pos == "body_end" {
-                            edit.action = "insert_before".to_string();
-                        }
-                    }
-                }
+                crate::resolve_line_edits_symbols_for_file(
+                    project.query(),
+                    project_root,
+                    &file_path,
+                    &mut edits,
+                    false,
+                )?;
 
                 let lint_enabled = params.get("lint").and_then(|v| v.as_bool()).unwrap_or(true);
                 let resolved_path = resolve_project_path(project_root, &file_path);
@@ -11053,54 +11005,13 @@ pub async fn atls_batch_query(
                     if le.is_empty() {
                         return Err("line_edits requires non-empty line_edits array".to_string());
                     }
-                    let file_lookup = normalize_for_lookup(&file_path, project_root);
-                    for edit in &mut le {
-                        if let Some(ref sym_name) = edit.symbol {
-                            let pos = edit.position.as_deref().unwrap_or("before");
-                            let range = project.query().get_symbol_line_range(&file_lookup, sym_name)
-                                .or_else(|_| project.query().get_symbol_line_range(&file_path, sym_name))
-                                .map_err(|e| format!("Failed to resolve symbol '{}': {}", sym_name, e))?
-                                .ok_or_else(|| format!("Symbol '{}' not found in {}", sym_name, file_path))?;
-                            edit.line = match pos {
-                                "before" => range.start_line,
-                                "after" => range.end_line + 1,
-                                "body_start" => {
-                                    let rp = resolve_project_path(project_root, &file_path);
-                                    let fc = std::fs::read_to_string(&rp)
-                                        .map(|c| normalize_line_endings(&c)).unwrap_or_default();
-                                    let flines: Vec<&str> = fc.lines().collect();
-                                    let s = (range.start_line as usize).saturating_sub(1);
-                                    let e = std::cmp::min(range.end_line as usize, flines.len());
-                                    let sym_lines: Vec<&str> = flines[s..e].to_vec();
-                                    if let Some((body_start, _)) = find_body_bounds(&sym_lines) {
-                                        range.start_line + body_start as u32
-                                    } else { range.start_line + 1 }
-                                }
-                                "body_end" => {
-                                    let rp = resolve_project_path(project_root, &file_path);
-                                    let fc = std::fs::read_to_string(&rp)
-                                        .map(|c| normalize_line_endings(&c)).unwrap_or_default();
-                                    let flines: Vec<&str> = fc.lines().collect();
-                                    let s = (range.start_line as usize).saturating_sub(1);
-                                    let e = std::cmp::min(range.end_line as usize, flines.len());
-                                    let sym_lines: Vec<&str> = flines[s..e].to_vec();
-                                    if let Some((_, body_end)) = find_body_bounds(&sym_lines) {
-                                        range.start_line + body_end as u32 - 1
-                                    } else { range.end_line.saturating_sub(1) }
-                                }
-                                _ => return Err(format!("Unknown position '{}'. Use: before, after, body_start, body_end", pos)),
-                            };
-                            // Auto-set count for delete when symbol provides the full range
-                            if edit.action == "delete" && edit.count.is_none() && pos == "before" {
-                                edit.count = Some(range.end_line - range.start_line + 1);
-                            }
-                            if edit.action == "insert_before" || edit.action == "prepend" {
-                                // keep as-is
-                            } else if pos == "after" || pos == "body_end" {
-                                edit.action = "insert_before".to_string();
-                            }
-                        }
-                    }
+                    crate::resolve_line_edits_symbols_for_file(
+                        project.query(),
+                        project_root,
+                        &file_path,
+                        &mut le,
+                        true,
+                    )?;
                     let draft_stale_policy = params.get("stale_policy")
                         .and_then(|v| v.as_str())
                         .unwrap_or("block");
@@ -13420,8 +13331,17 @@ pub async fn atls_batch_query(
             "batch_edits" => {
                 let edits_val = params.get("edits")
                     .ok_or_else(|| "batch_edits requires 'edits' array".to_string())?;
-                let edits: Vec<hash_resolver::BatchEditEntry> = serde_json::from_value(edits_val.clone())
+                let mut edits: Vec<hash_resolver::BatchEditEntry> = serde_json::from_value(edits_val.clone())
                     .map_err(|e| format!("Invalid batch_edits format: {}. Expected: [{{file, content_hash?, line_edits:[...]}}]", e))?;
+                for entry in &mut edits {
+                    crate::resolve_line_edits_symbols_for_file(
+                        project.query(),
+                        project_root,
+                        &entry.file,
+                        &mut entry.line_edits,
+                        true,
+                    )?;
+                }
                 let hr_state = app.state::<hash_resolver::HashRegistryState>();
                 let mut registry = hr_state.registry.lock().await;
                 let ss_state = app.state::<crate::snapshot::SnapshotServiceState>();
@@ -14747,7 +14667,7 @@ pub async fn atls_batch_query(
                                             None => (current.lines().count() as u32).saturating_sub(start) + 1,
                                         };
                                         LineEdit {
-                                            line: adj_start,
+                                            line: crate::LineCoordinate::Abs(adj_start),
                                             action: "delete".to_string(),
                                             content: None,
                                             count: Some(orig_count),
@@ -14971,7 +14891,7 @@ pub async fn atls_batch_query(
                                 raw_line
                             };
                             let edit = LineEdit {
-                                line: adjusted_line,
+                                line: crate::LineCoordinate::Abs(adjusted_line),
                                 action: upd.get("action").and_then(|v| v.as_str()).unwrap_or("replace").to_string(),
                                 content: upd.get("content").and_then(|v| v.as_str()).map(|s| s.to_string()),
                                 count: upd.get("count").and_then(|v| v.as_u64()).map(|n| n as u32),

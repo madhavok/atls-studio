@@ -100,8 +100,18 @@ interface PositionalDelta {
  * Net line-count change from a single line edit (matches Rust apply_line_edits semantics
  * for insert/delete/replace). Used for positional rebase math.
  */
+/** Line index for intra-step rebase: only fixed positive snapshot lines participate. */
+function snapshotLineForRebase(o: Record<string, unknown>): number {
+  const line = o.line;
+  if (line === 'end') return 0;
+  if (typeof line === 'string' && /^\s*-\d+\s*$/.test(line)) return 0;
+  if (typeof line === 'number' && Number.isFinite(line) && line < 0) return 0;
+  if (typeof line === 'number' && Number.isFinite(line) && line > 0) return line;
+  return 0;
+}
+
 function effectiveLineSpanCount(e: Record<string, unknown>): number {
-  const line = typeof e.line === 'number' && Number.isFinite(e.line) ? e.line : 0;
+  const line = snapshotLineForRebase(e);
   const endLine = typeof e.end_line === 'number' && Number.isFinite(e.end_line) ? e.end_line : null;
   if (endLine != null && line > 0) return Math.max(0, endLine - line + 1);
   const count = typeof e.count === 'number' && Number.isFinite(e.count) ? e.count : 1;
@@ -140,7 +150,7 @@ function computePositionalDeltas(lineEdits: unknown): PositionalDelta[] {
   for (const edit of lineEdits) {
     if (!edit || typeof edit !== 'object') continue;
     const e = edit as Record<string, unknown>;
-    const line = typeof e.line === 'number' && Number.isFinite(e.line) ? e.line : 0;
+    const line = snapshotLineForRebase(e);
     const d = computeSingleEditNetDelta(e);
     const originalLine = line > 0 ? line - cumulativeDelta : 0;
     if (d !== 0 && originalLine > 0) deltas.push({ line: originalLine, delta: d });
@@ -172,7 +182,7 @@ function rebaseIntraStepSnapshotLineEdits(lineEdits: unknown[]): void {
   const snapshotLines: number[] = lineEdits.map((edit) => {
     if (!edit || typeof edit !== 'object') return 0;
     const o = edit as Record<string, unknown>;
-    const line = typeof o.line === 'number' && Number.isFinite(o.line) ? o.line : 0;
+    const line = snapshotLineForRebase(o);
     const hasSymbol = o.symbol != null && typeof o.symbol === 'string';
     if (line > 0 && !hasSymbol) return line;
     return 0;
@@ -189,7 +199,8 @@ function rebaseIntraStepSnapshotLineEdits(lineEdits: unknown[]): void {
     }
     const o = lineEdits[i] as Record<string, unknown>;
     const hasSymbol = o.symbol != null && typeof o.symbol === 'string';
-    if (typeof o.line === 'number' && o.line > 0 && !hasSymbol) {
+    const snap = snapshotLineForRebase(o);
+    if (snap > 0 && !hasSymbol) {
       o.line = targetSnap + shift;
     }
   }

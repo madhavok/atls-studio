@@ -1094,6 +1094,22 @@ function coalesceExplicitLineEdits(lineEdits: Array<Record<string, unknown>>): A
   return lineEdits.map(edit => ({ ...edit }));
 }
 
+/** Validates `line` for serde / Rust: number (incl. negative), `"end"`, or `0` with symbol. */
+function isValidLineEditLineValue(v: unknown, hasSymbol: boolean): boolean {
+  if (v == null) return false;
+  if (typeof v === 'number') {
+    if (!Number.isInteger(v) || !Number.isFinite(v)) return false;
+    if (v === 0 && !hasSymbol) return false;
+    return true;
+  }
+  if (typeof v === 'string') {
+    const t = v.trim();
+    if (t === 'end') return true;
+    return /^-?\d+$/.test(t);
+  }
+  return false;
+}
+
 function formatDisplayOnlyRefError(refs: string[]): StepOutput {
   const payload = {
     error: 'display_only_refs_not_edit_safe',
@@ -1177,7 +1193,7 @@ function resolveEditOperation(params: Record<string, unknown>): { operation: str
     const VALID_ACTIONS_HINT =
       'insert_before|insert_after|prepend|append|replace|replace_body|delete|move';
     // Validate each entry: must have (symbol or line) and explicit valid action. No silent defaults.
-    // Backend LineEdit requires line: u32 for serde; when symbol present without line, line=0 signals resolve-from-symbol.
+    // Backend accepts line as number, "end", or negative index; symbol-only uses line=0 for resolve-from-symbol.
     const injectedLine = typeof params.line === 'number' && Number.isFinite(params.line) && params.line > 0
       ? params.line as number
       : undefined;
@@ -1207,8 +1223,12 @@ function resolveEditOperation(params: Record<string, unknown>): { operation: str
           { index: i, action },
         );
       }
-      if (hasLine && (typeof o.line !== 'number' || !Number.isInteger(o.line) || o.line <= 0)) {
-        throwEditValidationError(`line_edits[${i}] line must be a positive integer`, 'invalid_line_edit', { index: i, line: o.line });
+      if (hasLine && !isValidLineEditLineValue(o.line, hasSymbol)) {
+        throwEditValidationError(
+          `line_edits[${i}] line must be an integer (positive, negative from end, or 0 with symbol), or "end"`,
+          'invalid_line_edit',
+          { index: i, line: o.line },
+        );
       }
       if (hasSymbol && !hasLine) o.line = 0; // backend serde contract: 0 = resolve from symbol
       if (action === 'move') {

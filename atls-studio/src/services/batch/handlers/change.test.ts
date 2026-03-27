@@ -195,6 +195,26 @@ describe('line_edits validation', () => {
     expect((out.content as { error_class?: string })?.error_class).toBe('invalid_line_edit');
   });
 
+  it('accepts line as end or negative index', async () => {
+    const atlsBatchQuery = vi.fn().mockResolvedValue({});
+    const ctx = {
+      atlsBatchQuery,
+      store: () => ({ getStats: () => ({}), getPinnedCount: () => 0, recordMemoryEvent: () => {}, recordRebindOutcomes: () => {} }),
+    } as unknown as Parameters<typeof handleEdit>[1];
+    const out = await handleEdit(
+      {
+        file: 'a.ts',
+        snapshot_hash: 'abc',
+        line_edits: [
+          { line: 'end', action: 'insert_after', content: '// x' },
+          { line: -1, action: 'replace', count: 1, content: 'y' },
+        ],
+      },
+      ctx,
+    );
+    expect(out.ok).toBe(true);
+  });
+
   it('passes sequential line edits through without overlap rejection', async () => {
     // Sequential semantics: replace L3 count=2, then delete L4 is valid
     // (the delete targets the post-replace state, not the original).

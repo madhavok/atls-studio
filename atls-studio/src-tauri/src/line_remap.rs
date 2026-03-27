@@ -1,4 +1,4 @@
-use crate::LineEdit;
+use crate::{LineCoordinate, LineEdit};
 
 /// Line mapping from old (shadow) line numbers to new (current) line numbers.
 /// Index 0 is unused; index i corresponds to old 1-based line i.
@@ -74,18 +74,20 @@ pub fn remap_edits(edits: &mut [LineEdit], map: &LineMap, shadow_hash_short: &st
     let mut notices = Vec::new();
 
     for edit in edits.iter_mut() {
-        if edit.line == 0 {
-            continue;
-        }
-        if let Some(new_line) = map.remap(edit.line) {
-            if new_line != edit.line {
-                let delta = new_line as i64 - edit.line as i64;
+        let old_abs = match &edit.line {
+            LineCoordinate::Abs(0) => continue,
+            LineCoordinate::Abs(n) => *n,
+            LineCoordinate::End | LineCoordinate::Neg(_) => continue,
+        };
+        if let Some(new_line) = map.remap(old_abs) {
+            if new_line != old_abs {
+                let delta = new_line as i64 - old_abs as i64;
                 let sign = if delta > 0 { "+" } else { "" };
                 notices.push(format!(
                     "line_remapped: edit L{}→L{} via shadow diff (shadow h:{}, delta {}{})",
-                    edit.line, new_line, shadow_hash_short, sign, delta
+                    old_abs, new_line, shadow_hash_short, sign, delta
                 ));
-                edit.line = new_line;
+                edit.line = LineCoordinate::Abs(new_line);
             }
         }
         // None → line was in a changed hunk; leave edit.line as-is
@@ -198,7 +200,7 @@ mod tests {
 
     fn make_edit(line: u32, action: &str, content: Option<&str>) -> LineEdit {
         LineEdit {
-            line,
+            line: LineCoordinate::Abs(line),
             action: action.to_string(),
             content: content.map(|s| s.to_string()),
             count: None,
@@ -296,8 +298,8 @@ mod tests {
 
         let notices = remap_edits(&mut edits, &map, "abc123");
 
-        assert_eq!(edits[0].line, 55); // shifted +5
-        assert_eq!(edits[1].line, 10); // before insertion, unchanged
+        assert_eq!(edits[0].line, LineCoordinate::Abs(55)); // shifted +5
+        assert_eq!(edits[1].line, LineCoordinate::Abs(10)); // before insertion, unchanged
         assert_eq!(notices.len(), 1);
         assert!(notices[0].contains("L50→L55"));
     }
@@ -315,7 +317,7 @@ mod tests {
         let notices = remap_edits(&mut edits, &map, "abc123");
 
         // Line 3 is in a changed hunk → not remapped
-        assert_eq!(edits[0].line, 3);
+        assert_eq!(edits[0].line, LineCoordinate::Abs(3));
         assert!(notices.is_empty());
     }
 
@@ -334,7 +336,7 @@ mod tests {
 
         let notices = remap_edits(&mut edits, &map, "def456");
 
-        assert_eq!(edits[0].line, 26); // shifted +1
+        assert_eq!(edits[0].line, LineCoordinate::Abs(26)); // shifted +1
         assert_eq!(notices.len(), 1);
         assert!(notices[0].contains("L25→L26"));
     }
@@ -348,7 +350,7 @@ mod tests {
         let mut edits = vec![make_edit(3, "replace", Some("x"))];
         let notices = remap_edits(&mut edits, &map, "aaa");
 
-        assert_eq!(edits[0].line, 3);
+        assert_eq!(edits[0].line, LineCoordinate::Abs(3));
         assert!(notices.is_empty());
     }
 
@@ -370,7 +372,7 @@ mod tests {
         let mut edits = vec![make_edit(0, "insert_before", Some("x"))];
         let notices = remap_edits(&mut edits, &map, "aaa");
 
-        assert_eq!(edits[0].line, 0); // untouched
+        assert_eq!(edits[0].line, LineCoordinate::Abs(0)); // untouched
         assert!(notices.is_empty());
     }
 
@@ -392,7 +394,7 @@ mod tests {
         let mut edits = vec![make_edit(8, "replace", Some("REPLACED"))];
         let notices = remap_edits(&mut edits, &map, "abc");
 
-        assert_eq!(edits[0].line, 13); // remapped from 8 to 13
+        assert_eq!(edits[0].line, LineCoordinate::Abs(13)); // remapped from 8 to 13
         assert_eq!(notices.len(), 1);
 
         let (result, warnings) = crate::apply_line_edits(&current, &edits).unwrap();
@@ -448,7 +450,7 @@ mod tests {
         let mut edits = vec![make_edit(8, "replace", Some("REPLACED"))];
         let notices = remap_edits(&mut edits, &map, "ghi");
 
-        assert_eq!(edits[0].line, 13);
+        assert_eq!(edits[0].line, LineCoordinate::Abs(13));
         assert_eq!(notices.len(), 1);
 
         let (result, _) = crate::apply_line_edits(&current, &edits).unwrap();

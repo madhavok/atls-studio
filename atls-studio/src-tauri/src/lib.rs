@@ -117,9 +117,89 @@ pub(crate) fn strip_ansi(s: &str) -> String {
 // Content Buffer State (in-memory draft/revise/flush cycle)
 // ============================================================================
 
+/// 1-based line coordinate: absolute line, `"end"`, or negative offset from the last line (`-1` = last).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum LineCoordinate {
+    Abs(u32),
+    /// Last line of the file (1-based = line count in Rust's line model).
+    End,
+    /// `-1` = last line, `-2` = second-to-last, etc.
+    Neg(i32),
+}
+
+impl From<u32> for LineCoordinate {
+    fn from(n: u32) -> Self {
+        LineCoordinate::Abs(n)
+    }
+}
+
+impl std::fmt::Display for LineCoordinate {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            LineCoordinate::Abs(n) => write!(f, "{}", n),
+            LineCoordinate::End => write!(f, "end"),
+            LineCoordinate::Neg(k) => write!(f, "{}", k),
+        }
+    }
+}
+
+impl Serialize for LineCoordinate {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        match self {
+            LineCoordinate::Abs(n) => serializer.serialize_u32(*n),
+            LineCoordinate::End => serializer.serialize_str("end"),
+            LineCoordinate::Neg(k) => serializer.serialize_i32(*k),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for LineCoordinate {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        use serde::de::Error;
+        let v = serde_json::Value::deserialize(deserializer)?;
+        match v {
+            serde_json::Value::Number(num) => {
+                if let Some(i) = num.as_i64() {
+                    if i < 0 {
+                        return Ok(LineCoordinate::Neg(i as i32));
+                    }
+                    return Ok(LineCoordinate::Abs(i as u32));
+                }
+                if let Some(u) = num.as_u64() {
+                    return Ok(LineCoordinate::Abs(u as u32));
+                }
+            }
+            serde_json::Value::String(s) => {
+                if s == "end" {
+                    return Ok(LineCoordinate::End);
+                }
+                if let Ok(n) = s.parse::<i32>() {
+                    if n < 0 {
+                        return Ok(LineCoordinate::Neg(n));
+                    }
+                    if n >= 0 {
+                        return Ok(LineCoordinate::Abs(n as u32));
+                    }
+                }
+                return Err(Error::custom(format!("invalid line string {:?}", s)));
+            }
+            _ => {}
+        }
+        Err(Error::custom(
+            "expected number, \"end\", or negative index for line",
+        ))
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct LineEdit {
-    pub line: u32,
+    pub line: LineCoordinate,
     pub action: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub content: Option<String>,
@@ -442,13 +522,53 @@ fn detect_indent(line: &str) -> &str {
     &line[..line.len() - trimmed.len()]
 }
 
+/// Last 1-based line that `apply_line_edits` treats as "content" for `end` / negative indexing.
+/// When the file ends with `\\n`, Rust keeps an extra empty `lines` entry; callers usually mean
+/// the last non-empty line (the line before that placeholder).
+fn last_meaningful_line_one_based(lines: &[String]) -> usize {
+    let n = lines.len();
+    if n == 0 {
+        return 1;
+    }
+    if n >= 2 && lines[n - 1].is_empty() {
+        n - 1
+    } else {
+        n
+    }
+}
+
 /// Resolve the target line number for a single edit against the current state of `lines`.
 fn resolve_single_edit_line(
     edit: &LineEdit,
-    _lines: &[String],
+    lines: &[String],
     _anchor_warnings: &mut Vec<String>,
 ) -> Result<usize, String> {
-    Ok(edit.line as usize)
+    let n = lines.len();
+    match &edit.line {
+        LineCoordinate::Abs(0) => Err(
+            "line 0 is invalid (use symbol resolution or a positive line, \"end\", or negative index)"
+                .to_string(),
+        ),
+        LineCoordinate::Abs(line) => Ok(*line as usize),
+        LineCoordinate::End => Ok(last_meaningful_line_one_based(lines)),
+        LineCoordinate::Neg(k) => {
+            if *k >= 0 {
+                return Err(format!(
+                    "negative line index expected (e.g. -1 for last line), got {}",
+                    k
+                ));
+            }
+            let anchor = last_meaningful_line_one_based(lines) as i32;
+            let one_based = anchor + 1 + k;
+            if one_based < 1 {
+                return Err(format!(
+                    "line index {} out of range (file has {} lines)",
+                    k, n
+                ));
+            }
+            Ok(one_based as usize)
+        }
+    }
 }
 
 /// Returns (new_content, anchor_miss_warnings). Warnings are non-fatal: the edit
@@ -676,6 +796,94 @@ pub(crate) fn find_body_bounds(symbol_lines: &[&str]) -> Option<(usize, usize)> 
     }
     // body_start = line after the opening `{`, body_end = the closing `}` line
     Some((open_line + 1, close_line))
+}
+
+/// Resolve `symbol` + `position` on each edit to concrete `line` / `end_line` / `count` using the symbol index.
+/// When `draft_style_delete_count` is true, auto-sets `count` for `delete` at `before` (draft semantics).
+/// For `replace` / `replace_body` at `before` without an explicit span, sets `end_line` to the symbol's end line.
+pub(crate) fn resolve_line_edits_symbols_for_file(
+    query: &atls_core::query::QueryEngine,
+    project_root: &std::path::Path,
+    file_path: &str,
+    edits: &mut Vec<LineEdit>,
+    draft_style_delete_count: bool,
+) -> Result<(), String> {
+    let file_lookup = normalize_for_lookup(file_path, project_root);
+    for edit in edits.iter_mut() {
+        if let Some(ref sym_name) = edit.symbol {
+            let pos = edit.position.as_deref().unwrap_or("before");
+            let range = query
+                .get_symbol_line_range(&file_lookup, sym_name)
+                .or_else(|_| query.get_symbol_line_range(file_path, sym_name))
+                .map_err(|e| format!("Failed to resolve symbol '{}': {}", sym_name, e))?
+                .ok_or_else(|| format!("Symbol '{}' not found in {}", sym_name, file_path))?;
+
+            let line_num: u32 = match pos {
+                "before" => range.start_line,
+                "after" => range.end_line.saturating_add(1),
+                "body_start" => {
+                    let resolved_path = resolve_project_path(project_root, file_path);
+                    let fc = std::fs::read_to_string(&resolved_path)
+                        .map(|c| normalize_line_endings(&c))
+                        .unwrap_or_default();
+                    let flines: Vec<&str> = fc.lines().collect();
+                    let s = (range.start_line as usize).saturating_sub(1);
+                    let e = std::cmp::min(range.end_line as usize, flines.len());
+                    let sym_lines: Vec<&str> = flines[s..e].to_vec();
+                    if let Some((body_start, _)) = find_body_bounds(&sym_lines) {
+                        range.start_line + body_start as u32
+                    } else {
+                        range.start_line.saturating_add(1)
+                    }
+                }
+                "body_end" => {
+                    let resolved_path = resolve_project_path(project_root, file_path);
+                    let fc = std::fs::read_to_string(&resolved_path)
+                        .map(|c| normalize_line_endings(&c))
+                        .unwrap_or_default();
+                    let flines: Vec<&str> = fc.lines().collect();
+                    let s = (range.start_line as usize).saturating_sub(1);
+                    let e = std::cmp::min(range.end_line as usize, flines.len());
+                    let sym_lines: Vec<&str> = flines[s..e].to_vec();
+                    if let Some((_, body_end)) = find_body_bounds(&sym_lines) {
+                        range.start_line + body_end as u32 - 1
+                    } else {
+                        range.end_line.saturating_sub(1)
+                    }
+                }
+                _ => {
+                    return Err(format!(
+                        "Unknown position '{}'. Use: before, after, body_start, body_end",
+                        pos
+                    ));
+                }
+            };
+            edit.line = LineCoordinate::Abs(line_num);
+
+            if draft_style_delete_count
+                && edit.action == "delete"
+                && edit.count.is_none()
+                && pos == "before"
+            {
+                edit.count = Some(range.end_line - range.start_line + 1);
+            }
+
+            if (edit.action == "replace" || edit.action == "replace_body")
+                && edit.end_line.is_none()
+                && edit.count.is_none()
+                && pos == "before"
+            {
+                edit.end_line = Some(range.end_line);
+            }
+
+            if edit.action == "insert_before" || edit.action == "prepend" {
+                // keep as-is
+            } else if pos == "after" || pos == "body_end" {
+                edit.action = "insert_before".to_string();
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Shared implementation for symbol-level edit actions.
@@ -2025,11 +2233,11 @@ pub fn run() {
 
 #[cfg(test)]
 mod apply_line_edits_tests {
-    use super::{apply_line_edits, LineEdit};
+    use super::{apply_line_edits, LineCoordinate, LineEdit};
 
     fn le(line: u32, action: &str, content: Option<&str>, count: Option<u32>) -> LineEdit {
         LineEdit {
-            line,
+            line: LineCoordinate::Abs(line),
             action: action.to_string(),
             content: content.map(String::from),
             count,
@@ -2039,6 +2247,52 @@ mod apply_line_edits_tests {
             destination: None,
             reindent: false,
         }
+    }
+
+    #[test]
+    fn line_end_inserts_after_last_line() {
+        let content = "a\nb\nc\n";
+        let edits = vec![LineEdit {
+            line: LineCoordinate::End,
+            action: "insert_after".to_string(),
+            content: Some("d".to_string()),
+            count: None,
+            end_line: None,
+            symbol: None,
+            position: None,
+            destination: None,
+            reindent: false,
+        }];
+        let (result, _) = apply_line_edits(content, &edits).unwrap();
+        assert_eq!(result, "a\nb\nc\nd\n");
+    }
+
+    #[test]
+    fn line_negative_one_targets_last_line() {
+        let content = "a\nb\nc\n";
+        let edits = vec![LineEdit {
+            line: LineCoordinate::Neg(-1),
+            action: "replace".to_string(),
+            content: Some("LAST".to_string()),
+            count: Some(1),
+            end_line: None,
+            symbol: None,
+            position: None,
+            destination: None,
+            reindent: false,
+        }];
+        let (result, _) = apply_line_edits(content, &edits).unwrap();
+        assert!(result.contains("LAST"), "{}", result);
+    }
+
+    #[test]
+    fn line_edit_json_accepts_end_and_negative() {
+        let json = r#"{"line":"end","action":"insert_before","content":"x"}"#;
+        let e: LineEdit = serde_json::from_str(json).unwrap();
+        assert!(matches!(e.line, LineCoordinate::End));
+        let json2 = r#"{"line":-2,"action":"replace","content":"y","count":1}"#;
+        let e2: LineEdit = serde_json::from_str(json2).unwrap();
+        assert!(matches!(e2.line, LineCoordinate::Neg(-2)));
     }
 
     #[test]
@@ -2175,7 +2429,7 @@ function alsoStay() {
                 None => 1,
             };
             LineEdit {
-                line: start,
+                line: LineCoordinate::Abs(start),
                 action: "delete".to_string(),
                 content: None,
                 count: Some(count),
@@ -2229,13 +2483,21 @@ function alsoStay() {
 
 #[cfg(test)]
 mod hard_line_edit_tests {
-    use super::{apply_line_edits, LineEdit, content_hash};
+    use super::{apply_line_edits, LineCoordinate, LineEdit, content_hash};
     use crate::path_utils::normalize_line_endings;
 
     fn le(line: u32, action: &str, content: Option<&str>, count: Option<u32>) -> LineEdit {
-        LineEdit { line, action: action.to_string(), content: content.map(String::from),
-                   count, end_line: None, symbol: None, position: None,
-                   destination: None, reindent: false }
+        LineEdit {
+            line: LineCoordinate::Abs(line),
+            action: action.to_string(),
+            content: content.map(String::from),
+            count,
+            end_line: None,
+            symbol: None,
+            position: None,
+            destination: None,
+            reindent: false,
+        }
     }
 
     // ── trailing newline preservation ──
@@ -2591,7 +2853,7 @@ mod hard_batch_edits_tests {
                 file: "src/a.ts".to_string(),
                 content_hash: None,
                 line_edits: vec![LineEdit {
-                    line: 2, action: "replace".to_string(),
+                    line: LineCoordinate::Abs(2), action: "replace".to_string(),
                     content: Some("  return 42;".to_string()), count: Some(1),
                     end_line: None, symbol: None, position: None,
                     destination: None, reindent: false,
@@ -2601,7 +2863,7 @@ mod hard_batch_edits_tests {
                 file: "src/b.ts".to_string(),
                 content_hash: None,
                 line_edits: vec![LineEdit {
-                    line: 2, action: "replace".to_string(),
+                    line: LineCoordinate::Abs(2), action: "replace".to_string(),
                     content: Some("  return 99;".to_string()), count: Some(1),
                     end_line: None, symbol: None, position: None,
                     destination: None, reindent: false,
@@ -2630,7 +2892,7 @@ mod hard_batch_edits_tests {
                 file: "f.ts".to_string(),
                 content_hash: Some("h:deadbeef".to_string()),
                 line_edits: vec![LineEdit {
-                    line: 1, action: "replace".to_string(),
+                    line: LineCoordinate::Abs(1), action: "replace".to_string(),
                     content: Some("const a = 42;".to_string()), count: Some(1),
                     end_line: None, symbol: None, position: None,
                     destination: None, reindent: false,
@@ -2663,7 +2925,7 @@ mod hard_batch_edits_tests {
                 file: file.to_string(),
                 content_hash: Some(format!("h:{}", original_hash)),
                 line_edits: vec![LineEdit {
-                    line: 4,
+                    line: LineCoordinate::Abs(4),
                     action: "replace".to_string(),
                     content: Some("const target = 20;".to_string()),
                     count: Some(1),
@@ -2683,7 +2945,7 @@ mod hard_batch_edits_tests {
                 file: file.to_string(),
                 content_hash: Some(format!("h:{}", original_hash)),
                 line_edits: vec![LineEdit {
-                    line: 4,
+                    line: LineCoordinate::Abs(4),
                     action: "replace".to_string(),
                     content: Some("const target = 200;".to_string()),
                     count: Some(1),
@@ -2702,7 +2964,7 @@ mod hard_batch_edits_tests {
                 file: file.to_string(),
                 content_hash: Some(refreshed_hash),
                 line_edits: vec![LineEdit {
-                    line: 4,
+                    line: LineCoordinate::Abs(4),
                     action: "replace".to_string(),
                     content: Some("const target = 200;".to_string()),
                     count: Some(1),
@@ -2720,7 +2982,7 @@ mod hard_batch_edits_tests {
                 file: file.to_string(),
                 content_hash: Some(format!("h:{}", content_hash(&std::fs::read_to_string(root.join(file)).unwrap()))),
                 line_edits: vec![LineEdit {
-                    line: 4,
+                    line: LineCoordinate::Abs(4),
                     action: "replace".to_string(),
                     content: Some("const target = 999;".to_string()),
                     count: Some(1),
@@ -2752,7 +3014,7 @@ mod hard_batch_edits_tests {
                 file: "main.rs".to_string(),
                 content_hash: None,
                 line_edits: vec![LineEdit {
-                    line: 2, action: "replace".to_string(),
+                    line: LineCoordinate::Abs(2), action: "replace".to_string(),
                     content: Some("  println!(\"world\");".to_string()), count: Some(1),
                     end_line: None, symbol: None, position: None,
                     destination: None, reindent: false,
@@ -2799,7 +3061,7 @@ module.exports = {
                 file: "src/index.js".to_string(),
                 content_hash: None,
                 line_edits: vec![LineEdit {
-                    line: 17,
+                    line: LineCoordinate::Abs(17),
                     action: "replace".to_string(),
                     content: Some(
                         "\t\trecommended: { rules: {} },\n\t\tstrict: { rules: {} },".to_string()
@@ -2862,7 +3124,7 @@ module.exports = {
                 file: "src/index.js".to_string(),
                 content_hash: None,
                 line_edits: vec![LineEdit {
-                    line: 9,
+                    line: LineCoordinate::Abs(9),
                     action: "replace".to_string(),
                     content: Some("module.exports = ;".to_string()),
                     count: Some(1),
@@ -2885,14 +3147,22 @@ module.exports = {
 
 #[cfg(test)]
 mod hard_refactor_pipeline_tests {
-    use super::{apply_line_edits, content_hash, LineEdit};
+    use super::{apply_line_edits, content_hash, LineCoordinate, LineEdit};
     use crate::hash_resolver::{self, HashEntry, HashRegistry, parse_line_ranges};
     use crate::path_utils::normalize_line_endings;
 
     fn le(line: u32, action: &str, content: Option<&str>, count: Option<u32>) -> LineEdit {
-        LineEdit { line, action: action.to_string(), content: content.map(String::from),
-                   count, end_line: None, symbol: None, position: None,
-                   destination: None, reindent: false }
+        LineEdit {
+            line: LineCoordinate::Abs(line),
+            action: action.to_string(),
+            content: content.map(String::from),
+            count,
+            end_line: None,
+            symbol: None,
+            position: None,
+            destination: None,
+            reindent: false,
+        }
     }
 
     /// Mirror of adjust_line_for_shifts from the refactor execute pipeline.
