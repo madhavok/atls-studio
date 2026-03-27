@@ -1,6 +1,6 @@
 import type { PromptMetrics } from '../stores/appStore';
 
-export const PROTECTED_RECENT_ROUNDS = 4;
+export const PROTECTED_RECENT_ROUNDS = 6;
 
 /** Verbatim tool-loop rounds kept before older rounds roll into summary */
 export const ROLLING_WINDOW_ROUNDS = 20;

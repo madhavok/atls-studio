@@ -38,7 +38,7 @@ import {
 // ---------------------------------------------------------------------------
 
 /** Results smaller than this are kept inline (tokens) */
-export const COMPRESSION_THRESHOLD_TOKENS = 800;
+export const COMPRESSION_THRESHOLD_TOKENS = 1200;
 
 /** Per-op overrides — ops whose output is needed immediately get higher limits.
  *  Derived from families: all system.* and verify.* ops get a higher threshold. */
@@ -53,7 +53,7 @@ export const TOOL_COMPRESSION_OVERRIDES: Record<string, number> = Object.fromEnt
   ),
 );
 
-export const HISTORY_TEXT_REPLACEMENT_THRESHOLD_TOKENS = 600;
+export const HISTORY_TEXT_REPLACEMENT_THRESHOLD_TOKENS = 1000;
 
 // ---------------------------------------------------------------------------
 // Assistant round map (tool-loop rounds; rolling summary excluded)
