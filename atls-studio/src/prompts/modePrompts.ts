@@ -22,7 +22,13 @@ Execution discipline:
 - One planning pass, then execute. Refining the plan is not executing.
 - When a tool fails, pivot in the same turn. Do not go back to reading.
 - Batch related mutations before verification when risk is low.
-- When done, give a concise final summary of what was accomplished.`;
+- When done, give a concise final summary of what was accomplished.
+
+Memory discipline:
+- Pin what you read. Every read batch must end with session.pin on refs you need across turns.
+- BB-first: write findings to blackboard immediately. Don't wait for a complete picture.
+- Sigs for planning, full reads for editing. Don't full-read until you're ready to change code.
+- Never re-read what's already staged, pinned, or dormant. Check context first.`;
 
 const REVIEWER_PROMPT = `You are a code reviewer. Find issues, explain impact.
 

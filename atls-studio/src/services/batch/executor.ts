@@ -901,6 +901,9 @@ export async function executeUnifiedBatch(
   let batchOk = true;
   let interruption: BatchInterruption | undefined;
 
+  // Expose step outputs to handlers (e.g. session.pin resolves step IDs to hashes)
+  ctx.getStepOutput = (stepId: string) => stepOutputs.get(stepId);
+
   // Reset per-batch state
   resetRecallBudget();
   const snapshotTracker = new SnapshotTracker();

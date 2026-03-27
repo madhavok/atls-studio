@@ -418,8 +418,20 @@ export const handlePin: OpHandler = async (params, ctx) => {
   if (!rawHashes?.length) return err('pin: ERROR missing hashes param');
 
   const { expanded, notes } = ctx.expandSetRefsInHashes(rawHashes);
+
+  // Resolve step IDs to their output chunk hashes (pin-by-step-ID support)
+  const resolved = expanded.flatMap(ref => {
+    if (ref.startsWith('h:')) return [ref];
+    const stepOutput = ctx.getStepOutput?.(ref);
+    if (stepOutput?.refs?.length) {
+      notes.push(`${ref} \u2192 ${stepOutput.refs.join(', ')}`);
+      return stepOutput.refs;
+    }
+    return [ref];
+  });
+
   const pinShape = (params.shape as string) || undefined;
-  const count = ctx.store().pinChunks(expanded, pinShape);
+  const count = ctx.store().pinChunks(resolved, pinShape);
   let line = count > 0 ? `pin: ${count} chunk${count > 1 ? 's' : ''} pinned${pinShape ? ` (shape:${pinShape})` : ''}` : `pin: no matching chunks`;
   if (notes.length > 0) line += ` | ${notes.join('; ')}`;
   return ok(line);

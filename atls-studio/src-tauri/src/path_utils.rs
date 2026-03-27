@@ -89,13 +89,40 @@ pub(crate) fn resolve_tree_directory_path(
 /// Try to find a source file with fallback strategies when the direct path fails.
 /// Searches the project directory for a file matching the given path's filename,
 /// checking common project structures (src/, lib/, etc.).
+///
+/// When multiple candidates match (e.g. two files named `lib.rs` in different
+/// sub-workspaces), prefers the candidate whose path shares the most trailing
+/// segments with the query. Optionally checks `workspace_rel_paths` before
+/// falling back to suffix/breadth-first search.
 pub(crate) fn resolve_source_file_with_fallback(
     project_root: &std::path::Path,
     file_path: &str,
 ) -> Option<(PathBuf, String)> {
+    resolve_source_file_with_workspace_hint(project_root, file_path, &[])
+}
+
+/// Like `resolve_source_file_with_fallback` but also checks sub-workspace
+/// prefixes before resorting to suffix/BFS search.
+pub(crate) fn resolve_source_file_with_workspace_hint(
+    project_root: &std::path::Path,
+    file_path: &str,
+    workspace_rel_paths: &[String],
+) -> Option<(PathBuf, String)> {
     let direct = resolve_project_path(project_root, file_path);
     if direct.exists() {
         return Some((direct, file_path.to_string()));
+    }
+
+    // Try each workspace prefix (e.g. "atls-studio/src-tauri/src/lib.rs")
+    let norm = file_path.trim_start_matches("./").replace('\\', "/");
+    for rp in workspace_rel_paths {
+        let rp = rp.replace('\\', "/");
+        if rp.is_empty() || rp == "." { continue; }
+        let combined = format!("{}/{}", rp.trim_end_matches('/'), norm);
+        let alt = resolve_project_path(project_root, &combined);
+        if alt.exists() && alt.is_file() {
+            return Some((alt, combined));
+        }
     }
 
     let file_name = std::path::Path::new(file_path)
@@ -128,77 +155,84 @@ pub(crate) fn resolve_source_file_with_fallback(
         }
     }
 
-    // Try matching a path suffix: if the caller gave "src/click/options.py",
-    // search for any file whose path ends with that suffix.
+    // Try matching a path suffix: collect ALL candidates and pick the best one
+    // (most trailing segments matching the query).
     let normalized_suffix = file_path.replace('\\', "/");
     let suffix_parts: Vec<&str> = normalized_suffix.split('/').collect();
-    // Try progressively shorter suffixes (skip 0 = full path already tried)
     for skip in 1..suffix_parts.len() {
         let suffix: String = suffix_parts[skip..].join("/");
         if suffix.is_empty() { continue; }
-        if let Some(found) = find_file_by_suffix(project_root, &suffix, 0) {
-            let relative = found.strip_prefix(project_root)
+        let candidates = find_all_files_by_suffix(project_root, &suffix, 0);
+        if let Some(best) = pick_best_suffix_match(&candidates, &normalized_suffix, project_root) {
+            let relative = best.strip_prefix(project_root)
                 .ok()
                 .and_then(|p| p.to_str())
                 .map(|s| s.replace('\\', "/"))
-                .unwrap_or_else(|| found.to_string_lossy().to_string());
-            return Some((found, relative));
+                .unwrap_or_else(|| best.to_string_lossy().to_string());
+            return Some((best, relative));
         }
     }
 
-    // Walk the project looking for a file with the same name (breadth-first, max 8 levels)
-    fn find_in_dir(dir: &std::path::Path, target: &str, depth: u32) -> Option<PathBuf> {
-        if depth > 8 {
-            return None;
-        }
-        let entries = std::fs::read_dir(dir).ok()?;
-        let mut subdirs = Vec::new();
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_file() {
-                if path.file_name().and_then(|s| s.to_str()) == Some(target) {
-                    return Some(path);
-                }
-            } else if path.is_dir() {
-                let dir_name = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
-                if !matches!(dir_name, "node_modules" | ".git" | "target" | "dist" | "build" | "__pycache__" | ".atls" | "obj" | "bin") {
-                    subdirs.push(path);
-                }
-            }
-        }
-        for subdir in subdirs {
-            if let Some(found) = find_in_dir(&subdir, target, depth + 1) {
-                return Some(found);
-            }
-        }
-        None
-    }
-
-    if let Some(found) = find_in_dir(project_root, file_name, 0) {
-        let relative = found.strip_prefix(project_root)
+    // Walk the project looking for a file with the same name (breadth-first, max 8 levels).
+    // Collects all matches and picks the one with the best suffix overlap.
+    let all_by_name = find_all_in_dir(project_root, file_name, 0);
+    if let Some(best) = pick_best_suffix_match(&all_by_name, &normalized_suffix, project_root) {
+        let relative = best.strip_prefix(project_root)
             .ok()
             .and_then(|p| p.to_str())
             .map(|s| s.replace('\\', "/"))
-            .unwrap_or_else(|| found.to_string_lossy().to_string());
-        return Some((found, relative));
+            .unwrap_or_else(|| best.to_string_lossy().to_string());
+        return Some((best, relative));
     }
 
     None
 }
 
-/// Recursively search for a file whose relative path ends with the given suffix.
-pub(crate) fn find_file_by_suffix(dir: &std::path::Path, suffix: &str, depth: u32) -> Option<PathBuf> {
-    if depth > 8 {
-        return None;
-    }
-    let entries = std::fs::read_dir(dir).ok()?;
+/// Count how many trailing path segments of `candidate` match the query suffix.
+fn suffix_overlap_score(candidate_rel: &str, query: &str) -> usize {
+    let c_parts: Vec<&str> = candidate_rel.split('/').rev().collect();
+    let q_parts: Vec<&str> = query.split('/').rev().collect();
+    c_parts.iter().zip(q_parts.iter())
+        .take_while(|(c, q)| c.eq_ignore_ascii_case(q))
+        .count()
+}
+
+/// From a list of candidate paths, pick the one whose relative path shares the
+/// most trailing segments with the query. Tie-break: shortest total path (least nesting).
+fn pick_best_suffix_match(
+    candidates: &[PathBuf],
+    query: &str,
+    project_root: &std::path::Path,
+) -> Option<PathBuf> {
+    if candidates.is_empty() { return None; }
+    if candidates.len() == 1 { return Some(candidates[0].clone()); }
+    candidates.iter()
+        .max_by_key(|c| {
+            let rel = c.strip_prefix(project_root)
+                .ok()
+                .map(|p| p.to_string_lossy().replace('\\', "/"))
+                .unwrap_or_default();
+            let score = suffix_overlap_score(&rel, query);
+            let brevity = 1000usize.saturating_sub(rel.len());
+            (score, brevity)
+        })
+        .cloned()
+}
+
+/// Collect ALL files under `dir` matching the given name (breadth-first, max 8 levels).
+fn find_all_in_dir(dir: &std::path::Path, target: &str, depth: u32) -> Vec<PathBuf> {
+    let mut results = Vec::new();
+    if depth > 8 { return results; }
+    let entries = match std::fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(_) => return results,
+    };
     let mut subdirs = Vec::new();
     for entry in entries.flatten() {
         let path = entry.path();
         if path.is_file() {
-            let path_str = path.to_string_lossy().replace('\\', "/");
-            if path_str.ends_with(suffix) {
-                return Some(path);
+            if path.file_name().and_then(|s| s.to_str()) == Some(target) {
+                results.push(path);
             }
         } else if path.is_dir() {
             let dir_name = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
@@ -208,11 +242,44 @@ pub(crate) fn find_file_by_suffix(dir: &std::path::Path, suffix: &str, depth: u3
         }
     }
     for subdir in subdirs {
-        if let Some(found) = find_file_by_suffix(&subdir, suffix, depth + 1) {
-            return Some(found);
+        results.extend(find_all_in_dir(&subdir, target, depth + 1));
+    }
+    results
+}
+
+/// Recursively search for a file whose relative path ends with the given suffix.
+#[allow(dead_code)]
+pub(crate) fn find_file_by_suffix(dir: &std::path::Path, suffix: &str, depth: u32) -> Option<PathBuf> {
+    find_all_files_by_suffix(dir, suffix, depth).into_iter().next()
+}
+
+/// Collect ALL files whose relative path ends with the given suffix (recursive, max 8 levels).
+fn find_all_files_by_suffix(dir: &std::path::Path, suffix: &str, depth: u32) -> Vec<PathBuf> {
+    let mut results = Vec::new();
+    if depth > 8 { return results; }
+    let entries = match std::fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(_) => return results,
+    };
+    let mut subdirs = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_file() {
+            let path_str = path.to_string_lossy().replace('\\', "/");
+            if path_str.ends_with(suffix) {
+                results.push(path);
+            }
+        } else if path.is_dir() {
+            let dir_name = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
+            if !matches!(dir_name, "node_modules" | ".git" | "target" | "dist" | "build" | "__pycache__" | ".atls" | "obj" | "bin") {
+                subdirs.push(path);
+            }
         }
     }
-    None
+    for subdir in subdirs {
+        results.extend(find_all_files_by_suffix(&subdir, suffix, depth + 1));
+    }
+    results
 }
 
 /// Manifest kinds detected by find_manifest_nearest.

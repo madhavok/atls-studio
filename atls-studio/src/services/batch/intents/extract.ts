@@ -43,10 +43,12 @@ export const resolveExtract: IntentResolver = (
 
   const refactorWith: Record<string, unknown> = {
     action: 'execute',
-    file_paths: [sourceFile],
-    to: targetFile,
+    source_file: sourceFile,
+    extractions: [{
+      symbols: symbolNames,
+      target_file: targetFile,
+    }],
   };
-  if (symbolNames.length > 0) refactorWith.symbol_names = symbolNames;
 
   steps.push({
     id: refactorId,

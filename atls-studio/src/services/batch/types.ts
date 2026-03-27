@@ -313,6 +313,8 @@ export interface HandlerContext {
   ) => Promise<{ items: ExpandedFilePath[]; notes: string[] }>;
   /** Access to tool loop state for compact_history */
   toolLoopState?: ToolLoopState | null;
+  /** Lookup a completed step's output by step ID (for pin-by-step-ID). */
+  getStepOutput?: (stepId: string) => StepOutput | undefined;
 }
 
 export type ExpandedFilePath =

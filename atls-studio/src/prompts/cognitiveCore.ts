@@ -32,17 +32,37 @@ Large file (>500L) -> pin(sig) + extract_plan + change.refactor + verify per bat
 Cross-file symbol move -> change.refactor(extract). Localized change -> change.edit.
 Multi-round -> pin(sig) + persist plan to BB.
 
+### PIN DISCIPLINE (CRITICAL)
+Pinning is how you keep knowledge across turns. Without pins, reads go dormant → compacted → evicted → you re-read → loop.
+- **Every read batch MUST end with session.pin** on the refs you need. No exceptions.
+- **Pin sigs for planning, pin full for editing.** pin(shape:"sig") ~200tk/round; pin() for full visibility.
+- **Unpin when done.** After editing a file or completing a subtask, unpin its refs. Edit inherits pin automatically.
+- **Anti-loop guard:** If you find yourself reading the same file twice, STOP. You lost context because you didn't pin. Check dormant/staged first.
+- **Pin budget:** Keep ≤15 pinned engrams. More than that = you're hoarding. Unpin older refs as you finish with them.
+
+### BB-FIRST WORKFLOW
+BB survives everything — compaction, eviction, session boundaries. Use it as your anchor.
+1. **Write partial understanding immediately.** Don't wait for a complete picture. bb_write after your first read pass.
+2. **Update BB at phase transitions.** bb_write(key:"plan:current", "Goal:X|Done:A,B|Next:C,D").
+3. **Read BB before re-searching.** search.memory greps all regions (dormant, archived, BB, staged, dropped).
+4. **BB keys are stable handles.** h:bb:key usable in responses. Templates (tpl:NAME) reduce output tokens 80%.
+
 ### CONTEXT MANAGEMENT
-1. pin(shape:"sig") for planning (~200tk/round); pin() for full visibility (expensive).
-2. BB as anchor: bb_write(key:"plan:current", "Goal:X|Done:A,B|Next:C,D"). Update at phase transitions. Read on resumption or after compression.
-3. compact_history: auto-managed. Manual only if stats show large compressible tokens.
-4. Drop-after-distill at phase boundaries, not after every batch. unpin+drop when done. Unstage completed targets.
-5. BB-first: read BB before re-searching. search.memory greps all memory regions (dormant, archived, BB, staged, dropped).
-6. read.context type:smart|full (NOT raw). read.shaped(sig) is default for discovery. Sigs include [N lines] counts — use for size estimation.
-7. Trust RECENT EDITS — h:refs from edit results are fresh. Do not re-read, re-search, or re-stage.
-8. Trust RECENT READS — pinned/staged content is canonical. Do not re-read sections of a file you already have via h:ref. One full read per file per task. Re-read ONLY on stale_hash or after external mutation.
-9. Action bias — after 2 read/search steps on the same target, your next step MUST be a mutation (change.*, refactor, create) or a decision to stop. Reading more of what you already have is not progress.
-10. Budget: session.stats every 5 turns. bb_write returns h:bb:key — use in response. A lean 15k context > bloated 80k.
+1. Sigs are sufficient for planning. Full reads are for editing. read.shaped(sig) is default for discovery.
+2. read.context type:smart|full (NOT raw). Sigs include [N lines] counts — use for size estimation.
+3. Trust RECENT EDITS — h:refs from edit results are fresh. Do not re-read, re-search, or re-stage.
+4. Trust RECENT READS — pinned/staged content is canonical. One full read per file per task. Re-read ONLY on stale_hash or after external mutation.
+5. Action bias — after 2 read/search steps on the same target, your next step MUST be a mutation (change.*, refactor, create) or a decision to stop. Reading more of what you already have is not progress.
+6. compact_history: auto-managed. Manual only if stats show large compressible tokens.
+7. Drop-after-distill at phase boundaries, not after every batch. unpin+drop when done. Unstage completed targets.
+8. Budget: session.stats every 5 turns. A lean 15k context > bloated 80k.
+
+### ANTI-PATTERNS (NEVER DO THESE)
+- Reading a file 3+ times without pinning or writing to BB.
+- Issuing reads "to check" what you already have staged/pinned.
+- Planning to pin without actually calling session.pin.
+- Waiting for a "complete picture" before writing anything to BB.
+- Re-reading after edit — the edit result h:ref IS the fresh content.
 
 ### ACTIVATION LIFECYCLE
 Stage (dynamic block) → Active (full, budgeted) → Compacted [C] (digest ~60tk) → Archived (recall by hash) → Evicted (re-read).

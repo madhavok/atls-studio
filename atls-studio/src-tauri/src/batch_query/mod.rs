@@ -19,11 +19,17 @@ pub async fn atls_batch_query(
     params: serde_json::Value,
 ) -> Result<serde_json::Value, String> {
     let state = app.state::<AtlsProjectState>();
-    let (project, _resolved_root) = {
+    let (project, _resolved_root, workspace_rel_paths) = {
         let roots = state.roots.lock().await;
         let ar = state.active_root.read().map(|a| a.clone()).unwrap_or(None);
         let root_hint = params.get("root").and_then(|v| v.as_str());
-        resolve_project(&roots, &ar, root_hint)?
+        let (proj, resolved) = resolve_project(&roots, &ar, root_hint)?;
+        let ws_paths: Vec<String> = roots.iter()
+            .flat_map(|r| r.sub_workspaces.iter())
+            .map(|w| w.rel_path.clone())
+            .filter(|s| !s.is_empty() && s != ".")
+            .collect();
+        (proj, resolved, ws_paths)
     };
     // Lock released â€” verify/git/exec can run without blocking other operations
     let project_root = project.root_path();
@@ -557,17 +563,7 @@ pub async fn atls_batch_query(
                     return Err("file_path or file_paths required for context operation".to_string());
                 }
 
-                let tree_workspace_rel_paths: Vec<String> = if context_type == "tree" {
-                    let roots_lock = state.roots.lock().await;
-                    roots_lock
-                        .iter()
-                        .flat_map(|r| r.sub_workspaces.iter())
-                        .map(|w| w.rel_path.clone())
-                        .filter(|s| !s.is_empty() && s != ".")
-                        .collect()
-                } else {
-                    Vec::new()
-                };
+                let tree_workspace_rel_paths = &workspace_rel_paths;
                 
                 let mut results = Vec::new();
                 for file_path in file_paths {
@@ -771,7 +767,7 @@ pub async fn atls_batch_query(
                             let read_result = read_file_with_format(&resolved_path)
                                 .map(|(content, _fmt)| content)
                                 .or_else(|_| {
-                                    resolve_source_file_with_fallback(project_root, &file_path)
+                                    resolve_source_file_with_workspace_hint(project_root, &file_path, &workspace_rel_paths)
                                         .and_then(|(p, _)| read_file_with_format(&p).ok())
                                         .map(|(content, _fmt)| content)
                                         .ok_or_else(|| format!("File not found: {}", file_path))
@@ -6041,7 +6037,7 @@ pub async fn atls_batch_query(
                 }
 
                 // Resolve source file
-                let (resolved_source, resolved_file_path) = match resolve_source_file_with_fallback(project_root, source_file) {
+                let (resolved_source, resolved_file_path) = match resolve_source_file_with_workspace_hint(project_root, source_file, &workspace_rel_paths) {
                     Some((path, rel)) => (path, rel),
                     None => return Err(format!("Source file not found: {}", source_file)),
                 };
@@ -6342,7 +6338,7 @@ pub async fn atls_batch_query(
                     .unwrap_or(10) as usize;
 
                 // Resolve source file with fallback strategies for path mismatches
-                let (resolved_source, resolved_file_path) = match resolve_source_file_with_fallback(project_root, file_path) {
+                let (resolved_source, resolved_file_path) = match resolve_source_file_with_workspace_hint(project_root, file_path, &workspace_rel_paths) {
                     Some((path, rel)) => {
                         (path, rel)
                     },

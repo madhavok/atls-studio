@@ -31,7 +31,7 @@ use regex::Regex;
 use tauri::{AppHandle, Emitter, Manager};
 use portable_pty::{CommandBuilder, PtySize, native_pty_system, MasterPty, Child};
 use chat_db::ChatDbState;
-use path_utils::{to_relative_path, resolve_project_path, resolve_source_file_with_fallback, normalize_line_endings, FileFormat};
+use path_utils::{to_relative_path, resolve_project_path, resolve_source_file_with_workspace_hint, normalize_line_endings, FileFormat};
 use crate::ast_query::parse_ast_condition;
 
 // ============================================================================

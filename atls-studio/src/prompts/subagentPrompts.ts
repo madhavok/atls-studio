@@ -25,7 +25,10 @@ Workflow:
 
 Rules:
 - Prefer 1-3 intent calls over 3-5 primitive calls.
-- Do not re-read or re-stage files listed under ALREADY STAGED.{{EXTRA_RULES}}`;
+- Do not re-read or re-stage files listed under ALREADY STAGED.
+- **Pin after every read.** Every read/search batch MUST end with session.pin on refs you need. Unpinned reads go dormant and get evicted.
+- **Never re-read what's pinned or staged.** Check ALREADY STAGED and your pinned refs before issuing reads.
+- **BB-first:** Write partial findings to session.bb.write immediately. Don't wait for a complete picture.{{EXTRA_RULES}}`;
 
 export type SubagentRole = 'retriever' | 'design' | 'semantic';
 

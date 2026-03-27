@@ -136,6 +136,19 @@ When estimated prompt pressure exceeds 90%, `addChunk` triggers emergency evicti
 
 The 70% threshold is shown in the stats line as a warning to the model ("consider drop/compact"). The runtime encourages proactive working-set management; emergency eviction is a safety net.
 
+## Anti-Patterns
+
+Common failure modes that lead to context loops and wasted tokens:
+
+| Anti-Pattern | Why It Fails | Fix |
+|-------------|-------------|-----|
+| Reading without pinning | Reads go dormant → compacted → evicted. Next turn you re-read the same file. | Every read batch MUST end with `session.pin` on refs you need. |
+| Waiting for "complete picture" before writing to BB | You lose partial findings to compaction before ever recording them. | Write to BB after your first read pass. Update incrementally. |
+| Re-reading pinned/staged content | Wastes tokens and batch ops. The content is already in your context. | Check STAGED and pinned refs before issuing reads. |
+| Full-reading for planning | Full reads cost 2-13k tokens. Sigs cost ~200 tokens and contain all structural info. | Use `read.shaped(sig)` or `pin(shape:"sig")` for planning. Full reads only when editing. |
+| Reading 3+ times without acting | Analysis paralysis. You have enough context after 1-2 reads. | After 2 reads on the same target, your next step MUST be a mutation or a decision to stop. |
+| Not using BB as primary anchor | BB survives compaction, eviction, and session boundaries. Everything else is ephemeral. | `bb_write` findings immediately. `bb_read` before re-searching. |
+
 ## Engram Annotations and Relationships
 
 ### Annotations

@@ -22,4 +22,11 @@ export const EDIT_DISCIPLINE = `### EDIT + VERIFY DISCIPLINE
 - On stale_hash/authority_mismatch: stop, re-read, rebuild patch from current content.
 - Condition discipline: prefer step_ok chains and explicit verification gates. Do not use unsupported conditions.
 - Completion: brief final summary. Do not finish until verify.build succeeds or blocker reached. Cannot perform an action? Say so — never simulate.
-- No filler, echo, narration. Flag risks with «WARNING»/«DECISION»/«ASSUMPTION» tags.`;
+- No filler, echo, narration. Flag risks with «WARNING»/«DECISION»/«ASSUMPTION» tags.
+
+### MEMORY DISCIPLINE IN EDIT WORKFLOW
+- Before editing: check if file is already pinned/staged. If yes, edit directly — do NOT re-read.
+- After reading for edit: pin the ref immediately. The edit will inherit the pin.
+- After editing: the new h:ref is auto-pinned (inherits). Unpin old refs you no longer need.
+- Multi-file edit sessions: pin all target sigs at start, edit in sequence, unpin+drop at end.
+- If you get stale_hash: re-read ONCE, pin, then edit. Do not re-read again.`;
