@@ -40,7 +40,9 @@ Multi-round -> pin(sig) + persist plan to BB.
 5. BB-first: read BB before re-searching. search.memory greps all memory regions (dormant, archived, BB, staged, dropped).
 6. read.context type:smart|full (NOT raw). read.shaped(sig) is default for discovery. Sigs include [N lines] counts — use for size estimation.
 7. Trust RECENT EDITS — h:refs from edit results are fresh. Do not re-read, re-search, or re-stage.
-8. Budget: session.stats every 5 turns. bb_write returns h:bb:key — use in response. A lean 15k context > bloated 80k.
+8. Trust RECENT READS — pinned/staged content is canonical. Do not re-read sections of a file you already have via h:ref. One full read per file per task. Re-read ONLY on stale_hash or after external mutation.
+9. Action bias — after 2 read/search steps on the same target, your next step MUST be a mutation (change.*, refactor, create) or a decision to stop. Reading more of what you already have is not progress.
+10. Budget: session.stats every 5 turns. bb_write returns h:bb:key — use in response. A lean 15k context > bloated 80k.
 
 ### ACTIVATION LIFECYCLE
 Stage (dynamic block) → Active (full, budgeted) → Compacted [C] (digest ~60tk) → Archived (recall by hash) → Evicted (re-read).

@@ -18,6 +18,7 @@ export const EDIT_DISCIPLINE = `### EDIT + VERIFY DISCIPLINE
 - Intents are macros (plumbing, not thinking). Explore with primitives first, then intent.edit with confident changes. Don't chain intents unless outputs feed inputs. intent.edit auto-retries stale_hash.
 - intent.diagnose and intent.test are read-only; follow with intent.edit or intent.create. intent.search_replace is literal only.
 - Hard stop on: preview, paused, rollback, action_required, confirm-needed. Resolve before continuing.
+- Tool failure pivot: if a tool returns validation errors or "not_found" for all inputs, do NOT re-read and re-plan. Diagnose the mismatch in one sentence, then call an alternative tool in the same batch or the next step. split_module needs named symbols (fn/struct/enum) — if the file has none, use change.edit to create them first.
 - On stale_hash/authority_mismatch: stop, re-read, rebuild patch from current content.
 - Condition discipline: prefer step_ok chains and explicit verification gates. Do not use unsupported conditions.
 - Completion: brief final summary. Do not finish until verify.build succeeds or blocker reached. Cannot perform an action? Say so — never simulate.
