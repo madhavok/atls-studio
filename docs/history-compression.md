@@ -19,14 +19,12 @@ After (compressed):
 
 The original content remains in working memory (as an engram) or archive. The model can recall it by hash reference at any time. The history entry now costs ~20 tokens instead of ~2000.
 
-### Compression Thresholds
-
 | Content Type | Threshold | Compressed When |
 |-------------|-----------|-----------------|
-| Tool results | 500 tokens | Content exceeds threshold |
+| Tool results | 800 tokens | Content exceeds threshold |
 | Exec/verify/git results | 800 tokens | Higher threshold for structured output |
-| Tool use inputs (JSON) | 500 tokens | Large tool call parameters |
-| Long text messages | 350 tokens | Non-tool text blocks |
+| Tool use inputs (JSON) | 800 tokens | Large tool call parameters |
+| Long text messages | 600 tokens | Non-tool text blocks |
 
 ## Two Compression Paths
 
@@ -39,8 +37,7 @@ Runs via the history compression middleware on round 0 (between user turns). Thi
 - Never touches messages before `priorTurnBoundary` (preserves BP3 cache prefix)
 - Each compressed block is registered in working memory via `addChunk`
 - HPP `dematerialize()` is called for compressed chunks (transitions materialized → referenced)
-
-**Budget-driven compression**: If history exceeds `CONVERSATION_HISTORY_BUDGET_TOKENS` (12k), the oldest non-reference messages are compressed until under budget.
+**Budget-driven compression**: If history exceeds `CONVERSATION_HISTORY_BUDGET_TOKENS` (20k), the oldest non-reference messages are compressed until under budget.
 
 ### 2. `deflateToolResults` (Immediately After Tools)
 
@@ -50,10 +47,9 @@ Runs right after tool execution completes, before the next round. This is a ligh
 - Does **not** create new chunks
 - Replaces tool result content with hash references **only when a matching engram already exists** in working memory (matched by content hash or source description)
 - Prevents duplicate content between history and working memory
-
 ## Rolling history window
 
-Beyond hash deflation, the compressor maintains a **verbatim window** of the most recent tool-loop rounds in history. Constants live in [`promptMemory.ts`](../atls-studio/src/services/promptMemory.ts): `ROLLING_WINDOW_ROUNDS` (10) and `ROLLING_SUMMARY_MAX_TOKENS` (500).
+Beyond hash deflation, the compressor maintains a **verbatim window** of the most recent tool-loop rounds in history. Constants live in [`promptMemory.ts`](../atls-studio/src/services/promptMemory.ts): `ROLLING_WINDOW_ROUNDS` (20) and `ROLLING_SUMMARY_MAX_TOKENS` (1500).
 
 When the number of **rounds** in history exceeds the window, the **oldest** round is removed from the verbatim transcript and **distilled** into structured facts by [`historyDistiller.ts`](../atls-studio/src/services/historyDistiller.ts). The distiller fills a [`RollingSummary`](../atls-studio/src/services/historyDistiller.ts) in the context store (`decisions`, `filesChanged`, `userPreferences`, `workDone`, `findings`, `errors`).
 

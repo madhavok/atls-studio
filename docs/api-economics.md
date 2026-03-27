@@ -8,20 +8,20 @@ Anthropic API pricing (Claude Opus):
 
 | Token Type | Cost per MTok | Relative |
 |-----------|--------------|----------|
-| Cached input (read) | $0.30 | 1x |
-| Cached input (write) | $3.75 | 12.5x |
-| Uncached input | $3.00 | 10x |
-| Output | $15.00 | 50x |
+| Cached input (read) | $0.50 | 1x |
+| Cached input (write) | $6.25 | 12.5x |
+| Uncached input | $5.00 | 10x |
+| Output | $25.00 | 50x |
 
 In a typical 10-round ATLS tool loop:
 
 | Region | Tokens/Round | Cost Rate | 10-Round Total |
 |--------|-------------|-----------|---------------|
-| System + tools (cached) | ~5k | $0.30/MTok | ~$0.015 |
-| History (cached, append-only) | ~5-10k | $0.30/MTok | ~$0.03 |
-| Dynamic block (uncached) | ~20-40k | $3.00/MTok | ~$0.60-1.20 |
-| Output | ~2-4k | $15.00/MTok | ~$0.30-0.60 |
-| **Total** | | | **~$0.95-1.85** |
+| System + tools (cached) | ~5k | $0.50/MTok | ~$0.025 |
+| History (cached, append-only) | ~5-10k | $0.50/MTok | ~$0.05 |
+| Dynamic block (uncached) | ~20-40k | $5.00/MTok | ~$1.00-2.00 |
+| Output | ~2-4k | $25.00/MTok | ~$0.50-1.00 |
+| **Total** | | | **~$1.58-3.08** |
 
 The dynamic block — blackboard, staged snippets, working memory, dormant manifest, workspace context — accounts for **60-70% of input tokens** and is charged at **full uncached price** on every round.
 

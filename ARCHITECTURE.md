@@ -200,14 +200,14 @@ All model-initiated actions flow through a single tool: `batch()`. This collapse
 
 | Family | Operations | Purpose |
 |--------|-----------|---------|
-| **discover** | `search.code`, `search.symbol`, `search.usage`, `search.similar`, `search.issues`, `search.patterns` | Find code |
-| **understand** | `read.context`, `read.shaped`, `read.lines`, `analyze.deps`, `analyze.calls`, `analyze.structure`, `analyze.impact`, `analyze.blast_radius`, `analyze.extract_plan` | Comprehend code |
-| **change** | `change.edit`, `change.create`, `change.delete`, `change.refactor`, `change.rollback` | Modify code |
+| **discover** | `search.code`, `search.symbol`, `search.usage`, `search.similar`, `search.issues`, `search.patterns`, `search.memory` | Find code |
+| **understand** | `read.context`, `read.shaped`, `read.lines`, `read.file`, `analyze.deps`, `analyze.calls`, `analyze.structure`, `analyze.impact`, `analyze.blast_radius`, `analyze.extract_plan` | Comprehend code |
+| **change** | `change.edit`, `change.create`, `change.delete`, `change.refactor`, `change.rollback`, `change.split_module` | Modify code |
 | **verify** | `verify.build`, `verify.test`, `verify.lint`, `verify.typecheck` | Validate changes |
-| **session** | `session.plan`, `session.advance`, `session.pin`, `session.compact`, `session.drop`, `session.recall`, `session.bb.write`, `session.rule`, `session.compact_history` | Manage memory and tasks |
-| **annotate** | `annotate.engram`, `annotate.note`, `annotate.link`, `annotate.split`, `annotate.merge` | Annotate and connect engrams |
+| **session** | `session.plan`, `session.advance`, `session.status`, `session.pin`, `session.unpin`, `session.compact`, `session.drop`, `session.recall`, `session.stage`, `session.unstage`, `session.unload`, `session.bb.write`, `session.bb.read`, `session.bb.delete`, `session.bb.list`, `session.rule`, `session.emit`, `session.shape`, `session.load`, `session.debug`, `session.stats`, `session.compact_history` | Manage memory and tasks |
+| **annotate** | `annotate.engram`, `annotate.note`, `annotate.link`, `annotate.split`, `annotate.merge`, `annotate.retype`, `annotate.design` | Annotate and connect engrams |
 | **delegate** | `delegate.retrieve`, `delegate.design` | Dispatch cheaper sub-models |
-| **intent** | `intent.understand`, `intent.edit`, `intent.edit_multi`, `intent.investigate`, `intent.diagnose`, `intent.refactor`, `intent.create`, `intent.test` | Macro operations (expand to primitives) |
+| **intent** | `intent.understand`, `intent.edit`, `intent.edit_multi`, `intent.investigate`, `intent.diagnose`, `intent.survey`, `intent.refactor`, `intent.create`, `intent.test`, `intent.search_replace`, `intent.extract` | Macro operations (expand to primitives) |
 
 ### 4.2 Dataflow Between Steps
 
@@ -401,7 +401,7 @@ History compression is deferred to round 0 (between user turns), so within a mul
 Before each round, middleware runs in sequence:
 
 1. **History compression**: On round 0, compress old tool results and long messages into hash references; apply the **rolling window** so excess rounds are distilled into `RollingSummary` rather than kept verbatim (see §7.1)
-2. **Context hygiene**: After 20+ rounds, aggressive compression if history exceeds 15k tokens
+2. **Context hygiene**: After 20+ rounds, aggressive compression if history exceeds 20k tokens
 3. **Prompt budget**: Prune staged snippets if over budget
 
 ---
@@ -455,10 +455,10 @@ In a typical 10-round tool loop:
 
 | Region | Tokens | Cost | Cacheable? |
 |--------|--------|------|------------|
-| System + tools | ~5k | $0.30/MTok (cached) | Yes |
-| History | ~5-10k | $0.30/MTok (cached) | Yes (append-only) |
-| Dynamic block (BB, staged, WM, dormant) | ~20-40k | $3.00/MTok (full price) | No — changes every round |
-| Output | ~2-4k | $15.00/MTok | N/A |
+| System + tools | ~5k | $0.50/MTok (cached) | Yes |
+| History | ~5-10k | $0.50/MTok (cached) | Yes (append-only) |
+| Dynamic block (BB, staged, WM, dormant) | ~20-40k | $5.00/MTok (full price) | No — changes every round |
+| Output | ~2-4k | $25.00/MTok | N/A |
 
 The dynamic block — the cognitive state — is 60-70% of input tokens, charged at full price, resent on every round. This is the part that makes ATLS work. And it's the part the caching model penalizes.
 

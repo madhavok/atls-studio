@@ -139,7 +139,7 @@ The context stats line gives the model real-time visibility into its resource us
 Threshold warnings appear at:
 - **50%**: "approaching budget"
 - **70%**: "consider drop/compact"
-- **90%**: "CRITICAL — emergency eviction imminent"
+- **85%**: "CRITICAL — emergency eviction imminent"
 
 ## Modes
 
