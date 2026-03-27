@@ -181,6 +181,7 @@ export interface ReconcileStats {
   invalidated: number;
   preserved: number;
   at: number;
+  bbSuperseded?: number;
 }
 
 export interface RefreshRoundStats {
@@ -342,6 +343,10 @@ export interface MemorySearchResult {
   hits: MemorySearchHit[];
 }
 
+// Blackboard artifact classification
+export type BbArtifactKind = 'plan' | 'bug' | 'repair' | 'status' | 'err' | 'fix' | 'edit' | 'general';
+export type BbArtifactState = 'active' | 'superseded' | 'historical';
+
 // Blackboard entry - persistent session knowledge
 export interface BlackboardEntry {
   content: string;
@@ -349,6 +354,59 @@ export interface BlackboardEntry {
   tokens: number;
   derivedFrom?: string[];
   derivedRevisions?: string[];
+  kind: BbArtifactKind;
+  state: BbArtifactState;
+  filePath?: string;
+  snapshotHash?: string;
+  supersededAt?: number;
+  supersededBy?: string;
+  updatedAt: number;
+}
+
+// BB key prefix -> kind mapping
+const BB_KIND_PREFIXES: ReadonlyArray<[string, BbArtifactKind]> = [
+  ['plan:', 'plan'],
+  ['bugs:', 'bug'],
+  ['bug:', 'bug'],
+  ['repair:', 'repair'],
+  ['status:', 'status'],
+  ['err:', 'err'],
+  ['fix:', 'fix'],
+  ['edit:', 'edit'],
+];
+
+const BB_SHADOWABLE_KINDS: ReadonlySet<BbArtifactKind> = new Set(['plan', 'bug', 'repair', 'status', 'err', 'fix']);
+
+export function parseBbKey(key: string): { kind: BbArtifactKind; basename?: string } {
+  for (const [prefix, kind] of BB_KIND_PREFIXES) {
+    if (key.startsWith(prefix)) {
+      const rest = key.slice(prefix.length);
+      return { kind, basename: rest || undefined };
+    }
+  }
+  return { kind: 'general' };
+}
+
+/**
+ * Resolve a BB key's file binding. Uses explicit filePath first, then derivedFrom,
+ * then attempts basename resolution against the awareness cache.
+ */
+export function inferBbFilePath(
+  key: string,
+  derivedFrom?: string[],
+  awarenessKeys?: Iterable<string>,
+): string | undefined {
+  if (derivedFrom?.length) return derivedFrom[0];
+  const { basename } = parseBbKey(key);
+  if (!basename) return undefined;
+  if (basename.includes('/') || basename.includes('\\')) return basename;
+  if (!awarenessKeys) return undefined;
+  for (const aPath of awarenessKeys) {
+    const segments = aPath.split('/');
+    const aBase = segments[segments.length - 1];
+    if (aBase === basename.toLowerCase()) return aPath;
+  }
+  return undefined;
 }
 
 // Cognitive rule — self-imposed behavioral constraint written by the model
@@ -714,12 +772,13 @@ interface ContextStoreState {
   setTask: (task: Partial<TaskPlan> | null) => void;
   
   // Blackboard actions
-  setBlackboardEntry: (key: string, content: string, opts?: { derivedFrom?: string[] }) => { tokens: number; warning?: string };
+  setBlackboardEntry: (key: string, content: string, opts?: { derivedFrom?: string[]; filePath?: string; snapshotHash?: string }) => { tokens: number; warning?: string };
   getBlackboardEntry: (key: string) => string | null;
-  getBlackboardEntryWithMeta: (key: string) => { content: string; derivedFrom?: string[]; derivedRevisions?: string[] } | null;
+  getBlackboardEntryWithMeta: (key: string) => { content: string; derivedFrom?: string[]; derivedRevisions?: string[]; kind: BbArtifactKind; state: BbArtifactState; filePath?: string; snapshotHash?: string; supersededAt?: number; supersededBy?: string } | null;
   removeBlackboardEntry: (key: string) => boolean;
-  listBlackboardEntries: () => Array<{ key: string; preview: string; tokens: number }>;
+  listBlackboardEntries: () => Array<{ key: string; preview: string; tokens: number; state: BbArtifactState; filePath?: string; supersededBy?: string }>;
   getBlackboardTokenCount: () => number;
+  supersedeBlackboardForPath: (path: string, newRevision: string) => number;
 
   // Cognitive rules — self-imposed behavioral constraints
   cognitiveRules: Map<string, CognitiveRule>;
@@ -1304,7 +1363,8 @@ export const useContextStore = create<ContextStoreState>()(
       readSpan: opts?.readSpan,
       ttl: opts?.ttl ?? (type === 'result' ? 3 : type === 'search' ? 5 : undefined),
     };
-    
+
+    let collisionReturnShort: string | undefined;
     set(state => {
       const newChunks = new Map(state.chunks);
       let newArchive: Map<string, ContextChunk> | undefined;
@@ -1314,9 +1374,8 @@ export const useContextStore = create<ContextStoreState>()(
       if (existing && existing.content !== content) {
         const suffix = (++_collisionCounter).toString(36);
         const disambiguated = hash + '_' + suffix;
-        // Ensure shortHash is always exactly SHORT_HASH_LEN chars
-        const rawShort = (hash.slice(0, SHORT_HASH_LEN) + '_' + suffix);
-        const disambiguatedShort = rawShort.slice(0, SHORT_HASH_LEN);
+        const disambiguatedShort = hashContentSync(disambiguated).slice(0, SHORT_HASH_LEN);
+        collisionReturnShort = disambiguatedShort;
         newChunks.set(disambiguated, { ...chunk, hash: disambiguated, shortHash: disambiguatedShort });
         return { chunks: newChunks };
       }
@@ -1596,16 +1655,18 @@ export const useContextStore = create<ContextStoreState>()(
       };
     });
 
+    const returnShort = collisionReturnShort ?? shortHash;
+
     // Push to recency stacks (file-relevant types only — keeps h:$last aligned with h:$last_read)
     const FILE_TYPES_FOR_RECENCY = new Set(['file', 'smart', 'raw', 'tree', 'search', 'symbol', 'deps']);
     if (FILE_TYPES_FOR_RECENCY.has(type)) {
-      get().pushHash(shortHash);
-      get().pushReadHash(shortHash);
+      get().pushHash(returnShort);
+      get().pushReadHash(returnShort);
     }
     for (const compactedHash of autoCompactedHashes) hppDematerialize(compactedHash);
     for (const evictedHash of autoEvictedHashes) hppEvict(evictedHash);
     
-    return shortHash;
+    return returnShort;
   },
 
   findReusableRead: (span: ReadSpan): string | null => {
@@ -2337,6 +2398,12 @@ export const useContextStore = create<ContextStoreState>()(
     if (!awarenessEntry || canonicalizeSnapshotHash(currentRevision) !== awarenessEntry.snapshotHash) {
       get().invalidateAwareness(path);
     }
+
+    const bbSuperseded = get().supersedeBlackboardForPath(path, currentRevision);
+    if (bbSuperseded > 0) {
+      stats.bbSuperseded = bbSuperseded;
+    }
+
     return stats;
   },
 
@@ -2730,6 +2797,9 @@ export const useContextStore = create<ContextStoreState>()(
           content: compositeContent,
           createdAt: new Date(),
           tokens: estimateTokens(compositeContent),
+          kind: 'status' as const,
+          state: 'active' as const,
+          updatedAt: Date.now(),
         });
       }
       
@@ -2830,7 +2900,7 @@ export const useContextStore = create<ContextStoreState>()(
   /**
    * Set a blackboard entry. Returns token count.
    */
-  setBlackboardEntry: (key: string, content: string, opts?: { derivedFrom?: string[] }) => {
+  setBlackboardEntry: (key: string, content: string, opts?: { derivedFrom?: string[]; filePath?: string; snapshotHash?: string }) => {
     if (!content || content.trim() === '') {
       const state = get();
       const newBb = new Map(state.blackboardEntries);
@@ -2849,12 +2919,29 @@ export const useContextStore = create<ContextStoreState>()(
         return awareness?.snapshotHash ?? '';
       });
     }
+
+    const { kind } = parseBbKey(key);
+    const resolvedFilePath = opts?.filePath
+      ?? inferBbFilePath(key, derivedFrom, get().awarenessCache.keys());
+    const resolvedSnapshot = opts?.snapshotHash
+      ?? (resolvedFilePath ? get().getAwareness(resolvedFilePath)?.snapshotHash : undefined)
+      ?? derivedRevisions?.[0]
+      ?? undefined;
     
     set(state => {
       const newBb = new Map(state.blackboardEntries);
-      const entry: BlackboardEntry = { content, createdAt: new Date(), tokens };
+      const entry: BlackboardEntry = {
+        content,
+        createdAt: new Date(),
+        tokens,
+        kind,
+        state: 'active',
+        updatedAt: Date.now(),
+      };
       if (derivedFrom?.length) entry.derivedFrom = derivedFrom;
       if (derivedRevisions?.length) entry.derivedRevisions = derivedRevisions;
+      if (resolvedFilePath) entry.filePath = normalizeSourcePath(resolvedFilePath);
+      if (resolvedSnapshot) entry.snapshotHash = resolvedSnapshot;
       newBb.set(key, entry);
       
       return { blackboardEntries: newBb };
@@ -2878,6 +2965,12 @@ export const useContextStore = create<ContextStoreState>()(
       content: entry.content,
       derivedFrom: entry.derivedFrom,
       derivedRevisions: entry.derivedRevisions,
+      kind: entry.kind,
+      state: entry.state,
+      filePath: entry.filePath,
+      snapshotHash: entry.snapshotHash,
+      supersededAt: entry.supersededAt,
+      supersededBy: entry.supersededBy,
     };
   },
   
@@ -2897,10 +2990,17 @@ export const useContextStore = create<ContextStoreState>()(
    * List all blackboard entries with preview.
    */
   listBlackboardEntries: () => {
-    const entries: Array<{ key: string; preview: string; tokens: number }> = [];
+    const entries: Array<{ key: string; preview: string; tokens: number; state: BbArtifactState; filePath?: string; supersededBy?: string }> = [];
     get().blackboardEntries.forEach((entry, key) => {
       const firstLine = entry.content.split('\n')[0].slice(0, 80);
-      entries.push({ key, preview: firstLine, tokens: entry.tokens });
+      entries.push({
+        key,
+        preview: firstLine,
+        tokens: entry.tokens,
+        state: entry.state,
+        filePath: entry.filePath,
+        supersededBy: entry.supersededBy,
+      });
     });
     return entries;
   },
@@ -2914,6 +3014,35 @@ export const useContextStore = create<ContextStoreState>()(
       if (!k.startsWith('tpl:')) total += e.tokens;
     });
     return total;
+  },
+
+  /**
+   * Mark all active, file-bound, shadowable BB entries for a path as superseded.
+   * Called during reconciliation and post-edit. Returns count of entries superseded.
+   */
+  supersedeBlackboardForPath: (path: string, newRevision: string) => {
+    const pathNorm = normalizeSourcePath(path);
+    let count = 0;
+    set(state => {
+      const newBb = new Map(state.blackboardEntries);
+      let changed = false;
+      for (const [key, entry] of state.blackboardEntries) {
+        if (entry.state !== 'active') continue;
+        if (!entry.filePath || normalizeSourcePath(entry.filePath) !== pathNorm) continue;
+        if (!BB_SHADOWABLE_KINDS.has(entry.kind)) continue;
+        if (entry.snapshotHash && entry.snapshotHash === newRevision) continue;
+        newBb.set(key, {
+          ...entry,
+          state: 'superseded',
+          supersededAt: Date.now(),
+          supersededBy: newRevision,
+        });
+        changed = true;
+        count++;
+      }
+      return changed ? { blackboardEntries: newBb } : {};
+    });
+    return count;
   },
 
   // =========================================================================
@@ -3988,7 +4117,7 @@ export const useContextStore = create<ContextStoreState>()(
     _resetRetention();
     const seededBb = new Map<string, BlackboardEntry>();
     for (const [key, content] of BB_TEMPLATES) {
-      seededBb.set(key, { content, createdAt: new Date(), tokens: estimateTokens(content) });
+      seededBb.set(key, { content, createdAt: new Date(), tokens: estimateTokens(content), kind: 'general' as const, state: 'active' as const, updatedAt: Date.now() });
     }
     set({
       chunks: new Map(),

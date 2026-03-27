@@ -616,7 +616,7 @@ export const handleCompactHistory: OpHandler = async (_params, ctx) => {
     const { compressToolLoopHistory, analyzeHistoryBreakdown, formatHistoryBreakdown } = await import('../../historyCompressor');
     const count = compressToolLoopHistory(
       ctx.toolLoopState.conversationHistory,
-      ctx.toolLoopState.round,
+      undefined,
       ctx.toolLoopState.priorTurnBoundary,
     );
     // When nothing was compressed, show breakdown so model knows WHY

@@ -229,8 +229,8 @@ pub async fn chat_db_get_session_total_stats(session_id: String, state: tauri::S
 }
 
 #[tauri::command]
-pub async fn chat_db_set_note(session_id: String, key: String, content: String, state: tauri::State<'_, ChatDbState>) -> Result<(), String> {
-    chat_db::set_blackboard_note(&state, &session_id, &key, &content)
+pub async fn chat_db_set_note(session_id: String, key: String, content: String, note_state: Option<String>, file_path: Option<String>, state: tauri::State<'_, ChatDbState>) -> Result<(), String> {
+    chat_db::set_blackboard_note(&state, &session_id, &key, &content, note_state.as_deref(), file_path.as_deref())
 }
 
 #[tauri::command]

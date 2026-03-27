@@ -159,6 +159,10 @@ export const handleRead: OpHandler = async (params, ctx) => {
   const allRefs: string[] = [];
   const readResults: Array<Record<string, unknown>> = [];
   let totalTokensDelta = 0;
+  const isTreeRead = loadType === 'tree';
+  const treePathsAccum: string[] = [];
+  const treeTextsAccum: string[] = [];
+  let treePathsTruncated = false;
   const isFull = loadType === 'raw' || loadType === 'full';
   if (isFull && !readShape) {
     lines.push('read: NOTE type:"smart" is 70% smaller and sufficient for most tasks — use full when you need canonical mutation authority');
@@ -238,9 +242,14 @@ export const handleRead: OpHandler = async (params, ctx) => {
               lines.push(`read: ${r.file || '?'} → ERROR ${r.error}`);
               continue;
             }
-            const raw = r.content ?? r.context ?? r.text;
+            let raw: unknown = r.content ?? r.context ?? r.text;
+            if (isTreeRead && typeof r.tree === 'string') {
+              raw = r.tree;
+            }
             const content = (typeof raw === 'string') ? raw : JSON.stringify(raw ?? item);
-            const src = String(r.file ?? r.path ?? filePaths[0] ?? '');
+            const src = isTreeRead
+              ? String(r.root ?? r.file ?? r.path ?? filePaths[0] ?? '')
+              : String(r.file ?? r.path ?? filePaths[0] ?? '');
             const backendHash = extractSnapshotHash(r);
             const chunkType = isFull ? 'raw' : 'smart';
             const bindIds = readBind?.length ? readBind : undefined;
@@ -276,7 +285,15 @@ export const handleRead: OpHandler = async (params, ctx) => {
               file: src,
               h: `h:${hash}`,
               ...(backendHash ? { snapshot_hash: backendHash } : {}),
+              ...(isTreeRead && r.root != null ? { root: r.root } : {}),
             });
+            if (isTreeRead) {
+              if (typeof r.tree === 'string') treeTextsAccum.push(r.tree);
+              if (Array.isArray(r.file_paths)) {
+                for (const p of r.file_paths as string[]) treePathsAccum.push(p);
+              }
+              if (r.file_paths_truncated === true) treePathsTruncated = true;
+            }
             ctx.store().clearSuspect(src);
             if (backendHash) ctx.store().reconcileSourceRevision(src, backendHash);
             ctx.store().recordMemoryEvent({ action: 'read', reason: 'context', source: src, newRevision: backendHash, refs: [`h:${hash}`] });
@@ -296,10 +313,16 @@ export const handleRead: OpHandler = async (params, ctx) => {
   const store = ctx.store();
   const freshnessHint = getFreshnessHintForRefs(store, allRefs);
   const summary = lines.join('\n');
+  const contentOut: Record<string, unknown> = { results: readResults };
+  if (isTreeRead) {
+    contentOut.file_paths = [...new Set(treePathsAccum)];
+    contentOut.tree = treeTextsAccum.join('\n\n');
+    if (treePathsTruncated) contentOut.file_paths_truncated = true;
+  }
   return {
     kind: 'file_refs', ok: true, refs: allRefs, summary: freshnessHint ? `${summary}\n${freshnessHint}` : summary,
     tokens: totalTokensDelta,
-    content: { results: readResults },
+    content: contentOut,
     ...(freshnessHint ? { _hash_warnings: [freshnessHint] } : {}),
   };
 };

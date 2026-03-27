@@ -1684,15 +1684,82 @@ pub(crate) fn load_atlsignore(root: &std::path::Path) -> Option<ignore::gitignor
 // No separate negation matcher needed — gi.matched().is_ignore() already returns
 // false when a path is negated by a ! rule.
 
+/// Max relative file paths returned with tree context (downstream read.shaped / batch bindings).
+pub(crate) const MAX_TREE_FILE_PATHS: usize = 1500;
+
+fn rel_path_posix(base: &std::path::Path, path: &std::path::Path) -> String {
+    path.strip_prefix(base)
+        .unwrap_or(path)
+        .to_string_lossy()
+        .replace('\\', "/")
+}
+
+/// Collect relative file paths under `dir` with the same depth and ignore rules as `tree_walk`,
+/// without the per-directory display cap. Stops when `out.len() >= max` and returns `true` if truncated.
+fn collect_tree_file_paths(
+    dir: &std::path::Path,
+    base: &std::path::Path,
+    depth_remaining: u32,
+    atlsignore: Option<&ignore::gitignore::Gitignore>,
+    out: &mut Vec<String>,
+    max: usize,
+) -> bool {
+    if out.len() >= max {
+        return true;
+    }
+    let entries: Vec<_> = match std::fs::read_dir(dir) {
+        Ok(rd) => rd.filter_map(|e| e.ok()).collect(),
+        Err(_) => return false,
+    };
+
+    let mut items: Vec<(String, std::path::PathBuf, bool)> = Vec::new();
+    for entry in &entries {
+        let name = entry.file_name().to_string_lossy().to_string();
+        if should_ignore_path(&name) {
+            continue;
+        }
+        let path = entry.path();
+        if let Some(gi) = atlsignore {
+            if let Ok(rel) = path.strip_prefix(base) {
+                if gi.matched(rel, path.is_dir()).is_ignore() {
+                    continue;
+                }
+            }
+        }
+        items.push((name, path.clone(), path.is_dir()));
+    }
+    items.sort_by(|a, b| match (a.2, b.2) {
+        (true, false) => std::cmp::Ordering::Less,
+        (false, true) => std::cmp::Ordering::Greater,
+        _ => a.0.to_lowercase().cmp(&b.0.to_lowercase()),
+    });
+
+    for (_name, path, is_dir) in items {
+        if out.len() >= max {
+            return true;
+        }
+        if is_dir {
+            if depth_remaining > 0 {
+                if collect_tree_file_paths(&path, base, depth_remaining - 1, atlsignore, out, max) {
+                    return true;
+                }
+            }
+        } else {
+            out.push(rel_path_posix(base, &path));
+        }
+    }
+    false
+}
+
 /// Build compact text tree for context type:tree output.
-/// Returns (tree_text, file_count, dir_count).
+/// Returns (tree_text, file_count, dir_count, file_paths, file_paths_truncated).
 pub(crate) fn build_compact_tree(
     root: &std::path::Path,
     base: &std::path::Path,
     max_depth: u32,
     glob_matcher: Option<&globset::GlobMatcher>,
     atlsignore: Option<&ignore::gitignore::Gitignore>,
-) -> (String, usize, usize) {
+) -> (String, usize, usize, Vec<String>, bool) {
     let mut lines = Vec::new();
     let mut file_count = 0usize;
     let mut dir_count = 0usize;
@@ -1713,11 +1780,51 @@ pub(crate) fn build_compact_tree(
             }
             lines.push(format!("  {} ({}L)", name, lc));
         }
-    } else {
-        tree_walk(root, base, 0, max_depth, &mut lines, &mut file_count, &mut dir_count, atlsignore);
-    }
 
-    (lines.join("\n"), file_count, dir_count)
+        let mut file_paths: Vec<String> = hits
+            .iter()
+            .map(|(parent, name, _)| {
+                if parent.is_empty() {
+                    name.clone()
+                } else {
+                    format!("{}/{}", parent, name)
+                }
+            })
+            .collect();
+        file_paths.sort();
+        let truncated = file_paths.len() > MAX_TREE_FILE_PATHS;
+        if truncated {
+            file_paths.truncate(MAX_TREE_FILE_PATHS);
+        }
+        (lines.join("\n"), file_count, dir_count, file_paths, truncated)
+    } else {
+        tree_walk(
+            root,
+            base,
+            0,
+            max_depth,
+            &mut lines,
+            &mut file_count,
+            &mut dir_count,
+            atlsignore,
+        );
+        let mut file_paths = Vec::new();
+        let truncated = collect_tree_file_paths(
+            root,
+            base,
+            max_depth,
+            atlsignore,
+            &mut file_paths,
+            MAX_TREE_FILE_PATHS,
+        );
+        (
+            lines.join("\n"),
+            file_count,
+            dir_count,
+            file_paths,
+            truncated,
+        )
+    }
 }
 
 /// Collect glob-matched files as (parent_dir, filename, line_count) tuples

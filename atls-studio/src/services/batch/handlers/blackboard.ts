@@ -14,11 +14,11 @@ function err(summary: string): StepOutput {
 }
 
 /** @returns false if DB was required and the operation failed */
-async function persistBlackboardNote(key: string, content: string, sessionId: string | null): Promise<boolean> {
+async function persistBlackboardNote(key: string, content: string, sessionId: string | null, noteState?: string, filePath?: string): Promise<boolean> {
   try {
     const { chatDb } = await import('../../chatDb');
     if (sessionId && chatDb.isInitialized()) {
-      await chatDb.setBlackboardNote(sessionId, key, content);
+      await chatDb.setBlackboardNote(sessionId, key, content, noteState, filePath);
     }
     return true;
   } catch (e) {
@@ -56,9 +56,10 @@ export const handleBbWrite: OpHandler = async (params, ctx) => {
 
   const derivedFrom = params.derived_from as string[] | undefined;
   const { tokens } = ctx.store().setBlackboardEntry(key, content, derivedFrom?.length ? { derivedFrom } : undefined);
+  const entryMeta = ctx.store().getBlackboardEntryWithMeta(key);
   let line = `bb_write: h:bb:${key} (${tokens}tk) — use h:bb:${key} in response`;
   if (derivedFrom?.length) line += ` | derived_from: ${derivedFrom.join(', ')}`;
-  const persisted = await persistBlackboardNote(key, content, ctx.sessionId);
+  const persisted = await persistBlackboardNote(key, content, ctx.sessionId, 'active', entryMeta?.filePath);
   if (!persisted) {
     ctx.store().removeBlackboardEntry(key);
     return err('bb_write: ERROR could not persist note to database');
@@ -104,8 +105,16 @@ export const handleBbRead: OpHandler = async (params, ctx) => {
           staleWarning = ` [stale: source changed — ${staleFiles.join(', ')}]`;
         }
       }
+      let supersededWarning = '';
+      if (meta.state === 'superseded') {
+        const byHash = meta.supersededBy ? ` by h:${meta.supersededBy.slice(0, 8)}` : '';
+        supersededWarning = ` [superseded${byHash} — not in active reasoning]`;
+      } else if (meta.state === 'historical') {
+        supersededWarning = ' [historical — not authoritative for action]';
+      }
       const tk = estimateTokens(meta.content);
-      lines.push(`bb_read:${k}: [-> bb:${k}, ${tk}tk — visible in ## BLACKBOARD block]${staleWarning}`);
+      const visibleNote = meta.state === 'active' ? ' — visible in ## BLACKBOARD block' : ' — excluded from ## BLACKBOARD';
+      lines.push(`bb_read:${k}: [-> bb:${k}, ${tk}tk${visibleNote}]${staleWarning}${supersededWarning}`);
       refs.push(`h:bb:${k}`);
     } else {
       lines.push(`bb_read:${k}: NOT_FOUND`);
@@ -133,7 +142,25 @@ export const handleBbList: OpHandler = async (_params, ctx) => {
   const entries = ctx.store().listBlackboardEntries();
   if (entries.length === 0) return ok('bb_list: (empty)');
 
-  const list = entries.map(e => `  ${e.key}: ${e.preview} (${e.tokens}tk)`).join('\n');
+  const activeEntries = entries.filter(e => e.state === 'active');
+  const supersededEntries = entries.filter(e => e.state !== 'active');
+
+  const formatEntry = (e: typeof entries[0]): string => {
+    const stateLabel = e.state === 'active' ? '' :
+      e.state === 'superseded' ? ` [superseded${e.supersededBy ? ` by h:${e.supersededBy.slice(0, 8)}` : ''}]` :
+      ` [${e.state}]`;
+    return `  ${e.key}: ${e.preview} (${e.tokens}tk)${stateLabel}`;
+  };
+
+  const lines: string[] = [];
+  if (activeEntries.length > 0) {
+    lines.push(...activeEntries.map(formatEntry));
+  }
+  if (supersededEntries.length > 0) {
+    lines.push(`  --- ${supersededEntries.length} superseded/historical ---`);
+    lines.push(...supersededEntries.map(formatEntry));
+  }
+
   const refs = entries.map(e => `h:bb:${e.key}`);
-  return ok(`bb_list: ${entries.length} entries\n${list}`, refs);
+  return ok(`bb_list: ${entries.length} entries (${activeEntries.length} active, ${supersededEntries.length} superseded)\n${lines.join('\n')}`, refs);
 };

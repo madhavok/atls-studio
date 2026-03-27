@@ -73,6 +73,8 @@ export interface DbBlackboardNote {
   content: string;
   created_at: string;
   updated_at: string;
+  state?: string;
+  file_path?: string;
 }
 
 export interface DbTask {
@@ -400,8 +402,8 @@ class ChatDbService {
   /**
    * Set a blackboard note (upsert: creates or updates)
    */
-  async setBlackboardNote(sessionId: string, key: string, content: string): Promise<void> {
-    await invoke('chat_db_set_note', { sessionId, key, content });
+  async setBlackboardNote(sessionId: string, key: string, content: string, noteState?: string, filePath?: string): Promise<void> {
+    await invoke('chat_db_set_note', { sessionId, key, content, noteState: noteState ?? null, filePath: filePath ?? null });
   }
 
   /**

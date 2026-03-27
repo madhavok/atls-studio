@@ -1043,7 +1043,22 @@ export async function executeUnifiedBatch(
       if (inferred) mergedParams.workspace = inferred;
     }
 
-    // Dispatch
+    // Dispatch (runtime JSON may use non-OperationKind names e.g. OpenAI multi_tool_use.*)
+    const useStr = String(step.use);
+    if (useStr === 'multi_tool_use.parallel' || useStr.startsWith('multi_tool_use.')) {
+      const output: StepOutput = {
+        kind: 'raw', ok: false, refs: [],
+        summary: `${step.id}: ERROR batch steps must use ATLS operation names (e.g. read.context, search.issues), not "${useStr}"`,
+        error:
+          `unknown operation: ${useStr} — batch uses OperationKind names; express parallel work as multiple batch steps, not OpenAI multi_tool_use wrappers`,
+      };
+      stepOutputs.set(step.id, output);
+      results.push(stepOutputToResult(step.id, step.use, output, Date.now() - stepStart));
+      batchOk = false;
+      if (step.on_error === 'stop') break;
+      continue;
+    }
+
     const handler = getHandler(step.use);
     if (!handler) {
       const output: StepOutput = {

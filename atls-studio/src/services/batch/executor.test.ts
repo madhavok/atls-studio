@@ -174,6 +174,26 @@ describe('executeUnifiedBatch interruption handling', () => {
   });
 });
 
+describe('executeUnifiedBatch pseudo-op handling', () => {
+  beforeEach(() => {
+    handlers.clear();
+  });
+
+  it('rejects multi_tool_use.parallel with an actionable message', async () => {
+    const result = await executeUnifiedBatch(
+      {
+        version: '1.0',
+        steps: [{ id: 'bad', use: 'multi_tool_use.parallel' }],
+      },
+      makeCtx(),
+    );
+    expect(result.ok).toBe(false);
+    const first = result.step_results[0];
+    expect(first?.error).toContain('OperationKind');
+    expect(first?.error).toContain('multi_tool_use');
+  });
+});
+
 describe('executeUnifiedBatch snapshot propagation', () => {
   beforeEach(() => {
     handlers.clear();

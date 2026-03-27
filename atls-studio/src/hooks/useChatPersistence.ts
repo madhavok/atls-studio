@@ -11,7 +11,7 @@
 
 import { useEffect, useCallback, useRef } from 'react';
 import { useAppStore, type Message, type ChatSession } from '../stores/appStore';
-import { useContextStore, type ContextChunk, type TaskPlan, type ManifestEntry, type TransitionBridge, type StagedSnippet } from '../stores/contextStore';
+import { useContextStore, type ContextChunk, type TaskPlan, type ManifestEntry, type TransitionBridge, type StagedSnippet, type BlackboardEntry, parseBbKey } from '../stores/contextStore';
 import { useCostStore, type SubAgentUsage, type AIProvider } from '../stores/costStore';
 import { chatDb, type PersistedMemorySnapshot, type PersistedSubAgentUsageRow } from '../services/chatDb';
 import { useRoundHistoryStore } from '../stores/roundHistoryStore';
@@ -183,6 +183,16 @@ export function rehydrateChunkDates(chunks: ContextChunk[]): ContextChunk[] {
     createdAt: new Date(chunk.createdAt),
     lastAccessed: chunk.lastAccessed ?? (chunk.createdAt ? new Date(chunk.createdAt).getTime() : Date.now()),
   }));
+}
+
+function rehydrateBbEntry(key: string, entry: Partial<BlackboardEntry> & { content: string; createdAt: Date | string; tokens: number }): BlackboardEntry {
+  return {
+    ...entry as BlackboardEntry,
+    createdAt: new Date(entry.createdAt),
+    kind: entry.kind ?? parseBbKey(key).kind,
+    state: entry.state ?? 'active',
+    updatedAt: entry.updatedAt ?? Date.now(),
+  };
 }
 
 function normalizePersistedSnippet(key: string, snippet: StagedSnippet): StagedSnippet | null {
@@ -483,7 +493,7 @@ export function useChatPersistence() {
             archivedChunks: new Map(rehydrateChunkDates(memorySnapshot.archivedChunks).map(chunk => [chunk.hash, chunk])),
             droppedManifest: new Map(memorySnapshot.droppedManifest),
             stagedSnippets: new Map(normalizedStagedSnippets),
-            blackboardEntries: new Map(memorySnapshot.blackboardEntries.map(([key, entry]) => [key, { ...entry, createdAt: new Date(entry.createdAt) }])),
+            blackboardEntries: new Map(memorySnapshot.blackboardEntries.map(([key, entry]) => [key, rehydrateBbEntry(key, entry)])),
             cognitiveRules: new Map(memorySnapshot.cognitiveRules.map(([key, rule]) => [key, { ...rule, createdAt: new Date(rule.createdAt) }])),
             taskPlan: memorySnapshot.taskPlan,
             task: memorySnapshot.taskPlan,
@@ -545,7 +555,9 @@ export function useChatPersistence() {
               const val = parseInt(note.content, 10);
               if (!isNaN(val)) useContextStore.setState({ freedTokens: val });
             } else {
-              contextStore.setBlackboardEntry(note.key, note.content);
+              contextStore.setBlackboardEntry(note.key, note.content, {
+                filePath: note.file_path ?? undefined,
+              });
               userNoteCount++;
             }
           }
@@ -995,7 +1007,7 @@ export function useChatPersistence() {
       archivedChunks: new Map(rehydrateChunkDates(snapshot.archivedChunks).map(chunk => [chunk.hash, chunk])),
       droppedManifest: new Map(snapshot.droppedManifest),
       stagedSnippets: new Map(normalizedStagedSnippets),
-      blackboardEntries: new Map(snapshot.blackboardEntries.map(([key, entry]) => [key, { ...entry, createdAt: new Date(entry.createdAt) }])),
+      blackboardEntries: new Map(snapshot.blackboardEntries.map(([key, entry]) => [key, rehydrateBbEntry(key, entry)])),
       cognitiveRules: new Map(snapshot.cognitiveRules.map(([key, rule]) => [key, { ...rule, createdAt: new Date(rule.createdAt) }])),
       taskPlan: snapshot.taskPlan,
       task: snapshot.taskPlan,

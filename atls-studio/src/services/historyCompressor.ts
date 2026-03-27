@@ -364,12 +364,26 @@ export function compressToolLoopHistory(
   const messageRounds = buildAssistantRoundMap(history, startIdx);
 
   const protectedCount = opts?.emergency ? 0 : PROTECTED_RECENT_ROUNDS;
-  // Use the max surviving round index (not the global loop counter) so that
-  // protection still works after applyRollingHistoryWindow evicts + reindexes.
   let maxSurvivingRound = -1;
   for (const r of messageRounds.values()) maxSurvivingRound = Math.max(maxSurvivingRound, r);
-  const skipThreshold = maxSurvivingRound >= 0
-    ? Math.max(0, maxSurvivingRound + 1 - protectedCount) : Infinity;
+  const numRounds = maxSurvivingRound + 1;
+
+  // Round guard: skip compressing messages in assistant rounds >= skipThreshold.
+  // - emergency: compress every round (subject to token thresholds).
+  // - explicit currentRound (tests, emergency path): align with analyzeHistoryBreakdown
+  //   — protect the last `protectedCount` rounds relative to that counter.
+  // - undefined currentRound (e.g. middleware): derive from history length only — protect
+  //   the last `protectedCount` rounds in the slice; if the slice has ≤ that many rounds,
+  //   all rounds are protected (skipThreshold 0).
+  const skipThreshold = (() => {
+    if (opts?.emergency) return Infinity;
+    if (currentRound !== undefined) {
+      return Math.max(0, currentRound - protectedCount);
+    }
+    return numRounds > protectedCount
+      ? Math.max(0, numRounds - protectedCount)
+      : 0;
+  })();
 
   const recordReplacement = (content: string, role: string, description: string): string => {
     const tokens = estimateTokens(content);

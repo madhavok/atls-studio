@@ -242,7 +242,7 @@ describe('compressToolLoopHistory dedup', () => {
   });
 
   it('reuses a batch-handler chunk with different source via source-match fallback', () => {
-    const bigContent = 'export function search() {}\n'.repeat(120);
+    const bigContent = 'export function search() {}\n'.repeat(400);
     useContextStore.getState().addChunk('different serialization of same result', 'search', 'search.code:auth');
     const chunkCountBefore = useContextStore.getState().chunks.size;
 
@@ -578,7 +578,8 @@ describe('analyzeHistoryBreakdown protectedTokens', () => {
       { role: 'user', content: 'ok' },
     ];
 
-    const breakdown = analyzeHistoryBreakdown(history, 0, 5);
+    // skipThreshold = max(0, currentRound - PROTECTED_RECENT_ROUNDS); need currentRound >= 7 so round-0 tool_result is outside the last 6 rounds.
+    const breakdown = analyzeHistoryBreakdown(history, 0, 7);
     expect(breakdown.compressibleTokens).toBeGreaterThan(0);
     expect(breakdown.protectedTokens).toBe(0);
   });

@@ -369,11 +369,11 @@ export interface ContextStoreApi {
   rebaseStagedLineNumbers: (sourcePath: string, lineDelta: number) => number;
 
   // Blackboard
-  setBlackboardEntry: (key: string, content: string, opts?: { derivedFrom?: string[] }) => { tokens: number; warning?: string };
+  setBlackboardEntry: (key: string, content: string, opts?: { derivedFrom?: string[]; filePath?: string; snapshotHash?: string }) => { tokens: number; warning?: string };
   getBlackboardEntry: (key: string) => string | null;
-  getBlackboardEntryWithMeta: (key: string) => { content: string; derivedFrom?: string[]; derivedRevisions?: string[] } | null;
+  getBlackboardEntryWithMeta: (key: string) => { content: string; derivedFrom?: string[]; derivedRevisions?: string[]; kind: string; state: string; filePath?: string; snapshotHash?: string; supersededAt?: number; supersededBy?: string } | null;
   removeBlackboardEntry: (key: string) => boolean;
-  listBlackboardEntries: () => Array<{ key: string; preview: string; tokens: number }>;
+  listBlackboardEntries: () => Array<{ key: string; preview: string; tokens: number; state: string; filePath?: string; supersededBy?: string }>;
 
   // Rules
   setRule: (key: string, content: string) => { tokens: number; warning?: string };

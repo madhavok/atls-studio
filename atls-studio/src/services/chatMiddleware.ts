@@ -99,7 +99,7 @@ export const historyCompressionMiddleware: BeforeRoundMiddleware = (ctx) => {
   }
   const compressed = compressToolLoopHistory(
     ctx.conversationHistory,
-    ctx.round,
+    undefined,
     ctx.priorTurnBoundary,
   );
   if (compressed > 0) {
@@ -179,7 +179,7 @@ export const contextHygieneMiddleware: BeforeRoundMiddleware = (ctx) => {
 
   const compressed = compressToolLoopHistory(
     ctx.conversationHistory,
-    ctx.round,
+    undefined,
     ctx.priorTurnBoundary,
   );
   if (compressed > 0) {

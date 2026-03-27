@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { estimateTokens, formatChunkTag, formatWorkingMemoryChunk, parseChunkTag } from './contextHash';
+import { estimateTokens, formatChunkTag, parseChunkTag } from './contextHash';
 
 describe('contextHash chunk tags', () => {
   it('round-trips compound chunk types without a source', () => {
@@ -24,9 +24,8 @@ describe('contextHash chunk tags', () => {
     });
   });
 
-  it('parses working-memory tags emitted by the formatter', () => {
-    const chunk = formatWorkingMemoryChunk('feed12', 64, 'exec:cmd', 'scripts/build.ps1', true);
-    const tag = chunk.replace(/^📌\s*/, '');
+  it('parses chunk tags used in working memory / tagged context (formatChunkTag)', () => {
+    const tag = formatChunkTag('feed12', 64, 'exec:cmd', 'scripts/build.ps1');
 
     expect(parseChunkTag(tag)).toEqual({
       hash: 'feed12',

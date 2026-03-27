@@ -62,7 +62,86 @@ pub struct NoiseMarkingResult {
     pub errors: Vec<String>,
 }
 
+/// Shared predicates for deduplicated `code_issues` rows (same as `find_issues`, without ORDER/LIMIT/OFFSET).
+fn push_issue_filter_predicates(
+    options: &IssueFilterOptions,
+    sql: &mut String,
+    params: &mut Vec<String>,
+) {
+    let severity_str: Option<String> =
+        options.severity.as_ref().map(|s| format!("{:?}", s).to_lowercase());
+
+    if let Some(ref file_pattern) = options.file_pattern {
+        sql.push_str(" AND EXISTS (SELECT 1 FROM files f WHERE f.id = i.file_id AND f.path LIKE ?)");
+        params.push(file_pattern.clone());
+    }
+
+    if let Some(ref file_patterns) = options.file_patterns {
+        if !file_patterns.is_empty() {
+            let placeholders: Vec<&str> = file_patterns.iter().map(|_| "f.path LIKE ?").collect();
+            sql.push_str(&format!(
+                " AND EXISTS (SELECT 1 FROM files f WHERE f.id = i.file_id AND ({}))",
+                placeholders.join(" OR ")
+            ));
+            for pat in file_patterns {
+                params.push(pat.clone());
+            }
+        }
+    }
+
+    if let Some(ref exclude_pattern) = options.exclude_pattern {
+        sql.push_str(" AND NOT EXISTS (SELECT 1 FROM files f WHERE f.id = i.file_id AND f.path LIKE ?)");
+        params.push(exclude_pattern.clone());
+    }
+
+    if let Some(ref sev_str) = severity_str {
+        sql.push_str(" AND i.severity = ?");
+        params.push(sev_str.clone());
+    }
+
+    if let Some(ref sevs) = options.severities {
+        if !sevs.is_empty() {
+            let placeholders: Vec<String> = sevs.iter().map(|_| "?".to_string()).collect();
+            sql.push_str(&format!(" AND i.severity IN ({})", placeholders.join(",")));
+            params.extend(sevs.iter().cloned());
+        }
+    }
+
+    if let Some(ref category) = options.category {
+        sql.push_str(" AND i.category = ?");
+        params.push(category.clone());
+    }
+
+    if let Some(ref cats) = options.categories {
+        if !cats.is_empty() {
+            let placeholders: Vec<String> = cats.iter().map(|_| "?".to_string()).collect();
+            sql.push_str(&format!(" AND i.category IN ({})", placeholders.join(",")));
+            params.extend(cats.iter().cloned());
+        }
+    }
+}
+
 impl QueryEngine {
+    /// Count issues matching filters (same dedup semantics as `find_issues`, ignoring limit/offset).
+    pub fn count_issues(&self, options: &IssueFilterOptions) -> Result<u64, QueryError> {
+        let conn = self.db.conn();
+        let mut sql = String::from(
+            "SELECT COUNT(*) FROM code_issues i
+             WHERE i.suppressed = 0
+               AND i.id IN (
+                   SELECT MIN(id) FROM code_issues
+                   WHERE suppressed = 0
+                   GROUP BY file_id, line, type
+               )",
+        );
+        let mut params: Vec<String> = Vec::new();
+        push_issue_filter_predicates(options, &mut sql, &mut params);
+        let mut stmt = conn.prepare(&sql)?;
+        let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p as &dyn rusqlite::ToSql).collect();
+        let n: u64 = stmt.query_row(params_refs.as_slice(), |row| row.get(0))?;
+        Ok(n)
+    }
+
     /// Find issues with optional filters and pagination
     pub fn find_issues(
         &self,
@@ -84,59 +163,8 @@ impl QueryEngine {
                )"
         );
 
-        // Pre-compute string values that need to outlive params
-        let severity_str: Option<String> = options.severity.as_ref().map(|s| format!("{:?}", s).to_lowercase());
-        
         let mut params: Vec<String> = Vec::new();
-
-        if let Some(ref file_pattern) = options.file_pattern {
-            sql.push_str(" AND EXISTS (SELECT 1 FROM files f WHERE f.id = i.file_id AND f.path LIKE ?)");
-            params.push(file_pattern.clone());
-        }
-
-        if let Some(ref file_patterns) = options.file_patterns {
-            if !file_patterns.is_empty() {
-                let placeholders: Vec<&str> = file_patterns.iter().map(|_| "f.path LIKE ?").collect();
-                sql.push_str(&format!(
-                    " AND EXISTS (SELECT 1 FROM files f WHERE f.id = i.file_id AND ({}))",
-                    placeholders.join(" OR ")
-                ));
-                for pat in file_patterns {
-                    params.push(pat.clone());
-                }
-            }
-        }
-
-        if let Some(ref exclude_pattern) = options.exclude_pattern {
-            sql.push_str(" AND NOT EXISTS (SELECT 1 FROM files f WHERE f.id = i.file_id AND f.path LIKE ?)");
-            params.push(exclude_pattern.clone());
-        }
-
-        if let Some(ref sev_str) = severity_str {
-            sql.push_str(" AND i.severity = ?");
-            params.push(sev_str.clone());
-        }
-
-        if let Some(ref sevs) = options.severities {
-            if !sevs.is_empty() {
-                let placeholders: Vec<String> = sevs.iter().map(|_| "?".to_string()).collect();
-                sql.push_str(&format!(" AND i.severity IN ({})", placeholders.join(",")));
-                params.extend(sevs.iter().cloned());
-            }
-        }
-
-        if let Some(ref category) = options.category {
-            sql.push_str(" AND i.category = ?");
-            params.push(category.clone());
-        }
-
-        if let Some(ref cats) = options.categories {
-            if !cats.is_empty() {
-                let placeholders: Vec<String> = cats.iter().map(|_| "?".to_string()).collect();
-                sql.push_str(&format!(" AND i.category IN ({})", placeholders.join(",")));
-                params.extend(cats.iter().cloned());
-            }
-        }
+        push_issue_filter_predicates(options, &mut sql, &mut params);
 
         sql.push_str(" ORDER BY CASE i.severity WHEN 'high' THEN 0 WHEN 'medium' THEN 1 WHEN 'low' THEN 2 ELSE 3 END, i.line");
 

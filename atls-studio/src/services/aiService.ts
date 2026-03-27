@@ -2685,7 +2685,7 @@ function buildDynamicContextBlock(
   }
 
   const escalatedRepairs = bbEntries
-    .filter(e => e.key.startsWith('repair:') && parseInt(e.preview, 10) >= 2)
+    .filter(e => e.key.startsWith('repair:') && e.state === 'active' && parseInt(e.preview, 10) >= 2)
     .map(e => `${e.key.slice(7)} (${e.preview} attempts)`);
   if (escalatedRepairs.length > 0) {
     parts.push(`<<ESCALATED REPAIR: ${escalatedRepairs.join(', ')}. Multiple failed repairs. Full scope in context. Review holistically before editing.>>`);
@@ -2999,6 +2999,7 @@ function _buildBlackboardBlock(): string {
   const bbLines: string[] = ['## BLACKBOARD'];
   ctxState.blackboardEntries.forEach((entry, key) => {
     if (key.startsWith('edit:')) return;
+    if (entry.state === 'superseded' || entry.state === 'historical') return;
     bbLines.push(`${key}: ${entry.content}`);
   });
   if (bbLines.length <= 1) return '';

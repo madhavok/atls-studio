@@ -202,9 +202,13 @@ export function formatWorkingMemory(input: FormatterInput): string {
 
   // BB summary — full content is in the dynamic context block.
   if (blackboardEntries.size > 0) {
-    let bbTokens = 0;
-    blackboardEntries.forEach(e => bbTokens += e.tokens);
-    lines.push(`BB: ${blackboardEntries.size} entries, ${(bbTokens / 1000).toFixed(1)}k tk (in dynamic block — use session.bb.read/write to access)`);
+    let activeTk = 0, activeCount = 0, supersededCount = 0;
+    blackboardEntries.forEach(e => {
+      if (e.state === 'active') { activeTk += e.tokens; activeCount++; }
+      else supersededCount++;
+    });
+    const supersededSuffix = supersededCount > 0 ? `, ${supersededCount} superseded` : '';
+    lines.push(`BB: ${activeCount} active entries, ${(activeTk / 1000).toFixed(1)}k tk${supersededSuffix} (in dynamic block — use session.bb.read/write to access)`);
     lines.push('');
   }
 

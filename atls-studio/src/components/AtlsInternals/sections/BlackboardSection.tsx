@@ -57,6 +57,11 @@ export function BlackboardSection() {
                 <span className="text-[10px] text-studio-muted">{isExpanded ? '▼' : '▶'}</span>
                 <span className="font-mono text-xs text-studio-accent flex-1 truncate">{key}</span>
                 <span className="text-[10px] text-studio-muted">{entry.tokens}tk</span>
+                {entry.state !== 'active' && (
+                  <span className={`text-[10px] px-1 rounded ${entry.state === 'superseded' ? 'bg-yellow-900/30 text-yellow-400/80' : 'bg-studio-border/30 text-studio-muted'}`}>
+                    {entry.state}
+                  </span>
+                )}
                 <span className="text-[10px] text-studio-muted">
                   {entry.createdAt instanceof Date
                     ? entry.createdAt.toLocaleTimeString()

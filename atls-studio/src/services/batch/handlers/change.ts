@@ -319,13 +319,21 @@ export function extractEditLessons(result: unknown, params: Record<string, unkno
           const lesson = fileErrors
             .map(e => `L${e.line} ${e.severity}: ${(e.message as string || '').slice(0, 80)}`)
             .join(' | ');
-          store.setBlackboardEntry(`err:${basename}`, lesson);
+          const awareness = store.getAwareness(file);
+          store.setBlackboardEntry(`err:${basename}`, lesson, {
+            filePath: file,
+            snapshotHash: awareness?.snapshotHash,
+          });
         }
       } else if (!hasErrors) {
         const errKey = `err:${basename}`;
         const priorErr = store.getBlackboardEntry(errKey);
         if (priorErr) {
-          store.setBlackboardEntry(`fix:${basename}`, `resolved: ${priorErr}`);
+          const awareness = store.getAwareness(file);
+          store.setBlackboardEntry(`fix:${basename}`, `resolved: ${priorErr}`, {
+            filePath: file,
+            snapshotHash: awareness?.snapshotHash,
+          });
           store.removeBlackboardEntry(errKey);
         }
       }
@@ -373,9 +381,11 @@ function recordEditSummary(result: unknown, params: Record<string, unknown>): vo
         ? ` diff:h:${oldHash.replace(/^h:/, '').slice(0, SHORT_HASH_LEN)}..${shortHash}`
         : '';
 
+      const awareness = store.getAwareness(file);
       store.setBlackboardEntry(
         `edit:${basename}`,
         `${shortHash}${lineInfo}${deltaInfo}${diffRef} @${Date.now()}`,
+        { filePath: file, snapshotHash: awareness?.snapshotHash },
       );
     }
 
@@ -1523,7 +1533,11 @@ export const handleEdit: OpHandler = async (params, ctx) => {
         const repairKey = `repair:${basename}`;
         const prev = useContextStore.getState().getBlackboardEntry(repairKey);
         const count = prev ? parseInt(prev, 10) + 1 : 1;
-        useContextStore.getState().setBlackboardEntry(repairKey, String(count));
+        const awareness = useContextStore.getState().getAwareness(tf);
+        useContextStore.getState().setBlackboardEntry(repairKey, String(count), {
+          filePath: tf,
+          snapshotHash: awareness?.snapshotHash,
+        });
       }
       return errWithContent(formatEditErrorSummary(enrichedErrorPayload), enrichedErrorPayload);
     }
@@ -1536,11 +1550,15 @@ export const handleEdit: OpHandler = async (params, ctx) => {
     if (isMutating && refs.length > 0) {
       summary += `\n[FRESH] Content is live at ${refs.join(', ')}. Do NOT re-read these files — chain next edits from these refs. Re-read only on stale_hash errors.`;
     }
-    // Clear repair escalation counter on success
+    // Supersede file-bound reasoning artifacts on successful edit
     if (isMutating) {
+      const newRevision = refs.length > 0 ? refs[0].replace(/^h:/, '') : undefined;
       for (const tf of targetFiles) {
         const basename = tf.split('/').pop() ?? tf;
         useContextStore.getState().removeBlackboardEntry(`repair:${basename}`);
+        if (newRevision) {
+          useContextStore.getState().supersedeBlackboardForPath(tf, newRevision);
+        }
       }
     }
     return ok(summary, refs, result);

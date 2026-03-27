@@ -119,6 +119,8 @@ pub struct DbBlackboardNote {
     pub content: String,
     pub created_at: String,
     pub updated_at: String,
+    pub state: Option<String>,
+    pub file_path: Option<String>,
 }
 
 // ============================================================================
@@ -447,6 +449,23 @@ impl ChatDbState {
             }
             conn.execute("INSERT INTO schema_version (version) VALUES (3)", [])
                 .map_err(|e| format!("Migration v3 version bump: {}", e))?;
+        }
+
+        // v4: add state and file_path to blackboard_notes for reasoning freshness.
+        if current_version < 4 {
+            let has_state: bool = conn
+                .prepare("SELECT COUNT(*) FROM pragma_table_info('blackboard_notes') WHERE name='state'")
+                .and_then(|mut s| s.query_row([], |r| r.get::<_, i64>(0)))
+                .unwrap_or(0) > 0;
+            if !has_state {
+                conn.execute_batch(
+                    "ALTER TABLE blackboard_notes ADD COLUMN state TEXT DEFAULT 'active';
+                     ALTER TABLE blackboard_notes ADD COLUMN file_path TEXT;"
+                )
+                .map_err(|e| format!("Migration v4 blackboard_notes: {}", e))?;
+            }
+            conn.execute("INSERT INTO schema_version (version) VALUES (4)", [])
+                .map_err(|e| format!("Migration v4 version bump: {}", e))?;
         }
 
         Ok(())
@@ -1232,12 +1251,12 @@ pub fn get_session_total_stats(state: &ChatDbState, session_id: &str) -> Result<
 // Blackboard Notes Operations
 // ============================================================================
 
-pub fn set_blackboard_note(state: &ChatDbState, session_id: &str, key: &str, content: &str) -> Result<(), String> {
+pub fn set_blackboard_note(state: &ChatDbState, session_id: &str, key: &str, content: &str, note_state: Option<&str>, file_path: Option<&str>) -> Result<(), String> {
     state.with_conn(|conn| {
         conn.execute(
-            "INSERT INTO blackboard_notes (session_id, key, content) VALUES (?1, ?2, ?3)
-             ON CONFLICT(session_id, key) DO UPDATE SET content = ?3, updated_at = CURRENT_TIMESTAMP",
-            params![session_id, key, content],
+            "INSERT INTO blackboard_notes (session_id, key, content, state, file_path) VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT(session_id, key) DO UPDATE SET content = ?3, state = COALESCE(?4, state), file_path = COALESCE(?5, file_path), updated_at = CURRENT_TIMESTAMP",
+            params![session_id, key, content, note_state.unwrap_or("active"), file_path],
         )?;
         Ok(())
     })
@@ -1246,7 +1265,7 @@ pub fn set_blackboard_note(state: &ChatDbState, session_id: &str, key: &str, con
 pub fn get_blackboard_notes(state: &ChatDbState, session_id: &str) -> Result<Vec<DbBlackboardNote>, String> {
     state.with_conn(|conn| {
         let mut stmt = conn.prepare(
-            "SELECT id, session_id, key, content, created_at, updated_at 
+            "SELECT id, session_id, key, content, created_at, updated_at, state, file_path
              FROM blackboard_notes WHERE session_id = ?1 ORDER BY created_at ASC"
         )?;
         
@@ -1258,6 +1277,8 @@ pub fn get_blackboard_notes(state: &ChatDbState, session_id: &str) -> Result<Vec
                 content: row.get(3)?,
                 created_at: row.get(4)?,
                 updated_at: row.get(5)?,
+                state: row.get(6)?,
+                file_path: row.get(7)?,
             })
         })?
         .collect::<Result<Vec<_>, _>>()?;

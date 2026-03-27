@@ -897,9 +897,10 @@ describe('intent.extract resolver', () => {
     const result = resolveExtract(params, emptyContext());
     const refactorStep = result.steps.find(s => s.use === 'change.refactor');
     expect(refactorStep!.with!.action).toBe('execute');
-    expect(refactorStep!.with!.file_paths).toEqual(['src/lib.rs']);
-    expect(refactorStep!.with!.to).toBe('src/handlers.rs');
-    expect(refactorStep!.with!.symbol_names).toEqual(['dispatch']);
+    expect(refactorStep!.with!.source_file).toBe('src/lib.rs');
+    expect(refactorStep!.with!.extractions).toEqual([
+      { symbols: ['dispatch'], target_file: 'src/handlers.rs' },
+    ]);
   });
 
   it('verify conditioned on refactor success', () => {

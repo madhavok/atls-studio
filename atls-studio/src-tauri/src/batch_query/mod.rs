@@ -1057,7 +1057,8 @@ pub async fn atls_batch_query(
                             }
 
                             let gi = if include_ignored { None } else { load_atlsignore(&resolved) };
-                            let (tree_text, file_count, dir_count) = build_compact_tree(
+                            let (tree_text, file_count, dir_count, file_paths, file_paths_truncated) =
+                                build_compact_tree(
                                 &resolved,
                                 &resolved,
                                 depth,
@@ -1069,7 +1070,9 @@ pub async fn atls_batch_query(
                                 "root": tree_root_display,
                                 "files": file_count,
                                 "dirs": dir_count,
-                                "tree": tree_text
+                                "tree": tree_text,
+                                "file_paths": file_paths,
+                                "file_paths_truncated": file_paths_truncated
                             }));
                         }
                         _ => {
@@ -5028,9 +5031,16 @@ pub async fn atls_batch_query(
                     }).collect();
                     filter.file_patterns = Some(patterns);
                 }
+
+                let mut count_filter = filter.clone();
+                count_filter.limit = None;
+                count_filter.offset = None;
+                let matching_total_res = project.query().count_issues(&count_filter);
                 
                 match project.query().find_issues(&filter) {
                     Ok(issues) => {
+                        let matching_total =
+                            matching_total_res.unwrap_or_else(|_| issues.len() as u64);
                         // Get file path mapping
                         let file_path_map: std::collections::HashMap<i64, String> = {
                             let conn = project.query().db().conn();
@@ -5113,10 +5123,14 @@ pub async fn atls_batch_query(
                         let applied_limit = filter.limit.unwrap_or(50);
                         let applied_offset = filter.offset.unwrap_or(0);
                         let returned = filtered.len() as u32;
+                        let returned_u64 = u64::from(returned);
+                        let offset_u64 = u64::from(applied_offset);
+                        let has_more = offset_u64.saturating_add(returned_u64) < matching_total;
                         let mut result = serde_json::json!({
                             "issues": by_file,
                             "summary": {
                                 "total": filtered.len(),
+                                "matching_total": matching_total,
                                 "high": high,
                                 "medium": medium,
                                 "low": low
@@ -5125,9 +5139,9 @@ pub async fn atls_batch_query(
                                 "returned": returned,
                                 "limit": applied_limit,
                                 "offset": applied_offset,
-                                "has_more": returned == applied_limit
+                                "has_more": has_more
                             },
-                            "_next": "Use limit/offset to paginate, batch({version:\"1.0\",steps:[{id:\"e1\",use:\"change.edit\",with:{line_edits:[...]}}]}) to fix, batch({version:\"1.0\",steps:[{id:\"s1\",use:\"search.issues\",with:{mark_noise:true,...}}]}) to suppress"
+                            "_next": "summary.matching_total is the full matching row count; summary.total is this page. Use limit/offset to paginate, batch({version:\"1.0\",steps:[{id:\"e1\",use:\"change.edit\",with:{line_edits:[...]}}]}) to fix, batch({version:\"1.0\",steps:[{id:\"s1\",use:\"search.issues\",with:{mark_noise:true,...}}]}) to suppress"
                         });
                         if filtered.is_empty() {
                             result["_hint"] = serde_json::json!(
@@ -5142,7 +5156,7 @@ pub async fn atls_batch_query(
                         Ok(serde_json::json!({
                             "error": e.to_string(),
                             "issues": [],
-                            "summary": { "total": 0, "high": 0, "medium": 0, "low": 0 }
+                            "summary": { "total": 0, "matching_total": 0, "high": 0, "medium": 0, "low": 0 }
                         }))
                     }
                 }

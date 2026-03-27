@@ -371,8 +371,8 @@ impl QueryEngine {
         };
 
         // Get symbols (capped to prevent token bloat on large files)
-        const MAX_SYMBOLS: usize = 150;
-        const MAX_SIGNATURE_LEN: usize = 120;
+        const MAX_SYMBOLS: usize = 300;
+        const MAX_SIGNATURE_LEN: usize = 240;
         let mut symbols_stmt = conn.prepare(
             "SELECT name, kind, line, signature FROM symbols WHERE file_id = ? ORDER BY line LIMIT ?"
         )?;

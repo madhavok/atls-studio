@@ -53,6 +53,35 @@ describe('context handlers snapshot authority', () => {
     ]);
   });
 
+  it('exposes content.file_paths and content.tree for type tree (intent.survey bindings)', async () => {
+    const ctx = makeCtx({
+      atlsBatchQuery: vi.fn().mockResolvedValue({
+        results: [
+          {
+            root: 'src',
+            tree: '  a.ts (10L)',
+            file_paths: ['src/a.ts', 'src/b.ts'],
+            file_paths_truncated: false,
+          },
+        ],
+      }),
+    });
+
+    const result = await handleRead({ type: 'tree', file_paths: ['src'] }, ctx);
+
+    expect(result.ok).toBe(true);
+    const c = result.content as {
+      results: Array<Record<string, unknown>>;
+      file_paths: string[];
+      tree: string;
+      file_paths_truncated?: boolean;
+    };
+    expect(c.file_paths).toEqual(['src/a.ts', 'src/b.ts']);
+    expect(c.tree).toBe('  a.ts (10L)');
+    expect(c.file_paths_truncated).toBeUndefined();
+    expect(c.results[0]).toMatchObject({ file: 'src', h: expect.any(String), root: 'src' });
+  });
+
   it('keeps shaped reads tied to the backend snapshot authority', async () => {
     const ctx = makeCtx({
       atlsBatchQuery: vi.fn().mockResolvedValue({
