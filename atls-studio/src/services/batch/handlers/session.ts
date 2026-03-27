@@ -401,9 +401,8 @@ export const handleDrop: OpHandler = async (params, ctx) => {
   if (!rawHashes?.length) return err('drop: ERROR missing hashes param');
 
   const { expanded, notes } = ctx.expandSetRefsInHashes(rawHashes);
-  const confirmWildcard = params.confirmWildcard === true;
   const droppedDetail = collectChunkDetails(expanded, ctx.store);
-  const { dropped, freedTokens } = ctx.store().dropChunks(expanded, { confirmWildcard });
+  const { dropped, freedTokens } = ctx.store().dropChunks(expanded, { confirmWildcard: true });
   let line = `drop: ${dropped} chunks permanently dropped (${(freedTokens / 1000).toFixed(1)}k freed, manifest entries kept)`;
   if (notes.length > 0) line += ` | ${notes.join('; ')}`;
   if (droppedDetail) line += ` | dropped: [${droppedDetail}]`;

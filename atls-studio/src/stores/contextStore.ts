@@ -4103,10 +4103,16 @@ export const useContextStore = create<ContextStoreState>()(
     const evictedHashes: string[] = [];
 
     set(state => {
-      // Count compacted+unpinned chunks (dormant candidates)
+      // Count all dormant chunks: compacted OR HPP-dematerialized, unpinned, non-chat
       const dormantEntries: Array<[string, ContextChunk]> = [];
       for (const [key, chunk] of state.chunks) {
-        if (chunk.compacted && !chunk.pinned) dormantEntries.push([key, chunk]);
+        if (chunk.pinned || CHAT_TYPES.has(chunk.type)) continue;
+        if (chunk.compacted) {
+          dormantEntries.push([key, chunk]);
+        } else {
+          const ref = hppGetRef(chunk.hash);
+          if (ref && !hppShouldMaterialize(ref)) dormantEntries.push([key, chunk]);
+        }
       }
 
       if (dormantEntries.length <= MAX_DORMANT_CHUNKS) return {};
