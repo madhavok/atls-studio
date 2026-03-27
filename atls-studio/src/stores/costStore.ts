@@ -277,7 +277,7 @@ function loadCostData(): DailyUsage[] {
         const e = entry as Record<string, unknown>;
         if (typeof e.date !== 'string' || typeof e.provider !== 'string' || typeof e.model !== 'string') return false;
         // Validate numeric fields — reject entries with non-finite numbers
-        for (const key of ['inputTokens', 'outputTokens', 'costCents', 'apiCalls']) {
+        for (const key of ['inputTokens', 'outputTokens', 'costCents', 'apiCalls', 'cacheReadTokens', 'cacheWriteTokens']) {
           if (key in e && (typeof e[key] !== 'number' || !Number.isFinite(e[key] as number))) return false;
         }
         return true;

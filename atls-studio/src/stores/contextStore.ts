@@ -220,11 +220,13 @@ const recentRevisionAdvances = new Map<string, { cause: FreshnessCause; sessionI
 function recordRevisionAdvanceModule(path: string, cause: FreshnessCause, sessionId?: string): void {
   const norm = path.replace(/\\/g, '/').toLowerCase();
   recentRevisionAdvances.set(norm, { cause, sessionId, at: Date.now() });
-  // Prune old entries
+  // Prune old entries (collect keys first to avoid mutating Map during iteration)
   const cutoff = Date.now() - RECENT_ADVANCE_TTL_MS;
+  const expired: string[] = [];
   for (const [k, v] of recentRevisionAdvances) {
-    if (v.at < cutoff) recentRevisionAdvances.delete(k);
+    if (v.at < cutoff) expired.push(k);
   }
+  for (const k of expired) recentRevisionAdvances.delete(k);
 }
 function consumeRevisionAdvanceCause(path: string): FreshnessCause | undefined {
   const norm = path.replace(/\\/g, '/').toLowerCase();
@@ -1289,7 +1291,9 @@ export const useContextStore = create<ContextStoreState>()(
       if (existing && existing.content !== content) {
         const suffix = (++_collisionCounter).toString(36);
         const disambiguated = hash + '_' + suffix;
-        const disambiguatedShort = (hash.slice(0, SHORT_HASH_LEN - suffix.length - 1) + '_' + suffix).slice(0, SHORT_HASH_LEN);
+        // Ensure shortHash is always exactly SHORT_HASH_LEN chars
+        const rawShort = (hash.slice(0, SHORT_HASH_LEN) + '_' + suffix);
+        const disambiguatedShort = rawShort.slice(0, SHORT_HASH_LEN);
         newChunks.set(disambiguated, { ...chunk, hash: disambiguated, shortHash: disambiguatedShort });
         return { chunks: newChunks };
       }
@@ -3466,12 +3470,16 @@ export const useContextStore = create<ContextStoreState>()(
             const t = part.trim();
             const dash = t.indexOf('-');
             if (dash >= 0) {
-              const s = Math.max(1, parseInt(t.slice(0, dash), 10) + lineDelta);
-              const e = Math.max(s, parseInt(t.slice(dash + 1), 10) + lineDelta);
+              const sParsed = parseInt(t.slice(0, dash), 10);
+              const eParsed = parseInt(t.slice(dash + 1), 10);
+              if (isNaN(sParsed) || isNaN(eParsed)) return t; // preserve malformed ranges
+              const s = Math.max(1, sParsed + lineDelta);
+              const e = Math.max(s, eParsed + lineDelta);
               return `${s}-${e}`;
             }
-            const n = Math.max(1, parseInt(t, 10) + lineDelta);
-            return String(n);
+            const n = parseInt(t, 10);
+            if (isNaN(n)) return t; // preserve malformed single lines
+            return String(Math.max(1, n + lineDelta));
           }).join(',');
           nextStaged.set(key, { ...snippet, lines: newLines });
           rebased++;
