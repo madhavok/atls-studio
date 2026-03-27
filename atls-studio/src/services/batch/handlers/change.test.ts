@@ -11,7 +11,6 @@ import {
   handleDelete,
   handleEdit,
   normalizeEditParams,
-  validateAnchorReplaceContent,
 } from './change';
 
 vi.mock('@tauri-apps/api/core', () => ({
@@ -61,7 +60,7 @@ describe('normalizeEditParams', () => {
     expect(out.edits).toBeUndefined();
   });
 
-  it('promotes edits: [{ file_path, line_edits }] (anchor-style) to top-level', () => {
+  it('promotes edits: [{ file_path, line_edits }] (symbol-style) to top-level', () => {
     const edits = [{ symbol: 'foo', position: 'before', action: 'insert_before', content: '// added' }];
     const input = { edits: [{ file_path: 'src/bar.ts', line_edits: edits }] };
     const out = normalizeEditParams(input);
@@ -160,66 +159,6 @@ describe('normalizeEditParams', () => {
       edit_target_range: [[10, 20]],
       edit_target_hash: 'h:aabb1122',
     }]);
-  });
-});
-
-describe('validateAnchorReplaceContent', () => {
-  it('accepts balanced multiline anchor replace for .rs', () => {
-    expect(() =>
-      validateAnchorReplaceContent('x.rs', [
-        { anchor: 'fn', action: 'replace', content: 'fn foo() {\n  bar()\n}' },
-      ])
-    ).not.toThrow();
-  });
-
-  it('rejects unbalanced multiline anchor replace (depth !== 0)', () => {
-    expect(() =>
-      validateAnchorReplaceContent('x.rs', [
-        { anchor: 'fn', action: 'replace', content: 'fn foo() {\n  bar()' },
-      ])
-    ).toThrow(/unbalanced braces/);
-  });
-
-  it('includes Rust-specific hint when rejecting .rs', () => {
-    try {
-      validateAnchorReplaceContent('src/lib.rs', [
-        { anchor: 'fn', action: 'replace', content: 'fn bad() {\n  x' },
-      ]);
-      expect.fail('should have thrown');
-    } catch (e) {
-      expect((e as Error).message).toContain('For Rust:');
-    }
-  });
-
-  it('rejects multiline content with extra closing brace', () => {
-    expect(() =>
-      validateAnchorReplaceContent('a.ts', [
-        { symbol: 'bar', action: 'replace', content: 'x\n}\n}' },
-      ])
-    ).toThrow(/unbalanced braces/);
-  });
-
-  it('skips non-replace or line-based edits', () => {
-    expect(() =>
-      validateAnchorReplaceContent('x.rs', [
-        { line: 1, action: 'replace', content: '{\n  x' },
-        { anchor: 'y', action: 'insert_before', content: 'a\nb\nc' },
-      ])
-    ).not.toThrow();
-  });
-
-  it('skips single-line anchor replace', () => {
-    expect(() =>
-      validateAnchorReplaceContent('x.rs', [{ anchor: 'fn', action: 'replace', content: 'single' }])
-    ).not.toThrow();
-  });
-
-  it('skips non-brace-language files', () => {
-    expect(() =>
-      validateAnchorReplaceContent('script.py', [
-        { anchor: 'def', action: 'replace', content: 'def foo():\n  pass\n  # no close' },
-      ])
-    ).not.toThrow();
   });
 });
 

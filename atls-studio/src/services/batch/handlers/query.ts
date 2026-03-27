@@ -29,6 +29,24 @@ function extractFilePathsFromSearchResult(result: unknown): string[] {
   return paths;
 }
 
+/** 1-based line numbers per search hit (parallel to extractFilePathsFromSearchResult order). */
+function extractLinesFromSearchResult(result: unknown): number[] {
+  if (!result || typeof result !== 'object') return [];
+  const obj = result as Record<string, unknown>;
+  const results = obj.results as Array<Record<string, unknown>> | undefined;
+  if (!Array.isArray(results)) return [];
+  const seen = new Set<string>();
+  const lines: number[] = [];
+  for (const r of results) {
+    const file = (r.file ?? r.path ?? r.file_path) as string | undefined;
+    if (typeof file !== 'string' || !file || seen.has(file)) continue;
+    seen.add(file);
+    const ln = r.line;
+    lines.push(typeof ln === 'number' && Number.isFinite(ln) && ln > 0 ? ln : 1);
+  }
+  return lines;
+}
+
 // ---------------------------------------------------------------------------
 // search.code
 // ---------------------------------------------------------------------------
@@ -49,12 +67,13 @@ export const handleSearchCode: OpHandler = async (params, ctx) => {
     const hash = ctx.store().addChunk(resultStr, 'search', queries.join(', '), undefined, summary);
     const tk = estimateTokens(resultStr);
     const resultFilePaths = extractFilePathsFromSearchResult(result);
+    const resultLines = extractLinesFromSearchResult(result);
     return {
       kind: 'search_results', ok: true,
       refs: [`h:${hash}`],
       summary: `search: ${queries.join(', ')} → h:${hash} (${(tk / 1000).toFixed(1)}k tk)`,
       tokens: tk,
-      content: { file_paths: resultFilePaths },
+      content: { file_paths: resultFilePaths, lines: resultLines },
     };
   } catch (searchErr) {
     return err('search', searchErr instanceof Error ? searchErr.message : String(searchErr));

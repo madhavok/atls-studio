@@ -229,7 +229,7 @@ describe('executeUnifiedBatch intra-step snapshot line rebasing', () => {
     handlers.clear();
   });
 
-  it('shifts snapshot line numbers when line_numbering is snapshot', async () => {
+  it('always rebases intra-step line_edits as snapshot coordinates', async () => {
     const editSpy = vi.fn(async (params: Record<string, unknown>) => {
       expect(params.line_numbering).toBeUndefined();
       const le = params.line_edits as Array<Record<string, unknown>>;
@@ -249,7 +249,6 @@ describe('executeUnifiedBatch intra-step snapshot line rebasing', () => {
           use: 'change.edit',
           with: {
             file: 'src/a.ts',
-            line_numbering: 'snapshot',
             line_edits: [
               { line: 5, action: 'insert_before', content: 'a\nb' },
               { line: 15, action: 'replace', content: 'x', count: 1 },
@@ -262,8 +261,9 @@ describe('executeUnifiedBatch intra-step snapshot line rebasing', () => {
     expect(editSpy).toHaveBeenCalledOnce();
   });
 
-  it('does not shift when line_numbering is omitted (sequential coords)', async () => {
+  it('strips legacy line_numbering from params after rebase', async () => {
     const editSpy = vi.fn(async (params: Record<string, unknown>) => {
+      expect(params.line_numbering).toBeUndefined();
       const le = params.line_edits as Array<Record<string, unknown>>;
       expect(le[1].line).toBe(17);
       return raw('applied', { status: 'ok' });
@@ -279,9 +279,10 @@ describe('executeUnifiedBatch intra-step snapshot line rebasing', () => {
           use: 'change.edit',
           with: {
             file: 'src/a.ts',
+            line_numbering: 'sequential',
             line_edits: [
               { line: 5, action: 'insert_before', content: 'a\nb' },
-              { line: 17, action: 'replace', content: 'x', count: 1 },
+              { line: 15, action: 'replace', content: 'x', count: 1 },
             ],
           },
         },
@@ -291,7 +292,7 @@ describe('executeUnifiedBatch intra-step snapshot line rebasing', () => {
     expect(editSpy).toHaveBeenCalledOnce();
   });
 
-  it('rebases each file line_edits in batch_edits mode when snapshot', async () => {
+  it('rebases each file line_edits in batch_edits mode', async () => {
     const editSpy = vi.fn(async (params: Record<string, unknown>) => {
       expect(params.line_numbering).toBeUndefined();
       const edits = params.edits as Array<Record<string, unknown>>;
@@ -310,7 +311,6 @@ describe('executeUnifiedBatch intra-step snapshot line rebasing', () => {
           use: 'change.edit',
           with: {
             mode: 'batch_edits',
-            line_numbering: 'snapshot',
             edits: [
               {
                 file: 'src/a.ts',

@@ -14751,10 +14751,9 @@ pub async fn atls_batch_query(
                                             action: "delete".to_string(),
                                             content: None,
                                             count: Some(orig_count),
+                                            end_line: None,
                                             symbol: None,
                                             position: None,
-                                            anchor: None,
-                                            anchor_miss_policy: None,
                                             destination: None,
                                             reindent: false,
                                         }
@@ -14976,10 +14975,9 @@ pub async fn atls_batch_query(
                                 action: upd.get("action").and_then(|v| v.as_str()).unwrap_or("replace").to_string(),
                                 content: upd.get("content").and_then(|v| v.as_str()).map(|s| s.to_string()),
                                 count: upd.get("count").and_then(|v| v.as_u64()).map(|n| n as u32),
+                                end_line: upd.get("end_line").and_then(|v| v.as_u64()).map(|n| n as u32),
                                 symbol: None,
                                 position: None,
-                                anchor: upd.get("anchor").and_then(|v| v.as_str()).map(|s| s.to_string()),
-                                anchor_miss_policy: upd.get("anchor_miss_policy").and_then(|v| v.as_str()).map(|s| s.to_string()),
                                 destination: upd.get("destination").and_then(|v| v.as_u64()).map(|n| n as u32),
                                 reindent: upd.get("reindent").and_then(|v| v.as_bool()).unwrap_or(false),
                             };
@@ -14996,9 +14994,8 @@ pub async fn atls_batch_query(
                             let (new_content, anchor_warnings) = apply_line_edits(&current, edits)
                                 .map_err(|e| {
                                     let attempted: Vec<String> = edits.iter().map(|ed| {
-                                        format!("  line:{} action:{} anchor:{} content:\"{}\"",
-                                            ed.line, ed.action,
-                                            ed.anchor.as_deref().unwrap_or("-"),
+                                        format!("  line:{} end_line:{:?} action:{} content:\"{}\"",
+                                            ed.line, ed.end_line, ed.action,
                                             ed.content.as_deref().unwrap_or("").chars().take(120).collect::<String>())
                                     }).collect();
                                     format!("import_update failed on {} (op {}):\n  error: {}\n  attempted edits:\n{}", file_path, op_idx, e, attempted.join("\n"))
@@ -15018,7 +15015,7 @@ pub async fn atls_batch_query(
                                     serde_json::json!({
                                         "line": ed.line,
                                         "action": ed.action,
-                                        "anchor": ed.anchor.as_deref().unwrap_or("-"),
+                                        "end_line": ed.end_line,
                                         "content": ed.content.as_deref().unwrap_or("")
                                     })
                                 }).collect();

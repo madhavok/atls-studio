@@ -710,8 +710,11 @@ export interface AnalyzeExtractPlanParams {
 
 export interface LineEdit {
   line?: number;
-  anchor?: string;
-  action: 'replace' | 'insert_before' | 'insert_after' | 'delete' | 'move';
+  /** If set, overrides count: 1-based inclusive end line for replace/delete/move spans. */
+  end_line?: number;
+  symbol?: string;
+  position?: string;
+  action: 'replace' | 'insert_before' | 'insert_after' | 'delete' | 'move' | 'replace_body';
   count?: number;
   content?: string;
   destination?: number;
@@ -731,7 +734,7 @@ export interface CreateEntry {
 
 export interface ChangeEditParams {
   file_path?: string;
-  /** When set to `snapshot`, all numeric `line` values in `line_edits` are relative to the file before any edit in this step; the batch executor rebases them to sequential coordinates before apply. Default is sequential (Rust behavior). */
+  /** @deprecated Ignored: intra-step line_edits are always rebased as snapshot coordinates. */
   line_numbering?: 'snapshot' | 'sequential';
   line_edits?: LineEdit[];
   edits?: LegacyEdit[];

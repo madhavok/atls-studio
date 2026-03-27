@@ -27,9 +27,8 @@ change.edit file_path:"" line_edits:[{line:N, action:"replace", count:M, content
   also: line_edits:[{line:N, action:"insert_before"|"insert_after", content:"...", reindent?:true}]
   also: line_edits:[{line:N, action:"delete", count:M}] — spans must keep valid syntax; partial deletes may fail with syntax_error_after_edit
   also: line_edits:[{line:N, action:"move", count:M, destination:D, reindent?:true}]
-  also: line_edits:[{anchor:"unique text", action:"replace", count:M, content:"..."}] — anchor resolves to line
-  **sequential** (default): edits apply top-down; each edit's line refers to the file state AFTER all prior edits. Insert +3 lines at L10 → next edit targeting original L50 should use L53.
-  **snapshot**: pass line_numbering:"snapshot" on the same change.edit step so every numeric line is relative to the same pre-edit read; the batch executor rebases to sequential before apply. Prefer for multiple line-numbered replaces from one read.
+  also: line_edits:[{line:N, end_line:M, action:"replace", ...}] — end_line overrides count for inclusive span N..=M
+  Intra-step coords are snapshot-style: all numeric lines are relative to the file before any edit in the step; the batch executor rebases to sequential before apply. Then each subsequent edit's line refers to the file state after prior edits (Rust apply_line_edits).
   legacy: edits:[{file,old,new}] — exact text match, use only for short unambiguous replacements
   also: creates:[{path,content}] | revise:"hash" | undo:"h:$last_edit" | deletes:["path"|"h:X",...]
 change.create creates:[{path,content}]

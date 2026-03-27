@@ -68,10 +68,8 @@ pub fn compute_line_map(old_content: &str, new_content: &str) -> LineMap {
 /// Remap line numbers in a set of LineEdits using a shadow-to-current line map.
 /// Returns notice strings for edits that were shifted.
 ///
-/// - Edits with anchors: `edit.line` is remapped as a **hint** (anchor still resolves
-///   against the current buffer and wins).
-/// - Edits without anchors: `edit.line` is remapped as the **primary locator**.
-/// - Edits whose lines fall in changed hunks (`None` mapping) are left unchanged.
+/// `edit.line` is remapped when the map has a definite mapping; lines in changed
+/// hunks (`None` mapping) are left unchanged.
 pub fn remap_edits(edits: &mut [LineEdit], map: &LineMap, shadow_hash_short: &str) -> Vec<String> {
     let mut notices = Vec::new();
 
@@ -198,16 +196,15 @@ fn compute_lcs_diff<'a>(old: &[&'a str], new: &[&'a str]) -> Vec<LcsOp> {
 mod tests {
     use super::*;
 
-    fn make_edit(line: u32, action: &str, anchor: Option<&str>, content: Option<&str>) -> LineEdit {
+    fn make_edit(line: u32, action: &str, content: Option<&str>) -> LineEdit {
         LineEdit {
             line,
             action: action.to_string(),
             content: content.map(|s| s.to_string()),
             count: None,
+            end_line: None,
             symbol: None,
             position: None,
-            anchor: anchor.map(|s| s.to_string()),
-            anchor_miss_policy: None,
             destination: None,
             reindent: false,
         }
@@ -293,8 +290,8 @@ mod tests {
         let map = compute_line_map(&old.join("\n"), &new_lines.join("\n"));
 
         let mut edits = vec![
-            make_edit(50, "replace", None, Some("new content")),
-            make_edit(10, "insert_after", None, Some("added")),
+            make_edit(50, "replace", Some("new content")),
+            make_edit(10, "insert_after", Some("added")),
         ];
 
         let notices = remap_edits(&mut edits, &map, "abc123");
@@ -312,7 +309,7 @@ mod tests {
         let map = compute_line_map(old, new);
 
         let mut edits = vec![
-            make_edit(3, "replace", Some("line 3"), Some("fixed")),
+            make_edit(3, "replace", Some("fixed")),
         ];
 
         let notices = remap_edits(&mut edits, &map, "abc123");
@@ -323,10 +320,7 @@ mod tests {
     }
 
     #[test]
-    fn remap_with_anchor_shifts_hint_only() {
-        // Anchor-bearing edits get their line shifted, but anchor still resolves
-        // against the current buffer (tested via apply_line_edits, not here).
-        // This test just verifies the line field is updated.
+    fn remap_shifts_line_after_insert_above() {
         let old: Vec<String> = (1..=50).map(|i| format!("fn func_{}() {{}}", i)).collect();
         let mut new_lines: Vec<String> = old[..9].to_vec();
         new_lines.push("// new comment".to_string());
@@ -335,7 +329,7 @@ mod tests {
         let map = compute_line_map(&old.join("\n"), &new_lines.join("\n"));
 
         let mut edits = vec![
-            make_edit(25, "replace", Some("fn func_25()"), Some("fn func_25_v2() {}")),
+            make_edit(25, "replace", Some("fn func_25_v2() {}")),
         ];
 
         let notices = remap_edits(&mut edits, &map, "def456");
@@ -351,7 +345,7 @@ mod tests {
         let content = "a\nb\nc\nd\ne";
         let map = compute_line_map(content, content);
 
-        let mut edits = vec![make_edit(3, "replace", None, Some("x"))];
+        let mut edits = vec![make_edit(3, "replace", Some("x"))];
         let notices = remap_edits(&mut edits, &map, "aaa");
 
         assert_eq!(edits[0].line, 3);
@@ -373,7 +367,7 @@ mod tests {
         let new = "a\nINSERTED\nb\nc";
         let map = compute_line_map(old, new);
 
-        let mut edits = vec![make_edit(0, "insert_before", None, Some("x"))];
+        let mut edits = vec![make_edit(0, "insert_before", Some("x"))];
         let notices = remap_edits(&mut edits, &map, "aaa");
 
         assert_eq!(edits[0].line, 0); // untouched
@@ -385,10 +379,9 @@ mod tests {
     // -----------------------------------------------------------------------
 
     #[test]
-    fn remap_plus_anchor_resolves_correctly() {
+    fn remap_plus_apply_line_edits_line_number() {
         // Shadow: 10 lines. Current: 5 lines inserted at top → everything shifts +5.
-        // Edit targets shadow line 8 with anchor "target_line".
-        // After remap, edit.line = 13. Anchor resolves at line 13 in current buffer.
+        // Edit targets shadow line 8; after remap, edit.line = 13.
         let shadow = "line 1\nline 2\nline 3\nline 4\nline 5\nline 6\nline 7\ntarget_line\nline 9\nline 10";
         let mut current_lines: Vec<&str> = vec!["new 1", "new 2", "new 3", "new 4", "new 5"];
         current_lines.extend(shadow.lines());
@@ -396,7 +389,7 @@ mod tests {
 
         let map = compute_line_map(shadow, &current);
 
-        let mut edits = vec![make_edit(8, "replace", Some("target_line"), Some("REPLACED"))];
+        let mut edits = vec![make_edit(8, "replace", Some("REPLACED"))];
         let notices = remap_edits(&mut edits, &map, "abc");
 
         assert_eq!(edits[0].line, 13); // remapped from 8 to 13
@@ -405,34 +398,7 @@ mod tests {
         let (result, warnings) = crate::apply_line_edits(&current, &edits).unwrap();
         assert!(result.contains("REPLACED"));
         assert!(!result.contains("target_line"));
-        // No anchor warnings — anchor found at the remapped position
-        let has_miss = warnings.iter().any(|w| w.contains("anchor_miss") || w.contains("not found"));
-        assert!(!has_miss, "unexpected anchor warning: {:?}", warnings);
-    }
-
-    #[test]
-    fn remap_plus_fuzzy_resolves_case_insensitive() {
-        // Shadow: 10 lines. Current: 3 lines deleted at top → everything shifts -3.
-        // Anchor is case-mismatched ("TARGET_LINE" vs "target_line").
-        // After remap, edit.line = 5 (was 8). Fuzzy finds case-insensitive match near 5.
-        let shadow = "line 1\nline 2\nline 3\nline 4\nline 5\nline 6\nline 7\ntarget_line\nline 9\nline 10";
-        let current_lines: Vec<&str> = shadow.lines().skip(3).collect(); // drop first 3
-        let current = current_lines.join("\n");
-
-        let map = compute_line_map(shadow, &current);
-
-        let mut edits = vec![make_edit(8, "replace", Some("TARGET_LINE"), Some("REPLACED"))];
-        let notices = remap_edits(&mut edits, &map, "def");
-
-        assert_eq!(edits[0].line, 5); // remapped from 8 to 5
-        assert_eq!(notices.len(), 1);
-
-        let (result, warnings) = crate::apply_line_edits(&current, &edits).unwrap();
-        assert!(result.contains("REPLACED"));
-        assert!(!result.contains("target_line"));
-        // Should have fuzzy resolution notice
-        let has_fuzzy = warnings.iter().any(|w| w.contains("fuzzy_resolved"));
-        assert!(has_fuzzy, "expected fuzzy resolution notice, got: {:?}", warnings);
+        assert!(warnings.is_empty(), "unexpected warnings: {:?}", warnings);
     }
 
     #[test]
@@ -470,9 +436,8 @@ mod tests {
     }
 
     #[test]
-    fn remap_no_anchor_content_identity() {
-        // No anchor — pure line-number edit. Shadow line 8 shifts to current line 13.
-        // The content at current line 13 is the same as shadow line 8 (content identity).
+    fn remap_line_number_content_identity() {
+        // Shadow line 8 shifts to current line 13.
         let shadow = "a\nb\nc\nd\ne\nf\ng\nTARGET\ni\nj";
         let mut current_lines: Vec<&str> = vec!["x1", "x2", "x3", "x4", "x5"];
         current_lines.extend(shadow.lines());
@@ -480,7 +445,7 @@ mod tests {
 
         let map = compute_line_map(shadow, &current);
 
-        let mut edits = vec![make_edit(8, "replace", None, Some("REPLACED"))];
+        let mut edits = vec![make_edit(8, "replace", Some("REPLACED"))];
         let notices = remap_edits(&mut edits, &map, "ghi");
 
         assert_eq!(edits[0].line, 13);

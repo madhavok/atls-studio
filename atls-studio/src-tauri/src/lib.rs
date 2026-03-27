@@ -125,22 +125,15 @@ pub(crate) struct LineEdit {
     pub content: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub count: Option<u32>,
+    /// If set, replaces `count`. Means "replace/delete lines line..=end_line" (1-based inclusive).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub end_line: Option<u32>,
     /// Symbol name for symbol-relative positioning (resolves to a line number)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub symbol: Option<String>,
     /// Position relative to symbol: "before", "after", "body_start", "body_end"
     #[serde(skip_serializing_if = "Option::is_none")]
     pub position: Option<String>,
-    /// Content-match anchor: if present, scans file lines for a line containing
-    /// this text and uses that line number instead of `line`. The `line` field
-    /// serves as a disambiguation hint when multiple lines match.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub anchor: Option<String>,
-    /// Controls behavior when anchor is not found: "error" (default) returns Err,
-    /// Legacy field retained for wire compatibility. Write paths now hard-fail on anchor miss.
-    #[serde(default)]
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub anchor_miss_policy: Option<String>,
     /// Destination line (1-based) for "move" action.
     #[serde(default)]
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -416,164 +409,6 @@ pub(crate) fn exact_replacen_for_write(
     }
 }
 
-/// Heuristic: returns true when `anchor` appears only inside a string literal or
-/// line comment on the given line. Avoids full AST parsing by scanning for quote
-/// and comment boundaries. False negatives are acceptable (we fall through to the
-/// normal disambiguation); false positives are not (we must not exclude real code).
-fn anchor_in_string_or_comment(line: &str, anchor: &str) -> bool {
-    if let Some(pos) = line.find(anchor) {
-        let before = &line[..pos];
-        // Inside a line comment (// or #)?
-        if before.contains("//") || before.trim_start().starts_with('#') {
-            return true;
-        }
-        // Inside a string literal? Count unescaped quotes before the match position.
-        // Odd count means we're inside an open string.
-        for quote in ['"', '\'', '`'] {
-            let unescaped = before.chars().fold((0u32, false), |(count, esc), ch| {
-                if esc { (count, false) }
-                else if ch == '\\' { (count, true) }
-                else if ch == quote { (count + 1, false) }
-                else { (count, false) }
-            }).0;
-            if unescaped % 2 == 1 {
-                return true;
-            }
-        }
-        // Inside a regex literal (common pattern: /.../)
-        let slash_count = before.chars().filter(|&c| c == '/').count();
-        if slash_count % 2 == 1 && !before.ends_with("//") {
-            let trimmed = before.trim();
-            if trimmed.ends_with('/') || trimmed.contains("= /") || trimmed.contains("(/") {
-                return true;
-            }
-        }
-    }
-    false
-}
-
-/// When anchor-based replace has multi-line content and no explicit count, infer block extent
-/// by scanning for balanced braces. Returns number of lines to replace (1-based span).
-fn infer_block_extent(lines: &[String]) -> Option<usize> {
-    if lines.is_empty() {
-        return None;
-    }
-    let mut depth: i32 = 0;
-    let mut saw_open = false;
-    for (i, line) in lines.iter().enumerate() {
-        for ch in line.chars() {
-            match ch {
-                '{' => {
-                    depth += 1;
-                    saw_open = true;
-                }
-                '}' => depth -= 1,
-                _ => {}
-            }
-        }
-        if saw_open && depth == 0 {
-            return Some(i + 1);
-        }
-    }
-    None
-}
-
-
-/// Find up to `limit` lines most similar to `anchor` by substring or normalized match.
-/// Returns (1-based line number, score, preview). Score: 1=case-insensitive, 2=prefix, 3=token overlap.
-fn find_fuzzy_anchor_matches_scored(lines: &[String], anchor: &str, limit: usize) -> Vec<(usize, u32, String)> {
-    let norm_anchor = anchor.trim().to_lowercase();
-    let mut candidates: Vec<(usize, u32, String)> = Vec::new();
-    for (i, line) in lines.iter().enumerate() {
-        let norm_line = line.trim().to_lowercase();
-        let score = if norm_line.contains(&norm_anchor) {
-            1 // case-insensitive substring match
-        } else if norm_anchor.len() >= 8 {
-            let prefix_len = norm_anchor.len().min(norm_line.len().max(1));
-            let prefix = &norm_anchor[..prefix_len];
-            if prefix.chars().any(|c| c.is_alphanumeric()) && norm_line.contains(prefix) {
-                2
-            } else {
-                let anchor_tokens: std::collections::HashSet<&str> = norm_anchor.split(|c: char| !c.is_alphanumeric() && c != '_').filter(|s| s.len() > 2).collect();
-                let line_tokens: std::collections::HashSet<&str> = norm_line.split(|c: char| !c.is_alphanumeric() && c != '_').filter(|s| s.len() > 2).collect();
-                let overlap = anchor_tokens.intersection(&line_tokens).count();
-                if overlap > 0 && anchor_tokens.len() > 0 {
-                    let ratio = (overlap * 100) / anchor_tokens.len();
-                    if ratio >= 40 { 3 } else { continue; }
-                } else {
-                    continue;
-                }
-            }
-        } else {
-            let anchor_tokens: std::collections::HashSet<&str> = norm_anchor.split(|c: char| !c.is_alphanumeric() && c != '_').filter(|s| s.len() > 2).collect();
-            let line_tokens: std::collections::HashSet<&str> = norm_line.split(|c: char| !c.is_alphanumeric() && c != '_').filter(|s| s.len() > 2).collect();
-            let overlap = anchor_tokens.intersection(&line_tokens).count();
-            if overlap > 0 && anchor_tokens.len() > 0 {
-                let ratio = (overlap * 100) / anchor_tokens.len();
-                if ratio >= 40 { 3 } else { continue; }
-            } else {
-                continue;
-            }
-        };
-        let preview: String = line.chars().take(80).collect();
-        candidates.push((i, score, preview));
-    }
-    candidates.sort_by_key(|&(_, score, _)| score);
-    candidates.truncate(limit);
-    candidates.into_iter().map(|(i, score, preview)| (i + 1, score, preview)).collect()
-}
-
-fn find_fuzzy_anchor_matches(lines: &[String], anchor: &str, limit: usize) -> Vec<(usize, String)> {
-    find_fuzzy_anchor_matches_scored(lines, anchor, limit)
-        .into_iter()
-        .map(|(ln, _, preview)| (ln, preview))
-        .collect()
-}
-
-/// Try to resolve an anchor via fuzzy matching when exact `contains` found nothing.
-/// Only accepts score=1 (case-insensitive substring) for safety. If `hint_line` > 0,
-/// prefers candidates within FUZZY_HINT_WINDOW lines of the hint; if multiple score-1
-/// candidates exist, picks the one closest to hint. Returns None if ambiguous or no
-/// score-1 match exists.
-const FUZZY_HINT_WINDOW: usize = 15;
-
-fn try_fuzzy_anchor_resolve(
-    lines: &[String],
-    anchor: &str,
-    hint_line: u32,
-) -> Option<(usize, String)> {
-    let candidates = find_fuzzy_anchor_matches_scored(lines, anchor, 20);
-    let score1: Vec<&(usize, u32, String)> = candidates.iter().filter(|(_, s, _)| *s == 1).collect();
-    if score1.is_empty() {
-        return None;
-    }
-    if score1.len() == 1 {
-        let (ln, _, preview) = score1[0];
-        return Some((*ln, preview.clone()));
-    }
-    // Multiple score-1 matches: use hint_line to disambiguate
-    if hint_line == 0 {
-        return None;
-    }
-    let hint = hint_line as usize;
-    let in_window: Vec<&&(usize, u32, String)> = score1.iter()
-        .filter(|(ln, _, _)| (*ln as isize - hint as isize).unsigned_abs() <= FUZZY_HINT_WINDOW)
-        .collect();
-    if in_window.len() == 1 {
-        let (ln, _, preview) = in_window[0];
-        return Some((*ln, preview.clone()));
-    }
-    // Pick closest to hint if any are in window
-    if !in_window.is_empty() {
-        let closest = in_window.iter()
-            .min_by_key(|(ln, _, _)| (*ln as isize - hint as isize).unsigned_abs())
-            .unwrap();
-        let (ln, _, preview) = closest;
-        return Some((*ln, preview.clone()));
-    }
-    None
-}
-
 /// Reindent a block of content to match a target indentation string.
 /// Strips the common leading indent from the block, then prepends `target_indent`.
 fn reindent_block(content: &str, target_indent: &str) -> String {
@@ -610,107 +445,10 @@ fn detect_indent(line: &str) -> &str {
 /// Resolve the target line number for a single edit against the current state of `lines`.
 fn resolve_single_edit_line(
     edit: &LineEdit,
-    lines: &[String],
-    anchor_warnings: &mut Vec<String>,
-) -> Result<u32, String> {
-    if let Some(ref anchor) = edit.anchor {
-        if anchor.contains('\n') || anchor.contains('\r') {
-            return Err(format!("invalid multiline anchor {:?} for action {}", anchor, edit.action));
-        }
-        let all_matches: Vec<usize> = lines.iter().enumerate()
-            .filter(|(_, l)| l.contains(anchor.as_str()))
-            .map(|(i, _)| i)
-            .collect();
-
-        let matches: Vec<usize> = if all_matches.len() > 1 {
-            let filtered: Vec<usize> = all_matches.iter().copied()
-                .filter(|&i| !anchor_in_string_or_comment(&lines[i], anchor))
-                .collect();
-            if filtered.is_empty() { all_matches.clone() } else { filtered }
-        } else {
-            all_matches.clone()
-        };
-
-        if matches.is_empty() {
-            // Fuzzy fallback: try case-insensitive resolution before giving up
-            if let Some((fuzzy_ln, fuzzy_preview)) = try_fuzzy_anchor_resolve(lines, anchor, edit.line) {
-                anchor_warnings.push(format!(
-                    "anchor_fuzzy_resolved: {:?} not found exactly, resolved via case-insensitive match to L{}:{:?}",
-                    anchor, fuzzy_ln, fuzzy_preview
-                ));
-                return Ok(fuzzy_ln as u32);
-            }
-            let content_preview = edit.content.as_deref()
-                .map(|c| c.chars().take(80).collect::<String>())
-                .unwrap_or_default();
-            let fuzzy = find_fuzzy_anchor_matches(lines, anchor, 3);
-            let fuzzy_desc = if fuzzy.is_empty() {
-                String::new()
-            } else {
-                let parts: Vec<String> = fuzzy.iter()
-                    .map(|(ln, preview)| format!("L{}:{:?}", ln, preview))
-                    .collect();
-                format!(", near_matches=[{}]", parts.join(", "))
-            };
-            return Err(format!(
-                "anchor {:?} not found (action: {}, content: {:?}, total_lines: {}{}). Re-read the file and retry with current anchors",
-                anchor, edit.action, content_preview, lines.len(), fuzzy_desc
-            ));
-        } else if matches.len() == 1 {
-            let chosen = (matches[0] + 1) as u32;
-            if edit.line > 0 {
-                let delta = (chosen as i64 - edit.line as i64).unsigned_abs();
-                if delta > 5 {
-                    anchor_warnings.push(format!(
-                        "anchor_miss: {:?} matched at L{} but line hint was L{} (delta {})",
-                        anchor, chosen, edit.line, delta
-                    ));
-                }
-            }
-            Ok(chosen)
-        } else {
-            let hint = edit.line as usize;
-            let hint_exact = matches.iter().find(|&&m| m + 1 == hint).copied();
-            let Some(chosen_idx) = hint_exact else {
-                let match_lines: Vec<usize> = matches.iter().map(|&m| m + 1).collect();
-                return Err(format!(
-                    "anchor is ambiguous {:?}; matched lines {:?} and no exact line hint was provided",
-                    anchor, match_lines
-                ));
-            };
-            let chosen = (chosen_idx + 1) as u32;
-
-            if edit.line > 0 {
-                let delta = (chosen as i64 - edit.line as i64).unsigned_abs();
-                if delta > 5 {
-                    anchor_warnings.push(format!(
-                        "anchor_miss: {:?} best match L{} differs from hint L{} by {} lines",
-                        anchor, chosen, edit.line, delta
-                    ));
-                }
-            }
-            Ok(chosen)
-        }
-    } else {
-        Ok(edit.line)
-    }
-}
-
-/// For anchored multi-line replace without explicit count, infer block extent.
-fn compute_effective_replace_count(
-    edit: &LineEdit,
-    lines: &[String],
-    idx: usize,
-) -> Option<usize> {
-    if edit.anchor.is_some()
-        && edit.content.as_ref().map(|c| c.lines().count()).unwrap_or(0) > 1
-        && edit.count.unwrap_or(1) <= 1
-    {
-        let slice = if idx < lines.len() { &lines[idx..] } else { &lines[lines.len()..] };
-        infer_block_extent(slice)
-    } else {
-        None
-    }
+    _lines: &[String],
+    _anchor_warnings: &mut Vec<String>,
+) -> Result<usize, String> {
+    Ok(edit.line as usize)
 }
 
 /// Returns (new_content, anchor_miss_warnings). Warnings are non-fatal: the edit
@@ -734,7 +472,7 @@ pub(crate) fn apply_line_edits(content: &str, edits: &[LineEdit]) -> Result<(Str
 
     for edit in edits.iter() {
         let resolved_line = resolve_single_edit_line(edit, &lines, &mut anchor_warnings)?;
-        let idx = (resolved_line as usize).saturating_sub(1);
+        let idx = resolved_line.saturating_sub(1);
         if idx > lines.len() {
             return Err(format!("Line {} out of range (file has {} lines)", resolved_line, lines.len()));
         }
@@ -763,9 +501,11 @@ pub(crate) fn apply_line_edits(content: &str, edits: &[LineEdit]) -> Result<(Str
                 }
             }
             "replace" => {
-                let effective = compute_effective_replace_count(edit, &lines, idx);
-                let mut count = effective
-                    .unwrap_or_else(|| edit.count.unwrap_or(1) as usize);
+                let mut count = if let Some(end) = edit.end_line {
+                    (end as usize).saturating_sub(idx.saturating_sub(1))
+                } else {
+                    edit.count.unwrap_or(1) as usize
+                };
                 let replacement: Vec<String> = edit.content.as_deref().unwrap_or("").lines().map(String::from).collect();
 
                 // Count overlap guard: when the model's replacement content ends with
@@ -832,12 +572,20 @@ pub(crate) fn apply_line_edits(content: &str, edits: &[LineEdit]) -> Result<(Str
                 lines.splice(body_start..body_end, replacement);
             }
             "delete" => {
-                let count = edit.count.unwrap_or(1) as usize;
+                let count = if let Some(end) = edit.end_line {
+                    (end as usize).saturating_sub(idx.saturating_sub(1))
+                } else {
+                    edit.count.unwrap_or(1) as usize
+                };
                 let end = std::cmp::min(idx + count, lines.len());
                 lines.drain(idx..end);
             }
             "move" => {
-                let count = edit.count.unwrap_or(1) as usize;
+                let count = if let Some(end) = edit.end_line {
+                    (end as usize).saturating_sub(idx.saturating_sub(1))
+                } else {
+                    edit.count.unwrap_or(1) as usize
+                };
                 let src_end = std::cmp::min(idx + count, lines.len());
                 let dest = edit.destination.unwrap_or(0) as usize;
                 if dest == 0 {
@@ -2285,10 +2033,9 @@ mod apply_line_edits_tests {
             action: action.to_string(),
             content: content.map(String::from),
             count,
+            end_line: None,
             symbol: None,
             position: None,
-            anchor: None,
-            anchor_miss_policy: None,
             destination: None,
             reindent: false,
         }
@@ -2352,109 +2099,6 @@ mod apply_line_edits_tests {
         let edits = vec![le(1, "invalid_action", None, None)];
         let err = apply_line_edits(content, &edits).unwrap_err();
         assert!(err.contains("Unknown line_edit action"));
-    }
-}
-
-#[cfg(test)]
-mod anchor_matching_tests {
-    use super::{apply_line_edits, anchor_in_string_or_comment, LineEdit};
-
-    fn le_anchor(line: u32, action: &str, content: Option<&str>, anchor: &str) -> LineEdit {
-        LineEdit {
-            line,
-            action: action.to_string(),
-            content: content.map(String::from),
-            count: Some(1),
-            symbol: None,
-            position: None,
-            anchor: Some(anchor.to_string()),
-            anchor_miss_policy: None,
-            destination: None,
-            reindent: false,
-        }
-    }
-
-    #[test]
-    fn string_or_comment_detection_line_comment() {
-        assert!(anchor_in_string_or_comment("    // seen.add(ref);", "seen.add(ref)"));
-    }
-
-    #[test]
-    fn string_or_comment_detection_hash_comment() {
-        assert!(anchor_in_string_or_comment("# seen.add(ref);", "seen.add(ref)"));
-    }
-
-    #[test]
-    fn string_or_comment_detection_inside_double_quotes() {
-        assert!(anchor_in_string_or_comment(r#"const x = "seen.add(ref);";"#, "seen.add(ref)"));
-    }
-
-    #[test]
-    fn string_or_comment_detection_inside_single_quotes() {
-        assert!(anchor_in_string_or_comment("const x = 'seen.add(ref);';", "seen.add(ref)"));
-    }
-
-    #[test]
-    fn string_or_comment_detection_code_line() {
-        assert!(!anchor_in_string_or_comment("    seen.add(ref);", "seen.add(ref)"));
-    }
-
-    #[test]
-    fn string_or_comment_detection_regex_literal() {
-        assert!(anchor_in_string_or_comment("const pattern = /seen.add(ref);/;", "seen.add"));
-    }
-
-    #[test]
-    fn anchor_skips_string_literal_match() {
-        let content = "    seen.add(ref);\n\
-                        const pattern = \"seen.add(ref);\";\n\
-                        other_code();\n";
-        let edits = vec![le_anchor(1, "replace", Some("    seen.add(normalizedRef);"), "seen.add(ref)")];
-        let (result, warnings) = apply_line_edits(content, &edits).unwrap();
-        assert!(result.contains("seen.add(normalizedRef)"));
-        assert!(result.contains("\"seen.add(ref);\""), "string literal should be unchanged");
-        assert!(warnings.is_empty() || !warnings.iter().any(|w| w.contains("anchor_miss")));
-    }
-
-    #[test]
-    fn anchor_multi_match_without_exact_hint_fails() {
-        let content = "foo();\nfoo();\nbar();\n";
-        let edits = vec![le_anchor(0, "replace", Some("baz();"), "foo()")];
-        let err = apply_line_edits(content, &edits).unwrap_err();
-        assert!(err.contains("anchor is ambiguous"));
-    }
-
-    #[test]
-    fn anchor_prefers_exact_line_hint() {
-        let content = "foo();\nbar();\nfoo();\n";
-        let edits = vec![le_anchor(3, "replace", Some("baz();"), "foo()")];
-        let (result, _warnings) = apply_line_edits(content, &edits).unwrap();
-        assert_eq!(result, "foo();\nbar();\nbaz();\n", "should replace the foo() at line 3");
-    }
-
-    #[test]
-    fn anchor_miss_warning_on_large_delta() {
-        let content = "a\nb\nc\nd\ne\nf\ng\nh\ni\ntarget_fn();\n";
-        let edits = vec![le_anchor(2, "replace", Some("replaced();"), "target_fn()")];
-        let (_result, warnings) = apply_line_edits(content, &edits).unwrap();
-        assert!(warnings.iter().any(|w| w.contains("anchor_miss")), "should warn when match is far from hint");
-    }
-
-    #[test]
-    fn multiline_anchor_fails() {
-        let content = "foo();\nbar();\n";
-        let edits = vec![le_anchor(1, "replace", Some("baz();"), "foo()\nbar()")];
-        let err = apply_line_edits(content, &edits).unwrap_err();
-        assert!(err.contains("invalid multiline anchor"));
-    }
-
-    #[test]
-    fn missing_anchor_with_zero_line_hint_fails() {
-        let content = "foo();\nbar();\n";
-        let edits = vec![le_anchor(0, "replace", Some("baz();"), "missing()")];
-        let err = apply_line_edits(content, &edits).unwrap_err();
-        assert!(err.contains("not found"));
-        assert!(err.contains("Re-read the file and retry"));
     }
 }
 
@@ -2535,10 +2179,9 @@ function alsoStay() {
                 action: "delete".to_string(),
                 content: None,
                 count: Some(count),
+                end_line: None,
                 symbol: None,
                 position: None,
-                anchor: None,
-                anchor_miss_policy: None,
                 destination: None,
                 reindent: false,
             }
@@ -2591,13 +2234,7 @@ mod hard_line_edit_tests {
 
     fn le(line: u32, action: &str, content: Option<&str>, count: Option<u32>) -> LineEdit {
         LineEdit { line, action: action.to_string(), content: content.map(String::from),
-                   count, symbol: None, position: None, anchor: None, anchor_miss_policy: None,
-                   destination: None, reindent: false }
-    }
-
-    fn lea(line: u32, action: &str, content: Option<&str>, count: Option<u32>, anchor: &str) -> LineEdit {
-        LineEdit { line, action: action.to_string(), content: content.map(String::from),
-                   count, symbol: None, position: None, anchor: Some(anchor.to_string()), anchor_miss_policy: None,
+                   count, end_line: None, symbol: None, position: None,
                    destination: None, reindent: false }
     }
 
@@ -2649,23 +2286,25 @@ mod hard_line_edit_tests {
         assert_eq!(result, "a\nc\n", "replace with empty string acts as delete");
     }
 
-    // ── anchor resolution ──
+    // ── replace by explicit line / end_line ──
 
     #[test]
-    fn anchor_finds_exact_line() {
+    fn replace_import_line_by_line_number() {
         let content = "import { foo } from './foo';\nimport { bar } from './bar';\nexport default function main() {}\n";
-        let edits = vec![lea(1, "replace", Some("import { foo } from './new-foo';"), Some(1), "import { foo }")];
+        let edits = vec![le(1, "replace", Some("import { foo } from './new-foo';"), Some(1))];
         let (result, warnings) = apply_line_edits(content, &edits).unwrap();
-        assert!(warnings.is_empty(), "anchor should match");
+        assert!(warnings.is_empty());
         assert!(result.contains("from './new-foo'"));
         assert!(!result.contains("from './foo'"));
     }
 
     #[test]
-    fn anchor_replace_multiline_infers_block_extent() {
+    fn replace_multiline_span_uses_end_line() {
         let content = "a\nb\nexport function foo(x: number) {\n  return x + 1;\n}\nd\ne\n";
         let new_body = "export function foo(x: number) {\n  return x * 2;\n}";
-        let edits = vec![lea(0, "replace", Some(new_body), None, "export function foo")];
+        let mut ed = le(3, "replace", Some(new_body), None);
+        ed.end_line = Some(5);
+        let edits = vec![ed];
         let (result, _warnings) = apply_line_edits(content, &edits).unwrap();
         assert!(result.contains("return x * 2"), "replacement content should appear");
         assert!(!result.contains("return x + 1"), "old body should be fully replaced");
@@ -2674,103 +2313,13 @@ mod hard_line_edit_tests {
     }
 
     #[test]
-    fn anchor_miss_errors_by_default() {
-        let content = "a\nb\nc\n";
-        let edits = vec![lea(2, "replace", Some("B"), Some(1), "NONEXISTENT_ANCHOR")];
-        let err = apply_line_edits(content, &edits).unwrap_err();
-        assert!(err.contains("not found"), "should error on anchor miss: {}", err);
-    }
-
-    #[test]
-    fn anchor_miss_is_always_hard_error() {
-        let content = "a\nb\nc\n";
-        let mut edit = lea(2, "replace", Some("B"), Some(1), "NONEXISTENT_ANCHOR");
-        edit.anchor_miss_policy = Some("fallback".to_string());
-        let result = apply_line_edits(content, &[edit]);
-        assert!(result.is_err(), "anchor miss should be a hard error regardless of policy");
-        let err_msg = result.unwrap_err();
-        assert!(err_msg.contains("anchor") && err_msg.contains("not found"), "error should mention anchor not found, got: {}", err_msg);
-    }
-
-    #[test]
-    fn anchor_disambiguates_with_hint_line() {
+    fn replace_second_duplicate_line_by_line_number() {
         let content = "import x;\nsome code;\nimport x;\nmore code;\n";
-        let edits = vec![lea(3, "replace", Some("import x_new;"), Some(1), "import x;")];
+        let edits = vec![le(3, "replace", Some("import x_new;"), Some(1))];
         let (result, _) = apply_line_edits(content, &edits).unwrap();
         let lines: Vec<&str> = result.lines().collect();
         assert_eq!(lines[0], "import x;", "first import should be untouched");
-        assert_eq!(lines[2], "import x_new;", "third line (closest to hint 3) should be replaced");
-    }
-
-    #[test]
-    fn anchor_miss_line_zero_fails() {
-        let content = "a\nb\nc\n";
-        let edits = vec![lea(0, "insert_before", Some("NEW_LINE"), None, "NONEXISTENT")];
-        let err = apply_line_edits(content, &edits).unwrap_err();
-        assert!(err.contains("not found"), "should error on anchor miss: {}", err);
-    }
-
-    // ── fuzzy anchor fallback ──
-
-    #[test]
-    fn fuzzy_resolves_case_insensitive_anchor() {
-        let content = "function Foo() {\n  return 1;\n}\n";
-        // Anchor has wrong case — exact match fails, fuzzy score=1 resolves it
-        let edits = vec![lea(1, "replace", Some("function Foo() {"), Some(1), "Function foo() {")];
-        let (result, warnings) = apply_line_edits(content, &edits).unwrap();
-        assert!(result.starts_with("function Foo() {"), "should have replaced line 1");
-        assert!(warnings.iter().any(|w| w.contains("anchor_fuzzy_resolved")),
-            "should emit fuzzy resolution warning: {:?}", warnings);
-    }
-
-    #[test]
-    fn fuzzy_rejects_ambiguous_case_insensitive() {
-        // Two lines both match case-insensitively, no hint → should fail
-        let content = "Case 'ArrowDown':\ncase 'arrowdown':\nother\n";
-        let edits = vec![lea(0, "replace", Some("REPLACED"), Some(1), "CASE 'ARROWDOWN':")];
-        let result = apply_line_edits(content, &[edits.into_iter().next().unwrap()]);
-        assert!(result.is_err(), "ambiguous fuzzy should still error");
-    }
-
-    #[test]
-    fn fuzzy_prefers_hint_window() {
-        // Two case-insensitive matches; hint_line=8 should pick the one near L8
-        let mut lines_vec: Vec<String> = Vec::new();
-        for i in 1..=20 {
-            if i == 3 || i == 10 {
-                lines_vec.push("case 'ArrowDown':".to_string());
-            } else {
-                lines_vec.push(format!("line {}", i));
-            }
-        }
-        let content = lines_vec.join("\n") + "\n";
-        // Anchor with wrong case, hint near L10
-        let edits = vec![lea(8, "replace", Some("REPLACED"), Some(1), "Case 'arrowdown':")];
-        let (result, warnings) = apply_line_edits(&content, &edits).unwrap();
-        let result_lines: Vec<&str> = result.lines().collect();
-        assert_eq!(result_lines[2], "case 'ArrowDown':", "L3 should be untouched");
-        assert_eq!(result_lines[9], "REPLACED", "L10 (near hint 8) should be replaced");
-        assert!(warnings.iter().any(|w| w.contains("anchor_fuzzy_resolved")));
-    }
-
-    #[test]
-    fn fuzzy_does_not_fire_on_total_mismatch() {
-        let content = "alpha\nbeta\ngamma\n";
-        let edits = vec![lea(2, "replace", Some("X"), Some(1), "ZZZZZ_TOTALLY_UNRELATED")];
-        let result = apply_line_edits(content, &edits);
-        assert!(result.is_err(), "completely unrelated anchor should still fail");
-    }
-
-    #[test]
-    fn exact_match_still_preferred_over_fuzzy() {
-        let content = "case 'ArrowDown':\nCASE 'ARROWDOWN':\nother\n";
-        // Exact match exists on L1, should use it without fuzzy warning
-        let edits = vec![lea(1, "replace", Some("REPLACED"), Some(1), "case 'ArrowDown':")];
-        let (result, warnings) = apply_line_edits(content, &edits).unwrap();
-        let result_lines: Vec<&str> = result.lines().collect();
-        assert_eq!(result_lines[0], "REPLACED");
-        assert!(!warnings.iter().any(|w| w.contains("fuzzy")),
-            "exact match should not trigger fuzzy: {:?}", warnings);
+        assert_eq!(lines[2], "import x_new;", "line 3 replaced");
     }
 
     // ── count overlap guard ──
@@ -2782,7 +2331,7 @@ mod hard_line_edit_tests {
         let content = "      case 'ArrowDown':\n        e.preventDefault();\n        setSelectedIndex(i => Math.min(i + 1, results.length - 1));\n        break;\n      case 'ArrowUp':\n";
         let replacement = "      case 'ArrowDown':\n        e.preventDefault();\n        if (results.length > 0) setSelectedIndex(i => Math.min(i + 1, results.length - 1));\n        break;";
         // count=3 covers lines 1-3, but line 4 ("break;") duplicates the last line of replacement
-        let edits = vec![lea(1, "replace", Some(replacement), Some(3), "case 'ArrowDown':")];
+        let edits = vec![le(1, "replace", Some(replacement), Some(3))];
         let (result, warnings) = apply_line_edits(content, &edits).unwrap();
         let break_count = result.lines().filter(|l| l.trim() == "break;").count();
         assert_eq!(break_count, 1, "should have exactly one break; not a duplicate: {}", result);
@@ -3044,7 +2593,7 @@ mod hard_batch_edits_tests {
                 line_edits: vec![LineEdit {
                     line: 2, action: "replace".to_string(),
                     content: Some("  return 42;".to_string()), count: Some(1),
-                    symbol: None, position: None, anchor: None, anchor_miss_policy: None,
+                    end_line: None, symbol: None, position: None,
                     destination: None, reindent: false,
                 }],
             },
@@ -3054,7 +2603,7 @@ mod hard_batch_edits_tests {
                 line_edits: vec![LineEdit {
                     line: 2, action: "replace".to_string(),
                     content: Some("  return 99;".to_string()), count: Some(1),
-                    symbol: None, position: None, anchor: None,                     anchor_miss_policy: None,
+                    end_line: None, symbol: None, position: None,
                     destination: None, reindent: false,
                 }],
             },
@@ -3083,7 +2632,7 @@ mod hard_batch_edits_tests {
                 line_edits: vec![LineEdit {
                     line: 1, action: "replace".to_string(),
                     content: Some("const a = 42;".to_string()), count: Some(1),
-                    symbol: None, position: None, anchor: None, anchor_miss_policy: None,
+                    end_line: None, symbol: None, position: None,
                     destination: None, reindent: false,
                 }],
             },
@@ -3096,10 +2645,10 @@ mod hard_batch_edits_tests {
 
 
     #[test]
-    fn batch_edits_require_fresh_hash_and_anchor_after_prior_write() {
+    fn batch_edits_require_fresh_hash_after_prior_write() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
-        let file = "multi_edit_anchor.ts";
+        let file = "multi_edit_line.ts";
         std::fs::write(
             root.join(file),
             "const marker = 'alpha';\nconst target = 1;\nconst spacer = 'keep';\nconst target = 2;\n",
@@ -3118,10 +2667,9 @@ mod hard_batch_edits_tests {
                     action: "replace".to_string(),
                     content: Some("const target = 20;".to_string()),
                     count: Some(1),
+                    end_line: None,
                     symbol: None,
                     position: None,
-                    anchor: Some("const target = 2;".to_string()),
-                    anchor_miss_policy: None,
                     destination: None, reindent: false,
                 }],
             },
@@ -3139,10 +2687,9 @@ mod hard_batch_edits_tests {
                     action: "replace".to_string(),
                     content: Some("const target = 200;".to_string()),
                     count: Some(1),
+                    end_line: None,
                     symbol: None,
                     position: None,
-                    anchor: Some("const target = 2;".to_string()),
-                    anchor_miss_policy: None,
                     destination: None, reindent: false,
                 }],
             },
@@ -3150,7 +2697,7 @@ mod hard_batch_edits_tests {
         assert!(forward_attempt.contains("forwarded"), "expected forwarded hash hard error, got: {}", forward_attempt);
 
         let refreshed_hash = format!("h:{}", content_hash(&std::fs::read_to_string(root.join(file)).unwrap()));
-        let stale_anchor_attempt = batch_edits(&mut registry, root, vec![
+        let mid_write = batch_edits(&mut registry, root, vec![
             BatchEditEntry {
                 file: file.to_string(),
                 content_hash: Some(refreshed_hash),
@@ -3159,16 +2706,14 @@ mod hard_batch_edits_tests {
                     action: "replace".to_string(),
                     content: Some("const target = 200;".to_string()),
                     count: Some(1),
+                    end_line: None,
                     symbol: None,
                     position: None,
-                    anchor: Some("const target = 2;".to_string()),
-                    anchor_miss_policy: None,
                     destination: None, reindent: false,
                 }],
             },
-        ], &mut snapshot_svc).unwrap_err();
-        assert!(stale_anchor_attempt.contains("not found"), "expected anchor miss, got: {}", stale_anchor_attempt);
-        assert!(stale_anchor_attempt.contains("Re-read the file and retry"));
+        ], &mut snapshot_svc).unwrap();
+        assert_eq!(mid_write.undo_entries.len(), 1);
 
         let final_result = batch_edits(&mut registry, root, vec![
             BatchEditEntry {
@@ -3177,12 +2722,11 @@ mod hard_batch_edits_tests {
                 line_edits: vec![LineEdit {
                     line: 4,
                     action: "replace".to_string(),
-                    content: Some("const target = 200;".to_string()),
+                    content: Some("const target = 999;".to_string()),
                     count: Some(1),
+                    end_line: None,
                     symbol: None,
                     position: None,
-                    anchor: Some("const target = 20;".to_string()),
-                    anchor_miss_policy: None,
                     destination: None, reindent: false,
                 }],
             },
@@ -3190,8 +2734,8 @@ mod hard_batch_edits_tests {
         assert_eq!(final_result.undo_entries.len(), 1);
 
         let disk = std::fs::read_to_string(root.join(file)).unwrap();
-        assert!(disk.contains("const target = 200;"));
-        assert!(!disk.contains("const target = 20;"));
+        assert!(disk.contains("const target = 999;"));
+        assert!(!disk.contains("const target = 200;"));
     }
 
     #[test]
@@ -3210,7 +2754,7 @@ mod hard_batch_edits_tests {
                 line_edits: vec![LineEdit {
                     line: 2, action: "replace".to_string(),
                     content: Some("  println!(\"world\");".to_string()), count: Some(1),
-                    symbol: None, position: None, anchor: None, anchor_miss_policy: None,
+                    end_line: None, symbol: None, position: None,
                     destination: None, reindent: false,
                 }],
             },
@@ -3255,16 +2799,15 @@ module.exports = {
                 file: "src/index.js".to_string(),
                 content_hash: None,
                 line_edits: vec![LineEdit {
-                    line: 15,
+                    line: 17,
                     action: "replace".to_string(),
                     content: Some(
                         "\t\trecommended: { rules: {} },\n\t\tstrict: { rules: {} },".to_string()
                     ),
                     count: Some(1),
+                    end_line: None,
                     symbol: None,
                     position: None,
-                    anchor: Some("recommended: { rules: {} }".to_string()),
-                    anchor_miss_policy: None,
                     destination: None, reindent: false,
                 }],
             },
@@ -3323,10 +2866,9 @@ module.exports = {
                     action: "replace".to_string(),
                     content: Some("module.exports = ;".to_string()),
                     count: Some(1),
+                    end_line: None,
                     symbol: None,
                     position: None,
-                    anchor: Some("module.exports = {".to_string()),
-                    anchor_miss_policy: None,
                     destination: None, reindent: false,
                 }],
             },
@@ -3349,13 +2891,7 @@ mod hard_refactor_pipeline_tests {
 
     fn le(line: u32, action: &str, content: Option<&str>, count: Option<u32>) -> LineEdit {
         LineEdit { line, action: action.to_string(), content: content.map(String::from),
-                   count, symbol: None, position: None, anchor: None, anchor_miss_policy: None,
-                   destination: None, reindent: false }
-    }
-
-    fn lea(line: u32, action: &str, content: Option<&str>, count: Option<u32>, anchor: &str) -> LineEdit {
-        LineEdit { line, action: action.to_string(), content: content.map(String::from),
-                   count, symbol: None, position: None, anchor: Some(anchor.to_string()), anchor_miss_policy: None,
+                   count, end_line: None, symbol: None, position: None,
                    destination: None, reindent: false }
     }
 
@@ -3483,15 +3019,14 @@ export function extractMe() {
 
         // Step 3: update consumer imports
         let import_edits = vec![
-            lea(1, "replace",
+            le(1, "replace",
                 Some("import { keepMe } from './source';\nimport { extractMe } from './extracted';"),
-                Some(1),
-                "import { keepMe, extractMe } from './source'"),
+                Some(1)),
         ];
         let (new_consumer, warnings) = apply_line_edits(consumer_content, &import_edits).unwrap();
         std::fs::write(root.join("src/consumer.ts"), &new_consumer).unwrap();
 
-        assert!(warnings.is_empty(), "anchor should match the import line");
+        assert!(warnings.is_empty());
         assert!(new_consumer.contains("from './source'"));
         assert!(new_consumer.contains("from './extracted'"));
         assert!(!new_consumer.contains("keepMe, extractMe"), "old combined import should be gone");
@@ -3623,7 +3158,7 @@ export function extractMe() {
         assert_eq!(after3_lines[400], "REPLACED_B");
     }
 
-    // ── Import update with anchor on a file that was just modified by remove_lines ──
+    // ── Import update on a file that was just modified by remove_lines ──
 
     #[test]
     fn import_update_after_remove_lines_on_same_file() {
@@ -3640,15 +3175,14 @@ export function baz() { return 3; }
         let (after_remove, _) = apply_line_edits(content, &[le(5, "delete", None, Some(1))]).unwrap();
         assert!(!after_remove.contains("function bar"));
 
-        // Step 2: update the import (should use anchor since line numbers shifted)
+        // Step 2: update the import (line 1 unchanged after single-line delete above)
         let import_edits = vec![
-            lea(1, "replace",
+            le(1, "replace",
                 Some("import { foo } from './module';"),
-                Some(1),
-                "import { foo, bar }"),
+                Some(1)),
         ];
         let (final_content, warnings) = apply_line_edits(&after_remove, &import_edits).unwrap();
-        assert!(warnings.is_empty(), "anchor should find the import line");
+        assert!(warnings.is_empty());
         assert!(final_content.contains("import { foo } from './module'"));
         assert!(!final_content.contains("bar"));
     }

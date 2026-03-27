@@ -1015,7 +1015,7 @@ function normalizeCreateParams(params: Record<string, unknown>): Record<string, 
 // change.edit — routes to correct backend operation (draft, batch_edits, undo, etc.)
 // ---------------------------------------------------------------------------
 
-/** Canonicalize anchor-style line_edits payloads to { file, line_edits } before dispatch. Exported for tests. */
+/** Canonicalize line_edits payloads to { file, line_edits } before dispatch. Exported for tests. */
 export function normalizeEditParams(params: Record<string, unknown>): Record<string, unknown> {
   const normalizedParams = inheritSingleEditContext(normalizeExactSpanEditPayload(params));
   const edits = normalizedParams.edits as Array<Record<string, unknown>> | undefined;
@@ -1072,75 +1072,6 @@ export function normalizeEditParams(params: Record<string, unknown>): Record<str
     ...(contentHash ? { content_hash: contentHash } : {}),
     ...topLevelMeta,
   };
-}
-
-/** Brace-language extensions that benefit from pre-dispatch block validation. */
-const BRACE_LANG_EXTS = /\.(ts|tsx|js|jsx|rs|go|java|cs|cpp|c|h|hpp|scala|kt)(\?|$)/i;
-
-/**
- * Check brace balance in content. Returns final depth (0 = balanced). Depth going negative = invalid.
- */
-function braceDepth(content: string): { depth: number; unbalanced: boolean } {
-  let depth = 0;
-  let inStr = false;
-  let inBlockComment = false;
-  let inLineComment = false;
-  let quote = '';
-  for (let i = 0; i < content.length; i++) {
-    const c = content[i];
-    const c2 = content.slice(i, i + 2);
-    if (inLineComment) {
-      if (c === '\n') inLineComment = false;
-      continue;
-    }
-    if (inBlockComment) {
-      if (c2 === '*/') { inBlockComment = false; i++; }
-      continue;
-    }
-    if (inStr) {
-      if (c === '\\' && i + 1 < content.length) { i++; continue; }
-      if (c === quote) inStr = false;
-      continue;
-    }
-    if (c === '"' || c === "'" || c === '`') { inStr = true; quote = c; continue; }
-    if (c2 === '//') { inLineComment = true; continue; }
-    if (c2 === '/*') { inBlockComment = true; i++; continue; }
-    if (c === '{') depth++;
-    else if (c === '}') { depth--; if (depth < 0) return { depth, unbalanced: true }; }
-  }
-  return { depth, unbalanced: depth !== 0 };
-}
-
-/**
- * Pre-dispatch validation for anchor replace with multiline content.
- * Rejects obviously unbalanced brace blocks in brace-language files.
- * Rust (.rs): enforces strict syntax; provides actionable diagnostics.
- * Exported for tests.
- */
-export function validateAnchorReplaceContent(file: string, lineEdits: Array<Record<string, unknown>>): void {
-  if (!BRACE_LANG_EXTS.test(file)) return;
-  const isRust = /\.rs(\?|$)/i.test(file);
-  for (let i = 0; i < lineEdits.length; i++) {
-    const e = lineEdits[i];
-    if (e.action !== 'replace') continue;
-    const hasAnchor = e.anchor != null || e.symbol != null;
-    if (!hasAnchor) continue;
-    const content = typeof e.content === 'string' ? e.content : '';
-    const lines = content.split(/\r?\n/).filter(Boolean);
-    if (lines.length < 2) continue;
-    const { depth, unbalanced } = braceDepth(content);
-    if (unbalanced || depth !== 0) {
-      const base = `line_edits[${i}] anchor replace: multiline content has unbalanced braces (depth=${depth})`;
-      const hint = isRust
-        ? ' — For Rust: ensure replacement is a complete item (e.g. full fn body). Set count explicitly if block extent is ambiguous. Pre-write lint will reject invalid syntax.'
-        : ' — fix block before dispatch';
-      throwEditValidationError(base + hint, 'anchor_replace_unbalanced', {
-        file,
-        index: i,
-        depth,
-      });
-    }
-  }
 }
 
 function effectiveExplicitLineEditCount(edit: Record<string, unknown>): number {
@@ -1219,7 +1150,7 @@ function resolveEditOperation(params: Record<string, unknown>): { operation: str
     }
     return { operation: 'batch_edits', resolved };
   }
-  // Prioritize line-edit branch: anchor line_edits must go through canonical { file, line_edits }, never fallback edits path
+  // Prioritize line-edit branch: line_edits must go through canonical { file, line_edits }, never fallback edits path
   if (hasLineEdits) {
     const fileVal = params.file_path || params.file;
     const fileSet = typeof fileVal === 'string';
@@ -1245,15 +1176,21 @@ function resolveEditOperation(params: Record<string, unknown>): { operation: str
     ]);
     const VALID_ACTIONS_HINT =
       'insert_before|insert_after|prepend|append|replace|replace_body|delete|move';
-    // Validate each entry: must have (anchor or symbol or line) and explicit valid action. No silent defaults.
-    // Backend LineEdit requires line: u32 for serde; when anchor/symbol present, line=0 signals resolve-from-anchor.
+    // Validate each entry: must have (symbol or line) and explicit valid action. No silent defaults.
+    // Backend LineEdit requires line: u32 for serde; when symbol present without line, line=0 signals resolve-from-symbol.
+    const injectedLine = typeof params.line === 'number' && Number.isFinite(params.line) && params.line > 0
+      ? params.line as number
+      : undefined;
+
     let le = leRaw.map((e: unknown, i: number) => {
       const o = (e && typeof e === 'object' ? { ...(e as object) } : {}) as Record<string, unknown>;
-      const hasAnchor = o.anchor != null && typeof o.anchor === 'string';
+      if (injectedLine != null && o.line == null) {
+        o.line = injectedLine;
+      }
       const hasSymbol = o.symbol != null && typeof o.symbol === 'string';
       const hasLine = o.line != null;
-      if (!hasAnchor && !hasSymbol && !hasLine) {
-        throwEditValidationError(`line_edits[${i}] requires anchor, symbol, or line`, 'invalid_line_edit', { index: i });
+      if (!hasSymbol && !hasLine) {
+        throwEditValidationError(`line_edits[${i}] requires symbol or line`, 'invalid_line_edit', { index: i });
       }
       const action = o.action;
       if (action == null || typeof action !== 'string') {
@@ -1273,7 +1210,7 @@ function resolveEditOperation(params: Record<string, unknown>): { operation: str
       if (hasLine && (typeof o.line !== 'number' || !Number.isInteger(o.line) || o.line <= 0)) {
         throwEditValidationError(`line_edits[${i}] line must be a positive integer`, 'invalid_line_edit', { index: i, line: o.line });
       }
-      if ((hasAnchor || hasSymbol) && !hasLine) o.line = 0; // backend serde contract: 0 = resolve from anchor/symbol
+      if (hasSymbol && !hasLine) o.line = 0; // backend serde contract: 0 = resolve from symbol
       if (action === 'move') {
         const dest = o.destination;
         if (dest == null || typeof dest !== 'number' || !Number.isInteger(dest) || dest <= 0) {
@@ -1294,8 +1231,6 @@ function resolveEditOperation(params: Record<string, unknown>): { operation: str
       }
       return o;
     });
-    // Pre-dispatch: validate anchor replace content for brace languages — reject obviously unbalanced blocks
-    validateAnchorReplaceContent(fileVal as string, le);
     le = coalesceExplicitLineEdits(le);
     // Backend expects exact { file, line_edits }; strip file_path, edits, etc. to avoid mixed/unsupported shape
     const canonical: Record<string, unknown> = {

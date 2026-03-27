@@ -818,15 +818,18 @@ describe('intent.search_replace resolver', () => {
     expect(editSteps.length).toBe(3);
   });
 
-  it('edit slots use anchor-based edits', () => {
+  it('edit slots bind line from search content.lines', () => {
     const result = resolveSearchReplace(params, emptyContext());
     const editStep = result.steps.find(s => s.use === 'change.edit');
     expect(editStep!.with!.line_edits).toEqual([{
-      anchor: 'console.log',
       action: 'replace',
       count: 1,
       content: 'logger.info',
     }]);
+    expect(editStep!.in).toMatchObject({
+      file_path: { from_step: 'sr1__search', path: 'content.file_paths.0' },
+      line: { from_step: 'sr1__search', path: 'content.lines.0' },
+    });
   });
 
   it('verify conditioned on search having refs', () => {

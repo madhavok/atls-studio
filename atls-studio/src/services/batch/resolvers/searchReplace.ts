@@ -1,7 +1,7 @@
 /**
  * intent.search_replace — literal find/replace across files.
  *
- * Searches for old_text, emits capped edit slots using anchor-based edits,
+ * Searches for old_text, emits capped edit slots with line numbers from search hits,
  * then verifies. Works ONLY for literal text replacement, not semantic transforms.
  *
  * Discipline: old_text must be exact. No regex. No AI reasoning about what to change.
@@ -56,7 +56,6 @@ export const resolveSearchReplace: IntentResolver = (
 
     const editWith: Record<string, unknown> = {
       line_edits: [{
-        anchor: oldText,
         action: 'replace',
         count: oldText.split('\n').length,
         content: newText,
@@ -79,6 +78,11 @@ export const resolveSearchReplace: IntentResolver = (
     if (!isConcreteGlob) {
       editStep.in = {
         file_path: { from_step: searchId, path: `content.file_paths.${i}` },
+        line: { from_step: searchId, path: `content.lines.${i}` },
+      };
+    } else {
+      editStep.in = {
+        line: { from_step: searchId, path: `content.lines.${i}` },
       };
     }
 
