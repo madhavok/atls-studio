@@ -57,6 +57,7 @@ See [Architecture Document](ARCHITECTURE.md) for the full technical description,
 | [Architecture Overview](ARCHITECTURE.md) | Complete technical architecture (start here) |
 | [Engrams & Memory](docs/engrams.md) | Hash-addressed knowledge units, activation states, memory regions |
 | [Batch Executor](docs/batch-executor.md) | Unified tool surface, operation families, dataflow, intents, error recovery |
+| [Subagents](docs/subagents.md) | Delegate models: four roles, snapshot loop, scoped HPP, budgets, `delegate.*` batch ops |
 | [Freshness System](docs/freshness.md) | Staleness detection, snapshot tracking, preflight (`context` full + store refresh), round-end sweep of chunks/archive/**staged** via bulk `get_current_revisions`, rebase strategies |
 | [Hash Protocol](docs/hash-protocol.md) | HPP visibility tracking and UHPP reference syntax |
 | [Prompt Assembly](docs/prompt-assembly.md) | Cache-aware prompt construction and middleware pipeline |

@@ -41,7 +41,7 @@ interface Step {
 | **verify** | `verify.build`, `verify.test`, `verify.lint`, `verify.typecheck` | Validate changes against toolchain |
 | **session** | `session.plan`, `session.advance`, `session.status`, `session.pin`, `session.unpin`, `session.compact`, `session.unload`, `session.drop`, `session.recall`, `session.stage`, `session.unstage`, `session.bb.write`, `session.bb.read`, `session.bb.delete`, `session.bb.list`, `session.rule`, `session.compact_history`, `session.stats`, `session.emit`, `session.shape`, `session.load` | Manage memory, tasks, and session state |
 | **annotate** | `annotate.engram`, `annotate.note`, `annotate.link`, `annotate.retype`, `annotate.split`, `annotate.merge`, `annotate.design` | Annotate, connect, and restructure engrams |
-| **delegate** | `delegate.retrieve`, `delegate.design` | Dispatch cheaper sub-models for research |
+| **delegate** | `delegate.retrieve`, `delegate.design`, `delegate.code`, `delegate.test` | Dispatch cheaper sub-models (engram-first subagents; see [subagents.md](./subagents.md)) |
 | **intent** | `intent.understand`, `intent.edit`, `intent.edit_multi`, `intent.investigate`, `intent.diagnose`, `intent.survey`, `intent.refactor`, `intent.create`, `intent.test`, `intent.search_replace`, `intent.extract` | Macro operations that expand to primitives |
 | **system** | `system.exec`, `system.git`, `system.workspaces`, `system.help` | Shell execution, git operations, workspace management |
 

@@ -29,6 +29,7 @@ Related:
 | [tauri-backend.md](./tauri-backend.md) | Rust / Tauri layer |
 | [mcp-integration.md](./mcp-integration.md) | MCP |
 | [swarm-orchestration.md](./swarm-orchestration.md) | Multi-agent orchestration |
+| [subagents.md](./subagents.md) | Delegate subagents: four roles, snapshot loop, scoped HPP, budgets, batch ops |
 
 ## Repo layout
 

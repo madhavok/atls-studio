@@ -75,6 +75,7 @@ For subsystem-oriented overviews that complement this runtime-focused architectu
 
 - [Freshness & Hash-Safe Edits](docs/freshness.md) — snapshot tracking, sequential `line_edits`, cross-step rebase, post-edit refresh, own-write suppression
 - [Batch Executor](docs/batch-executor.md)
+- [Subagents](docs/subagents.md) — delegate roles, snapshot loop, budgets
 - [Docs Index](docs/README.md)
 - [Studio App Shell](docs/studio-app-shell.md)
 - [Tauri Backend](docs/tauri-backend.md)
@@ -206,7 +207,7 @@ All model-initiated actions flow through a single tool: `batch()`. This collapse
 | **verify** | `verify.build`, `verify.test`, `verify.lint`, `verify.typecheck` | Validate changes |
 | **session** | `session.plan`, `session.advance`, `session.pin`, `session.unpin`, `session.compact`, `session.drop`, `session.unload`, `session.recall`, `session.stage`, `session.unstage`, `session.bb.write`, `session.bb.read`, `session.bb.delete`, `session.bb.list`, `session.rule`, `session.compact_history`, `session.stats`, `session.emit`, `session.shape`, `session.load`, `session.debug` | Manage memory and tasks |
 | **annotate** | `annotate.engram`, `annotate.note`, `annotate.link`, `annotate.retype`, `annotate.split`, `annotate.merge`, `annotate.design` | Annotate and connect engrams |
-| **delegate** | `delegate.retrieve`, `delegate.design` | Dispatch cheaper sub-models |
+| **delegate** | `delegate.retrieve`, `delegate.design`, `delegate.code`, `delegate.test` | Engram-first subagents (snapshot loop, role allowlists; see [docs/subagents.md](../../docs/subagents.md)) |
 | **intent** | `intent.understand`, `intent.edit`, `intent.edit_multi`, `intent.investigate`, `intent.diagnose`, `intent.survey`, `intent.refactor`, `intent.create`, `intent.test`, `intent.search_replace`, `intent.extract` | Macro operations (expand to primitives) |
 | **system** | `system.exec`, `system.git`, `system.workspaces`, `system.help` | Shell, git, workspace management |
 
