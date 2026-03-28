@@ -83,6 +83,8 @@ npm run tauri build
 
 Creates platform-specific installers in `src-tauri/target/release/bundle/`.
 
+If you run `cargo build` directly under `src-tauri`, run `npm run build` in this directory first so `dist/` exists — Tauri embeds that bundle at compile time.
+
 ### TypeScript
 
 ```bash
