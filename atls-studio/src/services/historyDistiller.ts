@@ -3,7 +3,8 @@
  * and formats a compact assistant summary message for the API payload.
  */
 
-import { estimateTokens } from '../utils/contextHash';
+import { countTokensSync } from '../utils/tokenCounter';
+import { isCompressedRef } from '../utils/contextHash';
 import { ROLLING_SUMMARY_MAX_TOKENS } from './promptMemory';
 
 export const ROLLING_SUMMARY_MARKER = '[Rolling Summary]';
@@ -53,7 +54,7 @@ export function isRollingSummaryMessage(msg: { role: string; content: unknown })
 
 function dedupePush(arr: string[], item: string): void {
   const t = item.trim();
-  if (!t || t.startsWith('[->')) return;
+  if (!t || isCompressedRef(t)) return;
   const key = t.toLowerCase();
   if (arr.some((x) => x.toLowerCase() === key)) return;
   arr.push(t.length > 400 ? `${t.slice(0, 397)}...` : t);
@@ -140,7 +141,7 @@ export function distillRound(messages: Array<{ role: string; content: unknown }>
       const texts = extractTextFromAssistantContent(msg.content);
       for (const t of texts) {
         const line = t.replace(/\s+/g, ' ').trim();
-        if (line.startsWith('[->')) continue;
+        if (isCompressedRef(line)) continue;
         if (line.length > 20 && line.length < 500) {
           dedupePush(facts.decisions, line.slice(0, 280));
         }
@@ -182,7 +183,7 @@ export function distillRound(messages: Array<{ role: string; content: unknown }>
           const b = block as { type?: string; content?: string };
           if (b.type !== 'tool_result' || typeof b.content !== 'string') continue;
           const c = b.content;
-          if (c.startsWith('[->')) continue;
+          if (isCompressedRef(c)) continue;
           if (ERROR_HINTS.test(c) || /"error"\s*:/i.test(c)) {
             dedupePush(facts.errors, c.replace(/\s+/g, ' ').trim().slice(0, 240));
           }
@@ -293,7 +294,7 @@ export function formatSummaryMessage(summary: RollingSummary): { role: 'assistan
 export function trimSummaryToTokenBudget(summary: RollingSummary, maxTokens: number): RollingSummary {
   let s = { ...summary, decisions: [...summary.decisions], filesChanged: [...summary.filesChanged], userPreferences: [...summary.userPreferences], workDone: [...summary.workDone], findings: [...(summary.findings ?? [])], errors: [...summary.errors], currentGoal: summary.currentGoal || '', nextSteps: [...(summary.nextSteps ?? [])], blockers: [...(summary.blockers ?? [])] };
   let body = formatSummaryBody(s);
-  let tok = estimateTokens(body);
+  let tok = countTokensSync(body);
   let guard = 0;
   // Trim order: expendable first; goal/nextSteps/findings last (most valuable for continuity)
   while (tok > maxTokens && guard++ < 500) {
@@ -310,7 +311,7 @@ export function trimSummaryToTokenBudget(summary: RollingSummary, maxTokens: num
     }
     if (!cut) break;
     body = formatSummaryBody(s);
-    tok = estimateTokens(body);
+    tok = countTokensSync(body);
   }
   return s;
 }

@@ -10,7 +10,7 @@
  * The rolling summary (prepended by aiService) covers anything excluded.
  */
 
-import { estimateTokens } from '../utils/contextHash';
+import { countTokensSync } from '../utils/tokenCounter';
 import { CONVERSATION_HISTORY_BUDGET_TOKENS } from './promptMemory';
 
 interface HasRoleAndContent {
@@ -23,15 +23,15 @@ const MIN_RECENT_MESSAGES = 10;
 
 function estimateMessageTokens(msg: HasRoleAndContent): number {
   const c = msg.content;
-  if (typeof c === 'string') return estimateTokens(c);
+  if (typeof c === 'string') return countTokensSync(c);
   if (Array.isArray(c)) {
     let total = 0;
     for (const block of c) {
       if (!block || typeof block !== 'object') continue;
       const b = block as Record<string, unknown>;
       const text = (b.text ?? b.content ?? '') as string;
-      if (typeof text === 'string') total += estimateTokens(text);
-      else if (b.input) total += estimateTokens(JSON.stringify(b.input));
+      if (typeof text === 'string') total += countTokensSync(text);
+      else if (b.input) total += countTokensSync(JSON.stringify(b.input));
     }
     return total || 20;
   }

@@ -4,7 +4,8 @@
 
 import type { OpHandler, StepOutput, ExpandedFilePath } from '../types';
 import { getFreshnessHintForRefs } from '../../freshnessPreflight';
-import { estimateTokens, hashContentSync, SHORT_HASH_LEN, type DigestSymbol } from '../../../utils/contextHash';
+import { hashContentSync, SHORT_HASH_LEN, type DigestSymbol } from '../../../utils/contextHash';
+import { countTokensSync } from '../../../utils/tokenCounter';
 import { invoke } from '@tauri-apps/api/core';
 import { invokeWithTimeout } from '../../toolHelpers';
 import { parseHashRef } from '../../../utils/hashRefParsers';
@@ -126,7 +127,7 @@ export const handleLoad: OpHandler = async (params, ctx) => {
       const reused = ctx.store().findReusableRead({ filePath: filePaths[0], sourceRevision: backendHash });
       if (reused) {
         useRetentionStore.getState().incrementReadsReused();
-        lines.push(`load: ERROR redundant — ${filePaths[0]} already at h:${reused} (same rev). Content is live at that hash. Do NOT re-read.`);
+        lines.push(`load: ERROR redundant — ${filePaths[0]} already at h:${reused} (same rev). Content is live at that hash. Do NOT re-read. Use h:${reused} in file_path params directly, or change.edit file_path:"h:${reused}:source".`);
         return { kind: 'file_refs', ok: false, refs: [`h:${reused}`], summary: lines.join('\n'), tokens: 0 };
       }
     }
@@ -134,7 +135,7 @@ export const handleLoad: OpHandler = async (params, ctx) => {
     const hash = ctx.store().addChunk(resultStr, isFull ? 'raw' : 'smart', filePaths.join(', '), symbols, undefined, backendHash, {
       ...(backendHash && filePaths.length === 1 ? { readSpan: { filePath: filePaths[0], sourceRevision: backendHash } } : {}),
     });
-    const tokens = estimateTokens(resultStr);
+    const tokens = countTokensSync(resultStr);
     lines.push(`load: ${filePaths.join(', ')} → h:${hash} (${(tokens / 1000).toFixed(1)}k tk)`);
     return { kind: 'file_refs', ok: true, refs: [`h:${hash}`], summary: lines.join('\n'), tokens };
   } catch (loadErr) {
@@ -219,7 +220,7 @@ export const handleRead: OpHandler = async (params, ctx) => {
       for (const ti of temporalItems) {
         const sourceRevision = hashContentSync(ti.content);
         const hash = ctx.store().addChunk(ti.content, 'smart', ti.source, undefined, undefined, sourceRevision, { sourceRevision, viewKind: 'latest' });
-        const tk = estimateTokens(ti.content);
+        const tk = countTokensSync(ti.content);
         totalTokensDelta += tk;
         allRefs.push(`h:${hash}`);
         readResults.push({
@@ -262,7 +263,7 @@ export const handleRead: OpHandler = async (params, ctx) => {
                 useRetentionStore.getState().incrementReadsReused();
                 allRefs.push(`h:${reusedRead}`);
                 readResults.push({ file: src, h: `h:${reusedRead}`, ...(backendHash ? { snapshot_hash: backendHash } : {}) });
-                lines.push(`read: ERROR redundant — ${src} already at h:${reusedRead} (same rev). Content is live. Use read.lines(ref:"h:${reusedRead}:LL-LL") for a different span. Do NOT re-read.`);
+                lines.push(`read: ERROR redundant — ${src} already at h:${reusedRead} (same rev). Content is live. Use read.lines(ref:"h:${reusedRead}:LL-LL") for a different span, or change.edit file_path:"h:${reusedRead}:source". Do NOT re-read.`);
                 continue;
               }
             }
@@ -281,7 +282,7 @@ export const handleRead: OpHandler = async (params, ctx) => {
                 ...(backendHash && src ? { readSpan: { filePath: src, sourceRevision: backendHash, shape: readShape } } : {}),
               },
             );
-            const tk = estimateTokens(content);
+            const tk = countTokensSync(content);
             totalTokensDelta += tk;
             allRefs.push(`h:${hash}`);
             readResults.push({
@@ -445,7 +446,7 @@ export const handleReadLines: OpHandler = async (params, ctx) => {
     const usedContextLines = typeof rlResult.context_lines === 'number' ? rlResult.context_lines : requestedContextLines;
     const targetLabel = formatLineRanges(targetRange) || rlLines;
     const actualLabel = formatLineRanges(actualRange);
-    const tk = estimateTokens(rlContent);
+    const tk = countTokensSync(rlContent);
     ctx.store().clearSuspect(rlFile || rlH);
     const rlSnapshotHash = typeof rlResult.snapshot_hash === 'string' ? String(rlResult.snapshot_hash)
       : typeof rlResult.content_hash === 'string' ? String(rlResult.content_hash) : undefined;
@@ -463,7 +464,7 @@ export const handleReadLines: OpHandler = async (params, ctx) => {
             formatLineRanges(actualRange) || formatLineRanges(targetRange) || (typeof rlLines === 'string' ? rlLines.trim() : '');
           const baseRef = normalizeHashRefToken(`h:${reusedLines}`);
           const refWithLines = lineSpecForRef ? `${baseRef}:${lineSpecForRef}` : baseRef;
-          const reuseSummary = `read_lines: ERROR redundant — ${rlFile}:${targetLabel} already at h:${reusedLines} (same rev). Content is live. Chain from this ref. Do NOT re-read.`;
+          const reuseSummary = `read_lines: ERROR redundant — ${rlFile}:${targetLabel} already at h:${reusedLines} (same rev). Content is live. Chain from this ref — change.edit file_path:"h:${reusedLines}:source" or read.lines ref:"h:${reusedLines}:LL-LL" for a different span. Do NOT re-read.`;
           return {
             kind: 'file_refs', ok: false, refs: [refWithLines],
             summary: reuseSummary, tokens: 0,
@@ -623,7 +624,7 @@ export const handleShape: OpHandler = async (params, ctx) => {
     const rawRef = hashRef.startsWith('h:') ? hashRef : `h:${hashRef}`;
     const resolved = await invokeWithTimeout<ResolvedHashContent>('resolve_hash_ref', { rawRef }, READ_TIMEOUT_MS);
     const hash = ctx.store().addChunk(resolved.content, 'smart', resolved.source || undefined);
-    const tokens = estimateTokens(resolved.content);
+    const tokens = countTokensSync(resolved.content);
     return ok(`shape: ${hashRef} → h:${hash} (${tokens}tk)`, [`h:${hash}`], tokens);
   } catch (shapeErr) {
     return err(`shape: ERROR ${shapeErr instanceof Error ? shapeErr.message : String(shapeErr)}`);
@@ -642,7 +643,7 @@ export const handleEmit: OpHandler = async (params, ctx) => {
 
   const { dematerialize } = await import('../../hashProtocol');
   const hash = ctx.store().addChunk(content, 'result', label);
-  const tokens = estimateTokens(content);
+  const tokens = countTokensSync(content);
   dematerialize(hash);
 
   invoke('register_hash_content', {
@@ -702,7 +703,7 @@ async function _processShapedFile(
   }
 
   const fullHash = snapshotHash ?? hashContentSync(fullContent);
-  const fullTokens = estimateTokens(fullContent);
+  const fullTokens = countTokensSync(fullContent);
 
   if (!snapshotHash) {
     await invokeWithTimeout('register_hash_content', {
@@ -718,7 +719,7 @@ async function _processShapedFile(
   }, READ_TIMEOUT_MS);
   const canonicalSnapshotHash = resolved.snapshot_hash ?? fullHash;
 
-  const shapedTokens = estimateTokens(resolved.content);
+  const shapedTokens = countTokensSync(resolved.content);
 
   const stageResult = ctx.store().stageSnippet(
     canonicalSnapshotHash.slice(0, SHORT_HASH_LEN),

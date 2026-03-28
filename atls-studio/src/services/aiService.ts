@@ -124,9 +124,10 @@ function ensureAiServiceWiring(): void {
 initCrossStoreAccessors();
 import { useCostStore, calculateCost, type AIProvider as CostProvider } from '../stores/costStore';
 import { useRefactorStore } from '../stores/refactorStore';
-import { formatChunkRef, estimateTokens, hashContentSync, sliceContentByLines, extractSearchSummary, extractSymbolSummary, extractDepsSummary, SHORT_HASH_LEN, type DigestSymbol } from '../utils/contextHash';
+import { formatChunkRef, hashContentSync, isCompressedRef, sliceContentByLines, extractSearchSummary, extractSymbolSummary, extractDepsSummary, SHORT_HASH_LEN, type DigestSymbol } from '../utils/contextHash';
 import { resolveHashRefsWithMeta, setRecencyResolver, setEditRecencyResolver, setReadRecencyResolver, setStageRecencyResolver, type HashLookup, type SetRefLookup } from '../utils/hashResolver';
 import { toTOON, formatResult } from '../utils/toon';
+import { countTokensSync, countTokens as countTokensAsync } from '../utils/tokenCounter';
 import { BATCH_TOOL_REF, DESIGNER_TOOL_REF, SUBAGENT_TOOL_REF, NATIVE_TOOL_TOKENS_ESTIMATE } from '../prompts/toolRef';
 import { CONTEXT_CONTROL_V4, CONTEXT_CONTROL_DESIGNER } from '../prompts/cognitiveCore';
 import { EDIT_DISCIPLINE } from '../prompts/editDiscipline';
@@ -165,7 +166,7 @@ import {
   type PromptPressureBuckets,
   type PromptReliefAction,
 } from './promptMemory';
-import { compressToolLoopHistory, deflateToolResults, estimateHistoryTokens } from './historyCompressor';
+import { compressToolLoopHistory, deflateToolResults, estimateHistoryTokens, estimateHistoryTokensAsync } from './historyCompressor';
 import { formatSummaryMessage, isRollingSummaryEmpty, trimSummaryToTokenBudget } from './historyDistiller';
 import { createGuardrailCallbacks, runBeforeRoundMiddlewares, setPromptBudgetEstimates } from './chatMiddleware';
 import { createTauriChatStream } from './chatTransport';
@@ -1220,7 +1221,7 @@ async function streamChatViaTauri(
       const roundLastUserIndex = conversationHistory.reduceRight((acc, msg, index) => acc === -1 && msg.role === 'user' ? index : acc, -1);
       useAppStore.getState().setPromptMetrics({
         bp3PriorTurnsTokens: estimateHistoryTokens(conversationHistory.slice(0, Math.max(0, roundLastUserIndex))),
-        workspaceContextTokens: estimateTokens(dynamicContextBlock),
+        workspaceContextTokens: countTokensSync(dynamicContextBlock),
       });
       const assembledRound = assembleProviderMessages(
         conversationHistory,
@@ -1547,6 +1548,12 @@ async function streamChatViaTauri(
           timestamp: new Date(),
         });
         console.log(`[aiService] Recorded cost: ${roundCostCents}Â¢ for ${roundInputTokens}in/${roundOutputTokens}out (cache r:${roundCacheReadTokens} w:${roundCacheWriteTokens}) (${config.provider}/${config.model})`);
+        // Token accuracy telemetry: compare provider-reported input with our estimate
+        const estimatedInput = estimateHistoryTokens(conversationHistory) + countTokensSync(dynamicContextBlock);
+        if (roundInputTokens > 0 && estimatedInput > 0) {
+          const accuracyRatio = estimatedInput / roundInputTokens;
+          console.log(`[tokenizer] accuracy: estimated=${estimatedInput} provider=${roundInputTokens} ratio=${accuracyRatio.toFixed(3)} (1.0=perfect, <1=undercount, >1=overcount)`);
+        }
       }
 
       // Capture per-round snapshot for Internals charts
@@ -1562,8 +1569,7 @@ async function streamChatViaTauri(
         ctxState.archivedChunks.forEach(c => archivedTokens += c.tokens);
         const overheadTokens = appState.promptMetrics.totalOverheadTokens;
         const staticSystemTokens = getStaticSystemTokens(appState.promptMetrics);
-        const conversationHistoryTokens = estimateHistoryTokens(conversationHistory);
-        // Compute history breakdown for CTX line awareness
+        const conversationHistoryTokens = await estimateHistoryTokensAsync(conversationHistory);
         let historyBreakdownLabel: string | undefined;
         if (conversationHistoryTokens > 5000) {
           const { analyzeHistoryBreakdown, formatHistoryBreakdown } = await import('./historyCompressor');
@@ -1571,7 +1577,7 @@ async function streamChatViaTauri(
           historyBreakdownLabel = formatHistoryBreakdown(breakdown) || undefined;
         }
         const stagedTokensBucket = getStagedTokens(appState.promptMetrics, stagedTokens);
-        const workspaceContextTokens = estimateTokens(dynamicContextBlock);
+        const workspaceContextTokens = countTokensSync(dynamicContextBlock);
         // Model's actual context window (includes extended 1M when enabled)
         const modelCtx = appState.availableModels.find(m => m.id === config.model);
         const extendedResolution = getExtendedContextResolutionFromSettings(appState.settings);
@@ -1608,7 +1614,7 @@ async function streamChatViaTauri(
         const trimmedRs = trimSummaryToTokenBudget(rsSnap, ROLLING_SUMMARY_MAX_TOKENS);
         const rollingSummaryTokens = isRollingSummaryEmpty(trimmedRs)
           ? 0
-          : estimateTokens(formatSummaryMessage(trimmedRs).content);
+          : countTokensSync(formatSummaryMessage(trimmedRs).content);
         useRoundHistoryStore.getState().pushSnapshot({
           round: round + 1,
           timestamp: Date.now(),
@@ -2779,7 +2785,7 @@ function _extractRecentReasoning(): string {
     scanned++;
     if (typeof msg.content === 'string') {
       const t = msg.content.trim();
-      if (t && !t.startsWith('[->') && !t.startsWith('[Rolling Summary]')) {
+      if (t && !isCompressedRef(t) && !t.startsWith('[Rolling Summary]')) {
         textChunks.unshift(t);
       }
     } else if (Array.isArray(msg.content)) {
@@ -2788,7 +2794,7 @@ function _extractRecentReasoning(): string {
         const b = block as { type?: string; text?: string };
         if (b.type === 'text' && b.text) {
           const t = b.text.trim();
-          if (t && !t.startsWith('[->')) textChunks.unshift(t);
+          if (t && !isCompressedRef(t)) textChunks.unshift(t);
         }
       }
     }
@@ -3056,7 +3062,7 @@ function _buildStaticSystemPrompt(
   // Retriever mode: prompt only, no tools/shell/patterns
   if (mode === 'retriever') {
     useAppStore.getState().setPromptMetrics({
-      modePromptTokens: estimateTokens(modePrompt),
+      modePromptTokens: countTokensSync(modePrompt),
       toolRefTokens: 0, shellGuideTokens: 0,
       nativeToolTokens: 0,
     });
@@ -3127,12 +3133,12 @@ batch({version:"1.0",steps:[{id:"exec",use:"system.exec",with:{cmd:"..."}}]}) â†
   }
 
   const metricsSnapshot = {
-    modePromptTokens: estimateTokens(modePrompt + refactorConfig),
-    toolRefTokens: estimateTokens(toolRef),
-    shellGuideTokens: estimateTokens(shellGuide),
+    modePromptTokens: countTokensSync(modePrompt + refactorConfig),
+    toolRefTokens: countTokensSync(toolRef),
+    shellGuideTokens: countTokensSync(shellGuide),
     nativeToolTokens: NATIVE_TOOL_TOKENS_ESTIMATE,
-    contextControlTokens: estimateTokens(editDisciplineSection + contextControl + hppSection + providerReinforcement),
-    entryManifestTokens: estimateTokens(entryManifestSection),
+    contextControlTokens: countTokensSync(editDisciplineSection + contextControl + hppSection + providerReinforcement),
+    entryManifestTokens: countTokensSync(entryManifestSection),
   };
   useAppStore.getState().setPromptMetrics(metricsSnapshot);
 
@@ -3301,7 +3307,7 @@ export async function streamChat(
 
     // Entry manifest is now in BP1 static system prompt (no staging needed)
 
-    const wsCtxTokens = estimateTokens(dynamicContextBlock);
+    const wsCtxTokens = countTokensSync(dynamicContextBlock);
     if (wsCtxTokens > 0) {
       useAppStore.getState().setPromptMetrics({ workspaceContextTokens: wsCtxTokens });
     }

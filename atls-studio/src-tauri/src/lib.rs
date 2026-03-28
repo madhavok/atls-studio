@@ -58,6 +58,7 @@ pub mod chat_db_commands;
 pub mod hash_commands;
 pub mod commands;
 pub mod workspace_run;
+pub mod tokenizer;
 
 // ============================================================================
 // Utility: resolve preferred shell (pwsh > powershell on Windows)
@@ -2360,6 +2361,10 @@ pub fn run() {
             ai_execute::ai_execute_background,
             ai_execute::ai_get_background_output,
             ai_execute::ai_kill_background,
+            // Tokenizer (real BPE token counting)
+            tokenizer::count_tokens,
+            tokenizer::count_tokens_batch,
+            tokenizer::count_tool_def_tokens,
             // AI Chat Streaming (bypasses CORS)
             ai_streaming::stream_chat_anthropic,
             ai_streaming::estimate_tool_def_tokens,

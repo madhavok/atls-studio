@@ -1090,11 +1090,14 @@ export async function executeUnifiedBatch(
             : typeof rawFp === 'string'
               ? rawFp.slice(0, 120)
               : JSON.stringify(rawFp).slice(0, 240);
+        const bindingSource = step.in?.file_paths && 'from_step' in step.in.file_paths
+          ? ` (binding from step '${step.in.file_paths.from_step}' resolved to nothing)`
+          : '';
         const output: StepOutput = {
           kind: 'raw',
           ok: false,
           refs: [],
-          summary: `${step.id}: ERROR file_paths must resolve to a non-empty string[] (paths or h: refs). Got: ${preview}`,
+          summary: `${step.id}: ERROR file_paths must resolve to a non-empty string[] (paths or h: refs). Got: ${preview}${bindingSource}. Use explicit file_paths in 'with', or read.lines with a known h:ref.`,
           error: 'invalid file_paths binding',
         };
         stepOutputs.set(step.id, output);

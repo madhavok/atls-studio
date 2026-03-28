@@ -16,7 +16,7 @@ import { rateLimiter } from './rateLimiter';
 import { streamChatForSwarm, BATCH_TOOL_REF, type AIConfig, type ChatMessage, type AIProvider } from './aiService';
 import { EDIT_DISCIPLINE } from '../prompts/editDiscipline';
 import { toTOON } from '../utils/toon';
-import { estimateTokens } from '../utils/contextHash';
+import { countTokensSync } from '../utils/tokenCounter';
 
 /** Persisted in agent_stats for LLM usage not tied to a worker task row */
 const SWARM_ORCHESTRATION_PLAN_TASK_ID = '__swarm_orchestration_plan__';
@@ -2028,7 +2028,7 @@ ${toolDocs}
 
     const budgetLog: string[] = [];
     const trackTokens = (label: string, content: string): number => {
-      const tk = estimateTokens(content);
+      const tk = countTokensSync(content);
       tokensUsed += tk;
       budgetLog.push(`${label}: ${(tk / 1000).toFixed(1)}k`);
       return tk;
@@ -2067,12 +2067,12 @@ You may ONLY write to these files: ${task.fileClaims.length > 0 ? task.fileClaim
         const rawContent = research?.fileContents?.get(filePath);
         const fd = digest?.files.get(filePath);
 
-        if (rawContent && (tokensUsed + estimateTokens(rawContent)) < contextBudget) {
+        if (rawContent && (tokensUsed + countTokensSync(rawContent)) < contextBudget) {
           // Full content fits — inline it
           const fileBlock = `### ${filePath} [EDIT]\n\`\`\`\n${rawContent}\n\`\`\``;
           trackTokens(`owned:${filePath.split(/[/\\]/).pop()}`, fileBlock);
           ownedParts.push(fileBlock);
-        } else if (fd?.smartContent && (tokensUsed + estimateTokens(fd.smartContent)) < contextBudget) {
+        } else if (fd?.smartContent && (tokensUsed + countTokensSync(fd.smartContent)) < contextBudget) {
           // Degrade to signatures
           const sigBlock = `### ${filePath} [EDIT — signatures only, load full with read.context]\n${fd.smartContent}`;
           trackTokens(`owned-sig:${filePath.split(/[/\\]/).pop()}`, sigBlock);
@@ -2097,11 +2097,11 @@ You may ONLY write to these files: ${task.fileClaims.length > 0 ? task.fileClaim
         if (task.fileClaims.includes(filePath)) continue;
         const fd = digest?.files.get(filePath);
 
-        if (fd?.signatures.length && (tokensUsed + estimateTokens(fd.signatures.join('\n'))) < contextBudget) {
+        if (fd?.signatures.length && (tokensUsed + countTokensSync(fd.signatures.join('\n'))) < contextBudget) {
           const sigBlock = `### ${filePath} [READ-ONLY]\nSignatures: ${fd.signatures.join('; ')}`;
           trackTokens(`ref:${filePath.split(/[/\\]/).pop()}`, sigBlock);
           refParts.push(sigBlock);
-        } else if (fd?.smartContent && (tokensUsed + estimateTokens(fd.smartContent)) < contextBudget) {
+        } else if (fd?.smartContent && (tokensUsed + countTokensSync(fd.smartContent)) < contextBudget) {
           const smartBlock = `### ${filePath} [READ-ONLY]\n${fd.smartContent}`;
           trackTokens(`ref-smart:${filePath.split(/[/\\]/).pop()}`, smartBlock);
           refParts.push(smartBlock);

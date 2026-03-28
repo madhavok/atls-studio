@@ -134,7 +134,11 @@ export function estimateTokens(content: string): number {
  * Format a chunk reference for compressed history.
  * Uses h: prefix so compressed refs are directly usable as hash references in tool calls.
  * With digest: multi-line block showing hash + symbols/key lines.
- * Without: single-line [-> h:{hash}, {tokens}tk | {description}]
+ * Without: single-line [h:{hash} {tokens}tk {description}]
+ *
+ * Token-optimized: dropped `->` arrow and `,` separator (saves ~2 tokens per ref
+ * on Claude/OpenAI tokenizers; spaces between fields tokenize more efficiently
+ * than punctuation-heavy separators in BPE).
  */
 export function formatChunkRef(
   shortHash: string,
@@ -144,8 +148,8 @@ export function formatChunkRef(
   digest?: string,
 ): string {
   const header = description
-    ? `[-> h:${shortHash}, ${tokens}tk | ${description}]`
-    : `[-> h:${shortHash}, ${tokens}tk${source ? ` ${source}` : ''}]`;
+    ? `[h:${shortHash} ${tokens}tk ${description}]`
+    : `[h:${shortHash} ${tokens}tk${source ? ` ${source}` : ''}]`;
   if (digest) {
     return `${header}\n${digest}`;
   }
@@ -158,7 +162,7 @@ export function formatChunkTag(
   type: ChunkType,
   source?: string,
 ): string {
-  return `«h:${shortHash} tk:${tokens} ${type}${source ? `:${source}` : ''}»`;
+  return `«h:${shortHash} ${tokens}tk ${type}${source ? ` ${source}` : ''}»`;
 }
 
 /**
@@ -170,18 +174,23 @@ export function parseChunkTag(tag: string): {
   type: string;
   source?: string;
 } | null {
-  const match = tag.match(/^«h:(\w+)\s+tk:(\d+)\s+(.+)»$/);
+  // Supports both new format «h:XXXX 450tk type source» and legacy «h:XXXX tk:450 type:source»
+  const match = tag.match(/^«h:(\w+)\s+(?:tk:(\d+)|(\d+)tk)\s+(.+)»$/);
   if (!match) return null;
+  const tokensStr = match[2] ?? match[3];
 
-  const payload = match[3];
-  const type = [...CHUNK_TAG_TYPES].sort((a, b) => b.length - a.length).find((chunkType) => payload === chunkType || payload.startsWith(`${chunkType}:`));
+  const payload = match[4];
+  const type = [...CHUNK_TAG_TYPES].sort((a, b) => b.length - a.length).find((chunkType) => payload === chunkType || payload.startsWith(`${chunkType} `) || payload.startsWith(`${chunkType}:`));
   if (!type) return null;
+
+  const rest = payload.slice(type.length);
+  const source = rest.startsWith(' ') ? rest.slice(1) : rest.startsWith(':') ? rest.slice(1) : undefined;
 
   return {
     hash: match[1],
-    tokens: parseInt(match[2], 10),
+    tokens: parseInt(tokensStr, 10),
     type,
-    source: payload === type ? undefined : payload.slice(type.length + 1),
+    source: source || undefined,
   };
 }
 
@@ -450,6 +459,11 @@ export function sliceContentByLines(content: string, linesSpec: string, raw?: bo
     }
   }
   return output.join('\n');
+}
+
+/** Check if content is a compressed chunk reference (either format). */
+export function isCompressedRef(content: string): boolean {
+  return content.startsWith('[h:') || content.startsWith('[->');
 }
 
 // ---------------------------------------------------------------------------

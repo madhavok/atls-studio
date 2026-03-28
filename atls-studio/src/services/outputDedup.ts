@@ -12,7 +12,7 @@
  */
 
 import { useContextStore } from '../stores/contextStore';
-import { estimateTokens } from '../utils/contextHash';
+import { countTokensSync } from '../utils/tokenCounter';
 
 const CODE_BLOCK_RE = /```[\w]*\n([\s\S]*?)```/g;
 const MIN_LINES_FOR_DEDUP = 4;
@@ -49,14 +49,14 @@ export function deduplicateOutput(text: string): DedupResult {
     if (!match) return fullMatch;
 
     const { shortHash, source, lineRange } = match;
-    const originalTokens = estimateTokens(codeContent);
+    const originalTokens = countTokensSync(codeContent);
     const refStr = lineRange
       ? `h:${shortHash}:${lineRange}`
       : `h:${shortHash}`;
     const label = source ? `[${source}]` : '';
 
     refsInserted++;
-    tokensSaved += originalTokens - estimateTokens(refStr);
+    tokensSaved += originalTokens - countTokensSync(refStr);
 
     return `\`${refStr}\`${label}`;
   });

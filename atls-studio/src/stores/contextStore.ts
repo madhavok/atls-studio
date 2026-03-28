@@ -14,7 +14,6 @@ import { create } from 'zustand';
 import { 
   type ChunkType, 
   hashContentSync, 
-  estimateTokens, 
   formatChunkTag,
   formatChunkRef,
   generateDigest,
@@ -22,6 +21,7 @@ import {
   SHORT_HASH_LEN,
   type DigestSymbol,
 } from '../utils/contextHash';
+import { countTokensSync } from '../utils/tokenCounter';
 import {
   formatWorkingMemory,
   formatTaggedContext,
@@ -581,7 +581,7 @@ function pruneLowValueChunks(
     if (!chunk.compacted && shouldAutoCompactChunk(chunk)) {
       nextArchived.set(key, { ...chunk });
       const compactContent = pickCompactContent(chunk, `[compacted] h:${chunk.shortHash}`);
-      const compactTokens = estimateTokens(compactContent);
+      const compactTokens = countTokensSync(compactContent);
       nextChunks.set(key, {
         ...chunk,
         content: compactContent,
@@ -1376,7 +1376,7 @@ export const useContextStore = create<ContextStoreState>()(
   addChunk: (content: string, type: ChunkType, source?: string, symbols?: DigestSymbol[], summary?: string, backendHash?: string, opts?: { subtaskIds?: string[]; boundDuringPlanning?: boolean; fullHash?: string; sourceRevision?: string; viewKind?: EngramViewKind; editSessionId?: string; origin?: EngramOrigin; readSpan?: ReadSpan; ttl?: number }) => {
     const hash = backendHash || hashContentSync(content);
     const shortHash = hash.slice(0, SHORT_HASH_LEN);
-    const tokens = estimateTokens(content);
+    const tokens = countTokensSync(content);
     const now = Date.now();
     const activeSubtaskId = get().taskPlan?.activeSubtaskId || undefined;
     const digest = generateDigest(content, type, symbols) || undefined;
@@ -1459,7 +1459,7 @@ export const useContextStore = create<ContextStoreState>()(
             chunk.readCount = Math.max(chunk.readCount ?? 0, (c.readCount || 0) + 1);
           } else {
             const compactContent = pickCompactContent(c, `[forwarded] h:${c.shortHash} → h:${shortHash}`);
-            const digestTokens = estimateTokens(compactContent);
+            const digestTokens = countTokensSync(compactContent);
             newChunks.set(key, {
               ...c,
               content: compactContent,
@@ -1577,7 +1577,7 @@ export const useContextStore = create<ContextStoreState>()(
               }
               compactContent = editDigest || c.summary || `[compacted] h:${c.shortHash}`;
             }
-            const digestTokens = estimateTokens(compactContent);
+            const digestTokens = countTokensSync(compactContent);
             totalFreed += c.tokens - digestTokens;
 
             newChunks.set(key, {
@@ -1646,7 +1646,7 @@ export const useContextStore = create<ContextStoreState>()(
                   if (errEntry && editDigest2) editDigest2 += ` [ERR ${errEntry.content.slice(0, 60)}]`;
                 }
                 const compactContent2 = editDigest2 || c2.summary || `[compacted] h:${c2.shortHash}`;
-                const digestTokens2 = estimateTokens(compactContent2);
+                const digestTokens2 = countTokensSync(compactContent2);
                 totalFreed += c2.tokens - digestTokens2;
                 newChunks.set(key, { ...c2, content: compactContent2, tokens: digestTokens2, compacted: true, editDigest: editDigest2 || undefined });
                 autoCompactedHashes.push(c2.hash);
@@ -1832,7 +1832,7 @@ export const useContextStore = create<ContextStoreState>()(
           }
           compactContent = editDigest || chunk.summary || `[compacted] h:${chunk.shortHash}`;
         }
-        const digestTokens = estimateTokens(compactContent);
+        const digestTokens = countTokensSync(compactContent);
 
         const tokensSaved = chunk.tokens - digestTokens;
         freedTokens += tokensSaved;
@@ -2893,7 +2893,7 @@ export const useContextStore = create<ContextStoreState>()(
         newBb.set(`subtask:${completedId}`, {
           content: compositeContent,
           createdAt: new Date(),
-          tokens: estimateTokens(compositeContent),
+          tokens: countTokensSync(compositeContent),
           kind: 'status' as const,
           state: 'active' as const,
           updatedAt: Date.now(),
@@ -3013,7 +3013,7 @@ export const useContextStore = create<ContextStoreState>()(
       return { tokens: 0 };
     }
     
-    const tokens = estimateTokens(content);
+    const tokens = countTokensSync(content);
 
     const rawDerivedFrom = opts?.derivedFrom;
     const derivedFrom = rawDerivedFrom?.map(p => validateSourceIdentity(p)).filter((p): p is string => !!p);
@@ -3172,7 +3172,7 @@ export const useContextStore = create<ContextStoreState>()(
       return { tokens: 0 };
     }
 
-    const tokens = estimateTokens(content);
+    const tokens = countTokensSync(content);
     let warning: string | undefined;
 
     set(state => {
@@ -3225,7 +3225,7 @@ export const useContextStore = create<ContextStoreState>()(
     if (!found) return { ok: false, error: `engram not found: ${hashRef}` };
     const [key, chunk] = found;
     const id = `ann_${Date.now().toString(36)}`;
-    const tokens = estimateTokens(note);
+    const tokens = countTokensSync(note);
     const annotation: EngramAnnotation = { id, content: note, createdAt: Date.now(), tokens };
     newChunks.set(key, {
       ...chunk,
@@ -3343,7 +3343,7 @@ export const useContextStore = create<ContextStoreState>()(
 
     const newHash = hashContentSync(newContent);
     const newShortHash = newHash.slice(0, SHORT_HASH_LEN);
-    const newTokens = estimateTokens(newContent);
+    const newTokens = countTokensSync(newContent);
 
     const newChunk: ContextChunk = {
       ...oldChunk,
@@ -3367,7 +3367,7 @@ export const useContextStore = create<ContextStoreState>()(
     newChunks.set(oldChunk.hash, {
       ...oldChunk,
       content: compactContent,
-      tokens: estimateTokens(compactContent),
+      tokens: countTokensSync(compactContent),
       compacted: true,
     });
 
@@ -3441,7 +3441,7 @@ export const useContextStore = create<ContextStoreState>()(
       hash: hashA,
       shortHash: hashA.slice(0, SHORT_HASH_LEN),
       content: contentA,
-      tokens: estimateTokens(contentA),
+      tokens: countTokensSync(contentA),
       digest: generateDigest(contentA, oldChunk.type) || undefined,
       editDigest: generateEditReadyDigest(contentA, oldChunk.type) || undefined,
       annotations: oldChunk.annotations?.filter(a => {
@@ -3458,7 +3458,7 @@ export const useContextStore = create<ContextStoreState>()(
       hash: hashB,
       shortHash: hashB.slice(0, SHORT_HASH_LEN),
       content: contentB,
-      tokens: estimateTokens(contentB),
+      tokens: countTokensSync(contentB),
       digest: generateDigest(contentB, oldChunk.type) || undefined,
       editDigest: generateEditReadyDigest(contentB, oldChunk.type) || undefined,
       annotations: oldChunk.annotations?.filter(a => {
@@ -3479,7 +3479,7 @@ export const useContextStore = create<ContextStoreState>()(
     newChunks.set(oldChunk.hash, {
       ...oldChunk,
       content: compactContent,
-      tokens: estimateTokens(compactContent),
+      tokens: countTokensSync(compactContent),
       compacted: true,
     });
     newChunks.set(hashA, chunkA);
@@ -3522,7 +3522,7 @@ export const useContextStore = create<ContextStoreState>()(
       type: firstChunk.type,
       source: firstChunk.source,
       content: mergedContent,
-      tokens: estimateTokens(mergedContent),
+      tokens: countTokensSync(mergedContent),
       digest: summary || generateDigest(mergedContent, firstChunk.type) || undefined,
       editDigest: generateEditReadyDigest(mergedContent, firstChunk.type) || undefined,
       summary,
@@ -3541,7 +3541,7 @@ export const useContextStore = create<ContextStoreState>()(
       newChunks.set(c.hash, {
         ...c,
         content: compactContent,
-        tokens: estimateTokens(compactContent),
+        tokens: countTokensSync(compactContent),
         compacted: true,
       });
     }
@@ -3557,7 +3557,7 @@ export const useContextStore = create<ContextStoreState>()(
   // =========================================================================
 
   stageSnippet: (key: string, content: string, source: string, lines?: string, sourceRevision?: string, shapeSpec?: string, viewKind?: EngramViewKind) => {
-    const tokens = estimateTokens(content);
+    const tokens = countTokensSync(content);
     const newStaged = new Map(get().stagedSnippets);
     const now = Date.now();
     const currentTurn = useRoundHistoryStore.getState().snapshots.length;
@@ -4269,7 +4269,7 @@ export const useContextStore = create<ContextStoreState>()(
     _resetRetention();
     const seededBb = new Map<string, BlackboardEntry>();
     for (const [key, content] of BB_TEMPLATES) {
-      seededBb.set(key, { content, createdAt: new Date(), tokens: estimateTokens(content), kind: 'general' as const, state: 'active' as const, updatedAt: Date.now() });
+      seededBb.set(key, { content, createdAt: new Date(), tokens: countTokensSync(content), kind: 'general' as const, state: 'active' as const, updatedAt: Date.now() });
     }
     set({
       chunks: new Map(),
@@ -4361,7 +4361,7 @@ export const useContextStore = create<ContextStoreState>()(
         newArchive.set(key, { ...chunk });
 
         const compactContent = pickCompactContent(chunk, `[compacted] h:${chunk.shortHash}`);
-        const compactTokens = estimateTokens(compactContent);
+        const compactTokens = countTokensSync(compactContent);
         const saved = Math.max(0, chunk.tokens - compactTokens);
         freedTokens += saved;
         compactedCount++;

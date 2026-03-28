@@ -3,7 +3,7 @@
  */
 
 import type { OpHandler, StepOutput } from '../types';
-import { estimateTokens } from '../../../utils/contextHash';
+import { countTokensSync } from '../../../utils/tokenCounter';
 import { normalizeHashRefsToStrings } from '../paramNorm';
 
 function ok(summary: string, refs: string[] = []): StepOutput {
@@ -129,7 +129,7 @@ export const handleBbRead: OpHandler = async (params, ctx) => {
       } else if (meta.state === 'historical') {
         supersededWarning = ' [historical — not authoritative for action]';
       }
-      const tk = estimateTokens(meta.content);
+      const tk = countTokensSync(meta.content);
       const visibleNote = meta.state === 'active' ? ' — visible in ## BLACKBOARD block' : ' — excluded from ## BLACKBOARD';
       lines.push(`bb_read:${k}: [-> bb:${k}, ${tk}tk${visibleNote}]${staleWarning}${supersededWarning}`);
       refs.push(`h:bb:${k}`);

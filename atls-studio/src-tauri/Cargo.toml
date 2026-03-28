@@ -64,6 +64,10 @@ tree-sitter-scala = "0.23"
 tree-sitter-dart-orchard = "0.3"
 # Glob matching for context type:tree filtering
 globset = "0.4"
+# BPE tokenizer for accurate token counting (OpenAI models)
+tiktoken-rs = "0.9"
+# Lazy initialization for tokenizer singletons
+once_cell = "1"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = ["Win32_System_Diagnostics_ToolHelp", "Win32_Foundation"] }

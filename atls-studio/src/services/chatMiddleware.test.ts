@@ -1,4 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  COMPACT_HISTORY_TURN_THRESHOLD,
+  COMPACT_HISTORY_TOKEN_THRESHOLD,
+} from './promptMemory';
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }));
 vi.mock('../stores/contextStore', () => ({
@@ -50,7 +54,7 @@ describe('createGuardrailCallbacks', () => {
 });
 
 describe('historyCompressionMiddleware', () => {
-  it('returns ctx unchanged when under budget and protected rounds', () => {
+  it('returns ctx unchanged when under budget and protected rounds', async () => {
     const ctx = {
       conversationHistory: [{ role: 'user', content: 'hi' }],
       round: 0,
@@ -61,7 +65,7 @@ describe('historyCompressionMiddleware', () => {
       abortSignal: new AbortController().signal,
       isSessionValid: () => true,
     };
-    const result = historyCompressionMiddleware(ctx);
+    const result = await historyCompressionMiddleware(ctx);
     expect(result.reliefAction).toBe('none');
   });
 });
@@ -80,18 +84,24 @@ describe('contextHygieneMiddleware', () => {
     };
   }
 
-  it('skips when roundCount < 20', () => {
+  it(`skips when roundCount < ${COMPACT_HISTORY_TURN_THRESHOLD}`, async () => {
     (useAppStore.getState as any).mockReturnValue
-      ?? vi.spyOn(useAppStore, 'getState').mockReturnValue({ setPromptMetrics: vi.fn(), promptMetrics: { roundCount: 5 } } as any);
+      ?? vi.spyOn(useAppStore, 'getState').mockReturnValue({
+        setPromptMetrics: vi.fn(),
+        promptMetrics: { roundCount: Math.max(0, COMPACT_HISTORY_TURN_THRESHOLD - 1) },
+      } as any);
     const ctx = makeCtx();
-    const result = contextHygieneMiddleware(ctx);
+    const result = await contextHygieneMiddleware(ctx);
     expect(result.reliefAction).toBe('none');
   });
 
-  it('skips when roundCount >= 20 but history is under token threshold', () => {
-    vi.spyOn(useAppStore, 'getState').mockReturnValue({ setPromptMetrics: vi.fn(), promptMetrics: { roundCount: 25 } } as any);
+  it(`skips when roundCount >= ${COMPACT_HISTORY_TURN_THRESHOLD} but history is under ${COMPACT_HISTORY_TOKEN_THRESHOLD} tokens`, async () => {
+    vi.spyOn(useAppStore, 'getState').mockReturnValue({
+      setPromptMetrics: vi.fn(),
+      promptMetrics: { roundCount: COMPACT_HISTORY_TURN_THRESHOLD },
+    } as any);
     const ctx = makeCtx();
-    const result = contextHygieneMiddleware(ctx);
+    const result = await contextHygieneMiddleware(ctx);
     expect(result.reliefAction).toBe('none');
   });
 });

@@ -35,7 +35,7 @@ describe('compressToolLoopHistory', () => {
 
     expect(count).toBeGreaterThan(0);
     expect(typeof history[1]?.content).toBe('string');
-    expect(String(history[1]?.content)).toContain('[->');
+    expect(String(history[1]?.content)).toContain('[h:');
     expect(after).toBeLessThan(before);
   });
 
@@ -73,7 +73,7 @@ describe('compressToolLoopHistory', () => {
 
     expect(count).toBeGreaterThan(0);
     expect(textBlock.type).toBe('text');
-    expect(String(textBlock.text)).toContain('[->');
+    expect(String(textBlock.text)).toContain('[h:');
     expect(estimateHistoryTokens(history)).toBeLessThan(before);
   });
 
@@ -98,7 +98,7 @@ describe('compressToolLoopHistory', () => {
     const textBlock = (history[1].content as Array<{ type: string; content?: string }>)[0];
 
     expect(count).toBeGreaterThan(0);
-    expect(String(textBlock.content)).toContain('[->');
+    expect(String(textBlock.content)).toContain('[h:');
   });
 });
 
@@ -123,7 +123,7 @@ describe('compressToolLoopHistory [Stopped] fragments', () => {
 
     const count = compressToolLoopHistory(history, 7, 0);
     expect(count).toBeGreaterThan(0);
-    expect(String(history[1].content)).toContain('[->');
+    expect(String(history[1].content)).toContain('[h:');
   });
 
   it('compresses [Stopped] text blocks in array-shaped assistant messages', () => {
@@ -152,7 +152,7 @@ describe('compressToolLoopHistory [Stopped] fragments', () => {
     const count = compressToolLoopHistory(history, 7, 0);
     expect(count).toBeGreaterThan(0);
     const textBlock = (history[1].content as Array<{ type: string; text?: string }>)[0];
-    expect(String(textBlock.text)).toContain('[->');
+    expect(String(textBlock.text)).toContain('[h:');
   });
 });
 
@@ -235,7 +235,7 @@ describe('compressToolLoopHistory dedup', () => {
     expect(count).toBeGreaterThan(0);
 
     const toolResult = (history[2].content as Array<{ content: string }>)[0];
-    expect(toolResult.content).toContain('[->');
+    expect(toolResult.content).toContain('[h:');
 
     const chunkCountAfter = useContextStore.getState().chunks.size;
     expect(chunkCountAfter).toBe(chunkCountBefore);
@@ -277,7 +277,7 @@ describe('compressToolLoopHistory dedup', () => {
     expect(count).toBeGreaterThan(0);
 
     const toolResult = (history[2].content as Array<{ content: string }>)[0];
-    expect(toolResult.content).toContain('[->');
+    expect(toolResult.content).toContain('[h:');
 
     const chunkCountAfter = useContextStore.getState().chunks.size;
     expect(chunkCountAfter).toBe(chunkCountBefore);
@@ -304,7 +304,7 @@ describe('deflateToolResults', () => {
     const count = deflateToolResults(toolResults, history);
 
     expect(count).toBe(1);
-    expect(toolResults[0].content).toContain('[->');
+    expect(toolResults[0].content).toContain('[h:');
     expect(toolResults[0].content).toContain(`h:${hash.slice(0, 8)}`);
     expect(toolResults[0].content).not.toContain('export function hello');
   });
@@ -356,7 +356,7 @@ describe('deflateToolResults', () => {
     const count = deflateToolResults(toolResults, history);
 
     expect(count).toBe(1);
-    expect(toolResults[0].content).toContain('[->');
+    expect(toolResults[0].content).toContain('[h:');
   });
 
   it('deflates multiple tool_results in a single pass', () => {
@@ -375,8 +375,8 @@ describe('deflateToolResults', () => {
     const count = deflateToolResults(toolResults, history);
 
     expect(count).toBe(2);
-    expect(toolResults[0].content).toContain('[->');
-    expect(toolResults[1].content).toContain('[->');
+    expect(toolResults[0].content).toContain('[h:');
+    expect(toolResults[1].content).toContain('[h:');
   });
 
   it('deflates using source-match when content hash differs', () => {
@@ -405,7 +405,7 @@ describe('deflateToolResults', () => {
     ];
     const count2 = deflateToolResults(toolResults2, history);
     expect(count2).toBe(1);
-    expect(toolResults2[0].content).toContain('[->');
+    expect(toolResults2[0].content).toContain('[h:');
   });
 });
 
@@ -441,7 +441,7 @@ describe('compressToolLoopHistory rolling window', () => {
     );
     expect(summaryIdx).toBeGreaterThanOrEqual(0);
     const content = String(history[summaryIdx].content);
-    expect(content).not.toMatch(/^\[->/);
+    expect(content).not.toMatch(/^\[h:/);
     expect(content).toContain(ROLLING_SUMMARY_MARKER);
   });
 
@@ -461,7 +461,7 @@ describe('compressToolLoopHistory rolling window', () => {
     );
     expect(summaryIdx).toBeGreaterThanOrEqual(0);
     const content = String(history[summaryIdx].content);
-    expect(content).not.toContain('[-> h:');
+    expect(content).not.toContain('[h:');
   });
 });
 
@@ -492,7 +492,7 @@ describe('compressToolLoopHistory emergency mode', () => {
     const count = compressToolLoopHistory(history, 1, 0, { emergency: true });
     expect(count).toBeGreaterThan(0);
     const toolResult = (history[2].content as Array<{ content: string }>)[0];
-    expect(toolResult.content).toContain('[->');
+    expect(toolResult.content).toContain('[h:');
   });
 
   it('normal mode does NOT compress round 0 tool result when called at round 1', () => {

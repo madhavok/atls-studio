@@ -16,7 +16,7 @@ import { useContextStore } from '../stores/contextStore';
 import { canSteerExecution } from './universalFreshness';
 import { useCostStore, calculateCost } from '../stores/costStore';
 import { useRoundHistoryStore, type RoundSnapshot } from '../stores/roundHistoryStore';
-import { estimateTokens } from '../utils/contextHash';
+import { countTokensSync } from '../utils/tokenCounter';
 import { buildSubagentPrompt, type SubagentRole } from '../prompts/subagentPrompts';
 import { coerceBatchSteps } from './batch/coerceBatchSteps';
 import { dematerialize, getRef } from './hashProtocol';
@@ -479,7 +479,7 @@ function buildSnapshotMetrics(
     if (!snippet.content || !snippet.source) continue;
     if (!canSteerExecution({ stageState: snippet.stageState, freshness: snippet.freshness })) continue;
     if (preExistingSources.has(snippet.source)) continue;
-    const tk = estimateTokens(snippet.content);
+    const tk = countTokensSync(snippet.content);
     pinTokens += tk;
     newStagedSources.add(snippet.source);
     const lineInfo = snippet.lines ? `:${snippet.lines}` : '';
@@ -538,7 +538,7 @@ function extractSubagentRefs(
       shortHash: key.slice(0, 8),
       source: snippet.source || 'unknown',
       lines: snippet.lines,
-      tokens: estimateTokens(snippet.content),
+      tokens: countTokensSync(snippet.content),
       digest: undefined,
       pinned: false,
       type: 'staged',

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { estimateTokens, formatChunkTag, parseChunkTag } from './contextHash';
+import { estimateTokens, formatChunkTag, parseChunkTag, formatChunkRef, isCompressedRef } from './contextHash';
 
 describe('contextHash chunk tags', () => {
   it('round-trips compound chunk types without a source', () => {
@@ -44,6 +44,43 @@ describe('contextHash chunk tags', () => {
       type: 'exec:cmd',
       source: 'C:/repo/scripts/build.ps1',
     });
+  });
+
+  it('parses legacy tk: prefixed tags', () => {
+    expect(parseChunkTag('«h:abc123 tk:450 msg:user»')).toEqual({
+      hash: 'abc123',
+      tokens: 450,
+      type: 'msg:user',
+      source: undefined,
+    });
+  });
+});
+
+describe('formatChunkRef', () => {
+  it('produces compact format without arrow', () => {
+    const ref = formatChunkRef('abc123', 1500, undefined, 'read_file:src/api.ts');
+    expect(ref).toBe('[h:abc123 1500tk read_file:src/api.ts]');
+    expect(ref).not.toContain('->');
+  });
+
+  it('is recognized by isCompressedRef', () => {
+    const ref = formatChunkRef('abc123', 1500, undefined, 'read_file:src/api.ts');
+    expect(isCompressedRef(ref)).toBe(true);
+  });
+});
+
+describe('isCompressedRef', () => {
+  it('matches new compact format', () => {
+    expect(isCompressedRef('[h:abc123 1500tk desc]')).toBe(true);
+  });
+
+  it('matches legacy arrow format', () => {
+    expect(isCompressedRef('[-> h:abc123, 1500tk | desc]')).toBe(true);
+  });
+
+  it('rejects non-refs', () => {
+    expect(isCompressedRef('some normal text')).toBe(false);
+    expect(isCompressedRef('[Rolling Summary]')).toBe(false);
   });
 });
 

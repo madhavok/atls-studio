@@ -3,7 +3,7 @@
  */
 
 import type { ContextStoreApi, OpHandler, HandlerContext, StepOutput } from '../types';
-import { estimateTokens, SHORT_HASH_LEN, sliceContentByLines } from '../../../utils/contextHash';
+import { SHORT_HASH_LEN, sliceContentByLines } from '../../../utils/contextHash';
 import { PROTECTED_RECENT_ROUNDS } from '../../promptMemory';
 import { parseHashRef } from '../../../utils/hashRefParsers';
 import { invoke } from '@tauri-apps/api/core';

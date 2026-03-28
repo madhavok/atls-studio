@@ -32,3 +32,6 @@ atls-studio/HPP_XRAY_RETEST.md
 .cursor/plans/
 CODEBASE_ANALYSIS.md
 test-hpp-validation.ts
+
+# Claude tokenizer: fetch cache (regenerate via src-tauri/scripts/gen_claude_vocab.py); binary is committed
+atls-studio/src-tauri/data/vocab.json

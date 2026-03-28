@@ -9,11 +9,10 @@
  * Pattern inspired by Vercel AI SDK Language Model Middleware.
  */
 
-import { invoke } from '@tauri-apps/api/core';
 import { useContextStore } from '../stores/contextStore';
 import { useAppStore } from '../stores/appStore';
-import { estimateTokens } from '../utils/contextHash';
-import { estimateHistoryTokens, compressToolLoopHistory } from './historyCompressor';
+import { countTokensBatch, countToolDefTokens } from '../utils/tokenCounter';
+import { estimateHistoryTokensAsync, compressToolLoopHistory } from './historyCompressor';
 import {
   CONVERSATION_HISTORY_BUDGET_TOKENS,
   COMPACT_HISTORY_TURN_THRESHOLD,
@@ -88,12 +87,13 @@ export function createGuardrailCallbacks(
  * Anthropic prefix cache stays valid — each round extends the prefix, and the
  * old portion gets cache reads (0.1x) instead of full rewrites (1.25x).
  */
-export const historyCompressionMiddleware: BeforeRoundMiddleware = (ctx) => {
+export const historyCompressionMiddleware: BeforeRoundMiddleware = async (ctx) => {
   // Within a tool loop, skip compression to keep history append-only for
   // prefix cache stability. Compression is deferred to the next user turn.
   if (ctx.round > 0) return ctx;
 
-  const historyTokensBefore = estimateHistoryTokens(ctx.conversationHistory);
+  // Use real tokenizer for the gate decision (warms LRU cache for sync calls inside compressor)
+  const historyTokensBefore = await estimateHistoryTokensAsync(ctx.conversationHistory);
   if (historyTokensBefore <= CONVERSATION_HISTORY_BUDGET_TOKENS) {
     return ctx;
   }
@@ -131,14 +131,12 @@ export async function setPromptBudgetEstimates(
   conversationHistory: Array<{ role: string; content: unknown }>,
 ): Promise<void> {
   try {
-    const bp2ToolDefTokens = await invoke<number>('estimate_tool_def_tokens', {
-      provider: config.provider,
-    });
+    const bp2ToolDefTokens = await countToolDefTokens();
     const lastUserIndex = conversationHistory.reduceRight(
       (acc, m, i) => (acc === -1 && m.role === 'user' ? i : acc),
       -1,
     );
-    let bp3PriorTurnsTokens = 0;
+    const priorContents: string[] = [];
     for (let j = 0; j < lastUserIndex; j++) {
       const m = conversationHistory[j];
       const text =
@@ -153,8 +151,10 @@ export async function setPromptBudgetEstimates(
                 .filter(Boolean)
                 .join('\n')
             : JSON.stringify(m.content ?? '');
-      bp3PriorTurnsTokens += estimateTokens(text);
+      priorContents.push(text);
     }
+    const counts = await countTokensBatch(priorContents);
+    const bp3PriorTurnsTokens = counts.reduce((a, b) => a + b, 0);
     useAppStore.getState().setPromptMetrics({ bp2ToolDefTokens, bp3PriorTurnsTokens });
   } catch {
     /* ignore — CacheCompositionSection shows 0 when unavailable */
@@ -170,11 +170,11 @@ export async function setPromptBudgetEstimates(
  * history compression even mid-loop when history exceeds the hygiene token
  * threshold. This supplements the round-0-only historyCompressionMiddleware.
  */
-export const contextHygieneMiddleware: BeforeRoundMiddleware = (ctx) => {
+export const contextHygieneMiddleware: BeforeRoundMiddleware = async (ctx) => {
   const roundCount = useAppStore.getState().promptMetrics.roundCount;
   if (roundCount < COMPACT_HISTORY_TURN_THRESHOLD) return ctx;
 
-  const historyTokens = estimateHistoryTokens(ctx.conversationHistory);
+  const historyTokens = await estimateHistoryTokensAsync(ctx.conversationHistory);
   if (historyTokens <= COMPACT_HISTORY_TOKEN_THRESHOLD) return ctx;
 
   const compressed = compressToolLoopHistory(

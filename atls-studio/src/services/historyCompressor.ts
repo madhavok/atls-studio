@@ -14,7 +14,8 @@
 
 import { useContextStore } from '../stores/contextStore';
 import { useAppStore } from '../stores/appStore';
-import { formatChunkRef, estimateTokens, hashContentSync, SHORT_HASH_LEN } from '../utils/contextHash';
+import { formatChunkRef, hashContentSync, isCompressedRef, SHORT_HASH_LEN } from '../utils/contextHash';
+import { countTokensSync, countTokensBatch } from '../utils/tokenCounter';
 import { dematerialize, getRef } from './hashProtocol';
 import {
   CONVERSATION_HISTORY_BUDGET_TOKENS,
@@ -244,7 +245,7 @@ function removeOrphanedCompressedSummaries(
     const msg = history[i];
     if (isRollingSummaryMessage(msg)) continue;
     if (msg.role !== 'assistant' || typeof msg.content !== 'string') continue;
-    if (msg.content.startsWith('[->') && msg.content.includes('[Rolling Summary]')) {
+    if (isCompressedRef(msg.content) && msg.content.includes('[Rolling Summary]')) {
       history.splice(i, 1);
       removed++;
     }
@@ -399,7 +400,7 @@ export function compressToolLoopHistory(
   })();
 
   const recordReplacement = (content: string, role: string, description: string): string => {
-    const tokens = estimateTokens(content);
+    const tokens = countTokensSync(content);
     const existingByDesc = findExistingChunkBySource(contextStore, description);
     if (existingByDesc) {
       dematerialize(existingByDesc.hash);
@@ -427,7 +428,7 @@ export function compressToolLoopHistory(
 
       for (const tr of toolResults) {
         if (!tr.content || typeof tr.content !== 'string') continue;
-        if (tr.content.startsWith('[->')) continue;
+        if (isCompressedRef(tr.content)) continue;
 
         // Preserve inline history for pinned content so the model retains
         // full conversational context around its most important engrams.
@@ -435,7 +436,7 @@ export function compressToolLoopHistory(
         const pinnedChunk = contextStore.chunks.get(pinnedCheckHash);
         if (pinnedChunk?.pinned) continue;
 
-        const tokens = estimateTokens(tr.content);
+        const tokens = countTokensSync(tr.content);
         const description = buildCompressionDescription(tr.tool_use_id, history);
         const toolName = description.split(':')[0] || '';
 
@@ -469,7 +470,7 @@ export function compressToolLoopHistory(
           chunkDigest = contextStore.chunks.get(hash)?.digest;
         }
         const ref = formatChunkRef(shortHash, tokens, undefined, description, chunkDigest);
-        totalSavedTokens += tokens - estimateTokens(ref);
+        totalSavedTokens += tokens - countTokensSync(ref);
         tr.content = ref;
         compressedCount++;
 
@@ -486,7 +487,7 @@ export function compressToolLoopHistory(
         if (block.type !== 'tool_use' || !block.input) continue;
 
         const inputStr = JSON.stringify(block.input);
-        const inputTokens = estimateTokens(inputStr);
+        const inputTokens = countTokensSync(inputStr);
         if (inputTokens <= COMPRESSION_THRESHOLD_TOKENS) continue;
 
         const description = extractToolDescription(block.name || 'tool_use', block.input);
@@ -494,7 +495,7 @@ export function compressToolLoopHistory(
         const shortHash = hash.slice(0, SHORT_HASH_LEN);
         const chunk = contextStore.chunks.get(hash);
         const ref = formatChunkRef(shortHash, inputTokens, undefined, description, chunk?.digest);
-        totalSavedTokens += inputTokens - estimateTokens(ref);
+        totalSavedTokens += inputTokens - countTokensSync(ref);
         block.input = { _compressed: ref } as any;
         compressedCount++;
 
@@ -511,13 +512,13 @@ export function compressToolLoopHistory(
             : typeof tb.content === 'string'
               ? tb.content
               : '';
-        if (!raw || raw.startsWith('[->')) continue;
+        if (!raw || isCompressedRef(raw)) continue;
         const isStopped = raw.includes('[Stopped]');
-        const tokens = estimateTokens(raw);
+        const tokens = countTokensSync(raw);
         if (!isStopped && tokens <= HISTORY_TEXT_REPLACEMENT_THRESHOLD_TOKENS) continue;
         const description = `history:assistant:${raw.slice(0, 60).replace(/\s+/g, ' ').trim()}`;
         const ref = recordReplacement(raw, 'assistant', description);
-        totalSavedTokens += tokens - estimateTokens(ref);
+        totalSavedTokens += tokens - countTokensSync(ref);
         if (typeof tb.text === 'string') tb.text = ref;
         else if (typeof tb.content === 'string') tb.content = ref;
         compressedCount++;
@@ -527,32 +528,32 @@ export function compressToolLoopHistory(
     if (typeof msg.content === 'string') {
       if (isRollingSummaryMessage(msg)) continue;
       const isStopped = msg.role === 'assistant' && msg.content.includes('[Stopped]');
-      const tokens = estimateTokens(msg.content);
+      const tokens = countTokensSync(msg.content);
       if (!isStopped && tokens <= HISTORY_TEXT_REPLACEMENT_THRESHOLD_TOKENS) continue;
       const description = `history:${msg.role}:${msg.content.slice(0, 60).replace(/\s+/g, ' ').trim()}`;
       const ref = recordReplacement(msg.content, msg.role, description);
-      totalSavedTokens += tokens - estimateTokens(ref);
+      totalSavedTokens += tokens - countTokensSync(ref);
       msg.content = ref;
       compressedCount++;
     }
   }
 
-  let estimatedHistoryTokens = estimateHistoryTokens(history.slice(startIdx));
-  if (estimatedHistoryTokens > CONVERSATION_HISTORY_BUDGET_TOKENS) {
-    for (let i = startIdx; i < history.length && estimatedHistoryTokens > CONVERSATION_HISTORY_BUDGET_TOKENS; i++) {
+  let estimatedHistoryTk = estimateHistoryTokens(history.slice(startIdx));
+  if (estimatedHistoryTk > CONVERSATION_HISTORY_BUDGET_TOKENS) {
+    for (let i = startIdx; i < history.length && estimatedHistoryTk > CONVERSATION_HISTORY_BUDGET_TOKENS; i++) {
       const msg = history[i];
       const msgRound = messageRounds.get(i) ?? -1;
       if (msgRound >= skipThreshold) continue;
-      if (typeof msg.content !== 'string' || msg.content.startsWith('[->')) continue;
+      if (typeof msg.content !== 'string' || isCompressedRef(msg.content)) continue;
       if (isRollingSummaryMessage(msg)) continue;
-      const tokens = estimateTokens(msg.content);
+      const tokens = countTokensSync(msg.content);
       if (tokens <= 0) continue;
       const description = `history:${msg.role}:budget-relief`;
       const ref = recordReplacement(msg.content, msg.role, description);
-      totalSavedTokens += tokens - estimateTokens(ref);
+      totalSavedTokens += tokens - countTokensSync(ref);
       msg.content = ref;
       compressedCount++;
-      estimatedHistoryTokens = estimateHistoryTokens(history.slice(startIdx));
+      estimatedHistoryTk = estimateHistoryTokens(history.slice(startIdx));
     }
   }
 
@@ -595,7 +596,7 @@ export function deflateToolResults(
 
   for (const tr of toolResults) {
     if (!tr.content || typeof tr.content !== 'string') continue;
-    if (tr.content.startsWith('[->')) continue;
+    if (isCompressedRef(tr.content)) continue;
 
     // Try content-hash match first (exact content already in store)
     const contentHash = hashContentSync(tr.content);
@@ -613,7 +614,7 @@ export function deflateToolResults(
     const description = buildCompressionDescription(tr.tool_use_id, history);
     const existing = findExistingChunkBySource(store, description);
     if (existing) {
-      const tokens = estimateTokens(tr.content);
+      const tokens = countTokensSync(tr.content);
       const ref = formatChunkRef(existing.shortHash, tokens, undefined, description, existing.digest);
       tr.content = ref;
       deflated++;
@@ -624,7 +625,7 @@ export function deflateToolResults(
     // This closes the receipt gap: every tool result above threshold
     // becomes an engram at insertion time, so history always gets a
     // lightweight ref instead of inline content.
-    const tokens = estimateTokens(tr.content);
+    const tokens = countTokensSync(tr.content);
     if (tokens >= MIN_DEFLATE_TOKENS) {
       const hash = store.addChunk(tr.content, 'result', description, undefined, `result: ${description}`);
       chunk = store.chunks.get(hash);
@@ -645,10 +646,32 @@ export function deflateToolResults(
 }
 export function estimateHistoryTokens(history: Array<{ role: string; content: unknown }>): number {
   return history.reduce((sum, msg) => {
-    if (typeof msg.content === 'string') return sum + estimateTokens(msg.content);
-    if (Array.isArray(msg.content)) return sum + estimateTokens(JSON.stringify(msg.content));
+    if (typeof msg.content === 'string') return sum + countTokensSync(msg.content);
+    if (Array.isArray(msg.content)) return sum + countTokensSync(JSON.stringify(msg.content));
     return sum;
   }, 0);
+}
+
+/**
+ * Async variant using real provider-specific tokenizer via Tauri IPC.
+ * Results are cached in the LRU so subsequent sync calls via countTokensSync hit warm cache.
+ */
+export async function estimateHistoryTokensAsync(history: Array<{ role: string; content: unknown }>): Promise<number> {
+  const contents: string[] = [];
+  const indices: number[] = [];
+  for (let i = 0; i < history.length; i++) {
+    const msg = history[i];
+    if (typeof msg.content === 'string') {
+      contents.push(msg.content);
+      indices.push(i);
+    } else if (Array.isArray(msg.content)) {
+      contents.push(JSON.stringify(msg.content));
+      indices.push(i);
+    }
+  }
+  if (contents.length === 0) return 0;
+  const counts = await countTokensBatch(contents);
+  return counts.reduce((a, b) => a + b, 0);
 }
 
 // ---------------------------------------------------------------------------
@@ -702,13 +725,13 @@ export function analyzeHistoryBreakdown(
     const isProtected = messageRounds ? (messageRounds.get(i) ?? -1) >= skipThreshold : false;
 
     if (typeof msg.content === 'string') {
-      const tokens = estimateTokens(msg.content);
+      const tokens = countTokensSync(msg.content);
       breakdown.total += tokens;
       if (msg.role === 'assistant' && isRollingSummaryMessage(msg)) {
         breakdown.rolled += tokens;
         continue;
       }
-      if (msg.content.startsWith('[->')) {
+      if (isCompressedRef(msg.content)) {
         breakdown.compressed += tokens;
       } else if (msg.role === 'assistant') {
         breakdown.assistantText += tokens;
@@ -733,9 +756,9 @@ export function analyzeHistoryBreakdown(
       for (const block of blocks) {
         if (block.type === 'tool_result') {
           const content = typeof block.content === 'string' ? block.content : JSON.stringify(block.content);
-          const tokens = estimateTokens(content);
+          const tokens = countTokensSync(content);
           breakdown.total += tokens;
-          if (content.startsWith('[->')) {
+          if (isCompressedRef(content)) {
             breakdown.compressed += tokens;
           } else {
             breakdown.toolResults += tokens;
@@ -747,7 +770,7 @@ export function analyzeHistoryBreakdown(
           }
         } else if (block.type === 'tool_use' && block.input) {
           const inputStr = JSON.stringify(block.input);
-          const tokens = estimateTokens(inputStr);
+          const tokens = countTokensSync(inputStr);
           breakdown.total += tokens;
           if (inputStr.includes('"_compressed"')) {
             breakdown.compressed += tokens;
@@ -760,14 +783,13 @@ export function analyzeHistoryBreakdown(
             }
           }
         } else {
-          // text blocks in assistant messages — check both .text and .content (Anthropic uses .text)
           const tb = block as { type: string; text?: string; content?: string };
           const text = typeof tb.text === 'string' ? tb.text
             : typeof tb.content === 'string' ? tb.content
             : JSON.stringify(block);
-          const tokens = estimateTokens(text);
+          const tokens = countTokensSync(text);
           breakdown.total += tokens;
-          if (text.startsWith('[->')) {
+          if (isCompressedRef(text)) {
             breakdown.compressed += tokens;
           } else {
             breakdown.assistantText += tokens;

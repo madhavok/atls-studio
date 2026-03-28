@@ -3,7 +3,8 @@
  */
 
 import type { OpHandler, StepOutput, SearchCodeParams, SearchSymbolParams, SearchUsageParams, AnalyzeDepsParams, AnalyzeImpactParams, AnalyzeBlastRadiusParams, AnalyzeStructureParams, SearchMemoryParams } from '../types';
-import { estimateTokens, extractSearchSummary, extractSymbolSummary, extractDepsSummary } from '../../../utils/contextHash';
+import { extractSearchSummary, extractSymbolSummary, extractDepsSummary } from '../../../utils/contextHash';
+import { countTokensSync } from '../../../utils/tokenCounter';
 import { formatResult } from '../../../utils/toon';
 import { checkRetention } from './retention';
 
@@ -65,7 +66,7 @@ export const handleSearchCode: OpHandler = async (params, ctx) => {
     const retained = checkRetention('search.code', params, resultStr, true, 'search_results', `search: ${queries.join(', ')}`);
     if (retained.reused) return retained.output;
     const hash = ctx.store().addChunk(resultStr, 'search', queries.join(', '), undefined, summary);
-    const tk = estimateTokens(resultStr);
+    const tk = countTokensSync(resultStr);
     let resultFilePaths = extractFilePathsFromSearchResult(result);
     let resultLines = extractLinesFromSearchResult(result);
     const maxPaths = params.max_file_paths;
@@ -102,7 +103,7 @@ export const handleSearchSymbol: OpHandler = async (params, ctx) => {
     const retained = checkRetention('search.symbol', params, resultStr, true, 'symbol_refs', `find_symbol: ${queries.join(', ')}`);
     if (retained.reused) return retained.output;
     const hash = ctx.store().addChunk(resultStr, 'symbol', queries.join(', '));
-    const tk = estimateTokens(resultStr);
+    const tk = countTokensSync(resultStr);
     return {
       kind: 'symbol_refs', ok: true,
       refs: [`h:${hash}`],
@@ -129,7 +130,7 @@ export const handleSearchUsage: OpHandler = async (params, ctx) => {
     const retained = checkRetention('search.usage', params, resultStr, true, 'symbol_refs', `symbols: ${symbolNames.join(', ')}`);
     if (retained.reused) return retained.output;
     const hash = ctx.store().addChunk(resultStr, 'symbol', symbolNames.join(', '), undefined, summary);
-    const tk = estimateTokens(resultStr);
+    const tk = countTokensSync(resultStr);
     return {
       kind: 'symbol_refs', ok: true,
       refs: [`h:${hash}`],
@@ -172,7 +173,7 @@ export const handleSearchSimilar: OpHandler = async (params, ctx) => {
     const retained = checkRetention('search.similar', params, resultStr, true, 'search_results', 'find_similar');
     if (retained.reused) return retained.output;
     const hash = ctx.store().addChunk(resultStr, 'search', 'find_similar');
-    const tk = estimateTokens(resultStr);
+    const tk = countTokensSync(resultStr);
     return {
       kind: 'search_results', ok: true,
       refs: [`h:${hash}`],
@@ -195,7 +196,7 @@ export const handleSearchIssues: OpHandler = async (params, ctx) => {
     const retained = checkRetention('search.issues', params, resultStr, true, 'search_results', 'find_issues');
     if (retained.reused) return retained.output;
     const hash = ctx.store().addChunk(resultStr, 'search', 'find_issues');
-    const tk = estimateTokens(resultStr);
+    const tk = countTokensSync(resultStr);
     return {
       kind: 'search_results', ok: true,
       refs: [`h:${hash}`],
@@ -218,7 +219,7 @@ export const handleSearchPatterns: OpHandler = async (params, ctx) => {
     const retained = checkRetention('search.patterns', params, resultStr, true, 'search_results', 'detect_patterns');
     if (retained.reused) return retained.output;
     const hash = ctx.store().addChunk(resultStr, 'search', 'detect_patterns');
-    const tk = estimateTokens(resultStr);
+    const tk = countTokensSync(resultStr);
     return {
       kind: 'search_results', ok: true,
       refs: [`h:${hash}`],
@@ -248,7 +249,7 @@ export const handleAnalyzeDeps: OpHandler = async (params, ctx) => {
     const retained = checkRetention('analyze.deps', params, resultStr, true, 'analysis', `deps: ${depMode} ${filePaths.join(', ')}`);
     if (retained.reused) return retained.output;
     const hash = ctx.store().addChunk(resultStr, 'deps', filePaths.join(', '), undefined, summary);
-    const tk = estimateTokens(resultStr);
+    const tk = countTokensSync(resultStr);
     return {
       kind: 'analysis', ok: true,
       refs: [`h:${hash}`],
@@ -271,7 +272,7 @@ export const handleAnalyzeCalls: OpHandler = async (params, ctx) => {
     const retained = checkRetention('analyze.calls', params, resultStr, true, 'analysis', 'call_hierarchy');
     if (retained.reused) return retained.output;
     const hash = ctx.store().addChunk(resultStr, 'analysis', 'call_hierarchy');
-    const tk = estimateTokens(resultStr);
+    const tk = countTokensSync(resultStr);
     return {
       kind: 'analysis', ok: true,
       refs: [`h:${hash}`],
@@ -294,7 +295,7 @@ export const handleAnalyzeStructure: OpHandler = async (params, ctx) => {
     const retained = checkRetention('analyze.structure', params, resultStr, true, 'analysis', 'symbol_dep_graph');
     if (retained.reused) return retained.output;
     const hash = ctx.store().addChunk(resultStr, 'analysis', 'symbol_dep_graph');
-    const tk = estimateTokens(resultStr);
+    const tk = countTokensSync(resultStr);
     return {
       kind: 'analysis', ok: true,
       refs: [`h:${hash}`],
@@ -317,7 +318,7 @@ export const handleAnalyzeImpact: OpHandler = async (params, ctx) => {
     const retained = checkRetention('analyze.impact', params, resultStr, true, 'analysis', 'change_impact');
     if (retained.reused) return retained.output;
     const hash = ctx.store().addChunk(resultStr, 'analysis', 'change_impact');
-    const tk = estimateTokens(resultStr);
+    const tk = countTokensSync(resultStr);
     return {
       kind: 'analysis', ok: true,
       refs: [`h:${hash}`],
@@ -340,7 +341,7 @@ export const handleAnalyzeBlastRadius: OpHandler = async (params, ctx) => {
     const retained = checkRetention('analyze.blast_radius', params, resultStr, true, 'analysis', 'impact_analysis');
     if (retained.reused) return retained.output;
     const hash = ctx.store().addChunk(resultStr, 'analysis', 'impact_analysis');
-    const tk = estimateTokens(resultStr);
+    const tk = countTokensSync(resultStr);
     return {
       kind: 'analysis', ok: true,
       refs: [`h:${hash}`],
@@ -363,7 +364,7 @@ export const handleAnalyzeExtractPlan: OpHandler = async (params, ctx) => {
     const retained = checkRetention('analyze.extract_plan', params, resultStr, true, 'analysis', 'extract_plan');
     if (retained.reused) return retained.output;
     const hash = ctx.store().addChunk(resultStr, 'analysis', 'extract_plan');
-    const tk = estimateTokens(resultStr);
+    const tk = countTokensSync(resultStr);
     return {
       kind: 'analysis', ok: true,
       refs: [`h:${hash}`],
@@ -415,7 +416,7 @@ export const handleSearchMemory: OpHandler = async (params, ctx) => {
   const regionSummary = Object.entries(regionCounts).map(([k, v]) => `${k}:${v}`).join(' ');
   const resultStr = `search.memory: "${query}" — ${results.length} hits [${regionSummary}]\n${lines.join('\n')}`;
   const hash = ctx.store().addChunk(resultStr, 'search', `memory: ${query}`);
-  const tk = estimateTokens(resultStr);
+  const tk = countTokensSync(resultStr);
 
   return {
     kind: 'search_results', ok: true,

@@ -5,24 +5,29 @@ export const PROTECTED_RECENT_ROUNDS = 6;
 /** Verbatim tool-loop rounds kept before older rounds roll into summary */
 export const ROLLING_WINDOW_ROUNDS = 20;
 
-/** Max tokens for the formatted rolling summary message */
-export const ROLLING_SUMMARY_MAX_TOKENS = 1500;
+/** Max tokens for the formatted rolling summary message.
+ *  Calibrated against real BPE tokenizer (heuristic undercounted text by ~10%). */
+export const ROLLING_SUMMARY_MAX_TOKENS = 1650;
 
-export const CONVERSATION_HISTORY_BUDGET_TOKENS = 20000;
-export const STAGED_BUDGET_TOKENS = 4000;
+/** Calibrated against real BPE tokenizer counts.
+ *  History is a mix of code (~1.0x), JSON (~1.26x), and hash refs (~0.77x).
+ *  Heuristic systematically undercounted hash-heavy content by ~15%.
+ *  Thresholds raised to maintain same behavioral compression triggers. */
+export const CONVERSATION_HISTORY_BUDGET_TOKENS = 24000;
+export const STAGED_BUDGET_TOKENS = 4500;
 /** Hard cap on total tokens across all staged snippets — prevents unbounded growth when batch stages hundreds of refs. */
 export const STAGED_TOTAL_HARD_CAP_TOKENS = 65536;
-export const STAGED_ANCHOR_BUDGET_TOKENS = 1200;
-export const WM_BUDGET_TOKENS = 32000;
-export const WORKSPACE_CONTEXT_BUDGET_TOKENS = 6000;
-export const BLACKBOARD_BUDGET_TOKENS = 4000;
+export const STAGED_ANCHOR_BUDGET_TOKENS = 1400;
+export const WM_BUDGET_TOKENS = 38000;
+export const WORKSPACE_CONTEXT_BUDGET_TOKENS = 7000;
+export const BLACKBOARD_BUDGET_TOKENS = 4800;
 
 export const TOTAL_SOFT_PRESSURE_PCT = 0.70;
 export const TOTAL_HARD_PRESSURE_PCT = 0.85;
 
 export const HYGIENE_CHECK_INTERVAL_ROUNDS = 15;
 export const COMPACT_HISTORY_TURN_THRESHOLD = 20;
-export const COMPACT_HISTORY_TOKEN_THRESHOLD = 15000;
+export const COMPACT_HISTORY_TOKEN_THRESHOLD = 18000;
 
 /** Max rounds in a single task phase before nudging session.advance. */
 export const PHASE_ROUND_BUDGET = 5;

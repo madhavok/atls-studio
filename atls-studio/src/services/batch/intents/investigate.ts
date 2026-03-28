@@ -51,11 +51,14 @@ export const resolveInvestigate: IntentResolver = (
 
   if (needsRead) {
     if (!hasCachedResults) {
-      // Structural sig (same cost model as intent.survey / read.shaped) — not full smart read per file.
+      const readWith: Record<string, unknown> = { shape: 'sig', max_files: INTENT_INVESTIGATE_MAX_FILES };
+      if (filePaths.length > 0) {
+        readWith.file_paths = filePaths.slice(0, INTENT_INVESTIGATE_MAX_FILES);
+      }
       steps.push({
         id: readId,
         use: 'read.shaped',
-        with: { shape: 'sig', max_files: INTENT_INVESTIGATE_MAX_FILES },
+        with: readWith,
         in: { file_paths: { from_step: searchId, path: 'content.file_paths' } },
         if: { step_has_refs: searchId },
       });
