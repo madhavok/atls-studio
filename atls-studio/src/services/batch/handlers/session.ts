@@ -81,6 +81,7 @@ export const handleTaskAdvance: OpHandler = async (params, ctx) => {
   }
 
   const target = plan.subtasks.find(s => s.id === subtaskId);
+  if (!target) return err(`task_advance: ERROR subtask "${subtaskId}" not found in plan`);
   if (target?.status === 'done') return err(`task_advance: ERROR subtask "${subtaskId}" already done`);
 
   const summary = typeof params.summary === 'string' ? (params.summary as string).trim() : '';

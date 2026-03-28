@@ -775,12 +775,11 @@ export const useAppStore = create<AppState>((set) => ({
         newActiveFile = null;
       } else {
         // Find position of closed tab in original array, pick neighbor in filtered array
-        const idx = state.openFiles.indexOf(path);
         const closedIdx = state.openFiles.indexOf(path);
         // After removing the closed file, prefer the tab to its left (closedIdx - 1),
         // falling back to the tab that slid into its position (closedIdx), then null.
-        const preferredIdx = Math.min(closedIdx, newOpenFiles.length - 1);
-        const fallbackIdx = Math.max(0, closedIdx - 1);
+        const preferredIdx = Math.max(0, closedIdx - 1);
+        const fallbackIdx = Math.min(closedIdx, newOpenFiles.length - 1);
         newActiveFile = newOpenFiles[preferredIdx] ?? newOpenFiles[fallbackIdx] ?? null;
       }
     }
