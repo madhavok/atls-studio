@@ -126,8 +126,8 @@ export const handleLoad: OpHandler = async (params, ctx) => {
       const reused = ctx.store().findReusableRead({ filePath: filePaths[0], sourceRevision: backendHash });
       if (reused) {
         useRetentionStore.getState().incrementReadsReused();
-        lines.push(`load: NOTE redundant — ${filePaths[0]} already at h:${reused} (same rev, content is live). Chain from this ref; do not full-read again.`);
-        return { kind: 'file_refs', ok: true, refs: [`h:${reused}`], summary: lines.join('\n'), tokens: 0 };
+        lines.push(`load: ERROR redundant — ${filePaths[0]} already at h:${reused} (same rev). Content is live at that hash. Do NOT re-read.`);
+        return { kind: 'file_refs', ok: false, refs: [`h:${reused}`], summary: lines.join('\n'), tokens: 0 };
       }
     }
 
@@ -262,7 +262,7 @@ export const handleRead: OpHandler = async (params, ctx) => {
                 useRetentionStore.getState().incrementReadsReused();
                 allRefs.push(`h:${reusedRead}`);
                 readResults.push({ file: src, h: `h:${reusedRead}`, ...(backendHash ? { snapshot_hash: backendHash } : {}) });
-                lines.push(`read: NOTE redundant — ${src} already at h:${reusedRead} (same rev, content is live). Use read.lines(ref:"h:${reusedRead}:LL-LL") for a different span; do not full-read again.`);
+                lines.push(`read: ERROR redundant — ${src} already at h:${reusedRead} (same rev). Content is live. Use read.lines(ref:"h:${reusedRead}:LL-LL") for a different span. Do NOT re-read.`);
                 continue;
               }
             }
@@ -463,9 +463,9 @@ export const handleReadLines: OpHandler = async (params, ctx) => {
             formatLineRanges(actualRange) || formatLineRanges(targetRange) || (typeof rlLines === 'string' ? rlLines.trim() : '');
           const baseRef = normalizeHashRefToken(`h:${reusedLines}`);
           const refWithLines = lineSpecForRef ? `${baseRef}:${lineSpecForRef}` : baseRef;
-          const reuseSummary = `read_lines: NOTE redundant — ${rlFile}:${targetLabel} already at h:${reusedLines} (same rev, content is live). Chain from this ref.`;
+          const reuseSummary = `read_lines: ERROR redundant — ${rlFile}:${targetLabel} already at h:${reusedLines} (same rev). Content is live. Chain from this ref. Do NOT re-read.`;
           return {
-            kind: 'file_refs', ok: true, refs: [refWithLines],
+            kind: 'file_refs', ok: false, refs: [refWithLines],
             summary: reuseSummary, tokens: 0,
             content: { file: rlFile, hash: reusedLines, ...(rlSnapshotHash ? { snapshot_hash: rlSnapshotHash } : {}), target_range: targetRange, actual_range: actualRange, context_lines: usedContextLines, content: rlContent },
           };

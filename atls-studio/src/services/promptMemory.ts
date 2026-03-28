@@ -24,6 +24,9 @@ export const HYGIENE_CHECK_INTERVAL_ROUNDS = 15;
 export const COMPACT_HISTORY_TURN_THRESHOLD = 20;
 export const COMPACT_HISTORY_TOKEN_THRESHOLD = 15000;
 
+/** Max rounds in a single task phase before nudging session.advance. */
+export const PHASE_ROUND_BUDGET = 5;
+
 /** Safety ceiling for subagent rounds — budget-based stopping is the real limiter. */
 export const SUBAGENT_MAX_ROUNDS = 100;
 /** Total input+output tokens across all subagent rounds before forced stop. */

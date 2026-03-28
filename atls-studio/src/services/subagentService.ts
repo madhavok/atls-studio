@@ -667,6 +667,8 @@ function checkStopConditions(
   preExistingSources: Set<string>,
   lastBatchResult: string | null,
   noToolCalls: boolean,
+  hasSpinBreaker?: boolean,
+  consecutiveReadOnlyRounds?: number,
 ): StopCheck {
   // Safety ceiling
   if (round >= SUBAGENT_MAX_ROUNDS) {
@@ -682,6 +684,19 @@ function checkStopConditions(
   // Empty round (model said done with no tool calls)
   if (noToolCalls) {
     return { shouldStop: true, reason: 'model completed (no tool calls)' };
+  }
+
+  // Read spin detected — batch executor flagged repeated reads of the same files
+  if (hasSpinBreaker) {
+    return { shouldStop: true, reason: 'read spin detected — subagent reading same files repeatedly without acting' };
+  }
+
+  // Consecutive read-only rounds — subagent is not making progress
+  if (consecutiveReadOnlyRounds != null) {
+    const limit = (role === 'retriever' || role === 'design') ? 3 : 5;
+    if (consecutiveReadOnlyRounds >= limit) {
+      return { shouldStop: true, reason: `${consecutiveReadOnlyRounds} consecutive read-only rounds without mutations` };
+    }
   }
 
   // Pin budget saturation for retriever/design
@@ -837,6 +852,7 @@ export async function executeSubagent(
   let lastToolResults: Array<{ type: string; tool_use_id: string; name: string; content: string }> | null = null;
   let lastBatchOutcome: string | null = null;
   let lastErrors: string[] = [];
+  let consecutiveReadOnlyRounds = 0;
 
   const roleStatusMap: Record<SubagentType, SubAgentProgress['status']> = {
     retriever: 'searching',
@@ -845,6 +861,11 @@ export async function executeSubagent(
     tester: 'testing',
   };
   onProgress?.({ status: roleStatusMap[role], message: `${role}: ${params.query}` });
+
+  // Isolate spin state: save parent's counters, reset for this invocation,
+  // and restore on exit so parent/subagent don't poison each other.
+  const savedSpinState = { ...useContextStore.getState().fileReadSpinByPath };
+  useContextStore.getState().resetFileReadSpin();
 
   try {
     for (let round = 0; round < SUBAGENT_MAX_ROUNDS; round++) {
@@ -934,7 +955,7 @@ export async function executeSubagent(
         const stop = checkStopConditions(
           role, round, totalInputTokens, totalOutputTokens,
           tokenBudget, pinBudget, preExistingHashes, preExistingSources,
-          lastBatchOutcome, true,
+          lastBatchOutcome, true, false, consecutiveReadOnlyRounds,
         );
         console.log(`[subagent:${role}] No tool calls, stopping: ${stop.reason || 'model completed'}`);
         break;
@@ -1010,11 +1031,23 @@ export async function executeSubagent(
         .filter(tr => tr.content.startsWith('Error:'))
         .map(tr => tr.content.slice(0, 200));
 
+      // Track consecutive read-only rounds for spin detection
+      const hadMutation = toolResults.some(tr =>
+        tr.content.includes('change.') && !tr.content.includes('ERROR') && !tr.content.includes('BLOCKED'),
+      );
+      if (hadMutation) {
+        consecutiveReadOnlyRounds = 0;
+      } else {
+        consecutiveReadOnlyRounds++;
+      }
+
+      const hasSpinBreaker = lastBatchOutcome?.includes('<<STOP:') ?? false;
+
       // Check stop conditions
       const stop = checkStopConditions(
         role, round, totalInputTokens, totalOutputTokens,
         tokenBudget, pinBudget, preExistingHashes, preExistingSources,
-        lastBatchOutcome, false,
+        lastBatchOutcome, false, hasSpinBreaker, consecutiveReadOnlyRounds,
       );
       if (stop.shouldStop) {
         console.log(`[subagent:${role}] Stopping: ${stop.reason}`);
@@ -1028,6 +1061,9 @@ export async function executeSubagent(
     });
     throw error;
   } finally {
+    // Restore parent's spin state so subagent reads don't leak back
+    useContextStore.setState({ fileReadSpinByPath: savedSpinState });
+
     // Clean up terminal
     if (terminalId) {
       try {

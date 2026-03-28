@@ -429,6 +429,12 @@ export function compressToolLoopHistory(
         if (!tr.content || typeof tr.content !== 'string') continue;
         if (tr.content.startsWith('[->')) continue;
 
+        // Preserve inline history for pinned content so the model retains
+        // full conversational context around its most important engrams.
+        const pinnedCheckHash = hashContentSync(tr.content);
+        const pinnedChunk = contextStore.chunks.get(pinnedCheckHash);
+        if (pinnedChunk?.pinned) continue;
+
         const tokens = estimateTokens(tr.content);
         const description = buildCompressionDescription(tr.tool_use_id, history);
         const toolName = description.split(':')[0] || '';

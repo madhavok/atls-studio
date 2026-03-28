@@ -918,12 +918,29 @@ function detectBatchInterruption(stepId: string, stepIndex: number, stepUse: str
 }
 
 // ---------------------------------------------------------------------------
+// Progress callback — fired after each step so callers can stream partial results
+// ---------------------------------------------------------------------------
+
+export interface BatchStepProgress {
+  stepId: string;
+  stepUse: string;
+  stepIndex: number;
+  totalSteps: number;
+  ok: boolean;
+  summaryLine: string;
+  durationMs: number;
+}
+
+export type OnBatchStepComplete = (progress: BatchStepProgress) => void;
+
+// ---------------------------------------------------------------------------
 // Executor
 // ---------------------------------------------------------------------------
 
 export async function executeUnifiedBatch(
   request: UnifiedBatchRequest,
   ctx: HandlerContext,
+  onStepComplete?: OnBatchStepComplete,
 ): Promise<UnifiedBatchResult> {
   const batchStart = Date.now();
   const stepOutputs = new Map<string, StepOutput>();
@@ -935,6 +952,7 @@ export async function executeUnifiedBatch(
   let batchOk = true;
   let interruption: BatchInterruption | undefined;
   let spinBreaker: string | undefined;
+  let spinBlocked = false;
 
   // Expose step outputs to handlers (e.g. session.pin resolves step IDs to hashes)
   ctx.getStepOutput = (stepId: string) => stepOutputs.get(stepId);
@@ -1102,6 +1120,18 @@ export async function executeUnifiedBatch(
       continue;
     }
 
+    // Block further reads/searches after the spin breaker fires
+    if (spinBlocked && (step.use.startsWith('read.') || step.use.startsWith('search.'))) {
+      const output: StepOutput = {
+        kind: 'raw', ok: false, refs: [],
+        summary: `${step.id}: BLOCKED — read spin detected. Use existing h:refs, write to BB, or make an edit.`,
+        error: 'read_spin_blocked',
+      };
+      stepOutputs.set(step.id, output);
+      results.push(stepOutputToResult(step.id, step.use, output, 0));
+      continue;
+    }
+
     const handler = getHandler(step.use);
     if (!handler) {
       const output: StepOutput = {
@@ -1211,7 +1241,7 @@ export async function executeUnifiedBatch(
       const spinPaths = extractFilePathsFromFileRefsContent(output);
       if (spinPaths.length > 0) {
         const br = ctx.store().recordFileReadSpin(spinPaths);
-        if (br) spinBreaker = br;
+        if (br) { spinBreaker = br; spinBlocked = true; }
       }
     }
     if (output.ok && step.use === 'session.bb.write') {

@@ -154,6 +154,7 @@ import {
   ROLLING_SUMMARY_MAX_TOKENS,
   WORKSPACE_CONTEXT_BUDGET_TOKENS,
   WM_BUDGET_TOKENS,
+  PHASE_ROUND_BUDGET,
   createPromptLayerBudgets,
   getStagedTokens,
   getEstimatedTotalPromptTokens,
@@ -1092,6 +1093,9 @@ async function streamChatViaTauri(
   let taskCompleteCalled = false;
   let totalToolsQueued = 0;
   let lastReliefAction: PromptReliefAction = 'none';
+  let consecutiveReadOnlyRounds = 0;
+  let roundsInCurrentPhase = 0;
+  let lastActiveSubtaskId: string | null = null;
   
   // Initialize agent progress tracking
   const store = useAppStore.getState();
@@ -2066,7 +2070,59 @@ async function streamChatViaTauri(
         useAppStore.getState().setAgentCanContinue(false);
         break;
       }
-      
+
+      // --- Structured behavior enforcement ---
+
+      // Track consecutive read-only rounds (no mutations). After 3, inject
+      // a hard system message that the model cannot ignore.
+      if (!_roundHadMutations) {
+        consecutiveReadOnlyRounds++;
+      } else {
+        consecutiveReadOnlyRounds = 0;
+      }
+      if (consecutiveReadOnlyRounds >= 3 && mode !== 'ask' && mode !== 'retriever') {
+        conversationHistory.push({
+          role: 'user',
+          content: '<<SYSTEM: 3 consecutive read-only rounds without edits or BB writes. You must now: ' +
+            '(1) make an edit/create, (2) write findings to session.bb.write, or (3) declare a specific blocker. ' +
+            'Further reads of already-seen files will be blocked.>>',
+        });
+        consecutiveReadOnlyRounds = 0;
+        console.log(`[aiService] Spin guard: injected read-only round warning at round ${round + 1}`);
+      }
+
+      // Nudge toward task plan if the model has done a read-only round without planning
+      if (round === 1 && !useContextStore.getState().taskPlan && !_roundHadMutations
+          && mode !== 'ask' && mode !== 'retriever' && mode !== 'designer') {
+        conversationHistory.push({
+          role: 'user',
+          content: 'You completed a research round without a task plan. For multi-step work, create one now:\n' +
+            'batch({version:"1.0",steps:[{id:"plan",use:"session.plan",with:{goal:"...",subtasks:["analyze","implement","verify"]}}]})\n' +
+            'session.advance commits findings (dehydrates context) and moves to the next phase.',
+        });
+        console.log('[aiService] Task plan nudge injected after read-only round 1');
+      }
+
+      // Phase round budget: if a task plan is active, track rounds per phase
+      // and nudge advancement when the budget is exceeded.
+      const taskPlan = useContextStore.getState().taskPlan;
+      if (taskPlan?.activeSubtaskId) {
+        if (taskPlan.activeSubtaskId !== lastActiveSubtaskId) {
+          roundsInCurrentPhase = 0;
+          lastActiveSubtaskId = taskPlan.activeSubtaskId;
+        }
+        roundsInCurrentPhase++;
+        if (roundsInCurrentPhase >= PHASE_ROUND_BUDGET) {
+          conversationHistory.push({
+            role: 'user',
+            content: `<<SYSTEM: You have spent ${roundsInCurrentPhase} rounds in the "${taskPlan.activeSubtaskId}" phase. ` +
+              'Commit your findings with session.advance(summary:"...") and move to the next phase. ' +
+              'If blocked, declare the blocker in BB and advance anyway.>>',
+          });
+          console.log(`[aiService] Phase budget exceeded: ${roundsInCurrentPhase} rounds in "${taskPlan.activeSubtaskId}"`);
+        }
+      }
+
       // Safety compression deferred to round 0 to keep history append-only
       // within a tool loop (preserves prefix cache stability). Only compress
       // mid-loop at a much higher threshold to prevent context overflow.
