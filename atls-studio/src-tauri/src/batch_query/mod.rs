@@ -578,44 +578,51 @@ pub async fn atls_batch_query(
                     // Hoist file_hash via SnapshotService (caches mtime+size, single hash derivation).
                     let file_hash: Option<String> = if context_type != "tree" {
                         let resolved = resolve_project_path(project_root, &file_path);
+                        // Use workspace-aware resolution so the registered source path
+                        // includes the sub-workspace prefix when needed.
+                        let (effective_resolved, effective_fp) = if resolved.exists() {
+                            (resolved.clone(), file_path.clone())
+                        } else {
+                            resolve_source_file_with_workspace_hint(project_root, &file_path, &workspace_rel_paths)
+                                .unwrap_or_else(|| (resolved.clone(), file_path.clone()))
+                        };
                         let ss_state = app.state::<crate::snapshot::SnapshotServiceState>();
                         let mut snapshot_svc = ss_state.service.lock().await;
-                        match snapshot_svc.get_resolved(&resolved, &file_path) {
+                        match snapshot_svc.get_resolved(&effective_resolved, &effective_fp) {
                             Ok(snap) => {
                                 let fhash = snap.snapshot_hash.clone();
-                                // Register in HashRegistry for h: reference resolution
                                 let content_for_registry = if snap.content.is_empty() {
-                                    std::fs::read_to_string(&resolved).ok().map(|c| normalize_line_endings(&c))
+                                    std::fs::read_to_string(&effective_resolved).ok().map(|c| normalize_line_endings(&c))
                                 } else {
                                     Some(snap.content.clone())
                                 };
                                 if let Some(content) = content_for_registry {
                                     let hr_state = app.state::<hash_resolver::HashRegistryState>();
                                     let mut registry = hr_state.registry.lock().await;
-                                    let lang = hash_resolver::detect_lang(Some(&file_path));
+                                    let lang = hash_resolver::detect_lang(Some(&effective_fp));
                                     let line_count = content.lines().count();
-                                    let prev_rev = registry.get_current_revision(&file_path);
+                                    let prev_rev = registry.get_current_revision(&effective_fp);
                                     registry.register(fhash.clone(), hash_resolver::HashEntry {
-                                        source: Some(file_path.clone()),
+                                        source: Some(effective_fp.clone()),
                                         content: content.clone(),
                                         tokens: content.len() / 4,
                                         lang,
                                         line_count,
                                         symbol_count: None,
                                     });
-                                    if file_path.contains('/') || file_path.contains('\\') {
+                                    if effective_fp.contains('/') || effective_fp.contains('\\') {
                                         let _ = app.emit("canonical_revision_changed", serde_json::json!({
-                                            "path": file_path,
+                                            "path": effective_fp,
                                             "revision": fhash,
                                             "previous_revision": prev_rev
                                         }));
                                     }
                                     // Keep FileCache in sync during migration
-                                    if let Ok(meta) = std::fs::metadata(&resolved) {
+                                    if let Ok(meta) = std::fs::metadata(&effective_resolved) {
                                         let fc_state = app.state::<hash_resolver::FileCacheState>();
                                         let mut fc = fc_state.cache.lock().await;
                                         fc.insert(
-                                            resolved.to_string_lossy().to_string(),
+                                            effective_resolved.to_string_lossy().to_string(),
                                             fhash.clone(),
                                             metadata_modified_ns(&meta),
                                             meta.len(),
@@ -766,13 +773,22 @@ pub async fn atls_batch_query(
                                 });
                             
                             let resolved_path = resolve_project_path(project_root, &file_path);
-                            
+
+                            // Track the effective relative path — may differ from
+                            // file_path when workspace fallback resolves a sub-workspace
+                            // prefix (e.g. "src/foo.ts" → "atls-studio/src/foo.ts").
+                            let mut effective_file_path = file_path.clone();
                             let read_result = read_file_with_format(&resolved_path)
                                 .map(|(content, _fmt)| content)
                                 .or_else(|_| {
                                     resolve_source_file_with_workspace_hint(project_root, &file_path, &workspace_rel_paths)
-                                        .and_then(|(p, _)| read_file_with_format(&p).ok())
-                                        .map(|(content, _fmt)| content)
+                                        .and_then(|(p, effective_rel)| {
+                                            read_file_with_format(&p).ok().map(|(content, _fmt)| (content, effective_rel))
+                                        })
+                                        .map(|(content, effective_rel)| {
+                                            effective_file_path = effective_rel;
+                                            content
+                                        })
                                         .ok_or_else(|| format!("File not found: {}", file_path))
                                 });
                             
@@ -781,26 +797,26 @@ pub async fn atls_batch_query(
                                     // Register via SnapshotService + HashRegistry
                                     let ss_state = app.state::<crate::snapshot::SnapshotServiceState>();
                                     let mut snapshot_svc = ss_state.service.lock().await;
-                                    let snap = snapshot_svc.snapshot_from_content(&file_path, &content, None);
+                                    let snap = snapshot_svc.snapshot_from_content(&effective_file_path, &content, None);
                                     let file_hash = snap.snapshot_hash;
                                     drop(snapshot_svc);
                                     {
                                         let hr_state = app.state::<hash_resolver::HashRegistryState>();
                                         let mut registry = hr_state.registry.lock().await;
-                                        let lang = hash_resolver::detect_lang(Some(&file_path));
+                                        let lang = hash_resolver::detect_lang(Some(&effective_file_path));
                                         let line_count = content.lines().count();
-                                        let prev_rev = registry.get_current_revision(&file_path);
+                                        let prev_rev = registry.get_current_revision(&effective_file_path);
                                         registry.register(file_hash.clone(), hash_resolver::HashEntry {
-                                            source: Some(file_path.clone()),
+                                            source: Some(effective_file_path.clone()),
                                             content: content.clone(),
                                             tokens: content.len() / 4,
                                             lang,
                                             line_count,
                                             symbol_count: None,
                                         });
-                                        if file_path.contains('/') || file_path.contains('\\') {
+                                        if effective_file_path.contains('/') || effective_file_path.contains('\\') {
                                             let _ = app.emit("canonical_revision_changed", serde_json::json!({
-                                                "path": file_path,
+                                                "path": effective_file_path,
                                                 "revision": file_hash,
                                                 "previous_revision": prev_rev
                                             }));
@@ -827,7 +843,7 @@ pub async fn atls_batch_query(
                                     if truncated {
                                         let ss_state2 = app.state::<crate::snapshot::SnapshotServiceState>();
                                         let mut ss2 = ss_state2.service.lock().await;
-                                        let display_snap = ss2.snapshot_from_content(&file_path, &display_content, None);
+                                        let display_snap = ss2.snapshot_from_content(&effective_file_path, &display_content, None);
                                         let display_hash = display_snap.snapshot_hash;
                                         drop(ss2);
                                         if display_hash != file_hash {
@@ -837,7 +853,7 @@ pub async fn atls_batch_query(
                                                 source: None,
                                                 content: display_content.clone(),
                                                 tokens: display_content.len() / 4,
-                                                lang: hash_resolver::detect_lang(Some(&file_path)),
+                                                lang: hash_resolver::detect_lang(Some(&effective_file_path)),
                                                 line_count: display_content.lines().count(),
                                                 symbol_count: None,
                                             });
@@ -845,7 +861,7 @@ pub async fn atls_batch_query(
                                     }
 
                                     results.push(serde_json::json!({
-                                        "file": file_path,
+                                        "file": effective_file_path,
                                         "h": format!("h:{}", &file_hash[..hash_resolver::SHORT_HASH_LEN]),
                                         "content_hash": file_hash,
                                         "snapshot_hash": file_hash,
@@ -10814,7 +10830,7 @@ pub async fn atls_batch_query(
                 if let Some(edits) = params.get("edits").and_then(|v| v.as_array()) {
                     had_input = true;
                     for edit_val in edits {
-                        let file = edit_val.get("file")
+                        let mut file = edit_val.get("file")
                             .or_else(|| edit_val.get("file_path"))
                             .and_then(|v| v.as_str())
                             .unwrap_or("")
@@ -10851,7 +10867,10 @@ pub async fn atls_batch_query(
                         // against full source from disk â€” spans are absolute line numbers in the real file buffer.
                         let mut base = if edit_target_kind == Some("exact_span") || edit_val.get("edit_target_range").is_some() {
                             match load_draft_base_content(project_root, &file) {
-                                Ok(content) => content,
+                                Ok((content, effective_path)) => {
+                                    if effective_path != file { file = effective_path; }
+                                    content
+                                }
                                 Err(err) => {
                                     return Ok(serde_json::json!({
                                         "mode": "draft",
@@ -10865,7 +10884,10 @@ pub async fn atls_batch_query(
                             match file_map.get(&file).cloned() {
                                 Some(existing) => existing,
                                 None => match load_draft_base_content(project_root, &file) {
-                                    Ok(content) => content,
+                                    Ok((content, effective_path)) => {
+                                        if effective_path != file { file = effective_path; }
+                                        content
+                                    }
                                     Err(err) => {
                                         return Ok(serde_json::json!({
                                             "mode": "draft",
@@ -10912,7 +10934,8 @@ pub async fn atls_batch_query(
                                         _ => {
                                             // Auto-retry: re-read from disk
                                             match load_draft_base_content(project_root, &file) {
-                                                Ok(fresh) => {
+                                                Ok((fresh, effective_path)) => {
+                                                    if effective_path != file { file = effective_path; }
                                                     let fresh_hash = content_hash(&fresh);
                                                     if fresh_hash != actual_hash {
                                                         base = fresh;
@@ -11100,7 +11123,7 @@ pub async fn atls_batch_query(
 
                 if let Some(_le_arr) = params.get("line_edits").and_then(|v| v.as_array()) {
                     had_input = true;
-                    let file_path = params.get("file").or_else(|| params.get("file_path"))
+                    let mut file_path = params.get("file").or_else(|| params.get("file_path"))
                         .and_then(|v| v.as_str())
                         .ok_or_else(|| "line_edits requires 'file' param".to_string())?
                         .to_string();
@@ -11133,7 +11156,10 @@ pub async fn atls_batch_query(
                     let mut base = match file_map.get(&file_path).cloned() {
                         Some(existing) => existing,
                         None => match load_draft_base_content(project_root, &file_path) {
-                            Ok(content) => content,
+                            Ok((content, effective_path)) => {
+                                if effective_path != file_path { file_path = effective_path; }
+                                content
+                            }
                             Err(err) => {
                                 return Ok(serde_json::json!({
                                     "mode": "draft",
@@ -11178,7 +11204,8 @@ pub async fn atls_batch_query(
                                 _ => {
                                     // Auto-retry: re-read from disk and apply against fresh content
                                     match load_draft_base_content(project_root, &file_path) {
-                                        Ok(fresh) => {
+                                        Ok((fresh, effective_path)) => {
+                                            if effective_path != file_path { file_path = effective_path; }
                                             let fresh_hash = content_hash(&fresh);
                                             if fresh_hash != actual_hash {
                                                 base = fresh;

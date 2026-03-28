@@ -364,18 +364,23 @@ pub(crate) fn should_emit_line_edit_stale_warning(
     canonicalize_expected_content_hash(expected_hash) != actual_hash
 }
 
-pub(crate) fn load_draft_base_content(project_root: &std::path::Path, file: &str) -> Result<String, String> {
+/// Returns `(content, effective_relative_path)`. When the direct path doesn't
+/// exist but a workspace-aware fallback finds the file under a sub-workspace
+/// prefix, `effective_relative_path` is the prefixed path (e.g.
+/// `atls-studio/src/foo.ts` instead of bare `src/foo.ts`), ensuring downstream
+/// writes target the correct location.
+pub(crate) fn load_draft_base_content(project_root: &std::path::Path, file: &str) -> Result<(String, String), String> {
     let trimmed = file.trim();
     if trimmed.is_empty() || trimmed.starts_with("h:") {
         return Err(format!("Edit target file not found: {}", file));
     }
     let resolved_path = resolve_project_path(project_root, trimmed);
     if let Ok(content) = std::fs::read_to_string(&resolved_path) {
-        return Ok(normalize_line_endings(&content));
+        return Ok((normalize_line_endings(&content), trimmed.to_string()));
     }
-    if let Some((fallback_path, _)) = crate::path_utils::resolve_source_file_with_fallback(project_root, trimmed) {
+    if let Some((fallback_path, effective_rel)) = crate::path_utils::resolve_source_file_with_fallback(project_root, trimmed) {
         return std::fs::read_to_string(&fallback_path)
-            .map(|content| normalize_line_endings(&content))
+            .map(|content| (normalize_line_endings(&content), effective_rel))
             .map_err(|err| format!("Failed to read edit target {}: {}", trimmed, err));
     }
     Err(format!("Edit target file not found: {}", file))
