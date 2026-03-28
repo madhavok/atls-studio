@@ -49,7 +49,7 @@ session.bb.delete keys:[]
 session.rule action?:set|delete|list key:"" content?:""
 session.emit content:"" type?:""
 session.shape|load|debug|stage|unstage|compact|unload|drop|recall|stats|compact_history — session management (system.help for params)
-annotate.note|retype|split|merge — hash-targeted metadata ops (hash:"" + op-specific params)
+annotate.note|retype|split|merge — hash-targeted metadata ops (hash:"" + op-specific params); full list includes annotate.engram|link|design — see ### Operation Families above
 intent.understand file_paths:[] force?:bool — reads, analyzes deps, stages, pins; skips steps already done
 intent.edit file_path:"" line_edits:[...] verify?:bool force?:bool — reads if needed, edits, auto-retries on stale_hash, verifies
 intent.edit_multi edits:[{file_path:"",line_edits:[...]}] verify?:bool force?:bool — per-file read/edit/retry, single verify.build at end

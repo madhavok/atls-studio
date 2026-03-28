@@ -27,12 +27,13 @@ Related:
 | [api-economics.md](./api-economics.md) | Token / API considerations |
 | [studio-app-shell.md](./studio-app-shell.md) | UI shell |
 | [tauri-backend.md](./tauri-backend.md) | Rust / Tauri layer |
+| [tauri-commands.md](./tauri-commands.md) | Enumerated Tauri `invoke` command names (`lib.rs`) |
 | [mcp-integration.md](./mcp-integration.md) | MCP |
 | [swarm-orchestration.md](./swarm-orchestration.md) | Multi-agent orchestration |
 | [subagents.md](./subagents.md) | Delegate subagents: four roles, snapshot loop, scoped HPP, budgets, batch ops |
 
 ## Repo layout
 
-- App README: [`../atls-studio/README.md`](../atls-studio/README.md)
-- High-level architecture: [`../ARCHITECTURE.md`](../ARCHITECTURE.md)
-- Agent edit rules: [`.cursor/rules/edit-freshness.mdc`](../.cursor/rules/edit-freshness.mdc)
+- **Repository root** (contains this `docs/` folder): clone root; [`ARCHITECTURE.md`](../ARCHITECTURE.md) lives here.
+- **App package** (npm scripts, `src/`, `src-tauri/`): [`../atls-studio/README.md`](../atls-studio/README.md) — run `npm install` and `npm run tauri:dev` from `atls-studio/` inside the clone.
+- Optional Cursor rule (local only; `.cursor/` is gitignored): if present, `.cursor/rules/edit-freshness.mdc` — not required for builds.

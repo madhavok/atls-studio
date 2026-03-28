@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { BATCH_TOOL_REF } from './toolRef';
 import { ALL_OPERATIONS, OPERATION_FAMILIES, FAMILY_NAMES } from '../services/batch/families';
+import { getHandler } from '../services/batch/opMap';
 
 describe('BATCH_TOOL_REF drift detection', () => {
   it('contains every operation from families.ts in the Operation Families section', () => {
@@ -17,8 +18,11 @@ describe('BATCH_TOOL_REF drift detection', () => {
     }
   });
 
-  it('has the expected operation count', () => {
-    expect(ALL_OPERATIONS.length).toBe(73);
+  it('gives every non-intent operation a handler in opMap', () => {
+    for (const op of ALL_OPERATIONS) {
+      if (op.startsWith('intent.')) continue;
+      expect(getHandler(op), `missing handler for ${op}`).toBeDefined();
+    }
   });
 
   it('covers all 9 families', () => {

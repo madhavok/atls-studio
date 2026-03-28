@@ -16,7 +16,7 @@ Through the ATLS runtime, the model gets structured control over its active work
 
 - **Hash-addressed engrams** with four activation states (active, dormant, archived, evicted) and model-controlled lifecycle transitions
 - **Freshness tracking** — per-engram five-state taxonomy, **universal execution authority** (`canSteerExecution` across blackboard, staged snippets, WM, pins), and a cascade of recovery strategies (edit journal, shape match, symbol identity, fingerprint, line relocation)
-- **Unified batch executor** — one tool surface (`batch()`) with 60+ operations, step-to-step dataflow, intent macros, and multi-level error recovery
+- **Unified batch executor** — one tool surface (`batch()`) with 75 `OperationKind` steps (primitives + `intent.*` macros), step-to-step dataflow, intent macros, and multi-level error recovery
 - **Universal Hash Pointer Protocol (UHPP)** — rich reference syntax with shapes, line ranges, set selectors, diffs, and boolean operations
 - **History compression** via hash-reference deflation, a **rolling verbatim window**, and a **distilled rolling summary** (`[Rolling Summary]`) for API assembly — large tool results replaced with hash pointers, older rounds summarized into structured facts, recallable on demand
 - **Prompt cache optimization** — append-only history within tool loops, mutable content isolated to the uncached dynamic block
@@ -65,6 +65,7 @@ See [Architecture Document](ARCHITECTURE.md) for the full technical description,
 | [API Economics](docs/api-economics.md) | The caching problem and what would fix it |
 | [Studio App Shell](docs/studio-app-shell.md) | Desktop UI structure, panel layout, and shell-level responsibilities |
 | [Tauri Backend](docs/tauri-backend.md) | Native Rust service layer, command groups, and backend boundaries |
+| [Tauri command list](docs/tauri-commands.md) | All `invoke` names registered in `src-tauri` (IPC inventory) |
 | [Session Persistence](docs/session-persistence.md) | Per-project chat DB, auto-resume last session, cold restore vs deferred freshness reconcile, Tauri close flush, memory snapshots, swarm persistence |
 | [Swarm And Orchestration](docs/swarm-orchestration.md) | Multi-agent research, planning, execution, and task coordination |
 | [ATLS Engine](docs/atls-engine.md) | Shared Rust engine for indexing, parsing, queries, and project state |
@@ -77,56 +78,65 @@ See [Architecture Document](ARCHITECTURE.md) for the full technical description,
 - **Code Intelligence**: Custom ATLS engine (semantic search, symbol resolution, dependency graphs)
 - **Supported Providers**: Anthropic (Claude), OpenAI, Google (Gemini/Vertex), LM Studio
 
+## Repository layout
+
+Paths below are from the **Git repository root** (the folder that contains `ARCHITECTURE.md` and `docs/`).
+
+| Path | Contents |
+|------|----------|
+| **`docs/`** | Subsystem markdown (freshness, batch executor, Tauri, etc.) |
+| **`atls-rs/`** | Rust ATLS engine (`atls-core`) and MCP crate |
+| **`atls-studio/`** | Desktop app package — **run all npm scripts from here** |
+
+The Tauri app’s frontend and `src-tauri/` live under **`atls-studio/atls-studio/`** (nested folder). Do not confuse with a top-level `src-tauri/` at repo root (that path is gitignored if present).
+
 ## Setup
 
 ### Prerequisites
 
 - [Rust](https://rustup.rs/) (stable)
-- [Node.js](https://nodejs.org/) 18+
-- [pnpm](https://pnpm.io/) or npm
+- [Node.js](https://nodejs.org/) 20+ (see `engines` in `atls-studio/package.json`)
+- [npm](https://docs.npmjs.com/) (lockfile: `atls-studio/package-lock.json`)
 
 ### Install and Run
 
 ```bash
 cd atls-studio
-pnpm install
-pnpm tauri dev
+npm install
+npm run tauri:dev
 ```
 
 ### Build
 
 ```bash
-pnpm tauri build
+npm run tauri:build
 ```
 
-## Project Structure
+## Project Structure (app package)
+
+From **`atls-studio/`** (the nested app directory):
 
 ```
-atls-studio/
-├── src/                    # TypeScript frontend
-│   ├── components/         # React UI components
-│   ├── hooks/              # React hooks (chat persistence, etc.)
-│   ├── prompts/            # Cognitive Core, tool reference, mode prompts
-│   ├── services/           # Core services
-│   │   ├── aiService.ts    # Prompt assembly, streaming, round loop
-│   │   ├── contextFormatter.ts  # Working memory formatting
-│   │   ├── hashProtocol.ts # HPP visibility tracking
-│   │   ├── historyCompressor.ts # Hash-reference deflation
-│   │   ├── freshnessPreflight.ts # Rebase and staleness detection
-│   │   ├── promptMemory.ts # Stage budgets and classification
-│   │   └── batch/          # Batch executor
-│   │       ├── executor.ts # Step dispatch and dataflow
-│   │       ├── handlers/   # Per-operation handlers
-│   │       ├── intents/    # Intent macro expansion
-│   │       └── snapshotTracker.ts # File revision tracking
-│   ├── stores/             # Zustand stores
-│   │   └── contextStore.ts # Engram lifecycle, memory regions
-│   └── utils/              # Hash computation, ref parsers
-├── src-tauri/
-│   └── src/
-│       └── lib.rs          # Rust backend (file I/O, search, edits, verify)
-└── docs/                   # Architecture documentation
+atls-studio/                 # app package — cd here for npm run …
+├── src/                     # TypeScript frontend
+│   ├── components/          # React UI components
+│   ├── hooks/               # React hooks (chat persistence, etc.)
+│   ├── prompts/             # Cognitive Core, tool reference, mode prompts
+│   ├── services/            # Core services
+│   │   ├── aiService.ts     # Prompt assembly, streaming, round loop
+│   │   ├── contextFormatter.ts
+│   │   ├── hashProtocol.ts
+│   │   ├── historyCompressor.ts
+│   │   ├── freshnessPreflight.ts
+│   │   ├── promptMemory.ts
+│   │   └── batch/           # Batch executor (handlers, intents, executor)
+│   ├── stores/
+│   └── utils/
+├── src-tauri/src/           # Rust backend (many modules; see docs/tauri-commands.md)
+└── package.json
 ```
+
+Repo-level **`docs/`** (next to the `atls-studio/` app folder) holds the architecture deep-dives linked from the table above.
 
 ## License
 

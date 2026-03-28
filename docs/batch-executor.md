@@ -33,13 +33,15 @@ interface Step {
 
 ## Operation Families
 
+The authoritative list of `use` strings is [`atls-studio/src/services/batch/families.ts`](../atls-studio/src/services/batch/families.ts) (`OPERATION_FAMILIES`); the batch tool reference builds its “Operation Families” block from that file. The table below summarizes the same surface.
+
 | Family | Operations | Purpose |
 |--------|-----------|---------|
-| **discover** | `search.code`, `search.symbol`, `search.usage`, `search.similar`, `search.issues`, `search.patterns` | Find code by query, symbol, pattern |
+| **discover** | `search.code`, `search.symbol`, `search.usage`, `search.similar`, `search.issues`, `search.patterns`, `search.memory` | Find code by query, symbol, pattern, or in-memory regions |
 | **understand** | `read.context`, `read.shaped`, `read.lines`, `read.file`, `analyze.deps`, `analyze.calls`, `analyze.structure`, `analyze.impact`, `analyze.blast_radius`, `analyze.extract_plan` | Load and comprehend code |
 | **change** | `change.edit`, `change.create`, `change.delete`, `change.refactor`, `change.rollback`, `change.split_module` | Modify code with preimage verification |
 | **verify** | `verify.build`, `verify.test`, `verify.lint`, `verify.typecheck` | Validate changes against toolchain |
-| **session** | `session.plan`, `session.advance`, `session.status`, `session.pin`, `session.unpin`, `session.compact`, `session.unload`, `session.drop`, `session.recall`, `session.stage`, `session.unstage`, `session.bb.write`, `session.bb.read`, `session.bb.delete`, `session.bb.list`, `session.rule`, `session.compact_history`, `session.stats`, `session.emit`, `session.shape`, `session.load` | Manage memory, tasks, and session state |
+| **session** | `session.plan`, `session.advance`, `session.status`, `session.pin`, `session.unpin`, `session.compact`, `session.unload`, `session.drop`, `session.recall`, `session.stage`, `session.unstage`, `session.bb.write`, `session.bb.read`, `session.bb.delete`, `session.bb.list`, `session.rule`, `session.compact_history`, `session.stats`, `session.debug`, `session.emit`, `session.shape`, `session.load` | Manage memory, tasks, and session state |
 | **annotate** | `annotate.engram`, `annotate.note`, `annotate.link`, `annotate.retype`, `annotate.split`, `annotate.merge`, `annotate.design` | Annotate, connect, and restructure engrams |
 | **delegate** | `delegate.retrieve`, `delegate.design`, `delegate.code`, `delegate.test` | Dispatch cheaper sub-models (engram-first subagents; see [subagents.md](./subagents.md)) |
 | **intent** | `intent.understand`, `intent.edit`, `intent.edit_multi`, `intent.investigate`, `intent.diagnose`, `intent.survey`, `intent.refactor`, `intent.create`, `intent.test`, `intent.search_replace`, `intent.extract` | Macro operations that expand to primitives |

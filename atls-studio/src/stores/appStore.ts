@@ -78,10 +78,10 @@ function generateTitle(messages: Message[]): string {
   if (!text) return 'New Conversation';
   
   // Take first line, then truncate to reasonable length
-  const firstLine = text.split('\n')[0] || text;
-  const words = firstLine.split(' ').filter(w => w.length > 0);
+  const firstLine = (text.split('\n')[0] || text).trim();
+  const words = firstLine.split(/\s+/).filter(Boolean);
   if (words.length === 0) return 'New Conversation';
-  
+
   const title = words.slice(0, 6).join(' ');
   return title.length > TITLE_MAX_LENGTH ? title.substring(0, TITLE_MAX_LENGTH - 3) + '...' : title;
 }
@@ -776,9 +776,12 @@ export const useAppStore = create<AppState>((set) => ({
       } else {
         // Find position of closed tab in original array, pick neighbor in filtered array
         const idx = state.openFiles.indexOf(path);
-        // idx-1 maps to the same index in newOpenFiles since the closed tab is removed
-        // Use Math.min to clamp to the last valid index
-        newActiveFile = newOpenFiles[Math.min(idx, newOpenFiles.length - 1)] ?? null;
+        const closedIdx = state.openFiles.indexOf(path);
+        // After removing the closed file, prefer the tab to its left (closedIdx - 1),
+        // falling back to the tab that slid into its position (closedIdx), then null.
+        const preferredIdx = Math.min(closedIdx, newOpenFiles.length - 1);
+        const fallbackIdx = Math.max(0, closedIdx - 1);
+        newActiveFile = newOpenFiles[preferredIdx] ?? newOpenFiles[fallbackIdx] ?? null;
       }
     }
     return { openFiles: newOpenFiles, activeFile: newActiveFile };

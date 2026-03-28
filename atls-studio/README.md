@@ -2,6 +2,15 @@
 
 AI-First IDE powered by ATLS - where the AI is the developer and you are the director.
 
+## Repository layout
+
+This file lives in the **app package** folder (`…/atls-studio/atls-studio/` from the clone root). Paths in docs often write `atls-studio/src/…` meaning **this** folder’s `src/`, not the repository root.
+
+| Location | Role |
+|----------|------|
+| **Clone root** | `ARCHITECTURE.md`, `docs/`, `atls-rs/` |
+| **This folder** (`atls-studio/`) | `package.json`, `src/`, `src-tauri/` — **run npm scripts here** |
+
 ## Vision
 
 ATLS Studio is a minimal, purpose-built development environment where ATLS provides the intelligence and Claude provides the conversation. The four-panel layout gives you everything you need to understand and improve your codebase.
@@ -13,6 +22,7 @@ ATLS Studio is a minimal, purpose-built development environment where ATLS provi
 - **Docs index**: [`../docs/README.md`](../docs/README.md)
 - **Subagents** (delegate roles, budgets, scoped HPP): [`../docs/subagents.md`](../docs/subagents.md)
 - **Architecture overview**: [`../ARCHITECTURE.md`](../ARCHITECTURE.md)
+- **Tauri IPC command names**: [`../docs/tauri-commands.md`](../docs/tauri-commands.md)
 
 ### `line_edits` semantics
 
@@ -43,20 +53,20 @@ Edits in `change.edit` / `line_edits` apply **sequentially in array order** (top
 
 ## Tech Stack
 
-- **Tauri 2.0** - Rust-powered native shell, 10x smaller than Electron
-- **React 18** - Modern UI framework
-- **TypeScript** - Type-safe frontend development
-- **Monaco Editor** - VS Code's editor engine
-- **Tailwind CSS** - Utility-first styling
-- **Zustand** - Lightweight state management
-- **ATLS** - AI-native code intelligence (via StudioBridge)
-- **Claude API** - AI chat integration
+- **Tauri 2** — Rust-powered native shell
+- **React 19** — UI
+- **TypeScript** — Frontend
+- **Monaco Editor** — Editor engine
+- **Tailwind CSS** — Styling
+- **Zustand** — State
+- **ATLS** — Code intelligence via the in-process Tauri backend (`atls-core` in `../../atls-rs/crates/atls-core`)
+- **Claude API** (and other providers) — Chat streaming through Rust adapters
 
 ## Prerequisites
 
-1. **Rust** - [Install Rust](https://www.rust-lang.org/learn/get-started)
-2. **Node.js** - Version 20 or later
-3. **ATLS** - The parent ATLS project
+1. **Rust** — [Install Rust](https://www.rust-lang.org/learn/get-started)
+2. **Node.js** — 20 or later (see `engines` in `package.json`)
+3. **Engine checkout** — `atls-rs` is included in this repository; no separate ATLS npm package is required to build the app.
 
 ## Getting Started
 
@@ -70,7 +80,7 @@ npm install
 ### Development Mode
 
 ```bash
-npm run tauri dev
+npm run tauri:dev
 ```
 
 This starts the Vite dev server and launches the Tauri window.
@@ -78,7 +88,7 @@ This starts the Vite dev server and launches the Tauri window.
 ### Build for Production
 
 ```bash
-npm run tauri build
+npm run tauri:build
 ```
 
 Creates platform-specific installers in `src-tauri/target/release/bundle/`.
@@ -98,27 +108,27 @@ npm run test        # Frontend tests (Vitest)
 npm run test:all    # Frontend + Rust backend tests
 ```
 
-HPP validation tests (parser, materialization, ref formatting) run as part of `npm run test` via `src/__tests__/hpp-validation.test.ts`. A standalone script `test-hpp-validation.ts` exists at the workspace root for manual runs (`npx tsx test-hpp-validation.ts` from repo root).
+HPP validation (parser, materialization, ref formatting) runs as part of `npm run test` via [`src/__tests__/hpp-validation.test.ts`](src/__tests__/hpp-validation.test.ts).
 
 ## Project Structure
 
 ```
-atls-studio/
-├── src/                 # React frontend
+atls-studio/              # this app package
+├── src/                  # React frontend
 │   ├── components/
-│   │   ├── FileExplorer/    # File tree browser
-│   │   ├── CodeViewer/      # Monaco editor
-│   │   ├── AtlsPanel/       # Issues and fixes
-│   │   └── AiChat/          # Claude chat interface
-│   ├── stores/          # Zustand state
-│   ├── hooks/           # Custom React hooks
-│   ├── App.tsx          # Main app layout
-│   └── main.tsx         # Entry point
-├── src-tauri/           # Rust backend
+│   │   ├── FileExplorer/
+│   │   ├── CodeViewer/
+│   │   ├── AtlsPanel/
+│   │   └── AiChat/
+│   ├── stores/
+│   ├── hooks/
+│   ├── App.tsx
+│   └── main.tsx
+├── src-tauri/            # Rust backend (see ../docs/tauri-backend.md, ../docs/tauri-commands.md)
 │   ├── src/
-│   │   └── lib.rs       # Tauri commands
-│   └── Cargo.toml       # Rust dependencies
-├── tailwind.config.js   # Tailwind theme
+│   │   └── lib.rs        # Tauri entry + command registration
+│   └── Cargo.toml
+├── tailwind.config.js
 └── package.json
 ```
 
@@ -153,10 +163,10 @@ atls-studio/
 
 ATLS Studio uses AI-powered fixes via `edit(line_edits)` instead of pre-defined auto-fixers. When issues are detected:
 
-1. **Find issues** - `find_issues()` detects code issues across your project
-2. **Ask AI** - Chat with Claude about the issues
-3. **AI generates fix** - Claude analyzes context and generates appropriate fixes
-4. **Apply via edit** - Fixes are applied through line-level edits with symbol anchors
+1. **Find issues** — `find_issues` / batch `search.issues` detects code issues across your project
+2. **Ask AI** — Chat with Claude about the issues
+3. **AI generates fix** — Claude analyzes context and generates appropriate fixes
+4. **Apply via edit** — Fixes are applied through line-level edits with symbol anchors
 
 This approach provides more contextual, intelligent fixes compared to rigid pattern-based auto-fixers.
 
@@ -205,22 +215,16 @@ refactor(action:'execute', extract:'fn(myFunc)', from:'h:SOURCE', to:'target.ts'
 
 This automatically scaffolds imports, adds export keywords, removes from source, and rewires consumer imports.
 
-## Tauri Commands
+## Tauri commands (examples)
 
-The Rust backend provides these commands via IPC:
+The Rust backend exposes many IPC commands. A few common names:
 
-```rust
-// File system
-get_file_tree(path: String) -> Vec<FileNode>
-read_file_contents(path: String) -> String
-write_file_contents(path: String, contents: String)
-
-// ATLS bridge
-scan_project(root_path: String, full_rescan: bool)
-get_scan_status() -> ScanStatus
-get_issue_counts() -> IssueCounts
-find_issues(root_path: String, category: Option<String>, severity: Option<String>) -> Vec<Issue>
+```text
+get_file_tree, read_file_contents, write_file_contents
+scan_project, find_issues, get_scan_status, get_issue_counts
 ```
+
+This is **not** an exhaustive list. See [`../docs/tauri-commands.md`](../docs/tauri-commands.md) for the full inventory aligned with `src-tauri/src/lib.rs`, and [`../docs/tauri-backend.md`](../docs/tauri-backend.md) for module boundaries.
 
 ## Configuration
 
@@ -246,22 +250,8 @@ colors: {
 
 ## Integration with ATLS
 
-ATLS Studio communicates with the ATLS StudioBridge API:
-
-```typescript
-// From ATLS
-import { StudioBridge } from 'atls/studio';
-
-const bridge = new StudioBridge('/path/to/project');
-
-bridge.on('scan:progress', (data) => {
-  console.log(`Scanning: ${data.percent}%`);
-});
-
-await bridge.initialize();
-const issues = await bridge.findIssues({ severity: 'high' });
-```
+This desktop app talks to Rust via **Tauri `invoke()`** (see `src/services/` and `src/hooks/useAtls.ts`). The npm package `atls/studio` / `StudioBridge` is a **separate** integration surface for embedding ATLS outside this repo; it is **not** used by this application.
 
 ## License
 
-See LICENSE file in parent ATLS project.
+See [`../LICENSE`](../LICENSE) at the repository root.

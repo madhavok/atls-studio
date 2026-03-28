@@ -76,6 +76,7 @@ The Tauri backend is not the core engine itself. It is the desktop host and inte
 ## Related Documents
 
 - `ARCHITECTURE.md`
+- [`docs/tauri-commands.md`](./tauri-commands.md) — enumerated `invoke` command names (kept in sync with `lib.rs` `generate_handler`)
 - `docs/studio-app-shell.md`
 - `docs/session-persistence.md`
 - `docs/atls-engine.md`

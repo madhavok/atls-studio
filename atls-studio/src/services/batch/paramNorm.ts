@@ -295,10 +295,20 @@ export function normalizeStepParams(
     out.symbol_names = [stripSymbolPrefix(out.symbol_names)];
   }
 
-  // Pass 4: validate derived_from paths for bb.write (reject bogus identities)
+  // Pass 4: validate derived_from for bb.write — hash refs (h:…), { ref }, or real file paths
   if (op === 'session.bb.write' && Array.isArray(out.derived_from)) {
-    out.derived_from = (out.derived_from as unknown[])
-      .filter(v => typeof v === 'string' && validateSourceIdentity(v));
+    out.derived_from = (out.derived_from as unknown[]).filter((v) => {
+      if (v != null && typeof v === 'object' && typeof (v as { ref?: string }).ref === 'string') {
+        return (v as { ref: string }).ref.trim().length > 0;
+      }
+      if (typeof v === 'string') {
+        const t = v.trim();
+        if (!t) return false;
+        if (t.startsWith('h:')) return true;
+        return validateSourceIdentity(t) !== undefined;
+      }
+      return false;
+    });
   }
 
   return out;
