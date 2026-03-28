@@ -285,7 +285,7 @@ const AgentStatusCard = memo(function AgentStatusCard() {
   const isGenerating = useAppStore((s) => s.isGenerating);
   const [expanded, setExpanded] = useState(false);
   const { runningTools, completedTools, failedTools } = useMemo(() => ({
-    runningTools: progress.recentTools.filter((t) => t.status === 'running'),
+    runningTools: progress.recentTools.filter((t) => t.status === 'running' || t.status === 'pending'),
     completedTools: progress.recentTools.filter((t) => t.status === 'completed'),
     failedTools: progress.recentTools.filter((t) => t.status === 'failed'),
   }), [progress.recentTools]);

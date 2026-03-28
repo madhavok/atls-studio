@@ -86,6 +86,7 @@ import type {
   AgentPendingAction,
   AgentPendingActionSource,
   AgentPendingActionState,
+  AgentToolSummary,
   ContextUsage,
   Message,
   MessagePart,
@@ -1931,11 +1932,7 @@ async function streamChatViaTauri(
         let toolStatus: 'completed' | 'failed' = 'completed';
 
         // Pre-register batch step summaries so UI shows pending spinners immediately
-        let batchStepSummaries: Array<{
-          id: string; parentId: string; name: string; detail: string;
-          round: number; stepId: string; stepIndex: number; totalSteps: number;
-          status: 'pending' | 'running' | 'completed' | 'failed';
-        }> | undefined;
+        let batchStepSummaries: AgentToolSummary[] | undefined;
         const partialResultLines: string[] = [];
 
         if (tc.name === 'batch') {
@@ -1979,7 +1976,7 @@ async function streamChatViaTauri(
                     if (idx < partialResultLines.length) {
                       const line = partialResultLines[idx];
                       const failed = line?.includes('ERROR') || line?.includes('BLOCKED');
-                      return { ...s, status: (failed ? 'failed' : 'completed') as const };
+                      return { ...s, status: (failed ? 'failed' : 'completed') as AgentToolSummary['status'] };
                     }
                     if (idx === partialResultLines.length) {
                       return { ...s, status: 'running' as const };
@@ -1998,8 +1995,6 @@ async function streamChatViaTauri(
             : undefined;
 
           const execution = await executeToolCallDetailed(tc.name, tc.args, {
-            swarmTerminalId: options?.swarmTerminalId,
-            fileClaims: options?.fileClaims,
             onBatchStepProgress,
           });
           result = execution.displayText;

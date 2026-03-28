@@ -378,7 +378,7 @@ export interface AgentToolSummary {
   id: string;
   name: string;
   detail: string;
-  status: 'running' | 'completed' | 'failed';
+  status: 'pending' | 'running' | 'completed' | 'failed';
   round: number;
   parentId?: string;
   stepId?: string;
