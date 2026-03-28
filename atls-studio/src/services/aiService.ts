@@ -250,42 +250,92 @@ function deriveVerificationLabel(artifact: { classification?: string; summary?: 
 
 
 /**
- * Detect if user message contains terminal output (build errors, test failures)
- * that contradicts cached passing verify artifacts. Conservative patterns only:
- * requires multiple error indicators or explicit build/test failure signals.
+ * Extract file paths from terminal error output. Returns normalized forward-slash
+ * paths that can be intersected with verify artifact `filesObserved`.
  */
-function detectContradictingTerminalOutput(text: string): boolean {
-  if (!text || text.length < 20) return false;
+function extractFilePathsFromErrors(text: string): string[] {
+  const FILE_PATH_RE = /(?:^|\s|['"`(])([a-zA-Z]:[\\/]|\.{0,2}[\\/]|src[\\/]|lib[\\/]|app[\\/]|packages[\\/])([^\s:'"`)]+\.(?:ts|tsx|js|jsx|rs|py|css|html|json|toml|yaml|yml))/gm;
+  const LINE_PREFIXED_RE = /^\s*(?:-->|error\[?\w*\]?:?\s+).*?([a-zA-Z]:[/\\][^\s:]+|(?:\.{0,2}[/\\])?(?:src|lib|app|packages)[/\\][^\s:]+)/gm;
+  const seen = new Set<string>();
+  const paths: string[] = [];
+  for (const re of [FILE_PATH_RE, LINE_PREFIXED_RE]) {
+    re.lastIndex = 0;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(text)) !== null) {
+      const raw = (m[2] ? m[1] + m[2] : m[1]).replace(/\\/g, '/').replace(/['"`)]+$/, '');
+      const norm = raw.toLowerCase();
+      if (!seen.has(norm)) {
+        seen.add(norm);
+        paths.push(raw);
+      }
+    }
+  }
+  return paths;
+}
+
+/**
+ * Detect if user message contains terminal output (build errors, test failures)
+ * that contradicts cached passing verify artifacts.
+ *
+ * Returns extracted file paths on match (empty array = detected but no files extracted).
+ * Returns null when no contradiction detected.
+ *
+ * Requires structural evidence: either a fenced code block / indented block containing
+ * multiple error indicators, or a single strong header signal. Plain prose mentioning
+ * "error" or "failed" alone does not trigger.
+ */
+function detectContradictingTerminalOutput(text: string): { files: string[] } | null {
+  if (!text || text.length < 20) return null;
   const hasPassingVerify = (() => {
     for (const artifact of useContextStore.getState().verifyArtifacts.values()) {
       if (artifact.ok && !artifact.stale) return true;
     }
     return false;
   })();
-  if (!hasPassingVerify) return false;
+  if (!hasPassingVerify) return null;
 
-  const lower = text.toLowerCase();
+  const terminalBlock = extractTerminalBlock(text);
+  const probe = terminalBlock ?? text;
+
   const errorSignals = [
-    /error\s*(?:ts|rs|cs)?\d{2,}/i,          // error TS2345, error[E0308], etc.
-    /\berror\[E\d+\]/,                        // Rust error codes
-    /^error:/m,                                // "error:" at start of line
-    /\bfailed\b.*\b(?:build|compile|test)/i,   // "failed to build", "failed test"
-    /\b(?:build|compile|test)\b.*\bfailed\b/i, // "build failed", "test failed"
-    /exit\s*code\s*[1-9]\d*/i,                // "exit code 1"
-    /\bFAIL\b.*\.(?:ts|tsx|js|jsx|rs|py)/,    // "FAIL src/foo.test.ts"
-    /npm\s+ERR!/,                             // npm errors
-    /cargo\s+(?:build|test).*error/i,          // "cargo build" + error
-    /\bpanic(?:ked)?\b.*\bat\b/i,             // Rust panic
+    /error\s*(?:ts|rs|cs)?\d{2,}/i,
+    /\berror\[E\d+\]/,
+    /^error:/m,
+    /\bfailed\b.*\b(?:build|compile|test)/i,
+    /\b(?:build|compile|test)\b.*\bfailed\b/i,
+    /exit\s*code\s*[1-9]\d*/i,
+    /\bFAIL\b.*\.(?:ts|tsx|js|jsx|rs|py)/,
+    /npm\s+ERR!/,
+    /cargo\s+(?:build|test).*error/i,
+    /\bpanic(?:ked)?\b.*\bat\b/i,
   ];
   let matches = 0;
   for (const pattern of errorSignals) {
-    if (pattern.test(text)) matches++;
-    if (matches >= 2) return true;
+    if (pattern.test(probe)) matches++;
+    if (matches >= 2) {
+      return { files: extractFilePathsFromErrors(probe) };
+    }
   }
-  // Single strong signal: explicit "build failed" or "FAILED" header
-  if (/^(?:FAILED|BUILD FAILED|Tests? FAILED)/mi.test(text)) return true;
+  if (/^(?:FAILED|BUILD FAILED|Tests? FAILED)/mi.test(probe)) {
+    return { files: extractFilePathsFromErrors(probe) };
+  }
 
-  return false;
+  return null;
+}
+
+/**
+ * Try to isolate a terminal/code block from user text. Returns the block content
+ * if a fenced block (```) or consistently-indented block (4+ spaces / tab) is found,
+ * otherwise null — meaning we fall back to the full text but with higher signal
+ * confidence since only structured pastes get through.
+ */
+function extractTerminalBlock(text: string): string | null {
+  const fenced = text.match(/```[\s\S]*?\n([\s\S]*?)```/);
+  if (fenced) return fenced[1];
+  const lines = text.split('\n');
+  const indented = lines.filter(l => /^(?:\t|    )/.test(l));
+  if (indented.length >= 3) return indented.join('\n');
+  return null;
 }
 
 function getLatestUserText(messages: ChatMessage[]): string {
@@ -329,6 +379,18 @@ function mergePendingAction(
   if (nextPriority > currentPriority) return next;
   if (nextPriority === currentPriority && next.summary.length > current.summary.length) return next;
   return current;
+}
+
+const VERIFY_STALE_RE = /\bverify\b.*\bstale\b|\bstale\b.*\bre-verify\b/i;
+
+function buildCompletionGateNudge(blocker: string | null): string {
+  if (blocker && VERIFY_STALE_RE.test(blocker)) {
+    return (
+      'Verification artifacts are stale. You MUST re-run verification before finishing. ' +
+      'Call batch with a verify.build step (and verify.test if applicable) on the affected files, then provide your summary.'
+    );
+  }
+  return 'You paused before finishing. Continue any remaining implementation first. When the work is actually complete, run final verification and then provide a brief summary.';
 }
 
 function buildPendingActionBlock(): string {
@@ -1671,7 +1733,7 @@ async function streamChatViaTauri(
           if (completionOnlyBlocked) {
             if (autoContinueCount < maxAutoContinues) {
               autoContinueCount++;
-              console.log(`[aiService] Natural stop hit completion gate, auto-continuing (${autoContinueCount}/${maxAutoContinues})`);
+              console.log(`[aiService][telemetry] auto-continue: trigger=st_done_completion_gate, round=${round}, count=${autoContinueCount}/${maxAutoContinues}, blocker=${runtimeCompletionBlocker}`);
               useAppStore.getState().setAgentProgress({
                 status: 'auto_continuing',
                 autoContinueCount,
@@ -1681,7 +1743,7 @@ async function streamChatViaTauri(
               }
               conversationHistory.push({
                 role: 'user',
-                content: 'You are not ready to finish yet. If planned implementation work remains, continue it now. If the implementation is complete, run final verification before finishing.',
+                content: buildCompletionGateNudge(runtimeCompletionBlocker),
               });
               continue;
             }
@@ -1729,7 +1791,7 @@ async function streamChatViaTauri(
           // Model was cut off mid-output — always auto-continue
           if (autoContinueCount < maxAutoContinues) {
             autoContinueCount++;
-            console.log(`[aiService] max_tokens truncation, auto-continuing (${autoContinueCount}/${maxAutoContinues})`);
+            console.log(`[aiService][telemetry] auto-continue: trigger=max_tokens, round=${round}, count=${autoContinueCount}/${maxAutoContinues}, blocker=${runtimeCompletionBlocker}`);
 
             useAppStore.getState().setAgentProgress({
               status: 'auto_continuing',
@@ -1758,7 +1820,7 @@ async function streamChatViaTauri(
           if (completionOnlyBlocked) {
             if (autoContinueCount < maxAutoContinues) {
               autoContinueCount++;
-              console.log(`[aiService] end_turn hit completion gate, auto-continuing (${autoContinueCount}/${maxAutoContinues})`);
+              console.log(`[aiService][telemetry] auto-continue: trigger=end_turn_completion_gate, round=${round}, count=${autoContinueCount}/${maxAutoContinues}, blocker=${runtimeCompletionBlocker}`);
               useAppStore.getState().setAgentProgress({
                 status: 'auto_continuing',
                 autoContinueCount,
@@ -1768,7 +1830,7 @@ async function streamChatViaTauri(
               }
               conversationHistory.push({
                 role: 'user',
-                content: 'You paused before finishing. Continue any remaining implementation first. When the work is actually complete, run final verification and then provide a brief summary.',
+                content: buildCompletionGateNudge(runtimeCompletionBlocker),
               });
               continue;
             }
@@ -2014,8 +2076,12 @@ async function streamChatViaTauri(
             roundPendingAction = mergePendingAction(roundPendingAction, execution.meta.pendingAction);
           }
           if (execution.meta && 'completionBlocker' in execution.meta) {
+            const prev = runtimeCompletionBlocker;
             runtimeCompletionBlocker = execution.meta.completionBlocker ?? null;
             useAppStore.getState().setAgentProgress({ canTaskComplete: runtimeCompletionBlocker == null });
+            if (runtimeCompletionBlocker !== prev) {
+              console.log(`[aiService][telemetry] completionBlocker changed: ${prev ?? '(none)'} → ${runtimeCompletionBlocker ?? '(none)'} (round=${round}, tool=${tc.name})`);
+            }
           }
           if (tc.name === 'task_complete') {
             runtimeCompletionBlocker = null;
@@ -3197,10 +3263,15 @@ export async function streamChat(
       createPendingActionState('state_changed', 'user', `New user instruction: ${excerptText(latestUserText)}`),
     );
     // Freshness gate: detect terminal output contradicting cached verify
-    if (detectContradictingTerminalOutput(latestUserText)) {
-      const downgraded = useContextStore.getState().downgradeVerifyToStale();
+    const contradiction = detectContradictingTerminalOutput(latestUserText);
+    if (contradiction) {
+      const scopeFiles = contradiction.files.length > 0 ? contradiction.files : undefined;
+      const downgraded = useContextStore.getState().downgradeVerifyToStale(scopeFiles);
       if (downgraded > 0) {
-        console.log(`[aiService] User evidence contradicts ${downgraded} verify artifact(s) — marked stale`);
+        console.log(
+          `[aiService] User evidence contradicts ${downgraded} verify artifact(s) — marked stale` +
+          (scopeFiles ? ` (scoped to ${scopeFiles.length} file(s): ${scopeFiles.slice(0, 3).join(', ')}${scopeFiles.length > 3 ? '…' : ''})` : ' (unscoped — no file paths extracted)'),
+        );
       }
     }
   }
