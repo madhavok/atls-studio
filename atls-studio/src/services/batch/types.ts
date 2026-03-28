@@ -494,6 +494,7 @@ export type FreshnessCause =
   | 'same_file_prior_edit'
   | 'external_file_change'
   | 'watcher_event'
+  | 'session_restore'
   | 'unknown';
 export type EngramOrigin = 'read' | 'edit' | 'edit-refresh' | 'stage' | 'derived';
 

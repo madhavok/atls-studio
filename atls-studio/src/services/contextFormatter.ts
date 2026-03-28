@@ -86,7 +86,6 @@ function formatSuspectHint(
   origin?: string,
 ): string {
   if (suspectSince == null && !freshness && !freshnessCause) return '';
-  if (origin === 'edit-refresh') return '';
   if (freshness === 'shifted' || freshnessCause === 'same_file_prior_edit') {
     return ' (safe positional drift after your previous edit)';
   }
@@ -344,7 +343,7 @@ export function formatWorkingMemory(input: FormatterInput): string {
         const compactIndicator = chunk.compacted ? '[C] ' : '';
         const liveIndicator = chunk.origin === 'edit-refresh' ? '[LIVE] ' : '';
         const summaryHint = chunk.summary ? ` — ${chunk.summary}` : '';
-        const suspectHint = chunk.compacted ? '' : formatSuspectHint(chunk.suspectSince, chunk.freshness, chunk.freshnessCause, chunk.origin);
+        const suspectHint = formatSuspectHint(chunk.suspectSince, chunk.freshness, chunk.freshnessCause, chunk.origin);
         const tag = `${compactIndicator}${liveIndicator}${pinIndicator}<<h:${chunk.shortHash} tk:${chunk.tokens} ${chunk.type}>> ${chunk.source || ''}${suspectHint}${formatRebindHint(chunk.lastRebind)}${summaryHint}`;
         lines.push(tag.trim());
         const metaLines = formatEngramMeta(chunk);

@@ -9,6 +9,7 @@ import { useRef, useCallback, useEffect } from 'react';
 import { transformIssues } from './useAtlsTransforms';
 import { normPath } from './useAtlsPaths';
 import { freshnessTelemetry } from '../services/freshnessTelemetry';
+import { resetProjectTreeCache } from '../services/aiService';
 
 // ---------------------------------------------------------------------------
 // Own-write suppression: paths recently written by ATLS edits are excluded
@@ -335,6 +336,8 @@ export function useAtls() {
         const { path, revision } = ev.payload;
         pendingChangedPathsRef.current.delete(normPath(path).toLowerCase());
         const stats = useContextStore.getState().reconcileSourceRevision(path, revision);
+        useContextStore.getState().invalidateArtifactsForPaths([path]);
+        useContextStore.getState().bumpWorkspaceRev([path]);
         if (stats.total > 0) {
           console.log('[useAtls] canonical_revision_changed:', path, stats);
         }
@@ -377,6 +380,9 @@ export function useAtls() {
           ctxState.markEngramsSuspect(externalPaths, 'watcher_event');
           ctxState.bumpWorkspaceRev(externalPaths);
           ctxState.invalidateArtifactsForPaths(externalPaths);
+          for (const path of externalPaths) {
+            ctxState.supersedeBlackboardForPath(path, '');
+          }
           useRetentionStore.getState().evictMutationSensitive();
         } else {
           pendingCoarseRefreshRef.current = true;
@@ -385,6 +391,8 @@ export function useAtls() {
           ctxState.syncFreshnessMirror();
           ctxState.invalidateAllAwarenessCache();
           ctxState.bumpWorkspaceRev();
+          ctxState.downgradeVerifyToStale();
+          resetProjectTreeCache();
           useRetentionStore.getState().evictMutationSensitive();
           console.warn('[useAtls] file_tree_changed missing exact paths; bounded invalidation (awareness + workspace rev) — not marking all engrams suspect');
         }

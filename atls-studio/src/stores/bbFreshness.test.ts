@@ -322,3 +322,46 @@ describe('getBlackboardEntryWithMeta', () => {
     expect(meta!.supersededAt).toBeGreaterThan(0);
   });
 });
+
+// ---------------------------------------------------------------------------
+// BB Kind Extensions (summary, fixplan)
+// ---------------------------------------------------------------------------
+
+describe('BB Kind Extensions', () => {
+  it('parseBbKey("summary:test") returns kind=summary', () => {
+    const result = parseBbKey('summary:test');
+    expect(result).toEqual({ kind: 'summary', basename: 'test' });
+  });
+
+  it('parseBbKey("fixplan:query.ts") returns kind=fixplan', () => {
+    const result = parseBbKey('fixplan:query.ts');
+    expect(result).toEqual({ kind: 'fixplan', basename: 'query.ts' });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Identity Validation in setBlackboardEntry
+// ---------------------------------------------------------------------------
+
+describe('setBlackboardEntry identity validation', () => {
+  beforeEach(() => resetStore());
+
+  it('filters out bogus derivedFrom paths like "results.0.file_path"', () => {
+    useContextStore.getState().setBlackboardEntry('plan:test', 'content', {
+      derivedFrom: ['results.0.file_path'],
+    });
+    const entry = getEntry('plan:test');
+    expect(entry).toBeDefined();
+    expect(entry!.filePath).toBeUndefined();
+    expect(entry!.derivedFrom).toBeUndefined();
+  });
+
+  it('preserves valid derivedFrom paths', () => {
+    useContextStore.getState().setBlackboardEntry('plan:foo', 'content', {
+      derivedFrom: ['src/foo.ts'],
+    });
+    const entry = getEntry('plan:foo');
+    expect(entry).toBeDefined();
+    expect(entry!.derivedFrom).toEqual(['src/foo.ts']);
+  });
+});

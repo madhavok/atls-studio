@@ -11,6 +11,7 @@ import { safeListen } from '../utils/tauri';
 import type { ContextUsage, StreamChunk, AIProvider } from '../stores/appStore';
 import { useAppStore } from '../stores/appStore';
 import { useContextStore } from '../stores/contextStore';
+import { canSteerExecution } from './universalFreshness';
 import { useCostStore, calculateCost } from '../stores/costStore';
 import { useRoundHistoryStore, type RoundSnapshot } from '../stores/roundHistoryStore';
 import { estimateTokens } from '../utils/contextHash';
@@ -302,6 +303,7 @@ function extractPinnedContent(preExistingHashes: Set<string>, preExistingSources
   // Priority 1: staged snippets (most precise — specific line ranges)
   for (const snippet of ctx.stagedSnippets.values()) {
     if (snippet.content) {
+      if (!canSteerExecution({ stageState: snippet.stageState, freshness: snippet.freshness })) continue;
       if (preExistingSources && snippet.source && preExistingSources.has(snippet.source)) continue;
       blocks.push({
         path: snippet.source || 'unknown',
@@ -315,6 +317,7 @@ function extractPinnedContent(preExistingHashes: Set<string>, preExistingSources
   // Priority 2: pinned chunks in working memory
   for (const chunk of ctx.chunks.values()) {
     if (chunk.pinned && chunk.content) {
+      if (chunk.suspectSince != null || chunk.freshness === 'suspect' || chunk.freshness === 'changed') continue;
       if (preExistingSources && chunk.source && preExistingSources.has(chunk.source)) continue;
       const alreadyStaged = blocks.some(b => b.path === chunk.source);
       if (!alreadyStaged) {
@@ -412,6 +415,7 @@ export async function executeRetriever(
   const ctxSnapshot = useContextStore.getState();
   const preExistingSources = new Set(
     Array.from(ctxSnapshot.stagedSnippets.values())
+      .filter(s => canSteerExecution({ stageState: s.stageState, freshness: s.freshness }))
       .map(s => s.source).filter(Boolean) as string[]
   );
   const alreadyStagedStr = preExistingSources.size > 0

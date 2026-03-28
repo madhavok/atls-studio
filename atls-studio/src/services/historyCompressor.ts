@@ -320,6 +320,10 @@ export function extractToolDescription(
  * Used by eager deflation to match engrams created by batch handlers that
  * may use types like 'smart', 'raw', 'file' rather than 'result'.
  */
+function looksLikeFilePath(s: string): boolean {
+  return /^[\w./-]/.test(s) && (s.includes('/') || s.includes('\\')) && /\.\w+/.test(s);
+}
+
 function findExistingChunkBySource(
   store: ReturnType<typeof useContextStore.getState>,
   description: string,
@@ -328,6 +332,15 @@ function findExistingChunkBySource(
   let best: { hash: string; shortHash: string; digest?: string; compacted: boolean; lastAccessed: number } | null = null;
   for (const [, chunk] of store.chunks) {
     if (!chunk.source || chunk.source.toLowerCase() !== descNorm) continue;
+
+    // Revision guard: skip stale engrams whose source file has changed
+    if (chunk.sourceRevision && chunk.source && looksLikeFilePath(chunk.source)) {
+      const awareness = store.getAwareness(chunk.source);
+      if (awareness?.snapshotHash && awareness.snapshotHash !== chunk.sourceRevision) {
+        continue;
+      }
+    }
+
     if (!best
         || (!chunk.compacted && best.compacted)
         || (chunk.compacted === best.compacted && chunk.lastAccessed > best.lastAccessed)) {

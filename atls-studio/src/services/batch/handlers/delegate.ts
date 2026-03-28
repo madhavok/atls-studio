@@ -23,10 +23,13 @@ export const handleDelegateRetrieve: OpHandler = async (params, _ctx) => {
       return err('delegate.retrieve: ERROR subagent is disabled');
     }
 
+    const wsRev = (await import('../../../stores/contextStore')).useContextStore.getState().getCurrentRev();
+    const queryWithContext = `${String(params.query || '')} [workspace_rev=${wsRev}]`;
+
     const { executeRetriever } = await import('../../subagentService');
     const result = await executeRetriever({
       type: 'retriever',
-      query: String(params.query || ''),
+      query: queryWithContext,
       focus_files: Array.isArray(params.focus_files) ? params.focus_files as string[] : undefined,
       max_tokens: typeof params.max_tokens === 'number' ? params.max_tokens as number : undefined,
     });

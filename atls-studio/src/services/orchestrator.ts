@@ -234,6 +234,7 @@ Workflow:
 
 class OrchestratorService {
   private activeAgents: Map<string, AgentExecution> = new Map();
+  private dispatchRevs: Map<string, number> = new Map();
   private _isRunning = false;
   private pollInterval: ReturnType<typeof setInterval> | null = null;
   private completionInterval: ReturnType<typeof setInterval> | null = null;
@@ -1510,6 +1511,7 @@ Synthesize the swarm outcome.`;
     const tasksToStart = readyTasks.slice(0, availableSlots);
     
     for (const task of tasksToStart) {
+      this.dispatchRevs.set(task.id, useContextStore.getState().getCurrentRev());
       this.startAgent(task, projectPath, config);
     }
   }
@@ -1715,6 +1717,7 @@ Synthesize the swarm outcome.`;
           agentRole: task.assignedRole,
           taskId: task.id,
           fileClaims: task.fileClaims, // File ownership enforcement
+          swarmSessionId: swarmStore.sessionId || undefined,
         }
       );
       
@@ -1725,6 +1728,16 @@ Synthesize the swarm outcome.`;
         sessionInputTokens + sessionOutputTokens,
         Math.round(sessionCostCents),
       );
+      
+      // Post-completion freshness: bump workspace rev and reconcile owned files
+      useContextStore.getState().bumpWorkspaceRev();
+      for (const file of task.fileClaims || []) {
+        const awareness = useContextStore.getState().getAwareness(file);
+        if (awareness) {
+          useContextStore.getState().reconcileSourceRevision(file, awareness.snapshotHash);
+        }
+      }
+      this.dispatchRevs.delete(task.id);
       
       // Distinguish explicit completion from blocked/incomplete agent exits
       const finalStatus: ChatTaskStatus = taskCompleted
@@ -1858,6 +1871,7 @@ Synthesize the swarm outcome.`;
       execution.abortController.abort();
     }
     this.activeAgents.clear();
+    this.dispatchRevs.clear();
   }
 
   /**

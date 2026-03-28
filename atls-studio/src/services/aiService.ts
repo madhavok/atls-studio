@@ -194,6 +194,7 @@ import { createTauriChatStream } from './chatTransport';
 import { fetchModels, type AIProvider } from './modelFetcher';
 import { parseHashRef } from '../utils/hashRefParsers';
 import { executeWithConcurrency } from './aiConcurrency';
+import { canSteerExecution } from './universalFreshness';
 
 /** Content block types for multimodal messages */
 export type TextContentBlock = { type: 'text'; text: string };
@@ -2286,7 +2287,7 @@ function buildBatchSyntheticToolCalls(result: UnifiedBatchResult, batchArgs: Rec
 async function executeToolCallDetailed(
   toolName: string,
   args: Record<string, unknown>,
-  options?: { swarmTerminalId?: string },
+  options?: { swarmTerminalId?: string; fileClaims?: string[] },
 ): Promise<ToolExecutionResult> {
   console.log(`[aiService] Tool: ${toolName}`, args);
   
@@ -2377,9 +2378,12 @@ async function executeToolCallDetailed(
 export async function executeToolCall(
   toolName: string,
   args: Record<string, unknown>,
-  options?: { swarmTerminalId?: string },
+  options?: { swarmTerminalId?: string; fileClaims?: string[] },
 ): Promise<string> {
-  const result = await executeToolCallDetailed(toolName, args, { swarmTerminalId: options?.swarmTerminalId });
+  const result = await executeToolCallDetailed(toolName, args, {
+    swarmTerminalId: options?.swarmTerminalId,
+    fileClaims: options?.fileClaims,
+  });
   return result.displayText;
 }
 
@@ -2671,7 +2675,8 @@ function buildDynamicContextBlock(
   // STEERING — edit awareness, repair escalation, context pressure
   // -------------------------------------------------------------------------
 
-  const bbEntries = useContextStore.getState().listBlackboardEntries();
+  const bbEntriesRaw = useContextStore.getState().listBlackboardEntries();
+  const bbEntries = bbEntriesRaw.filter(e => canSteerExecution({ state: e.state }));
   const errBasenames = new Set(
     bbEntries.filter(e => e.key.startsWith('err:')).map(e => e.key.slice(4)),
   );
@@ -2710,7 +2715,9 @@ function buildDynamicContextBlock(
       let activeTkSum = 0, staleTkSum = 0;
       for (const c of ctxChunks.values()) {
         if (c.type === 'msg:user' || c.type === 'msg:asst') continue;
-        if (!c.compacted && (c.lastAccessed ?? 0) >= activeCutoff) activeTkSum += c.tokens ?? 0;
+        const fresh = !c.compacted && (c.lastAccessed ?? 0) >= activeCutoff
+          && canSteerExecution({ freshness: c.freshness });
+        if (fresh) activeTkSum += c.tokens ?? 0;
         else if (!c.compacted) staleTkSum += c.tokens ?? 0;
       }
       if (staleTkSum > activeTkSum && staleTkSum > 2000) {
@@ -2862,7 +2869,8 @@ function _buildStaticSystemPrompt(
   // Inject refactor config early for cache key (refactor mode only)
   const refactorPart = mode === 'refactor' ? useRefactorStore.getState().getConfigForPrompt() : '';
   // P0 #1: Check cache — key includes refactor config for invalidation when thresholds change
-  const cacheKey = `${mode}|${shellContext?.os ?? ''}|${shellContext?.shell ?? ''}|${shellContext?.cwd ?? ''}|${atlsReady ?? false}|${provider ?? ''}|${refactorPart}|${entryManifestDepth ?? 'off'}`;
+  const manifestFingerprint = JSON.stringify(entryManifest ?? '').length;
+  const cacheKey = `${mode}|${shellContext?.os ?? ''}|${shellContext?.shell ?? ''}|${shellContext?.cwd ?? ''}|${atlsReady ?? false}|${provider ?? ''}|${refactorPart}|${entryManifestDepth ?? 'off'}|${manifestFingerprint}`;
   if (_cachedStaticPrompt && _cachedStaticPrompt.key === cacheKey) {
     useAppStore.getState().setPromptMetrics(_cachedStaticPrompt.metrics);
     return _cachedStaticPrompt.prompt;
@@ -3010,7 +3018,7 @@ function _buildBlackboardBlock(): string {
   const bbLines: string[] = ['## BLACKBOARD'];
   ctxState.blackboardEntries.forEach((entry, key) => {
     if (key.startsWith('edit:')) return;
-    if (entry.state === 'superseded' || entry.state === 'historical') return;
+    if (!canSteerExecution({ state: entry.state })) return;
     bbLines.push(`${key}: ${entry.content}`);
   });
   if (bbLines.length <= 1) return '';
@@ -3035,6 +3043,9 @@ export function buildDormantBlock(): string {
       const finding = c.annotations?.[0]?.content || c.summary || '';
       if (finding) {
         line += ` — ${finding.length > 80 ? finding.slice(0, 77) + '...' : finding}`;
+      }
+      if (c.suspectSince != null || (c.freshness && c.freshness !== 'fresh')) {
+        line += ' [suspect]';
       }
       dormantLines.push(line);
     }

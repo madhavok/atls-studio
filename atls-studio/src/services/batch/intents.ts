@@ -10,6 +10,7 @@ import type {
   IntentOp, IntentResolver, IntentContext, IntentResult, IntentMetrics,
   Step, StepOutput, ContextStoreApi,
 } from './types';
+import { canSteerExecution } from '../universalFreshness';
 
 // ---------------------------------------------------------------------------
 // Registry
@@ -42,6 +43,7 @@ export function buildIntentContext(
   const staged: Map<string, { source?: string; tokens: number }> = new Map();
   const stagedEntries = s.getStagedEntries();
   for (const [key, entry] of stagedEntries) {
+    if (!canSteerExecution({ stageState: (entry as { stageState?: string }).stageState, freshness: (entry as { freshness?: string }).freshness })) continue;
     staged.set(key, { source: entry.source, tokens: entry.tokens });
   }
 

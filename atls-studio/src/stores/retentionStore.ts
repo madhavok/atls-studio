@@ -23,6 +23,14 @@ export interface RetentionEntry {
   firstSeenAt: number;
   lastSeenAt: number;
   transitions: string[];
+  semanticSignature?: {
+    opKind: string;
+    targetFiles: string[];
+    targetSymbols?: string[];
+    verificationTarget?: string;
+  };
+  traceState: 'active_exemplar' | 'duplicate' | 'distilled';
+  distillSummary?: string;
 }
 
 export type RetentionAction =
@@ -31,6 +39,7 @@ export type RetentionAction =
   | { action: 'collapse'; reason: 'same_outcome'; latestHash: string; occurrenceCount: number };
 
 const MAX_TRANSITIONS = 10;
+const DISTILL_THRESHOLD = 3;
 
 export interface RetentionState {
   entries: Map<string, RetentionEntry>;
@@ -44,6 +53,7 @@ export interface RetentionState {
   getMetrics: () => { readsReused: number; resultsCollapsed: number; transitionsRecorded: number };
   evictByPrefix: (prefix: string) => number;
   evictMutationSensitive: () => number;
+  evictSearchFamily: () => number;
   reset: () => void;
 }
 
@@ -72,6 +82,7 @@ export const useRetentionStore = create<RetentionState>()((set, get) => ({
         firstSeenAt: now,
         lastSeenAt: now,
         transitions: [],
+        traceState: 'active_exemplar',
       };
       set(s => {
         const ne = new Map(s.entries);
@@ -99,6 +110,7 @@ export const useRetentionStore = create<RetentionState>()((set, get) => ({
         occurrenceCount: existing.occurrenceCount + 1,
         lastSeenAt: now,
         transitions,
+        traceState: 'active_exemplar',
       };
       set(s => {
         const ne = new Map(s.entries);
@@ -109,11 +121,16 @@ export const useRetentionStore = create<RetentionState>()((set, get) => ({
     }
 
     // Same outcome — collapse
+    const newCount = existing.occurrenceCount + 1;
     const entry: RetentionEntry = {
       ...existing,
       latestHash: chunkHash,
-      occurrenceCount: existing.occurrenceCount + 1,
+      occurrenceCount: newCount,
       lastSeenAt: now,
+      traceState: newCount >= DISTILL_THRESHOLD ? 'distilled' : 'active_exemplar',
+      distillSummary: newCount >= DISTILL_THRESHOLD
+        ? `Repeated ${existing.fingerprint.split(':')[0]} ${newCount}x without new evidence`
+        : existing.distillSummary,
     };
     set(s => {
       const ne = new Map(s.entries);
@@ -155,6 +172,21 @@ export const useRetentionStore = create<RetentionState>()((set, get) => ({
     const toDelete: string[] = [];
     for (const key of state.entries.keys()) {
       if (PREFIXES.some(p => key.startsWith(p))) toDelete.push(key);
+    }
+    if (toDelete.length === 0) return 0;
+    set(s => {
+      const ne = new Map(s.entries);
+      for (const key of toDelete) ne.delete(key);
+      return { entries: ne };
+    });
+    return toDelete.length;
+  },
+
+  evictSearchFamily: (): number => {
+    const state = get();
+    const toDelete: string[] = [];
+    for (const key of state.entries.keys()) {
+      if (key.startsWith('search.')) toDelete.push(key);
     }
     if (toDelete.length === 0) return 0;
     set(s => {

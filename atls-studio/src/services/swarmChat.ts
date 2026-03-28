@@ -37,6 +37,7 @@ export interface SwarmStreamOptions {
   agentRole?: string;
   taskId?: string;
   fileClaims?: string[];
+  swarmSessionId?: string;
   /**
    * When true, updates main chat context bar, prompt round counter, and session cache metrics.
    * Default false so parallel swarm workers do not distort the primary chat UI.
@@ -476,7 +477,7 @@ export async function streamChatForSwarm(
   sessionCostCents: number;
 }> {
   const { provider } = config;
-  const sessionId = useAppStore.getState().currentSessionId;
+  const sessionId = _options.swarmSessionId ?? useAppStore.getState().currentSessionId;
   const lookup = createHashLookup(sessionId);
   const setLookup = useContextStore.getState().createSetRefLookup();
 
@@ -587,7 +588,7 @@ export async function streamChatForSwarm(
           const result = await executeToolCall(
             toolCall.name,
             toolCall.args ?? {},
-            { swarmTerminalId: _options.swarmTerminalId },
+            { swarmTerminalId: _options.swarmTerminalId, fileClaims: _options.fileClaims },
           );
           if (/BATCH INTERRUPTED|awaiting confirmation|paused/i.test(result)) {
             blockingToolResultSeen = true;

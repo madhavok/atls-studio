@@ -215,6 +215,8 @@ import type {
 // Freshness taxonomy types — import for use, re-export for consumers
 import type { FreshnessState, FreshnessCause, EngramOrigin, VerifyArtifact, TaskCompleteRecord } from '../services/batch/types';
 export type { FreshnessState, FreshnessCause, EngramOrigin, VerifyArtifact, TaskCompleteRecord };
+import { canSteerExecution, validateSourceIdentity } from '../services/universalFreshness';
+export { canSteerExecution };
 
 // Tracks paths we recently wrote (for same_file_prior_edit cause at reconcile)
 const RECENT_ADVANCE_TTL_MS = 10_000;
@@ -319,12 +321,22 @@ export interface SubTask {
   contextManifest?: ContextBinding[]; // Pre-bound context for this subtask
 }
 
-// Task plan for AI orientation and context lifecycle
-export interface TaskPlan {
+// Task directive for AI orientation and context lifecycle
+export interface TaskDirective {
+  id: string;
   goal: string;
   subtasks: SubTask[];
   activeSubtaskId: string | null;
+  status: 'active' | 'blocked' | 'done' | 'superseded' | 'cancelled';
+  createdAt: number;
+  supersedes?: string;
+  retryCount: number;
+  evidenceRefs: string[];
+  stopReason?: string;
 }
+
+// Backward-compatible alias
+export type TaskPlan = TaskDirective;
 
 // Legacy type alias for backward compatibility
 export type TaskState = TaskPlan;
@@ -345,7 +357,7 @@ export interface MemorySearchResult {
 }
 
 // Blackboard artifact classification
-export type BbArtifactKind = 'plan' | 'bug' | 'repair' | 'status' | 'err' | 'fix' | 'edit' | 'general';
+export type BbArtifactKind = 'plan' | 'bug' | 'repair' | 'status' | 'err' | 'fix' | 'edit' | 'general' | 'summary' | 'fixplan';
 export type BbArtifactState = 'active' | 'superseded' | 'historical';
 
 // Blackboard entry - persistent session knowledge
@@ -374,9 +386,11 @@ const BB_KIND_PREFIXES: ReadonlyArray<[string, BbArtifactKind]> = [
   ['err:', 'err'],
   ['fix:', 'fix'],
   ['edit:', 'edit'],
+  ['summary:', 'summary'],
+  ['fixplan:', 'fixplan'],
 ];
 
-const BB_SHADOWABLE_KINDS: ReadonlySet<BbArtifactKind> = new Set(['plan', 'bug', 'repair', 'status', 'err', 'fix']);
+const BB_SHADOWABLE_KINDS: ReadonlySet<BbArtifactKind> = new Set(['plan', 'bug', 'repair', 'status', 'err', 'fix', 'summary', 'fixplan']);
 
 export function parseBbKey(key: string): { kind: BbArtifactKind; basename?: string } {
   for (const [prefix, kind] of BB_KIND_PREFIXES) {
@@ -397,17 +411,23 @@ export function inferBbFilePath(
   derivedFrom?: string[],
   awarenessKeys?: Iterable<string>,
 ): string | undefined {
-  if (derivedFrom?.length) return derivedFrom[0];
-  const { basename } = parseBbKey(key);
-  if (!basename) return undefined;
-  if (basename.includes('/') || basename.includes('\\')) return basename;
-  if (!awarenessKeys) return undefined;
-  for (const aPath of awarenessKeys) {
-    const segments = aPath.split('/');
-    const aBase = segments[segments.length - 1];
-    if (aBase === basename.toLowerCase()) return aPath;
+  let candidate: string | undefined;
+  if (derivedFrom?.length) {
+    candidate = derivedFrom[0];
+  } else {
+    const { basename } = parseBbKey(key);
+    if (!basename) return undefined;
+    if (basename.includes('/') || basename.includes('\\')) {
+      candidate = basename;
+    } else if (awarenessKeys) {
+      for (const aPath of awarenessKeys) {
+        const segments = aPath.split('/');
+        const aBase = segments[segments.length - 1];
+        if (aBase === basename.toLowerCase()) { candidate = aPath; break; }
+      }
+    }
   }
-  return undefined;
+  return validateSourceIdentity(candidate);
 }
 
 // Cognitive rule — self-imposed behavioral constraint written by the model
@@ -416,6 +436,8 @@ export interface CognitiveRule {
   createdAt: Date;
   tokens: number;
   scope: 'session';
+  filePath?: string;
+  createdAtRev?: number;
 }
 
 // Max tokens for cognitive rules collectively
@@ -476,6 +498,8 @@ export interface StagedSnippet {
   /** Shape recipe for replay on eviction — lines, shapeSpec, sourceRevision, editSessionId */
   shapeRecipe?: { lines?: string; shape?: string; sourceRevision?: string; editSessionId?: string };
   lastRebind?: RebindOutcome;
+  /** Universal freshness stage state — explicit lifecycle for execution gating */
+  stageState?: 'current' | 'stale' | 'superseded';
 }
 
 // Soft ceiling for staged snippets (tokens) — stats line warns above this
@@ -1115,6 +1139,10 @@ function promoteStagedToChunk(
     sourceRevision: snippet.sourceRevision,
     viewKind: snippet.viewKind,
     suspectSince: snippet.suspectSince,
+    freshness: snippet.freshness,
+    freshnessCause: snippet.freshnessCause,
+    observedRevision: snippet.observedRevision,
+    origin: snippet.origin,
     createdAt: new Date(),
     lastAccessed: Date.now(),
     lastRebind: snippet.lastRebind,
@@ -2375,9 +2403,11 @@ export const useContextStore = create<ContextStoreState>()(
         if (isSameFilePriorEdit) {
           nextSnippet.freshness = 'shifted';
           nextSnippet.freshnessCause = effectiveCause;
+          nextSnippet.stageState = 'stale';
         } else {
           delete nextSnippet.freshness;
           delete nextSnippet.freshnessCause;
+          nextSnippet.stageState = 'current';
         }
         if (nextSnippet.viewKind == null) nextSnippet.viewKind = 'latest';
         newStaged.set(key, nextSnippet);
@@ -2738,8 +2768,31 @@ export const useContextStore = create<ContextStoreState>()(
       set({ taskPlan: null, task: null });
       return;
     }
-    const subtasks = plan.subtasks ?? [];
-    let activeSubtaskId = plan.activeSubtaskId;
+
+    const oldPlan = get().taskPlan;
+
+    const now = Date.now();
+    const directive: TaskDirective = {
+      id: plan.id ?? now.toString(36),
+      goal: plan.goal,
+      subtasks: plan.subtasks ?? [],
+      activeSubtaskId: plan.activeSubtaskId,
+      status: plan.status ?? 'active',
+      createdAt: plan.createdAt ?? now,
+      retryCount: plan.retryCount ?? 0,
+      evidenceRefs: plan.evidenceRefs ?? [],
+      supersedes: plan.supersedes,
+      stopReason: plan.stopReason,
+    };
+
+    if (oldPlan && oldPlan.status === 'active' && oldPlan.id !== directive.id) {
+      const superseded: TaskDirective = { ...oldPlan, status: 'superseded' };
+      directive.supersedes = directive.supersedes ?? oldPlan.id;
+      set({ taskPlan: superseded, task: superseded });
+    }
+
+    const subtasks = directive.subtasks;
+    let activeSubtaskId = directive.activeSubtaskId;
     const hasActive = subtasks.some(s => s.status === 'active');
     if (subtasks.length > 0 && (!activeSubtaskId || !hasActive)) {
       const first = subtasks[0]!;
@@ -2748,9 +2801,9 @@ export const useContextStore = create<ContextStoreState>()(
         ...s,
         status: (i === 0 ? 'active' : (s.status === 'done' ? 'done' : 'pending')) as 'pending' | 'active' | 'done' | 'blocked',
       }));
-      set({ taskPlan: { ...plan, subtasks: normalized, activeSubtaskId }, task: { ...plan, subtasks: normalized, activeSubtaskId } });
+      set({ taskPlan: { ...directive, subtasks: normalized, activeSubtaskId }, task: { ...directive, subtasks: normalized, activeSubtaskId } });
     } else {
-      set({ taskPlan: plan, task: plan });
+      set({ taskPlan: directive, task: directive });
     }
   },
   
@@ -2930,10 +2983,17 @@ export const useContextStore = create<ContextStoreState>()(
           status: (i === 0 ? 'active' : (s.status === 'done' ? 'done' : 'pending')) as 'pending' | 'active' | 'done' | 'blocked',
         }));
       }
-      const newPlan = {
+      const newPlan: TaskDirective = {
+        id: state.taskPlan?.id || Date.now().toString(36),
         goal: task.goal || state.taskPlan?.goal || 'Working',
         subtasks,
         activeSubtaskId,
+        status: state.taskPlan?.status || 'active',
+        createdAt: state.taskPlan?.createdAt || Date.now(),
+        retryCount: state.taskPlan?.retryCount || 0,
+        evidenceRefs: state.taskPlan?.evidenceRefs || [],
+        supersedes: state.taskPlan?.supersedes,
+        stopReason: state.taskPlan?.stopReason,
       };
       return { taskPlan: newPlan, task: newPlan };
     });
@@ -2953,7 +3013,8 @@ export const useContextStore = create<ContextStoreState>()(
     
     const tokens = estimateTokens(content);
 
-    const derivedFrom = opts?.derivedFrom;
+    const rawDerivedFrom = opts?.derivedFrom;
+    const derivedFrom = rawDerivedFrom?.map(p => validateSourceIdentity(p)).filter((p): p is string => !!p);
     let derivedRevisions: string[] | undefined;
     if (derivedFrom?.length) {
       derivedRevisions = derivedFrom.map(path => {
@@ -2963,8 +3024,9 @@ export const useContextStore = create<ContextStoreState>()(
     }
 
     const { kind } = parseBbKey(key);
-    const resolvedFilePath = opts?.filePath
-      ?? inferBbFilePath(key, derivedFrom, get().awarenessCache.keys());
+    const resolvedFilePath = validateSourceIdentity(
+      opts?.filePath ?? inferBbFilePath(key, derivedFrom, get().awarenessCache.keys()),
+    );
     const resolvedSnapshot = opts?.snapshotHash
       ?? (resolvedFilePath ? get().getAwareness(resolvedFilePath)?.snapshotHash : undefined)
       ?? derivedRevisions?.[0]
@@ -3070,8 +3132,16 @@ export const useContextStore = create<ContextStoreState>()(
       let changed = false;
       for (const [key, entry] of state.blackboardEntries) {
         if (entry.state !== 'active') continue;
-        if (!entry.filePath || normalizeSourcePath(entry.filePath) !== pathNorm) continue;
         if (!BB_SHADOWABLE_KINDS.has(entry.kind)) continue;
+
+        const filePathMatch = entry.filePath && normalizeSourcePath(entry.filePath) === pathNorm;
+        const derivedMatch = !entry.filePath && entry.derivedFrom?.some((d, i) => {
+          if (normalizeSourcePath(d) !== pathNorm) return false;
+          const storedRev = entry.derivedRevisions?.[i];
+          return !storedRev || storedRev !== newRevision;
+        });
+        if (!filePathMatch && !derivedMatch) continue;
+
         if (entry.snapshotHash && entry.snapshotHash === newRevision) continue;
         newBb.set(key, {
           ...entry,
@@ -3105,7 +3175,7 @@ export const useContextStore = create<ContextStoreState>()(
 
     set(state => {
       const newRules = new Map(state.cognitiveRules);
-      newRules.set(key, { content, createdAt: new Date(), tokens, scope: 'session' });
+      newRules.set(key, { content, createdAt: new Date(), tokens, scope: 'session', createdAtRev: get().getCurrentRev() });
 
       let totalRulesTokens = 0;
       for (const entry of newRules.values()) totalRulesTokens += entry.tokens;
@@ -3286,6 +3356,9 @@ export const useContextStore = create<ContextStoreState>()(
       lastAccessed: Date.now(),
       compacted: false,
     };
+    delete newChunk.suspectSince;
+    newChunk.freshness = 'fresh' as FreshnessState;
+    delete newChunk.freshnessCause;
 
     // Compress old engram (hash forwarding)
     const compactContent = oldChunk.editDigest || oldChunk.digest || oldChunk.summary || `[forwarded] h:${oldChunk.shortHash} → h:${newShortHash}`;
@@ -3440,6 +3513,7 @@ export const useContextStore = create<ContextStoreState>()(
       if (c.synapses) allSynapses.push(...c.synapses);
     }
 
+    const sourceChunks = resolved.map(([, c]) => c);
     const mergedChunk: ContextChunk = {
       hash: mergedHash,
       shortHash: mergedHash.slice(0, SHORT_HASH_LEN),
@@ -3457,6 +3531,8 @@ export const useContextStore = create<ContextStoreState>()(
       pinned: resolved.some(([, c]) => c.pinned),
       annotations: allAnnotations.length > 0 ? allAnnotations : undefined,
       synapses: allSynapses.length > 0 ? allSynapses : undefined,
+      freshness: sourceChunks.some(c => c.freshness === 'suspect' || c.freshness === 'changed') ? 'suspect' as FreshnessState : 'fresh' as FreshnessState,
+      sourceRevision: sourceChunks[0]?.sourceRevision,
     };
     for (const [, c] of resolved) {
       const compactContent = c.editDigest || c.digest || `[merged → h:${mergedChunk.shortHash}]`;
@@ -3558,8 +3634,11 @@ export const useContextStore = create<ContextStoreState>()(
     }
 
     state.stagedSnippets.forEach((snippet, key) => {
+      if (snippet.stageState === 'superseded') return;
+      const isStale = !canSteerExecution({ stageState: snippet.stageState, freshness: snippet.freshness });
+      const staleTag = isStale ? ' [STALE]' : '';
       const lineRange = snippet.lines ? `:${snippet.lines}` : '';
-      lines.push(`[${key}] ${snippet.source}${lineRange} (${snippet.tokens}tk)`);
+      lines.push(`[${key}]${staleTag} ${snippet.source}${lineRange} (${snippet.tokens}tk)`);
       const normSource = normalizeSourcePath(snippet.source);
       if (activeEngramSources.has(normSource)) {
         lines.push(`[content in active engram — see ## ACTIVE ENGRAMS]`);
@@ -3726,6 +3805,9 @@ export const useContextStore = create<ContextStoreState>()(
       for (const k of toDelete) newMap.delete(k);
     }
     set({ workspaceRev: nextRev, changedFilesSinceRev: newMap });
+    import('./retentionStore').then(m => {
+      m.useRetentionStore.getState().evictSearchFamily();
+    }).catch(() => { /* retention store may not be initialized yet */ });
     return nextRev;
   },
 
@@ -3910,6 +3992,7 @@ export const useContextStore = create<ContextStoreState>()(
   },
 
   setAwareness: (entry: AwarenessCacheEntry): void => {
+    if (!validateSourceIdentity(entry.filePath)) return;
     set(state => {
       const key = entry.filePath.replace(/\\/g, '/').toLowerCase();
       const newCache = new Map(state.awarenessCache);
@@ -4002,21 +4085,30 @@ export const useContextStore = create<ContextStoreState>()(
       : null;
     if (bbPrefix !== null) {
       const entry = get().blackboardEntries.get(bbPrefix);
-      if (entry) return { content: entry.content, source: `bb:${bbPrefix}`, chunkType: 'blackboard' };
+      if (entry) {
+        if (entry.state !== 'active') return { content: '[SUPERSEDED]', source: `bb:${bbPrefix}`, chunkType: 'blackboard' };
+        return { content: entry.content, source: `bb:${bbPrefix}`, chunkType: 'blackboard' };
+      }
       return null;
     }
 
     const state = get();
     const found = findChunkByRef(state.chunks, hashRef);
+    const suspectPrefix = (c: { freshness?: string }) =>
+      (c.freshness === 'suspect' || c.freshness === 'changed') ? '[SUSPECT] ' : '';
     if (found) {
+      const prefix = suspectPrefix(found[1]);
       if (found[1].compacted) {
         const archived = findChunkByRef(state.archivedChunks, hashRef);
-        if (archived) return { content: archived[1].content, source: archived[1].source, chunkType: archived[1].type };
+        if (archived) return { content: prefix + archived[1].content, source: archived[1].source, chunkType: archived[1].type };
       }
-      return { content: found[1].content, source: found[1].source, chunkType: found[1].type };
+      return { content: prefix + found[1].content, source: found[1].source, chunkType: found[1].type };
     }
     const archived = findChunkByRef(state.archivedChunks, hashRef);
-    if (archived) return { content: archived[1].content, source: archived[1].source, chunkType: archived[1].type };
+    if (archived) {
+      const prefix = suspectPrefix(archived[1]);
+      return { content: prefix + archived[1].content, source: archived[1].source, chunkType: archived[1].type };
+    }
     const staged = findStagedByRef(state.stagedSnippets, hashRef);
     if (staged) return { content: staged[1].content, source: staged[1].source, chunkType: 'staged' };
     return null;
@@ -4112,15 +4204,27 @@ export const useContextStore = create<ContextStoreState>()(
    * Get task line showing plan progress (delegates to contextFormatter).
    */
   getTaskLine: () => {
-    const currentTaskState = get().blackboardEntries.get('current-task-state')?.content;
-    const currentPlanState = get().blackboardEntries.get('current-plan-state')?.content;
+    const taskMeta = get().getBlackboardEntryWithMeta('current-task-state');
+    const planMeta = get().getBlackboardEntryWithMeta('current-plan-state');
+
     const authoritativeLines: string[] = [];
-    const taskMatch = currentTaskState?.match(/(?:^|\n)TASK:\s*(.+)/);
-    if (taskMatch?.[1]) authoritativeLines.push(`<<TASK: ${taskMatch[1].trim()}>>`);
-    const planMatch = currentPlanState?.match(/(?:^|\n)PLAN:\s*(.+)/);
-    if (planMatch?.[1]) authoritativeLines.push(`<<PLAN: ${planMatch[1].trim()}>>`);
+
+    if (taskMeta && taskMeta.state === 'active') {
+      const taskMatch = taskMeta.content.match(/(?:^|\n)TASK:\s*(.+)/);
+      if (taskMatch?.[1]) authoritativeLines.push(`<<TASK: ${taskMatch[1].trim()}>>`);
+    }
+    if (planMeta && planMeta.state === 'active') {
+      const planMatch = planMeta.content.match(/(?:^|\n)PLAN:\s*(.+)/);
+      if (planMatch?.[1]) authoritativeLines.push(`<<PLAN: ${planMatch[1].trim()}>>`);
+    }
+
     if (authoritativeLines.length > 0) return authoritativeLines.join('\n');
-    return formatTaskLine(get().taskPlan);
+
+    const taskPlan = get().taskPlan;
+    if (taskPlan && (taskPlan.status === 'superseded' || taskPlan.status === 'cancelled')) {
+      return '';
+    }
+    return formatTaskLine(taskPlan);
   },
   
   /**
@@ -4742,6 +4846,14 @@ export const useContextStore = create<ContextStoreState>()(
         if (archived) {
           const [key, arc] = archived;
           const recalled = { ...arc, lastAccessed: Date.now() };
+          if (recalled.sourceRevision && recalled.source) {
+            const awareness = get().getAwareness(recalled.source);
+            if (awareness && awareness.snapshotHash !== recalled.sourceRevision) {
+              recalled.suspectSince = Date.now();
+              recalled.freshness = 'suspect' as FreshnessState;
+              recalled.freshnessCause = 'unknown' as FreshnessCause;
+            }
+          }
           if (recalled.subtaskIds) {
             if (!recalled.subtaskIds.includes(subtaskId)) recalled.subtaskIds.push(subtaskId);
           } else {

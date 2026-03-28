@@ -7,7 +7,7 @@
  */
 
 import type { StepOutput, HandlerContext, OperationKind } from '../types';
-import { buildRetentionFingerprint } from '../../retentionFingerprint';
+import { buildRetentionFingerprint, type FingerprintResult } from '../../retentionFingerprint';
 import { useRetentionStore } from '../../../stores/retentionStore';
 import { hashContentSync } from '../../../utils/contextHash';
 
@@ -35,14 +35,34 @@ export function checkRetention(
   summaryLabel: string,
   classification?: string,
 ): RetentionCheckResult {
-  const fp = buildRetentionFingerprint(use, params);
-  if (!fp) return { reused: false };
+  const result = buildRetentionFingerprint(use, params);
+  if (!result) return { reused: false };
 
+  const { fingerprint, semanticSignature } = result;
   const contentHash = hashContentSync(resultContent);
   const store = useRetentionStore.getState();
-  const action = store.recordResult(fp, contentHash, ok, classification);
+  const action = store.recordResult(fingerprint, contentHash, ok, classification);
+
+  // Attach semanticSignature to the entry after recording
+  const entry = store.getEntry(fingerprint);
+  if (entry && !entry.semanticSignature) {
+    entry.semanticSignature = semanticSignature;
+  }
 
   if (action.action === 'collapse') {
+    if (entry?.traceState === 'distilled' && entry.distillSummary) {
+      return {
+        reused: true,
+        output: {
+          kind: outputKind,
+          ok,
+          refs: [],
+          summary: entry.distillSummary,
+          tokens: 0,
+          classification: classification as StepOutput['classification'],
+        },
+      };
+    }
     return {
       reused: true,
       output: {

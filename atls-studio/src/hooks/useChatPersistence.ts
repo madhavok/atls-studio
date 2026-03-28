@@ -508,9 +508,21 @@ export function useChatPersistence() {
             memoryEvents: memorySnapshot.memoryEvents ?? [],
             reconcileStats: memorySnapshot.reconcileStats ?? null,
           });
+          useContextStore.setState(state => {
+            const now = Date.now();
+            const chunks = new Map(state.chunks);
+            for (const [hash, chunk] of chunks) {
+              chunks.set(hash, { ...chunk, freshness: 'suspect', freshnessCause: 'session_restore', suspectSince: now });
+            }
+            const stagedSnippets = new Map(state.stagedSnippets);
+            for (const [key, snippet] of stagedSnippets) {
+              stagedSnippets.set(key, { ...snippet, stageState: 'stale', suspectSince: now });
+            }
+            return { chunks, stagedSnippets };
+          });
           if (memorySnapshot.geminiCache) restoreGeminiCacheSnapshot(memorySnapshot.geminiCache);
           restoredFromSnapshot = true;
-          console.log('[ChatPersistence] Restored memory snapshot v' + memorySnapshot.version);
+          console.log('[ChatPersistence] Restored memory snapshot v' + memorySnapshot.version + ' (chunks/staged marked suspect)');
         }
       } catch (e) {
         console.warn('[ChatPersistence] Failed to restore memory snapshot:', e);
@@ -558,6 +570,15 @@ export function useChatPersistence() {
               contextStore.setBlackboardEntry(note.key, note.content, {
                 filePath: note.file_path ?? undefined,
               });
+              if (note.state && note.state !== 'active') {
+                useContextStore.setState(state => {
+                  const entry = state.blackboardEntries.get(note.key);
+                  if (!entry) return {};
+                  const newBb = new Map(state.blackboardEntries);
+                  newBb.set(note.key, { ...entry, state: note.state as BlackboardEntry['state'] });
+                  return { blackboardEntries: newBb };
+                });
+              }
               userNoteCount++;
             }
           }

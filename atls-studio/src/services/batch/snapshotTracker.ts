@@ -11,6 +11,8 @@
  * AI has sufficient coverage of the edit region.
  */
 
+import { validateSourceIdentity } from '../universalFreshness';
+
 export type ReadKind = 'canonical' | 'shaped' | 'cached' | 'lines';
 
 export enum AwarenessLevel {
@@ -83,6 +85,7 @@ export class SnapshotTracker {
 
   /** Record a snapshot hash for a file (from a read or write result). */
   record(filePath: string, snapshotHash: string, readKind: ReadKind = 'canonical', opts?: RecordOpts): void {
+    if (!validateSourceIdentity(filePath)) return;
     const key = normalizePathKey(filePath);
     const bare = canonicalizeSnapshotHash(snapshotHash);
     const existing = this.snapshots.get(key);

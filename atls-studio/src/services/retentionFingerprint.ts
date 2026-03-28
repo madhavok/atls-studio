@@ -8,6 +8,18 @@
 
 import type { OperationKind } from './batch/types';
 
+export interface SemanticSignature {
+  opKind: string;
+  targetFiles: string[];
+  targetSymbols?: string[];
+  verificationTarget?: string;
+}
+
+export interface FingerprintResult {
+  fingerprint: string;
+  semanticSignature: SemanticSignature;
+}
+
 function sortedJoin(arr: unknown[]): string {
   return [...arr].filter(v => typeof v === 'string').map(String).sort().join(',');
 }
@@ -15,7 +27,7 @@ function sortedJoin(arr: unknown[]): string {
 export function buildRetentionFingerprint(
   use: OperationKind | string,
   params: Record<string, unknown>,
-): string | null {
+): FingerprintResult | null {
   if (use.startsWith('change.') || use.startsWith('session.') || use.startsWith('annotate.')
     || use.startsWith('read.') || use.startsWith('delegate.')) {
     return null;
@@ -24,23 +36,41 @@ export function buildRetentionFingerprint(
   switch (use) {
     case 'search.code': {
       const queries = Array.isArray(params.queries) ? params.queries : [];
-      return `search.code:${sortedJoin(queries)}`;
+      return {
+        fingerprint: `search.code:${sortedJoin(queries)}`,
+        semanticSignature: { opKind: use, targetFiles: [], targetSymbols: queries.filter((q): q is string => typeof q === 'string') },
+      };
     }
     case 'search.symbol': {
       const names = Array.isArray(params.symbol_names) ? params.symbol_names
         : params.name ? [params.name] : params.query ? [params.query] : [];
-      return `search.symbol:${sortedJoin(names)}`;
+      return {
+        fingerprint: `search.symbol:${sortedJoin(names)}`,
+        semanticSignature: { opKind: use, targetFiles: [], targetSymbols: names.filter((n): n is string => typeof n === 'string') },
+      };
     }
     case 'search.usage': {
       const syms = Array.isArray(params.symbol_names) ? params.symbol_names : [];
-      return `search.usage:${sortedJoin(syms)}`;
+      return {
+        fingerprint: `search.usage:${sortedJoin(syms)}`,
+        semanticSignature: { opKind: use, targetFiles: [], targetSymbols: syms.filter((s): s is string => typeof s === 'string') },
+      };
     }
     case 'search.similar':
-      return `search.similar:${String(params.type ?? 'code')}:${String(params.query ?? '')}`;
+      return {
+        fingerprint: `search.similar:${String(params.type ?? 'code')}:${String(params.query ?? '')}`,
+        semanticSignature: { opKind: use, targetFiles: [], targetSymbols: [String(params.query ?? '')] },
+      };
     case 'search.issues':
-      return 'search.issues';
+      return {
+        fingerprint: 'search.issues',
+        semanticSignature: { opKind: use, targetFiles: [], targetSymbols: [] },
+      };
     case 'search.patterns':
-      return 'search.patterns';
+      return {
+        fingerprint: 'search.patterns',
+        semanticSignature: { opKind: use, targetFiles: [], targetSymbols: [] },
+      };
 
     case 'verify.build':
     case 'verify.test':
@@ -50,14 +80,20 @@ export function buildRetentionFingerprint(
     case 'system.git':
       return null;
     case 'system.workspaces':
-      return 'system.workspaces';
+      return {
+        fingerprint: 'system.workspaces',
+        semanticSignature: { opKind: use, targetFiles: [], targetSymbols: [] },
+      };
     case 'system.help':
       return null;
 
     default: {
       if (use.startsWith('analyze.')) {
         const fps = Array.isArray(params.file_paths) ? params.file_paths : [];
-        return `analyze:${use}:${sortedJoin(fps)}`;
+        return {
+          fingerprint: `analyze:${use}:${sortedJoin(fps)}`,
+          semanticSignature: { opKind: use, targetFiles: fps.filter((f): f is string => typeof f === 'string') },
+        };
       }
       return null;
     }

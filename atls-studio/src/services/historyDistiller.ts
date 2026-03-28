@@ -8,6 +8,8 @@ import { ROLLING_SUMMARY_MAX_TOKENS } from './promptMemory';
 
 export const ROLLING_SUMMARY_MARKER = '[Rolling Summary]';
 export const MAX_SUMMARY_ITEMS_PER_ARRAY = 8;
+/** Summaries older than this get their oldest 50% evicted */
+export const SUMMARY_STALENESS_MS = 10 * 60 * 1000;
 
 export interface RollingSummary {
   decisions: string[];
@@ -22,6 +24,8 @@ export interface RollingSummary {
   nextSteps: string[];
   /** Identified blockers or open questions */
   blockers: string[];
+  /** Timestamp of last distillation — used for staleness eviction */
+  distilledAt?: number;
 }
 
 export type RoundFacts = RollingSummary;
@@ -37,6 +41,7 @@ export function emptyRollingSummary(): RollingSummary {
     currentGoal: '',
     nextSteps: [],
     blockers: [],
+    distilledAt: undefined,
   };
 }
 
@@ -189,6 +194,20 @@ export function distillRound(messages: Array<{ role: string; content: unknown }>
   return facts;
 }
 
+function hasContradiction(existing: string, newEntry: string): boolean {
+  const OPPOSITES: [string, string][] = [['added', 'removed'], ['fixed', 'broken'], ['enabled', 'disabled'], ['created', 'deleted'], ['set', 'unset']];
+  const eLower = existing.toLowerCase();
+  const nLower = newEntry.toLowerCase();
+  const pathPattern = /\b[\w./\\-]+\.(?:ts|tsx|js|jsx|rs|py|css|json|md)\b/;
+  const eFile = eLower.match(pathPattern)?.[0];
+  const nFile = nLower.match(pathPattern)?.[0];
+  if (!eFile || !nFile || eFile !== nFile) return false;
+  for (const [a, b] of OPPOSITES) {
+    if ((eLower.includes(a) && nLower.includes(b)) || (eLower.includes(b) && nLower.includes(a))) return true;
+  }
+  return false;
+}
+
 export function updateRollingSummary(existing: RollingSummary, newFacts: RoundFacts): RollingSummary {
   const merge = (a: string[], b: string[]) => {
     for (const x of b) dedupePush(a, x);
@@ -204,6 +223,26 @@ export function updateRollingSummary(existing: RollingSummary, newFacts: RoundFa
     nextSteps: [...(existing.nextSteps ?? [])],
     blockers: [...(existing.blockers ?? [])],
   };
+
+  // Staleness cap: evict oldest 50% of each array when summary is stale
+  if (existing.distilledAt && Date.now() - existing.distilledAt > SUMMARY_STALENESS_MS) {
+    for (const key of ['decisions', 'filesChanged', 'userPreferences', 'workDone', 'findings', 'errors', 'nextSteps', 'blockers'] as const) {
+      const half = Math.ceil(next[key].length / 2);
+      next[key] = next[key].slice(half);
+    }
+  }
+
+  // Goal supersession: new goal invalidates prior next-steps
+  if (newFacts.currentGoal && newFacts.currentGoal !== existing.currentGoal) {
+    next.nextSteps = [];
+  }
+
+  // Contradiction-aware merge for decisions: replace rather than append
+  for (const nd of newFacts.decisions) {
+    const idx = next.decisions.findIndex(e => hasContradiction(e, nd));
+    if (idx >= 0) next.decisions[idx] = nd;
+  }
+
   merge(next.decisions, newFacts.decisions);
   merge(next.filesChanged, newFacts.filesChanged);
   merge(next.userPreferences, newFacts.userPreferences);
@@ -215,6 +254,8 @@ export function updateRollingSummary(existing: RollingSummary, newFacts: RoundFa
   for (const key of ['decisions', 'filesChanged', 'userPreferences', 'workDone', 'findings', 'errors', 'nextSteps', 'blockers'] as const) {
     while (next[key].length > MAX_SUMMARY_ITEMS_PER_ARRAY) next[key].shift();
   }
+
+  next.distilledAt = Date.now();
   return next;
 }
 

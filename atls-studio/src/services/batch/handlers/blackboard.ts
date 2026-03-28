@@ -61,10 +61,25 @@ export const handleBbWrite: OpHandler = async (params, ctx) => {
   const entryMeta = ctx.store().getBlackboardEntryWithMeta(key);
   let line = `bb_write: h:bb:${key} (${tokens}tk) — use h:bb:${key} in response`;
   if (derivedOpt?.length) line += ` | derived_from: ${derivedOpt.join(', ')}`;
-  const persisted = await persistBlackboardNote(key, content, ctx.sessionId, 'active', entryMeta?.filePath);
+  const persisted = await persistBlackboardNote(key, content, ctx.sessionId, entryMeta?.state ?? 'active', entryMeta?.filePath);
   if (!persisted) {
     ctx.store().removeBlackboardEntry(key);
     return err('bb_write: ERROR could not persist note to database');
+  }
+
+  if (derivedOpt?.length) {
+    const meta = ctx.store().getBlackboardEntryWithMeta(key);
+    const staleWarnings: string[] = [];
+    for (let i = 0; i < derivedOpt.length; i++) {
+      const awareness = ctx.store().getAwareness(derivedOpt[i]);
+      const storedRev = meta?.derivedRevisions?.[i];
+      if (awareness && storedRev && awareness.snapshotHash !== storedRev) {
+        staleWarnings.push(derivedOpt[i]);
+      }
+    }
+    if (staleWarnings.length > 0) {
+      line += ` [STALE DERIVATION: ${staleWarnings.join(', ')}]`;
+    }
   }
 
   const stem = key.replace(/[-_]?\d+$|[-_]?(final|latest|v\d+)$/i, '');

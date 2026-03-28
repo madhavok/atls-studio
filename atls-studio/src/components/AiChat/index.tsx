@@ -6,7 +6,7 @@ import { appendTextToSegments as _appendText, appendReasoningToSegments as _appe
 import { useSwarmStore } from '../../stores/swarmStore';
 import { useCostStore, formatCost, calculateCost, type AIProvider as CostProvider } from '../../stores/costStore';
 import { useAttachmentStore, type ChatAttachment, consumeInternalDragPayload } from '../../stores/attachmentStore';
-import { streamChat, stopChat, getProviderFromModel, resetStaticPromptCache, type ChatMessage, type AIConfig, type AIProvider, type WorkspaceContext, type ChatMode } from '../../services/aiService';
+import { streamChat, stopChat, getProviderFromModel, resetStaticPromptCache, resetProjectTreeCache, type ChatMessage, type AIConfig, type AIProvider, type WorkspaceContext, type ChatMode } from '../../services/aiService';
 import { orchestrator } from '../../services/orchestrator';
 import { ModelModeSelector } from '../ModelModeSelector';
 import { Settings } from '../Settings';
@@ -2521,6 +2521,7 @@ export function AiChat() {
     await createNewSession();
     newChat();
     resetStaticPromptCache();
+    resetProjectTreeCache();
     resetAgentProgress();
     useCostStore.getState().resetChat();
   }, [createNewSession, newChat, resetAgentProgress]);

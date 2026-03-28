@@ -7,6 +7,7 @@
  */
 
 import type { OperationKind } from './types';
+import { validateSourceIdentity } from '../universalFreshness';
 
 // ---------------------------------------------------------------------------
 // Alias Registry — declarative mapping from alias → canonical name
@@ -292,6 +293,12 @@ export function normalizeStepParams(
     out.symbol_names = normalizeSymbolNames(out.symbol_names);
   } else if (typeof out.symbol_names === 'string') {
     out.symbol_names = [stripSymbolPrefix(out.symbol_names)];
+  }
+
+  // Pass 4: validate derived_from paths for bb.write (reject bogus identities)
+  if (op === 'session.bb.write' && Array.isArray(out.derived_from)) {
+    out.derived_from = (out.derived_from as unknown[])
+      .filter(v => typeof v === 'string' && validateSourceIdentity(v));
   }
 
   return out;

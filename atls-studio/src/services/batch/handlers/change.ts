@@ -1504,9 +1504,24 @@ export const handleEdit: OpHandler = async (params, ctx) => {
       const affectedPaths = extractAffectedPaths(result);
       if (affectedPaths.length > 0) {
         useContextStore.getState().bumpWorkspaceRev(affectedPaths);
+        useContextStore.getState().invalidateArtifactsForPaths(affectedPaths);
       }
       if (preflightResult && automationDecision && preflightResult.strategy !== 'fresh') {
         result = attachPreflightMetadata(result, preflightResult, automationDecision, operation, targetFiles, resolved);
+      }
+    }
+    if (operation === 'undo' && !extractTopLevelError(result) && targetFiles.length > 0) {
+      const store = useContextStore.getState();
+      for (const fp of targetFiles) {
+        const basename = fp.split('/').pop() ?? fp;
+        store.removeBlackboardEntry(`edit:${basename}`);
+        store.removeBlackboardEntry(`err:${basename}`);
+        store.removeBlackboardEntry(`fix:${basename}`);
+        store.removeBlackboardEntry(`repair:${basename}`);
+      }
+      const affectedPaths = extractAffectedPaths(result);
+      if (affectedPaths.length > 0) {
+        store.bumpWorkspaceRev(affectedPaths);
       }
     }
     const errorPayload = extractTopLevelError(result);
@@ -1552,8 +1567,9 @@ export const handleEdit: OpHandler = async (params, ctx) => {
     }
     // Supersede file-bound reasoning artifacts on successful edit
     if (isMutating) {
-      const newRevision = refs.length > 0 ? refs[0].replace(/^h:/, '') : undefined;
-      for (const tf of targetFiles) {
+      for (let i = 0; i < targetFiles.length; i++) {
+        const tf = targetFiles[i];
+        const newRevision = (refs[i] ?? refs[0] ?? '').replace(/^h:/, '') || undefined;
         const basename = tf.split('/').pop() ?? tf;
         useContextStore.getState().removeBlackboardEntry(`repair:${basename}`);
         if (newRevision) {

@@ -545,7 +545,11 @@ async function refreshContextAfterEdit(
       for (let i = 0; i < fullFileRefs.length; i++) {
         const entry = resolved[i];
         const ef = fullFileMap.get(fullFileRefs[i]);
-        if (!entry?.content || !ef) continue;
+        if (!ef) continue;
+        if (!entry?.content) {
+          store.markEngramsSuspect([ef.filePath], 'same_file_prior_edit' as 'unknown', 'content');
+          continue;
+        }
         store.addChunk(entry.content, 'smart', ef.filePath, undefined, undefined, undefined, {
           sourceRevision: ef.newHash.replace(/^h:/, ''),
           origin: 'edit-refresh',
@@ -591,6 +595,8 @@ async function refreshContextAfterEdit(
           const resolved = await invoke<{ content: string; source?: string | null }>('resolve_hash_ref', { rawRef });
           if (resolved?.content) {
             store.stageSnippet(snippet.key, resolved.content, snippet.source, undefined, bareHash, undefined, 'latest');
+          } else {
+            store.unstageSnippet(snippet.key);
           }
         }
       } catch (e) {
