@@ -2074,10 +2074,16 @@ async function streamChatViaTauri(
       const safetyThreshold = round === 0
         ? CONVERSATION_HISTORY_BUDGET_TOKENS
         : CONVERSATION_HISTORY_BUDGET_TOKENS * 3;
-      if (estimatedHistoryTokens > safetyThreshold) {
+      // Also check provider-reported input tokens — heuristic estimates can
+      // undercount vs actual tokenizer, letting context grow unchecked.
+      const providerExceedsThreshold = roundInputTokens > 0
+        && roundInputTokens > safetyThreshold * 4;
+      if (estimatedHistoryTokens > safetyThreshold || providerExceedsThreshold) {
+        const triggerSource = providerExceedsThreshold && estimatedHistoryTokens <= safetyThreshold
+          ? 'provider-reported' : 'heuristic';
         const count = compressToolLoopHistory(conversationHistory, round, priorTurnBoundary, { emergency: true });
         if (count > 0) {
-          console.log(`[aiService] SAFETY: auto-compressed ${count} history entries (history at ${(estimatedHistoryTokens / 1000).toFixed(1)}k / ${(safetyThreshold / 1000).toFixed(1)}k threshold${round > 0 ? ', mid-loop emergency' : ''})`);
+          console.log(`[aiService] SAFETY: auto-compressed ${count} history entries (${triggerSource}: history=${(estimatedHistoryTokens / 1000).toFixed(1)}k, provider=${(roundInputTokens / 1000).toFixed(1)}k, threshold=${(safetyThreshold / 1000).toFixed(1)}k${round > 0 ? ', mid-loop emergency' : ''})`);
         }
       }
     }

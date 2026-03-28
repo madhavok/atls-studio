@@ -84,6 +84,14 @@ export function formatStepOutput(output: StepOutput): string {
 // ---------------------------------------------------------------------------
 // UnifiedBatchResult formatting
 // ---------------------------------------------------------------------------
+
+const MAX_STEP_SUMMARY_CHARS = 2000;
+
+function capSummary(text: string): string {
+  if (text.length <= MAX_STEP_SUMMARY_CHARS) return text;
+  return text.substring(0, MAX_STEP_SUMMARY_CHARS) + '... [truncated]';
+}
+
 export function formatBatchResult(result: UnifiedBatchResult): string {
   const lines: string[] = [];
 
@@ -100,9 +108,9 @@ export function formatBatchResult(result: UnifiedBatchResult): string {
       ? ' [STALE: cached verification result — rerun canonical command]'
       : '';
     if (step.summary) {
-      lines.push(`${label} ${step.id}: ${step.summary}${suffix}${staleSuffix}${durationTag}`);
+      lines.push(`${label} ${step.id}: ${capSummary(step.summary)}${suffix}${staleSuffix}${durationTag}`);
     } else if (step.error) {
-      lines.push(`${label} ${step.id}: ${step.error}${durationTag}`);
+      lines.push(`${label} ${step.id}: ${capSummary(step.error)}${durationTag}`);
     }
   }
 

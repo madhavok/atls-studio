@@ -34,7 +34,8 @@ export const handleDelegateRetrieve: OpHandler = async (params, _ctx) => {
       max_tokens: typeof params.max_tokens === 'number' ? params.max_tokens as number : undefined,
     });
 
-    return ok(result.content, result);
+    const summary = `Retrieved ${result.pinCount} blocks (${result.pinTokens}tk)`;
+    return ok(summary, result);
   } catch (delegateErr) {
     return err(`delegate.retrieve: ERROR ${delegateErr instanceof Error ? delegateErr.message : String(delegateErr)}`);
   }
@@ -59,7 +60,8 @@ export const handleDelegateDesign: OpHandler = async (params, _ctx) => {
       max_tokens: typeof params.max_tokens === 'number' ? params.max_tokens as number : undefined,
     });
 
-    return ok(result.content, result);
+    const summary = `Design: ${result.pinCount} blocks (${result.pinTokens}tk)`;
+    return ok(summary, result);
   } catch (delegateErr) {
     return err(`delegate.design: ERROR ${delegateErr instanceof Error ? delegateErr.message : String(delegateErr)}`);
   }

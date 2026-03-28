@@ -296,15 +296,31 @@ interface PinnedBlock {
   tokens: number;
 }
 
+const RETRIEVER_EXCLUDED_PATH_PATTERNS = [
+  /[/\\]patterns[/\\].*\.json$/i,
+  /[/\\]schemas[/\\].*\.json$/i,
+  /Cargo\.lock$/,
+  /package-lock\.json$/,
+  /yarn\.lock$/,
+  /pnpm-lock\.yaml$/,
+];
+
+function isExcludedRetrieverPath(path: string): boolean {
+  return RETRIEVER_EXCLUDED_PATH_PATTERNS.some(re => re.test(path));
+}
+
 function extractPinnedContent(preExistingHashes: Set<string>, preExistingSources?: Set<string>): PinnedBlock[] {
   const ctx = useContextStore.getState();
   const blocks: PinnedBlock[] = [];
+
+  let excludedCount = 0;
 
   // Priority 1: staged snippets (most precise — specific line ranges)
   for (const snippet of ctx.stagedSnippets.values()) {
     if (snippet.content) {
       if (!canSteerExecution({ stageState: snippet.stageState, freshness: snippet.freshness })) continue;
       if (preExistingSources && snippet.source && preExistingSources.has(snippet.source)) continue;
+      if (snippet.source && isExcludedRetrieverPath(snippet.source)) { excludedCount++; continue; }
       blocks.push({
         path: snippet.source || 'unknown',
         lines: snippet.lines || '',
@@ -319,6 +335,7 @@ function extractPinnedContent(preExistingHashes: Set<string>, preExistingSources
     if (chunk.pinned && chunk.content) {
       if (chunk.suspectSince != null || chunk.freshness === 'suspect' || chunk.freshness === 'changed') continue;
       if (preExistingSources && chunk.source && preExistingSources.has(chunk.source)) continue;
+      if (chunk.source && isExcludedRetrieverPath(chunk.source)) { excludedCount++; continue; }
       const alreadyStaged = blocks.some(b => b.path === chunk.source);
       if (!alreadyStaged) {
         blocks.push({
@@ -336,6 +353,7 @@ function extractPinnedContent(preExistingHashes: Set<string>, preExistingSources
   if (blocks.length === 0) {
     for (const [hash, chunk] of ctx.chunks.entries()) {
       if (!preExistingHashes.has(hash) && chunk.content && chunk.type !== 'msg:user' && chunk.type !== 'msg:asst') {
+        if (chunk.source && isExcludedRetrieverPath(chunk.source)) { excludedCount++; continue; }
         blocks.push({
           path: chunk.source || 'unknown',
           lines: '',
@@ -347,6 +365,10 @@ function extractPinnedContent(preExistingHashes: Set<string>, preExistingSources
     if (blocks.length > 0) {
       console.log(`[subagent] Fallback: extracted ${blocks.length} new chunks (model didn't pin/stage explicitly)`);
     }
+  }
+
+  if (excludedCount > 0) {
+    console.log(`[subagent] Filtered ${excludedCount} non-source blocks (pattern catalogs, lock files, schemas)`);
   }
 
   return blocks;
