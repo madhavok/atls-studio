@@ -94,10 +94,10 @@ function quickHash(content: string): string {
 // ---------------------------------------------------------------------------
 
 function getActiveProviderModel(): { provider: string; model: string } {
-  const state = useAppStore.getState();
+  const { settings } = useAppStore.getState();
   return {
-    provider: state.selectedProvider,
-    model: state.selectedModel,
+    provider: settings.selectedProvider,
+    model: settings.selectedModel,
   };
 }
 
