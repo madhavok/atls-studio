@@ -227,29 +227,13 @@ export function useChatPersistence() {
   const messages = useAppStore(state => state.messages);
   const currentSessionId = useAppStore(state => state.currentSessionId);
   const contextUsage = useAppStore(state => state.contextUsage);
-  
-  const contextChunks = useContextStore(state => state.chunks);
-  const archivedChunks = useContextStore(state => state.archivedChunks);
-  const stagedSnippets = useContextStore(state => state.stagedSnippets);
-  const blackboardEntries = useContextStore(state => state.blackboardEntries);
-  const cognitiveRules = useContextStore(state => state.cognitiveRules);
-  const droppedManifest = useContextStore(state => state.droppedManifest);
-  const taskPlan = useContextStore(state => state.taskPlan);
-  const freedTokens = useContextStore(state => state.freedTokens);
-  const stageVersion = useContextStore(state => state.stageVersion);
-  const transitionBridge = useContextStore(state => state.transitionBridge);
-  const batchMetrics = useContextStore(state => state.batchMetrics);
-  const hashStack = useContextStore(state => state.hashStack);
-  const editHashStack = useContextStore(state => state.editHashStack);
-  const readHashStack = useContextStore(state => state.readHashStack);
-  const stageHashStack = useContextStore(state => state.stageHashStack);
-  const memoryEvents = useContextStore(state => state.memoryEvents);
-  const reconcileStats = useContextStore(state => state.reconcileStats);
-  
+
   const lastSaveRef = useRef<number>(0);
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Track the session ID across debounced saves to avoid re-creating on each invocation
   const pendingSessionIdRef = useRef<string | null>(null);
+  /** Always points at latest saveSession (avoids stale closures in timeouts / effect cleanups). */
+  const saveSessionRef = useRef<() => Promise<void>>(async () => {});
 
   /**
    * Initialize chat database when project opens.
@@ -305,47 +289,49 @@ export function useChatPersistence() {
   }, []);
 
   /**
-   * Save current session to database
+   * Save current session to database.
+   * Always reads latest state via getState() so timers/refs never persist stale messages or context.
    */
   const saveSession = useCallback(async () => {
-    if (!chatDb.isInitialized() || messages.length === 0) return;
-    
-    // Debounce saves
+    if (!chatDb.isInitialized()) return;
+
+    // Debounce saves (wall clock only; payload is read after the gate)
     const now = Date.now();
     if (now - lastSaveRef.current < 2000) {
-      // Schedule a save for later
       if (saveTimeoutRef.current) {
         clearTimeout(saveTimeoutRef.current);
       }
-      saveTimeoutRef.current = setTimeout(() => saveSession(), 2000);
+      saveTimeoutRef.current = setTimeout(() => {
+        void saveSessionRef.current();
+      }, 2000);
       return;
     }
     lastSaveRef.current = now;
-    
+
+    const app = useAppStore.getState();
+    const messages = app.messages;
+    if (messages.length === 0) return;
+
+    const contextUsage = app.contextUsage;
     try {
-      let sessionId = currentSessionId || pendingSessionIdRef.current;
-      
+      let sessionId = app.currentSessionId || pendingSessionIdRef.current;
+
       // Create session if new (or verify it exists)
       if (!sessionId) {
         sessionId = crypto.randomUUID();
         pendingSessionIdRef.current = sessionId;
         const title = messages.find(m => m.role === 'user')?.content.slice(0, 50) || 'New Chat';
-        // Pass sessionId to ensure we use the same ID we'll save with
         await chatDb.createSession('agent', title, sessionId);
       } else {
-        // Verify session exists before saving (handles orchestrator race condition)
         const existingSession = await chatDb.getSession(sessionId);
         if (!existingSession) {
-          // Session doesn't exist in this database - create it
           const title = messages.find(m => m.role === 'user')?.content.slice(0, 50) || 'New Chat';
           await chatDb.createSession('agent', title, sessionId);
         }
       }
-      
-      // Convert context chunks to array
-      const blackboard = Array.from(contextChunks.values());
-      
-      // Save session
+
+      const blackboard = Array.from(useContextStore.getState().chunks.values());
+
       const chatCostCents = useCostStore.getState().chatCostCents;
       await chatDb.saveFullSession(
         sessionId,
@@ -362,16 +348,15 @@ export function useChatPersistence() {
       const geminiSnapshot = getGeminiCacheSnapshot();
       const snapshot = serializeMemorySnapshot(ctxState, geminiSnapshot);
       await chatDb.saveMemorySnapshot(sessionId, snapshot);
-      
-      // Update local sessions list with current session info
+
       const title = messages.find(m => m.role === 'user')?.content.slice(0, 50) || 'New Chat';
       const currentSessions = useAppStore.getState().chatSessions;
       const existingIndex = currentSessions.findIndex(s => s.id === sessionId);
-      
+
       const updatedSession = {
         id: sessionId,
         title,
-        messages: [], // Don't store messages in list
+        messages: [],
         createdAt: existingIndex >= 0 ? currentSessions[existingIndex].createdAt : new Date(),
         updatedAt: new Date(),
         contextUsage: {
@@ -381,7 +366,7 @@ export function useChatPersistence() {
           costCents: useCostStore.getState().chatCostCents,
         },
       };
-      
+
       let newSessions;
       if (existingIndex >= 0) {
         newSessions = [...currentSessions];
@@ -389,9 +374,8 @@ export function useChatPersistence() {
       } else {
         newSessions = [updatedSession, ...currentSessions];
       }
-      
-      // Update store
-      useAppStore.setState({ 
+
+      useAppStore.setState({
         chatSessions: newSessions,
         currentSessionId: sessionId,
       });
@@ -405,28 +389,9 @@ export function useChatPersistence() {
     } catch (error) {
       console.error('[ChatPersistence] Failed to save session:', error);
     }
-  }, [
-    messages,
-    currentSessionId,
-    contextChunks,
-    archivedChunks,
-    stagedSnippets,
-    blackboardEntries,
-    cognitiveRules,
-    droppedManifest,
-    taskPlan,
-    freedTokens,
-    stageVersion,
-    transitionBridge,
-    batchMetrics,
-    hashStack,
-    editHashStack,
-    readHashStack,
-    stageHashStack,
-    memoryEvents,
-    reconcileStats,
-    contextUsage,
-  ]);
+  }, []);
+
+  saveSessionRef.current = saveSession;
 
   /**
    * Load a specific session with its blackboard and restore to stores
@@ -687,13 +652,10 @@ export function useChatPersistence() {
       console.error('[ChatPersistence] Failed to load session:', error);
       return false;
     }
-  }, [contextUsage.maxTokens, saveSession]);
+  }, [contextUsage.maxTokens]);
 
   const loadSessionRef = useRef(loadSession);
   loadSessionRef.current = loadSession;
-
-  const saveSessionRef = useRef(saveSession);
-  saveSessionRef.current = saveSession;
 
   /**
    * Create a new session
@@ -762,7 +724,7 @@ export function useChatPersistence() {
       console.error('[ChatPersistence] Failed to create session:', error);
       return null;
     }
-  }, [messages, saveSession, contextUsage.maxTokens]);
+  }, [messages, contextUsage.maxTokens]);
 
   /**
    * Delete a session
@@ -849,9 +811,14 @@ export function useChatPersistence() {
       const isSwitch = prevPath !== null && prevPath !== projectPath;
 
       const init = async () => {
-        // Save outgoing session before switching DB
-        if (isSwitch && messages.length > 0) {
-          try { await saveSession(); } catch { /* best effort */ }
+        // Save outgoing session before switching DB (read store + ref so we never use stale message state)
+        if (isSwitch && useAppStore.getState().messages.length > 0) {
+          lastSaveRef.current = 0;
+          try {
+            await saveSessionRef.current();
+          } catch {
+            /* best effort */
+          }
         }
 
         const success = await initChatDb(projectPath);
@@ -902,36 +869,41 @@ export function useChatPersistence() {
       };
       void init();
     } else {
-      chatDb.close();
-      syncCurrentSessionIdToLocalStorage(null);
-      // Clear everything when no project
-      useAppStore.setState({
-        chatSessions: [],
-        currentSessionId: null,
-        messages: [],
-      });
-      useContextStore.getState().resetSession();
+      const closeWithoutProject = async () => {
+        if (chatDb.isInitialized() && useAppStore.getState().messages.length > 0) {
+          lastSaveRef.current = 0;
+          try {
+            await saveSessionRef.current();
+          } catch {
+            /* best effort */
+          }
+        }
+        await chatDb.close();
+        syncCurrentSessionIdToLocalStorage(null);
+        useAppStore.setState({
+          chatSessions: [],
+          currentSessionId: null,
+          messages: [],
+        });
+        useContextStore.getState().resetSession();
+      };
+      void closeWithoutProject();
     }
-    
-    return () => {
-      // Save on unmount
-      if (messages.length > 0) {
-        saveSession();
-      }
-    };
-  }, [projectPath, initChatDb, loadSessions, contextUsage.maxTokens, messages.length]);
+
+    // Do not save in cleanup: including messages.length in deps caused a save on every new message
+    // with a stale closure (one message behind) and raced with project DB switches.
+  }, [projectPath, initChatDb, loadSessions, contextUsage.maxTokens]);
 
   // Best-effort save on window close / refresh
   useEffect(() => {
     const handleBeforeUnload = () => {
-      if (messages.length > 0 && chatDb.isInitialized()) {
-        lastSaveRef.current = 0; // Bypass debounce
-        saveSession();
-      }
+      if (!chatDb.isInitialized() || useAppStore.getState().messages.length === 0) return;
+      lastSaveRef.current = 0; // Bypass debounce
+      void saveSessionRef.current();
     };
     window.addEventListener('beforeunload', handleBeforeUnload);
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
-  }, [messages.length, saveSession]);
+  }, []);
 
   // Tauri: await final save before window closes (beforeunload cannot reliably flush async IO)
   useEffect(() => {
@@ -973,7 +945,7 @@ export function useChatPersistence() {
         clearTimeout(saveTimeoutRef.current);
       }
       saveTimeoutRef.current = setTimeout(() => {
-        saveSession();
+        void saveSessionRef.current();
       }, 5000); // Auto-save every 5 seconds of inactivity
     }
     
@@ -982,7 +954,7 @@ export function useChatPersistence() {
         clearTimeout(saveTimeoutRef.current);
       }
     };
-  }, [messages, saveSession]);
+  }, [messages]);
 
   // =========================================================================
   // Chat Restore Points (edit-and-resend)
@@ -1100,7 +1072,7 @@ export function useChatPersistence() {
       console.error('[ChatPersistence] Failed to restore to point:', e);
       return null;
     }
-  }, [loadRestorePoint, applyMemorySnapshot, saveSession]);
+  }, [loadRestorePoint, applyMemorySnapshot]);
 
   /**
    * Undo the last restore operation, bringing back discarded messages and context.
@@ -1125,7 +1097,7 @@ export function useChatPersistence() {
     }
 
     console.log('[ChatPersistence] Undo restore completed');
-  }, [applyMemorySnapshot, saveSession]);
+  }, [applyMemorySnapshot]);
 
   return {
     initChatDb,
