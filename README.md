@@ -15,7 +15,7 @@ Through the ATLS runtime, the model gets structured control over its active work
 ## Key Capabilities
 
 - **Hash-addressed engrams** with four activation states (active, dormant, archived, evicted) and model-controlled lifecycle transitions
-- **Freshness tracking** with a five-state taxonomy and a cascade of recovery strategies (edit journal, shape match, symbol identity, fingerprint, line relocation)
+- **Freshness tracking** — per-engram five-state taxonomy, **universal execution authority** (`canSteerExecution` across blackboard, staged snippets, WM, pins), and a cascade of recovery strategies (edit journal, shape match, symbol identity, fingerprint, line relocation)
 - **Unified batch executor** — one tool surface (`batch()`) with 60+ operations, step-to-step dataflow, intent macros, and multi-level error recovery
 - **Universal Hash Pointer Protocol (UHPP)** — rich reference syntax with shapes, line ranges, set selectors, diffs, and boolean operations
 - **History compression** via hash-reference deflation, a **rolling verbatim window**, and a **distilled rolling summary** (`[Rolling Summary]`) for API assembly — large tool results replaced with hash pointers, older rounds summarized into structured facts, recallable on demand
@@ -58,7 +58,7 @@ See [Architecture Document](ARCHITECTURE.md) for the full technical description,
 | [Engrams & Memory](docs/engrams.md) | Hash-addressed knowledge units, activation states, memory regions |
 | [Batch Executor](docs/batch-executor.md) | Unified tool surface, operation families, dataflow, intents, error recovery |
 | [Subagents](docs/subagents.md) | Delegate models: four roles, snapshot loop, scoped HPP, budgets, `delegate.*` batch ops |
-| [Freshness System](docs/freshness.md) | Staleness detection, snapshot tracking, preflight (`context` full + store refresh), round-end sweep of chunks/archive/**staged** via bulk `get_current_revisions`, rebase strategies |
+| [Freshness System](docs/freshness.md) | Universal freshness (`canSteerExecution`, staged `stageState`), staleness detection, snapshot tracking, preflight (`context` full + store refresh), round-end sweep of chunks/archive/**staged** via bulk `get_current_revisions`, rebase strategies |
 | [Hash Protocol](docs/hash-protocol.md) | HPP visibility tracking and UHPP reference syntax |
 | [Prompt Assembly](docs/prompt-assembly.md) | Cache-aware prompt construction and middleware pipeline |
 | [History Compression](docs/history-compression.md) | Hash-reference deflation, rolling window, distilled summary, snapshot format v5 persistence |

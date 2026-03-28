@@ -85,7 +85,7 @@ Each round of the tool loop:
 
 ### Dynamic Context Block
 
-Built fresh every round by `buildDynamicContextBlock()`:
+Built fresh every round by `buildDynamicContextBlock()`. Components that could steer behavior (blackboard lines, working-memory inclusion, staged snippets for intents, subagent pins, task lines) are filtered through **`canSteerExecution`** from [`universalFreshness.ts`](../atls-studio/src/services/universalFreshness.ts) so superseded, stale, or suspect artifacts do not present as the default next action. See [freshness.md](./freshness.md) (universal freshness).
 
 | Component | Source | Volatility |
 |-----------|--------|------------|

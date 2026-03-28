@@ -78,7 +78,9 @@ This fallback path matters because it lets the system recover gracefully from ol
 
 ### Freshness after restore
 
-`loadSession` does **not** run a `read.context` full pass or `refreshRoundEnd` at the end of restore. Rehydrated engrams and staged snippets keep their persisted **`sourceRevision`** fields until the runtime reconciles against disk — for example through **freshness preflight** before a mutation, **`refreshRoundEnd`** after the first `advanceTurn` in a tool loop (`round > 0`), or an **intelligence / scan** refresh. See [freshness.md](./freshness.md) (round-end sweep, preflight).
+`loadSession` does **not** run a `read.context` full pass or `refreshRoundEnd` at the end of restore. On **successful memory snapshot restore**, working-memory chunks are marked **`freshness: suspect`** with cause **`session_restore`**, and staged snippets get **`stageState: stale`** (so `canSteerExecution` excludes them until reconciliation). That aligns persisted state with the universal freshness model: nothing from disk is treated as execution-authoritative until the runtime reconciles.
+
+Rehydrated revisions then catch up through **freshness preflight** before a mutation, **`refreshRoundEnd`** after the first `advanceTurn` in a tool loop (`round > 0`), or an **intelligence / scan** refresh. See [freshness.md](./freshness.md) (universal freshness, round-end sweep, preflight).
 
 ### Shutdown and save reliability
 

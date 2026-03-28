@@ -252,6 +252,10 @@ The executor provides three levels of error handling:
 
 The freshness system is the critical differentiator. Without it, an agent that reads a file, edits it, then reasons about the old content will produce incorrect results. ATLS tracks freshness at every level.
 
+### 5.0 Universal execution authority
+
+Across blackboard entries, staged snippets, retention traces, and working-memory engrams, **`canSteerExecution`** ([`universalFreshness.ts`](atls-studio/src/services/universalFreshness.ts)) enforces a single rule: only artifacts in an authoritative lifecycle state may steer the next mutation or appear as trusted “next step” context in prompt assembly. Concretely, non-`active` blackboard states, staged rows with `stageState` `stale` or `superseded`, distilled or duplicate retention traces, and engrams with `freshness` `suspect` or `changed` are filtered out. See [freshness.md](docs/freshness.md).
+
 ### 5.1 Snapshot Tracker
 
 During batch execution, the `SnapshotTracker` records the content hash of every file read. When the executor encounters a `change.*` step, it automatically injects the tracked `snapshot_hash` into the edit parameters. The Rust backend then verifies that the file hasn't changed since it was read — if it has, the edit is rejected with `stale_hash`.

@@ -12,6 +12,26 @@ ATLS addresses this at three levels:
 2. **Freshness classification** — Know whether knowledge is still valid
 3. **Preflight gating** — Block operations on suspect content, recover rebaseable content
 
+## Universal freshness (`canSteerExecution`)
+
+Across blackboard entries, staged snippets, retention traces, task directives, and working-memory engrams, the runtime enforces one **execution authority** invariant:
+
+> Only artifacts that are **active** (not superseded, historical, duplicate, or distilled where those axes apply) and **current** (staged `stageState` is not stale/superseded; engram `freshness` is not `suspect` or `changed`) may **steer** the next mutation or be treated as authoritative “what to do next” context.
+
+Implementation lives in [`universalFreshness.ts`](../atls-studio/src/services/universalFreshness.ts):
+
+- **`canSteerExecution(...)`** — Single gate used when assembling prompts, building intent context, and extracting subagent pins. Returns false for non-authoritative `state`, bad `stageState` / `traceState`, or bad engram `freshness`.
+- **`UniversalState`** — `active` | `historical` | `superseded` | `duplicate` | `distilled` (blackboard and related artifacts).
+- **`validateSourceIdentity(path)`** — Rejects bogus or placeholder paths before identities enter the snapshot tracker, awareness, blackboard, or normalized batch params (keeps `derived_from` and file paths trustworthy).
+
+**Staged snippets** carry **`stageState`**: `current` | `stale` | `superseded`. `reconcileSourceRevision` sets `stale` when the source file revision no longer matches. Stale lines are labeled **`[STALE]`** in staged blocks; **`buildIntentContext`** and subagent pin extraction skip stale or suspect staged rows.
+
+**Blackboard**: Supersession by path considers **`derivedFrom`** as well as `filePath`. New artifact kinds (e.g. summary / fixplan) participate in the same shadowing rules where applicable.
+
+**Retention / search traces**: Entries can move to **`traceState`** `duplicate` or `distilled`; distilled traces contribute summary text instead of full content. Bumping workspace revision evicts search-family retention so old results are not reused as current.
+
+**Telemetry** (local counters for tests / Internals): [`freshnessTelemetry.ts`](../atls-studio/src/services/freshnessTelemetry.ts) — includes BB superseded, staged marked stale, task directives superseded, cognitive rules expired, retention distilled, session-restore reconcile signals, plus file-tree coarse vs path-aware paths.
+
 ## Snapshot Tracker
 
 During batch execution, the `SnapshotTracker` records the content hash of every file the model reads:
@@ -120,7 +140,7 @@ When files change, `reconcileSourceRevision` sweeps all memory regions:
 | Snapshot (`viewKind: 'snapshot'`) | Preserve regardless (intentionally frozen) |
 | Derived with stale revision | Evict from chunks and archive |
 | Dormant (compacted, unpinned, stale) | Archive if >1000 tokens, drop if smaller |
-| Staged (non-snapshot, non-derived) | Update revision metadata |
+| Staged (non-snapshot, non-derived) | Update revision metadata; may set **`stageState`** to `stale` on mismatch |
 | Staged derived with stale revision | Delete from staged |
 
 ### Reconciliation Triggers
@@ -197,12 +217,13 @@ Successful edits register paths as **own writes** so the file watcher does not e
 
 ---
 
-**History compression (orthogonal)**: Per-file freshness and round-end sweeps are unrelated to the **rolling verbatim window** and distilled `[Rolling Summary]` message used to cap history size. See [history-compression.md](./history-compression.md).
+**History compression**: Mostly orthogonal to per-file reconciliation, but **`deflateToolResults` / history compression** skips deflating onto **stale** engrams when the source file revision no longer matches — avoiding silent reuse of outdated WM hashes. The **rolling verbatim window** and distilled `[Rolling Summary]` still cap transcript size; see [history-compression.md](./history-compression.md).
 
 ## Source Files (Quick Reference)
 
 | Concern | Primary files |
 |--------|----------------|
+| Universal gate + path validation | [`universalFreshness.ts`](../atls-studio/src/services/universalFreshness.ts), [`freshnessTelemetry.ts`](../atls-studio/src/services/freshnessTelemetry.ts) |
 | Snapshot tracking + injection | [`snapshotTracker.ts`](../atls-studio/src/services/batch/snapshotTracker.ts), [`executor.ts`](../atls-studio/src/services/batch/executor.ts) |
 | `line_edits` apply (Rust) | [`lib.rs`](../atls-studio/src-tauri/src/lib.rs) (`apply_line_edits`) |
 | `line_edits` dispatch (no TS overlap/coalesce) | [`change.ts`](../atls-studio/src/services/batch/handlers/change.ts) |

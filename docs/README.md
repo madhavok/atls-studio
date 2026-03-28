@@ -6,7 +6,7 @@ Subsystem docs for the Studio app and batch runtime. Start here for orientation.
 
 | Doc | Topics |
 |-----|--------|
-| **[freshness.md](./freshness.md)** | Snapshot tracker, awareness levels, hash injection, freshness states, preflight (`context` full + `refreshRoundEnd`), **round-end bulk revisions** (`get_current_revisions`, staged + WM + archive), reconciliation, **sequential `line_edits`**, **cross-step line rebase**, **post-edit context refresh**, **own-write suppression** |
+| **[freshness.md](./freshness.md)** | **Universal freshness** (`canSteerExecution`, `UniversalState`, `validateSourceIdentity`), staged **`stageState`**, snapshot tracker, awareness levels, hash injection, freshness states, preflight (`context` full + `refreshRoundEnd`), **round-end bulk revisions** (`get_current_revisions`, staged + WM + archive), reconciliation, retention/trace distillation vs workspace rev, **sequential `line_edits`**, **cross-step line rebase**, **post-edit context refresh**, **own-write suppression**, freshness telemetry |
 
 Related:
 

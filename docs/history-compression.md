@@ -46,6 +46,7 @@ Runs right after tool execution completes, before the next round. This is a ligh
 - No token threshold — always runs
 - Does **not** create new chunks
 - Replaces tool result content with hash references **only when a matching engram already exists** in working memory (matched by content hash or source description)
+- **Revision guard**: skips deflating onto engrams whose backing file revision no longer matches the current source (avoids pointing history at stale WM)
 - Prevents duplicate content between history and working memory
 ## Rolling history window
 

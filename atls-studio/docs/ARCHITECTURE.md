@@ -73,7 +73,7 @@ The architecture has four layers:
 
 For subsystem-oriented overviews that complement this runtime-focused architecture doc, see:
 
-- [Freshness & Hash-Safe Edits](docs/freshness.md) — snapshot tracking, sequential `line_edits`, cross-step rebase, post-edit refresh, own-write suppression
+- [Freshness & Hash-Safe Edits](./freshness.md) — universal `canSteerExecution`, snapshot tracking, sequential `line_edits`, cross-step rebase, post-edit refresh, own-write suppression
 - [Batch Executor](docs/batch-executor.md)
 - [Subagents](docs/subagents.md) — delegate roles, snapshot loop, budgets
 - [Docs Index](docs/README.md)
@@ -252,6 +252,10 @@ The executor provides three levels of error handling:
 ## 5. Freshness: Knowing When Knowledge Is Stale
 
 The freshness system is the critical differentiator. Without it, an agent that reads a file, edits it, then reasons about the old content will produce incorrect results. ATLS tracks freshness at every level.
+
+### 5.0 Universal execution authority
+
+Across blackboard entries, staged snippets, retention traces, and working-memory engrams, **`canSteerExecution`** ([`universalFreshness.ts`](../src/services/universalFreshness.ts)) enforces a single rule: only artifacts in an authoritative lifecycle state may steer the next mutation or appear as trusted “next step” context in prompt assembly. Concretely, non-`active` blackboard states, staged rows with `stageState` `stale` or `superseded`, distilled or duplicate retention traces, and engrams with `freshness` `suspect` or `changed` are filtered out. See [freshness.md](./freshness.md).
 
 ### 5.1 Snapshot Tracker
 
