@@ -420,6 +420,11 @@ function baseHashFromRefToken(h: string): string {
   return rest.includes(':') ? rest.split(':')[0]! : rest;
 }
 
+/** True when the segment after h: looks like a real short hash (hex), not a step id (e.g. r1, s2). */
+function isPlausibleHashBaseSegment(base: string): boolean {
+  return /^[0-9a-fA-F]{6,64}$/.test(base);
+}
+
 /**
  * Ensure read_lines / file_refs step outputs exist as engrams before pinChunks.
  * read.lines returns file_refs with embedded content but does not call addChunk until post-batch deflation;
@@ -506,6 +511,14 @@ export const handlePin: OpHandler = async (params, ctx) => {
     : alreadyPinned > 0
       ? `pin: ${alreadyPinned} already pinned${shapeTag}`
       : `pin: no matching chunks`;
+  if (count === 0 && alreadyPinned === 0) {
+    const suspicious = resolved.filter((t) => !isPlausibleHashBaseSegment(baseHashFromRefToken(t)));
+    if (suspicious.length > 0) {
+      const sample = suspicious[0]!;
+      const stepGuess = baseHashFromRefToken(sample);
+      line += ` — if "${sample}" was meant to name a batch step, use hashes from that step's output, bare step id "${stepGuess}", or in:{hashes:{from_step:"${stepGuess}",path:"refs"}}; the h: prefix is only for real content hashes (6+ hex), not step ids`;
+    }
+  }
   if (notes.length > 0) line += ` | ${notes.join('; ')}`;
   return ok(line);
 };

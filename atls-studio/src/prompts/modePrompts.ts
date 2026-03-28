@@ -25,11 +25,16 @@ Execution discipline:
 - Batch related mutations before verification when risk is low.
 - When done, give a concise final summary of what was accomplished.
 
+Completion (main chat):
+- Call task_complete({summary:"...",files_changed:["path/rel.ts",...]}) when the user's request is satisfied (after any required verify.* passes). Do not keep issuing batch() after that.
+- If the user asked for "N bugs" or "N issues," count distinct fixes or distinct root causes — one fix touching two call sites can satisfy N=2. If nothing else credible remains after verify, stop; do not loop on search.code or session.recall with the same hashes hoping for new evidence.
+
 Memory discipline:
-- Pin what you read. Every read batch must end with session.pin on refs you need across turns.
+- Pin what you read. Every read batch must end with session.pin on refs you need across turns (use h:… from step output or in:{hashes:{from_step:"stepId",path:"refs"}} — never prefix a step id with h:).
 - BB-first: write findings to blackboard immediately. Don't wait for a complete picture.
 - Sigs for planning, full reads for editing. Don't full-read until you're ready to change code.
-- Never re-read what's already staged, pinned, or dormant. Check context first.`;
+- Never re-read what's already staged, pinned, or dormant. Check context first.
+- session.recall re-materializes the same archived content by hash — repeating it does not surface new hits. If searches were compacted, recall once, then read new files or change tactics; do not recall the same hashes in a loop.`;
 
 const REVIEWER_PROMPT = `You are a code reviewer. Find issues, explain impact.
 

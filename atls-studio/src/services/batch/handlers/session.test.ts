@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { handleStage, handleStats, handleTaskAdvance } from './session';
+import { handlePin, handleStage, handleStats, handleTaskAdvance } from './session';
 import { useContextStore } from '../../../stores/contextStore';
 
 function createMockCtx(overrides?: Partial<{
@@ -138,6 +138,23 @@ describe('handleStage', () => {
     const staged = useContextStore.getState().stagedSnippets.get('h:abc123:2-3:ctx(0)');
     expect(staged).toBeDefined();
     expect(staged?.sourceRevision).toBe('abc123');
+  });
+});
+
+describe('handlePin', () => {
+  beforeEach(() => {
+    useContextStore.getState().resetSession();
+  });
+
+  it('adds a hint when h: prefix is used with a step-like id and nothing pins', async () => {
+    const result = await handlePin(
+      { hashes: ['h:r1', 'h:r2'] },
+      createMockCtx() as unknown as Parameters<typeof handlePin>[1],
+    );
+    expect(result.ok).toBe(true);
+    expect(result.summary).toContain('pin: no matching chunks');
+    expect(result.summary).toContain('from_step');
+    expect(result.summary).toContain('h:r1');
   });
 });
 

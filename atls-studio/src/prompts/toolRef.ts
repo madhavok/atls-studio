@@ -15,7 +15,7 @@ session.advance subtask:optional (omit to advance to next) summary:required
 read.context type:smart|full|module|component|test|tree file_paths:[] depth?:N glob?:"" line_range?:[start,end] max_lines?:N (use full for full content; do NOT use raw)
 read.shaped file_paths:[] shape:"" max_files?:N (caps path count when bindings supply long lists)
 read.lines hash+lines ("15-50") | ref ("h:XXXX:15-50" — hash 6-16 hex) | file_path+start_line+end_line | context_lines?:0-5 (default 3, returns target_range + actual_range)
-search.code queries:[] file_paths?:[] limit?:N compact?:bool
+search.code queries:[] file_paths?:[] limit?:N compact?:bool — FTS over code: short English phrases match comments, symbols, and substrings (many false positives). Prefer identifier-like queries, paths, or search.issues for correctness; treat "maybe" hits as leads to confirm with read.lines, not as proof.
 search.symbol symbol_names:[] limit?:N
 search.usage symbol_names:[] filter?:"" limit?:N
 search.similar type?:code|function|concept|pattern query?:"" threshold?:N limit?:N
@@ -48,6 +48,7 @@ session.bb.read keys:[]
 session.bb.delete keys:[]
 session.rule action?:set|delete|list key:"" content?:""
 session.emit content:"" type?:""
+session.pin hashes:["h:SHORTHASH",...] or bare step id "r1" (resolves to that step's refs) or in:{hashes:{from_step:"r1",path:"refs"}} — never use h:r1 (h: must be a real content hash, not a step id).
 session.shape|load|debug|stage|unstage|compact|unload|drop|recall|stats|compact_history — session management (system.help for params)
 annotate.note|retype|split|merge — hash-targeted metadata ops (hash:"" + op-specific params); full list includes annotate.engram|link|design — see ### Operation Families above
 intent.understand file_paths:[] force?:bool — reads, analyzes deps, stages, pins; skips steps already done

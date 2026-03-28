@@ -1331,7 +1331,7 @@ async function streamChatViaTauri(
           });
         } else if (config.provider === 'vertex') {
           const { cacheName: vertexCache, cachedMessageCount: vertexCachedCount } = await manageGeminiRollingCache('vertex', config.apiKey, config.model, config.systemPrompt || '', cacheMessages, config.projectId, config.region);
-          const vertexUncachedStart = vertexCache ? Math.min(vertexCachedCount, tauriMessages.length - 1) : 0;
+          const vertexUncachedStart = vertexCache ? Math.min(vertexCachedCount, tauriMessages.length) : 0;
           const vertexMessages = vertexCache ? tauriMessages.slice(vertexUncachedStart) : tauriMessages;
           await invoke('stream_chat_vertex', {
             accessToken: config.apiKey,
@@ -1349,7 +1349,7 @@ async function streamChatViaTauri(
           });
         } else {
           const { cacheName: googleCache, cachedMessageCount: googleCachedCount } = await manageGeminiRollingCache('google', config.apiKey, config.model, config.systemPrompt || '', cacheMessages);
-          const googleUncachedStart = googleCache ? Math.min(googleCachedCount, tauriMessages.length - 1) : 0;
+          const googleUncachedStart = googleCache ? Math.min(googleCachedCount, tauriMessages.length) : 0;
           const googleMessages = googleCache ? tauriMessages.slice(googleUncachedStart) : tauriMessages;
           await invoke('stream_chat_google', {
             apiKey: config.apiKey,
