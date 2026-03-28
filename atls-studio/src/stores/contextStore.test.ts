@@ -4,7 +4,7 @@
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { setRoundRefreshRevisionResolver, setBulkRevisionResolver, setWorkspacesAccessor, useContextStore } from './contextStore';
-import { STAGED_ANCHOR_BUDGET_TOKENS, MAX_PERSISTENT_STAGE_ENTRIES } from '../services/promptMemory';
+import { STAGED_ANCHOR_BUDGET_TOKENS, STAGED_TOTAL_HARD_CAP_TOKENS, MAX_PERSISTENT_STAGE_ENTRIES } from '../services/promptMemory';
 
 function resetStore() {
   useContextStore.getState().resetSession();
@@ -658,6 +658,17 @@ describe('staged lifecycle policy', () => {
 
     expect(entries.length).toBeLessThanOrEqual(MAX_PERSISTENT_STAGE_ENTRIES);
     expect(tokens).toBeLessThanOrEqual(STAGED_ANCHOR_BUDGET_TOKENS);
+  });
+
+  it('evicts staged entries when total tokens exceed STAGED_TOTAL_HARD_CAP_TOKENS', () => {
+    const store = useContextStore.getState();
+    const chunk = 'x'.repeat(3000);
+    for (let i = 0; i < 100; i++) {
+      store.stageSnippet(`bulk:${i}`, chunk, `src/bulk-${i}.ts`, undefined, undefined, undefined, 'derived');
+    }
+    let total = 0;
+    useContextStore.getState().stagedSnippets.forEach(s => { total += s.tokens; });
+    expect(total).toBeLessThanOrEqual(STAGED_TOTAL_HARD_CAP_TOKENS);
   });
 });
 

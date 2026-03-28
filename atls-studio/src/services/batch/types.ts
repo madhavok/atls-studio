@@ -608,6 +608,8 @@ export interface SymbolTargetParams { symbol_names: string[]; }
 export interface SearchCodeParams {
   queries: string[];
   file_paths?: string[];
+  /** Cap distinct paths in step output content.file_paths (order-preserving). */
+  max_file_paths?: number;
   limit?: number;
   compact?: boolean;
   grouped?: boolean;
@@ -670,6 +672,8 @@ export interface ReadContextParams {
 export interface ReadShapedParams {
   file_paths: string[];
   shape?: string;
+  /** Cap how many paths are processed (order-preserving); bindings can still supply long lists. */
+  max_files?: number;
 }
 
 export interface ReadLinesParams {

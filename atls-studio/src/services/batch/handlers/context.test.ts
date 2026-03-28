@@ -112,6 +112,34 @@ describe('context handlers snapshot authority', () => {
     expect(staged[0]?.sourceRevision).toBe('canon1234');
   });
 
+  it('caps file_paths with max_files before expandFilePathRefs', async () => {
+    const paths = ['src/a.ts', 'src/b.ts', 'src/c.ts', 'src/d.ts', 'src/e.ts'];
+    const expand = vi.fn(async (filePaths: string[]) => ({
+      items: filePaths.map((path) => ({ kind: 'path' as const, path })),
+      notes: [] as string[],
+    }));
+    const ctx = makeCtx({
+      atlsBatchQuery: vi.fn().mockResolvedValue({
+        results: paths.slice(0, 2).map(f => ({ file: f, content: 'x\n', snapshot_hash: 'canon1234' })),
+      }),
+      expandFilePathRefs: expand,
+    });
+    invokeWithTimeoutMock
+      .mockResolvedValueOnce({ content: 'x\n', source: 'src/a.ts', snapshot_hash: 'canon1234' })
+      .mockResolvedValueOnce({ content: 'sig a', source: 'src/a.ts', snapshot_hash: 'canon1234', selector: 'sig' })
+      .mockResolvedValueOnce({ content: 'x\n', source: 'src/b.ts', snapshot_hash: 'canon1234' })
+      .mockResolvedValueOnce({ content: 'sig b', source: 'src/b.ts', snapshot_hash: 'canon1234', selector: 'sig' });
+
+    const result = await handleReadShaped(
+      { file_paths: paths, shape: 'sig', max_files: 2 },
+      ctx,
+    );
+
+    expect(expand).toHaveBeenCalledWith(['src/a.ts', 'src/b.ts']);
+    expect(result.summary).toContain('capped to 2 (max_files)');
+    expect(result.ok).toBe(true);
+  });
+
   it('includes snapshot_hash in read.lines content payloads', async () => {
     const ctx = makeCtx({
       atlsBatchQuery: vi.fn().mockResolvedValue({

@@ -31,6 +31,7 @@ import {
 import {
   STAGED_ANCHOR_BUDGET_TOKENS,
   STAGED_BUDGET_TOKENS,
+  STAGED_TOTAL_HARD_CAP_TOKENS,
   MAX_PERSISTENT_STAGE_ENTRIES,
   type PromptReliefAction,
   type StageAdmissionClass,
@@ -661,8 +662,9 @@ function pruneStagedSnippetsToBudget(
     return true;
   };
 
-  // Staged total budget removed — staged content is naturally bounded by entry count
-  // and the STAGE_SOFT_CEILING (25k). Only anchor-specific limits remain.
+  while (totalTokens() > STAGED_TOTAL_HARD_CAP_TOKENS && takeLowestValue()) {
+    // Evict lowest-value staged entries until total is under hard cap (session.stage can otherwise grow without bound).
+  }
 
   while (getPersistentAnchorTokens(next) > STAGED_ANCHOR_BUDGET_TOKENS && takeLowestValue()) {
     // Persistent anchors must remain tiny.

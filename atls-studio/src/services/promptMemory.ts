@@ -10,6 +10,8 @@ export const ROLLING_SUMMARY_MAX_TOKENS = 1500;
 
 export const CONVERSATION_HISTORY_BUDGET_TOKENS = 20000;
 export const STAGED_BUDGET_TOKENS = 4000;
+/** Hard cap on total tokens across all staged snippets — prevents unbounded growth when batch stages hundreds of refs. */
+export const STAGED_TOTAL_HARD_CAP_TOKENS = 65536;
 export const STAGED_ANCHOR_BUDGET_TOKENS = 1200;
 export const WM_BUDGET_TOKENS = 32000;
 export const WORKSPACE_CONTEXT_BUDGET_TOKENS = 6000;
@@ -26,10 +28,37 @@ export const COMPACT_HISTORY_TOKEN_THRESHOLD = 15000;
 export const SUBAGENT_MAX_ROUNDS = 100;
 /** Total input+output tokens across all subagent rounds before forced stop. */
 export const SUBAGENT_TOKEN_BUDGET_DEFAULT = 200_000;
+/** Role-specific token budgets — read-only roles stop sooner to cap API spend. */
+export const SUBAGENT_TOKEN_BUDGET_BY_ROLE: Record<string, number> = {
+  retriever: 80_000,
+  design: 100_000,
+  coder: 200_000,
+  tester: 150_000,
+};
+/** Role-specific maxTokens for model output per round — read-only roles need less. */
+export const SUBAGENT_MAX_OUTPUT_TOKENS_BY_ROLE: Record<string, number> = {
+  retriever: 2048,
+  design: 2048,
+  coder: 8192,
+  tester: 4096,
+};
 /** Hard cap on pin budget instruction to prevent unbounded pinning behavior. */
 export const SUBAGENT_PIN_BUDGET_CAP = 64_000;
 /** Max paths listed in the "ALREADY STAGED" section of subagent system prompts. */
 export const SUBAGENT_STAGED_PATHS_CAP = 60;
+
+/** intent.survey: shallow tree by default (same cost model as tree context — listing, not full files). */
+export const INTENT_SURVEY_DEFAULT_DEPTH = 2;
+/** intent.survey: hard ceiling on tree depth from model params. */
+export const INTENT_SURVEY_MAX_DEPTH = 3;
+/**
+ * intent.investigate: cap distinct paths from search → read.shaped(sig) (same token model as sig — not full smart read).
+ */
+export const INTENT_INVESTIGATE_MAX_FILES = 20;
+/**
+ * intent.survey: cap files from tree listing → read.shaped(sig) (tree text is cheap; sig batch was unbounded).
+ */
+export const INTENT_SURVEY_MAX_SHAPED_FILES = 40;
 
 export const MAX_PERSISTENT_STAGE_ENTRY_TOKENS = 300;
 export const MAX_PERSISTENT_STAGE_ENTRIES = 12;

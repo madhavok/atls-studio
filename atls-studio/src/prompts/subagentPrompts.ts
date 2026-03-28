@@ -8,8 +8,8 @@ const SUBAGENT_BASE = `Use native batch() only.
 
 Allowed intents (preferred):
 - intent.understand — reads sigs, stages, pins, analyzes deps
-- intent.investigate — searches, reads, stages, caches to BB
-- intent.survey — reads tree, stages sigs, caches to BB{{EXTRA_INTENTS}}
+- intent.investigate — search + sig-shaped reads (not full smart per hit), stages, caches to BB
+- intent.survey — tree listing + sig-shaped reads (capped), caches to BB{{EXTRA_INTENTS}}
 
 Allowed primitives (fallback):
 - search.code

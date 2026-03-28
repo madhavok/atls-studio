@@ -4,8 +4,8 @@
 
 import type { OpHandler, StepOutput } from '../types';
 
-function ok(summary: string, content?: unknown): StepOutput {
-  return { kind: 'raw', ok: true, refs: [], summary, content };
+function ok(summary: string, refs: string[], content?: unknown): StepOutput {
+  return { kind: 'raw', ok: true, refs, summary, content };
 }
 
 function err(summary: string): StepOutput {
@@ -38,11 +38,14 @@ async function runDelegate(
       token_budget: typeof params.token_budget === 'number' ? params.token_budget as number : undefined,
     });
 
+    const pinnedHashes = result.refs
+      .filter(r => r.pinned || r.type === 'staged')
+      .map(r => `h:${r.hash}`);
     const refHashes = result.refs.map(r => `h:${r.shortHash}`);
     const summary = `${role}: ${result.refs.length} refs (${(result.pinTokens / 1000).toFixed(1)}k tk), ${result.rounds} rounds` +
       (result.bbKeys.length > 0 ? ` | BB: ${result.bbKeys.join(', ')}` : '');
 
-    return ok(summary, {
+    return ok(summary, pinnedHashes, {
       refs: result.refs,
       bbKeys: result.bbKeys,
       pinCount: result.pinCount,

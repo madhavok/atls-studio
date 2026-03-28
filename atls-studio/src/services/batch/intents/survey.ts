@@ -10,13 +10,19 @@
 
 import type { IntentResolver, IntentResult, IntentContext, Step } from '../types';
 import { makeStepId, isFileStaged, computeNextTargets } from '../intents';
+import {
+  INTENT_SURVEY_DEFAULT_DEPTH,
+  INTENT_SURVEY_MAX_DEPTH,
+  INTENT_SURVEY_MAX_SHAPED_FILES,
+} from '../../promptMemory';
 
 export const resolveSurvey: IntentResolver = (
   params: Record<string, unknown>,
   context: IntentContext,
 ): IntentResult => {
   const directory = (params.directory as string) ?? '.';
-  const depth = typeof params.depth === 'number' ? params.depth : 3;
+  const rawDepth = typeof params.depth === 'number' ? params.depth : INTENT_SURVEY_DEFAULT_DEPTH;
+  const depth = Math.min(Math.max(1, rawDepth), INTENT_SURVEY_MAX_DEPTH);
   const force = params.force === true;
   const intentId = (params._intentId as string) ?? 'survey';
 
@@ -50,7 +56,7 @@ export const resolveSurvey: IntentResolver = (
     steps.push({
       id: sigReadId,
       use: 'read.shaped',
-      with: { shape: 'sig' },
+      with: { shape: 'sig', max_files: INTENT_SURVEY_MAX_SHAPED_FILES },
       in: { file_paths: { from_step: treeReadId, path: 'content.file_paths' } },
       if: { step_has_refs: treeReadId },
     });

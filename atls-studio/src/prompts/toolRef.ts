@@ -13,7 +13,7 @@ ${generateFamilyLines()}
 ### Common Params (canonical names — aliases auto-resolved)
 session.advance subtask:optional (omit to advance to next) summary:required
 read.context type:smart|full|module|component|test|tree file_paths:[] depth?:N glob?:"" line_range?:[start,end] max_lines?:N (use full for full content; do NOT use raw)
-read.shaped file_paths:[] shape:""
+read.shaped file_paths:[] shape:"" max_files?:N (caps path count when bindings supply long lists)
 read.lines hash+lines ("15-50") | ref ("h:XXXX:15-50" — hash 6-16 hex) | file_path+start_line+end_line | context_lines?:0-5 (default 3, returns target_range + actual_range)
 search.code queries:[] file_paths?:[] limit?:N compact?:bool
 search.symbol symbol_names:[] limit?:N
@@ -53,9 +53,9 @@ annotate.note|retype|split|merge — hash-targeted metadata ops (hash:"" + op-sp
 intent.understand file_paths:[] force?:bool — reads, analyzes deps, stages, pins; skips steps already done
 intent.edit file_path:"" line_edits:[...] verify?:bool force?:bool — reads if needed, edits, auto-retries on stale_hash, verifies
 intent.edit_multi edits:[{file_path:"",line_edits:[...]}] verify?:bool force?:bool — per-file read/edit/retry, single verify.build at end
-intent.investigate query:"" file_paths?:[] force?:bool — searches, reads results, stages, caches in BB
+intent.investigate query:"" file_paths?:[] force?:bool — search.code (capped paths) + read.shaped(sig), stages, caches in BB (not full smart read per hit)
 intent.diagnose file_paths?:[] severity?:"" query?:"" force?:bool — search.issues + analyze.impact, read-only discovery
-intent.survey directory:"" depth?:N force?:bool — reads tree, stages sigs, caches in BB
+intent.survey directory:"" depth?:N force?:bool — read.context(tree, default depth 2, max 3), read.shaped(sig) with max_files cap, caches in BB
 intent.refactor file_path:"" strategy?:"" symbol_names?:[] target_file?:"" force?:bool — reads, pins, analyzes, extracts plan, refactors, verifies
 intent.create target_path:"" content:"" ref_files?:[] verify?:bool force?:bool — creates file with dep context, verifies types
 intent.test source_file:"" test_file?:"" force?:bool — reads source sigs + test context, read-only prep

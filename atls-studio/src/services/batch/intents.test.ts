@@ -13,6 +13,12 @@ import { resolveTest } from './intents/test';
 import { resolveSearchReplace } from './intents/searchReplace';
 import { resolveExtract } from './intents/extract';
 import { AwarenessLevel } from './snapshotTracker';
+import {
+  INTENT_INVESTIGATE_MAX_FILES,
+  INTENT_SURVEY_DEFAULT_DEPTH,
+  INTENT_SURVEY_MAX_DEPTH,
+  INTENT_SURVEY_MAX_SHAPED_FILES,
+} from '../promptMemory';
 
 registerIntent('intent.understand', resolveUnderstand);
 registerIntent('intent.edit', resolveEdit);
@@ -352,13 +358,19 @@ describe('intent.edit resolver', () => {
 describe('intent.investigate resolver', () => {
   const params = { query: 'authentication flow', _intentId: 'inv1' };
 
-  it('empty context → emits search + read + stage + bb.write', () => {
+  it('empty context → emits search + read.shaped(sig) + stage + bb.write', () => {
     const result = resolveInvestigate(params, emptyContext());
     const ops = result.steps.map(s => s.use);
     expect(ops).toContain('search.code');
-    expect(ops).toContain('read.context');
+    expect(ops).toContain('read.shaped');
+    expect(ops).not.toContain('read.context');
     expect(ops).toContain('session.stage');
     expect(ops).toContain('session.bb.write');
+    const searchStep = result.steps.find(s => s.use === 'search.code');
+    expect(searchStep?.with?.max_file_paths).toBe(INTENT_INVESTIGATE_MAX_FILES);
+    const readStep = result.steps.find(s => s.use === 'read.shaped');
+    expect(readStep?.with?.shape).toBe('sig');
+    expect(readStep?.with?.max_files).toBe(INTENT_INVESTIGATE_MAX_FILES);
   });
 
   it('BB has cached results → skips search and read', () => {
@@ -367,7 +379,7 @@ describe('intent.investigate resolver', () => {
     const result = resolveInvestigate(params, ctx);
     const ops = result.steps.map(s => s.use);
     expect(ops).not.toContain('search.code');
-    expect(ops).not.toContain('read.context');
+    expect(ops).not.toContain('read.shaped');
   });
 
   it('force:true → full expansion even with BB cache', () => {
@@ -378,9 +390,9 @@ describe('intent.investigate resolver', () => {
     expect(ops).toContain('search.code');
   });
 
-  it('read.context wires from_step to search results', () => {
+  it('read.shaped wires from_step to search results', () => {
     const result = resolveInvestigate(params, emptyContext());
-    const readStep = result.steps.find(s => s.use === 'read.context');
+    const readStep = result.steps.find(s => s.use === 'read.shaped');
     expect(readStep?.in?.file_paths).toEqual({ from_step: 'inv1__search', path: 'content.file_paths' });
   });
 });
@@ -399,6 +411,20 @@ describe('intent.survey resolver', () => {
     expect(ops).toContain('read.shaped');
     expect(ops).toContain('session.stage');
     expect(ops).toContain('session.bb.write');
+    const treeStep = result.steps.find(s => s.use === 'read.context');
+    expect(treeStep?.with).toMatchObject({
+      type: 'tree',
+      file_paths: ['src/services'],
+      depth: INTENT_SURVEY_DEFAULT_DEPTH,
+    });
+    const sigStep = result.steps.find(s => s.use === 'read.shaped');
+    expect(sigStep?.with?.max_files).toBe(INTENT_SURVEY_MAX_SHAPED_FILES);
+  });
+
+  it('clamps depth to INTENT_SURVEY_MAX_DEPTH', () => {
+    const result = resolveSurvey({ ...params, depth: 99 }, emptyContext());
+    const treeStep = result.steps.find(s => s.use === 'read.context');
+    expect(treeStep?.with?.depth).toBe(INTENT_SURVEY_MAX_DEPTH);
   });
 
   it('tree in BB → zero expansion', () => {

@@ -8,6 +8,7 @@
 
 import type { IntentResolver, IntentResult, IntentContext, Step } from '../types';
 import { makeStepId, isFileStaged, computeNextTargets } from '../intents';
+import { INTENT_INVESTIGATE_MAX_FILES } from '../../promptMemory';
 
 export const resolveInvestigate: IntentResolver = (
   params: Record<string, unknown>,
@@ -34,13 +35,13 @@ export const resolveInvestigate: IntentResolver = (
       steps.push({
         id: searchId,
         use: 'search.code',
-        with: { queries: [query], file_paths: filePaths },
+        with: { queries: [query], file_paths: filePaths, max_file_paths: INTENT_INVESTIGATE_MAX_FILES },
       });
     } else {
       steps.push({
         id: searchId,
         use: 'search.code',
-        with: { queries: [query] },
+        with: { queries: [query], max_file_paths: INTENT_INVESTIGATE_MAX_FILES },
       });
     }
   }
@@ -50,18 +51,20 @@ export const resolveInvestigate: IntentResolver = (
 
   if (needsRead) {
     if (!hasCachedResults) {
+      // Structural sig (same cost model as intent.survey / read.shaped) — not full smart read per file.
       steps.push({
         id: readId,
-        use: 'read.context',
-        with: { type: 'smart' },
+        use: 'read.shaped',
+        with: { shape: 'sig', max_files: INTENT_INVESTIGATE_MAX_FILES },
         in: { file_paths: { from_step: searchId, path: 'content.file_paths' } },
         if: { step_has_refs: searchId },
       });
     } else if (filePaths.length > 0) {
+      const capped = filePaths.slice(0, INTENT_INVESTIGATE_MAX_FILES);
       steps.push({
         id: readId,
-        use: 'read.context',
-        with: { type: 'smart', file_paths: filePaths },
+        use: 'read.shaped',
+        with: { shape: 'sig', file_paths: capped, max_files: INTENT_INVESTIGATE_MAX_FILES },
       });
     }
   }

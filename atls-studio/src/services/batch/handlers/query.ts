@@ -66,12 +66,19 @@ export const handleSearchCode: OpHandler = async (params, ctx) => {
     if (retained.reused) return retained.output;
     const hash = ctx.store().addChunk(resultStr, 'search', queries.join(', '), undefined, summary);
     const tk = estimateTokens(resultStr);
-    const resultFilePaths = extractFilePathsFromSearchResult(result);
-    const resultLines = extractLinesFromSearchResult(result);
+    let resultFilePaths = extractFilePathsFromSearchResult(result);
+    let resultLines = extractLinesFromSearchResult(result);
+    const maxPaths = params.max_file_paths;
+    let cappedNote = '';
+    if (typeof maxPaths === 'number' && maxPaths > 0 && resultFilePaths.length > maxPaths) {
+      cappedNote = ` — paths capped to ${maxPaths}`;
+      resultFilePaths = resultFilePaths.slice(0, maxPaths);
+      resultLines = resultLines.slice(0, maxPaths);
+    }
     return {
       kind: 'search_results', ok: true,
       refs: [`h:${hash}`],
-      summary: `search: ${queries.join(', ')} → h:${hash} (${(tk / 1000).toFixed(1)}k tk)`,
+      summary: `search: ${queries.join(', ')} → h:${hash} (${(tk / 1000).toFixed(1)}k tk)${cappedNote}`,
       tokens: tk,
       content: { file_paths: resultFilePaths, lines: resultLines },
     };

@@ -19,10 +19,12 @@ import { useRoundHistoryStore, type RoundSnapshot } from '../stores/roundHistory
 import { estimateTokens } from '../utils/contextHash';
 import { buildSubagentPrompt, type SubagentRole } from '../prompts/subagentPrompts';
 import { coerceBatchSteps } from './batch/coerceBatchSteps';
-import { createScopedView, dematerialize, getRef, type ScopedHppView } from './hashProtocol';
+import { dematerialize, getRef } from './hashProtocol';
 import {
   SUBAGENT_MAX_ROUNDS,
   SUBAGENT_TOKEN_BUDGET_DEFAULT,
+  SUBAGENT_TOKEN_BUDGET_BY_ROLE,
+  SUBAGENT_MAX_OUTPUT_TOKENS_BY_ROLE,
   SUBAGENT_PIN_BUDGET_CAP,
   SUBAGENT_STAGED_PATHS_CAP,
 } from './promptMemory';
@@ -146,6 +148,14 @@ const ROLE_BB_KEYS: Record<SubagentType, string> = {
 
 const ROLE_NEEDS_TERMINAL = new Set<SubagentType>(['coder', 'tester']);
 
+/** BB key prefixes visible to each subagent role (avoids leaking unrelated entries). */
+const ROLE_BB_PREFIXES: Record<SubagentType, string[]> = {
+  retriever: ['retriever:', 'investigate:', 'survey:', 'tree:', 'deps:'],
+  design:    ['design:', 'retriever:', 'investigate:', 'survey:', 'tree:', 'deps:', 'diagnose:', 'test_context:'],
+  coder:     ['coder:', 'design:', 'retriever:', 'investigate:', 'deps:', 'extract_plan:'],
+  tester:    ['tester:', 'coder:', 'design:', 'test_context:', 'investigate:'],
+};
+
 // ============================================================================
 // Budget Calculation
 // ============================================================================
@@ -178,6 +188,7 @@ async function runSubagentRound(
   messages: Array<{ role: string; content: unknown }>,
   systemPrompt: string,
   streamId: string,
+  maxOutputTokens: number,
   baseUrl?: string,
   projectId?: string,
   region?: string,
@@ -249,7 +260,7 @@ async function runSubagentRound(
   const commonParams = {
     model,
     messages,
-    maxTokens: 4096,
+    maxTokens: maxOutputTokens,
     temperature: 0.3,
     systemPrompt,
     streamId,
@@ -296,6 +307,15 @@ async function runSubagentRound(
 export const SUBAGENT_MAX_FILE_PATHS = 15;
 
 const BARE_DIR_PATTERN = /^\.?\/?$|^\.\.?\/?$/;
+
+let _cachedExecuteToolCall: ((name: string, args: Record<string, unknown>, options?: Record<string, unknown>) => Promise<string>) | null = null;
+async function getExecuteToolCall() {
+  if (!_cachedExecuteToolCall) {
+    const mod = await import('./aiService');
+    _cachedExecuteToolCall = mod.executeToolCall;
+  }
+  return _cachedExecuteToolCall;
+}
 
 function sanitizeSubagentSteps(
   steps: Array<Record<string, unknown>>,
@@ -358,7 +378,7 @@ async function executeSubagentToolCall(
   const sanitizeErr = sanitizeSubagentSteps(steps, role);
   if (sanitizeErr) return sanitizeErr;
 
-  const { executeToolCall } = await import('./aiService');
+  const executeToolCall = await getExecuteToolCall();
   return executeToolCall(name, args, options);
 }
 
@@ -367,6 +387,7 @@ async function executeSubagentToolCall(
 // ============================================================================
 
 function buildSubagentSnapshot(
+  role: SubagentType,
   query: string,
   focusFiles: string[] | undefined,
   round: number,
@@ -378,36 +399,33 @@ function buildSubagentSnapshot(
   preExistingSources: Set<string>,
   lastBatchOutcome: string | null,
   lastErrors: string[],
-  _scopedView: ScopedHppView,
 ): string {
   const ctx = useContextStore.getState();
   const sections: string[] = [];
 
-  // Original query + focus
   sections.push(query);
   if (focusFiles?.length) {
     sections.push(`Focus files: ${focusFiles.join(', ')}`);
   }
 
-  // Working state
+  const metrics = buildSnapshotMetrics(preExistingHashes, preExistingSources);
+
   const tokensUsed = totalInputTokens + totalOutputTokens;
-  const pinnedTokens = computeCurrentPinTokens(preExistingHashes, preExistingSources);
   sections.push(
     `\n## SUBAGENT WORKING STATE (round ${round})`,
-    `Token budget: ${(tokensUsed / 1000).toFixed(1)}k of ${(tokenBudget / 1000).toFixed(0)}k used | Pin budget: ${(pinnedTokens / 1000).toFixed(1)}k of ${(pinBudget / 1000).toFixed(0)}k tokens`,
+    `Token budget: ${(tokensUsed / 1000).toFixed(1)}k of ${(tokenBudget / 1000).toFixed(0)}k used | Pin budget: ${(metrics.pinTokens / 1000).toFixed(1)}k of ${(pinBudget / 1000).toFixed(0)}k tokens`,
   );
 
-  // Engrams created since start
-  const engramLines = buildEngramListing(preExistingHashes, preExistingSources);
-  if (engramLines.length > 0) {
+  if (metrics.engramLines.length > 0) {
     sections.push('\n## ENGRAMS CREATED');
-    sections.push(engramLines.join('\n'));
+    sections.push(metrics.engramLines.join('\n'));
   }
 
-  // Blackboard entries
+  const bbAllowedPrefixes = ROLE_BB_PREFIXES[role];
   const bbLines: string[] = [];
   ctx.blackboardEntries.forEach((entry, key) => {
     if (key.startsWith('edit:') || key.startsWith('__')) return;
+    if (!bbAllowedPrefixes.some(p => key.startsWith(p))) return;
     bbLines.push(`${key}: ${entry.content.length > 500 ? entry.content.slice(0, 500) + '...' : entry.content}`);
   });
   if (bbLines.length > 0) {
@@ -415,23 +433,21 @@ function buildSubagentSnapshot(
     sections.push(bbLines.join('\n'));
   }
 
-  // Last batch outcome
   if (lastBatchOutcome) {
     sections.push('\n## LAST BATCH OUTCOME');
     sections.push(lastBatchOutcome);
   }
 
-  // Errors
   if (lastErrors.length > 0) {
     sections.push('\n## ERRORS / WARNINGS');
     sections.push(lastErrors.join('\n'));
   }
 
-  // Already staged (capped list)
+  // Only show pre-existing staged paths (new ones are already in ENGRAMS CREATED)
   const stagedPaths = Array.from(ctx.stagedSnippets.values())
     .filter(s => s.source && canSteerExecution({ stageState: s.stageState, freshness: s.freshness }))
     .map(s => s.source!)
-    .filter(Boolean);
+    .filter(src => src && !metrics.newStagedSources.has(src));
   if (stagedPaths.length > 0) {
     const shown = stagedPaths.slice(0, SUBAGENT_STAGED_PATHS_CAP);
     const overflow = stagedPaths.length - shown.length;
@@ -444,58 +460,45 @@ function buildSubagentSnapshot(
   return sections.join('\n');
 }
 
-function buildEngramListing(
+interface SnapshotMetrics {
+  engramLines: string[];
+  pinTokens: number;
+  newStagedSources: Set<string>;
+}
+
+function buildSnapshotMetrics(
   preExistingHashes: Set<string>,
   preExistingSources: Set<string>,
-): string[] {
+): SnapshotMetrics {
   const ctx = useContextStore.getState();
-  const lines: string[] = [];
+  const engramLines: string[] = [];
+  let pinTokens = 0;
+  const newStagedSources = new Set<string>();
 
-  // Staged snippets created since start
   for (const snippet of ctx.stagedSnippets.values()) {
     if (!snippet.content || !snippet.source) continue;
     if (!canSteerExecution({ stageState: snippet.stageState, freshness: snippet.freshness })) continue;
     if (preExistingSources.has(snippet.source)) continue;
     const tk = estimateTokens(snippet.content);
+    pinTokens += tk;
+    newStagedSources.add(snippet.source);
     const lineInfo = snippet.lines ? `:${snippet.lines}` : '';
-    lines.push(`h:staged (${snippet.source}${lineInfo}, ${(tk / 1000).toFixed(1)}k tk) [staged]`);
-  }
-
-  // Chunks created since start
-  for (const [hash, chunk] of ctx.chunks.entries()) {
-    if (preExistingHashes.has(hash)) continue;
-    if (chunk.type === 'msg:user' || chunk.type === 'msg:asst') continue;
-    if (!chunk.content) continue;
-    const src = chunk.source || chunk.type;
-    const pinnedTag = chunk.pinned ? ' [pinned]' : '';
-    lines.push(`h:${chunk.shortHash} (${src}, ${(chunk.tokens / 1000).toFixed(1)}k tk)${pinnedTag}`);
-  }
-
-  return lines;
-}
-
-function computeCurrentPinTokens(
-  preExistingHashes: Set<string>,
-  preExistingSources: Set<string>,
-): number {
-  const ctx = useContextStore.getState();
-  let total = 0;
-
-  for (const snippet of ctx.stagedSnippets.values()) {
-    if (!snippet.content || !snippet.source) continue;
-    if (!canSteerExecution({ stageState: snippet.stageState, freshness: snippet.freshness })) continue;
-    if (preExistingSources.has(snippet.source)) continue;
-    total += estimateTokens(snippet.content);
+    engramLines.push(`h:staged (${snippet.source}${lineInfo}, ${(tk / 1000).toFixed(1)}k tk) [staged]`);
   }
 
   for (const [hash, chunk] of ctx.chunks.entries()) {
     if (preExistingHashes.has(hash)) continue;
     if (chunk.pinned && chunk.content) {
-      total += chunk.tokens;
+      pinTokens += chunk.tokens;
     }
+    if (chunk.type === 'msg:user' || chunk.type === 'msg:asst') continue;
+    if (!chunk.content) continue;
+    const src = chunk.source || chunk.type;
+    const pinnedTag = chunk.pinned ? ' [pinned]' : '';
+    engramLines.push(`h:${chunk.shortHash} (${src}, ${(chunk.tokens / 1000).toFixed(1)}k tk)${pinnedTag}`);
   }
 
-  return total;
+  return { engramLines, pinTokens, newStagedSources };
 }
 
 // ============================================================================
@@ -523,11 +526,13 @@ function extractSubagentRefs(
   const refs: SubAgentRef[] = [];
 
   // Priority 1: staged snippets (most precise)
+  const stagedSources = new Set<string>();
   for (const [key, snippet] of ctx.stagedSnippets.entries()) {
     if (!snippet.content) continue;
     if (!canSteerExecution({ stageState: snippet.stageState, freshness: snippet.freshness })) continue;
     if (preExistingSources.has(snippet.source || '')) continue;
     if (snippet.source && isExcludedPath(snippet.source)) continue;
+    if (snippet.source) stagedSources.add(snippet.source);
     refs.push({
       hash: key,
       shortHash: key.slice(0, 8),
@@ -547,8 +552,7 @@ function extractSubagentRefs(
     if (chunk.suspectSince != null || chunk.freshness === 'suspect' || chunk.freshness === 'changed') continue;
     if (chunk.source && preExistingSources.has(chunk.source)) continue;
     if (chunk.source && isExcludedPath(chunk.source)) continue;
-    const alreadyStaged = refs.some(r => r.source === chunk.source && r.type === 'staged');
-    if (alreadyStaged) continue;
+    if (chunk.source && stagedSources.has(chunk.source)) continue;
     refs.push({
       hash: chunk.hash,
       shortHash: chunk.shortHash,
@@ -626,6 +630,23 @@ function dematerializeSubagentChunks(
   }
 }
 
+/**
+ * Drop staged snippets created during the subagent run. session.stage resolves
+ * full file bodies into stagedSnippets; bulk intent.survey can stage hundreds
+ * of grammar/assets files and blow the prompt (see STAGED_TOTAL_HARD_CAP_TOKENS).
+ * Findings should live in BB + delegate refs, not the staged cache.
+ */
+function unstageSubagentAdded(preExistingStagedKeys: Set<string>): void {
+  const ctx = useContextStore.getState();
+  const keys = Array.from(ctx.stagedSnippets.keys()).filter(k => !preExistingStagedKeys.has(k));
+  if (keys.length === 0) return;
+  let freed = 0;
+  for (const key of keys) {
+    freed += ctx.unstageSnippet(key).freed;
+  }
+  console.log(`[subagent] Unstaged ${keys.length} subagent-added snippets, freed ~${(freed / 1000).toFixed(1)}k tokens`);
+}
+
 // ============================================================================
 // Stopping Conditions
 // ============================================================================
@@ -665,7 +686,7 @@ function checkStopConditions(
 
   // Pin budget saturation for retriever/design
   if (role === 'retriever' || role === 'design') {
-    const currentPinTokens = computeCurrentPinTokens(preExistingHashes, preExistingSources);
+    const currentPinTokens = buildSnapshotMetrics(preExistingHashes, preExistingSources).pinTokens;
     if (currentPinTokens > pinBudget * 0.9) {
       return { shouldStop: true, reason: `pin budget saturated (${(currentPinTokens / 1000).toFixed(1)}k / ${(pinBudget / 1000).toFixed(0)}k)` };
     }
@@ -684,6 +705,7 @@ function checkStopConditions(
 // ============================================================================
 
 function buildProviderMessages(
+  role: SubagentType,
   query: string,
   focusFiles: string[] | undefined,
   round: number,
@@ -697,33 +719,28 @@ function buildProviderMessages(
   lastErrors: string[],
   lastAssistantContent: unknown[] | null,
   lastToolResults: Array<{ type: string; tool_use_id: string; name: string; content: string }> | null,
-  scopedView: ScopedHppView,
 ): Array<{ role: string; content: unknown }> {
   const messages: Array<{ role: string; content: unknown }> = [];
 
   if (round === 0) {
-    // First round: just the query
     messages.push({ role: 'user', content: query + (focusFiles?.length ? `\nFocus files: ${focusFiles.join(', ')}` : '') });
   } else if (lastAssistantContent && lastToolResults) {
-    // Subsequent rounds: snapshot + last tool exchange
     const snapshot = buildSubagentSnapshot(
-      query, focusFiles, round,
+      role, query, focusFiles, round,
       totalInputTokens, totalOutputTokens, tokenBudget, pinBudget,
       preExistingHashes, preExistingSources,
-      lastBatchOutcome, lastErrors, scopedView,
+      lastBatchOutcome, lastErrors,
     );
 
-    // [user: snapshot] → [assistant: last response] → [user: last tool_results + continue]
     messages.push({ role: 'user', content: snapshot });
     messages.push({ role: 'assistant', content: lastAssistantContent });
     messages.push({ role: 'user', content: lastToolResults });
   } else {
-    // Edge: model responded with text only (no tools) on prior round
     const snapshot = buildSubagentSnapshot(
-      query, focusFiles, round,
+      role, query, focusFiles, round,
       totalInputTokens, totalOutputTokens, tokenBudget, pinBudget,
       preExistingHashes, preExistingSources,
-      lastBatchOutcome, lastErrors, scopedView,
+      lastBatchOutcome, lastErrors,
     );
     messages.push({ role: 'user', content: snapshot });
   }
@@ -762,13 +779,16 @@ export async function executeSubagent(
   const vertexProjectId = subagentProvider === 'vertex' ? (settings.vertexProjectId as string) : undefined;
   const vertexRegion = subagentProvider === 'vertex' ? (settings.vertexRegion as string) : undefined;
 
-  // Budgets
+  // Budgets — role-specific defaults, overridable per call
   const contextUsage = appState.contextUsage;
   const pinBudget = computePinBudget(contextUsage, params.max_tokens);
-  const tokenBudget = params.token_budget ?? SUBAGENT_TOKEN_BUDGET_DEFAULT;
+  const tokenBudget = params.token_budget
+    ?? SUBAGENT_TOKEN_BUDGET_BY_ROLE[role]
+    ?? SUBAGENT_TOKEN_BUDGET_DEFAULT;
 
   // Snapshot pre-existing state for dedup
   const ctxSnapshot = useContextStore.getState();
+  const preExistingStagedKeys = new Set(ctxSnapshot.stagedSnippets.keys());
   const preExistingSources = new Set(
     Array.from(ctxSnapshot.stagedSnippets.values())
       .filter(s => canSteerExecution({ stageState: s.stageState, freshness: s.freshness }))
@@ -784,9 +804,6 @@ export async function executeSubagent(
     alreadyStaged: 'See ## ALREADY STAGED in working state',
     bbKey,
   });
-
-  // Scoped HPP view
-  const scopedView = createScopedView();
 
   // Terminal for coder/tester
   let terminalId: string | undefined;
@@ -807,6 +824,7 @@ export async function executeSubagent(
   }
 
   const streamId = `subagent-${invocationId}`;
+  const maxOutputTokens = SUBAGENT_MAX_OUTPUT_TOKENS_BY_ROLE[role] ?? 4096;
   let totalInputTokens = 0;
   let totalOutputTokens = 0;
   let totalCacheRead = 0;
@@ -831,16 +849,13 @@ export async function executeSubagent(
   try {
     for (let round = 0; round < SUBAGENT_MAX_ROUNDS; round++) {
       totalRounds++;
-      scopedView.advanceTurn();
 
-      // Build messages via snapshot rebuild
       const apiMessages = buildProviderMessages(
-        params.query, params.focus_files, round,
+        role, params.query, params.focus_files, round,
         totalInputTokens, totalOutputTokens, tokenBudget, pinBudget,
         preExistingHashes, preExistingSources,
         lastBatchOutcome, lastErrors,
         lastAssistantContent, lastToolResults,
-        scopedView,
       );
 
       const result = await runSubagentRound(
@@ -850,6 +865,7 @@ export async function executeSubagent(
         apiMessages,
         systemPrompt,
         `${streamId}-r${round}`,
+        maxOutputTokens,
         baseUrl,
         vertexProjectId,
         vertexRegion,
@@ -930,9 +946,8 @@ export async function executeSubagent(
         totalToolCalls++;
 
         const batchArgs = tc.args as Record<string, unknown>;
-        batchArgs.steps = coerceBatchSteps(batchArgs.steps);
-        const steps = batchArgs.steps as Array<Record<string, unknown>>;
-        const firstStep = steps[0] || {};
+        const rawSteps = (Array.isArray(batchArgs.steps) ? batchArgs.steps : []) as Array<Record<string, unknown>>;
+        const firstStep = rawSteps[0] || {};
         const toolName = String(firstStep.use || tc.name);
         const toolParams = (firstStep.with as Record<string, unknown>) || {};
 
@@ -1037,6 +1052,7 @@ export async function executeSubagent(
   // Pinned chunks are left alone — HPP exempts them from shouldMaterialize checks
   // and the parent will see them as compact ref lines.
   dematerializeSubagentChunks(preExistingHashes, preExistingSources);
+  unstageSubagentAdded(preExistingStagedKeys);
 
   // Collect BB keys written by this subagent
   const bbKeys: string[] = [];

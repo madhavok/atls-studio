@@ -511,21 +511,33 @@ export const handleReadLines: OpHandler = async (params, ctx) => {
 
 export const handleReadShaped: OpHandler = async (params, ctx) => {
   const rawShapedPaths = (params.file_paths as string[] | undefined) ?? [];
+  const maxFiles = params.max_files as number | undefined;
+  let pathsForShaped = rawShapedPaths;
+  if (typeof maxFiles === 'number' && maxFiles > 0 && rawShapedPaths.length > maxFiles) {
+    pathsForShaped = rawShapedPaths.slice(0, maxFiles);
+  }
   const shape = params.shape as string;
   const shapedBind = params.bind as string[] | undefined;
-  if (!rawShapedPaths.length) return err('read_shaped: ERROR missing file_paths param');
+  if (!pathsForShaped.length) return err('read_shaped: ERROR missing file_paths param');
   if (!shape) return err('read_shaped: ERROR missing shape param (e.g. "sig", "42-80:dedent", "fn(name)")');
-  for (const fp of rawShapedPaths) {
+  for (const fp of pathsForShaped) {
     const pathErr = validatePathParam(fp, 'read_shaped: file_path');
     if (pathErr) return err(pathErr);
   }
 
-  const { items: shapedItems, notes: shapedNotes } = await ctx.expandFilePathRefs(rawShapedPaths);
+  const { items: shapedItems, notes: shapedNotes } = await ctx.expandFilePathRefs(pathsForShaped);
   const lines: string[] = [];
   const allRefs: string[] = [];
   const shapedResults: Array<Record<string, unknown>> = [];
   let totalTokensDelta = 0;
 
+  if (
+    typeof maxFiles === 'number' &&
+    maxFiles > 0 &&
+    rawShapedPaths.length > maxFiles
+  ) {
+    lines.push(`read_shaped: NOTE file_paths capped to ${maxFiles} (max_files)`);
+  }
   for (const note of shapedNotes) lines.push(`read_shaped: ${note}`);
 
   let chunkLoadErrors = 0;
