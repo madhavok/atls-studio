@@ -4,7 +4,9 @@ import { fetchModels, resetStaticPromptCache, type AIProvider } from '../../serv
 import {
   modelPassesFilters,
   getEffectiveContextWindow,
-  modelSupportsExtendedContext,
+  getExtendedContextResolutionFromSettings,
+  isExtendedContextEnabled,
+  showExtendedContextToggleForModel,
 } from '../../utils/modelCapabilities';
 import { useSwarmStore, type AgentRole } from '../../stores/swarmStore';
 import { useRefactorStore } from '../../stores/refactorStore';
@@ -397,11 +399,12 @@ export function ModelModeSelector() {
 
   const hasAnyApiKey = settings.anthropicApiKey || settings.openaiApiKey || settings.googleApiKey || settings.vertexAccessToken || settings.lmstudioBaseUrl;
 
+  const extendedResolution = getExtendedContextResolutionFromSettings(settings);
   const effectiveCtx = currentModel && getEffectiveContextWindow(
     currentModel.id,
     currentModel.provider,
     currentModel.contextWindow,
-    settings.extendedContext ?? {}
+    extendedResolution
   );
   const contextLabel = effectiveCtx && effectiveCtx > 0
     ? (effectiveCtx >= 1000000 ? `${(effectiveCtx / 1000000).toFixed(1)}M` : `${(effectiveCtx / 1000).toFixed(0)}K`)
@@ -440,65 +443,79 @@ export function ModelModeSelector() {
           <div className="absolute bottom-full left-0 mb-1 w-64 max-h-80 overflow-y-auto bg-studio-surface border border-studio-border rounded-lg shadow-xl z-50">
             {Object.entries(modelsByProvider).map(([provider, models]) => {
               const prov = provider as AIProvider;
-              const hasExtendedModels = models.some((m) => modelSupportsExtendedContext(m.id, prov));
-              const extendedOn = settings.extendedContext?.[prov] ?? false;
               return (
               <div key={provider}>
                 <div
-                  className={`px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider ${PROVIDER_COLORS[prov]} bg-studio-bg/50 flex items-center justify-between gap-2`}
+                  className={`px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider ${PROVIDER_COLORS[prov]} bg-studio-bg/50`}
                 >
                   <span>{PROVIDER_BADGES[prov]}</span>
-                  {hasExtendedModels && (
-                    <label
-                      className="flex items-center gap-1 normal-case font-normal cursor-pointer shrink-0"
-                      onClick={(e) => e.stopPropagation()}
-                      title="Use 1M context (when model supports it)"
-                    >
-                      <input
-                        type="checkbox"
-                        checked={extendedOn}
-                        onChange={(e) => {
-                          useAppStore.getState().setSettings({
-                            extendedContext: {
-                              ...settings.extendedContext,
-                              [prov]: e.target.checked,
-                            },
-                          });
-                        }}
-                        className="rounded border-studio-border"
-                      />
-                      <span>1M</span>
-                    </label>
-                  )}
                 </div>
                 {models.map(model => {
                   const effectiveCtx = getEffectiveContextWindow(
                     model.id,
                     model.provider,
                     model.contextWindow,
-                    settings.extendedContext ?? {}
+                    extendedResolution
+                  );
+                  const show1mToggle = showExtendedContextToggleForModel(
+                    model.id,
+                    model.provider,
+                    model.contextWindow
+                  );
+                  const extendedOn = isExtendedContextEnabled(
+                    model.id,
+                    prov,
+                    settings.extendedContextByModelId ?? {},
+                    settings.extendedContext
                   );
                   return (
-                  <button
+                  <div
                     key={model.id}
-                    onClick={() => handleSelectModel(model)}
-                    className={`w-full px-3 py-2 text-left hover:bg-studio-accent/20 transition-colors flex items-center justify-between gap-1 ${
+                    className={`flex items-stretch w-full gap-0 border-b border-studio-border/50 last:border-b-0 ${
                       model.id === settings.selectedModel ? 'bg-studio-accent/10 text-studio-accent' : ''
                     }`}
                   >
-                    <span className="flex items-center gap-1.5 min-w-0">
-                      {model.isReasoning && <BrainIcon />}
-                      {model.isFast && <LightningIcon />}
-                      <span className="truncate">{model.name}</span>
-                    </span>
-                    {effectiveCtx != null && effectiveCtx > 0 && (
-                      <span className="text-[10px] text-studio-muted shrink-0">
-                        {effectiveCtx >= 1000000
-                          ? `${(effectiveCtx / 1000000).toFixed(1)}M`
-                          : `${(effectiveCtx / 1000).toFixed(0)}K`}
+                    <button
+                      type="button"
+                      onClick={() => handleSelectModel(model)}
+                      className="flex-1 min-w-0 px-3 py-2 text-left hover:bg-studio-accent/20 transition-colors flex items-center justify-between gap-1"
+                    >
+                      <span className="flex items-center gap-1.5 min-w-0">
+                        {model.isReasoning && <BrainIcon />}
+                        {model.isFast && <LightningIcon />}
+                        <span className="truncate">{model.name}</span>
                       </span>
+                      {effectiveCtx != null && effectiveCtx > 0 && (
+                        <span className="text-[10px] text-studio-muted shrink-0">
+                          {effectiveCtx >= 1000000
+                            ? `${(effectiveCtx / 1000000).toFixed(1)}M`
+                            : `${(effectiveCtx / 1000).toFixed(0)}K`}
+                        </span>
+                      )}
+                    </button>
+                    {show1mToggle && (
+                      <label
+                        className="flex items-center gap-1 px-2 py-2 shrink-0 cursor-pointer border-l border-studio-border/50 bg-studio-bg/30 text-studio-muted hover:text-studio-text"
+                        onClick={(e) => e.stopPropagation()}
+                        title="Use 1M context (when model supports it)"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={extendedOn}
+                          onChange={(e) => {
+                            useAppStore.getState().setSettings({
+                              extendedContextByModelId: {
+                                ...settings.extendedContextByModelId,
+                                [model.id]: e.target.checked,
+                              },
+                            });
+                          }}
+                          className="rounded border-studio-border"
+                        />
+                        <span className="text-[10px]">1M</span>
+                      </label>
                     )}
-                  </button>
+                  </div>
                 );
                 })}
               </div>

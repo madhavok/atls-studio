@@ -10,7 +10,7 @@ import { useAppStore } from '../stores/appStore';
 import { useContextStore } from '../stores/contextStore';
 import { useCostStore, calculateCost, type AIProvider as CostProvider } from '../stores/costStore';
 import { useRoundHistoryStore } from '../stores/roundHistoryStore';
-import { getEffectiveContextWindow } from '../utils/modelCapabilities';
+import { getEffectiveContextWindow, getExtendedContextResolutionFromSettings } from '../utils/modelCapabilities';
 import { resolveHashRefsWithMeta, type HashLookup } from '../utils/hashResolver';
 import { rateLimiter } from './rateLimiter';
 import type { AIProvider, AIConfig, ChatMessage as AiChatMessage, ToolCallEvent } from './aiService';
@@ -115,9 +115,9 @@ function pushSwarmRoundSnapshot(
 ): void {
   const appState = useAppStore.getState();
   const modelInfo = appState.availableModels.find(m => m.id === config.model);
-  const extendedContext = appState.settings.extendedContext ?? {};
+  const extendedResolution = getExtendedContextResolutionFromSettings(appState.settings);
   const maxTk = modelInfo
-    ? (getEffectiveContextWindow(modelInfo.id, modelInfo.provider, modelInfo.contextWindow, extendedContext)
+    ? (getEffectiveContextWindow(modelInfo.id, modelInfo.provider, modelInfo.contextWindow, extendedResolution)
       ?? (provider === 'google' || provider === 'vertex' ? 1000000 : 200000))
     : (provider === 'google' || provider === 'vertex' ? 1000000 : 200000);
 
@@ -259,9 +259,9 @@ async function runStreamRound(
         const displayIn = sessionTotals.input + roundInputTokens;
         const displayOut = sessionTotals.output + roundOutputTokens;
         const modelInfo = useAppStore.getState().availableModels.find(m => m.id === config.model);
-        const extendedContext = useAppStore.getState().settings.extendedContext ?? {};
+        const extendedResolution = getExtendedContextResolutionFromSettings(useAppStore.getState().settings);
         const maxTokens = modelInfo
-          ? (getEffectiveContextWindow(modelInfo.id, modelInfo.provider, modelInfo.contextWindow, extendedContext)
+          ? (getEffectiveContextWindow(modelInfo.id, modelInfo.provider, modelInfo.contextWindow, extendedResolution)
             ?? (provider === 'google' || provider === 'vertex' ? 1000000 : 200000))
           : (provider === 'google' || provider === 'vertex' ? 1000000 : 200000);
 

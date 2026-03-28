@@ -471,8 +471,10 @@ export interface Settings {
     /** When true (default), only show models that support tools */
     showToolCapableOnly: boolean;
   };
-  // Extended context (200K→1M) per provider when model supports it
+  /** @deprecated Legacy: extended 1M per provider; use extendedContextByModelId */
   extendedContext: Partial<Record<AIProvider, boolean>>;
+  /** Per-model extended 1M toggle (models with base &lt; 1M that support bump) */
+  extendedContextByModelId: Record<string, boolean>;
   // Entry manifest depth: 'off' = skip, 'paths' = file list only, 'sigs' = full signatures (default)
   entryManifestDepth: 'off' | 'paths' | 'sigs';
 }
@@ -1244,23 +1246,29 @@ export const useAppStore = create<AppState>((set) => ({
         showToolCapableOnly: true,
       },
       extendedContext: {},
+      extendedContextByModelId: {},
       entryManifestDepth: 'paths',
     };
     let parsed: Record<string, unknown> = {};
     try { parsed = saved ? JSON.parse(saved) : {}; } catch { /* corrupt settings — use defaults */ }
     const mf = parsed.modelFilters;
     const ec = parsed.extendedContext;
+    const ecm = parsed.extendedContextByModelId;
     const modelFiltersSpread = typeof mf === 'object' && mf !== null && !Array.isArray(mf)
       ? (mf as Record<string, boolean>)
       : {};
     const extendedContextSpread = typeof ec === 'object' && ec !== null && !Array.isArray(ec)
       ? (ec as Record<string, unknown>)
       : {};
+    const extendedByModelSpread = typeof ecm === 'object' && ecm !== null && !Array.isArray(ecm)
+      ? (ecm as Record<string, boolean>)
+      : {};
     return {
       ...defaults,
       ...parsed,
       modelFilters: { ...defaults.modelFilters, ...modelFiltersSpread },
       extendedContext: { ...defaults.extendedContext, ...extendedContextSpread },
+      extendedContextByModelId: { ...defaults.extendedContextByModelId, ...extendedByModelSpread },
     };
   })(),
   setSettings: (newSettings) => set((state) => {

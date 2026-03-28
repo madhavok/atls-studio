@@ -81,7 +81,7 @@ import {
   expandSetRefsInHashes as expandCanonicalSetRefsInHashes,
 } from './uhppExpansion';
 import { invoke } from '@tauri-apps/api/core';
-import { getEffectiveContextWindow } from '../utils/modelCapabilities';
+import { getEffectiveContextWindow, getExtendedContextResolutionFromSettings } from '../utils/modelCapabilities';
 import type {
   AgentPendingAction,
   AgentPendingActionSource,
@@ -1393,9 +1393,10 @@ async function streamChatViaTauri(
             const displayIn = totalInputTokens + roundInputTokens;
             const displayOut = totalOutputTokens + roundOutputTokens;
             const modelInfo = useAppStore.getState().availableModels.find(m => m.id === config.model);
-            const extendedContext = useAppStore.getState().settings.extendedContext ?? {};
+            const st = useAppStore.getState().settings;
+            const extendedResolution = getExtendedContextResolutionFromSettings(st);
             const maxTokens = modelInfo
-              ? (getEffectiveContextWindow(modelInfo.id, modelInfo.provider, modelInfo.contextWindow, extendedContext)
+              ? (getEffectiveContextWindow(modelInfo.id, modelInfo.provider, modelInfo.contextWindow, extendedResolution)
                 ?? (config.provider === 'google' || config.provider === 'vertex' ? 1000000 : 200000))
               : (config.provider === 'google' || config.provider === 'vertex' ? 1000000 : 200000);
             safeCallbacks.onUsageUpdate({
@@ -1498,9 +1499,9 @@ async function streamChatViaTauri(
         const workspaceContextTokens = estimateTokens(dynamicContextBlock);
         // Model's actual context window (includes extended 1M when enabled)
         const modelCtx = appState.availableModels.find(m => m.id === config.model);
-        const extendedContext = appState.settings.extendedContext ?? {};
+        const extendedResolution = getExtendedContextResolutionFromSettings(appState.settings);
         const maxTk = modelCtx
-          ? (getEffectiveContextWindow(modelCtx.id, modelCtx.provider, modelCtx.contextWindow, extendedContext)
+          ? (getEffectiveContextWindow(modelCtx.id, modelCtx.provider, modelCtx.contextWindow, extendedResolution)
             ?? appState.contextUsage.maxTokens
             ?? (config.provider === 'google' || config.provider === 'vertex' ? 1000000 : 200000))
           : (appState.contextUsage.maxTokens || (config.provider === 'google' || config.provider === 'vertex' ? 1000000 : 200000));

@@ -2,7 +2,7 @@ import { useMemo } from 'react';
 import { useAppStore } from '../../../stores/appStore';
 import { useContextStore } from '../../../stores/contextStore';
 import { useRoundHistoryStore, isMainChatRound } from '../../../stores/roundHistoryStore';
-import { getEffectiveContextWindow } from '../../../utils/modelCapabilities';
+import { getEffectiveContextWindow, getExtendedContextResolutionFromSettings } from '../../../utils/modelCapabilities';
 
 export function ContextMetricsSection() {
   const promptMetrics = useAppStore((s) => s.promptMetrics);
@@ -12,7 +12,8 @@ export function ContextMetricsSection() {
   const contextUsage = useAppStore((s) => s.contextUsage);
   const availableModels = useAppStore((s) => s.availableModels);
   const selectedModel = useAppStore((s) => s.settings.selectedModel);
-  const extendedContext = useAppStore((s) => s.settings.extendedContext) ?? {};
+  const extendedContext = useAppStore((s) => s.settings.extendedContext);
+  const extendedContextByModelId = useAppStore((s) => s.settings.extendedContextByModelId);
   const emDepth = useAppStore((s) => s.settings.entryManifestDepth) ?? 'sigs';
   const contextMaxTokens = useContextStore((s) => s.maxTokens);
   const chunks = useContextStore((s) => s.chunks);
@@ -24,11 +25,16 @@ export function ContextMetricsSection() {
     return main.length > 0 ? main[main.length - 1] : undefined;
   });
 
+  const extendedResolution = useMemo(
+    () => getExtendedContextResolutionFromSettings({ extendedContext, extendedContextByModelId }),
+    [extendedContext, extendedContextByModelId]
+  );
+
   const currentModel = availableModels.find((m) => m.id === selectedModel);
   const maxTokens =
     contextMaxTokens
     || (currentModel
-      ? (getEffectiveContextWindow(currentModel.id, currentModel.provider, currentModel.contextWindow, extendedContext) ?? null)
+      ? (getEffectiveContextWindow(currentModel.id, currentModel.provider, currentModel.contextWindow, extendedResolution) ?? null)
       : null)
     || contextUsage.maxTokens
     || 200000;

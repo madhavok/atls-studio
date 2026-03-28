@@ -22,7 +22,12 @@ import { HashRefText } from './HashRefInline';
 import { SignatureView } from '../SignatureView';
 import { ImageAttachment } from '../ImageAttachment';
 import { formatTokens } from '../../utils/toolTokenMetrics';
-import { getEffectiveContextWindow, modelSupportsExtendedContext } from '../../utils/modelCapabilities';
+import {
+  getEffectiveContextWindow,
+  getExtendedContextResolutionFromSettings,
+  isExtendedContextEnabled,
+  modelSupportsExtendedContext,
+} from '../../utils/modelCapabilities';
 import { useRoundHistoryStore } from '../../stores/roundHistoryStore';
 import { parseTaskCompleteArgs } from '../../utils/structuredOutput';
 import { selectRecentHistory } from '../../services/historySelector';
@@ -448,12 +453,17 @@ const ContextMeter = memo(function ContextMeter() {
   
   const availableModels = useAppStore(state => state.availableModels);
   const selectedModel = useAppStore(state => state.settings.selectedModel);
-  const extendedContext = useAppStore(state => state.settings.extendedContext) ?? {};
+  const extendedContext = useAppStore(state => state.settings.extendedContext);
+  const extendedContextByModelId = useAppStore(state => state.settings.extendedContextByModelId);
+  const extendedResolution = useMemo(
+    () => getExtendedContextResolutionFromSettings({ extendedContext, extendedContextByModelId }),
+    [extendedContext, extendedContextByModelId]
+  );
   const pm = useAppStore(state => state.promptMetrics);
   
   const currentModel = availableModels.find(m => m.id === selectedModel);
   const maxTokens = currentModel
-    ? (getEffectiveContextWindow(currentModel.id, currentModel.provider, currentModel.contextWindow, extendedContext) ?? 200000)
+    ? (getEffectiveContextWindow(currentModel.id, currentModel.provider, currentModel.contextWindow, extendedResolution) ?? 200000)
     : 200000;
   
   const chunkCount = chunks.size;
@@ -580,13 +590,18 @@ const ContextMetrics = memo(function ContextMetrics() {
   const getPromptTokens = useContextStore((s) => s.getPromptTokens);
   const availableModels = useAppStore(state => state.availableModels);
   const selectedModel = useAppStore(state => state.settings.selectedModel);
-  const extendedContext = useAppStore(state => state.settings.extendedContext) ?? {};
+  const extendedContext = useAppStore(state => state.settings.extendedContext);
+  const extendedContextByModelId = useAppStore(state => state.settings.extendedContextByModelId);
+  const extendedResolution = useMemo(
+    () => getExtendedContextResolutionFromSettings({ extendedContext, extendedContextByModelId }),
+    [extendedContext, extendedContextByModelId]
+  );
   const emDepth = useAppStore(state => state.settings.entryManifestDepth) ?? 'sigs';
   const [expanded, setExpanded] = useState(false);
 
   const currentModel = availableModels.find(m => m.id === selectedModel);
   const maxTokens = currentModel
-    ? (getEffectiveContextWindow(currentModel.id, currentModel.provider, currentModel.contextWindow, extendedContext) ?? 200000)
+    ? (getEffectiveContextWindow(currentModel.id, currentModel.provider, currentModel.contextWindow, extendedResolution) ?? 200000)
     : 200000;
   const provider = currentModel?.provider || getProviderFromModel(selectedModel);
 
@@ -2482,14 +2497,21 @@ export function AiChat() {
 
   // Sync context store max tokens with selected model (includes extended 1M when enabled)
   const availableModels = useAppStore(state => state.availableModels);
-  const extendedContext = settings.extendedContext ?? {};
+  const extendedResolution = useMemo(
+    () =>
+      getExtendedContextResolutionFromSettings({
+        extendedContext: settings.extendedContext,
+        extendedContextByModelId: settings.extendedContextByModelId,
+      }),
+    [settings.extendedContext, settings.extendedContextByModelId]
+  );
   useEffect(() => {
     const model = availableModels.find(m => m.id === settings.selectedModel);
-    const effectiveCtx = model && getEffectiveContextWindow(model.id, model.provider, model.contextWindow, extendedContext);
+    const effectiveCtx = model && getEffectiveContextWindow(model.id, model.provider, model.contextWindow, extendedResolution);
     if (effectiveCtx) {
       setContextMaxTokens(effectiveCtx);
     }
-  }, [settings.selectedModel, settings.extendedContext, availableModels, setContextMaxTokens]);
+  }, [settings.selectedModel, extendedResolution, availableModels, setContextMaxTokens]);
 
   const resetAgentProgress = useAppStore(state => state.resetAgentProgress);
   
@@ -2555,7 +2577,12 @@ export function AiChat() {
     const provider = getSelectedModelProvider();
     const anthropicBeta =
       provider === 'anthropic' &&
-      (settings.extendedContext?.anthropic ?? false) &&
+      isExtendedContextEnabled(
+        settings.selectedModel,
+        'anthropic',
+        settings.extendedContextByModelId ?? {},
+        settings.extendedContext
+      ) &&
       modelSupportsExtendedContext(settings.selectedModel, 'anthropic')
         ? ['context-1m-2025-08-07']
         : undefined;

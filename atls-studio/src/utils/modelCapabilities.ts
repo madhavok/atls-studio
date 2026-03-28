@@ -6,6 +6,9 @@
 
 export type AIProvider = 'anthropic' | 'openai' | 'google' | 'vertex' | 'lmstudio';
 
+/** Max extended context we surface in UI and budgets (1M). */
+export const EXTENDED_CONTEXT_VALUE = 1_000_000;
+
 /**
  * Known context windows for models when API does not provide them.
  * Anthropic /v1/models and OpenAI /v1/models do not return context_window.
@@ -23,6 +26,8 @@ export function getKnownContextWindow(modelId: string, provider: AIProvider): nu
     return 200_000; // default for unknown Claude
   }
   if (provider === 'openai') {
+    // GPT-5.4: native 1M context (API)
+    if (id.includes('gpt-5.4')) return EXTENDED_CONTEXT_VALUE;
     // o1/o3/o4: 200K; gpt-4o/mini: 128K+; gpt-4-turbo: 128K
     if (id.startsWith('o1') || id.startsWith('o3') || id.startsWith('o4')) return 200_000;
     if (id.includes('gpt-4o') || id.includes('gpt-4-turbo')) return 128_000;
@@ -32,11 +37,9 @@ export function getKnownContextWindow(modelId: string, provider: AIProvider): nu
   return undefined;
 }
 
-/** Extended context capability: 200K base → 1M with provider beta/option. */
-const EXTENDED_CONTEXT_VALUE = 1_000_000;
-
 /**
- * Whether a model supports extended context (e.g. 1M via Anthropic beta).
+ * Whether a model supports optional extended context (e.g. 200K → 1M via provider beta).
+ * OpenAI: only GPT-5.4-class models use native 1M — no separate “extended” bump; toggle hidden when base is already 1M.
  */
 export function modelSupportsExtendedContext(modelId: string, provider: AIProvider): boolean {
   const id = modelId.toLowerCase();
@@ -44,7 +47,7 @@ export function modelSupportsExtendedContext(modelId: string, provider: AIProvid
     return id.includes('4-6') || id.includes('4.5') || id.includes('opus-4') || id.includes('sonnet-4');
   }
   if (provider === 'openai') {
-    return id.startsWith('o1') || id.startsWith('o3') || id.startsWith('o4') || id.includes('gpt-4o');
+    return id.includes('gpt-5.4');
   }
   if (provider === 'google' || provider === 'vertex') {
     return id.includes('gemini-2') || id.includes('gemini-3');
@@ -54,21 +57,75 @@ export function modelSupportsExtendedContext(modelId: string, provider: AIProvid
 
 export type ExtendedContextFlags = Partial<Record<AIProvider, boolean>>;
 
+/** Per-model extended 1M toggle; legacy provider-wide flags for migration. */
+export interface ExtendedContextResolution {
+  byModelId: Record<string, boolean>;
+  legacyByProvider?: Partial<Record<AIProvider, boolean>>;
+}
+
+/** Build resolution payload from persisted settings (single import site for call sites). */
+export function getExtendedContextResolutionFromSettings(s: {
+  extendedContextByModelId?: Record<string, boolean>;
+  extendedContext?: Partial<Record<AIProvider, boolean>>;
+}): ExtendedContextResolution {
+  return {
+    byModelId: s.extendedContextByModelId ?? {},
+    legacyByProvider: s.extendedContext,
+  };
+}
+
 /**
- * Effective context window for a model: base value, or 1M when extended is enabled and model supports it.
+ * Whether extended 1M is enabled: per-model wins, then legacy per-provider.
+ */
+export function isExtendedContextEnabled(
+  modelId: string,
+  provider: AIProvider,
+  byModelId: Record<string, boolean>,
+  legacyByProvider?: Partial<Record<AIProvider, boolean>>
+): boolean {
+  if (Object.prototype.hasOwnProperty.call(byModelId, modelId)) {
+    return Boolean(byModelId[modelId]);
+  }
+  return Boolean(legacyByProvider?.[provider]);
+}
+
+/**
+ * Effective context window: base value, or 1M when extended is enabled and model supports a bump (base &lt; 1M).
  */
 export function getEffectiveContextWindow(
   modelId: string,
   provider: AIProvider,
   baseContextWindow: number | undefined,
-  extendedContext: ExtendedContextFlags
+  extended: ExtendedContextResolution | ExtendedContextFlags
 ): number | undefined {
+  let byModelId: Record<string, boolean> = {};
+  let legacyByProvider: Partial<Record<AIProvider, boolean>> | undefined;
+  if (extended && typeof extended === 'object' && 'byModelId' in extended) {
+    byModelId = extended.byModelId ?? {};
+    legacyByProvider = extended.legacyByProvider;
+  } else {
+    legacyByProvider = extended as ExtendedContextFlags;
+  }
+
   const base = baseContextWindow ?? getKnownContextWindow(modelId, provider);
   if (!base || base >= EXTENDED_CONTEXT_VALUE) return base;
-  if (extendedContext[provider] && modelSupportsExtendedContext(modelId, provider)) {
+
+  const enabled = isExtendedContextEnabled(modelId, provider, byModelId, legacyByProvider);
+  if (enabled && modelSupportsExtendedContext(modelId, provider)) {
     return EXTENDED_CONTEXT_VALUE;
   }
   return base;
+}
+
+/** Show the 1M toggle only when the model can bump from a smaller base window to 1M. */
+export function showExtendedContextToggleForModel(
+  modelId: string,
+  provider: AIProvider,
+  baseContextWindow: number | undefined
+): boolean {
+  if (!modelSupportsExtendedContext(modelId, provider)) return false;
+  const base = baseContextWindow ?? getKnownContextWindow(modelId, provider);
+  return typeof base === 'number' && base > 0 && base < EXTENDED_CONTEXT_VALUE;
 }
 
 export interface ModelCapabilities {
@@ -92,7 +149,11 @@ export function deriveModelCapabilities(
   let isFast = false;
 
   if (provider === 'openai') {
-    isReasoning = id.startsWith('o1') || id.startsWith('o3') || id.startsWith('o4') || id.startsWith('gpt-5');
+    isReasoning =
+      id.startsWith('o1') ||
+      id.startsWith('o3') ||
+      id.startsWith('o4') ||
+      id.startsWith('gpt-5');
     isFast = id.includes('mini') || id.includes('nano') || id.includes('flash');
   } else if (provider === 'anthropic') {
     isReasoning =
@@ -107,8 +168,9 @@ export function deriveModelCapabilities(
   }
   // lmstudio: no static patterns
 
+  const resolvedWindow = contextWindow ?? getKnownContextWindow(modelId, provider);
   const hasHighContext =
-    typeof contextWindow === 'number' && contextWindow >= HIGH_CONTEXT_THRESHOLD;
+    typeof resolvedWindow === 'number' && resolvedWindow >= HIGH_CONTEXT_THRESHOLD;
 
   return { isReasoning, isFast, hasHighContext };
 }
