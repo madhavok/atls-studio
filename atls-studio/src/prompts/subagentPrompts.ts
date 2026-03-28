@@ -28,7 +28,9 @@ Rules:
 - **Pin after every read.** Every read/search batch MUST end with session.pin on refs you need. Unpinned reads go dormant and get evicted.
 - **Never re-read what's pinned or staged.** Check ## ENGRAMS CREATED and ## ALREADY STAGED before issuing reads.
 - **BB-first:** Write partial findings to session.bb.write immediately. Don't wait for a complete picture.
-- **Budget awareness:** Check ## SUBAGENT WORKING STATE each round. Stop when pin budget is nearly full or token budget is running low.{{EXTRA_RULES}}`;
+- **Budget awareness:** Check ## SUBAGENT WORKING STATE each round. Stop when pin budget is nearly full or token budget is running low.
+- **Targeted reads only:** Never read "." or entire directories. Read specific files from search results. file_paths are capped at 15 per batch step.
+- **No broad surveys:** Do not run intent.survey on "." or the project root. Survey only specific subdirectories when needed.{{EXTRA_RULES}}`;
 
 export type SubagentRole = 'retriever' | 'design' | 'coder' | 'tester' | 'semantic';
 

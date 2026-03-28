@@ -19,7 +19,7 @@ import { useRoundHistoryStore, type RoundSnapshot } from '../stores/roundHistory
 import { estimateTokens } from '../utils/contextHash';
 import { buildSubagentPrompt, type SubagentRole } from '../prompts/subagentPrompts';
 import { coerceBatchSteps } from './batch/coerceBatchSteps';
-import { createScopedView, type ScopedHppView } from './hashProtocol';
+import { createScopedView, dematerialize, getRef, type ScopedHppView } from './hashProtocol';
 import {
   SUBAGENT_MAX_ROUNDS,
   SUBAGENT_TOKEN_BUDGET_DEFAULT,
@@ -293,6 +293,42 @@ async function runSubagentRound(
 // Tool Execution (with role-based allowlist enforcement)
 // ============================================================================
 
+export const SUBAGENT_MAX_FILE_PATHS = 15;
+
+const BARE_DIR_PATTERN = /^\.?\/?$|^\.\.?\/?$/;
+
+function sanitizeSubagentSteps(
+  steps: Array<Record<string, unknown>>,
+  role: SubagentType,
+): string | null {
+  for (const step of steps) {
+    const w = step.with as Record<string, unknown> | undefined;
+    if (!w) continue;
+
+    const filePaths = w.file_paths;
+    if (Array.isArray(filePaths)) {
+      // Reject bare directory paths (".", "./", "..", "../")
+      const bare = filePaths.filter(p => typeof p === 'string' && BARE_DIR_PATTERN.test(p.trim()));
+      if (bare.length > 0) {
+        return `Error: ${role} subagent cannot read bare directories (${bare.join(', ')}). Provide specific file paths.`;
+      }
+
+      // Cap file_paths to prevent bulk ingestion
+      if (filePaths.length > SUBAGENT_MAX_FILE_PATHS) {
+        console.warn(`[subagent:${role}] Capping file_paths from ${filePaths.length} to ${SUBAGENT_MAX_FILE_PATHS} in ${step.use}`);
+        w.file_paths = filePaths.slice(0, SUBAGENT_MAX_FILE_PATHS);
+      }
+    }
+
+    // Tree reads are allowed for survey but cap depth for subagents
+    if (step.use === 'read.context' && w.type === 'tree') {
+      const depth = typeof w.depth === 'number' ? w.depth : 3;
+      if (depth > 2) w.depth = 2;
+    }
+  }
+  return null;
+}
+
 async function executeSubagentToolCall(
   role: SubagentType,
   name: string,
@@ -318,6 +354,9 @@ async function executeSubagentToolCall(
   if (disallowed.length > 0) {
     return `Error: batch ops not allowed for ${role}: ${disallowed.map(step => step.use).join(', ')}. Allowed: ${[...allowed].join(', ')}`;
   }
+
+  const sanitizeErr = sanitizeSubagentSteps(steps, role);
+  if (sanitizeErr) return sanitizeErr;
 
   const { executeToolCall } = await import('./aiService');
   return executeToolCall(name, args, options);
@@ -545,6 +584,46 @@ function extractSubagentRefs(
   }
 
   return refs;
+}
+
+// ============================================================================
+// Post-Subagent Cleanup — prevent parent context inflation
+// ============================================================================
+
+/**
+ * Dematerialize chunks created by the subagent so they appear as dormant
+ * (digest-only) in the parent model's next prompt. Without this, subagent reads
+ * stay materialized (seenAtTurn === globalTurn) and formatWorkingMemory emits
+ * full file bodies, inflating the parent's context by megabytes.
+ *
+ * Pinned chunks are left materialized — the parent needs them, and HPP's
+ * shouldMaterialize already exempts pinned refs.
+ */
+function dematerializeSubagentChunks(
+  preExistingHashes: Set<string>,
+  preExistingSources: Set<string>,
+): void {
+  const ctx = useContextStore.getState();
+  const toDematerialize: string[] = [];
+
+  for (const [hash, chunk] of ctx.chunks.entries()) {
+    if (preExistingHashes.has(hash)) continue;
+    if (chunk.pinned) continue;
+    if (preExistingSources.has(chunk.source || '')) continue;
+    const ref = getRef(hash);
+    if (ref && ref.visibility === 'materialized') {
+      toDematerialize.push(hash);
+    }
+  }
+
+  for (const hash of toDematerialize) {
+    dematerialize(hash);
+  }
+
+  if (toDematerialize.length > 0) {
+    ctx.compactDormantChunks();
+    console.log(`[subagent] Dematerialized ${toDematerialize.length} chunks, compacted dormant`);
+  }
 }
 
 // ============================================================================
@@ -944,12 +1023,20 @@ export async function executeSubagent(
     }
   }
 
-  // Extract engram refs
+  // Extract engram refs BEFORE dematerializing (needs full chunk data)
   const refs = extractSubagentRefs(preExistingHashes, preExistingSources);
   const pinCount = refs.filter(r => r.pinned || r.type === 'staged').length;
   const pinTokens = refs.reduce((sum, r) => sum + r.tokens, 0);
 
   console.log(`[subagent:${role}] Extraction: ${refs.length} refs, ${pinCount} pinned, ${(pinTokens / 1000).toFixed(1)}k tokens`);
+
+  // Dematerialize subagent-created chunks so the parent model doesn't see full
+  // file bodies in its next prompt. Without this, every chunk the subagent read
+  // stays materialized (seenAtTurn === global turn) and gets emitted as full
+  // content in formatWorkingMemory, inflating the parent's context by megabytes.
+  // Pinned chunks are left alone — HPP exempts them from shouldMaterialize checks
+  // and the parent will see them as compact ref lines.
+  dematerializeSubagentChunks(preExistingHashes, preExistingSources);
 
   // Collect BB keys written by this subagent
   const bbKeys: string[] = [];

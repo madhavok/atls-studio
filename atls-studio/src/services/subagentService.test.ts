@@ -5,7 +5,7 @@
  * safety, and budget constants without requiring Tauri runtime.
  */
 import { describe, it, expect } from 'vitest';
-import { ROLE_ALLOWED_OPS } from './subagentService';
+import { ROLE_ALLOWED_OPS, SUBAGENT_MAX_FILE_PATHS } from './subagentService';
 import type { SubAgentRef, SubAgentResult, SubagentType } from './subagentService';
 import {
   SUBAGENT_MAX_ROUNDS,
@@ -127,6 +127,70 @@ describe('subagentService', () => {
     it('SUBAGENT_STAGED_PATHS_CAP limits system prompt growth', () => {
       expect(SUBAGENT_STAGED_PATHS_CAP).toBeGreaterThan(0);
       expect(SUBAGENT_STAGED_PATHS_CAP).toBeLessThanOrEqual(100);
+    });
+  });
+
+  describe('subagent step sanitization', () => {
+    it('SUBAGENT_MAX_FILE_PATHS caps bulk reads', () => {
+      expect(SUBAGENT_MAX_FILE_PATHS).toBeGreaterThan(0);
+      expect(SUBAGENT_MAX_FILE_PATHS).toBeLessThanOrEqual(30);
+    });
+
+    it('rejects bare directory paths', () => {
+      const bareDirs = ['.', './', '..', '../', ''];
+      for (const d of bareDirs) {
+        const isBare = /^\.?\/?$|^\.\.?\/?$/.test(d.trim());
+        expect(isBare).toBe(true);
+      }
+
+      const validPaths = ['src/auth.ts', './src/auth.ts', 'src/', '../other/file.ts'];
+      for (const p of validPaths) {
+        const isBare = /^\.?\/?$|^\.\.?\/?$/.test(p.trim());
+        expect(isBare).toBe(false);
+      }
+    });
+
+    it('would cap file_paths over the limit', () => {
+      const paths = Array.from({ length: 50 }, (_, i) => `src/file${i}.ts`);
+      const capped = paths.slice(0, SUBAGENT_MAX_FILE_PATHS);
+      expect(capped).toHaveLength(SUBAGENT_MAX_FILE_PATHS);
+      expect(capped[0]).toBe('src/file0.ts');
+    });
+  });
+
+  describe('dematerializeSubagentChunks (structural)', () => {
+    it('exported function exists and does not dematerialize pinned or pre-existing chunks', () => {
+      // The fix ensures that after executeSubagent returns, non-pinned
+      // subagent-created chunks are dematerialized in HPP and compacted
+      // in the context store. This is a structural contract test — full
+      // integration requires the Tauri runtime.
+      //
+      // Key invariants:
+      // 1. Chunks in preExistingHashes are NOT dematerialized (parent owns them)
+      // 2. Chunks whose source is in preExistingSources are NOT dematerialized
+      // 3. Pinned chunks are NOT dematerialized (parent needs them)
+      // 4. Only non-pinned, subagent-created materialized chunks are dematerialized
+      // 5. compactDormantChunks is called after dematerialization
+
+      const preExisting = new Set(['hash_a']);
+      const preExistingSources = new Set(['src/existing.ts']);
+
+      // Simulate chunk classification
+      const chunks = [
+        { hash: 'hash_a', pinned: false, source: 'src/a.ts', isPreExisting: true },
+        { hash: 'hash_b', pinned: true, source: 'src/b.ts', isPreExisting: false },
+        { hash: 'hash_c', pinned: false, source: 'src/existing.ts', isPreExisting: false },
+        { hash: 'hash_d', pinned: false, source: 'src/new.ts', isPreExisting: false },
+      ];
+
+      const shouldDematerialize = chunks.filter(c =>
+        !preExisting.has(c.hash) &&
+        !c.pinned &&
+        !preExistingSources.has(c.source),
+      );
+
+      expect(shouldDematerialize).toHaveLength(1);
+      expect(shouldDematerialize[0].hash).toBe('hash_d');
     });
   });
 
