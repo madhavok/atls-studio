@@ -961,7 +961,7 @@ export interface PersistedCacheMetrics {
 /** SubAgent usage row as stored in JSON (timestamp ISO string). */
 export interface PersistedSubAgentUsageRow {
   invocationId: string;
-  type: 'retriever' | 'design';
+  type: 'retriever' | 'design' | 'coder' | 'tester';
   provider: string;
   model: string;
   inputTokens: number;

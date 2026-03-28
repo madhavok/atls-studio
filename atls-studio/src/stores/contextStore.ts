@@ -423,7 +423,7 @@ export function inferBbFilePath(
       for (const aPath of awarenessKeys) {
         const segments = aPath.split('/');
         const aBase = segments[segments.length - 1];
-        if (aBase === basename.toLowerCase()) { candidate = aPath; break; }
+        if (aBase.toLowerCase() === basename.toLowerCase()) { candidate = aPath; break; }
       }
     }
   }

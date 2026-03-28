@@ -121,6 +121,8 @@ export const OPERATION_FAMILIES = {
     ops: [
       { op: 'delegate.retrieve' },
       { op: 'delegate.design' },
+      { op: 'delegate.code' },
+      { op: 'delegate.test' },
     ],
   },
   system: {

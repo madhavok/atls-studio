@@ -22,6 +22,15 @@ export const HYGIENE_CHECK_INTERVAL_ROUNDS = 15;
 export const COMPACT_HISTORY_TURN_THRESHOLD = 20;
 export const COMPACT_HISTORY_TOKEN_THRESHOLD = 15000;
 
+/** Safety ceiling for subagent rounds — budget-based stopping is the real limiter. */
+export const SUBAGENT_MAX_ROUNDS = 100;
+/** Total input+output tokens across all subagent rounds before forced stop. */
+export const SUBAGENT_TOKEN_BUDGET_DEFAULT = 200_000;
+/** Hard cap on pin budget instruction to prevent unbounded pinning behavior. */
+export const SUBAGENT_PIN_BUDGET_CAP = 64_000;
+/** Max paths listed in the "ALREADY STAGED" section of subagent system prompts. */
+export const SUBAGENT_STAGED_PATHS_CAP = 60;
+
 export const MAX_PERSISTENT_STAGE_ENTRY_TOKENS = 300;
 export const MAX_PERSISTENT_STAGE_ENTRIES = 12;
 export const MAX_TRANSIENT_STAGE_ENTRY_TOKENS = 1200;

@@ -72,7 +72,7 @@ function groupUsageByProvider(entries: DailyUsage[]): Record<AIProvider, Provide
 
 export interface SubAgentUsage {
   invocationId: string;
-  type: 'retriever' | 'design';
+  type: 'retriever' | 'design' | 'coder' | 'tester';
   provider: AIProvider;
   model: string;
   inputTokens: number;

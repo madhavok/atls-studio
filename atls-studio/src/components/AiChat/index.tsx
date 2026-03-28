@@ -1803,6 +1803,19 @@ const TextSegmentBubble = memo(function TextSegmentBubble({
 });
 
 // SubAgent collapsible card — renders a richer view for subagent tool calls
+const SUBAGENT_ROLE_LABELS: Record<string, string> = {
+  retriever: 'Retriever',
+  design: 'Design',
+  coder: 'Coder',
+  tester: 'Tester',
+};
+const SUBAGENT_STATUS_TEXT: Record<string, string> = {
+  retriever: 'searching...',
+  design: 'researching...',
+  coder: 'implementing...',
+  tester: 'testing...',
+};
+
 const SubAgentCard = memo(function SubAgentCard({ toolCall }: { toolCall: ToolCall }) {
   const [expanded, setExpanded] = useState(false);
   const args = toolCall.args || {};
@@ -1814,20 +1827,31 @@ const SubAgentCard = memo(function SubAgentCard({ toolCall }: { toolCall: ToolCa
   const isFailed = toolCall.status === 'failed';
   const isComplete = toolCall.status === 'completed';
 
-  // Parse result to extract pin count and code blocks
-  const resultBlocks = useMemo(() => {
-    if (!toolCall.result) return [];
+  // Parse result: new engram-first format (refs array) or legacy code blocks
+  const { refCount, refTokens, resultBlocks } = useMemo(() => {
+    if (!toolCall.result) return { refCount: 0, refTokens: 0, resultBlocks: [] as Array<{ path: string; content: string }> };
+
+    // Try parsing as batch step output containing refs
+    const refsMatch = toolCall.result.match(/(\d+) refs \((\d+(?:\.\d+)?k?) tk\)/);
+    if (refsMatch) {
+      const count = parseInt(refsMatch[1], 10);
+      const tkStr = refsMatch[2];
+      const tokens = tkStr.endsWith('k') ? parseFloat(tkStr) * 1000 : parseInt(tkStr, 10);
+      return { refCount: count, refTokens: tokens, resultBlocks: [] };
+    }
+
+    // Legacy format: parse code blocks
     const blocks: Array<{ path: string; content: string }> = [];
     const blockRegex = /--- (.+?) ---\n([\s\S]*?)\n--- end ---/g;
     let match;
     while ((match = blockRegex.exec(toolCall.result)) !== null) {
       blocks.push({ path: match[1], content: match[2] });
     }
-    return blocks;
+    return { refCount: blocks.length, refTokens: Math.ceil(toolCall.result.length / 4), resultBlocks: blocks };
   }, [toolCall.result]);
 
-  const pinCount = resultBlocks.length;
-  const pinTokens = toolCall.result ? Math.ceil(toolCall.result.length / 4) : 0;
+  const roleLabel = SUBAGENT_ROLE_LABELS[subType] || subType.charAt(0).toUpperCase() + subType.slice(1);
+  const statusText = SUBAGENT_STATUS_TEXT[subType] || 'working...';
 
   const statusColor = isFailed
     ? 'border-studio-error/50 bg-studio-error/8'
@@ -1853,19 +1877,19 @@ const SubAgentCard = memo(function SubAgentCard({ toolCall }: { toolCall: ToolCa
         )}
 
         <span className="font-medium text-sm text-teal-300">
-          Retriever
+          {roleLabel}
         </span>
 
         {isRunning && (
           <span className="text-xs text-studio-muted italic animate-pulse">
-            searching...
+            {statusText}
           </span>
         )}
 
         {isComplete && (
           <span className="text-xs text-studio-muted">
-            {pinCount} block{pinCount !== 1 ? 's' : ''} pinned
-            {pinTokens > 0 && ` (${pinTokens > 1000 ? `${(pinTokens / 1000).toFixed(1)}k` : pinTokens} tokens)`}
+            {refCount} ref{refCount !== 1 ? 's' : ''}
+            {refTokens > 0 && ` (${refTokens > 1000 ? `${(refTokens / 1000).toFixed(1)}k` : refTokens} tk)`}
           </span>
         )}
 
@@ -1902,7 +1926,7 @@ const SubAgentCard = memo(function SubAgentCard({ toolCall }: { toolCall: ToolCa
           {resultBlocks.length > 0 && (
             <div>
               <div className="text-[10px] text-studio-muted uppercase tracking-wide mb-1">
-                Pinned Code ({pinCount} block{pinCount !== 1 ? 's' : ''})
+                Pinned Code ({refCount} block{refCount !== 1 ? 's' : ''})
               </div>
               <div className="space-y-2 max-h-80 overflow-y-auto scrollbar-thin">
                 {resultBlocks.map((block, i) => (

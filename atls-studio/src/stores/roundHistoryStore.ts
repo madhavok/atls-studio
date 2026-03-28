@@ -56,7 +56,7 @@ export interface RoundSnapshot {
   isSubagentRound?: boolean;
   /** Swarm worker / planner / synthesis stream (not main chat agent loop) */
   isSwarmRound?: boolean;
-  subagentType?: 'retriever' | 'design';
+  subagentType?: 'retriever' | 'design' | 'coder' | 'tester';
   subagentModel?: string;
   subagentProvider?: string;
   subagentInvocationId?: string;

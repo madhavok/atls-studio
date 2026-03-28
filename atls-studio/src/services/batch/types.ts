@@ -83,7 +83,9 @@ export type AnnotationOp =
 
 export type DelegateOp =
   | 'delegate.retrieve'
-  | 'delegate.design';
+  | 'delegate.design'
+  | 'delegate.code'
+  | 'delegate.test';
 
 export type SystemOp =
   | 'system.exec'

@@ -46,7 +46,7 @@ import {
 } from './handlers/verify';
 
 import {
-  handleDelegateRetrieve, handleDelegateDesign,
+  handleDelegateRetrieve, handleDelegateDesign, handleDelegateCode, handleDelegateTest,
 } from './handlers/delegate';
 
 import {
@@ -133,6 +133,8 @@ const OP_MAP: ReadonlyMap<OperationKind, OpHandler> = new Map<OperationKind, OpH
   // delegate
   ['delegate.retrieve', handleDelegateRetrieve],
   ['delegate.design', handleDelegateDesign],
+  ['delegate.code', handleDelegateCode],
+  ['delegate.test', handleDelegateTest],
 
   // system
   ['system.exec', handleSystemExec],

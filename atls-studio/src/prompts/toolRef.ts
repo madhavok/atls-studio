@@ -91,12 +91,16 @@ file/f/path/target_file/source_file -> file_path (auto-promotes to file_paths:[]
 
 export const SUBAGENT_TOOL_REF = `
 
-**DELEGATE** — dispatch a cheaper retriever/design model inside batch
-• delegate.retrieve query:"what to find" → searches code, pins relevant blocks, returns source snippets
-• delegate.design query:"..." → planning research + blackboard write for design findings
-• focus_files?:["path/hint.ts"] and max_tokens?:N are optional
+**DELEGATE** — dispatch a cheaper model as a specialized subagent inside batch
+• delegate.retrieve query:"what to find" → searches code, pins relevant blocks, writes retriever:findings BB key
+• delegate.design query:"..." → planning research + writes design:research BB key
+• delegate.code query:"implement X" → edits files, verifies, writes coder:report BB key
+• delegate.test query:"test X" → writes/runs tests, iterates on failures, writes tester:results BB key
+• focus_files?:["path/hint.ts"], max_tokens?:N, token_budget?:N are optional
+Returns engram refs (not inline code) — pinned content appears in your next WM update.
 Example:
-batch({version:"1.0",steps:[{id:"d1",use:"delegate.retrieve",with:{query:"authentication flow",focus_files:["src/auth/"]}}]})`;
+batch({version:"1.0",steps:[{id:"d1",use:"delegate.retrieve",with:{query:"authentication flow",focus_files:["src/auth/"]}}]})
+batch({version:"1.0",steps:[{id:"d2",use:"delegate.code",with:{query:"add input validation to UserService.create",focus_files:["src/services/user.ts"]}}]})`;
 
 export const NATIVE_TOOL_TOKENS_ESTIMATE = 1100;
 

@@ -19,6 +19,7 @@ import {
   formatRefLine,
   sortRefs,
   setRoundRefreshHook,
+  createScopedView,
 } from './hashProtocol';
 
 describe('hashProtocol', () => {
@@ -252,6 +253,66 @@ describe('hashProtocol', () => {
       const fileRef = materialize('aa111111', 'file', 'src/foo.ts', 10, 5, '');
       const resultRef = materialize('bb222222', 'result', undefined, 10, 5, '');
       expect(sortRefs(fileRef, resultRef)).toBeLessThan(0);
+    });
+  });
+
+  describe('createScopedView', () => {
+    it('starts with local turn 0', () => {
+      const view = createScopedView();
+      expect(view.getTurn()).toBe(0);
+    });
+
+    it('advanceTurn increments local counter only', async () => {
+      const globalTurnBefore = getTurn();
+      const view = createScopedView();
+      view.advanceTurn();
+      view.advanceTurn();
+
+      expect(view.getTurn()).toBe(2);
+      expect(getTurn()).toBe(globalTurnBefore);
+    });
+
+    it('does not dematerialize global refs on local advanceTurn', async () => {
+      const ref = materialize('scoped11', 'file', 'src/a.ts', 100, 10, '');
+      expect(shouldMaterialize(ref)).toBe(true);
+
+      const view = createScopedView();
+      view.advanceTurn();
+      view.advanceTurn();
+
+      expect(shouldMaterialize(ref)).toBe(true);
+      expect(ref.visibility).toBe('materialized');
+    });
+
+    it('reads refs from shared global Map', () => {
+      materialize('shared11', 'file', 'src/b.ts', 200, 20, 'fn bar');
+      const view = createScopedView();
+      const ref = view.getRef('shared11');
+      expect(ref).toBeDefined();
+      expect(ref!.source).toBe('src/b.ts');
+    });
+
+    it('getActiveRefs returns global active refs', () => {
+      materialize('active11', 'file', 'src/c.ts', 50, 5, '');
+      evict('active11');
+      materialize('active22', 'file', 'src/d.ts', 60, 6, '');
+
+      const view = createScopedView();
+      const active = view.getActiveRefs();
+      expect(active.some(r => r.hash === 'active22')).toBe(true);
+      expect(active.some(r => r.hash === 'active11')).toBe(false);
+    });
+
+    it('multiple scoped views are independent', () => {
+      const v1 = createScopedView();
+      const v2 = createScopedView();
+
+      v1.advanceTurn();
+      v1.advanceTurn();
+      v1.advanceTurn();
+
+      expect(v1.getTurn()).toBe(3);
+      expect(v2.getTurn()).toBe(0);
     });
   });
 });

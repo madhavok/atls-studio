@@ -351,3 +351,41 @@ export function sortRefs(a: ChunkRef, b: ChunkRef): number {
   if (aFile !== bFile) return aFile ? -1 : 1;
   return b.seenAtTurn - a.seenAtTurn;
 }
+
+// ---------------------------------------------------------------------------
+// Scoped HPP View — isolated turn counter for subagents
+// ---------------------------------------------------------------------------
+
+export interface ScopedHppView {
+  getTurn(): number;
+  advanceTurn(): number;
+  getRef(hash: string): ChunkRef | undefined;
+  shouldMaterialize(ref: ChunkRef): boolean;
+  getActiveRefs(): ChunkRef[];
+}
+
+/**
+ * Create an isolated HPP view for subagent use. Reads from the shared global
+ * refs Map but tracks a local turn counter that does not mutate global state.
+ * advanceTurn() only increments the local counter — no dematerialization,
+ * no round-refresh hooks, no global side effects.
+ */
+export function createScopedView(): ScopedHppView {
+  let localTurn = 0;
+
+  return {
+    getTurn: () => localTurn,
+
+    advanceTurn: () => ++localTurn,
+
+    getRef: (hash: string) => getRef(hash),
+
+    shouldMaterialize: (ref: ChunkRef) => {
+      if (ref.visibility === 'archived' || ref.visibility === 'evicted') return false;
+      if (ref.visibility !== 'materialized') return false;
+      return ref.seenAtTurn >= (currentTurn - localTurn) || !!ref.pinned;
+    },
+
+    getActiveRefs: () => getActiveRefs(),
+  };
+}

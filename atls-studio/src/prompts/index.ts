@@ -6,7 +6,10 @@
 export {
   SEMANTIC_SEARCH_SUBAGENT_PROMPT,
   RETRIEVER_SUBAGENT_PROMPT_V2,
+  DESIGN_SUBAGENT_PROMPT_V2,
+  buildSubagentPrompt,
 } from './subagentPrompts';
+export type { SubagentRole } from './subagentPrompts';
 
 export {
   BATCH_TOOL_REF,
