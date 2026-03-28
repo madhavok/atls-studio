@@ -627,6 +627,7 @@ async function resolveTargetFiles(
   const next = { ...params };
   const targets = new Set<string>();
   const hashLookups = new Map<string, Array<(source: string) => void>>();
+  const hashResolvedPaths = new Set<string>();
 
   const registerTarget = (value: unknown) => {
     if (typeof value !== 'string' || value.length === 0 || value.startsWith('h:')) return;
@@ -643,8 +644,8 @@ async function resolveTargetFiles(
 
   registerTarget(next.file_path ?? next.file);
   Object.assign(next, deriveEditTargetMeta(next.file_path ?? next.file));
-  registerHashTarget(next.file_path, (source) => { next.file_path = source; });
-  registerHashTarget(next.file, (source) => { next.file = source; });
+  registerHashTarget(next.file_path, (source) => { next.file_path = source; hashResolvedPaths.add('top'); });
+  registerHashTarget(next.file, (source) => { next.file = source; hashResolvedPaths.add('top'); });
 
   if (Array.isArray(next.creates)) {
     next.creates = next.creates.map((create) => {
@@ -656,13 +657,13 @@ async function resolveTargetFiles(
   }
 
   if (Array.isArray(next.edits)) {
-    next.edits = next.edits.map((edit) => {
+    next.edits = next.edits.map((edit, idx) => {
       if (!edit || typeof edit !== 'object') return edit;
       const entry = { ...(edit as Record<string, unknown>) };
       Object.assign(entry, deriveEditTargetMeta(entry.file_path ?? entry.file));
       registerTarget(entry.file_path ?? entry.file);
-      registerHashTarget(entry.file_path, (source) => { entry.file_path = source; });
-      registerHashTarget(entry.file, (source) => { entry.file = source; });
+      registerHashTarget(entry.file_path, (source) => { entry.file_path = source; hashResolvedPaths.add(`edit:${idx}`); });
+      registerHashTarget(entry.file, (source) => { entry.file = source; hashResolvedPaths.add(`edit:${idx}`); });
       return entry;
     });
   }
@@ -704,6 +705,48 @@ async function resolveTargetFiles(
         for (const assign of hashLookups.get(ref) ?? []) assign(source);
       });
     }
+  }
+
+  // Hash-authority: when a snapshot_hash/content_hash is present but file_path
+  // was a plain string (not resolved from an h: ref above), resolve the hash's
+  // registered source and override file_path so writes always target the
+  // correct tracked file — never a stale or mismatched model-supplied path.
+  type HashSourceEntry = { source?: string | null };
+  const resolveHashSource = async (hashValue: unknown): Promise<string | null> => {
+    if (typeof hashValue !== 'string' || hashValue.length === 0) return null;
+    const ref = hashValue.startsWith('h:') ? hashValue : `h:${hashValue}`;
+    const lookupRef = normalizeHashRefForLookup(ref);
+    try {
+      const batch = await invoke<Array<HashSourceEntry | null>>('batch_resolve_hash_refs', { refs: [lookupRef] });
+      const source = batch?.[0]?.source;
+      return typeof source === 'string' && source.length > 0 ? source : null;
+    } catch { return null; }
+  };
+
+  const overrideFromHash = async (
+    obj: Record<string, unknown>,
+    tag: string,
+  ) => {
+    if (hashResolvedPaths.has(tag)) return;
+    const currentFile = (obj.file_path ?? obj.file) as string | undefined;
+    if (typeof currentFile !== 'string' || currentFile.startsWith('h:')) return;
+    const hash = (obj.snapshot_hash ?? obj.content_hash ?? obj.edit_target_hash) as string | undefined;
+    const source = await resolveHashSource(hash);
+    if (!source) return;
+    if (normalizeSourcePath(source) === normalizeSourcePath(currentFile)) return;
+    console.log(`[change] hash-authority override: model said "${currentFile}", hash source is "${source}"`);
+    targets.delete(currentFile);
+    targets.add(source);
+    if (typeof obj.file_path === 'string') obj.file_path = source;
+    if (typeof obj.file === 'string') obj.file = source;
+  };
+
+  await overrideFromHash(next, 'top');
+  if (Array.isArray(next.edits)) {
+    await Promise.all(
+      (next.edits as Array<Record<string, unknown>>)
+        .map((entry, idx) => overrideFromHash(entry, `edit:${idx}`)),
+    );
   }
 
   return { params: next, targetFiles: [...targets] };
