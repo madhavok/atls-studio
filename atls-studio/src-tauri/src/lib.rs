@@ -2336,6 +2336,7 @@ pub fn run() {
             code_intel::atls_get_file_context,
             code_intel::atls_diagnose_symbols,
             code_intel::atls_get_project_profile,
+            code_intel::atls_get_database_stats,
             code_intel::atls_get_language_health,
             workspace_run::atls_get_workspace_scripts,
             batch_query::atls_batch_query,

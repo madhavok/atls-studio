@@ -98,11 +98,40 @@ export function ContextTimelineSection() {
             domain={[0, maxTokens]}
           />
           <Tooltip
-            contentStyle={{ backgroundColor: '#141414', border: '1px solid #262626', borderRadius: 6, fontSize: 11 }}
-            labelStyle={{ color: '#e5e5e5' }}
-            itemStyle={{ padding: 0 }}
-            formatter={(value: number | undefined) => fmtK(value ?? 0)}
-            labelFormatter={(l) => `Round ${l}`}
+            content={({ active, payload, label }) => {
+              if (!active || !payload?.length) return null;
+              const round = typeof label === 'number' ? label : Number(label);
+              const snap = mainSnapshots.find((s) => s.round === round);
+              return (
+                <div
+                  style={{ backgroundColor: '#141414', border: '1px solid #262626', borderRadius: 6, fontSize: 11, padding: '8px 10px' }}
+                  className="text-neutral-200"
+                >
+                  <div className="font-medium mb-1">Round {label}</div>
+                  {snap?.verificationConfidence != null && (
+                    <div className="text-[10px] text-neutral-400 mb-0.5">
+                      Verify: <span className="text-neutral-200">{snap.verificationConfidence}</span>
+                      {snap.verificationLabel ? ` — ${snap.verificationLabel}` : ''}
+                    </div>
+                  )}
+                  {snap?.historyBreakdownLabel != null && snap.historyBreakdownLabel.length > 0 && (
+                    <div className="text-[9px] text-neutral-500 font-mono mb-0.5 max-w-[280px] break-all">{snap.historyBreakdownLabel}</div>
+                  )}
+                  {snap?.roundLatencyMs != null && (
+                    <div className="text-[10px] text-neutral-400 mb-1">
+                      Latency {snap.roundLatencyMs.toFixed(0)} ms
+                      {snap.timeToFirstTokenMs != null ? ` · TTFT ${snap.timeToFirstTokenMs.toFixed(0)} ms` : ''}
+                    </div>
+                  )}
+                  {payload.map((p) => (
+                    <div key={String(p.dataKey)} className="flex justify-between gap-4 text-[10px]">
+                      <span style={{ color: p.color }}>{p.name}</span>
+                      <span>{fmtK(Number(p.value) || 0)}</span>
+                    </div>
+                  ))}
+                </div>
+              );
+            }}
           />
           <ReferenceLine y={maxTokens} stroke="#737373" strokeDasharray="4 2" label={{ value: 'max', fill: '#737373', fontSize: 9, position: 'right' }} />
           {/* SubAgent invocation markers */}

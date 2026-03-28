@@ -11,6 +11,9 @@ import { CacheCompositionSection } from './sections/CacheCompositionSection';
 import { BatchEfficiencySection } from './sections/BatchEfficiencySection';
 import { EntryManifestSection } from './sections/EntryManifestSection';
 import { SubAgentSection } from './sections/SubAgentSection';
+import { MemoryTelemetrySection } from './sections/MemoryTelemetrySection';
+import { ReconcileFreshnessSection } from './sections/ReconcileFreshnessSection';
+import { IndexDbSection } from './sections/IndexDbSection';
 
 export const INTERNALS_TAB_ID = '__atls_internals__';
 
@@ -25,6 +28,8 @@ const SECTIONS: SectionDef[] = [
   { id: 'hpp', title: 'HPP Protocol', subtitle: 'Hash Pointer materialization state machine', component: HppSection },
   { id: 'bb', title: 'Blackboard', subtitle: 'Persistent session knowledge store', component: BlackboardSection },
   { id: 'wm', title: 'Working Memory', subtitle: 'Ephemeral task-scoped context chunks', component: WorkingMemorySection },
+  { id: 'memtel', title: 'Memory Telemetry', subtitle: 'Events, retries, and strategy summaries', component: MemoryTelemetrySection },
+  { id: 'reconcile', title: 'Reconcile & Freshness', subtitle: 'Last sweep stats and invalidation counters', component: ReconcileFreshnessSection },
   { id: 'ctx', title: 'Context Metrics', subtitle: 'Budget allocation and cache performance', component: ContextMetricsSection },
   { id: 'timeline', title: 'Context Timeline', subtitle: 'Context grow/shrink over rounds', component: ContextTimelineSection },
   { id: 'costio', title: 'Cost & I/O per Iteration', subtitle: 'Token I/O and cost per round', component: CostIOSection },
@@ -34,6 +39,7 @@ const SECTIONS: SectionDef[] = [
   { id: 'tools', title: 'Tool Token Usage', subtitle: 'Per-tool token consumption breakdown', component: ToolTokenSection },
   { id: 'subagent', title: 'SubAgent Activity', subtitle: 'Retriever invocations, cost, and pin efficiency', component: SubAgentSection },
   { id: 'entry', title: 'Entry Manifest', subtitle: 'Entry point signatures and token scaling', component: EntryManifestSection },
+  { id: 'indexdb', title: 'Index / DB', subtitle: 'SQLite index health for active project', component: IndexDbSection },
 ];
 
 const ChevronDown = () => (

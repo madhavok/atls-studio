@@ -84,6 +84,19 @@ describe('roundHistoryStore', () => {
     expect(isMainChatRound({ ...makeSnapshot(1), isSubagentRound: true, isSwarmRound: true })).toBe(false);
   });
 
+  it('stores optional latency telemetry on snapshots', () => {
+    useRoundHistoryStore.getState().pushSnapshot({
+      ...makeSnapshot(3),
+      timeToFirstTokenMs: 120,
+      roundLatencyMs: 4500,
+    });
+    expect(useRoundHistoryStore.getState().snapshots[0]).toMatchObject({
+      round: 3,
+      timeToFirstTokenMs: 120,
+      roundLatencyMs: 4500,
+    });
+  });
+
   it('preserves false compatibility flags instead of dropping them', () => {
     useRoundHistoryStore.getState().pushSnapshot({
       ...makeSnapshot(2),

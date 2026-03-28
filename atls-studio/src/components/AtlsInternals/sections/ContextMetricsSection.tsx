@@ -91,6 +91,52 @@ export function ContextMetricsSection() {
         )}
       </div>
 
+      {latestMainSnapshot && (
+        <div className="border border-studio-border/30 rounded-lg p-2 space-y-1.5 bg-studio-bg/30">
+          <div className="text-[10px] text-studio-muted font-medium">Latest main round (R{latestMainSnapshot.round})</div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1 text-[10px]">
+            {latestMainSnapshot.verificationConfidence != null && (
+              <span>
+                <span className="text-studio-muted">Verify confidence: </span>
+                <span className="text-studio-text font-medium">{latestMainSnapshot.verificationConfidence}</span>
+                {latestMainSnapshot.verificationLabel ? (
+                  <span className="text-studio-muted"> — {latestMainSnapshot.verificationLabel}</span>
+                ) : null}
+              </span>
+            )}
+            {latestMainSnapshot.historyBreakdownLabel != null && latestMainSnapshot.historyBreakdownLabel.length > 0 && (
+              <span className="sm:col-span-2">
+                <span className="text-studio-muted">History breakdown: </span>
+                <span className="font-mono text-[9px] text-studio-text">{latestMainSnapshot.historyBreakdownLabel}</span>
+              </span>
+            )}
+            {latestMainSnapshot.roundLatencyMs != null && (
+              <span>
+                <span className="text-studio-muted">Round latency: </span>
+                <span className="text-studio-text font-mono">{latestMainSnapshot.roundLatencyMs.toFixed(0)} ms</span>
+                {latestMainSnapshot.timeToFirstTokenMs != null && (
+                  <span className="text-studio-muted"> (TTFT {latestMainSnapshot.timeToFirstTokenMs.toFixed(0)} ms)</span>
+                )}
+              </span>
+            )}
+            {latestMainSnapshot.providerInputTokens > 0 && latestMainSnapshot.estimatedTotalPromptTokens > 0 && (
+              <span>
+                <span className="text-studio-muted">Est. vs provider in: </span>
+                <span className="font-mono text-studio-text">
+                  {latestMainSnapshot.estimatedTotalPromptTokens.toLocaleString()} vs {latestMainSnapshot.providerInputTokens.toLocaleString()} tk
+                </span>
+                <span className={`ml-1 ${Math.abs(latestMainSnapshot.estimatedTotalPromptTokens - latestMainSnapshot.providerInputTokens) > Math.max(500, latestMainSnapshot.providerInputTokens * 0.05) ? 'text-amber-400' : 'text-studio-muted'}`}>
+                  (Δ {Math.abs(latestMainSnapshot.estimatedTotalPromptTokens - latestMainSnapshot.providerInputTokens).toLocaleString()})
+                </span>
+              </span>
+            )}
+            {latestMainSnapshot.legacyHistoryTelemetryKnownWrong ? (
+              <span className="text-amber-400 sm:col-span-2">legacyHistoryTelemetryKnownWrong</span>
+            ) : null}
+          </div>
+        </div>
+      )}
+
       {/* Prompt overhead breakdown */}
       <div>
         <div className="text-xs text-studio-muted mb-2 font-medium">Prompt Overhead Breakdown</div>

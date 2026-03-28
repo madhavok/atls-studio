@@ -109,6 +109,8 @@ function pushSwarmRoundSnapshot(
     roundCacheReadTokens: number;
     roundCacheWriteTokens: number;
     roundCostCents: number;
+    timeToFirstTokenMs?: number;
+    roundLatencyMs?: number;
   },
   config: AIConfig,
   provider: AIProvider,
@@ -158,6 +160,8 @@ function pushSwarmRoundSnapshot(
     hypotheticalNonBatchedCost: r.roundCostCents,
     actualCost: r.roundCostCents,
     isSwarmRound: true,
+    timeToFirstTokenMs: r.timeToFirstTokenMs,
+    roundLatencyMs: r.roundLatencyMs,
   });
 }
 
@@ -181,6 +185,8 @@ async function runStreamRound(
   roundCacheReadTokens: number;
   roundCacheWriteTokens: number;
   roundCostCents: number;
+  timeToFirstTokenMs?: number;
+  roundLatencyMs: number;
 }> {
   let fullResponse = '';
   const pendingToolCalls: PendingToolCall[] = [];
@@ -196,10 +202,14 @@ async function runStreamRound(
     resolveDone = resolve;
   });
 
+  let streamStartMs = 0;
+  let firstTokenAtMs: number | null = null;
+
   const unlisten = await safeListen<StreamChunk>(`chat-chunk-${streamId}`, (event) => {
     const chunk = event.payload;
     switch (chunk.type) {
       case 'text_delta':
+        if (firstTokenAtMs === null) firstTokenAtMs = performance.now();
         fullResponse += chunk.delta;
         callbacks.onToken(chunk.delta);
         break;
@@ -294,6 +304,8 @@ async function runStreamRound(
         break;
     }
   });
+
+  streamStartMs = performance.now();
 
   // Cast messages for Gemini cache (same shape as aiService streamChatViaTauri)
   const cacheMessages: AiChatMessage[] = messages.map((m) => ({
@@ -399,6 +411,10 @@ async function runStreamRound(
 
   await donePromise;
 
+  const streamEndMs = performance.now();
+  const roundLatencyMs = streamEndMs - streamStartMs;
+  const timeToFirstTokenMs = firstTokenAtMs != null ? firstTokenAtMs - streamStartMs : undefined;
+
   if (affectMainChatMetrics) {
     useAppStore.getState().recordRound();
   }
@@ -437,6 +453,8 @@ async function runStreamRound(
     roundCacheReadTokens,
     roundCacheWriteTokens,
     roundCostCents,
+    timeToFirstTokenMs,
+    roundLatencyMs,
   };
 }
 
@@ -511,6 +529,8 @@ export async function streamChatForSwarm(
           roundCacheReadTokens: r.roundCacheReadTokens,
           roundCacheWriteTokens: r.roundCacheWriteTokens,
           roundCostCents: r.roundCostCents,
+          timeToFirstTokenMs: r.timeToFirstTokenMs,
+          roundLatencyMs: r.roundLatencyMs,
         },
         config,
         provider,

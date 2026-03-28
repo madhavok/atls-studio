@@ -62,6 +62,10 @@ export interface RoundSnapshot {
   subagentInvocationId?: string;
   /** Compact breakdown of history token distribution (e.g. "chat:2.1k results:5.3k refs:1.2k") */
   historyBreakdownLabel?: string;
+  /** Wall-clock ms from stream start to first assistant text token */
+  timeToFirstTokenMs?: number;
+  /** Wall-clock ms for full round (stream start to stream completion) */
+  roundLatencyMs?: number;
 }
 
 interface RoundHistoryState {

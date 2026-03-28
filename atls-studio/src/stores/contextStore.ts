@@ -832,6 +832,15 @@ interface ContextStoreState {
   invalidateAllAwarenessCache: () => void;
   getAwarenessCache: () => Map<string, AwarenessCacheEntry>;
 
+  /** Mirrors services/freshnessTelemetry.ts for reactive Internals UI */
+  freshnessMirror: {
+    fileTreeChangedWithPaths: number;
+    fileTreeChangedCoarseNoPaths: number;
+    engramsMarkedSuspectFromPaths: number;
+    coarseAwarenessOnlyInvalidations: number;
+  };
+  syncFreshnessMirror: () => void;
+
   // Cache affinity tracking
   trackReference: (hash: string) => void;
   trackEdit: (hash: string) => void;
@@ -1313,6 +1322,20 @@ export const useContextStore = create<ContextStoreState>()(
   verifyArtifacts: new Map(),
   taskCompleteRecord: null,
   awarenessCache: new Map(),
+  freshnessMirror: {
+    fileTreeChangedWithPaths: 0,
+    fileTreeChangedCoarseNoPaths: 0,
+    engramsMarkedSuspectFromPaths: 0,
+    coarseAwarenessOnlyInvalidations: 0,
+  },
+  syncFreshnessMirror: () => set({
+    freshnessMirror: {
+      fileTreeChangedWithPaths: freshnessTelemetry.fileTreeChangedWithPaths,
+      fileTreeChangedCoarseNoPaths: freshnessTelemetry.fileTreeChangedCoarseNoPaths,
+      engramsMarkedSuspectFromPaths: freshnessTelemetry.engramsMarkedSuspectFromPaths,
+      coarseAwarenessOnlyInvalidations: freshnessTelemetry.coarseAwarenessOnlyInvalidations,
+    },
+  }),
 
   /**
    * Add a new chunk to the context.
@@ -2621,6 +2644,7 @@ export const useContextStore = create<ContextStoreState>()(
     if (result.marked > 0 && sourcePaths && sourcePaths.length > 0) {
       get().invalidateAwarenessForPaths(sourcePaths);
       freshnessTelemetry.engramsMarkedSuspectFromPaths += result.marked;
+      get().syncFreshnessMirror();
     } else if (result.marked > 0) {
       set({ awarenessCache: new Map() });
     }
@@ -4169,6 +4193,12 @@ export const useContextStore = create<ContextStoreState>()(
       rollingSummary: emptyRollingSummary(),
       batchReadNoBbStreak: 0,
       fileReadSpinByPath: {},
+      freshnessMirror: {
+        fileTreeChangedWithPaths: 0,
+        fileTreeChangedCoarseNoPaths: 0,
+        engramsMarkedSuspectFromPaths: 0,
+        coarseAwarenessOnlyInvalidations: 0,
+      },
     });
     freshnessTelemetry.reset();
   },

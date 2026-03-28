@@ -372,6 +372,7 @@ export function useAtls() {
         if (externalPaths.length > 0) {
           pendingCoarseRefreshRef.current = false;
           freshnessTelemetry.fileTreeChangedWithPaths++;
+          ctxState.syncFreshnessMirror();
           externalPaths.forEach((path) => pendingChangedPathsRef.current.set(path.toLowerCase(), path));
           ctxState.markEngramsSuspect(externalPaths, 'watcher_event');
           ctxState.bumpWorkspaceRev(externalPaths);
@@ -381,6 +382,7 @@ export function useAtls() {
           pendingCoarseRefreshRef.current = true;
           freshnessTelemetry.fileTreeChangedCoarseNoPaths++;
           freshnessTelemetry.coarseAwarenessOnlyInvalidations++;
+          ctxState.syncFreshnessMirror();
           ctxState.invalidateAllAwarenessCache();
           ctxState.bumpWorkspaceRev();
           useRetentionStore.getState().evictMutationSensitive();

@@ -1296,6 +1296,10 @@ async function streamChatViaTauri(
         }
       };
 
+      const roundStreamStartMs = performance.now();
+      let roundFirstTokenAtMs: number | undefined;
+      let roundStreamEndMs = roundStreamStartMs;
+
       const stream = await createTauriChatStream({ streamId, invoke: invokeFn, abortSignal });
       const reader = stream.getReader();
 
@@ -1309,6 +1313,7 @@ async function streamChatViaTauri(
             safeCallbacks.onTextStart?.(chunk.id);
             break;
           case 'text_delta':
+            if (roundFirstTokenAtMs === undefined) roundFirstTokenAtMs = performance.now();
             safeCallbacks.onToken(chunk.delta);
             assistantTextContent += chunk.delta;
             break;
@@ -1429,6 +1434,7 @@ async function streamChatViaTauri(
           safeCallbacks.onError(streamErr instanceof Error ? streamErr : new Error(errMsg));
         }
       } finally {
+        roundStreamEndMs = performance.now();
         reader.releaseLock();
       }
 
@@ -1575,6 +1581,10 @@ async function streamChatViaTauri(
           verificationLabel: latestVerifyArtifact ? deriveVerificationLabel(latestVerifyArtifact) : undefined,
           verificationReused: latestVerifyArtifact?.confidence === 'cached' || latestVerifyArtifact?.source === 'cache',
           verificationObsolete: latestVerifyArtifact?.confidence === 'obsolete' || latestVerifyArtifact?.stale === true,
+          timeToFirstTokenMs: roundFirstTokenAtMs !== undefined
+            ? roundFirstTokenAtMs - roundStreamStartMs
+            : undefined,
+          roundLatencyMs: roundStreamEndMs - roundStreamStartMs,
         });
       }
 

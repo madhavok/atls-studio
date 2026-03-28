@@ -550,6 +550,32 @@ pub async fn atls_get_project_profile(
     }
 }
 
+/// SQLite index statistics for the active ATLS project (files, symbols, DB size).
+#[tauri::command]
+pub async fn atls_get_database_stats(app: AppHandle) -> Result<serde_json::Value, String> {
+    let state = app.state::<AtlsProjectState>();
+    let (project, _) = {
+        let roots = state.roots.lock().await;
+        let ar = state.active_root.read().map(|a| a.clone()).unwrap_or(None);
+        resolve_project(&roots, &ar, None)?
+    };
+    let stats = project
+        .query()
+        .get_database_stats()
+        .map_err(|e| format!("Database stats: {}", e))?;
+
+    Ok(serde_json::json!({
+        "file_count": stats.file_count,
+        "symbol_count": stats.symbol_count,
+        "issue_count": stats.issue_count,
+        "relation_count": stats.relation_count,
+        "signature_count": stats.signature_count,
+        "call_count": stats.call_count,
+        "last_indexed": stats.last_indexed,
+        "db_size_bytes": stats.db_size_bytes,
+    }))
+}
+
 /// Expand a concept to related search terms
 pub(crate) fn expand_concept(concept: &str) -> String {
     let concept_lower = concept.to_lowercase();
