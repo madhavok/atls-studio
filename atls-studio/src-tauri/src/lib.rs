@@ -2034,7 +2034,7 @@ pub(crate) fn tree_walk_compact(
     let display_items = if capped { &items[..100] } else { &items };
 
     let mut dir_end = 0usize;
-    for (name, path, is_dir) in display_items.iter() {
+    for (_name, _path, is_dir) in display_items.iter() {
         if *is_dir {
             dir_end += 1;
         } else {
