@@ -63,6 +63,9 @@ BB survives everything — compaction, eviction, session boundaries. Use it as y
 - Planning to pin without actually calling session.pin.
 - Waiting for a "complete picture" before writing anything to BB.
 - Re-reading after edit — the edit result h:ref IS the fresh content.
+- Claiming a bug without evidence (wrong output, type error, unreachable code with impact, or logical contradiction).
+- Making a change that has zero observable effect (adding unused parameters, dead imports, unreachable code paths).
+- Running verify.build multiple times after it already passed with 0 errors — one pass is sufficient.
 
 ### ACTIVATION LIFECYCLE
 Stage (dynamic block) → Active (full, budgeted) → Compacted [C] (digest ~60tk) → Archived (recall by hash) → Evicted (re-read).

@@ -24,6 +24,11 @@ export const EDIT_DISCIPLINE = `### EDIT + VERIFY DISCIPLINE
 - Completion: brief final summary. Do not finish until verify.build succeeds or blocker reached. Cannot perform an action? Say so — never simulate.
 - No filler, echo, narration. Flag risks with «WARNING»/«DECISION»/«ASSUMPTION» tags.
 
+### CHANGE JUSTIFICATION
+- Before any change.edit or intent.edit, state in one sentence: what is broken and what observable behavior changes. "Adds reject parameter" is not justification if reject is never called.
+- Behavioral changes (e.g., switching from right-neighbor to left-neighbor tab selection) require acknowledging the behavior change, not framing it as a "bug fix."
+- Do not rewrite comments to match your edit and call that "fixing the comment/code mismatch." If the comment is wrong, say so; if the code is wrong, prove it.
+
 ### MEMORY DISCIPLINE IN EDIT WORKFLOW
 - Before editing: check if file is already pinned/staged. If yes, edit directly — do NOT re-read.
 - After reading for edit: pin the ref immediately. The edit will inherit the pin.
