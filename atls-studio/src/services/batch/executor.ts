@@ -970,6 +970,29 @@ export async function executeUnifiedBatch(
 
   const policy = request.policy;
 
+  /** Push a step result and notify the caller for progressive UI updates. */
+  function recordStepResult(stepId: string, stepUse: string, output: StepOutput, durationMs: number): void {
+    const result = stepOutputToResult(stepId, stepUse, output, durationMs);
+    results.push(result);
+    if (onStepComplete) {
+      const label = output.classification
+        ? { pass: '[OK]', 'pass-with-warnings': '[WARN]', fail: '[FAIL]', 'tool-error': '[TOOL-ERROR]' }[output.classification]
+        : output.summary?.includes('SKIPPED') ? '[SKIP]' : (output.ok ? '[OK]' : '[FAIL]');
+      const suffix = durationMs > 0 ? ` (${durationMs}ms)` : '';
+      const text = output.summary || output.error || stepId;
+      const summaryLine = `${label} ${stepId}: ${text}${suffix}`;
+      onStepComplete({
+        stepId,
+        stepUse,
+        stepIndex: results.length - 1,
+        totalSteps: stepsToRun.length,
+        ok: output.ok,
+        summaryLine,
+        durationMs,
+      });
+    }
+  }
+
   // Resolve intent.* macro steps before main loop
   const intentCtx = buildIntentContext(ctx.store, stepOutputs);
   const intentResult = resolveIntents(request.steps, intentCtx);
@@ -1007,7 +1030,7 @@ export async function executeUnifiedBatch(
         error: 'max_steps exceeded',
       };
       stepOutputs.set(step.id, output);
-      results.push(stepOutputToResult(step.id, step.use, output, 0));
+      recordStepResult(step.id, step.use, output, 0);
       batchOk = false;
       break;
     }
@@ -1020,7 +1043,7 @@ export async function executeUnifiedBatch(
         error: 'blocked for swarm agents',
       };
       stepOutputs.set(step.id, output);
-      results.push(stepOutputToResult(step.id, step.use, output, 0));
+      recordStepResult(step.id, step.use, output, 0);
       continue;
     }
 
@@ -1033,7 +1056,7 @@ export async function executeUnifiedBatch(
         error: allowed.reason,
       };
       stepOutputs.set(step.id, output);
-      results.push(stepOutputToResult(step.id, step.use, output, 0));
+      recordStepResult(step.id, step.use, output, 0);
       continue;
     }
 
@@ -1046,7 +1069,7 @@ export async function executeUnifiedBatch(
           summary: `${step.id}: SKIPPED (condition not met)`,
         };
         stepOutputs.set(step.id, output);
-        results.push(stepOutputToResult(step.id, step.use, output, 0));
+        recordStepResult(step.id, step.use, output, 0);
         continue;
       }
     }
@@ -1075,7 +1098,7 @@ export async function executeUnifiedBatch(
           error: 'invalid file_paths binding',
         };
         stepOutputs.set(step.id, output);
-        results.push(stepOutputToResult(step.id, step.use, output, Date.now() - stepStart));
+        recordStepResult(step.id, step.use, output, Date.now() - stepStart);
         batchOk = false;
         if (step.on_error === 'stop') break;
         continue;
@@ -1114,7 +1137,7 @@ export async function executeUnifiedBatch(
           `unknown operation: ${useStr} — batch uses OperationKind names; express parallel work as multiple batch steps, not OpenAI multi_tool_use wrappers`,
       };
       stepOutputs.set(step.id, output);
-      results.push(stepOutputToResult(step.id, step.use, output, Date.now() - stepStart));
+      recordStepResult(step.id, step.use, output, Date.now() - stepStart);
       batchOk = false;
       if (step.on_error === 'stop') break;
       continue;
@@ -1128,7 +1151,7 @@ export async function executeUnifiedBatch(
         error: 'read_spin_blocked',
       };
       stepOutputs.set(step.id, output);
-      results.push(stepOutputToResult(step.id, step.use, output, 0));
+      recordStepResult(step.id, step.use, output, 0);
       continue;
     }
 
@@ -1140,7 +1163,7 @@ export async function executeUnifiedBatch(
         error: `unknown operation: ${step.use}`,
       };
       stepOutputs.set(step.id, output);
-      results.push(stepOutputToResult(step.id, step.use, output, Date.now() - stepStart));
+      recordStepResult(step.id, step.use, output, Date.now() - stepStart);
       batchOk = false;
       if (step.on_error === 'stop') break;
       continue;
@@ -1233,7 +1256,7 @@ export async function executeUnifiedBatch(
     }
 
     // Record result
-    results.push(stepOutputToResult(step.id, step.use, output, Date.now() - stepStart));
+    recordStepResult(step.id, step.use, output, Date.now() - stepStart);
 
     // Track op kinds for BB-write nudge + read-spin circuit breaker
     if (output.ok && output.kind === 'file_refs') {

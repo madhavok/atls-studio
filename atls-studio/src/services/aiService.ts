@@ -141,6 +141,7 @@ import {
   type HandlerContext,
   type UnifiedBatchRequest,
   type UnifiedBatchResult,
+  type OnBatchStepComplete,
 } from './batch';
 import { resetMainAgentTerminal } from '../stores/terminalStore';
 import { hashBp3Prefix, computeLogicalBp3Hit, computeLogicalStaticHit, type Bp3Snapshot } from './logicalCacheMetrics';
@@ -1928,34 +1929,83 @@ async function streamChatViaTauri(
 
         let result: string;
         let toolStatus: 'completed' | 'failed' = 'completed';
+
+        // Pre-register batch step summaries so UI shows pending spinners immediately
+        let batchStepSummaries: Array<{
+          id: string; parentId: string; name: string; detail: string;
+          round: number; stepId: string; stepIndex: number; totalSteps: number;
+          status: 'pending' | 'running' | 'completed' | 'failed';
+        }> | undefined;
+        const partialResultLines: string[] = [];
+
+        if (tc.name === 'batch') {
+          const steps = coerceBatchSteps((tc.args as Record<string, unknown>).steps);
+          batchStepSummaries = steps.map((step, index) => {
+            const withParams = (step.with as Record<string, unknown> | undefined) || {};
+            const stepName = String(step.use || `step_${index + 1}`);
+            const stepDetail = (withParams.file_paths as string[] | undefined)?.[0]
+              || String(withParams.file_path || '')
+              || String(withParams.cmd || '')
+              || (withParams.queries as string[] | undefined)?.[0]
+              || String(withParams.action || '')
+              || (withParams.symbol_names as string[] | undefined)?.[0]
+              || String(withParams.query || '')
+              || stepName;
+            return {
+              id: `${tc.id}::${String(step.id || index + 1)}`,
+              parentId: tc.id,
+              name: stepName,
+              detail: stepDetail,
+              round: round + 1,
+              stepId: String(step.id || index + 1),
+              stepIndex: index,
+              totalSteps: steps.length,
+              status: 'pending' as const,
+            };
+          });
+          const current = useAppStore.getState().agentProgress.recentTools.filter(t => t.parentId !== tc.id);
+          useAppStore.getState().setAgentProgress({ recentTools: [...current, ...batchStepSummaries] });
+        }
+
         try {
-          const execution = await executeToolCallDetailed(tc.name, tc.args);
+          const onBatchStepProgress: OnBatchStepComplete | undefined = tc.name === 'batch'
+            ? (progress) => {
+                partialResultLines.push(progress.summaryLine);
+                const partialResult = partialResultLines.join('\n');
+
+                // Update agentProgress: mark this step done, next step running
+                if (batchStepSummaries) {
+                  const updated = batchStepSummaries.map((s, idx) => {
+                    if (idx < partialResultLines.length) {
+                      const line = partialResultLines[idx];
+                      const failed = line?.includes('ERROR') || line?.includes('BLOCKED');
+                      return { ...s, status: (failed ? 'failed' : 'completed') as const };
+                    }
+                    if (idx === partialResultLines.length) {
+                      return { ...s, status: 'running' as const };
+                    }
+                    return s;
+                  });
+                  const current = useAppStore.getState().agentProgress.recentTools.filter(t => t.parentId !== tc.id);
+                  useAppStore.getState().setAgentProgress({ recentTools: [...current, ...updated] });
+                }
+
+                // Push partial result to streaming UI so each step appears as it completes
+                safeCallbacks.onToolCall({
+                  id: tc.id, name: tc.name, args: tc.args, status: 'running', result: partialResult,
+                });
+              }
+            : undefined;
+
+          const execution = await executeToolCallDetailed(tc.name, tc.args, {
+            swarmTerminalId: options?.swarmTerminalId,
+            fileClaims: options?.fileClaims,
+            onBatchStepProgress,
+          });
           result = execution.displayText;
-          if (tc.name === 'batch') {
-            const steps = coerceBatchSteps((tc.args as Record<string, unknown>).steps);
-            const batchStepSummaries = steps.map((step, index) => {
-              const withParams = (step.with as Record<string, unknown> | undefined) || {};
-              const stepName = String(step.use || `step_${index + 1}`);
-              const stepDetail = (withParams.file_paths as string[] | undefined)?.[0]
-                || String(withParams.file_path || '')
-                || String(withParams.cmd || '')
-                || (withParams.queries as string[] | undefined)?.[0]
-                || String(withParams.action || '')
-                || (withParams.symbol_names as string[] | undefined)?.[0]
-                || String(withParams.query || '')
-                || stepName;
-              return {
-                id: `${tc.id}::${String(step.id || index + 1)}`,
-                parentId: tc.id,
-                name: stepName,
-                detail: stepDetail,
-                round: round + 1,
-                stepId: String(step.id || index + 1),
-                stepIndex: index,
-                totalSteps: steps.length,
-                status: 'running' as const,
-              };
-            });
+
+          // Final agentProgress update for batch (mark all remaining as completed/failed)
+          if (tc.name === 'batch' && batchStepSummaries) {
             const stepResults = (execution.displayText.match(/^[^\n]+/gm) || []).map(line => line.trim());
             const completedBatchSteps = batchStepSummaries.map((summary, index) => ({
               ...summary,
@@ -1964,6 +2014,7 @@ async function streamChatViaTauri(
             const current = useAppStore.getState().agentProgress.recentTools.filter(t => t.parentId !== tc.id);
             useAppStore.getState().setAgentProgress({ recentTools: [...current, ...completedBatchSteps] });
           }
+
           if (execution.meta?.pendingAction) {
             roundPendingAction = mergePendingAction(roundPendingAction, execution.meta.pendingAction);
           }
@@ -2349,7 +2400,7 @@ function buildBatchSyntheticToolCalls(result: UnifiedBatchResult, batchArgs: Rec
 async function executeToolCallDetailed(
   toolName: string,
   args: Record<string, unknown>,
-  options?: { swarmTerminalId?: string; fileClaims?: string[] },
+  options?: { swarmTerminalId?: string; fileClaims?: string[]; onBatchStepProgress?: OnBatchStepComplete },
 ): Promise<ToolExecutionResult> {
   console.log(`[aiService] Tool: ${toolName}`, args);
   
@@ -2380,7 +2431,7 @@ async function executeToolCallDetailed(
           request.policy,
         );
 
-        const result = await executeUnifiedBatch(request, ctx);
+        const result = await executeUnifiedBatch(request, ctx, options?.onBatchStepProgress);
         if (result.step_results.some(step => step.ok && step.use.startsWith('change.'))) {
           _roundHadMutations = true;
         }
