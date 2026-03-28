@@ -1489,7 +1489,7 @@ pub async fn atls_batch_query(
                         serde_json::json!({"operation": "git", "params": "action:status", "description": "Check git status"}),
                         serde_json::json!({"operation": "git", "params": "action:diff", "description": "View changes"}),
                         serde_json::json!({"operation": "git", "params": "action:stage, files:[...] or all:true", "description": "Stage changes"}),
-                        serde_json::json!({"operation": "git", "params": "action:commit, message:'...'", "description": "Commit changes"}),
+                        serde_json::json!({"operation": "git", "params": "action:commit, message:'...', all:true optional (git commit -a)", "description": "Commit changes"}),
                         serde_json::json!({"operation": "git", "params": "action:push", "description": "Push to remote"}),
                     ]
                 } else if intent_lower.contains("deploy") || intent_lower.contains("release") || intent_lower.contains("complete") {
@@ -1497,7 +1497,7 @@ pub async fn atls_batch_query(
                         serde_json::json!({"operation": "verify", "params": "type:build", "description": "Ensure build passes"}),
                         serde_json::json!({"operation": "verify", "params": "type:test", "description": "Ensure tests pass"}),
                         serde_json::json!({"operation": "git", "params": "action:status", "description": "Check for uncommitted changes"}),
-                        serde_json::json!({"operation": "git", "params": "action:commit, message:'...'", "description": "Commit if needed"}),
+                        serde_json::json!({"operation": "git", "params": "action:commit, message:'...', all:true optional", "description": "Commit if needed"}),
                         serde_json::json!({"operation": "git", "params": "action:push", "description": "Push to remote"}),
                     ]
                 } else {
@@ -2249,11 +2249,19 @@ pub async fn atls_batch_query(
                             .get("message")
                             .and_then(|v| v.as_str())
                             .ok_or("message required for commit action")?;
-                        
-                        let output = run_git_command(
-                            vec!["commit".into(), "-m".into(), message.to_string()],
-                            project_root_str.clone(),
-                        ).await?;
+                        let all = params
+                            .get("all")
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(false);
+
+                        let mut args: Vec<String> = vec!["commit".into()];
+                        if all {
+                            args.push("-a".into());
+                        }
+                        args.push("-m".into());
+                        args.push(message.to_string());
+
+                        let output = run_git_command(args, project_root_str.clone()).await?;
                         
                         let stdout = String::from_utf8_lossy(&output.stdout);
                         let stderr = String::from_utf8_lossy(&output.stderr);

@@ -38,7 +38,7 @@ change.refactor action:inventory|impact_analysis|execute|rollback|rename|move|ex
 change.rollback restore:[{file,hash}] delete?:["path"|"h:X",...] — restore.hash: prefer h:$last_edit / h:$last_edit-N or hashes from execute _rollback
 change.split_module source_file:"" target_dir:"" plan:[{module,symbols:[]}] dry_run?:true mod_style?:""
 verify.build|test|lint|typecheck target_dir?:"" workspace?:"" runner?:""
-system.git action:status|diff|stage|unstage|commit|push|log|reset|restore workspace?:"" files?:[] message?:"" all?:bool
+system.git action:status|diff|stage|unstage|commit|push|log|reset|restore workspace?:"" files?:[] message?:"" all?:bool — stage: all:true → git add -A; commit: all:true → git commit -a (tracked mods only; untracked need stage first)
 system.workspaces action:list|search|add|remove|set_active|rescan
 system.exec cmd:"" terminal_id?:""
 delegate.retrieve query:"" focus_files?:[] max_tokens?:N

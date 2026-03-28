@@ -930,6 +930,7 @@ export interface SystemGitParams {
   action: 'status' | 'diff' | 'stage' | 'unstage' | 'commit' | 'push' | 'log' | 'reset' | 'restore';
   workspace?: string;
   files?: string[];
+  /** stage: `git add -A`; commit: `git commit -a` (tracked changes only). */
   all?: boolean;
   message?: string;
 }

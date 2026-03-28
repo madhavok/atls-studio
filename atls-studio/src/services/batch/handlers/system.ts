@@ -2,17 +2,10 @@
  * System operation handlers — terminal exec and backend utility passthroughs.
  */
 
-import { ensureTerminalTarget, getTerminalStore } from '../../../stores/terminalStore';
+import { ensureTerminalTarget, getTerminalStore, resolveTerminalTarget } from '../../../stores/terminalStore';
 import { toTOON } from '../../../utils/toon';
 import type { HandlerContext, OpHandler, StepOutput } from '../types';
 
-/** Prefix workspace-relative path with rel_path when git runs in project root. Exported for tests. */
-export function prefixFilePath(path: string, relPath: string): string {
-  const p = path.replace(/\\/g, '/');
-  const r = relPath.replace(/\\/g, '/');
-  if (p === r || p.startsWith(r + '/')) return path;
-  return `${r}/${p}`;
-}
 /** Strip PTY echo noise and PowerShell cd error blocks; exported for unit tests. */
 export function sanitizeExecOutput(output: string): string {
   const normalized = output.replace(/\r\n/g, '\n').trim();
@@ -119,92 +112,52 @@ export const handleSystemExec: OpHandler = async (params, ctx) => {
   }
 };
 
-/** Build git command string; prefixes file paths with workspace rel_path when applicable. Exported for tests. */
-export function buildGitCommand(params: Record<string, unknown>, ctx: HandlerContext): string | null {
-  const action = (params.action as string) ?? 'status';
-  const parts = ['git'];
+const MUTATING_GIT_ACTIONS = ['stage', 'unstage', 'commit', 'push', 'reset', 'restore'];
 
-  const wsName = params.workspace as string | undefined;
-  const relPath = ctx.getWorkspaceRelPath?.(wsName) ?? null;
+async function echoGitToTerminal(
+  ctx: { swarmTerminalId?: string; isSwarmAgent?: boolean },
+  raw: unknown,
+  action: string,
+): Promise<void> {
+  try {
+    const r = (raw && typeof raw === 'object') ? raw as Record<string, unknown> : {};
+    const output = typeof r.output === 'string' ? r.output.trim() : '';
+    const success = r.success !== false && r.exitCode !== 1;
+    const targetId = resolveTerminalTarget(undefined, ctx);
+    if (!targetId) return;
 
-  const prefixFiles = (paths: string[]): string[] => {
-    if (!relPath || relPath === '.') return paths;
-    return paths.map((p) => prefixFilePath(String(p), relPath));
-  };
+    const terminalStore = getTerminalStore();
+    const terminal = terminalStore.terminals.get(targetId);
+    if (!terminal?.isAlive) return;
 
-  switch (action) {
-    case 'status': parts.push('status'); break;
-    case 'diff': {
-      parts.push('diff');
-      if (params.staged || params.cached) parts.push('--cached');
-      const files = params.files ?? params.file_paths ?? params.paths;
-      if (Array.isArray(files)) parts.push('--', ...prefixFiles(files.map(String)));
-      break;
+    const label = `git ${action}`;
+    if (terminal.isAgent) {
+      const icon = success ? '\u2713' : '\u2717';
+      terminalStore.appendAgentMessage(targetId, `[${label}] ${icon} ${output || action}`);
+      return;
     }
-    case 'stage': {
-      const files = params.files ?? params.file_paths ?? params.paths;
-      if (params.all) { parts.push('add', '-A'); }
-      else if (Array.isArray(files) && files.length > 0) { parts.push('add', '--', ...prefixFiles(files.map(String))); }
-      else return null;
-      break;
-    }
-    case 'unstage': {
-      const files = params.files ?? params.file_paths ?? params.paths;
-      parts.push('restore', '--staged');
-      if (Array.isArray(files) && files.length > 0) parts.push('--', ...prefixFiles(files.map(String)));
-      else parts.push('.');
-      break;
-    }
-    case 'commit': {
-      const msg = params.message as string | undefined;
-      if (!msg) return null;
-      parts.push('commit', '-m', `"${msg.replace(/"/g, '\\"')}"`);
-      break;
-    }
-    case 'push': parts.push('push'); break;
-    case 'log': {
-      parts.push('log', '--oneline', `-${params.count ?? 10}`);
-      break;
-    }
-    case 'reset': {
-      parts.push('reset');
-      if (params.hard) parts.push('--hard');
-      if (typeof params.ref === 'string') parts.push(params.ref);
-      break;
-    }
-    default: return null;
+
+    const statusIcon = success ? '\x1b[32m\u2713\x1b[0m' : '\x1b[31m\u2717\x1b[0m';
+    const summary = output.split('\n')[0] || action;
+    const line = `\r\n\x1b[90m[${label}]\x1b[0m ${statusIcon} ${summary}\r\n`;
+    await terminalStore.writeRaw(targetId, `echo "${line.replace(/"/g, '`"')}"\r`);
+  } catch {
+    // Non-fatal: terminal echo is best-effort
   }
-  return parts.join(' ');
 }
 
 export const handleSystemGit: OpHandler = async (params, ctx) => {
-  const gitCmd = buildGitCommand(params, ctx);
-
-  // Mutating actions (stage, commit, push, reset) run through PTY for visibility
-  const mutatingActions = ['stage', 'unstage', 'commit', 'push', 'reset'];
   const action = (params.action as string) ?? 'status';
-
-  if (gitCmd && mutatingActions.includes(action)) {
-    const terminalStore = getTerminalStore();
-    const targetId = await ensureTerminalTarget(params.terminal_id as string | undefined, ctx);
-
-    try {
-      const result = await terminalStore.executeCommand(gitCmd, targetId);
-      const sanitizedOutput = sanitizeExecOutput(result.output) || '(no output)';
-      const content = toTOON({ exitCode: result.exitCode, output: sanitizedOutput, success: result.success });
-      return ok(content, { ...result, output: sanitizedOutput });
-    } catch (error) {
-      return err(`system.git: ERROR ${error instanceof Error ? error.message : String(error)}`);
-    }
-  }
-
-  // Read-only actions use the structured backend for rich parsed output
   try {
     const result = await ctx.atlsBatchQuery('git', params);
     const content = typeof result === 'string' ? result : JSON.stringify(result);
 
     if (action === 'restore' && result && typeof result === 'object') {
       clearEditLessonsForRestoredFiles(result as Record<string, unknown>, params, ctx);
+    }
+
+    if (MUTATING_GIT_ACTIONS.includes(action)) {
+      echoGitToTerminal(ctx, result, action);
     }
 
     return ok(content, result);
