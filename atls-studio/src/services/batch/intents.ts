@@ -140,7 +140,7 @@ export function resolveIntents(
     metrics.push({
       intentName: step.use,
       totalPossibleSteps: totalPossible,
-      actualGeneratedSteps: result.steps.length,
+      emittedSteps: result.steps.length,
       skippedSteps: Math.max(0, totalPossible - result.steps.length),
       lookaheadSteps: result.prepareNext?.length ?? 0,
     });
