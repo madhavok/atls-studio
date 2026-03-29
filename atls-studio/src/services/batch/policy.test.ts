@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { MAX_BATCH_POLICY_STEPS, normalizeBatchPolicyForExecution } from './policy';
+import { evaluateCondition, MAX_BATCH_POLICY_STEPS, normalizeBatchPolicyForExecution } from './policy';
+import type { StepOutput } from './types';
 
 describe('normalizeBatchPolicyForExecution', () => {
   it('forces readonly in Ask mode', () => {
@@ -27,5 +28,14 @@ describe('normalizeBatchPolicyForExecution', () => {
       normalizeBatchPolicyForExecution(false, { max_steps: MAX_BATCH_POLICY_STEPS + 50 }),
     ).toEqual({ mode: 'mutable', max_steps: MAX_BATCH_POLICY_STEPS });
     expect(normalizeBatchPolicyForExecution(false, { max_steps: 0 })).toEqual({ mode: 'mutable', max_steps: 1 });
+  });
+});
+
+describe('evaluateCondition', () => {
+  it('accepts string shorthand (e1.ok) without throwing', () => {
+    const outputs = new Map<string, StepOutput>([
+      ['e1', { ok: true, refs: [] }],
+    ]);
+    expect(evaluateCondition('e1.ok', outputs)).toBe(true);
   });
 });

@@ -5,6 +5,7 @@
 
 import type { ExecutionPolicy, OperationKind, ConditionExpr, StepOutput, Step } from './types';
 import { isMutatingOp, isReadonlyOp } from './opMap';
+import { expandBatchIfShorthand } from '../../utils/toon';
 
 // ---------------------------------------------------------------------------
 // Mode gating
@@ -98,9 +99,12 @@ export function isStepCountExceeded(
 // ---------------------------------------------------------------------------
 
 export function evaluateCondition(
-  cond: ConditionExpr,
+  cond: ConditionExpr | string,
   stepOutputs: ReadonlyMap<string, StepOutput>,
 ): boolean {
+  if (typeof cond === 'string') {
+    return evaluateCondition(expandBatchIfShorthand(cond) as ConditionExpr, stepOutputs);
+  }
   if ('step_ok' in cond) {
     const output = stepOutputs.get(cond.step_ok);
     return output?.ok === true;

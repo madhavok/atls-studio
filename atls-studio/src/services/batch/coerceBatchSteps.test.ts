@@ -42,4 +42,12 @@ describe('coerceBatchSteps', () => {
     expect(steps[0].use).toBe('read.context');
     expect((steps[0].with as Record<string, unknown>).file_paths).toEqual(['test.ts']);
   });
+
+  it('expands string `if` from JSON steps (same as if:e1.ok in line-per-step)', () => {
+    const steps = coerceBatchSteps([
+      { id: 'e1', use: 'change.edit', with: {} },
+      { id: 'v1', use: 'verify.build', if: 'e1.ok' },
+    ]);
+    expect(steps[1].if).toEqual({ step_ok: 'e1' });
+  });
 });

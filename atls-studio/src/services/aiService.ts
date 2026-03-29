@@ -150,6 +150,13 @@ import { hashBp3Prefix, computeLogicalBp3Hit, computeLogicalStaticHit, type Bp3S
 import type { ExpandedFilePath } from './batch/types';
 import { formatBatchResult } from './batch/resultFormatter';
 import { coerceBatchSteps } from './batch/coerceBatchSteps';
+
+/** Model may send `file_paths` / `queries` as a string or array; never use `[0]` on a string (first char). */
+function firstStringOrArrayHead(v: unknown): string | undefined {
+  if (typeof v === 'string') return v;
+  if (Array.isArray(v) && v.length > 0) return String(v[0]);
+  return undefined;
+}
 import {
   BLACKBOARD_BUDGET_TOKENS,
   STAGED_BUDGET_TOKENS,
@@ -1992,16 +1999,16 @@ async function streamChatViaTauri(
           const firstStep = steps[0] || {};
           displayName = String(firstStep.use || 'batch');
           const firstParams = (firstStep.with as Record<string, unknown>) || {};
-          detail = (firstParams.file_paths as string[])?.[0]
+          detail = firstStringOrArrayHead(firstParams.file_paths)
             || String(firstParams.file_path || '')
             || String(firstParams.cmd || '')
-            || (firstParams.queries as string[])?.[0]
+            || firstStringOrArrayHead(firstParams.queries)
             || String(firstParams.action || '')
-            || (firstParams.symbol_names as string[])?.[0]
+            || firstStringOrArrayHead(firstParams.symbol_names)
             || String(firstParams.query || '')
             || displayName;
         } else {
-          detail = (params.file_paths as string[] | undefined)?.[0] || tc.name;
+          detail = firstStringOrArrayHead(params.file_paths) || tc.name;
         }
         
         const toolSummary = { id: tc.id, name: displayName, detail, status: 'running' as const, round: round + 1 };
@@ -2059,12 +2066,12 @@ async function streamChatViaTauri(
           batchStepSummaries = steps.map((step, index) => {
             const withParams = (step.with as Record<string, unknown> | undefined) || {};
             const stepName = String(step.use || `step_${index + 1}`);
-            const stepDetail = (withParams.file_paths as string[] | undefined)?.[0]
+            const stepDetail = firstStringOrArrayHead(withParams.file_paths)
               || String(withParams.file_path || '')
               || String(withParams.cmd || '')
-              || (withParams.queries as string[] | undefined)?.[0]
+              || firstStringOrArrayHead(withParams.queries)
               || String(withParams.action || '')
-              || (withParams.symbol_names as string[] | undefined)?.[0]
+              || firstStringOrArrayHead(withParams.symbol_names)
               || String(withParams.query || '')
               || stepName;
             return {

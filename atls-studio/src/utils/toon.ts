@@ -343,11 +343,12 @@ function expandDataflow(val: string): Record<string, unknown> {
 
 /**
  * Expand conditional shorthand: `if:e1.ok` -> `{ step_ok: "e1" }`
+ * Used by line-per-step parsing and by JSON batch steps when `if` is a string.
  */
-function expandCondition(val: string): Record<string, unknown> {
+export function expandBatchIfShorthand(val: string): Record<string, unknown> {
   if (val.endsWith('.ok')) return { step_ok: val.slice(0, -3) };
   if (val.endsWith('.refs')) return { step_has_refs: val.slice(0, -5) };
-  if (val.startsWith('!')) return { not: expandCondition(val.slice(1)) };
+  if (val.startsWith('!')) return { not: expandBatchIfShorthand(val.slice(1)) };
   return { step_ok: val };
 }
 
@@ -367,7 +368,7 @@ export function parseBatchLines(q: string): { version: '1.0'; steps: Record<stri
   const steps: Record<string, unknown>[] = [];
 
   for (const line of lines) {
-    if (line.startsWith('@policy ')) continue;
+    if (line.startsWith('@policy ') || line.startsWith('--') || line.startsWith('#')) continue;
 
     const tokens = tokenizeBatchLine(line);
     if (tokens.length < 2) continue;
@@ -389,7 +390,7 @@ export function parseBatchLines(q: string): { version: '1.0'; steps: Record<stri
       if (key === 'in') {
         step.in = expandDataflow(rawVal);
       } else if (key === 'if') {
-        step.if = expandCondition(rawVal);
+        step.if = expandBatchIfShorthand(rawVal);
       } else if (key === 'on_error') {
         step.on_error = rawVal;
       } else {
