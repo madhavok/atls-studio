@@ -677,18 +677,33 @@ function prependCancelledToolResults(content: unknown, missingIds: string[]): un
  * Anthropic requires: every assistant message that contains tool_use blocks must be followed
  * immediately by a user message whose content includes a tool_result for each tool_use id.
  * Repairs history when normalization or persistence dropped pairings.
+ *
+ * Also strips orphaned tool_result user messages whose preceding assistant tool_use was dropped,
+ * and removes non-standard fields (thoughtSignature) from tool_use blocks.
  */
 function repairAnthropicToolPairing(messages: ApiMessage[]): ApiMessage[] {
   const out: ApiMessage[] = [];
   for (let i = 0; i < messages.length; i++) {
     const msg = messages[i];
+
+    // Forward repair: assistant with tool_use must have following user with tool_result
     if (msg.role === 'assistant' && Array.isArray(msg.content)) {
-      const toolUseIds = collectToolUseIdsFromBlocks(msg.content);
+      // Strip non-standard fields from tool_use blocks
+      const cleanedContent = msg.content.map((block: Record<string, unknown>) => {
+        if (block && typeof block === 'object' && (block as { type?: string }).type === 'tool_use') {
+          const { thoughtSignature: _, ...rest } = block as Record<string, unknown>;
+          return rest;
+        }
+        return block;
+      });
+      const cleanedMsg = { ...msg, content: cleanedContent };
+
+      const toolUseIds = collectToolUseIdsFromBlocks(cleanedContent);
       if (toolUseIds.length > 0) {
         const next = messages[i + 1];
         const covered = next?.role === 'user' ? collectToolResultIdsFromBlocks(next.content) : new Set<string>();
         const missing = toolUseIds.filter((id) => !covered.has(id));
-        out.push(msg);
+        out.push(cleanedMsg);
         if (missing.length > 0) {
           if (next?.role === 'user') {
             out.push({ role: 'user', content: prependCancelledToolResults(next.content, missing) });
@@ -702,9 +717,51 @@ function repairAnthropicToolPairing(messages: ApiMessage[]): ApiMessage[] {
         }
         continue;
       }
+      out.push(cleanedMsg);
+      continue;
     }
+
+    // Backward repair: user with tool_result must be preceded by assistant with matching tool_use
+    if (msg.role === 'user' && hasToolResultBlocks(msg.content) && Array.isArray(msg.content)) {
+      const prev = out[out.length - 1];
+      const prevToolUseIds = prev?.role === 'assistant'
+        ? new Set(collectToolUseIdsFromBlocks(prev.content))
+        : new Set<string>();
+
+      if (prevToolUseIds.size === 0) {
+        // No preceding assistant tool_use: strip orphaned tool_result blocks from this user message
+        const filtered = (msg.content as Array<Record<string, unknown>>).filter(
+          (block) => !(block && typeof block === 'object' && (block as { type?: string }).type === 'tool_result'),
+        );
+        if (filtered.length > 0) {
+          out.push({ role: 'user', content: filtered });
+        } else {
+          // Entire message was tool_results with no matching tool_use; drop it
+          console.warn('[aiService] Dropped orphaned tool_result user message at index', i);
+        }
+        continue;
+      }
+    }
+
     out.push(msg);
   }
+
+  // Final safety check: log any remaining mispairing
+  for (let i = 0; i < out.length; i++) {
+    const m = out[i];
+    if (m.role === 'assistant' && Array.isArray(m.content)) {
+      const ids = collectToolUseIdsFromBlocks(m.content);
+      if (ids.length > 0) {
+        const next = out[i + 1];
+        const covered = next?.role === 'user' ? collectToolResultIdsFromBlocks(next.content) : new Set<string>();
+        const uncovered = ids.filter((id) => !covered.has(id));
+        if (uncovered.length > 0) {
+          console.error('[aiService] PAIRING BUG after repair: tool_use IDs without tool_result:', uncovered, 'at msg index', i);
+        }
+      }
+    }
+  }
+
   return out;
 }
 

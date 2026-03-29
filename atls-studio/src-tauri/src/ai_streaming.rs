@@ -1123,14 +1123,16 @@ pub async fn stream_chat_anthropic(
         }))
         .collect();
 
-    // Anthropic rejects extra fields on tool_result blocks (e.g. "name").
-    // Strip any non-standard keys so stored conversation history doesn't cause 400s.
+    // Anthropic rejects extra fields on content blocks.
+    // Strip non-standard keys so stored conversation history doesn't cause 400s.
     for msg in anthropic_messages.iter_mut() {
         if let Some(serde_json::Value::Array(blocks)) = msg.get_mut("content") {
             for block in blocks.iter_mut() {
-                if block.get("type").and_then(|t| t.as_str()) == Some("tool_result") {
-                    if let Some(obj) = block.as_object_mut() {
-                        obj.remove("name");
+                if let Some(obj) = block.as_object_mut() {
+                    match obj.get("type").and_then(|t| t.as_str()) {
+                        Some("tool_result") => { obj.remove("name"); }
+                        Some("tool_use") => { obj.remove("thoughtSignature"); }
+                        _ => {}
                     }
                 }
             }
