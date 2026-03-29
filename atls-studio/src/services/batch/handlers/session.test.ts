@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { handlePin, handleStage, handleStats, handleTaskAdvance } from './session';
+import { handlePin, handleStage, handleStats, handleTaskAdvance, handleTaskPlan } from './session';
 import { useContextStore } from '../../../stores/contextStore';
 
 function createMockCtx(overrides?: Partial<{
@@ -11,9 +11,9 @@ function createMockCtx(overrides?: Partial<{
   expandSetRefsInHashes: (hashes: string[]) => { expanded: string[]; notes: string[] };
   atlsBatchQuery: (op: string, params: unknown) => Promise<unknown>;
 }>) {
-  const store = useContextStore.getState();
   return {
-    store: () => store,
+    /** Fresh state each read — Zustand replaces state objects on update; a captured snapshot goes stale. */
+    store: () => useContextStore.getState(),
     sessionId: 'test-session',
     isSwarmAgent: false,
     getProjectPath: () => null,
@@ -92,6 +92,36 @@ describe('handleTaskAdvance', () => {
 
     expect(result.ok).toBe(true);
     expect(result.summary).toContain('task_advance: c(active)');
+  });
+
+  it('resolves colon-prefixed string subtasks from session.plan for explicit session.advance', async () => {
+    const ctx = createMockCtx() as unknown as Parameters<typeof handleTaskPlan>[1];
+    const planResult = await handleTaskPlan(
+      {
+        goal: 'multi-phase',
+        subtasks: [
+          'round1_discover: Discovery — tree (DONE)',
+          'round2_read_pin: Read and pin (DONE)',
+          'round3_analyze: Analyze deps',
+        ],
+      },
+      ctx,
+    );
+    expect(planResult.ok).toBe(true);
+
+    const adv = await handleTaskAdvance(
+      {
+        subtask: 'round2_read_pin',
+        summary:
+          'Rounds 1-2 complete. Got tree, read executor sig, pinned chunk. Need to advance plan past discovery.',
+      },
+      ctx,
+    );
+    expect(adv.ok).toBe(true);
+    expect(adv.summary).toContain('task_advance: round2_read_pin(active)');
+    const updated = useContextStore.getState().taskPlan;
+    expect(updated?.subtasks.find(s => s.id === 'round1_discover')?.status).toBe('done');
+    expect(updated?.subtasks.find(s => s.id === 'round2_read_pin')?.status).toBe('active');
   });
 });
 

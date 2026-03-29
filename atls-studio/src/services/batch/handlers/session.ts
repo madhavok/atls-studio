@@ -42,6 +42,16 @@ function err(summary: string): StepOutput {
 // task_plan
 // ---------------------------------------------------------------------------
 
+/** `round1_foo: Do the thing` → id `round1_foo`, title `Do the thing` (matches session.advance subtask ids). */
+function parseSubtaskString(raw: string): { id: string; title: string } {
+  const s = raw.trim();
+  const colon = s.indexOf(':');
+  if (colon <= 0) return { id: s, title: s };
+  const id = s.slice(0, colon).trim();
+  const title = s.slice(colon + 1).trim() || id;
+  return { id, title };
+}
+
 export const handleTaskPlan: OpHandler = async (params, ctx) => {
   const goal = params.goal as string;
   if (!goal) return err('task_plan: ERROR missing goal');
@@ -50,7 +60,10 @@ export const handleTaskPlan: OpHandler = async (params, ctx) => {
   type SubStatus = 'pending' | 'active' | 'done' | 'blocked';
   const subtasks = (rawSubtasks || []).map((s, i) => {
     const st: SubStatus = i === 0 ? 'active' : 'pending';
-    if (typeof s === 'string') return { id: s, title: s, status: st };
+    if (typeof s === 'string') {
+      const { id, title } = parseSubtaskString(s);
+      return { id, title, status: st };
+    }
     return { id: s.id, title: s.title, status: st };
   });
   ctx.store().setTaskPlan({
