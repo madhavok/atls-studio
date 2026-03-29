@@ -3,6 +3,7 @@ import { compressToolLoopHistory, deflateToolResults, estimateHistoryTokens, ana
 import { ROLLING_SUMMARY_MARKER } from './historyDistiller';
 import { useContextStore } from '../stores/contextStore';
 import { useAppStore } from '../stores/appStore';
+import { hashContentSync } from '../utils/contextHash';
 
 function resetStore() {
   useContextStore.getState().resetSession();
@@ -332,6 +333,24 @@ describe('deflateToolResults', () => {
 
     expect(count).toBe(0);
     expect(toolResults[0].content).toBe(content);
+  });
+
+  it('does not alias batch results when tool_use is missing (no source-match on generic label)', () => {
+    useContextStore.getState().addChunk('stale shared placeholder', 'result', 'tool_result');
+    const a = 'x'.repeat(4000);
+    const b = 'y'.repeat(4000);
+    const countA = deflateToolResults(
+      [{ type: 'tool_result', tool_use_id: 'id-a', content: a }],
+      [],
+    );
+    const countB = deflateToolResults(
+      [{ type: 'tool_result', tool_use_id: 'id-b', content: b }],
+      [],
+    );
+    expect(countA).toBe(1);
+    expect(countB).toBe(1);
+    expect(useContextStore.getState().chunks.get(hashContentSync(a))).toBeDefined();
+    expect(useContextStore.getState().chunks.get(hashContentSync(b))).toBeDefined();
   });
 
   it('falls back to source-based matching when content hash differs', () => {

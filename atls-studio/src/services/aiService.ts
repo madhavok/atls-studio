@@ -2220,14 +2220,17 @@ async function streamChatViaTauri(
           .catch(() => {});
       }
 
+      // Assistant must be in history before deflate so buildCompressionDescription
+      // can pair tool_use_id with the batch/read.* input (otherwise every result
+      // falls back to description "tool_result" and source-match reuses one stale engram).
+      conversationHistory.push({ role: 'assistant', content: assistantContent });
+
       // Eager deflation: replace tool_result content with hash-pointer refs
       // when the content already lives in the context store as an engram.
       // This makes the engram the single source of truth and avoids sending
       // duplicate content in both history and working memory.
       deflateToolResults(toolResults, conversationHistory);
 
-      // Add messages to conversation for next round
-      conversationHistory.push({ role: 'assistant', content: assistantContent });
       conversationHistory.push({ role: 'user', content: toolResults });
 
       // Hard stop: model had one round after FORCE STOP and still didn't call task_complete

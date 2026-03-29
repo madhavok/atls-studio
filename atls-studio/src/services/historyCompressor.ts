@@ -589,7 +589,6 @@ export function deflateToolResults(
   toolResults: ToolResultBlock[],
   history: Array<{ role: string; content: unknown }>,
 ): number {
-  const store = useContextStore.getState();
   let deflated = 0;
   // Minimum size to create a new engram — tiny results ("ok", short errors)
   // are cheaper inline than as engram overhead.
@@ -598,6 +597,10 @@ export function deflateToolResults(
   for (const tr of toolResults) {
     if (!tr.content || typeof tr.content !== 'string') continue;
     if (isCompressedRef(tr.content)) continue;
+
+    // Fresh store each iteration — addChunk updates Zustand; a snapshot from
+    // the start of this function would leave chunks stale for .get after insert.
+    const store = useContextStore.getState();
 
     // Try content-hash match first (exact content already in store)
     const contentHash = hashContentSync(tr.content);
@@ -613,6 +616,20 @@ export function deflateToolResults(
     // cases where the batch handler stored content under a backend-provided
     // hash or as a non-result chunk type like 'smart' or 'raw')
     const description = buildCompressionDescription(tr.tool_use_id, history);
+    // No paired tool_use in history → do not match by vague label (would alias many results).
+    if (description === 'tool_result') {
+      const tokens = countTokensSync(tr.content);
+      if (tokens >= MIN_DEFLATE_TOKENS) {
+        store.addChunk(tr.content, 'result', `result:${tr.tool_use_id}`, undefined, `result: ${tr.tool_use_id}`);
+        const newChunk = useContextStore.getState().chunks.get(contentHash);
+        if (newChunk) {
+          dematerialize(contentHash);
+          tr.content = formatChunkRef(newChunk.shortHash, newChunk.tokens, undefined, `result:${tr.tool_use_id}`, newChunk.digest);
+          deflated++;
+        }
+      }
+      continue;
+    }
     const existing = findExistingChunkBySource(store, description);
     if (existing) {
       const tokens = countTokensSync(tr.content);
@@ -628,10 +645,10 @@ export function deflateToolResults(
     // lightweight ref instead of inline content.
     const tokens = countTokensSync(tr.content);
     if (tokens >= MIN_DEFLATE_TOKENS) {
-      const hash = store.addChunk(tr.content, 'result', description, undefined, `result: ${description}`);
-      chunk = store.chunks.get(hash);
+      store.addChunk(tr.content, 'result', description, undefined, `result: ${description}`);
+      chunk = useContextStore.getState().chunks.get(contentHash);
       if (chunk) {
-        dematerialize(hash);
+        dematerialize(contentHash);
         const ref = formatChunkRef(chunk.shortHash, chunk.tokens, undefined, description, chunk.digest);
         tr.content = ref;
         deflated++;
