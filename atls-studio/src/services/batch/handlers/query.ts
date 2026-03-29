@@ -104,11 +104,14 @@ export const handleSearchSymbol: OpHandler = async (params, ctx) => {
     if (retained.reused) return retained.output;
     const hash = ctx.store().addChunk(resultStr, 'symbol', queries.join(', '));
     const tk = countTokensSync(resultStr);
+    const resultFilePaths = extractFilePathsFromSearchResult(result);
+    const resultLines = extractLinesFromSearchResult(result);
     return {
       kind: 'symbol_refs', ok: true,
       refs: [`h:${hash}`],
       summary: `find_symbol: ${queries.join(', ')} → h:${hash} (${(tk / 1000).toFixed(1)}k tk)`,
       tokens: tk,
+      content: { file_paths: resultFilePaths, lines: resultLines },
     };
   } catch (findErr) {
     return err('find_symbol', findErr instanceof Error ? findErr.message : String(findErr));
@@ -131,11 +134,14 @@ export const handleSearchUsage: OpHandler = async (params, ctx) => {
     if (retained.reused) return retained.output;
     const hash = ctx.store().addChunk(resultStr, 'symbol', symbolNames.join(', '), undefined, summary);
     const tk = countTokensSync(resultStr);
+    const resultFilePaths = extractFilePathsFromSearchResult(result);
+    const resultLines = extractLinesFromSearchResult(result);
     return {
       kind: 'symbol_refs', ok: true,
       refs: [`h:${hash}`],
       summary: `symbols: ${symbolNames.join(', ')} → h:${hash} (${(tk / 1000).toFixed(1)}k tk)`,
       tokens: tk,
+      content: { file_paths: resultFilePaths, lines: resultLines },
     };
   } catch (symErr) {
     return err('symbols', symErr instanceof Error ? symErr.message : String(symErr));

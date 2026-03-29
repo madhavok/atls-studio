@@ -45,7 +45,7 @@ const PROFILES: ReadonlyMap<string, OperationProfile> = new Map<string, Operatio
   ['read.lines',       { family: 'understand', requires_target: true,  min_hydration: 'exact_span',         default_verification: [],               eligible_target_kinds: ['file', 'exact_span'] }],
   ['read.file',        { family: 'understand', requires_target: true,  min_hydration: 'full',               default_verification: [],               eligible_target_kinds: ['file'] }],
   ['analyze.deps',     { family: 'understand', requires_target: true,  min_hydration: 'digest',             default_verification: [],               eligible_target_kinds: ['file'] }],
-  ['analyze.calls',    { family: 'understand', requires_target: true,  min_hydration: 'digest',             default_verification: [],               eligible_target_kinds: ['file', 'symbol'] }],
+  ['analyze.calls',    { family: 'understand', requires_target: true,  min_hydration: 'digest',             default_verification: [],               eligible_target_kinds: ['symbol'] }],
   ['analyze.structure', { family: 'understand', requires_target: true, min_hydration: 'digest',             default_verification: [],               eligible_target_kinds: ['file'] }],
   ['analyze.impact',   { family: 'understand', requires_target: true,  min_hydration: 'digest',             default_verification: [],               eligible_target_kinds: DEFAULT_TARGET_KINDS }],
   ['analyze.blast_radius', { family: 'understand', requires_target: true, min_hydration: 'digest',          default_verification: [],               eligible_target_kinds: DEFAULT_TARGET_KINDS }],

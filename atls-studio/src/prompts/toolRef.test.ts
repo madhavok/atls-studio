@@ -35,3 +35,36 @@ describe('BATCH_TOOL_REF drift detection', () => {
     }
   });
 });
+
+describe('BATCH_TOOL_REF param-shape accuracy', () => {
+  const commonParams = BATCH_TOOL_REF.match(/### Common Params[\s\S]*?(?=\n### Examples)/)?.[0] ?? '';
+
+  it('documents analyze.calls with symbol_names as primary param (not grouped with file_paths ops)', () => {
+    const callsLine = commonParams.split('\n').find(l => l.startsWith('analyze.calls'));
+    expect(callsLine, 'analyze.calls must have its own param line in Common Params').toBeTruthy();
+    expect(callsLine).toContain('symbol_names');
+    expect(callsLine).not.toContain('file_paths');
+  });
+
+  it('documents analyze.extract_plan with singular file_path', () => {
+    const extractLine = commonParams.split('\n').find(l => l.startsWith('analyze.extract_plan'));
+    expect(extractLine, 'analyze.extract_plan must have its own param line in Common Params').toBeTruthy();
+    expect(extractLine).toContain('file_path:');
+    expect(extractLine).toContain('strategy');
+  });
+
+  it('does not group analyze.calls with file_paths-primary analyze ops', () => {
+    const groupedAnalyzeLine = commonParams.split('\n').find(l =>
+      l.startsWith('analyze.') && l.includes('|') && l.includes('file_paths'),
+    );
+    if (groupedAnalyzeLine) {
+      expect(groupedAnalyzeLine).not.toContain('calls');
+    }
+  });
+
+  it('documents read.file with its own param line', () => {
+    const readFileLine = commonParams.split('\n').find(l => l.startsWith('read.file'));
+    expect(readFileLine, 'read.file must have its own param line in Common Params').toBeTruthy();
+    expect(readFileLine).toContain('file_paths');
+  });
+});

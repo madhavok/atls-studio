@@ -18,6 +18,7 @@ session.advance subtask?:name summary:required
 read.context type:smart|full|module|component|test|tree file_paths:path1,path2 depth?:N glob?:pattern line_range?:start-end max_lines?:N
 read.shaped file_paths:path1,path2 shape:sig|skeleton max_files?:N
 read.lines hash:h:XXXX lines:15-50 | file_path:path start_line:N end_line:N context_lines?:0-5
+read.file file_paths:path1,path2 type?:smart|full — simpler than read.context, no shaped/tree/bind support
 search.code queries:term1,term2 file_paths?:path1,path2 limit?:N compact?:true
 search.symbol symbol_names:name1,name2 limit?:N
 search.usage symbol_names:name1,name2 filter?:pattern limit?:N
@@ -25,7 +26,9 @@ search.similar type?:code|function|concept query?:text threshold?:N limit?:N
 search.issues file_paths?:path1 severity_filter?:high|medium|low|all issue_mode?:correctness|all|security limit?:N
 search.patterns file_paths?:path1 patterns?:pattern1,pattern2
 search.memory query:text regions?:active,archived,bb max_results?:N
-analyze.deps|calls|structure|impact|blast_radius|extract_plan file_paths:path1 filter?:pattern limit?:N symbol_names?:name1
+analyze.deps|structure|impact|blast_radius file_paths:path1 filter?:pattern limit?:N
+analyze.calls symbol_names:name1,name2 depth?:N filter?:pattern limit?:N
+analyze.extract_plan file_path:path strategy?:by_cluster|by_prefix|by_kind min_lines?:N min_complexity?:N
 change.edit file_path:path line_edits:[{line:N,action:replace,count:M,content:"new code"}]
   line: end | -1 | symbol:fn(name) — replace/replace_body get end_line from symbol span
   actions: replace, insert_before, insert_after, delete, move
