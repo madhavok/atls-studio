@@ -94,7 +94,7 @@ import type {
   WorkspaceEntry,
   StreamChunk,
 } from '../stores/appStore';
-import { useAppStore } from '../stores/appStore';
+import { useAppStore, getMessageParts } from '../stores/appStore';
 import { useContextStore, setCacheHitRateAccessor, setWorkspacesAccessor, setPromptMetricsAccessor, setRoundRefreshRevisionResolver, setRetentionMetricsAccessor, setRetentionResetAccessor } from '../stores/contextStore';
 import { useRetentionStore } from '../stores/retentionStore';
 
@@ -530,9 +530,9 @@ export function deriveMutationCompletionBlocker(result: UnifiedBatchResult): str
 /**
  * Convert a stored Message (with segments/parts) to API content format for Gemini/OpenAI/Anthropic.
  * Assistant messages with tool calls are expanded to model content + optional tool_result user message.
- * Input: Message or ChatMessage (role, content, optional parts/segments).
+ * Uses getMessageParts() so legacy `toolCalls`-only messages (no parts/segments) still emit tool_use + tool_result.
  */
-function messageToApiContent(msg: { role: string; content: unknown; parts?: Array<{ type: string; content?: string; toolCall?: { id: string; name: string; args?: Record<string, unknown>; result?: string; thoughtSignature?: string } }>; segments?: Array<{ type: string; content?: string; toolCall?: { id: string; name: string; args?: Record<string, unknown>; result?: string; thoughtSignature?: string } }> }): {
+function messageToApiContent(msg: { role: string; content: unknown; parts?: Array<{ type: string; content?: string; toolCall?: { id: string; name: string; args?: Record<string, unknown>; result?: string; thoughtSignature?: string } }>; segments?: Array<{ type: string; content?: string; toolCall?: { id: string; name: string; args?: Record<string, unknown>; result?: string; thoughtSignature?: string } }>; toolCalls?: MessageToolCall[] }): {
   modelContent: string | Array<{ type: string; id?: string; text?: string; name?: string; input?: Record<string, unknown>; thoughtSignature?: string }>;
   toolResults?: Array<{ type: 'tool_result'; tool_use_id: string; content: string; name?: string }>;
 } {
@@ -540,8 +540,35 @@ function messageToApiContent(msg: { role: string; content: unknown; parts?: Arra
   if (msg.role !== 'assistant') {
     return { modelContent: strOrArr };
   }
-  const parts = (msg.parts ?? msg.segments) as MessagePart[] | undefined;
-  if (!parts || parts.length === 0) {
+  const parts = getMessageParts(msg as Message);
+  if (parts.length === 0) {
+    // Raw API-shaped content (array blocks) without parts — still normalize tool_use + synthetic tool_result
+    if (Array.isArray(msg.content)) {
+      const modelBlocks: Array<{ type: string; text?: string; id?: string; name?: string; input?: Record<string, unknown>; thoughtSignature?: string }> = [];
+      const toolResults: Array<{ type: 'tool_result'; tool_use_id: string; content: string; name?: string }> = [];
+      for (const block of msg.content) {
+        if (!block || typeof block !== 'object') continue;
+        const b = block as { type?: string; text?: string; id?: string; name?: string; input?: Record<string, unknown>; thoughtSignature?: string };
+        if (b.type === 'text') {
+          modelBlocks.push({ type: 'text', text: b.text ?? '' });
+        } else if (b.type === 'tool_use' && b.id) {
+          modelBlocks.push({
+            type: 'tool_use',
+            id: b.id,
+            name: b.name,
+            input: b.input ?? {},
+            thoughtSignature: b.thoughtSignature,
+          } as { type: string; id?: string; name?: string; input?: Record<string, unknown>; thoughtSignature?: string });
+          toolResults.push({ type: 'tool_result', tool_use_id: b.id, content: '[cancelled]' });
+        }
+      }
+      if (modelBlocks.some((x) => (x as { type?: string }).type === 'tool_use')) {
+        return {
+          modelContent: modelBlocks,
+          toolResults: toolResults.length > 0 ? toolResults : undefined,
+        };
+      }
+    }
     return { modelContent: strOrArr };
   }
   const modelBlocks: Array<{ type: string; text?: string; name?: string; input?: Record<string, unknown>; thoughtSignature?: string }> = [];
@@ -607,6 +634,78 @@ function hasToolResultBlocks(content: unknown): boolean {
         && 'type' in block
         && (block as { type?: string }).type === 'tool_result',
     );
+}
+
+function collectToolUseIdsFromBlocks(content: unknown): string[] {
+  if (!Array.isArray(content)) return [];
+  const ids: string[] = [];
+  for (const block of content) {
+    if (!block || typeof block !== 'object') continue;
+    if ((block as { type?: string }).type === 'tool_use') {
+      const id = (block as { id?: string }).id;
+      if (typeof id === 'string') ids.push(id);
+    }
+  }
+  return ids;
+}
+
+function collectToolResultIdsFromBlocks(content: unknown): Set<string> {
+  const s = new Set<string>();
+  if (!Array.isArray(content)) return s;
+  for (const block of content) {
+    if (!block || typeof block !== 'object') continue;
+    if ((block as { type?: string }).type === 'tool_result') {
+      const tid = (block as { tool_use_id?: string }).tool_use_id;
+      if (typeof tid === 'string') s.add(tid);
+    }
+  }
+  return s;
+}
+
+function prependCancelledToolResults(content: unknown, missingIds: string[]): unknown {
+  const blocks = missingIds.map((id) => ({ type: 'tool_result' as const, tool_use_id: id, content: '[cancelled]' }));
+  if (typeof content === 'string') {
+    return [...blocks, { type: 'text', text: content }];
+  }
+  if (Array.isArray(content)) {
+    return [...blocks, ...content];
+  }
+  return [...blocks, { type: 'text', text: String(content ?? '') }];
+}
+
+/**
+ * Anthropic requires: every assistant message that contains tool_use blocks must be followed
+ * immediately by a user message whose content includes a tool_result for each tool_use id.
+ * Repairs history when normalization or persistence dropped pairings.
+ */
+function repairAnthropicToolPairing(messages: ApiMessage[]): ApiMessage[] {
+  const out: ApiMessage[] = [];
+  for (let i = 0; i < messages.length; i++) {
+    const msg = messages[i];
+    if (msg.role === 'assistant' && Array.isArray(msg.content)) {
+      const toolUseIds = collectToolUseIdsFromBlocks(msg.content);
+      if (toolUseIds.length > 0) {
+        const next = messages[i + 1];
+        const covered = next?.role === 'user' ? collectToolResultIdsFromBlocks(next.content) : new Set<string>();
+        const missing = toolUseIds.filter((id) => !covered.has(id));
+        out.push(msg);
+        if (missing.length > 0) {
+          if (next?.role === 'user') {
+            out.push({ role: 'user', content: prependCancelledToolResults(next.content, missing) });
+            i++;
+          } else {
+            out.push({
+              role: 'user',
+              content: missing.map((id) => ({ type: 'tool_result', tool_use_id: id, content: '[cancelled]' })),
+            });
+          }
+        }
+        continue;
+      }
+    }
+    out.push(msg);
+  }
+  return out;
 }
 
 function normalizeConversationHistory(messages: ChatMessage[]): ApiMessage[] {
@@ -1329,6 +1428,8 @@ async function streamChatViaTauri(
       let toolCallCounter = 0;
 
       const tauriMessages = assembledRound.messages.map(m => ({ role: m.role, content: m.content }));
+      const tauriMessagesForProvider =
+        config.provider === 'anthropic' ? repairAnthropicToolPairing(tauriMessages) : tauriMessages;
       const cacheMessages = assembledRound.messages.map(m => ({
         role: m.role as 'user' | 'assistant' | 'system',
         content: m.content as string | ContentBlock[],
@@ -1336,7 +1437,7 @@ async function streamChatViaTauri(
 
       useAppStore.getState().setLastPromptSnapshot({
         systemPrompt: config.systemPrompt || '',
-        messages: tauriMessages,
+        messages: tauriMessagesForProvider,
         model: config.model,
         provider: config.provider,
         round,
@@ -1348,7 +1449,7 @@ async function streamChatViaTauri(
           await invoke('stream_chat_anthropic', {
             apiKey: config.apiKey,
             model: config.model,
-            messages: tauriMessages,
+            messages: tauriMessagesForProvider,
             maxTokens: config.maxTokens,
             temperature: config.temperature,
             systemPrompt: config.systemPrompt || '',
