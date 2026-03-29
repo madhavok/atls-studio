@@ -9,6 +9,7 @@ import type { Message } from '../stores/appStore';
 import { getMessageParts } from '../stores/appStore';
 import type { DbSegment } from '../services/chatDb';
 import { estimateTokens } from './contextHash';
+import { serializeForTokenEstimate } from './toon';
 
 export interface ToolTokenEntry {
   toolName: string;
@@ -65,7 +66,7 @@ function buildReport(toolCalls: RawToolCall[], textTokens: number, userTokens: n
   let grandResults = 0;
 
   for (const tc of toolCalls) {
-    const argStr = tc.args ? JSON.stringify(tc.args) : '';
+    const argStr = tc.args ? serializeForTokenEstimate(tc.args) : '';
     const argTokens = estimateTokens(argStr);
     const resultTokens = estimateTokens(tc.result ?? '');
 

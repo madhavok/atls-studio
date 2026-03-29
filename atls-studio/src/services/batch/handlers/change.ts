@@ -10,6 +10,7 @@ import { recordFreshnessJournal } from '../../../services/freshnessJournal';
 import { invoke } from '@tauri-apps/api/core';
 import { SHORT_HASH_LEN } from '../../../utils/contextHash';
 import { parseHashRef } from '../../../utils/hashRefParsers';
+import { formatResult } from '../../../utils/toon';
 import { canonicalizeSnapshotHash } from '../snapshotTracker';
 
 function ok(summary: string, refs: string[] = [], content?: unknown): StepOutput {
@@ -1600,7 +1601,7 @@ export const handleEdit: OpHandler = async (params, ctx) => {
       return errWithContent(formatEditErrorSummary(enrichedErrorPayload), enrichedErrorPayload);
     }
     const refs = extractRefs(result);
-    let summary = JSON.stringify(result);
+    let summary = formatResult(result);
     if (isMutating && hasLintErrorsInResult(result)) {
       const hint = formatLintErrorHint(result);
       summary = `[LINT ERRORS] ${hint} — see lints.top_issues\n${summary}`;
@@ -1682,7 +1683,7 @@ export const handleCreate: OpHandler = async (params, ctx) => {
     if (affectedPaths.length > 0) {
       useContextStore.getState().bumpWorkspaceRev(affectedPaths);
     }
-    return ok(JSON.stringify(result), refs, result);
+    return ok(formatResult(result), refs, result);
   } catch (createErr) {
     return err(`create: ERROR ${createErr instanceof Error ? createErr.message : String(createErr)}`);
   }
@@ -1704,7 +1705,7 @@ export const handleDelete: OpHandler = async (params, ctx) => {
     if (affectedPaths.length > 0) {
       useContextStore.getState().bumpWorkspaceRev(affectedPaths);
     }
-    return ok(JSON.stringify(result), [], result);
+    return ok(formatResult(result), [], result);
   } catch (delErr) {
     return err(`delete: ERROR ${delErr instanceof Error ? delErr.message : String(delErr)}`);
   }
@@ -1725,7 +1726,7 @@ export const handleRefactor: OpHandler = async (params, ctx) => {
       useContextStore.getState().bumpWorkspaceRev(affectedPaths);
     }
     const refs = extractRefs(result);
-    return ok(JSON.stringify(result), refs, result);
+    return ok(formatResult(result), refs, result);
   } catch (refactorErr) {
     return err(`refactor: ERROR ${refactorErr instanceof Error ? refactorErr.message : String(refactorErr)}`);
   }
@@ -1746,7 +1747,7 @@ export const handleRollback: OpHandler = async (params, ctx) => {
     const result = await ctx.atlsBatchQuery('refactor', merged);
     const refs = extractRefs(result);
     clearEditLessonsForRollback(params, ctx);
-    return ok(JSON.stringify(result), refs, result);
+    return ok(formatResult(result), refs, result);
   } catch (rbErr) {
     const msg = rbErr instanceof Error ? rbErr.message : String(rbErr);
     const hint =
@@ -1804,7 +1805,7 @@ export const handleSplitModule: OpHandler = async (params, ctx) => {
     if (affectedPaths.length > 0) {
       useContextStore.getState().bumpWorkspaceRev(affectedPaths);
     }
-    return ok(JSON.stringify(result), refs, result);
+    return ok(formatResult(result), refs, result);
   } catch (splitErr) {
     return err(`split_module: ERROR ${splitErr instanceof Error ? splitErr.message : String(splitErr)}`);
   }

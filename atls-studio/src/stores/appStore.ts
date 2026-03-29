@@ -55,11 +55,15 @@ export function getMessageParts(msg: Message | { parts?: MessagePart[]; segments
 
 /** Extract first text from a message for title/summary. Handles string content, parts, or segments. */
 export function extractFirstTextFromMessage(msg: Message): string {
-  if (typeof msg.content === 'string' && msg.content.trim()) return msg.content;
+  if (typeof msg.content === 'string') {
+    const trimmed = msg.content.trim();
+    if (trimmed) return trimmed;
+  }
   const parts = getMessageParts(msg);
-  if (parts.length) {
-    for (const p of parts) {
-      if (p.type === 'text' && p.content?.trim()) return p.content;
+  for (const p of parts) {
+    if (p.type === 'text') {
+      const trimmed = p.content.trim();
+      if (trimmed) return trimmed;
     }
   }
   return '';

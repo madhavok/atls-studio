@@ -11,6 +11,7 @@ import { invokeWithTimeout } from '../../toolHelpers';
 import { parseHashRef } from '../../../utils/hashRefParsers';
 import { resolveRecencyInString } from '../../../utils/hashResolver';
 import { useRetentionStore } from '../../../stores/retentionStore';
+import { formatResult } from '../../../utils/toon';
 
 interface ResolvedHashContent {
   content: string;
@@ -116,7 +117,7 @@ export const handleLoad: OpHandler = async (params, ctx) => {
   try {
     const backendType = loadType === 'raw' ? 'full' : loadType;
     const result = await ctx.atlsBatchQuery('context', { type: backendType, file_paths: filePaths });
-    const resultStr = typeof result === 'string' ? result : JSON.stringify(result);
+    const resultStr = typeof result === 'string' ? result : formatResult(result);
     const symbols = extractSymbolsFromContextResult(result);
     const resultObj = result as Record<string, unknown> | undefined;
     const items = Array.isArray(resultObj?.results) ? resultObj!.results as Array<Record<string, unknown>> : [];
@@ -250,7 +251,7 @@ export const handleRead: OpHandler = async (params, ctx) => {
             if (isTreeRead && typeof r.tree === 'string') {
               raw = r.tree;
             }
-            const content = (typeof raw === 'string') ? raw : JSON.stringify(raw ?? item);
+            const content = (typeof raw === 'string') ? raw : formatResult(raw ?? item);
             const src = isTreeRead
               ? String(r.root ?? r.file ?? r.path ?? filePaths[0] ?? '')
               : String(r.file ?? r.path ?? filePaths[0] ?? '');

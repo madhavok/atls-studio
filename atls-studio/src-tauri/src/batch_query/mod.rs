@@ -2131,15 +2131,19 @@ pub async fn atls_batch_query(
                         let mut file_diffs: Vec<serde_json::Value> = Vec::new();
                         let mut current_file: Option<String> = None;
                         let mut hunks: Vec<serde_json::Value> = Vec::new();
-                        let mut current_hunk: Option<(i32, i32, Vec<String>)> = None;
+                        let mut current_hunk: Option<(i32, i32, Vec<String>, usize)> = None;
+                        const MAX_HUNK_LINES: usize = 500;
                         
                         for line in diff_content.lines() {
                             if line.starts_with("diff --git ") {
-                                // Save previous file's data
-                                if let Some((old_start, new_start, lines)) = current_hunk.take() {
-                                    hunks.push(serde_json::json!({
+                                if let Some((old_start, new_start, lines, omitted)) = current_hunk.take() {
+                                    let mut hunk = serde_json::json!({
                                         "old_start": old_start, "new_start": new_start, "lines": lines
-                                    }));
+                                    });
+                                    if omitted > 0 {
+                                        hunk["lines_omitted"] = serde_json::json!(omitted);
+                                    }
+                                    hunks.push(hunk);
                                 }
                                 if let Some(ref file_name) = current_file {
                                     if !hunks.is_empty() {
@@ -2149,13 +2153,16 @@ pub async fn atls_batch_query(
                                     }
                                 }
                                 hunks = Vec::new();
-                                // Extract file name from "diff --git a/path b/path"
                                 current_file = line.split(" b/").nth(1).map(|s| s.to_string());
                             } else if line.starts_with("@@") {
-                                if let Some((old_start, new_start, lines)) = current_hunk.take() {
-                                    hunks.push(serde_json::json!({
+                                if let Some((old_start, new_start, lines, omitted)) = current_hunk.take() {
+                                    let mut hunk = serde_json::json!({
                                         "old_start": old_start, "new_start": new_start, "lines": lines
-                                    }));
+                                    });
+                                    if omitted > 0 {
+                                        hunk["lines_omitted"] = serde_json::json!(omitted);
+                                    }
+                                    hunks.push(hunk);
                                 }
                                 let parts: Vec<&str> = line.split(' ').collect();
                                 let old_start = parts.get(1)
@@ -2166,21 +2173,27 @@ pub async fn atls_batch_query(
                                     .and_then(|s| s.trim_start_matches('+').split(',').next())
                                     .and_then(|s| s.parse::<i32>().ok())
                                     .unwrap_or(0);
-                                current_hunk = Some((old_start, new_start, Vec::new()));
+                                current_hunk = Some((old_start, new_start, Vec::new(), 0));
                             } else if line.starts_with("---") || line.starts_with("+++") || line.starts_with("index ") {
                                 // Skip diff metadata lines
-                            } else if let Some((_, _, ref mut lines)) = current_hunk {
-                                if lines.len() < 50 {
+                            } else if let Some((_, _, ref mut lines, ref mut omitted)) = current_hunk {
+                                if lines.len() < MAX_HUNK_LINES {
                                     lines.push(line.to_string());
+                                } else {
+                                    *omitted += 1;
                                 }
                             }
                         }
                         
-                        // Flush final file
-                        if let Some((old_start, new_start, lines)) = current_hunk {
-                            hunks.push(serde_json::json!({
+                        // Flush final hunk
+                        if let Some((old_start, new_start, lines, omitted)) = current_hunk {
+                            let mut hunk = serde_json::json!({
                                 "old_start": old_start, "new_start": new_start, "lines": lines
-                            }));
+                            });
+                            if omitted > 0 {
+                                hunk["lines_omitted"] = serde_json::json!(omitted);
+                            }
+                            hunks.push(hunk);
                         }
                         if let Some(ref file_name) = current_file {
                             if !hunks.is_empty() {

@@ -12,6 +12,7 @@
 import { useContextStore } from '../stores/contextStore';
 import { useAppStore } from '../stores/appStore';
 import { countTokensBatch, countToolDefTokens } from '../utils/tokenCounter';
+import { serializeMessageContentForTokens } from '../utils/toon';
 import { estimateHistoryTokensAsync, compressToolLoopHistory } from './historyCompressor';
 import {
   CONVERSATION_HISTORY_BUDGET_TOKENS,
@@ -142,15 +143,7 @@ export async function setPromptBudgetEstimates(
       const text =
         typeof m.content === 'string'
           ? m.content
-          : Array.isArray(m.content)
-            ? (m.content as Array<{ text?: string; content?: string; input?: unknown }>)
-                .map((b) =>
-                  b.text ??
-                  (typeof b.content === 'string' ? b.content : JSON.stringify(b.input ?? '')),
-                )
-                .filter(Boolean)
-                .join('\n')
-            : JSON.stringify(m.content ?? '');
+          : serializeMessageContentForTokens(m.content ?? '');
       priorContents.push(text);
     }
     const counts = await countTokensBatch(priorContents);

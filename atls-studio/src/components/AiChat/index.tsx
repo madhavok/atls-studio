@@ -31,6 +31,7 @@ import {
 import { useRoundHistoryStore } from '../../stores/roundHistoryStore';
 import { parseTaskCompleteArgs } from '../../utils/structuredOutput';
 import { selectRecentHistory } from '../../services/historySelector';
+import { serializeForTokenEstimate } from '../../utils/toon';
 
 function isTaskCompleteCall(tc: { name: string; args?: Record<string, unknown> }): boolean {
   return tc.name === 'task_complete';
@@ -3096,7 +3097,7 @@ export function AiChat() {
           });
           
           if (toolCall.status === 'running' && toolCall.args) {
-            const callContent = `${toolCall.name}(${JSON.stringify(toolCall.args)})`;
+            const callContent = `${toolCall.name}(${serializeForTokenEstimate(toolCall.args)})`;
             const tcArgs = toolCall.args as Record<string, unknown> | undefined;
             const tcGoal = tcArgs?.goal as string | undefined;
             const tcSteps = Array.isArray(tcArgs?.steps) ? tcArgs.steps as unknown[] : undefined;
@@ -3422,7 +3423,7 @@ export function AiChat() {
           });
           
           if (toolCall.status === 'running' && toolCall.args) {
-            const callContent = `${toolCall.name}(${JSON.stringify(toolCall.args)})`;
+            const callContent = `${toolCall.name}(${serializeForTokenEstimate(toolCall.args)})`;
             const tcArgs2 = toolCall.args as Record<string, unknown> | undefined;
             const tcGoal2 = tcArgs2?.goal as string | undefined;
             const tcSteps2 = Array.isArray(tcArgs2?.steps) ? tcArgs2.steps as unknown[] : undefined;

@@ -5,7 +5,7 @@
 import type { OpHandler, StepOutput, SearchCodeParams, SearchSymbolParams, SearchUsageParams, AnalyzeDepsParams, AnalyzeImpactParams, AnalyzeBlastRadiusParams, AnalyzeStructureParams, SearchMemoryParams } from '../types';
 import { extractSearchSummary, extractSymbolSummary, extractDepsSummary } from '../../../utils/contextHash';
 import { countTokensSync } from '../../../utils/tokenCounter';
-import { formatResult } from '../../../utils/toon';
+import { formatResult, FORMAT_RESULT_MAX_SEARCH } from '../../../utils/toon';
 import { checkRetention } from './retention';
 
 function err(label: string, msg: string): StepOutput {
@@ -62,7 +62,7 @@ export const handleSearchCode: OpHandler = async (params, ctx) => {
     if (filePaths?.length) searchParams.file_paths = filePaths;
     const result = await ctx.atlsBatchQuery('code_search', searchParams);
     const summary = extractSearchSummary(result, queries);
-    const resultStr = formatResult(result);
+    const resultStr = formatResult(result, FORMAT_RESULT_MAX_SEARCH);
     const retained = checkRetention('search.code', params, resultStr, true, 'search_results', `search: ${queries.join(', ')}`);
     if (retained.reused) return retained.output;
     const hash = ctx.store().addChunk(resultStr, 'search', queries.join(', '), undefined, summary);
@@ -99,7 +99,7 @@ export const handleSearchSymbol: OpHandler = async (params, ctx) => {
 
   try {
     const result = await ctx.atlsBatchQuery('find_symbol', { symbol_names: queries, query: queries[0] });
-    const resultStr = formatResult(result);
+    const resultStr = formatResult(result, FORMAT_RESULT_MAX_SEARCH);
     const retained = checkRetention('search.symbol', params, resultStr, true, 'symbol_refs', `find_symbol: ${queries.join(', ')}`);
     if (retained.reused) return retained.output;
     const hash = ctx.store().addChunk(resultStr, 'symbol', queries.join(', '));
@@ -126,7 +126,7 @@ export const handleSearchUsage: OpHandler = async (params, ctx) => {
   try {
     const result = await ctx.atlsBatchQuery('symbol_usage', { symbol_names: symbolNames });
     const summary = extractSymbolSummary(result, symbolNames);
-    const resultStr = formatResult(result);
+    const resultStr = formatResult(result, FORMAT_RESULT_MAX_SEARCH);
     const retained = checkRetention('search.usage', params, resultStr, true, 'symbol_refs', `symbols: ${symbolNames.join(', ')}`);
     if (retained.reused) return retained.output;
     const hash = ctx.store().addChunk(resultStr, 'symbol', symbolNames.join(', '), undefined, summary);
@@ -169,7 +169,7 @@ export const handleSearchSimilar: OpHandler = async (params, ctx) => {
       if (arr.length) batchParams = { ...batchParams, concepts: arr.filter(Boolean).map(String) };
     }
     const result = await ctx.atlsBatchQuery(operation, batchParams);
-    const resultStr = formatResult(result);
+    const resultStr = formatResult(result, FORMAT_RESULT_MAX_SEARCH);
     const retained = checkRetention('search.similar', params, resultStr, true, 'search_results', 'find_similar');
     if (retained.reused) return retained.output;
     const hash = ctx.store().addChunk(resultStr, 'search', 'find_similar');
@@ -192,7 +192,7 @@ export const handleSearchSimilar: OpHandler = async (params, ctx) => {
 export const handleSearchIssues: OpHandler = async (params, ctx) => {
   try {
     const result = await ctx.atlsBatchQuery('find_issues', params);
-    const resultStr = formatResult(result);
+    const resultStr = formatResult(result, FORMAT_RESULT_MAX_SEARCH);
     const retained = checkRetention('search.issues', params, resultStr, true, 'search_results', 'find_issues');
     if (retained.reused) return retained.output;
     const hash = ctx.store().addChunk(resultStr, 'search', 'find_issues');
@@ -215,7 +215,7 @@ export const handleSearchIssues: OpHandler = async (params, ctx) => {
 export const handleSearchPatterns: OpHandler = async (params, ctx) => {
   try {
     const result = await ctx.atlsBatchQuery('detect_patterns', params);
-    const resultStr = formatResult(result);
+    const resultStr = formatResult(result, FORMAT_RESULT_MAX_SEARCH);
     const retained = checkRetention('search.patterns', params, resultStr, true, 'search_results', 'detect_patterns');
     if (retained.reused) return retained.output;
     const hash = ctx.store().addChunk(resultStr, 'search', 'detect_patterns');
@@ -402,19 +402,28 @@ export const handleSearchMemory: OpHandler = async (params, ctx) => {
 
   const regionCounts: Record<string, number> = {};
   const refs: string[] = [];
-  const lines: string[] = [];
 
   for (const r of results) {
     regionCounts[r.region] = (regionCounts[r.region] || 0) + 1;
     refs.push(r.ref);
-    const hitsPreview = r.hits
-      .map(h => `    L${h.lineNumber}: ${h.line}`)
-      .join('\n');
-    lines.push(`  [${r.region}] ${r.ref} (${r.source || 'unknown'}, ${r.type || '?'}, ${r.tokens ?? '?'}tk)\n${hitsPreview}`);
   }
 
   const regionSummary = Object.entries(regionCounts).map(([k, v]) => `${k}:${v}`).join(' ');
-  const resultStr = `search.memory: "${query}" — ${results.length} hits [${regionSummary}]\n${lines.join('\n')}`;
+  const structured = {
+    tool: 'search.memory',
+    query: query.trim(),
+    region_summary: regionSummary,
+    total_hits: results.length,
+    entries: results.map(r => ({
+      region: r.region,
+      ref: r.ref,
+      source: r.source,
+      type: r.type,
+      tokens: r.tokens,
+      hits: r.hits.map(h => ({ lineNumber: h.lineNumber, line: h.line })),
+    })),
+  };
+  const resultStr = formatResult(structured, FORMAT_RESULT_MAX_SEARCH);
   const hash = ctx.store().addChunk(resultStr, 'search', `memory: ${query}`);
   const tk = countTokensSync(resultStr);
 

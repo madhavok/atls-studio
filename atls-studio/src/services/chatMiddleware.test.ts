@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   COMPACT_HISTORY_TURN_THRESHOLD,
   COMPACT_HISTORY_TOKEN_THRESHOLD,
@@ -17,9 +17,24 @@ vi.mock('../stores/appStore', () => ({
     getState: () => ({
       setPromptMetrics: vi.fn(),
       promptMetrics: { roundCount: 0 },
+      settings: {
+        selectedProvider: 'anthropic',
+        selectedModel: 'claude-3-5-sonnet-20241022',
+      },
     }),
   },
 }));
+
+function mockAppState() {
+  return {
+    setPromptMetrics: vi.fn(),
+    promptMetrics: { roundCount: 0 },
+    settings: {
+      selectedProvider: 'anthropic',
+      selectedModel: 'claude-3-5-sonnet-20241022',
+    },
+  };
+}
 
 const { createGuardrailCallbacks, historyCompressionMiddleware, contextHygieneMiddleware } = await import('./chatMiddleware');
 const { useAppStore } = await import('../stores/appStore');
@@ -85,11 +100,10 @@ describe('contextHygieneMiddleware', () => {
   }
 
   it(`skips when roundCount < ${COMPACT_HISTORY_TURN_THRESHOLD}`, async () => {
-    (useAppStore.getState as any).mockReturnValue
-      ?? vi.spyOn(useAppStore, 'getState').mockReturnValue({
-        setPromptMetrics: vi.fn(),
-        promptMetrics: { roundCount: Math.max(0, COMPACT_HISTORY_TURN_THRESHOLD - 1) },
-      } as any);
+    vi.spyOn(useAppStore, 'getState').mockReturnValue({
+      ...mockAppState(),
+      promptMetrics: { roundCount: Math.max(0, COMPACT_HISTORY_TURN_THRESHOLD - 1) },
+    } as any);
     const ctx = makeCtx();
     const result = await contextHygieneMiddleware(ctx);
     expect(result.reliefAction).toBe('none');
@@ -97,7 +111,7 @@ describe('contextHygieneMiddleware', () => {
 
   it(`skips when roundCount >= ${COMPACT_HISTORY_TURN_THRESHOLD} but history is under ${COMPACT_HISTORY_TOKEN_THRESHOLD} tokens`, async () => {
     vi.spyOn(useAppStore, 'getState').mockReturnValue({
-      setPromptMetrics: vi.fn(),
+      ...mockAppState(),
       promptMetrics: { roundCount: COMPACT_HISTORY_TURN_THRESHOLD },
     } as any);
     const ctx = makeCtx();

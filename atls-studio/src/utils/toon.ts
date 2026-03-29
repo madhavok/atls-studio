@@ -132,15 +132,78 @@ export function compactByFile(data: unknown): unknown {
 // Public API
 // ============================================================================
 
+/** Default ceiling for TOON tool results (characters). */
+export const FORMAT_RESULT_MAX_DEFAULT = 80000;
+
+/** Search / FTS and memory-grep payloads can be large. */
+export const FORMAT_RESULT_MAX_SEARCH = 120000;
+
+/** Git status/diff payloads from `system.git`. */
+export const FORMAT_RESULT_MAX_GIT = 100000;
+
 /**
  * Format a tool result as TOON with a size ceiling.
  * Applies file-path compaction before serialization for token efficiency.
  */
-export function formatResult(result: unknown, maxSize = 80000): string {
+export function formatResult(result: unknown, maxSize = FORMAT_RESULT_MAX_DEFAULT): string {
   const compacted = compactByFile(result);
   const toon = toTOON(compacted);
   if (toon.length > maxSize) {
     return toon.substring(0, maxSize) + '\n[truncated - narrow query]';
   }
   return toon;
+}
+
+/**
+ * Serialize a value for token estimation / history metrics — no truncation.
+ * Uses file compaction + TOON (aligned with batch `formatResult` without size cap).
+ */
+export function serializeForTokenEstimate(value: unknown): string {
+  if (typeof value === 'string') return value;
+  if (value === null || value === undefined) return '';
+  if (typeof value === 'boolean') return value ? '1' : '0';
+  if (typeof value === 'number') return String(value);
+  const compacted = compactByFile(value);
+  return toTOON(compacted);
+}
+
+/**
+ * Flatten Anthropic-style message content (string or block array) for token counting.
+ * TOON-serializes object fields (`input`, tool_result `content`) instead of JSON.stringify.
+ */
+export function serializeMessageContentForTokens(content: unknown): string {
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return serializeForTokenEstimate(content);
+  const parts: string[] = [];
+  for (const block of content) {
+    if (!block || typeof block !== 'object') {
+      parts.push(serializeForTokenEstimate(block));
+      continue;
+    }
+    const b = block as Record<string, unknown>;
+    const type = typeof b.type === 'string' ? b.type : '';
+    if (type === 'tool_use' && b.input !== undefined) {
+      const name = typeof b.name === 'string' ? b.name : '';
+      const id = typeof b.id === 'string' ? b.id : '';
+      parts.push(
+        `{type:tool_use,name:${serializeForTokenEstimate(name)},id:${serializeForTokenEstimate(id)},input:${serializeForTokenEstimate(b.input)}}`,
+      );
+      continue;
+    }
+    if (type === 'tool_result') {
+      const id = typeof b.tool_use_id === 'string' ? b.tool_use_id : '';
+      const c = b.content;
+      const inner = typeof c === 'string' ? c : serializeForTokenEstimate(c);
+      parts.push(`{type:tool_result,tool_use_id:${serializeForTokenEstimate(id)},content:${inner}}`);
+      continue;
+    }
+    if (type === 'text') {
+      const text =
+        typeof b.text === 'string' ? b.text : typeof b.content === 'string' ? b.content : '';
+      parts.push(text);
+      continue;
+    }
+    parts.push(serializeForTokenEstimate(block));
+  }
+  return parts.join('\n');
 }

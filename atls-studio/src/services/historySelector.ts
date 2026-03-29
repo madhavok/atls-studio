@@ -11,6 +11,7 @@
  */
 
 import { countTokensSync } from '../utils/tokenCounter';
+import { serializeMessageContentForTokens } from '../utils/toon';
 import { CONVERSATION_HISTORY_BUDGET_TOKENS } from './promptMemory';
 
 interface HasRoleAndContent {
@@ -25,15 +26,7 @@ function estimateMessageTokens(msg: HasRoleAndContent): number {
   const c = msg.content;
   if (typeof c === 'string') return countTokensSync(c);
   if (Array.isArray(c)) {
-    let total = 0;
-    for (const block of c) {
-      if (!block || typeof block !== 'object') continue;
-      const b = block as Record<string, unknown>;
-      const text = (b.text ?? b.content ?? '') as string;
-      if (typeof text === 'string') total += countTokensSync(text);
-      else if (b.input) total += countTokensSync(JSON.stringify(b.input));
-    }
-    return total || 20;
+    return countTokensSync(serializeMessageContentForTokens(c)) || 20;
   }
   return 20;
 }

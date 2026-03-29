@@ -551,11 +551,11 @@ function messageToApiContent(msg: { role: string; content: unknown; parts?: Arra
           content = tc.result;
         } else if (typeof tc.result === 'object' && tc.result !== null) {
           try {
-            content = JSON.stringify(tc.result);
+            content = formatResult(tc.result);
           } catch {
             content = String(tc.result);
           }
-          console.warn('[aiService] Tool result is non-string — serialized to JSON for API payload', { id: tc.id, name: tc.name });
+          console.warn('[aiService] Tool result is non-string — serialized to TOON for API payload', { id: tc.id, name: tc.name });
         } else {
           content = String(tc.result);
         }
@@ -907,6 +907,7 @@ export interface ModelInfo {
 interface PendingToolCall {
   id: string;
   name: string;
+  /** JSON-serialized tool input for stream/UI replay — storage shape, not TOON. */
   inputJson: string;
   thoughtSignature?: string;
 }

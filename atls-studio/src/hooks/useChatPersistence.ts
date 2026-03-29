@@ -1,7 +1,9 @@
 /**
  * Chat Persistence Hook
- * 
+ *
  * Bridges appStore with chatDb for per-project chat persistence.
+ * Serialized snapshots (SQLite + localStorage helpers) use JSON — not TOON;
+ * that is intentional storage format, separate from model-facing batch/history TOON.
  * Handles:
  * - Loading sessions when project opens
  * - Saving sessions to database

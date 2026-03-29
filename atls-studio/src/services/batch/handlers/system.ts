@@ -3,7 +3,7 @@
  */
 
 import { ensureTerminalTarget, getTerminalStore, resolveTerminalTarget } from '../../../stores/terminalStore';
-import { toTOON } from '../../../utils/toon';
+import { toTOON, formatResult, FORMAT_RESULT_MAX_GIT } from '../../../utils/toon';
 import type { HandlerContext, OpHandler, StepOutput } from '../types';
 
 /** Strip PTY echo noise and PowerShell cd error blocks; exported for unit tests. */
@@ -150,7 +150,7 @@ export const handleSystemGit: OpHandler = async (params, ctx) => {
   const action = (params.action as string) ?? 'status';
   try {
     const result = await ctx.atlsBatchQuery('git', params);
-    const content = typeof result === 'string' ? result : JSON.stringify(result);
+    const content = typeof result === 'string' ? result : formatResult(result, FORMAT_RESULT_MAX_GIT);
 
     if (action === 'restore' && result && typeof result === 'object') {
       clearEditLessonsForRestoredFiles(result as Record<string, unknown>, params, ctx);
@@ -169,7 +169,7 @@ export const handleSystemGit: OpHandler = async (params, ctx) => {
 export const handleSystemWorkspaces: OpHandler = async (params, ctx) => {
   try {
     const result = await ctx.atlsBatchQuery('workspaces', params);
-    return ok(typeof result === 'string' ? result : JSON.stringify(result), result);
+    return ok(typeof result === 'string' ? result : formatResult(result), result);
   } catch (error) {
     return err(`system.workspaces: ERROR ${error instanceof Error ? error.message : String(error)}`);
   }
@@ -178,7 +178,7 @@ export const handleSystemWorkspaces: OpHandler = async (params, ctx) => {
 export const handleSystemHelp: OpHandler = async (params, ctx) => {
   try {
     const result = await ctx.atlsBatchQuery('help', params);
-    return ok(typeof result === 'string' ? result : JSON.stringify(result), result);
+    return ok(typeof result === 'string' ? result : formatResult(result), result);
   } catch (error) {
     return err(`system.help: ERROR ${error instanceof Error ? error.message : String(error)}`);
   }

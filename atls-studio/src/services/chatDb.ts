@@ -1,8 +1,13 @@
 /**
  * Chat Database Service
- * 
+ *
  * Per-project chat persistence using SQLite via Tauri.
  * Stores sessions, messages, blackboard context, and swarm tasks.
+ *
+ * Serialization note: JSON columns and message blobs here are **persistence / storage**
+ * format, not the model wire format. TOON (`formatResult`, `serializeForTokenEstimate`)
+ * applies to batch tool results and live history compression; DB round-trips stay JSON
+ * unless we intentionally migrate storage.
  */
 
 import { invoke } from '@tauri-apps/api/core';

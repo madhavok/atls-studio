@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
+import { serializeMessageContentForTokens } from '../utils/toon';
 import { estimateTokens, SHORT_HASH_LEN } from '../utils/contextHash';
 import { useContextStore } from '../stores/contextStore';
 import type { ChatMessage } from './aiService';
@@ -106,7 +107,7 @@ export async function manageGeminiRollingCache(
   const prevCachedCount = isVertex ? geminiCacheState.vertexCachedMessageCount : geminiCacheState.googleCachedMessageCount;
 
   const totalChars = systemPrompt.length + messages.reduce((sum, m) => {
-    const content = typeof m.content === 'string' ? m.content : JSON.stringify(m.content);
+    const content = typeof m.content === 'string' ? m.content : serializeMessageContentForTokens(m.content);
     return sum + content.length;
   }, 0);
 
@@ -121,7 +122,7 @@ export async function manageGeminiRollingCache(
     let uncachedChars = 0;
     for (let i = prevCachedCount; i < messages.length; i++) {
       const m = messages[i];
-      const content = typeof m.content === 'string' ? m.content : JSON.stringify(m.content);
+      const content = typeof m.content === 'string' ? m.content : serializeMessageContentForTokens(m.content);
       uncachedChars += content.length;
     }
     const uncachedTokens = Math.ceil(uncachedChars / 3.5);
@@ -136,7 +137,7 @@ export async function manageGeminiRollingCache(
   const hydratedMessages = hydrateHppReferences(messages);
 
   let currentSize = systemPrompt.length + hydratedMessages.reduce((sum, m) => {
-    const content = typeof m.content === 'string' ? m.content : JSON.stringify(m.content);
+    const content = typeof m.content === 'string' ? m.content : serializeMessageContentForTokens(m.content);
     return sum + content.length;
   }, 0);
 

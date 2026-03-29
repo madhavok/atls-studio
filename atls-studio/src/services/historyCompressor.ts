@@ -16,6 +16,7 @@ import { useContextStore } from '../stores/contextStore';
 import { useAppStore } from '../stores/appStore';
 import { formatChunkRef, hashContentSync, isCompressedRef, SHORT_HASH_LEN } from '../utils/contextHash';
 import { countTokensSync, countTokensBatch } from '../utils/tokenCounter';
+import { serializeForTokenEstimate, serializeMessageContentForTokens } from '../utils/toon';
 import { dematerialize, getRef } from './hashProtocol';
 import {
   CONVERSATION_HISTORY_BUDGET_TOKENS,
@@ -486,7 +487,7 @@ export function compressToolLoopHistory(
       for (const block of blocks) {
         if (block.type !== 'tool_use' || !block.input) continue;
 
-        const inputStr = JSON.stringify(block.input);
+        const inputStr = serializeForTokenEstimate(block.input);
         const inputTokens = countTokensSync(inputStr);
         if (inputTokens <= COMPRESSION_THRESHOLD_TOKENS) continue;
 
@@ -647,7 +648,9 @@ export function deflateToolResults(
 export function estimateHistoryTokens(history: Array<{ role: string; content: unknown }>): number {
   return history.reduce((sum, msg) => {
     if (typeof msg.content === 'string') return sum + countTokensSync(msg.content);
-    if (Array.isArray(msg.content)) return sum + countTokensSync(JSON.stringify(msg.content));
+    if (Array.isArray(msg.content)) {
+      return sum + countTokensSync(serializeMessageContentForTokens(msg.content));
+    }
     return sum;
   }, 0);
 }
@@ -665,7 +668,7 @@ export async function estimateHistoryTokensAsync(history: Array<{ role: string; 
       contents.push(msg.content);
       indices.push(i);
     } else if (Array.isArray(msg.content)) {
-      contents.push(JSON.stringify(msg.content));
+      contents.push(serializeMessageContentForTokens(msg.content));
       indices.push(i);
     }
   }
@@ -755,7 +758,7 @@ export function analyzeHistoryBreakdown(
       const blocks = msg.content as Array<{ type: string; content?: string; input?: Record<string, unknown> }>;
       for (const block of blocks) {
         if (block.type === 'tool_result') {
-          const content = typeof block.content === 'string' ? block.content : JSON.stringify(block.content);
+          const content = typeof block.content === 'string' ? block.content : serializeForTokenEstimate(block.content);
           const tokens = countTokensSync(content);
           breakdown.total += tokens;
           if (isCompressedRef(content)) {
@@ -769,10 +772,10 @@ export function analyzeHistoryBreakdown(
             }
           }
         } else if (block.type === 'tool_use' && block.input) {
-          const inputStr = JSON.stringify(block.input);
+          const inputStr = serializeForTokenEstimate(block.input);
           const tokens = countTokensSync(inputStr);
           breakdown.total += tokens;
-          if (inputStr.includes('"_compressed"')) {
+          if (inputStr.includes('_compressed')) {
             breakdown.compressed += tokens;
           } else {
             breakdown.toolUse += tokens;
@@ -786,7 +789,7 @@ export function analyzeHistoryBreakdown(
           const tb = block as { type: string; text?: string; content?: string };
           const text = typeof tb.text === 'string' ? tb.text
             : typeof tb.content === 'string' ? tb.content
-            : JSON.stringify(block);
+            : serializeForTokenEstimate(block);
           const tokens = countTokensSync(text);
           breakdown.total += tokens;
           if (isCompressedRef(text)) {

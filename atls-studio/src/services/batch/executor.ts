@@ -31,6 +31,7 @@ import { useAppStore } from '../../stores/appStore';
 import { invoke } from '@tauri-apps/api/core';
 import { getFreshnessJournal } from '../freshnessJournal';
 import { registerOwnWrite } from '../../hooks/useAtls';
+import { serializeForTokenEstimate } from '../../utils/toon';
 import './intents/index';
 
 /** Ops that require a non-empty `file_paths` array after binding coercion. */
@@ -1089,7 +1090,7 @@ export async function executeUnifiedBatch(
             ? 'undefined'
             : typeof rawFp === 'string'
               ? rawFp.slice(0, 120)
-              : JSON.stringify(rawFp).slice(0, 240);
+              : serializeForTokenEstimate(rawFp).slice(0, 240);
         const bindingSource = step.in?.file_paths && 'from_step' in step.in.file_paths
           ? ` (binding from step '${step.in.file_paths.from_step}' resolved to nothing)`
           : '';

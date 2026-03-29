@@ -86,10 +86,22 @@ export function formatStepOutput(output: StepOutput): string {
 // ---------------------------------------------------------------------------
 
 const MAX_STEP_SUMMARY_CHARS = 2000;
+const MAX_GIT_SUMMARY_CHARS = 64_000;
 
 function capSummary(text: string): string {
   if (text.length <= MAX_STEP_SUMMARY_CHARS) return text;
   return text.substring(0, MAX_STEP_SUMMARY_CHARS) + '... [truncated]';
+}
+
+function capStepSummary(text: string, stepUse: string): string {
+  const limit = stepUse === 'system.git' ? MAX_GIT_SUMMARY_CHARS : MAX_STEP_SUMMARY_CHARS;
+  if (text.length <= limit) return text;
+  const headBudget = Math.floor(limit * 0.75);
+  const tailBudget = limit - headBudget - 40;
+  const head = text.substring(0, headBudget);
+  const tail = text.substring(text.length - tailBudget);
+  const omitted = text.length - headBudget - tailBudget;
+  return `${head}\n...[${omitted} chars omitted]...\n${tail}`;
 }
 
 export function formatBatchResult(result: UnifiedBatchResult): string {
@@ -108,9 +120,9 @@ export function formatBatchResult(result: UnifiedBatchResult): string {
       ? ' [STALE: cached verification result — rerun canonical command]'
       : '';
     if (step.summary) {
-      lines.push(`${label} ${step.id}: ${capSummary(step.summary)}${suffix}${staleSuffix}${durationTag}`);
+      lines.push(`${label} ${step.id}: ${capStepSummary(step.summary, step.use)}${suffix}${staleSuffix}${durationTag}`);
     } else if (step.error) {
-      lines.push(`${label} ${step.id}: ${capSummary(step.error)}${durationTag}`);
+      lines.push(`${label} ${step.id}: ${capStepSummary(step.error, step.use)}${durationTag}`);
     }
   }
 
