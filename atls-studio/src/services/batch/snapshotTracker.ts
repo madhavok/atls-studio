@@ -1,8 +1,8 @@
 /**
  * SnapshotTracker — per-batch file snapshot hash and awareness tracker.
  *
- * Tracks the canonical `snapshot_hash` for each file read or written during a
- * batch execution. The executor uses this to automatically inject snapshot hashes
+ * Tracks the canonical `content_hash` for each file read or written during a
+ * batch execution. The executor uses this to automatically inject content hashes
  * into change steps, removing the need for callers to manually wire hashes.
  *
  * Supports tiered awareness: CANONICAL (full read), TARGETED (read.lines covering
@@ -239,11 +239,10 @@ export class SnapshotTracker {
   }
 
   /**
-   * Extract snapshot_hash from a backend response, preferring `snapshot_hash`
-   * over `content_hash` for forward compatibility. Supports `h` alias from batch/drafts.
+   * Extract content_hash from a backend response. Supports `hash` and `h` aliases.
    */
   static extractHash(response: Record<string, unknown>): string | undefined {
-    const sh = response.snapshot_hash ?? response.content_hash ?? response.hash ?? response.h;
+    const sh = response.content_hash ?? response.hash ?? response.h;
     return typeof sh === 'string' ? sh : undefined;
   }
 

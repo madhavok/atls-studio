@@ -2,6 +2,8 @@
  * Shared logging for Vitest: JSON vs TOON (or related serializers) token deltas.
  * Uses the same `estimateTokens` heuristic as production token metrics.
  */
+import { expect } from 'vitest';
+
 import { estimateTokens } from './contextHash';
 import { formatResult, serializeForTokenEstimate, toTOON } from './toon';
 
@@ -56,4 +58,12 @@ export function logObjectJsonVsFormatResult(label: string, value: unknown): Toke
 /** JSON.stringify vs serializeForTokenEstimate (history / metrics path). */
 export function logObjectJsonVsSerializeForTokenEstimate(label: string, value: unknown): TokenDeltaResult {
   return logTokenDelta(label, JSON.stringify(value), serializeForTokenEstimate(value), 'serializeForTokenEstimate');
+}
+
+/** Assert model-facing TOON still contains critical substrings (paths, hints, tool ids). */
+export function expectToonUnderstandable(toon: string, mustContain: string[]) {
+  for (const s of mustContain) {
+    const hint = `model-facing string should retain: ${s.length > 40 ? `${s.slice(0, 40)}…` : s}`;
+    expect(toon, hint).toContain(s);
+  }
 }

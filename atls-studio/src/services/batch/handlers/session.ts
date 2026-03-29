@@ -457,7 +457,8 @@ function materializeFileRefsContentIfNeeded(out: StepOutput, store: ContextStore
     if (typeof hashField !== 'string') continue;
     const testRef = hashField.startsWith('h:') ? hashField : `h:${hashField}`;
     if (store.getChunkForHashRef(testRef)) continue;
-    const snap = typeof row.snapshot_hash === 'string' ? row.snapshot_hash : undefined;
+    const snap = typeof row.content_hash === 'string' ? row.content_hash
+      : typeof row.snapshot_hash === 'string' ? row.snapshot_hash : undefined;
     const backendKey = baseHashFromRefToken(testRef);
     const opts: Record<string, unknown> = {};
     if (snap) opts.sourceRevision = snap;

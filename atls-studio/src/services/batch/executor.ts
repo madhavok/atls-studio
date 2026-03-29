@@ -300,7 +300,7 @@ function seedSnapshotTracker(
 }
 
 /**
- * Auto-inject snapshot_hash into change op params from the tracker.
+ * Auto-inject content_hash into change op params from the tracker.
  * Mutates mergedParams in place.
  */
 function injectSnapshotHashes(
@@ -308,10 +308,10 @@ function injectSnapshotHashes(
   tracker: SnapshotTracker,
 ): void {
   const targetFile = (mergedParams.file ?? mergedParams.file_path) as string | undefined;
-  if (typeof targetFile === 'string' && !mergedParams.snapshot_hash) {
+  if (typeof targetFile === 'string' && !mergedParams.content_hash) {
     const trackedHash = tracker.getHash(targetFile);
     if (trackedHash) {
-      mergedParams.snapshot_hash = trackedHash;
+      mergedParams.content_hash = trackedHash;
     }
   }
   if (Array.isArray(mergedParams.edits)) {
@@ -319,10 +319,10 @@ function injectSnapshotHashes(
       if (!edit || typeof edit !== 'object') return edit;
       const entry = edit as Record<string, unknown>;
       const editFile = (entry.file ?? entry.file_path) as string | undefined;
-      if (typeof editFile === 'string' && !entry.snapshot_hash) {
+      if (typeof editFile === 'string' && !entry.content_hash) {
         const trackedHash = tracker.getHash(editFile);
         if (trackedHash) {
-          entry.snapshot_hash = trackedHash;
+          entry.content_hash = trackedHash;
         }
       }
       return entry;
@@ -729,7 +729,7 @@ async function runImpactAutoStage(
       const ctxResult = await ctx.atlsBatchQuery('context', { type: 'full', file_paths: [filePath] });
       const ctxResults = (ctxResult as Record<string, unknown>)?.results as Array<Record<string, unknown>> | undefined;
       const first = ctxResults?.[0];
-      const fileHash = (first?.snapshot_hash ?? first?.content_hash ?? first?.hash) as string | undefined;
+      const fileHash = (first?.content_hash ?? first?.hash) as string | undefined;
       if (!fileHash) continue;
 
       const cleanHash = fileHash.startsWith('h:') ? fileHash : `h:${fileHash}`;
@@ -1157,7 +1157,7 @@ export async function executeUnifiedBatch(
       mergedParams = { ...mergedParams, refactor_validation_mode: request.policy.refactor_validation_mode };
     }
 
-    // Auto-inject snapshot_hash for change ops from the tracker
+    // Auto-inject content_hash for change ops from the tracker
     if (step.use.startsWith('change.') && snapshotTracker.size > 0) {
       injectSnapshotHashes(mergedParams, snapshotTracker);
     }

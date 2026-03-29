@@ -77,8 +77,14 @@ Policy (optional): verify_after_change, rollback_on_failure, max_steps (capped s
 Do not set policy.mode — execution mode is app-controlled (Ask chat is read-only; Agent/Designer/Reviewer/etc. always run mutable). Use verify_after_change for automatic verify.build after change.* steps.
 on_error: "stop"|"continue"|"rollback" per step.
 
-### Param Aliases (auto-resolved)
-file/f/path/target_file/source_file -> file_path (auto-promotes to file_paths:[] for array ops); query -> queries; symbol/symbol_name -> symbol_names; refs -> hashes; key -> keys; command -> cmd; contents -> content. fn()/cls() wrappers stripped.
+### Field Reference (canonical names — input aliases auto-resolved, response uses same names)
+file_path: single file (aliases: file, f, path, target_file, source_file; auto-promotes to file_paths:[] for array ops)
+file_paths: array of paths/h:refs (aliases: files, paths)
+content_hash: file content identity hash — the single authority field for mutation/stale checks (aliases: snapshot_hash, hash)
+h: short hash pointer (h:XXXX); refs/hashes: array of h:XXXX pointers (aliases: refs → hashes)
+lines: line count in response objects (aliases: total_lines, line_count)
+truncated: bool; file_paths_truncated, output_truncated: domain-specific truncation flags
+symbol_names: symbol list (aliases: symbol, symbol_name); query/queries, key/keys, command/cmd, contents/content also auto-resolved. fn()/cls() wrappers stripped.
 
 ### Rules
 - file_path/file_paths resolve from active workspace root. Subfolder prefix if monorepo (e.g. \`atls-studio/src/foo.ts\`).

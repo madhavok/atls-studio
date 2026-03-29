@@ -373,7 +373,7 @@ function recordEditSummary(result: unknown, params: Record<string, unknown>): vo
       const shortHash = hash ? `h:${hash.replace(/^h:/, '').slice(0, SHORT_HASH_LEN)}` : '';
 
       // Build a one-line summary: "h:abc123 40L (+5) diff:h:OLD..h:NEW"
-      const linesChanged = (entry.lines_changed ?? entry.line_count) as number | undefined;
+      const linesChanged = (entry.lines_changed ?? entry.lines) as number | undefined;
       const lineDelta = estimateLineDeltaForSource(params, file);
       const lineInfo = linesChanged ? ` ${linesChanged}L` : '';
       const deltaInfo = lineDelta !== 0 ? ` (${lineDelta > 0 ? '+' : ''}${lineDelta})` : '';
@@ -526,13 +526,12 @@ function normalizeExactSpanEditPayload(params: Record<string, unknown>): Record<
     const targetMeta = deriveEditTargetMeta(entry.file_path ?? entry.file);
     Object.assign(entry, targetMeta);
     const targetKind = entry.edit_target_kind;
-    const canonicalSnapshotHash = canonicalizeContentHash(
-      entry.snapshot_hash ?? entry.content_hash,
+    const canonicalHash = canonicalizeContentHash(
+      entry.content_hash ?? entry.snapshot_hash,
       entry.edit_target_hash as string | undefined,
     );
-    if (typeof canonicalSnapshotHash === 'string') {
-      entry.snapshot_hash = canonicalSnapshotHash;
-      entry.content_hash = canonicalSnapshotHash;
+    if (typeof canonicalHash === 'string') {
+      entry.content_hash = canonicalHash;
     }
     if (typeof entry.old === 'string') {
       if (targetKind === 'exact_span' || hasDisplayLinePrefixes(entry.old)) {
@@ -575,10 +574,9 @@ function inheritSingleEditContext(params: Record<string, unknown>): Record<strin
 
   entry.file = inheritedFile;
   const targetMeta = deriveEditTargetMeta(inheritedFile);
-  if (entry.snapshot_hash == null && entry.content_hash == null) {
-    const inheritedHash = canonicalizeContentHash(params.snapshot_hash ?? params.content_hash, targetMeta.edit_target_hash);
+  if (entry.content_hash == null && entry.snapshot_hash == null) {
+    const inheritedHash = canonicalizeContentHash(params.content_hash ?? params.snapshot_hash, targetMeta.edit_target_hash);
     if (typeof inheritedHash === 'string') {
-      entry.snapshot_hash = inheritedHash;
       entry.content_hash = inheritedHash;
     }
   }
@@ -708,7 +706,7 @@ async function resolveTargetFiles(
     }
   }
 
-  // Hash-authority: when a snapshot_hash/content_hash is present but file_path
+  // Hash-authority: when a content_hash is present but file_path
   // was a plain string (not resolved from an h: ref above), resolve the hash's
   // registered source and override file_path so writes always target the
   // correct tracked file — never a stale or mismatched model-supplied path.
@@ -731,7 +729,7 @@ async function resolveTargetFiles(
     if (hashResolvedPaths.has(tag)) return;
     const currentFile = (obj.file_path ?? obj.file) as string | undefined;
     if (typeof currentFile !== 'string' || currentFile.startsWith('h:')) return;
-    const hash = (obj.snapshot_hash ?? obj.content_hash ?? obj.edit_target_hash) as string | undefined;
+    const hash = (obj.content_hash ?? obj.edit_target_hash) as string | undefined;
     const source = await resolveHashSource(hash);
     if (!source) return;
     if (normalizeSourcePath(source) === normalizeSourcePath(currentFile)) return;
@@ -837,15 +835,15 @@ function collectRefreshedHashes(params: Record<string, unknown>): Set<string> {
     const canonical = canonicalizeContentHash(value);
     if (canonical) hashes.add(canonical);
   };
-  if (params.content_hash_refreshed === true || params.snapshot_hash_refreshed === true) {
-    add(params.snapshot_hash ?? params.content_hash);
+  if (params.content_hash_refreshed === true) {
+    add(params.content_hash);
   }
   if (Array.isArray(params.edits)) {
     for (const edit of params.edits) {
       if (!edit || typeof edit !== 'object') continue;
       const entry = edit as Record<string, unknown>;
-      if (entry.content_hash_refreshed === true || entry.snapshot_hash_refreshed === true) {
-        add(entry.snapshot_hash ?? entry.content_hash);
+      if (entry.content_hash_refreshed === true) {
+        add(entry.content_hash);
       }
     }
   }
@@ -875,7 +873,7 @@ function summarizeEditParams(params: Record<string, unknown>): Record<string, un
   for (const key of ['file', 'file_path', 'lines', 'stale_policy', 'retry_on_failure', 'require_fresh_read', 'freshness_ttl_ms']) {
     if (params[key] !== undefined) summary[key] = params[key];
   }
-  if (params.snapshot_hash !== undefined) summary.snapshot_hash = params.snapshot_hash;
+  if (params.content_hash !== undefined) summary.content_hash = params.content_hash;
   if (Array.isArray(params.edits)) {
     summary.edits = params.edits
       .filter((entry): entry is Record<string, unknown> => !!entry && typeof entry === 'object')
@@ -883,7 +881,7 @@ function summarizeEditParams(params: Record<string, unknown>): Record<string, un
         file: entry.file,
         file_path: entry.file_path,
         lines: entry.lines,
-        snapshot_hash: entry.snapshot_hash ?? entry.content_hash,
+        content_hash: entry.content_hash,
         edit_target_ref: entry.edit_target_ref,
         edit_target_kind: entry.edit_target_kind,
       }));
@@ -986,7 +984,7 @@ async function refreshContentHashes(
     if (!entry || typeof entry !== 'object') continue;
     const payload = entry as Record<string, unknown>;
     const file = payload.file ?? payload.path;
-    const contentHash = payload.snapshot_hash ?? payload.content_hash ?? payload.hash;
+    const contentHash = payload.content_hash ?? payload.hash;
     if (typeof file === 'string' && typeof contentHash === 'string') {
       refreshed.set(normalizePathKey(file), contentHash);
       useContextStore.getState().clearSuspect(file);
@@ -1006,7 +1004,6 @@ function applyRefreshedContentHashes(
   if (fileKey && refreshed.has(fileKey)) {
     const refreshedHash = refreshed.get(fileKey);
     if (typeof refreshedHash === 'string') {
-        next.snapshot_hash = refreshedHash;
       next.content_hash = refreshedHash;
       next.content_hash_refreshed = true;
       // edit_target_hash always follows the canonical snapshot hash
@@ -1024,7 +1021,6 @@ function applyRefreshedContentHashes(
       if (entryFileKey && refreshed.has(entryFileKey)) {
         const refreshedHash = refreshed.get(entryFileKey);
         if (typeof refreshedHash === 'string') {
-          entry.snapshot_hash = refreshedHash;
           entry.content_hash = refreshedHash;
           entry.content_hash_refreshed = true;
           if (typeof entry.edit_target_hash === 'string') {
@@ -1087,12 +1083,11 @@ export function normalizeEditParams(params: Record<string, unknown>): Record<str
       if (edits.length === 1 && typeof fileVal === 'string' && Array.isArray(le) && le.length > 0) {
         const { edits: _edits, ...rest } = normalizedParams;
         const targetMeta = deriveEditTargetMeta(fileVal);
-        const contentHash = canonicalizeContentHash(first.snapshot_hash ?? first.content_hash, targetMeta.edit_target_hash);
+        const contentHash = canonicalizeContentHash(first.content_hash ?? first.snapshot_hash, targetMeta.edit_target_hash);
         return {
           ...rest,
           file: fileVal,
           line_edits: le,
-          ...(contentHash ? { snapshot_hash: contentHash } : {}),
           ...(contentHash ? { content_hash: contentHash } : {}),
           ...targetMeta,
         };
@@ -1106,11 +1101,10 @@ export function normalizeEditParams(params: Record<string, unknown>): Record<str
     const f = edits[0].file ?? edits[0].file_path;
     if (typeof f === 'string') {
       const targetMeta = deriveEditTargetMeta(f);
-      const contentHash = canonicalizeContentHash(edits[0].snapshot_hash ?? edits[0].content_hash, targetMeta.edit_target_hash);
+      const contentHash = canonicalizeContentHash(edits[0].content_hash ?? edits[0].snapshot_hash, targetMeta.edit_target_hash);
       return {
         ...normalizedParams,
         file: f,
-        ...(contentHash ? { snapshot_hash: contentHash } : {}),
         ...(contentHash ? { content_hash: contentHash } : {}),
         ...targetMeta,
       };
@@ -1119,10 +1113,9 @@ export function normalizeEditParams(params: Record<string, unknown>): Record<str
 
   const topLevelFile = typeof normalizedParams.file_path === 'string' ? normalizedParams.file_path : normalizedParams.file;
   const topLevelMeta = deriveEditTargetMeta(topLevelFile);
-  const contentHash = canonicalizeContentHash(normalizedParams.snapshot_hash ?? normalizedParams.content_hash, topLevelMeta.edit_target_hash);
+  const contentHash = canonicalizeContentHash(normalizedParams.content_hash ?? normalizedParams.snapshot_hash, topLevelMeta.edit_target_hash);
   return {
     ...normalizedParams,
-    ...(contentHash ? { snapshot_hash: contentHash } : {}),
     ...(contentHash ? { content_hash: contentHash } : {}),
     ...topLevelMeta,
   };
@@ -1311,9 +1304,8 @@ function resolveEditOperation(params: Record<string, unknown>): { operation: str
       file: fileVal,
       line_edits: le,
     };
-    const canonicalHash = canonicalizeContentHash(params.snapshot_hash ?? params.content_hash, params.edit_target_hash as string | undefined);
+    const canonicalHash = canonicalizeContentHash(params.content_hash ?? params.snapshot_hash, params.edit_target_hash as string | undefined);
     if (typeof canonicalHash === 'string') {
-      canonical.snapshot_hash = canonicalHash;
       canonical.content_hash = canonicalHash;
     }
     if (typeof params.edit_target_ref === 'string') canonical.edit_target_ref = params.edit_target_ref;
@@ -1327,8 +1319,7 @@ function resolveEditOperation(params: Record<string, unknown>): { operation: str
       resolved.edits = resolved.edits.map((edit) => {
         if (!edit || typeof edit !== 'object') return edit;
         const entry = canonicalizeDraftEditFileField(edit as Record<string, unknown>);
-        const canonicalHash = canonicalizeContentHash(entry.snapshot_hash ?? entry.content_hash, entry.edit_target_hash as string | undefined);
-        entry.snapshot_hash = canonicalHash;
+        const canonicalHash = canonicalizeContentHash(entry.content_hash ?? entry.snapshot_hash, entry.edit_target_hash as string | undefined);
         entry.content_hash = canonicalHash;
         if (sameCanonicalHash(entry.edit_target_hash, entry.content_hash)) {
           entry.edit_target_hash = entry.content_hash;

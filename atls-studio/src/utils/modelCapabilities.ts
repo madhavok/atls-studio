@@ -2,6 +2,9 @@
  * Capability derivation for AI models.
  * APIs do not expose reasoning/fast/high-context; we derive from model id + context window.
  * Anthropic and OpenAI model lists do not include context_window; we use known values as fallback.
+ *
+ * Tokenizer test fixtures use canonical ids in `tokenizerTestModels.ts` (TS) and
+ * `src-tauri/src/tokenizer.rs` `test_models` (Rust) — update both when changing defaults.
  */
 
 export type AIProvider = 'anthropic' | 'openai' | 'google' | 'vertex' | 'lmstudio';

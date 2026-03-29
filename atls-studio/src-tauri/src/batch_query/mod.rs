@@ -669,7 +669,6 @@ pub async fn atls_batch_query(
                                     if let Some(ref fh) = file_hash {
                                         entry["h"] = serde_json::json!(format!("h:{}", &fh[..hash_resolver::SHORT_HASH_LEN]));
                                         entry["content_hash"] = serde_json::json!(fh);
-                                        entry["snapshot_hash"] = serde_json::json!(fh);
                                     }
                                     if let Some(ref prev) = history_data {
                                         entry["previous"] = prev.clone();
@@ -681,10 +680,10 @@ pub async fn atls_batch_query(
                                             let line_count = content.lines().count();
                                             if line_count <= 200 {
                                                 entry["content"] = serde_json::json!(content);
-                                                entry["line_count"] = serde_json::json!(line_count);
+                                                entry["lines"] = serde_json::json!(line_count);
                                                 entry["edit_target_expanded"] = serde_json::json!(true);
                                             } else {
-                                                entry["line_count"] = serde_json::json!(line_count);
+                                                entry["lines"] = serde_json::json!(line_count);
                                                 entry["edit_target_too_large"] = serde_json::json!(true);
                                             }
                                         }
@@ -734,7 +733,6 @@ pub async fn atls_batch_query(
                                     if let Some(ref fh) = file_hash {
                                         entry["h"] = serde_json::json!(format!("h:{}", &fh[..hash_resolver::SHORT_HASH_LEN]));
                                         entry["content_hash"] = serde_json::json!(fh);
-                                        entry["snapshot_hash"] = serde_json::json!(fh);
                                     }
                                     if let Some(ref prev) = history_data {
                                         entry["previous"] = prev.clone();
@@ -864,10 +862,9 @@ pub async fn atls_batch_query(
                                         "file": effective_file_path,
                                         "h": format!("h:{}", &file_hash[..hash_resolver::SHORT_HASH_LEN]),
                                         "content_hash": file_hash,
-                                        "snapshot_hash": file_hash,
                                         "content": display_content,
                                         "truncated": truncated,
-                                        "total_lines": total_lines
+                                        "lines": total_lines
                                     }));
                                 }
                                 Err(e) => {
@@ -956,7 +953,6 @@ pub async fn atls_batch_query(
                             if let Some(ref fh) = file_hash {
                                 entry["h"] = serde_json::json!(format!("h:{}", &fh[..hash_resolver::SHORT_HASH_LEN]));
                                 entry["content_hash"] = serde_json::json!(fh);
-                                entry["snapshot_hash"] = serde_json::json!(fh);
                             }
                             if let Some(ref prev) = history_data {
                                 entry["previous"] = prev.clone();
@@ -1035,7 +1031,6 @@ pub async fn atls_batch_query(
                             if let Some(ref fh) = file_hash {
                                 entry["h"] = serde_json::json!(format!("h:{}", &fh[..hash_resolver::SHORT_HASH_LEN]));
                                 entry["content_hash"] = serde_json::json!(fh);
-                                entry["snapshot_hash"] = serde_json::json!(fh);
                             }
                             if let Some(ref prev) = history_data {
                                 entry["previous"] = prev.clone();
@@ -2915,7 +2910,7 @@ pub async fn atls_batch_query(
                         "success": success,
                         "exit_code": output.status.code(),
                         "output_truncated": runner_truncated,
-                        "total_lines": runner_total_lines,
+                        "lines": runner_total_lines,
                         "output": runner_output,
                         "_metadata": meta,
                         "_next": runner_next
@@ -3237,7 +3232,7 @@ pub async fn atls_batch_query(
                             },
                             "failures": failures,
                             "output_truncated": test_truncated,
-                            "total_lines": test_total_lines,
+                            "lines": test_total_lines,
                             "output": output_val,
                             "_next": test_next
                         });
@@ -3723,7 +3718,7 @@ pub async fn atls_batch_query(
                                 "toolchain": "java",
                                 "success": success,
                                 "output_truncated": java_truncated,
-                                "total_lines": java_total,
+                                "lines": java_total,
                                 "output": java_output,
                                 "_next": java_next
                             }))
@@ -3740,7 +3735,7 @@ pub async fn atls_batch_query(
                                 "toolchain": "csharp",
                                 "success": success,
                                 "output_truncated": csharp_truncated,
-                                "total_lines": csharp_total,
+                                "lines": csharp_total,
                                 "output": csharp_output,
                                 "_next": csharp_next
                             }))
@@ -3757,7 +3752,7 @@ pub async fn atls_batch_query(
                                 "toolchain": "swift",
                                 "success": success,
                                 "output_truncated": swift_truncated,
-                                "total_lines": swift_total,
+                                "lines": swift_total,
                                 "output": swift_output,
                                 "_next": swift_next
                             }))
@@ -6082,28 +6077,18 @@ pub async fn atls_batch_query(
                     .map(|m| m.name.clone())
                     .collect();
 
-                let extract_params = serde_json::json!({
-                    "file_path": file_path,
-                    "extractions": proposed_modules.iter().map(|m| serde_json::json!({
-                        "target_file": m["target"],
-                        "methods": m["symbols"],
-                    })).collect::<Vec<_>>(),
-                    "dry_run": false,
-                });
-
                 let mut response = serde_json::json!({
                     "source": file_path,
                     "strategy": strategy,
                     "proposed_modules": proposed_modules,
                     "unassigned": unassigned,
-                    "extract_methods_params": extract_params,
                     "stats": {
                         "total_symbols": inv_methods.len(),
                         "assigned": assigned.len(),
                         "unassigned": unassigned.len(),
                         "modules": proposed_modules.len(),
                     },
-                    "_next": "Run extract_methods with extract_methods_params to execute. Set dry_run:true first to preview only."
+                    "_next": "To execute: change.refactor(action:\"extract\", file_path:source, extractions: proposed_modules.map(m => {target_file:m.target, methods:m.symbols}), dry_run:true)"
                 });
 
                 if !hubs.is_empty() {
@@ -10580,7 +10565,7 @@ pub async fn atls_batch_query(
                                     "error_class": "stale_hash",
                                     "expected_hash": canonicalize_expected_content_hash(expected_hash),
                                     "actual_hash": old_hash,
-                                    "snapshot_hash": old_hash,
+                                    "content_hash": old_hash,
                                     "stale_hash_root_cause": "file_bytes_changed",
                                     "_next": "Re-read the file with context(type:'full',file_paths:[...]) to get a fresh hash, then retry",
                                 }));
@@ -10713,7 +10698,6 @@ pub async fn atls_batch_query(
                     "h": format!("h:{}", &hash[..hash_resolver::SHORT_HASH_LEN]),
                     "old_h": format!("h:{}", &old_hash[..hash_resolver::SHORT_HASH_LEN]),
                     "content_hash": hash,
-                    "snapshot_hash": hash,
                     "status": "applied",
                     "edits_applied": edits.len(),
                     "lints": lint_summary,
@@ -11430,7 +11414,7 @@ pub async fn atls_batch_query(
                     let mut entry = serde_json::json!({
                         "file": file_path,
                         "hash": hash,
-                        "snapshot_hash": hash,
+                        "content_hash": hash,
                         "lines": content.lines().count(),
                     });
                     if let Some(ref oh) = old_hash {
@@ -11841,7 +11825,6 @@ pub async fn atls_batch_query(
                         "lints": lint_summary,
                         "written": write_ok,
                         "content_hash": new_hash.clone(),
-                        "snapshot_hash": new_hash.clone(),
                         "source_revision": new_hash.clone(),
                         "h": new_short,
                         "old_h": old_short,
@@ -11900,7 +11883,6 @@ pub async fn atls_batch_query(
                     "file": file_path,
                     "lines": line_count,
                     "content_hash": new_hash.clone(),
-                    "snapshot_hash": new_hash.clone(),
                     "source_revision": new_hash.clone(),
                     "h": new_short,
                     "old_h": old_short,
@@ -11970,7 +11952,6 @@ pub async fn atls_batch_query(
                                         "file": fp,
                                         "parent_hash": entry.parent_hash.clone(),
                                         "content_hash": resolved_hash.clone(),
-                                        "snapshot_hash": resolved_hash.clone(),
                                         "source_revision": resolved_hash,
                                         "h": short_hash,
                                         "old_h": old_short,
@@ -12195,7 +12176,6 @@ pub async fn atls_batch_query(
                                             "restored_hash": restored_hash.clone(),
                                             "undone_hash": entry.hash.clone(),
                                             "content_hash": restored_hash.clone(),
-                                            "snapshot_hash": restored_hash.clone(),
                                             "source_revision": restored_hash,
                                             "h": restored_short,
                                             "old_h": undone_short,
@@ -12276,7 +12256,6 @@ pub async fn atls_batch_query(
                                                     "restored_hash": restored_hash.clone(),
                                                     "undone_hash": entry.hash.clone(),
                                                     "content_hash": restored_hash.clone(),
-                                                    "snapshot_hash": restored_hash.clone(),
                                                     "source_revision": restored_hash,
                                                     "h": restored_short,
                                                     "old_h": undone_short,

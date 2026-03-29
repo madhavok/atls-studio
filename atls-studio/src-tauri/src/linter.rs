@@ -485,24 +485,24 @@ fn lint_typescript_tsc(path: &str, content: &str, options: &LintOptions, max_err
     let tsc_flags = if allow_js {
         if syntax_only {
             format!(
-                "--noEmit --pretty false --allowJs --esModuleInterop --moduleResolution node --target es2020 --skipLibCheck {}",
+                "--noEmit --pretty false --allowJs --esModuleInterop --module nodenext --moduleResolution nodenext --target es2020 --skipLibCheck {}",
                 temp_filename
             )
         } else {
             format!(
-                "--noEmit --pretty false --allowJs --strict --isolatedModules --esModuleInterop --moduleResolution node --target es2020 {}",
+                "--noEmit --pretty false --allowJs --strict --isolatedModules --esModuleInterop --module nodenext --moduleResolution nodenext --target es2020 {}",
                 temp_filename
             )
         }
     } else {
         if syntax_only {
             format!(
-                "--noEmit --pretty false --esModuleInterop --moduleResolution node --target es2020 --skipLibCheck {}",
+                "--noEmit --pretty false --esModuleInterop --module nodenext --moduleResolution nodenext --target es2020 --skipLibCheck {}",
                 temp_filename
             )
         } else {
             format!(
-                "--noEmit --pretty false --strict --isolatedModules --esModuleInterop --moduleResolution node --target es2020 {}",
+                "--noEmit --pretty false --strict --isolatedModules --esModuleInterop --module nodenext --moduleResolution nodenext --target es2020 {}",
                 temp_filename
             )
         }

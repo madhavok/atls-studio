@@ -133,8 +133,7 @@ describe('SnapshotTracker', () => {
     expect(result.has('c.ts')).toBe(false);
   });
 
-  it('extractHash prefers snapshot_hash over content_hash', () => {
-    expect(SnapshotTracker.extractHash({ snapshot_hash: 'snap', content_hash: 'content' })).toBe('snap');
+  it('extractHash returns content_hash', () => {
     expect(SnapshotTracker.extractHash({ content_hash: 'content' })).toBe('content');
     expect(SnapshotTracker.extractHash({ hash: 'bare' })).toBe('bare');
     expect(SnapshotTracker.extractHash({})).toBeUndefined();
@@ -144,7 +143,7 @@ describe('SnapshotTracker', () => {
     const tracker = new SnapshotTracker();
     tracker.recordFromResponse({
       results: [
-        { file: 'a.ts', snapshot_hash: 'hash_a' },
+        { file: 'a.ts', content_hash: 'hash_a' },
         { file: 'b.ts', content_hash: 'hash_b' },
       ],
     });
@@ -154,7 +153,7 @@ describe('SnapshotTracker', () => {
 
   it('recordFromResponse handles single entry', () => {
     const tracker = new SnapshotTracker();
-    tracker.recordFromResponse({ file: 'a.ts', snapshot_hash: 'hash_a' });
+    tracker.recordFromResponse({ file: 'a.ts', content_hash: 'hash_a' });
     expect(tracker.getHash('a.ts')).toBe('hash_a');
   });
 
@@ -185,7 +184,7 @@ describe('SnapshotTracker', () => {
 
   it('recordFromResponse overwrites with later values (last write wins)', () => {
     const tracker = new SnapshotTracker();
-    tracker.recordFromResponse({ results: [{ file: 'x.ts', snapshot_hash: 'v1' }] });
+    tracker.recordFromResponse({ results: [{ file: 'x.ts', content_hash: 'v1' }] });
     expect(tracker.getHash('x.ts')).toBe('v1');
     tracker.recordFromResponse({ drafts: [{ file: 'x.ts', content_hash: 'v2' }] });
     expect(tracker.getHash('x.ts')).toBe('v2');

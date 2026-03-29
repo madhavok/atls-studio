@@ -318,7 +318,7 @@ export async function runFreshnessPreflight(
         if (!entry || typeof entry !== 'object') continue;
         const p = entry as Record<string, unknown>;
         const file = p.file ?? p.path;
-        const hash = p.snapshot_hash ?? p.content_hash ?? p.hash;
+        const hash = p.content_hash ?? p.hash;
         if (typeof file === 'string' && typeof hash === 'string') {
           refreshedHashes.set(normalizePathKey(file), hash);
         }

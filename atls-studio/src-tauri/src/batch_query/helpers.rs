@@ -212,7 +212,7 @@ pub(crate) fn build_authority_mismatch_error(
         "error_class": "authority_mismatch",
         "expected_hash": canonicalize_expected_content_hash(expected_hash),
         "actual_hash": actual_hash,
-        "snapshot_hash": actual_hash,
+        "content_hash": actual_hash,
         "stale_hash_root_cause": "authority_mismatch",
         "hint": hint,
         "_next": "Run read.shaped(sig) + read.lines on the target range for targeted edits, or context(type:'full', file_paths:[...]) for broad changes, then rebuild the edit from current content",
@@ -235,7 +235,7 @@ pub(crate) fn build_forwarded_hash_error(
         "error_class": "stale_hash",
         "expected_hash": canonicalize_expected_content_hash(expected_hash),
         "actual_hash": actual_hash,
-        "snapshot_hash": actual_hash,
+        "content_hash": actual_hash,
         "stale_hash_root_cause": "forwarded_hash",
         "_next": "Run read.shaped(sig) + read.lines on the target range for targeted edits, or context(type:'full', file_paths:[...]) for broad changes, then rebuild the edit from current content",
     })

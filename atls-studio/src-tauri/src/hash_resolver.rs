@@ -1771,7 +1771,7 @@ pub fn peek(
                         "file": source,
                         "expected_hash": expected_hash,
                         "current_hash": current_hash,
-                        "snapshot_hash": current_hash,
+                        "content_hash": current_hash,
                         "hint": "File changed since last read. Use the new hash or re-read the file."
                     }));
                 }
@@ -1791,7 +1791,6 @@ pub fn peek(
         "file": source,
         "h": format!("h:{}", &current_hash[..SHORT_HASH_LEN]),
         "content_hash": current_hash,
-        "snapshot_hash": current_hash,
         "lines": lines,
         "total_lines": total_lines,
         "content": extracted.content,
@@ -1950,7 +1949,7 @@ pub fn batch_edits(
         let mut result_entry = serde_json::json!({
             "f": file_path,
             "h": format!("h:{}", &new_hash[..SHORT_HASH_LEN]),
-            "snapshot_hash": new_hash,
+            "content_hash": new_hash,
             "old_h": format!("h:{}", &old_hash[..SHORT_HASH_LEN]),
             "ok": entry.line_edits.len(),
         });

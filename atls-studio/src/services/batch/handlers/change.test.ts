@@ -111,7 +111,6 @@ describe('normalizeEditParams', () => {
 
     expect(out.file).toBe('h:aabb1122:10-20');
     expect(out.line_edits).toEqual(edits);
-    expect(out.snapshot_hash).toBe('fresh-hash-1');
     expect(out.content_hash).toBe('fresh-hash-1');
     expect(out.edit_target_kind).toBe('exact_span');
     expect(out.edit_target_ref).toBe('h:aabb1122:10-20');
@@ -127,17 +126,15 @@ describe('normalizeEditParams', () => {
 
     // canonicalizeContentHash now strips h: prefix and modifiers via canonicalizeSnapshotHash
     expect(out.content_hash).toBe('aabb1122');
-    expect(out.snapshot_hash).toBe('aabb1122');
   });
 
-  it('prefers snapshot_hash as the canonical public freshness field', () => {
+  it('prefers content_hash as the canonical public freshness field', () => {
     const out = normalizeEditParams({
       file: 'src/demo.ts',
-      snapshot_hash: 'h:feedbeef:sig',
+      content_hash: 'h:feedbeef:sig',
       line_edits: [{ line: 1, action: 'delete' }],
     });
 
-    expect(out.snapshot_hash).toBe('feedbeef');
     expect(out.content_hash).toBe('feedbeef');
   });
 
@@ -152,7 +149,6 @@ describe('normalizeEditParams', () => {
       file: 'h:aabb1122:10-20',
       old: 'before',
       new: 'after',
-      snapshot_hash: 'fresh-hash-1',
       content_hash: 'fresh-hash-1',
       edit_target_ref: 'h:aabb1122:10-20',
       edit_target_kind: 'exact_span',
@@ -204,7 +200,7 @@ describe('line_edits validation', () => {
     const out = await handleEdit(
       {
         file: 'a.ts',
-        snapshot_hash: 'abc',
+        content_hash: 'abc',
         line_edits: [
           { line: 'end', action: 'insert_after', content: '// x' },
           { line: -1, action: 'replace', count: 1, content: 'y' },
@@ -227,7 +223,7 @@ describe('line_edits validation', () => {
     const out = await handleEdit(
       {
         file: 'a.ts',
-        snapshot_hash: 'feedface',
+        content_hash: 'feedface',
         line_edits: [
           { line: 3, action: 'replace', count: 2, content: 'alpha' },
           { line: 4, action: 'delete', count: 1 },
@@ -251,7 +247,7 @@ describe('line_edits validation', () => {
     await handleEdit(
       {
         file: 'a.ts',
-        snapshot_hash: 'feedface',
+        content_hash: 'feedface',
         line_edits: [
           { line: 3, action: 'replace', count: 1, content: 'alpha' },
           { line: 4, action: 'replace', count: 1, content: 'beta' },
@@ -261,7 +257,6 @@ describe('line_edits validation', () => {
     );
 
     const [, payload] = atlsBatchQuery.mock.calls.at(-1)! as [string, Record<string, unknown>];
-    expect(payload.snapshot_hash).toBe('feedface');
     expect(payload.content_hash).toBe('feedface');
     expect((payload.line_edits as unknown[]).length).toBe(2);
   });
@@ -313,7 +308,7 @@ describe('line_edits validation', () => {
     await handleEdit(
       {
         file: 'a.ts',
-        snapshot_hash: 'feedface',
+        content_hash: 'feedface',
         line_edits: [
           { line: 3, action: 'move', count: 2, destination: 10, reindent: true },
         ],
@@ -403,7 +398,7 @@ describe('freshness safety', () => {
     expect(out.ok).toBe(true);
     expect(atlsBatchQuery).toHaveBeenNthCalledWith(1, 'context', { type: 'full', file_paths: ['src/demo.ts'] });
     expect(atlsBatchQuery).toHaveBeenNthCalledWith(2, 'draft', expect.objectContaining({
-      edits: [{ file: 'src/demo.ts', old: 'before', new: 'after', content_hash: 'fresh-hash-1', snapshot_hash: 'fresh-hash-1', content_hash_refreshed: true }],
+      edits: [{ file: 'src/demo.ts', old: 'before', new: 'after', content_hash: 'fresh-hash-1', content_hash_refreshed: true }],
       stale_policy: 'follow_latest',
     }));
   });
@@ -463,7 +458,6 @@ describe('freshness safety', () => {
     expect(atlsBatchQuery).toHaveBeenNthCalledWith(2, 'draft', {
       file_path: 'src/demo.ts',
       content_hash: 'fresh-hash-1',
-      snapshot_hash: 'fresh-hash-1',
       content_hash_refreshed: true,
       edit_target_ref: 'h:aabb1122:10-11',
       edit_target_kind: 'exact_span',
@@ -474,7 +468,6 @@ describe('freshness safety', () => {
         old: 'before',
         new: 'after',
         content_hash: 'fresh-hash-1',
-        snapshot_hash: 'fresh-hash-1',
         content_hash_refreshed: true,
         edit_target_ref: 'h:aabb1122:10-11',
         edit_target_kind: 'exact_span',
@@ -517,7 +510,6 @@ describe('freshness safety', () => {
       file: 'src/demo.ts',
       line_edits: [{ line: 1, action: 'insert_before', content: '// fresh' }],
       content_hash: 'fresh-hash-1',
-      snapshot_hash: 'fresh-hash-1',
       content_hash_refreshed: true,
       edit_target_ref: 'h:aabb1122',
       edit_target_kind: 'file',
@@ -591,7 +583,7 @@ describe('freshness safety', () => {
 
     expect(out.ok).toBe(true);
     expect(atlsBatchQuery).toHaveBeenNthCalledWith(4, 'draft', {
-      edits: [{ file: 'src/demo.ts', old: 'before', new: 'after', content_hash: 'fresh-hash-2', snapshot_hash: 'fresh-hash-2', content_hash_refreshed: true }],
+      edits: [{ file: 'src/demo.ts', old: 'before', new: 'after', content_hash: 'fresh-hash-2', content_hash_refreshed: true }],
       retry_on_failure: true,
       stale_policy: 'follow_latest',
     });
@@ -728,7 +720,6 @@ describe('freshness safety', () => {
         old: 'before',
         new: 'after',
         content_hash: 'fresh-hash-2',
-        snapshot_hash: 'fresh-hash-2',
         content_hash_refreshed: true,
         edit_target_ref: 'h:aabb1122:10-12',
         edit_target_kind: 'exact_span',
@@ -824,7 +815,6 @@ describe('freshness safety', () => {
         old: 'before',
         new: 'after',
         content_hash: 'fresh-hash-1',
-        snapshot_hash: 'fresh-hash-1',
         content_hash_refreshed: true,
         edit_target_ref: 'h:aabb1122:10-12',
         edit_target_kind: 'exact_span',
@@ -883,7 +873,7 @@ describe('freshness safety', () => {
 
     expect(out.ok).toBe(true);
     expect(atlsBatchQuery).toHaveBeenNthCalledWith(2, 'draft', {
-      edits: [{ file: 'SRC\\DEMO.ts', old: 'before', new: 'after', content_hash: 'fresh-hash-1', snapshot_hash: 'fresh-hash-1', content_hash_refreshed: true }],
+      edits: [{ file: 'SRC\\DEMO.ts', old: 'before', new: 'after', content_hash: 'fresh-hash-1', content_hash_refreshed: true }],
       stale_policy: 'follow_latest',
     });
   });
@@ -995,7 +985,6 @@ describe('freshness safety', () => {
         old: 'before\nafter',
         new: 'replaced',
         content_hash: 'fresh-hash-1',
-        snapshot_hash: 'fresh-hash-1',
         content_hash_refreshed: true,
         edit_target_ref: 'h:aabb1122:10-11',
         edit_target_kind: 'exact_span',
@@ -1041,7 +1030,6 @@ describe('freshness safety', () => {
         old: 'before\nafter',
         new: 'replaced',
         content_hash: 'fresh-hash-1',
-        snapshot_hash: 'fresh-hash-1',
         content_hash_refreshed: true,
         edit_target_ref: 'h:aabb1122:10-11',
         edit_target_kind: 'exact_span',

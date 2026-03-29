@@ -264,9 +264,21 @@ pub fn count_tool_def_tokens(provider: String, model: String) -> u32 {
 // Tests
 // ---------------------------------------------------------------------------
 
+/// Canonical model ids for tokenizer tests and printed profiles.
+/// - **OpenAI:** `tiktoken-rs` `get_bpe_from_model` (falls back to `o200k_base` for unknown ids — same family as GPT-4o / GPT-5.x).
+/// - **Anthropic:** matches default `selectedModel` in `src/stores/appStore.ts`; trie tokenizer ignores id but keeps tests aligned with product.
+/// - **Google:** `count_tokens_inner` uses calibrated heuristic; model id is ignored for counting but matches UI (`modelCapabilities.ts` Gemini 2/3).
+#[cfg(test)]
+mod test_models {
+    pub const OPENAI: &str = "gpt-5.4";
+    pub const ANTHROPIC: &str = "claude-sonnet-4-5";
+    pub const GOOGLE: &str = "gemini-2.5-pro";
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::test_models;
 
     #[test]
     fn test_trie_basic() {
@@ -296,7 +308,7 @@ mod tests {
 
     #[test]
     fn test_openai_basic() {
-        let tokens = count_openai_tokens("gpt-4o", "Hello, world!");
+        let tokens = count_openai_tokens(test_models::OPENAI, "Hello, world!");
         assert!(tokens > 0 && tokens < 10);
     }
 
@@ -304,8 +316,8 @@ mod tests {
     fn test_count_tokens_dispatch() {
         let text = "function test() { return true; }";
 
-        let openai = count_tokens_inner("openai", "gpt-4o", text);
-        let heuristic = count_tokens_inner("google", "gemini-2.5-pro", text);
+        let openai = count_tokens_inner("openai", test_models::OPENAI, text);
+        let heuristic = count_tokens_inner("google", test_models::GOOGLE, text);
 
         assert!(openai > 0);
         assert!(heuristic > 0);
@@ -326,10 +338,146 @@ mod tests {
     #[test]
     fn test_anthropic_dispatch() {
         let text = "export async function fetchData(url: string): Promise<Response> {\n  const resp = await fetch(url);\n  return resp;\n}";
-        let anthropic = count_tokens_inner("anthropic", "claude-sonnet-4-20250514", text);
-        let openai = count_tokens_inner("openai", "gpt-4o", text);
+        let anthropic = count_tokens_inner("anthropic", test_models::ANTHROPIC, text);
+        let openai = count_tokens_inner("openai", test_models::OPENAI, text);
         assert!(anthropic > 5 && anthropic < 60, "anthropic={}", anthropic);
         assert!(openai > 5 && openai < 60, "openai={}", openai);
+    }
+
+    /// BPE-level guardrail: TOON-style payloads should cost fewer tokens than equivalent JSON
+    /// for the same information (OpenAI tiktoken + Anthropic trie). Complements Vitest, which
+    /// uses `estimateTokens` heuristics and semantic substring checks on `formatResult` output.
+    #[test]
+    fn workspace_ctx_toon_fewer_tokens_than_json_bpe() {
+        const TOON: &str = "Ctx:{file:\"src/services/aiService.ts\",line:42,branch:main,deps:[express,pg,zustand],lang:typescript}";
+        const JSON: &str = "Ctx:{\"file\":\"src/services/aiService.ts\",\"line\":42,\"branch\":\"main\",\"deps\":[\"express\",\"pg\",\"zustand\"],\"lang\":\"typescript\"}";
+
+        for (provider, model) in [
+            ("openai", test_models::OPENAI),
+            ("anthropic", test_models::ANTHROPIC),
+            ("google", test_models::GOOGLE),
+        ] {
+            let t_toon = count_tokens_inner(provider, model, TOON);
+            let t_json = count_tokens_inner(provider, model, JSON);
+            assert!(
+                t_toon < t_json,
+                "{}:{}: expected TOON workspace tokens ({}) < JSON tokens ({})",
+                provider,
+                model,
+                t_toon,
+                t_json
+            );
+        }
+    }
+
+    /// Same semantic content as `makeCodeSearchBackendResult` in `src/utils/toonFixtures.ts` /
+    /// `formatResult` output — keep aligned when changing serializers.
+    #[test]
+    fn code_search_tool_payload_toon_fewer_tokens_than_json_bpe() {
+        const JSON: &str = r#"{"queries":["foo","bar"],"results":[{"file":"src/a.ts","line":10,"snippet":"const foo = 1;"},{"file":"src/b.ts","line":22,"snippet":"export function bar() {}"}],"total_matches":2}"#;
+        const TOON: &str = r#"{queries:[foo,bar],results:[{file:src/a.ts,line:10,snippet:"const foo = 1;"},{file:src/b.ts,line:22,snippet:"export function bar() {}"}],total_matches:2}"#;
+
+        for (provider, model) in [
+            ("openai", test_models::OPENAI),
+            ("anthropic", test_models::ANTHROPIC),
+            ("google", test_models::GOOGLE),
+        ] {
+            let t_toon = count_tokens_inner(provider, model, TOON);
+            let t_json = count_tokens_inner(provider, model, JSON);
+            assert!(
+                t_toon < t_json,
+                "{}:{}: expected TOON code_search tokens ({}) < JSON tokens ({})",
+                provider,
+                model,
+                t_toon,
+                t_json
+            );
+        }
+    }
+
+    /// Structural payload efficiency (BPE). String literals must stay aligned with
+    /// `atls-studio/src/utils/payloadStructuralFixtures.ts` and `payloadStructuralTokenEfficiency.test.ts`.
+    #[test]
+    fn bpe_structural_verbose_vs_compact_keys() {
+        const VERBOSE: &str = r#"{"file":"src/services/edit.ts","content_hash":"deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef","h":"h:a1b2c3","line":42,"status":"applied"}"#;
+        const COMPACT: &str = r#"{"f":"src/services/edit.ts","h":"h:a1b2c3","line":42,"status":"applied"}"#;
+        for (provider, model) in [
+            ("openai", test_models::OPENAI),
+            ("anthropic", test_models::ANTHROPIC),
+            ("google", test_models::GOOGLE),
+        ] {
+            assert!(
+                count_tokens_inner(provider, model, COMPACT) < count_tokens_inner(provider, model, VERBOSE),
+                "{}:{} compact keys",
+                provider,
+                model
+            );
+        }
+    }
+
+    #[test]
+    fn bpe_structural_triple_hash_vs_single_h() {
+        const TRIPLE: &str = r#"{"h":"h:a1b2c3","content_hash":"deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef","file":"src/x.ts"}"#;
+        const SINGLE: &str = r#"{"h":"h:a1b2c3","file":"src/x.ts"}"#;
+        for (provider, model) in [
+            ("openai", test_models::OPENAI),
+            ("anthropic", test_models::ANTHROPIC),
+            ("google", test_models::GOOGLE),
+        ] {
+            assert!(
+                count_tokens_inner(provider, model, SINGLE) < count_tokens_inner(provider, model, TRIPLE),
+                "{}:{} single hash",
+                provider,
+                model
+            );
+        }
+    }
+
+    #[test]
+    fn bpe_structural_default_fields_noise() {
+        const VERBOSE: &str = r#"{"action":"status","branch":"main","ahead":0,"behind":0,"clean":false,"staged":[],"modified":["src/a.ts","src/b.ts"],"untracked":[],"deleted":[],"dry_run":false}"#;
+        const COMPACT: &str = r#"{"action":"status","branch":"main","modified":["src/a.ts","src/b.ts"]}"#;
+        for (provider, model) in [
+            ("openai", test_models::OPENAI),
+            ("anthropic", test_models::ANTHROPIC),
+            ("google", test_models::GOOGLE),
+        ] {
+            assert!(
+                count_tokens_inner(provider, model, COMPACT) < count_tokens_inner(provider, model, VERBOSE),
+                "{}:{} omit defaults",
+                provider,
+                model
+            );
+        }
+    }
+
+    #[test]
+    fn bpe_structural_duplicate_nested_extract_plan_shape() {
+        const DUPLICATE: &str = r#"{"proposed_modules":[{"target":"src/mod/a.ts","symbols":["fnA","fnB"]},{"target":"src/mod/b.ts","symbols":["fnC"]}],"extract_methods_params":{"extractions":[{"target_file":"src/mod/a.ts","methods":["fnA","fnB"]},{"target_file":"src/mod/b.ts","methods":["fnC"]}],"dry_run":false}}"#;
+        const SINGLE: &str = r#"{"proposed_modules":[{"target":"src/mod/a.ts","symbols":["fnA","fnB"]},{"target":"src/mod/b.ts","symbols":["fnC"]}]}"#;
+        for (provider, model) in [
+            ("openai", test_models::OPENAI),
+            ("anthropic", test_models::ANTHROPIC),
+            ("google", test_models::GOOGLE),
+        ] {
+            assert!(
+                count_tokens_inner(provider, model, SINGLE) < count_tokens_inner(provider, model, DUPLICATE),
+                "{}:{} one nested block",
+                provider,
+                model
+            );
+        }
+    }
+
+    #[test]
+    fn bpe_structural_naming_total_refs_vs_references() {
+        const REFS: &str = r#"{"file":"src/x.ts","total_refs":12,"total_definitions":3,"files_shown":4}"#;
+        const REFERENCES: &str = r#"{"file":"src/x.ts","total_references":12,"total_definitions":3,"files_shown":4}"#;
+        // OpenAI tiktoken: shorter key name reliably costs fewer tokens.
+        let o = count_tokens_inner("openai", test_models::OPENAI, REFS);
+        let ol = count_tokens_inner("openai", test_models::OPENAI, REFERENCES);
+        assert!(o < ol, "openai: total_refs={} vs total_references={}", o, ol);
+        // Anthropic trie is greedy longest-match; short vs long key token counts can invert — not asserted.
     }
 
     /// Profile representative ATLS dynamic block format sections.
@@ -337,7 +485,11 @@ mod tests {
     /// identify where tokenizer waste is highest.
     #[test]
     fn profile_dynamic_block_formats() {
-        let providers = [("anthropic", "claude-sonnet-4-20250514"), ("openai", "gpt-4o")];
+        let providers = [
+            ("anthropic", test_models::ANTHROPIC),
+            ("openai", test_models::OPENAI),
+            ("google", test_models::GOOGLE),
+        ];
 
         let samples: Vec<(&str, &str)> = vec![
             // Stats line
@@ -403,8 +555,17 @@ mod tests {
         ];
 
         eprintln!("\n=== ATLS Dynamic Block Format Token Profile ===\n");
-        eprintln!("{:<25} {:>6} {:>6} {:>6} {:>8}", "Section", "chars", "claude", "openai", "ratio");
-        eprintln!("{}", "-".repeat(60));
+        eprintln!(
+            "{:<25} {:>6} {:>6} {:>6} {:>6} {:>8}",
+            "Section",
+            "chars",
+            "claude",
+            "openai",
+            "google*",
+            "ratio"
+        );
+        eprintln!("{}", "-".repeat(72));
+        eprintln!("*google = calibrated heuristic (not native Gemini BPE)\n");
 
         for (name, content) in &samples {
             let chars = content.len();
@@ -413,21 +574,28 @@ mod tests {
                 counts.push(count_tokens_inner(provider, model, content));
             }
             let ratio = chars as f64 / counts[0] as f64;
-            eprintln!("{:<25} {:>6} {:>6} {:>6} {:>8.2}",
-                name, chars, counts[0], counts[1], ratio);
+            eprintln!(
+                "{:<25} {:>6} {:>6} {:>6} {:>6} {:>8.2}",
+                name,
+                chars,
+                counts[0],
+                counts[1],
+                counts[2],
+                ratio
+            );
         }
         eprintln!("\n=== End Profile ===\n");
 
         // Compare guillemets vs ASCII for stats line
-        let guill_stats = count_tokens_inner("anthropic", "claude-sonnet-4-20250514",
+        let guill_stats = count_tokens_inner("anthropic", test_models::ANTHROPIC,
             "<<CTX 15k/200k (7%)>>");
-        let ascii_stats = count_tokens_inner("anthropic", "claude-sonnet-4-20250514",
+        let ascii_stats = count_tokens_inner("anthropic", test_models::ANTHROPIC,
             "[CTX 15k/200k (7%)]");
         eprintln!("Guillemet overhead: <<...>> = {} tokens, [...] = {} tokens (delta: {})",
             guill_stats, ascii_stats, guill_stats as i32 - ascii_stats as i32);
 
-        let guill_pair = count_tokens_inner("anthropic", "claude-sonnet-4-20250514", "<<>>");
-        let ascii_pair = count_tokens_inner("anthropic", "claude-sonnet-4-20250514", "[]");
+        let guill_pair = count_tokens_inner("anthropic", test_models::ANTHROPIC, "<<>>");
+        let ascii_pair = count_tokens_inner("anthropic", test_models::ANTHROPIC, "[]");
         eprintln!("Bare delimiters: <<>> = {} tokens, [] = {} tokens",
             guill_pair, ascii_pair);
 
@@ -440,9 +608,18 @@ mod tests {
         ];
         eprintln!("\n--- Chunk tag alternatives ---");
         for (name, content) in &alternatives {
-            let claude = count_tokens_inner("anthropic", "claude-sonnet-4-20250514", content);
-            let openai = count_tokens_inner("openai", "gpt-4o", content);
-            eprintln!("{:<12} {:>3}ch {:>3}cl {:>3}oa  {}", name, content.len(), claude, openai, content);
+            let claude = count_tokens_inner("anthropic", test_models::ANTHROPIC, content);
+            let openai = count_tokens_inner("openai", test_models::OPENAI, content);
+            let google = count_tokens_inner("google", test_models::GOOGLE, content);
+            eprintln!(
+                "{:<12} {:>3}ch {:>3}cl {:>3}oa {:>3}g  {}",
+                name,
+                content.len(),
+                claude,
+                openai,
+                google,
+                content
+            );
         }
 
         // Test ref line alternatives
@@ -453,9 +630,18 @@ mod tests {
         ];
         eprintln!("\n--- Ref line alternatives ---");
         for (name, content) in &ref_alts {
-            let claude = count_tokens_inner("anthropic", "claude-sonnet-4-20250514", content);
-            let openai = count_tokens_inner("openai", "gpt-4o", content);
-            eprintln!("{:<12} {:>3}ch {:>3}cl {:>3}oa  {}", name, content.len(), claude, openai, content);
+            let claude = count_tokens_inner("anthropic", test_models::ANTHROPIC, content);
+            let openai = count_tokens_inner("openai", test_models::OPENAI, content);
+            let google = count_tokens_inner("google", test_models::GOOGLE, content);
+            eprintln!(
+                "{:<12} {:>3}ch {:>3}cl {:>3}oa {:>3}g  {}",
+                name,
+                content.len(),
+                claude,
+                openai,
+                google,
+                content
+            );
         }
     }
 
@@ -479,16 +665,36 @@ mod tests {
         ];
 
         eprintln!("\n=== Heuristic vs Real Token Count Calibration ===\n");
-        eprintln!("{:<25} {:>6} {:>8} {:>8} {:>8} {:>8}", "Content Type", "chars", "heuristic", "claude", "openai", "h/c ratio");
-        eprintln!("{}", "-".repeat(70));
+        eprintln!(
+            "{:<25} {:>6} {:>8} {:>8} {:>8} {:>8} {:>8}",
+            "Content Type",
+            "chars",
+            "heuristic",
+            "claude",
+            "openai",
+            "google*",
+            "h/c ratio"
+        );
+        eprintln!("{}", "-".repeat(78));
+        eprintln!("*google = same calibrated heuristic as `count_heuristic_tokens` for provider google\n");
 
         for (name, content) in &samples {
             let heuristic = count_heuristic_tokens(content);
-            let claude = count_tokens_inner("anthropic", "claude-sonnet-4-20250514", content);
-            let openai = count_tokens_inner("openai", "gpt-4o", content);
+            let claude = count_tokens_inner("anthropic", test_models::ANTHROPIC, content);
+            let openai = count_tokens_inner("openai", test_models::OPENAI, content);
+            let google = count_tokens_inner("google", test_models::GOOGLE, content);
             let ratio = heuristic as f64 / claude as f64;
-            eprintln!("{:<25} {:>6} {:>8} {:>8} {:>8} {:>8.3}",
-                name, content.len(), heuristic, claude, openai, ratio);
+            assert_eq!(google, heuristic, "google path must match heuristic");
+            eprintln!(
+                "{:<25} {:>6} {:>8} {:>8} {:>8} {:>8} {:>8.3}",
+                name,
+                content.len(),
+                heuristic,
+                claude,
+                openai,
+                google,
+                ratio
+            );
         }
         eprintln!("\nRatio > 1.0 = heuristic overcounts (conservative)");
         eprintln!("Ratio < 1.0 = heuristic undercounts (dangerous - may blow context)");
@@ -502,25 +708,25 @@ mod tests {
     fn golden_format_token_counts() {
         // Hash ref (new compact format)
         let compact_ref = "[h:abc123 1500tk read_file:src/services/aiService.ts]";
-        let claude = count_tokens_inner("anthropic", "claude-sonnet-4-20250514", compact_ref);
-        let openai = count_tokens_inner("openai", "gpt-4o", compact_ref);
+        let claude = count_tokens_inner("anthropic", test_models::ANTHROPIC, compact_ref);
+        let openai = count_tokens_inner("openai", test_models::OPENAI, compact_ref);
         assert!(claude >= 18 && claude <= 26, "claude compact_ref={} (expected 18-26)", claude);
         assert!(openai >= 14 && openai <= 22, "openai compact_ref={} (expected 14-22)", openai);
 
         // Chunk tag (new format)
         let chunk_tag = "\u{00AB}h:a3bf12 450tk smart src/services/aiService.ts\u{00BB}";
-        let claude_tag = count_tokens_inner("anthropic", "claude-sonnet-4-20250514", chunk_tag);
+        let claude_tag = count_tokens_inner("anthropic", test_models::ANTHROPIC, chunk_tag);
         assert!(claude_tag >= 16 && claude_tag <= 24, "claude chunk_tag={} (expected 16-24)", claude_tag);
 
         // Stats line
         let stats = "<<CTX 15k/200k (7%) | chunks:12 | pinned:3 | bb:1.2k>>";
-        let claude_stats = count_tokens_inner("anthropic", "claude-sonnet-4-20250514", stats);
+        let claude_stats = count_tokens_inner("anthropic", test_models::ANTHROPIC, stats);
         assert!(claude_stats >= 20 && claude_stats <= 40, "claude stats={} (expected 20-40)", claude_stats);
 
         // OpenAI and Anthropic should agree within 30% for natural content
         let natural = "This is a test of the emergency broadcast system. If this had been an actual emergency.";
-        let c_nat = count_tokens_inner("anthropic", "claude-sonnet-4-20250514", natural);
-        let o_nat = count_tokens_inner("openai", "gpt-4o", natural);
+        let c_nat = count_tokens_inner("anthropic", test_models::ANTHROPIC, natural);
+        let o_nat = count_tokens_inner("openai", test_models::OPENAI, natural);
         let diff_pct = ((c_nat as f64 - o_nat as f64) / o_nat as f64).abs();
         assert!(diff_pct < 0.30, "providers diverge too much on natural text: claude={} openai={} diff={}%",
             c_nat, o_nat, (diff_pct * 100.0) as u32);

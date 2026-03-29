@@ -200,15 +200,14 @@ describe('executeUnifiedBatch snapshot propagation', () => {
     handlers.clear();
   });
 
-  it('propagates snapshot_hash from read.context into change.edit', async () => {
+  it('propagates content_hash from read.context into change.edit', async () => {
     const editSpy = vi.fn(async (params: Record<string, unknown>) => {
-      expect(params.snapshot_hash).toBe('abc12345');
-      expect(params.content_hash).toBeUndefined();
+      expect(params.content_hash).toBe('abc12345');
       return raw('applied', { status: 'ok' });
     });
 
     handlers.set('read.context', async () => raw('read', {
-      results: [{ file: 'src/demo.ts', snapshot_hash: 'abc12345' }],
+      results: [{ file: 'src/demo.ts', content_hash: 'abc12345' }],
     }));
     handlers.set('change.edit', editSpy as unknown as OpHandler);
 
@@ -228,7 +227,7 @@ describe('executeUnifiedBatch snapshot propagation', () => {
 
     handlers.set('read.lines', async () => raw('read_lines', {
       file: 'src/demo.ts',
-      snapshot_hash: 'cafefeed',
+      content_hash: 'cafefeed',
       content: 'const demo = 1;',
       actual_range: [[1, 5]],
     }));
@@ -362,24 +361,24 @@ describe('executeUnifiedBatch multiedit multibatch stress', () => {
     handlers.clear();
   });
 
-  it('propagates per-file snapshot_hash to batch_edits (edits: [{ file, line_edits }, ...])', async () => {
+  it('propagates per-file content_hash to batch_edits (edits: [{ file, line_edits }, ...])', async () => {
     const editSpy = vi.fn(async (params: Record<string, unknown>) => {
       const edits = params.edits as Array<Record<string, unknown>>;
       expect(edits).toHaveLength(3);
       expect(edits[0].file).toBe('src/a.ts');
-      expect(edits[0].snapshot_hash).toBe('hash-a');
+      expect(edits[0].content_hash).toBe('hash-a');
       expect(edits[1].file).toBe('src/b.ts');
-      expect(edits[1].snapshot_hash).toBe('hash-b');
+      expect(edits[1].content_hash).toBe('hash-b');
       expect(edits[2].file).toBe('src/c.ts');
-      expect(edits[2].snapshot_hash).toBe('hash-c');
+      expect(edits[2].content_hash).toBe('hash-c');
       return raw('batch applied', { status: 'ok', mode: 'batch_edits' });
     });
 
     handlers.set('read.context', async () => raw('multi-read', {
       results: [
-        { file: 'src/a.ts', snapshot_hash: 'hash-a' },
-        { file: 'src/b.ts', snapshot_hash: 'hash-b' },
-        { file: 'src/c.ts', snapshot_hash: 'hash-c' },
+        { file: 'src/a.ts', content_hash: 'hash-a' },
+        { file: 'src/b.ts', content_hash: 'hash-b' },
+        { file: 'src/c.ts', content_hash: 'hash-c' },
       ],
     }));
     handlers.set('change.edit', editSpy as unknown as OpHandler);
@@ -416,7 +415,7 @@ describe('executeUnifiedBatch multiedit multibatch stress', () => {
         'src/c.ts': 'hash-c-v1',
       };
       return raw('read', {
-        results: [{ file: path, snapshot_hash: hashes[path] ?? 'unknown', content: 'line' }],
+        results: [{ file: path, content_hash: hashes[path] ?? 'unknown', content: 'line' }],
       });
     });
     handlers.set('change.edit', async (params: Record<string, unknown>) => {
@@ -438,9 +437,9 @@ describe('executeUnifiedBatch multiedit multibatch stress', () => {
 
     expect(result.ok).toBe(true);
     expect(editCalls).toHaveLength(3);
-    expect(editCalls[0].snapshot_hash).toBe('hash-a-v1');
-    expect(editCalls[1].snapshot_hash).toBe('hash-b-v1');
-    expect(editCalls[2].snapshot_hash).toBe('hash-c-v1');
+    expect(editCalls[0].content_hash).toBe('hash-a-v1');
+    expect(editCalls[1].content_hash).toBe('hash-b-v1');
+    expect(editCalls[2].content_hash).toBe('hash-c-v1');
   });
 
   it('resolves in-bindings: from_step and path into prior output', async () => {
@@ -450,7 +449,7 @@ describe('executeUnifiedBatch multiedit multibatch stress', () => {
     });
 
     handlers.set('read.context', async () => raw('read', {
-      results: [{ file: 'src/x.ts', snapshot_hash: 'h123' }],
+      results: [{ file: 'src/x.ts', content_hash: 'h123' }],
       edits: [{ file: 'src/x.ts', old: 'old', new: 'new' }],
     }));
     handlers.set('change.edit', editSpy as unknown as OpHandler);
@@ -481,7 +480,7 @@ describe('executeUnifiedBatch multiedit multibatch stress', () => {
     const verifySpy = vi.fn(async () => raw('verified', { ok: true }));
 
     handlers.set('read.context', async () => raw('read', {
-      results: [{ file: 'src/foo.ts', snapshot_hash: 'pre-edit-hash' }],
+      results: [{ file: 'src/foo.ts', content_hash: 'pre-edit-hash' }],
     }));
     handlers.set('change.edit', async () => ({
       kind: 'raw',
@@ -537,7 +536,7 @@ describe('executeUnifiedBatch multiedit multibatch stress', () => {
 
     handlers.set('read.context', async () => {
       callOrder.push('read');
-      return raw('read', { results: [{ file: 'x', snapshot_hash: 'h' }] });
+      return raw('read', { results: [{ file: 'x', content_hash: 'h' }] });
     });
     handlers.set('change.edit', async () => {
       callOrder.push('edit');
@@ -591,12 +590,12 @@ describe('executeUnifiedBatch multiedit multibatch stress', () => {
 
   it('normalizes path separators for snapshot lookup (backslash read vs forward edit)', async () => {
     const editSpy = vi.fn(async (params: Record<string, unknown>) => {
-      expect(params.snapshot_hash).toBe('same-hash');
+      expect(params.content_hash).toBe('same-hash');
       return raw('applied', { status: 'ok' });
     });
 
     handlers.set('read.context', async () => raw('read', {
-      results: [{ file: 'src\\foo.ts', snapshot_hash: 'same-hash', content: 'x' }],
+      results: [{ file: 'src\\foo.ts', content_hash: 'same-hash', content: 'x' }],
     }));
     handlers.set('change.edit', editSpy as unknown as OpHandler);
 
@@ -615,7 +614,7 @@ describe('executeUnifiedBatch multiedit multibatch stress', () => {
     const afterSpy = vi.fn(async () => raw('continued', { ok: true }));
 
     handlers.set('read.context', async () => raw('read', {
-      results: [{ file: 'x.ts', snapshot_hash: 'hash-x' }],
+      results: [{ file: 'x.ts', content_hash: 'hash-x' }],
     }));
     handlers.set('change.edit', async () => raw('failed', {}, false));
     handlers.set('session.emit', afterSpy as unknown as OpHandler);
@@ -660,7 +659,7 @@ describe('executeUnifiedBatch multiedit multibatch stress', () => {
       expect(edits).toHaveLength(5);
       for (let i = 0; i < 5; i++) {
         expect(edits[i].file).toBe(files[i]);
-        expect(edits[i].snapshot_hash).toBe(`hash-${files[i].replace('/', '-')}`);
+        expect(edits[i].content_hash).toBe(`hash-${files[i].replace('/', '-')}`);
       }
       return raw('batch ok', { status: 'ok' });
     });
@@ -668,7 +667,7 @@ describe('executeUnifiedBatch multiedit multibatch stress', () => {
     handlers.set('read.context', async () => raw('multi', {
       results: files.map(f => ({
         file: f,
-        snapshot_hash: `hash-${f.replace('/', '-')}`,
+        content_hash: `hash-${f.replace('/', '-')}`,
       })),
     }));
     handlers.set('change.edit', editSpy as unknown as OpHandler);
@@ -695,7 +694,7 @@ describe('executeUnifiedBatch multiedit multibatch stress', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Hash freshness multiedit multibatch — ensures snapshot_hash stays correct
+// Hash freshness multiedit multibatch — ensures content_hash stays correct
 // across sequential edits, batch_edits, and mixed read/edit chains. Critical
 // for avoiding stale_hash errors when the same file is modified multiple
 // times in one batch.
@@ -710,7 +709,7 @@ describe('executeUnifiedBatch hash freshness multiedit multibatch', () => {
     const editCalls: Array<{ params: Record<string, unknown> }> = [];
 
     handlers.set('read.context', async () => raw('read', {
-      results: [{ file: 'src/impl.ts', snapshot_hash: 'hash-v1', content: 'const x = 1;' }],
+      results: [{ file: 'src/impl.ts', content_hash: 'hash-v1', content: 'const x = 1;' }],
     }));
     handlers.set('change.edit', async (params: Record<string, unknown>) => {
       editCalls.push({ params: { ...params } });
@@ -731,8 +730,8 @@ describe('executeUnifiedBatch hash freshness multiedit multibatch', () => {
 
     expect(result.ok).toBe(true);
     expect(editCalls).toHaveLength(2);
-    expect(editCalls[0].params.snapshot_hash).toBe('hash-v1');
-    expect(editCalls[1].params.snapshot_hash).toBe('hash-v2');
+    expect(editCalls[0].params.content_hash).toBe('hash-v1');
+    expect(editCalls[1].params.content_hash).toBe('hash-v2');
   });
 
   it('batch_edits: file A edited first, then batch to A+B — A gets post-edit hash, B gets read hash', async () => {
@@ -741,8 +740,8 @@ describe('executeUnifiedBatch hash freshness multiedit multibatch', () => {
       if (Array.isArray(edits) && edits.length === 2) {
         const aEntry = edits.find(e => (e.file ?? e.file_path) === 'src/a.ts');
         const bEntry = edits.find(e => (e.file ?? e.file_path) === 'src/b.ts');
-        expect(aEntry?.snapshot_hash).toBe('hash-a-post');
-        expect(bEntry?.snapshot_hash).toBe('hash-b-read');
+        expect(aEntry?.content_hash).toBe('hash-a-post');
+        expect(bEntry?.content_hash).toBe('hash-b-read');
         return raw('batch ok', { status: 'ok' });
       }
       return { kind: 'raw', ok: true, refs: [], summary: 'ok', content: { status: 'ok', drafts: [{ file: 'src/a.ts', content_hash: 'hash-a-post' }] } };
@@ -750,8 +749,8 @@ describe('executeUnifiedBatch hash freshness multiedit multibatch', () => {
 
     handlers.set('read.context', async () => raw('read', {
       results: [
-        { file: 'src/a.ts', snapshot_hash: 'hash-a-read' },
-        { file: 'src/b.ts', snapshot_hash: 'hash-b-read' },
+        { file: 'src/a.ts', content_hash: 'hash-a-read' },
+        { file: 'src/b.ts', content_hash: 'hash-b-read' },
       ],
     }));
     handlers.set('change.edit', editSpy as unknown as OpHandler);
@@ -785,7 +784,7 @@ describe('executeUnifiedBatch hash freshness multiedit multibatch', () => {
   it('three sequential edits to same file: each receives hash from prior step', async () => {
     const editCalls: Array<Record<string, unknown>> = [];
 
-    handlers.set('read.context', async () => raw('read', { results: [{ file: 'x.ts', snapshot_hash: 'h1', content: 'a' }] }));
+    handlers.set('read.context', async () => raw('read', { results: [{ file: 'x.ts', content_hash: 'h1', content: 'a' }] }));
     handlers.set('change.edit', async (params: Record<string, unknown>) => {
       editCalls.push({ ...params });
       const n = editCalls.length;
@@ -803,15 +802,15 @@ describe('executeUnifiedBatch hash freshness multiedit multibatch', () => {
       ],
     }, makeCtx());
 
-    expect(editCalls[0].snapshot_hash).toBe('h1');
-    expect(editCalls[1].snapshot_hash).toBe('h2');
-    expect(editCalls[2].snapshot_hash).toBe('h3');
+    expect(editCalls[0].content_hash).toBe('h1');
+    expect(editCalls[1].content_hash).toBe('h2');
+    expect(editCalls[2].content_hash).toBe('h3');
   });
 
   it('edit fails (no drafts): subsequent edit to same file still gets read hash', async () => {
     const editCalls: Array<Record<string, unknown>> = [];
 
-    handlers.set('read.context', async () => raw('read', { results: [{ file: 'f.ts', snapshot_hash: 'h-initial', content: 'x' }] }));
+    handlers.set('read.context', async () => raw('read', { results: [{ file: 'f.ts', content_hash: 'h-initial', content: 'x' }] }));
     handlers.set('change.edit', async (params: Record<string, unknown>) => {
       editCalls.push({ ...params });
       if (editCalls.length === 1) {
@@ -829,14 +828,14 @@ describe('executeUnifiedBatch hash freshness multiedit multibatch', () => {
       ],
     }, makeCtx());
 
-    expect(editCalls[0].snapshot_hash).toBe('h-initial');
-    expect(editCalls[1].snapshot_hash).toBe('h-initial');
+    expect(editCalls[0].content_hash).toBe('h-initial');
+    expect(editCalls[1].content_hash).toBe('h-initial');
   });
 
   it('batch with f/h alias: drafts use backend shorthand and tracker records correctly', async () => {
     const editCalls: Array<Record<string, unknown>> = [];
 
-    handlers.set('read.context', async () => raw('read', { results: [{ file: 'src/foo.ts', snapshot_hash: 'old-hash', content: 'x' }] }));
+    handlers.set('read.context', async () => raw('read', { results: [{ file: 'src/foo.ts', content_hash: 'old-hash', content: 'x' }] }));
     handlers.set('change.edit', async (params: Record<string, unknown>) => {
       editCalls.push({ ...params });
       if (editCalls.length === 1) {
@@ -855,8 +854,8 @@ describe('executeUnifiedBatch hash freshness multiedit multibatch', () => {
     }, makeCtx());
 
     expect(editCalls).toHaveLength(2);
-    expect(editCalls[0].snapshot_hash).toBe('old-hash');
-    expect(editCalls[1].snapshot_hash).toBe('backend-hash');
+    expect(editCalls[0].content_hash).toBe('old-hash');
+    expect(editCalls[1].content_hash).toBe('backend-hash');
   });
 });
 
@@ -932,7 +931,7 @@ describe('executeUnifiedBatch ref contamination prevention', () => {
       ok: true,
       refs: ['h:aaa111'],
       summary: 'read',
-      content: { results: [{ file: 'src/x.ts', snapshot_hash: 'h123' }], edits: [{ file: 'src/x.ts', old: 'old', new: 'new' }] },
+      content: { results: [{ file: 'src/x.ts', content_hash: 'h123' }], edits: [{ file: 'src/x.ts', old: 'old', new: 'new' }] },
     }));
     handlers.set('change.edit', async (params: Record<string, unknown>) => {
       receivedParams.push({ ...params });

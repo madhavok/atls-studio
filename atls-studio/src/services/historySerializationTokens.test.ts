@@ -8,42 +8,14 @@ import { estimateTokens } from '../utils/contextHash';
 import { countTokensSync } from '../utils/tokenCounter';
 import { formatResult, serializeMessageContentForTokens } from '../utils/toon';
 import {
+  makeCodeSearchBackendResult,
+  makeMemorySearchStructured,
+} from '../utils/toonFixtures';
+import {
   logTokenDelta,
   logObjectJsonVsFormatResult,
+  expectToonUnderstandable,
 } from '../utils/toonDeltaTestHelpers';
-
-function makeCodeSearchBackendResult() {
-  return {
-    queries: ['foo', 'bar'],
-    results: [
-      { file: 'src/a.ts', line: 10, snippet: 'const foo = 1;' },
-      { file: 'src/b.ts', line: 22, snippet: 'export function bar() {}' },
-    ],
-    total_matches: 2,
-  };
-}
-
-function makeMemorySearchStructured() {
-  return {
-    tool: 'search.memory',
-    query: 'token',
-    region_summary: 'active:2',
-    total_hits: 2,
-    entries: [
-      {
-        region: 'active' as const,
-        ref: 'h:deadbeef',
-        source: 'read.context',
-        type: 'context',
-        tokens: 120,
-        hits: [
-          { lineNumber: 1, line: 'line with token' },
-          { lineNumber: 5, line: 'another token hit' },
-        ],
-      },
-    ],
-  };
-}
 
 describe('historySerializationTokens', () => {
   it('serializeMessageContentForTokens is more compact than JSON.stringify for tool blocks', () => {
@@ -71,6 +43,39 @@ describe('historySerializationTokens', () => {
     );
     expect(ser.length).toBeLessThan(json.length);
     expect(altTok).toBeLessThan(jsonTok);
+  });
+
+  it('S7: serializeMessageContentForTokens retains tool identity and payload cues', () => {
+    const content = [
+      { type: 'text', text: 'Plan' },
+      {
+        type: 'tool_use',
+        id: 'call_1',
+        name: 'batch',
+        input: { version: '1.0', steps: [{ id: 's1', use: 'read.context', with: { file_paths: ['a.ts'] } }] },
+      },
+      {
+        type: 'tool_result',
+        tool_use_id: 'call_1',
+        content: { ok: true, results: [{ file: 'x.ts', line: 1 }] },
+      },
+    ];
+    const ser = serializeMessageContentForTokens(content);
+    const { jsonTok, altTok } = logTokenDelta(
+      'S7 message blocks tool_use + tool_result',
+      JSON.stringify(content),
+      ser,
+      'serializeMessageContentForTokens',
+    );
+    expect(altTok).toBeLessThan(jsonTok);
+    expectToonUnderstandable(ser, [
+      'tool_use',
+      'batch',
+      'call_1',
+      'read.context',
+      'ok:1',
+      'x.ts',
+    ]);
   });
 
   it('estimateHistoryTokens uses TOON serialization for array content', () => {
@@ -141,9 +146,11 @@ describe('historySerializationTokens', () => {
 
   it('search.memory structured payload: formatResult(TOON) vs JSON.stringify', () => {
     const structured = makeMemorySearchStructured();
+    const out = formatResult(structured);
     const { jsonTok, altTok } = logObjectJsonVsFormatResult('search.memory structured payload', structured);
     expect(altTok).toBeLessThan(jsonTok);
-    expect(formatResult(structured)).toContain('search.memory');
+    expect(out).toContain('search.memory');
+    expectToonUnderstandable(out, ['active', 'h:deadbeef', 'read.context', 'line with token']);
   });
 });
 

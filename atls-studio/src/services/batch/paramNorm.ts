@@ -32,6 +32,11 @@ const GLOBAL_ALIASES: Readonly<Record<string, string>> = {
   new_string: 'new',
   original_lines: 'old',
   updated_lines: 'new',
+  // Hash identity
+  snapshot_hash: 'content_hash',
+  // Line counts
+  total_lines: 'lines',
+  line_count: 'lines',
   // Other
   command: 'cmd',
   contents: 'content',

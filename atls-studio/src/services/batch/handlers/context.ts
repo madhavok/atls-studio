@@ -16,6 +16,8 @@ import { formatResult } from '../../../utils/toon';
 interface ResolvedHashContent {
   content: string;
   source: string | null;
+  content_hash?: string;
+  /** @deprecated Rust no longer emits this; prefer content_hash */
   snapshot_hash?: string;
   selector?: string | null;
   target_range?: Array<[number, number | null]>;
@@ -29,7 +31,6 @@ interface BackendContextEntry {
   content?: string;
   context?: unknown;
   text?: string;
-  snapshot_hash?: string;
   content_hash?: string;
   h?: string;
   previous?: Record<string, unknown>;
@@ -85,9 +86,9 @@ function formatLineRanges(ranges: Array<[number, number | null]> | undefined): s
     .join(',');
 }
 
-function extractSnapshotHash(payload: Record<string, unknown>): string | undefined {
-  const snapshotHash = payload.snapshot_hash ?? payload.content_hash ?? payload.hash;
-  return typeof snapshotHash === 'string' ? snapshotHash : undefined;
+function extractContentHash(payload: Record<string, unknown>): string | undefined {
+  const h = payload.content_hash ?? payload.hash;
+  return typeof h === 'string' ? h : undefined;
 }
 
 function extractFilePath(payload: Record<string, unknown>): string | undefined {
@@ -197,7 +198,7 @@ export const handleRead: OpHandler = async (params, ctx) => {
           ctx,
           fp,
           typeof fullEntry?.content === 'string' ? fullEntry.content : null,
-          extractSnapshotHash((fullEntry ?? {}) as Record<string, unknown>),
+          extractContentHash((fullEntry ?? {}) as Record<string, unknown>),
           readShape,
           readBind,
           lines,
@@ -227,7 +228,7 @@ export const handleRead: OpHandler = async (params, ctx) => {
         readResults.push({
           file: ti.source,
           h: `h:${hash}`,
-          snapshot_hash: sourceRevision,
+          content_hash: sourceRevision,
         });
         ctx.store().clearSuspect(ti.source);
         ctx.store().reconcileSourceRevision(ti.source, sourceRevision);
@@ -255,7 +256,7 @@ export const handleRead: OpHandler = async (params, ctx) => {
             const src = isTreeRead
               ? String(r.root ?? r.file ?? r.path ?? filePaths[0] ?? '')
               : String(r.file ?? r.path ?? filePaths[0] ?? '');
-            const backendHash = extractSnapshotHash(r);
+            const backendHash = extractContentHash(r);
             const chunkType = isFull ? 'raw' : 'smart';
             const bindIds = readBind?.length ? readBind : undefined;
             if (backendHash && src) {
@@ -263,7 +264,7 @@ export const handleRead: OpHandler = async (params, ctx) => {
               if (reusedRead) {
                 useRetentionStore.getState().incrementReadsReused();
                 allRefs.push(`h:${reusedRead}`);
-                readResults.push({ file: src, h: `h:${reusedRead}`, ...(backendHash ? { snapshot_hash: backendHash } : {}) });
+                readResults.push({ file: src, h: `h:${reusedRead}`, ...(backendHash ? { content_hash: backendHash } : {}) });
                 lines.push(`read: ERROR redundant — ${src} already at h:${reusedRead} (same rev). Content is live. Use read.lines(ref:"h:${reusedRead}:LL-LL") for a different span, or change.edit file_path:"h:${reusedRead}:source". Do NOT re-read.`);
                 continue;
               }
@@ -289,7 +290,7 @@ export const handleRead: OpHandler = async (params, ctx) => {
             readResults.push({
               file: src,
               h: `h:${hash}`,
-              ...(backendHash ? { snapshot_hash: backendHash } : {}),
+              ...(backendHash ? { content_hash: backendHash } : {}),
               ...(isTreeRead && r.root != null ? { root: r.root } : {}),
             });
             if (isTreeRead) {
@@ -411,7 +412,7 @@ export const handleReadLines: OpHandler = async (params, ctx) => {
       const ctxResult = await ctx.atlsBatchQuery('context', { type: 'full', file_paths: [pathItem.path] });
       const results = (ctxResult as Record<string, unknown>)?.results as Array<Record<string, unknown>> | undefined;
       const first = results?.[0];
-      const contentHash = first?.snapshot_hash ?? first?.content_hash ?? first?.hash;
+      const contentHash = first?.content_hash ?? first?.hash;
       if (typeof contentHash === 'string') rlHash = contentHash.startsWith('h:') ? contentHash : `h:${contentHash}`;
     }
   }
@@ -449,16 +450,15 @@ export const handleReadLines: OpHandler = async (params, ctx) => {
     const actualLabel = formatLineRanges(actualRange);
     const tk = countTokensSync(rlContent);
     ctx.store().clearSuspect(rlFile || rlH);
-    const rlSnapshotHash = typeof rlResult.snapshot_hash === 'string' ? String(rlResult.snapshot_hash)
-      : typeof rlResult.content_hash === 'string' ? String(rlResult.content_hash) : undefined;
+    const rlContentHash = typeof rlResult.content_hash === 'string' ? String(rlResult.content_hash) : undefined;
 
     // Read-span reuse: if a prior chunk covers this range at the same revision, reuse it
-    if (rlFile && rlSnapshotHash && actualRange?.length) {
+    if (rlFile && rlContentHash && actualRange?.length) {
       const rangeStart = actualRange[0]?.[0];
       const lastRange = actualRange[actualRange.length - 1];
       const rangeEnd = lastRange?.[1] ?? lastRange?.[0];
       if (rangeStart != null && rangeEnd != null) {
-        const reusedLines = ctx.store().findReusableRead({ filePath: rlFile, startLine: rangeStart, endLine: rangeEnd, sourceRevision: rlSnapshotHash });
+        const reusedLines = ctx.store().findReusableRead({ filePath: rlFile, startLine: rangeStart, endLine: rangeEnd, sourceRevision: rlContentHash });
         if (reusedLines) {
           useRetentionStore.getState().incrementReadsReused();
           const lineSpecForRef =
@@ -469,15 +469,15 @@ export const handleReadLines: OpHandler = async (params, ctx) => {
           return {
             kind: 'file_refs', ok: false, refs: [refWithLines],
             summary: reuseSummary, tokens: 0,
-            content: { file: rlFile, hash: reusedLines, ...(rlSnapshotHash ? { snapshot_hash: rlSnapshotHash } : {}), target_range: targetRange, actual_range: actualRange, context_lines: usedContextLines, content: rlContent },
+            content: { file: rlFile, hash: reusedLines, ...(rlContentHash ? { content_hash: rlContentHash } : {}), target_range: targetRange, actual_range: actualRange, context_lines: usedContextLines, content: rlContent },
           };
         }
       }
     }
 
-    if (rlFile && rlSnapshotHash) {
-      ctx.store().reconcileSourceRevision(rlFile, rlSnapshotHash);
-      ctx.store().recordMemoryEvent({ action: 'read', reason: 'read_lines', source: rlFile, newRevision: rlSnapshotHash, refs: [normalizeHashRefToken(rlH)] });
+    if (rlFile && rlContentHash) {
+      ctx.store().reconcileSourceRevision(rlFile, rlContentHash);
+      ctx.store().recordMemoryEvent({ action: 'read', reason: 'read_lines', source: rlFile, newRevision: rlContentHash, refs: [normalizeHashRefToken(rlH)] });
     }
     const lineSpecForRef =
       formatLineRanges(actualRange) || formatLineRanges(targetRange) || (typeof rlLines === 'string' ? rlLines.trim() : '');
@@ -498,7 +498,7 @@ export const handleReadLines: OpHandler = async (params, ctx) => {
       content: {
         file: rlFile,
         hash: rlH,
-        ...(rlSnapshotHash ? { snapshot_hash: rlSnapshotHash } : {}),
+        ...(rlContentHash ? { content_hash: rlContentHash } : {}),
         target_range: targetRange,
         actual_range: actualRange,
         context_lines: usedContextLines,
@@ -578,7 +578,7 @@ export const handleReadShaped: OpHandler = async (params, ctx) => {
         ctx,
         source,
         content ?? (typeof fullEntry?.content === 'string' ? fullEntry.content : null),
-        extractSnapshotHash((fullEntry ?? {}) as Record<string, unknown>),
+        extractContentHash((fullEntry ?? {}) as Record<string, unknown>),
         shape,
         shapedBind,
         lines,
@@ -681,7 +681,7 @@ async function _processShapedFile(
       rawRef: `h:${snapshotHash}`,
     }, READ_TIMEOUT_MS);
     fullContent = resolvedFull.content;
-    snapshotHash = resolvedFull.snapshot_hash ?? snapshotHash;
+    snapshotHash = resolvedFull.content_hash ?? resolvedFull.snapshot_hash ?? snapshotHash;
   }
 
   if (!fullContent) {
@@ -721,16 +721,16 @@ async function _processShapedFile(
   const resolved = await invokeWithTimeout<ResolvedHashContent>('resolve_hash_ref', {
     rawRef: `h:${fullHash}:${shape}`,
   }, READ_TIMEOUT_MS);
-  const canonicalSnapshotHash = resolved.snapshot_hash ?? fullHash;
+  const canonicalContentHash = resolved.content_hash ?? resolved.snapshot_hash ?? fullHash;
 
   const shapedTokens = countTokensSync(resolved.content);
 
   const stageResult = ctx.store().stageSnippet(
-    canonicalSnapshotHash.slice(0, SHORT_HASH_LEN),
+    canonicalContentHash.slice(0, SHORT_HASH_LEN),
     resolved.content,
     source,
     shape,
-    canonicalSnapshotHash,
+    canonicalContentHash,
     shape,
     'derived',
   );
@@ -739,13 +739,13 @@ async function _processShapedFile(
     const hash = ctx.store().addChunk(resolved.content, 'smart', source, undefined, undefined, undefined, {
       subtaskIds: bindIds,
       boundDuringPlanning: true,
-      fullHash: canonicalSnapshotHash,
-      sourceRevision: canonicalSnapshotHash,
+      fullHash: canonicalContentHash,
+      sourceRevision: canonicalContentHash,
       viewKind: 'derived',
     });
     ctx.store().clearSuspect(source);
-    ctx.store().reconcileSourceRevision(source, canonicalSnapshotHash);
-    ctx.store().recordMemoryEvent({ action: 'read', reason: 'read_shaped_fallback', source, newRevision: canonicalSnapshotHash, refs: [`h:${hash}`] });
+    ctx.store().reconcileSourceRevision(source, canonicalContentHash);
+    ctx.store().recordMemoryEvent({ action: 'read', reason: 'read_shaped_fallback', source, newRevision: canonicalContentHash, refs: [`h:${hash}`] });
     const savedPctFb = fullTokens > 0 ? Math.round((1 - shapedTokens / fullTokens) * 100) : 0;
     const foldHintFb = savedPctFb < 20 && shape === 'fold' ? ' | WARNING: low compression — consider sig shape' : '';
     lines.push(`read_shaped: ${source} → h:${hash} (full:${fullTokens}tk, shaped:${shapedTokens}tk, saved:${savedPctFb}%, staged full — WM fallback)${foldHintFb} | use canonical full read before edits`);
@@ -755,7 +755,7 @@ async function _processShapedFile(
       artifact: {
         file: source,
         h: `h:${hash}`,
-        snapshot_hash: canonicalSnapshotHash,
+        content_hash: canonicalContentHash,
         selector: resolved.selector ?? shape,
         shape_hash: hashContentSync(resolved.content),
       },
@@ -763,7 +763,7 @@ async function _processShapedFile(
   }
 
   if (bindIds) {
-    const binding = { hash: canonicalSnapshotHash.slice(0, SHORT_HASH_LEN), source, shape, tokens: shapedTokens, fullHash: canonicalSnapshotHash };
+    const binding = { hash: canonicalContentHash.slice(0, SHORT_HASH_LEN), source, shape, tokens: shapedTokens, fullHash: canonicalContentHash };
     const plan = ctx.store().taskPlan;
     if (plan) {
       for (const st of plan.subtasks) {
@@ -778,16 +778,16 @@ async function _processShapedFile(
   const savedPct = fullTokens > 0 ? Math.round((1 - shapedTokens / fullTokens) * 100) : 0;
   const foldHint = savedPct < 20 && shape === 'fold' ? ' | WARNING: low compression — consider sig shape' : '';
   ctx.store().clearSuspect(source);
-  ctx.store().reconcileSourceRevision(source, canonicalSnapshotHash);
-  ctx.store().recordMemoryEvent({ action: 'read', reason: 'read_shaped', source, newRevision: canonicalSnapshotHash, refs: [`h:${canonicalSnapshotHash.slice(0, SHORT_HASH_LEN)}`] });
-  lines.push(`read_shaped: ${source} → staged:${canonicalSnapshotHash.slice(0, SHORT_HASH_LEN)} (full:${fullTokens}tk, shaped:${shapedTokens}tk, saved:${savedPct}%, cached)${foldHint} | discovery only — use canonical full read before edits`);
+  ctx.store().reconcileSourceRevision(source, canonicalContentHash);
+  ctx.store().recordMemoryEvent({ action: 'read', reason: 'read_shaped', source, newRevision: canonicalContentHash, refs: [`h:${canonicalContentHash.slice(0, SHORT_HASH_LEN)}`] });
+  lines.push(`read_shaped: ${source} → staged:${canonicalContentHash.slice(0, SHORT_HASH_LEN)} (full:${fullTokens}tk, shaped:${shapedTokens}tk, saved:${savedPct}%, cached)${foldHint} | discovery only — use canonical full read before edits`);
   return {
-    refs: [`h:${canonicalSnapshotHash.slice(0, SHORT_HASH_LEN)}`],
+    refs: [`h:${canonicalContentHash.slice(0, SHORT_HASH_LEN)}`],
     tokens: shapedTokens,
     artifact: {
       file: source,
-      h: `h:${canonicalSnapshotHash.slice(0, SHORT_HASH_LEN)}`,
-      snapshot_hash: canonicalSnapshotHash,
+      h: `h:${canonicalContentHash.slice(0, SHORT_HASH_LEN)}`,
+      content_hash: canonicalContentHash,
       selector: resolved.selector ?? shape,
       shape_hash: hashContentSync(resolved.content),
     },

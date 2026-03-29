@@ -41,7 +41,7 @@ describe('context handlers snapshot authority', () => {
   it('returns canonical snapshot results for read.context', async () => {
     const ctx = makeCtx({
       atlsBatchQuery: vi.fn().mockResolvedValue({
-        results: [{ file: 'src/demo.ts', content: 'const demo = 1;\n', snapshot_hash: 'canon1234' }],
+        results: [{ file: 'src/demo.ts', content: 'const demo = 1;\n', content_hash: 'canon1234' }],
       }),
     });
 
@@ -49,7 +49,7 @@ describe('context handlers snapshot authority', () => {
 
     expect(result.ok).toBe(true);
     expect((result.content as { results: Array<Record<string, unknown>> }).results).toEqual([
-      { file: 'src/demo.ts', h: expect.any(String), snapshot_hash: 'canon1234' },
+      { file: 'src/demo.ts', h: expect.any(String), content_hash: 'canon1234' },
     ]);
   });
 
@@ -85,19 +85,19 @@ describe('context handlers snapshot authority', () => {
   it('keeps shaped reads tied to the backend snapshot authority', async () => {
     const ctx = makeCtx({
       atlsBatchQuery: vi.fn().mockResolvedValue({
-        results: [{ file: 'src/demo.ts', content: 'function demo() {\n  return 1;\n}\n', snapshot_hash: 'canon1234' }],
+        results: [{ file: 'src/demo.ts', content: 'function demo() {\n  return 1;\n}\n', content_hash: 'canon1234' }],
       }),
     });
 
     invokeWithTimeoutMock.mockResolvedValueOnce({
       content: 'function demo() {\n  return 1;\n}\n',
       source: 'src/demo.ts',
-      snapshot_hash: 'canon1234',
+      content_hash: 'canon1234',
     });
     invokeWithTimeoutMock.mockResolvedValueOnce({
       content: 'function demo();',
       source: 'src/demo.ts',
-      snapshot_hash: 'canon1234',
+      content_hash: 'canon1234',
       selector: 'sig',
     });
 
@@ -106,7 +106,7 @@ describe('context handlers snapshot authority', () => {
     expect(result.ok).toBe(true);
     const results = (result.content as { results: Array<Record<string, unknown>> }).results;
     expect(results).toHaveLength(1);
-    expect(results[0]).toMatchObject({ file: 'src/demo.ts', h: 'h:canon1', snapshot_hash: 'canon1234', selector: 'sig' });
+    expect(results[0]).toMatchObject({ file: 'src/demo.ts', h: 'h:canon1', content_hash: 'canon1234', selector: 'sig' });
     expect(results[0]).toHaveProperty('shape_hash');
     const staged = [...useContextStore.getState().stagedSnippets.values()];
     expect(staged[0]?.sourceRevision).toBe('canon1234');
@@ -120,15 +120,15 @@ describe('context handlers snapshot authority', () => {
     }));
     const ctx = makeCtx({
       atlsBatchQuery: vi.fn().mockResolvedValue({
-        results: paths.slice(0, 2).map(f => ({ file: f, content: 'x\n', snapshot_hash: 'canon1234' })),
+        results: paths.slice(0, 2).map(f => ({ file: f, content: 'x\n', content_hash: 'canon1234' })),
       }),
       expandFilePathRefs: expand,
     });
     invokeWithTimeoutMock
-      .mockResolvedValueOnce({ content: 'x\n', source: 'src/a.ts', snapshot_hash: 'canon1234' })
-      .mockResolvedValueOnce({ content: 'sig a', source: 'src/a.ts', snapshot_hash: 'canon1234', selector: 'sig' })
-      .mockResolvedValueOnce({ content: 'x\n', source: 'src/b.ts', snapshot_hash: 'canon1234' })
-      .mockResolvedValueOnce({ content: 'sig b', source: 'src/b.ts', snapshot_hash: 'canon1234', selector: 'sig' });
+      .mockResolvedValueOnce({ content: 'x\n', source: 'src/a.ts', content_hash: 'canon1234' })
+      .mockResolvedValueOnce({ content: 'sig a', source: 'src/a.ts', content_hash: 'canon1234', selector: 'sig' })
+      .mockResolvedValueOnce({ content: 'x\n', source: 'src/b.ts', content_hash: 'canon1234' })
+      .mockResolvedValueOnce({ content: 'sig b', source: 'src/b.ts', content_hash: 'canon1234', selector: 'sig' });
 
     const result = await handleReadShaped(
       { file_paths: paths, shape: 'sig', max_files: 2 },
@@ -140,12 +140,12 @@ describe('context handlers snapshot authority', () => {
     expect(result.ok).toBe(true);
   });
 
-  it('includes snapshot_hash in read.lines content payloads', async () => {
+  it('includes content_hash in read.lines content payloads', async () => {
     const ctx = makeCtx({
       atlsBatchQuery: vi.fn().mockResolvedValue({
         file: 'src/demo.ts',
         h: 'h:deadbeefcafe',
-        snapshot_hash: 'deadbeefcafe1234567890abcdef',
+        content_hash: 'deadbeefcafe1234567890abcdef',
         target_range: [[2, 3]],
         actual_range: [[2, 3]],
         context_lines: 2,
@@ -159,7 +159,7 @@ describe('context handlers snapshot authority', () => {
     expect(result.refs).toEqual(['h:deadbeefcafe:2-3']);
     expect(result.content).toMatchObject({
       file: 'src/demo.ts',
-      snapshot_hash: 'deadbeefcafe1234567890abcdef',
+      content_hash: 'deadbeefcafe1234567890abcdef',
     });
   });
 });

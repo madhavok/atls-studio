@@ -760,7 +760,7 @@ export interface ChangeEditParams {
   deletes?: string[];
   revise?: string;
   undo?: string;
-  snapshot_hash?: string;
+  content_hash?: string;
   mode?: string;
 }
 
