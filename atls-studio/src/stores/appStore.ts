@@ -479,8 +479,8 @@ export interface Settings {
   extendedContext: Partial<Record<AIProvider, boolean>>;
   /** Per-model extended 1M toggle (models with base &lt; 1M that support bump) */
   extendedContextByModelId: Record<string, boolean>;
-  // Entry manifest depth: 'off' = skip, 'paths' = file list only, 'sigs' = full signatures (default)
-  entryManifestDepth: 'off' | 'paths' | 'sigs';
+  // Entry manifest depth: 'off' = skip, 'paths' = file list only, 'sigs' = signatures only, 'paths_sigs' = both
+  entryManifestDepth: 'off' | 'paths' | 'sigs' | 'paths_sigs';
 }
 
 /** Per-category severity enables. Key = category, value = enabled severities */

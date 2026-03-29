@@ -3167,7 +3167,7 @@ function _buildStaticSystemPrompt(
   atlsReady?: boolean,
   provider?: string,
   entryManifest?: EntryManifestEntry[],
-  entryManifestDepth?: 'off' | 'paths' | 'sigs',
+  entryManifestDepth?: 'off' | 'paths' | 'sigs' | 'paths_sigs',
 ): string {
   // Inject refactor config early for cache key (refactor mode only)
   const refactorPart = mode === 'refactor' ? useRefactorStore.getState().getConfigForPrompt() : '';
@@ -3242,16 +3242,21 @@ batch({version:"1.0",steps:[{id:"exec",use:"system.exec",with:{cmd:"..."}}]}) â†
   // Entry manifest (frozen at session start, cached in BP1)
   let entryManifestSection = '';
   if (entryManifestDepth && entryManifestDepth !== 'off' && entryManifest?.length) {
+    const pathList = entryManifest.map(e => `${e.path} (${e.method}, ${e.lines}L)`).join(' | ');
+    const sigLines = entryManifest
+      .filter(e => e.sig && e.tokens > 0)
+      .map(e => e.sig);
     if (entryManifestDepth === 'paths') {
-      const pathList = entryManifest.map(e => `${e.path} (${e.method}, ${e.lines}L)`).join(' | ');
       entryManifestSection = `\n\n## Entry Points\n${pathList}`;
-    } else {
-      const sigLines = entryManifest
-        .filter(e => e.sig && e.tokens > 0)
-        .map(e => e.sig);
+    } else if (entryManifestDepth === 'sigs') {
       if (sigLines.length > 0) {
         entryManifestSection = `\n\n## Entry Points\n${sigLines.join('\n')}`;
       }
+    } else {
+      // paths_sigs
+      const body =
+        sigLines.length > 0 ? `${pathList}\n\n${sigLines.join('\n')}` : pathList;
+      entryManifestSection = `\n\n## Entry Points\n${body}`;
     }
   }
 

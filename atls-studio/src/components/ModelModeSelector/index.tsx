@@ -533,14 +533,19 @@ export function ModelModeSelector() {
       {/* Entry Manifest depth selector (next to model selector) */}
       {chatMode !== 'ask' && chatMode !== 'swarm' && (() => {
         const depth = settings.entryManifestDepth ?? 'sigs';
-        const setDepth = (d: 'off' | 'paths' | 'sigs') => {
+        const setDepth = (d: 'off' | 'paths' | 'sigs' | 'paths_sigs') => {
           useAppStore.getState().setSettings({ entryManifestDepth: d });
           resetStaticPromptCache();
         };
         const levels = [
           { id: 'off' as const, label: 'Off', title: 'Entry manifest OFF — saves context budget' },
           { id: 'paths' as const, label: 'Paths', title: 'Entry manifest: file paths only (~50-100 tokens)' },
-          { id: 'sigs' as const, label: 'Sigs', title: 'Entry manifest: full signatures (~200tk/file)' },
+          { id: 'sigs' as const, label: 'Sigs', title: 'Entry manifest: signatures only (~200tk/file)' },
+          {
+            id: 'paths_sigs' as const,
+            label: 'P+S',
+            title: 'Entry manifest: paths line + full signatures (highest token use)',
+          },
         ];
         return (
           <>
@@ -557,6 +562,7 @@ export function ModelModeSelector() {
                       depth === l.id
                         ? l.id === 'sigs' ? 'bg-emerald-500/80 text-white'
                           : l.id === 'paths' ? 'bg-amber-500/80 text-white'
+                          : l.id === 'paths_sigs' ? 'bg-sky-500/80 text-white'
                           : 'bg-studio-border text-studio-text'
                         : 'bg-studio-surface/30 text-studio-muted hover:bg-studio-surface'
                     }`}
