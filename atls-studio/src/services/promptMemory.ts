@@ -32,6 +32,11 @@ export const COMPACT_HISTORY_TOKEN_THRESHOLD = 18000;
 /** Max rounds in a single task phase before nudging session.advance. */
 export const PHASE_ROUND_BUDGET = 5;
 
+/** Absolute ceiling on read-only rounds before force-stop (Layer 3 safety net). */
+export const TOTAL_RESEARCH_ROUND_BUDGET = 12;
+/** Additional rounds after budget warning before auto task_complete. */
+export const RESEARCH_FORCE_STOP_MARGIN = 3;
+
 /** Safety ceiling for subagent rounds — budget-based stopping is the real limiter. */
 export const SUBAGENT_MAX_ROUNDS = 100;
 /** Total input+output tokens across all subagent rounds before forced stop. */

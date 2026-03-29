@@ -66,6 +66,16 @@ export interface RoundSnapshot {
   timeToFirstTokenMs?: number;
   /** Wall-clock ms for full round (stream start to stream completion) */
   roundLatencyMs?: number;
+  /** True when this round had no mutations (read-only research). */
+  isResearchRound?: boolean;
+  /** Cumulative read-only rounds across the session. */
+  totalResearchRounds?: number;
+  /** New file paths touched this round (0 = coverage plateau). */
+  newCoverage?: number;
+  /** True when coverage has plateaued for 2+ consecutive rounds. */
+  coveragePlateau?: boolean;
+  /** BB writes this round that met the substantive quality threshold. */
+  substantiveBbWrites?: number;
 }
 
 interface RoundHistoryState {
@@ -79,6 +89,23 @@ export const MAX_SNAPSHOTS = 200;
 /** Primary chat agent rounds only (excludes subagent and swarm worker snapshots). */
 export function isMainChatRound(s: RoundSnapshot): boolean {
   return !s.isSubagentRound && !s.isSwarmRound;
+}
+
+/** Cost aggregates for main-chat rounds only (same basis as Cost & I/O chart). */
+export function computeMainChatRoundCostStats(snapshots: RoundSnapshot[]): {
+  mainRoundCount: number;
+  mainRoundsCostSum: number;
+  avgMainRoundCost: number;
+} {
+  const main = snapshots.filter(isMainChatRound);
+  let sum = 0;
+  for (const s of main) {
+    sum += s.costCents;
+  }
+  const n = main.length;
+  const mainRoundsCostSum = Math.round(sum * 100) / 100;
+  const avgMainRoundCost = n > 0 ? Math.round((sum / n) * 100) / 100 : 0;
+  return { mainRoundCount: n, mainRoundsCostSum, avgMainRoundCost };
 }
 
 export const useRoundHistoryStore = create<RoundHistoryState>((set) => ({

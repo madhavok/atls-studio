@@ -470,7 +470,7 @@ export function useChatPersistence() {
             freedTokens: memorySnapshot.freedTokens,
             stageVersion: memorySnapshot.stageVersion,
             transitionBridge: memorySnapshot.transitionBridge,
-            batchMetrics: { ...memorySnapshot.batchMetrics, hadReads: memorySnapshot.batchMetrics?.hadReads ?? false, hadBbWrite: memorySnapshot.batchMetrics?.hadBbWrite ?? false },
+            batchMetrics: { ...memorySnapshot.batchMetrics, hadReads: memorySnapshot.batchMetrics?.hadReads ?? false, hadBbWrite: memorySnapshot.batchMetrics?.hadBbWrite ?? false, hadSubstantiveBbWrite: (memorySnapshot.batchMetrics as Record<string, unknown>)?.hadSubstantiveBbWrite as boolean ?? false },
             hashStack: memorySnapshot.hashStack,
             editHashStack: memorySnapshot.editHashStack,
             readHashStack: memorySnapshot.readHashStack,
@@ -624,8 +624,8 @@ export function useChatPersistence() {
 
           if (sessionState[STATE_KEY_BATCH_METRICS]) {
             try {
-              const metrics = JSON.parse(sessionState[STATE_KEY_BATCH_METRICS]) as { toolCalls: number; manageOps: number; hadReads?: boolean; hadBbWrite?: boolean };
-              useContextStore.setState({ batchMetrics: { ...metrics, hadReads: metrics.hadReads ?? false, hadBbWrite: metrics.hadBbWrite ?? false } });
+              const metrics = JSON.parse(sessionState[STATE_KEY_BATCH_METRICS]) as { toolCalls: number; manageOps: number; hadReads?: boolean; hadBbWrite?: boolean; hadSubstantiveBbWrite?: boolean };
+              useContextStore.setState({ batchMetrics: { ...metrics, hadReads: metrics.hadReads ?? false, hadBbWrite: metrics.hadBbWrite ?? false, hadSubstantiveBbWrite: metrics.hadSubstantiveBbWrite ?? false } });
             } catch { /* malformed */ }
           }
 
@@ -1012,7 +1012,7 @@ export function useChatPersistence() {
       freedTokens: snapshot.freedTokens,
       stageVersion: snapshot.stageVersion,
       transitionBridge: snapshot.transitionBridge,
-      batchMetrics: { ...snapshot.batchMetrics, hadReads: snapshot.batchMetrics?.hadReads ?? false, hadBbWrite: snapshot.batchMetrics?.hadBbWrite ?? false },
+      batchMetrics: { ...snapshot.batchMetrics, hadReads: snapshot.batchMetrics?.hadReads ?? false, hadBbWrite: snapshot.batchMetrics?.hadBbWrite ?? false, hadSubstantiveBbWrite: (snapshot.batchMetrics as Record<string, unknown>)?.hadSubstantiveBbWrite as boolean ?? false },
       hashStack: snapshot.hashStack,
       editHashStack: snapshot.editHashStack,
       readHashStack: snapshot.readHashStack,

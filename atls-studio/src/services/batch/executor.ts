@@ -1304,10 +1304,13 @@ export async function executeUnifiedBatch(
     // Record result
     recordStepResult(step.id, step.use, output, Date.now() - stepStart);
 
-    // Track op kinds for BB-write nudge + read-spin circuit breaker
+    // Track op kinds for BB-write nudge + read-spin circuit breaker + coverage
     if (output.ok && output.kind === 'file_refs') {
       ctx.store().recordBatchRead();
       const spinEntries = extractFileRefsWithRanges(output);
+      for (const entry of spinEntries) {
+        ctx.store().recordCoveragePath(entry.path);
+      }
       if (spinEntries.length > 0) {
         const br = ctx.store().recordFileReadSpin(spinEntries);
         if (br) {
@@ -1318,7 +1321,9 @@ export async function executeUnifiedBatch(
       }
     }
     if (output.ok && step.use === 'session.bb.write') {
-      ctx.store().recordBatchBbWrite();
+      const bbKey = typeof mergedParams.key === 'string' ? mergedParams.key : undefined;
+      const bbContent = typeof mergedParams.content === 'string' ? mergedParams.content : undefined;
+      ctx.store().recordBatchBbWrite(bbKey, bbContent);
       const bbPaths = extractBbWriteFilePaths(mergedParams);
       ctx.store().resetFileReadSpin(bbPaths.length > 0 ? bbPaths : undefined);
     }

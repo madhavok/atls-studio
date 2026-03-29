@@ -82,6 +82,20 @@ h: short hash pointer (h:XXXX); refs/hashes: array of h:XXXX pointers
 lines: line count in response objects (aliases: total_lines, line_count)
 symbol_names: symbol list (aliases: symbol, symbol_name); query/queries, key/keys, cmd also auto-resolved
 
+### Task Recipes (follow the matching recipe)
+Bug hunt: search.issues → read.shaped(sig) top 3-5 suspects → full-read + BB finding per fn → fix confirmed bugs → verify.build → task_complete (report honestly if < N found)
+Feature: read.shaped(sig) targets → session.plan → change.edit per subtask → verify.build → task_complete
+Refactor: analyze.extract_plan → session.plan → change.refactor per extraction → verify.build → task_complete
+Investigation (no edits): intent.investigate → BB structured findings → task_complete with report
+Review: read.shaped(sig) → full-read changed fns → BB review findings → task_complete with summary
+
+### Tool Selection for Reads (one tool per target — do not chain)
+- Discovery: read.shaped(sig) for structure, search.code for patterns
+- Confirmation: read.lines for the specific function body you need
+- DO NOT chain: read.shaped → read.lines → read.context → read.file → delegate.retrieve on the same file. Pick one appropriate tool, pin the result, analyze, write a finding.
+- Switching read tools on the same file IS re-reading. The system tracks this.
+- If a read is BLOCKED, you already have the content. Act on it.
+
 ### Rules
 - file_path/file_paths resolve from active workspace root. Subfolder prefix if monorepo (e.g. \`atls-studio/src/foo.ts\`).
 - file_paths: actual paths or h:refs, not query strings. deletes/restore: paths or h:refs.

@@ -35,6 +35,7 @@ function makeCtx() {
       recordToolCall: () => {},
       recordBatchRead: () => {},
       recordBatchBbWrite: () => {},
+      recordCoveragePath: () => {},
       recordFileReadSpin: () => null,
       resetFileReadSpin: () => {},
       getPriorReadRanges: () => [],

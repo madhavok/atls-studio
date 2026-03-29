@@ -880,6 +880,14 @@ type ToolCallLike = {
   result?: string;
   status: RenderToolStatus;
   thoughtSignature?: string;
+  /** Per-step rows from batch execution (authoritative after tool completes). */
+  syntheticChildren?: Array<{
+    id: string;
+    name: string;
+    args?: Record<string, unknown>;
+    result?: string;
+    status?: string;
+  }>;
 };
 
 type BatchStepCall = {
@@ -997,9 +1005,28 @@ function isBatchCall(call: { name: string; args?: Record<string, unknown> }): bo
   return call.name === 'batch';
 }
 
+function mapSyntheticStepStatus(raw: string | undefined): ToolCall['status'] {
+  if (raw === 'failed') return 'failed';
+  if (raw === 'running') return 'running';
+  if (raw === 'pending') return 'pending';
+  return 'completed';
+}
+
 function expandBatchToolCall(toolCall: ToolCallLike): BatchStepCall[] {
   if (!isBatchCall(toolCall)) {
     return [];
+  }
+
+  const synth = toolCall.syntheticChildren;
+  if (synth && synth.length > 0) {
+    return synth.map((child) => ({
+      id: child.id,
+      name: child.name,
+      args: child.args,
+      result: child.result,
+      status: mapSyntheticStepStatus(child.status),
+      thoughtSignature: toolCall.thoughtSignature,
+    }));
   }
 
   const batchArgs = toolCall.args || {};
@@ -1090,7 +1117,11 @@ const MessageBatchToolCalls = memo(function MessageBatchToolCalls({ toolCall }: 
             name: childCall.name,
             args: childCall.args,
             result: childCall.result,
-            status: childCall.status === 'failed' ? 'failed' : 'completed',
+            status:
+              childCall.status === 'failed' ? 'failed'
+              : childCall.status === 'running' ? 'running'
+              : childCall.status === 'pending' ? 'pending'
+              : 'completed',
             thoughtSignature: childCall.thoughtSignature,
           }}
         />

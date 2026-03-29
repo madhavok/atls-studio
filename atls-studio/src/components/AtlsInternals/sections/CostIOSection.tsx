@@ -2,7 +2,7 @@ import { useMemo } from 'react';
 import {
   ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend as RLegend,
 } from 'recharts';
-import { useRoundHistoryStore, isMainChatRound } from '../../../stores/roundHistoryStore';
+import { useRoundHistoryStore, isMainChatRound, computeMainChatRoundCostStats } from '../../../stores/roundHistoryStore';
 import { useCostStore, formatCost } from '../../../stores/costStore';
 
 const COLORS = {
@@ -27,7 +27,18 @@ export function CostIOSection() {
   const subagentSnapshots = useMemo(() => snapshots.filter((s) => s.isSubagentRound), [snapshots]);
   const swarmSnapshots = useMemo(() => snapshots.filter((s) => s.isSwarmRound), [snapshots]);
 
-  const { chartData, totalInput, totalOutput, totalCacheRead, avgMainRoundCost } = useMemo(() => {
+  const { mainRoundsCostSum, avgMainRoundCost } = useMemo(
+    () => computeMainChatRoundCostStats(snapshots),
+    [snapshots],
+  );
+
+  const researchRatio = useMemo(() => {
+    if (mainSnapshots.length === 0) return 0;
+    const researchCount = mainSnapshots.filter(s => s.isResearchRound).length;
+    return researchCount / mainSnapshots.length;
+  }, [mainSnapshots]);
+
+  const { chartData, totalInput, totalOutput, totalCacheRead } = useMemo(() => {
     const cd = mainSnapshots.map((s) => ({
       round: s.round,
       Input: s.inputTokens,
@@ -36,16 +47,12 @@ export function CostIOSection() {
       Cost: Math.round(s.costCents * 100) / 100,
     }));
     let tIn = 0, tOut = 0, tCache = 0;
-    let mainCostSum = 0;
     for (const s of mainSnapshots) {
       tIn += s.inputTokens;
       tOut += s.outputTokens;
       tCache += s.cacheReadTokens;
-      mainCostSum += s.costCents;
     }
-    const nMain = mainSnapshots.length;
-    const avgMain = nMain > 0 ? Math.round((mainCostSum / nMain) * 100) / 100 : 0;
-    return { chartData: cd, totalInput: tIn, totalOutput: tOut, totalCacheRead: tCache, avgMainRoundCost: avgMain };
+    return { chartData: cd, totalInput: tIn, totalOutput: tOut, totalCacheRead: tCache };
   }, [mainSnapshots]);
 
   const costAxisMax = useMemo(() => {
@@ -126,30 +133,55 @@ export function CostIOSection() {
         </ResponsiveContainer>
       )}
 
-      <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
-        <StatCard label="Total Cost" value={formatCost(chatCostCents)} accent />
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
         <StatCard
-          label="Avg Cost/Main Round"
-          value={mainSnapshots.length > 0 ? formatCost(avgMainRoundCost) : '—'}
-          subtitle="mean of main rounds in history"
+          label="Session total"
+          value={formatCost(chatCostCents)}
+          subtitle="main + subagents (API)"
+          accent
         />
-        <StatCard label="Main Input" value={fmtK(totalInput)} />
-        <StatCard label="Main Output" value={fmtK(totalOutput)} />
-        <StatCard label="Main Cache Reads" value={fmtK(totalCacheRead)} />
+        <StatCard
+          label="Main rounds total"
+          value={mainSnapshots.length > 0 ? formatCost(mainRoundsCostSum) : '—'}
+          subtitle="sum of main snapshot costs (chart series)"
+        />
+        <StatCard
+          label="Avg cost / main round"
+          value={mainSnapshots.length > 0 ? formatCost(avgMainRoundCost) : '—'}
+          subtitle="main agent only; session total includes subagents"
+        />
+        <StatCard label="Main input" value={fmtK(totalInput)} />
+        <StatCard label="Main output" value={fmtK(totalOutput)} />
+        <StatCard label="Main cache reads" value={fmtK(totalCacheRead)} />
+        {mainSnapshots.length > 0 && (
+          <StatCard
+            label="Research ratio"
+            value={`${Math.round(researchRatio * 100)}%`}
+            subtitle={researchRatio > 0.7 ? 'high — agent may be spinning' : 'read-only rounds'}
+            accent={researchRatio > 0.7}
+          />
+        )}
       </div>
 
-      <div className="text-[10px] text-studio-muted">
-        Showing {chartData.length} main chat rounds
-        {(subagentSnapshots.length > 0 || swarmSnapshots.length > 0) && (
-          <span>
-            {' '}
-            ({[
-              subagentSnapshots.length > 0 && `${subagentSnapshots.length} subagent`,
-              swarmSnapshots.length > 0 && `${swarmSnapshots.length} swarm`,
-            ].filter(Boolean).join('; ')} excluded)
-          </span>
+      <div className="text-[10px] text-studio-muted space-y-0.5">
+        <div>
+          Showing {chartData.length} main chat rounds
+          {(subagentSnapshots.length > 0 || swarmSnapshots.length > 0) && (
+            <span>
+              {' '}
+              ({[
+                subagentSnapshots.length > 0 && `${subagentSnapshots.length} subagent`,
+                swarmSnapshots.length > 0 && `${swarmSnapshots.length} swarm`,
+              ].filter(Boolean).join('; ')} excluded from chart)
+            </span>
+          )}
+          .
+        </div>
+        {swarmSnapshots.length > 0 && (
+          <div>
+            Swarm worker API cost is not included in session total (isolated metrics).
+          </div>
         )}
-        .
       </div>
 
       {subAgentUsages.length > 0 && (

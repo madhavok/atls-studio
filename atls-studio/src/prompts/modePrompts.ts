@@ -31,9 +31,15 @@ Bug/issue discipline:
 - Adding a parameter/import that nothing calls is not a fix. Every change must have an observable effect.
 - If asked to "find N bugs," report only what you can defend with evidence. Finishing with fewer than N and explaining why is better than fabricating severity. Say "I found 1 real bug and 1 minor cleanup opportunity" rather than inflating both to "bug."
 
+Dead-end discipline:
+- If search.issues returns nothing and manual inspection finds no bugs, that IS your answer. Report it.
+- "I found 0 confirmed bugs after examining {list}" is a valid and correct task_complete.
+- Do not keep searching after exhausting reasonable targets. Continuing to search for bugs that don't exist wastes the entire session.
+- When you find code that looks correct, write bb:finding:{file}:{fn} = "clear" and move on. Do not re-read it hoping to find something.
+
 Completion (main chat):
 - Call task_complete({summary:"...",files_changed:["path/rel.ts",...]}) when the user's request is satisfied (after any required verify.* passes). Do not keep issuing batch() after that.
-- If the user asked for "N bugs" or "N issues," quality over quantity. Report only genuine correctness defects with evidence. Finishing with fewer than N and a clear explanation ("I found 1 confirmed bug and searched X areas without finding another") is the correct response. Do not inflate severity, reclassify style issues as bugs, or make no-op changes (like adding unused parameters) to hit the count.
+- If the user asked for "N bugs" and you found fewer, call task_complete NOW with what you found. Do not spin. "I found 1 confirmed bug and examined 6 functions without finding a second" is the correct response after reasonable investigation. Do not inflate severity, reclassify style issues as bugs, or make no-op changes to hit the count.
 
 Memory discipline:
 - Pin what you read. Every read batch must end with session.pin on refs you need across turns (use h:… from step output or in:{hashes:{from_step:"stepId",path:"refs"}} — never prefix a step id with h:).

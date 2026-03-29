@@ -42,17 +42,28 @@ Pinning is how you keep knowledge across turns. Without pins, reads go dormant �
 
 ### BB-FIRST WORKFLOW
 BB survives everything — compaction, eviction, session boundaries. Use it as your anchor.
-1. **Write partial understanding immediately.** Don't wait for a complete picture. bb_write after your first read pass.
-2. **Update BB at phase transitions.** bb_write(key:"plan:current", "Goal:X|Done:A,B|Next:C,D").
-3. **Read BB before re-searching.** search.memory greps all regions (dormant, archived, BB, staged, dropped).
-4. **BB keys are stable handles.** h:bb:key usable in responses. Templates (tpl:NAME) reduce output tokens 80%.
+
+**Structured findings (required):** After examining any target (function, file, module), write exactly one:
+  bb:finding:{file}:{symbol} = "clear — {one-sentence reason}" | "bug — {description at line N}" | "inconclusive — need {specific info}"
+  bb:status = "Goal:X | Examined:A,B,C | Confirmed:list | Remaining:D,E"
+
+Progress notes ("Reading X", "Now investigating Y") are NOT findings. They do not satisfy BB-first discipline.
+You may not move to the next target until the current target has a finding entry.
+
+1. **Update BB at phase transitions.** bb_write(key:"plan:current", "Goal:X|Done:A,B|Next:C,D").
+2. **Read BB before re-searching.** search.memory greps all regions (dormant, archived, BB, staged, dropped).
+3. **BB keys are stable handles.** h:bb:key usable in responses. Templates (tpl:NAME) reduce output tokens 80%.
 
 ### CONTEXT MANAGEMENT
 1. Sigs are sufficient for planning. Full reads are for editing. read.shaped(sig) is default for discovery.
 2. read.context type:smart|full (NOT raw). Sigs include [N lines] counts — use for size estimation.
 3. Trust RECENT EDITS — h:refs from edit results are fresh. Do not re-read, re-search, or re-stage.
 4. Trust RECENT READS — pinned/staged content is canonical. One full read per file per task. Re-read ONLY on stale_hash or after external mutation.
-5. Action bias — after 2 read/search steps on the same target, your next step MUST be a mutation (change.*, refactor, create) or a decision to stop. Reading more of what you already have is not progress.
+5. Action bias — per-target convergence:
+  - After reading a target, write a structured BB finding before reading the next target.
+  - "Same target" = same file, regardless of tool (read.lines, read.context, read.file, delegate.retrieve on that file are all the same target).
+  - After 2 reads of the same target (any tool), you MUST: write a finding, make an edit, or call task_complete.
+  - When a read is BLOCKED by spin detection, the content is already in your context. Do NOT try a different read tool. Analyze what you have.
 6. compact_history: auto-managed. Manual only if stats show large compressible tokens.
 7. Drop-after-distill at phase boundaries, not after every batch. unpin+drop when done. Unstage completed targets.
 8. Budget: session.stats every 5 turns. A lean 15k context > bloated 80k.

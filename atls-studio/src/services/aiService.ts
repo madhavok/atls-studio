@@ -158,6 +158,8 @@ import {
   WORKSPACE_CONTEXT_BUDGET_TOKENS,
   WM_BUDGET_TOKENS,
   PHASE_ROUND_BUDGET,
+  TOTAL_RESEARCH_ROUND_BUDGET,
+  RESEARCH_FORCE_STOP_MARGIN,
   createPromptLayerBudgets,
   getStagedTokens,
   getEstimatedTotalPromptTokens,
@@ -943,6 +945,7 @@ type ToolLoopState = {
 };
 let _toolLoopState: ToolLoopState | null = null;
 let _roundHadMutations = false;
+let _hadVerification = false;
 let _nextSessionId = 0;
 
 function setToolLoopState(
@@ -1166,6 +1169,11 @@ async function streamChatViaTauri(
   let consecutiveReadOnlyRounds = 0;
   let roundsInCurrentPhase = 0;
   let lastActiveSubtaskId: string | null = null;
+  let totalResearchRounds = 0;
+  let anyRoundHadMutations = false;
+  _hadVerification = false;
+  const advanceCountBySubtask = new Map<string, number>();
+  let hadProgressSinceLastAdvance = false;
   
   // Initialize agent progress tracking
   const store = useAppStore.getState();
@@ -1668,6 +1676,11 @@ async function streamChatViaTauri(
             ? roundFirstTokenAtMs - roundStreamStartMs
             : undefined,
           roundLatencyMs: roundStreamEndMs - roundStreamStartMs,
+          isResearchRound: !_roundHadMutations,
+          totalResearchRounds,
+          newCoverage: ctxState.roundNewCoverage,
+          coveragePlateau: ctxState.coveragePlateauStreak >= 2,
+          substantiveBbWrites: bm.hadSubstantiveBbWrite ? 1 : 0,
         });
       }
 
@@ -2189,33 +2202,97 @@ async function streamChatViaTauri(
       conversationHistory.push({ role: 'user', content: toolResults });
 
       // task_complete was called — stop the loop after recording tool results
-      // so the model doesn't get another round to generate more text.
+      // Layer 3B: Verify gate — if mutations happened, require at least one verify.* before completing
       if (taskCompleteCalled) {
-        console.log('[aiService] task_complete called — stopping tool loop');
-        useAppStore.getState().clearAgentPendingAction();
-        useAppStore.getState().setAgentProgress({ status: 'stopped', stoppedReason: 'completed' });
-        useAppStore.getState().setAgentCanContinue(false);
-        break;
+        const forceStopActive = totalResearchRounds >= TOTAL_RESEARCH_ROUND_BUDGET + RESEARCH_FORCE_STOP_MARGIN;
+        if (anyRoundHadMutations && !_hadVerification && !forceStopActive
+            && (mode === 'agent' || mode === 'refactor')) {
+          console.log('[aiService] Verify gate: mutations detected but no verify.* ran — injecting warning');
+          taskCompleteCalled = false;
+          conversationHistory.push({
+            role: 'user',
+            content: '<<SYSTEM: You made code changes but did not verify them. Run verify.build before calling task_complete.>>',
+          });
+        } else {
+          console.log('[aiService] task_complete called — stopping tool loop');
+          useAppStore.getState().clearAgentPendingAction();
+          useAppStore.getState().setAgentProgress({ status: 'stopped', stoppedReason: 'completed' });
+          useAppStore.getState().setAgentCanContinue(false);
+          break;
+        }
       }
 
       // --- Structured behavior enforcement ---
 
-      // Track consecutive read-only rounds (no mutations). After 3, inject
-      // a hard system message that the model cannot ignore.
+      // Finalize round coverage tracking for convergence detection
+      useContextStore.getState().finishRoundCoverage(_roundHadMutations);
+
+      if (_roundHadMutations) {
+        anyRoundHadMutations = true;
+        hadProgressSinceLastAdvance = true;
+      }
+
+      // Track consecutive read-only rounds (no mutations). After 2, inject warning.
       if (!_roundHadMutations) {
         consecutiveReadOnlyRounds++;
+        totalResearchRounds++;
       } else {
         consecutiveReadOnlyRounds = 0;
       }
-      if (consecutiveReadOnlyRounds >= 3 && mode !== 'ask' && mode !== 'retriever') {
+      if (consecutiveReadOnlyRounds >= 2 && mode !== 'ask' && mode !== 'retriever') {
         conversationHistory.push({
           role: 'user',
-          content: '<<SYSTEM: 3 consecutive read-only rounds without edits or BB writes. You must now: ' +
-            '(1) make an edit/create, (2) write findings to session.bb.write, or (3) declare a specific blocker. ' +
+          content: '<<SYSTEM: 2 consecutive read-only rounds without edits. You must now: ' +
+            '(1) make an edit/create, (2) write structured findings to session.bb.write, or (3) declare a specific blocker. ' +
             'Further reads of already-seen files will be blocked.>>',
         });
         consecutiveReadOnlyRounds = 0;
         console.log(`[aiService] Spin guard: injected read-only round warning at round ${round + 1}`);
+      }
+
+      // Layer 2A: Coverage-based convergence detection
+      const ctxConvergence = useContextStore.getState();
+      if (ctxConvergence.coveragePlateauStreak >= 2 && !_roundHadMutations
+          && mode !== 'ask' && mode !== 'retriever') {
+        conversationHistory.push({
+          role: 'user',
+          content: '<<SYSTEM: No new files or symbols examined in the last 2 rounds. You are re-examining ' +
+            'known content. Write findings on what you have and either act or call task_complete.>>',
+        });
+        console.log(`[aiService] Coverage plateau detected at round ${round + 1} (streak: ${ctxConvergence.coveragePlateauStreak})`);
+      }
+
+      // Layer 2C: session.advance abuse detection
+      const taskPlanAdv = useContextStore.getState().taskPlan;
+      if (taskPlanAdv?.activeSubtaskId) {
+        if (taskPlanAdv.activeSubtaskId !== lastActiveSubtaskId) {
+          const prevId = lastActiveSubtaskId;
+          if (prevId) {
+            const count = (advanceCountBySubtask.get(prevId) ?? 0) + 1;
+            advanceCountBySubtask.set(prevId, count);
+            if (count > 1 && !hadProgressSinceLastAdvance) {
+              conversationHistory.push({
+                role: 'user',
+                content: `<<SYSTEM: session.advance called ${count}x for "${prevId}" without intervening edits or structured findings. ` +
+                  'Advancing phases does not create progress. You must act or complete.>>',
+              });
+              console.log(`[aiService] Advance abuse: "${prevId}" advanced ${count}x without progress`);
+            }
+          }
+          roundsInCurrentPhase = 0;
+          lastActiveSubtaskId = taskPlanAdv.activeSubtaskId;
+          hadProgressSinceLastAdvance = false;
+        }
+        roundsInCurrentPhase++;
+        if (roundsInCurrentPhase >= PHASE_ROUND_BUDGET) {
+          conversationHistory.push({
+            role: 'user',
+            content: `<<SYSTEM: You have spent ${roundsInCurrentPhase} rounds in the "${taskPlanAdv.activeSubtaskId}" phase. ` +
+              'Commit your findings with session.advance(summary:"...") and move to the next phase. ' +
+              'If blocked, declare the blocker in BB and advance anyway.>>',
+          });
+          console.log(`[aiService] Phase budget exceeded: ${roundsInCurrentPhase} rounds in "${taskPlanAdv.activeSubtaskId}"`);
+        }
       }
 
       // Nudge toward task plan if the model has done a read-only round without planning
@@ -2230,24 +2307,26 @@ async function streamChatViaTauri(
         console.log('[aiService] Task plan nudge injected after read-only round 1');
       }
 
-      // Phase round budget: if a task plan is active, track rounds per phase
-      // and nudge advancement when the budget is exceeded.
-      const taskPlan = useContextStore.getState().taskPlan;
-      if (taskPlan?.activeSubtaskId) {
-        if (taskPlan.activeSubtaskId !== lastActiveSubtaskId) {
-          roundsInCurrentPhase = 0;
-          lastActiveSubtaskId = taskPlan.activeSubtaskId;
-        }
-        roundsInCurrentPhase++;
-        if (roundsInCurrentPhase >= PHASE_ROUND_BUDGET) {
-          conversationHistory.push({
-            role: 'user',
-            content: `<<SYSTEM: You have spent ${roundsInCurrentPhase} rounds in the "${taskPlan.activeSubtaskId}" phase. ` +
-              'Commit your findings with session.advance(summary:"...") and move to the next phase. ' +
-              'If blocked, declare the blocker in BB and advance anyway.>>',
-          });
-          console.log(`[aiService] Phase budget exceeded: ${roundsInCurrentPhase} rounds in "${taskPlan.activeSubtaskId}"`);
-        }
+      // Layer 3A: Total research round budget — absolute ceiling
+      if (totalResearchRounds >= TOTAL_RESEARCH_ROUND_BUDGET + RESEARCH_FORCE_STOP_MARGIN
+          && mode !== 'ask' && mode !== 'retriever') {
+        console.log(`[aiService] FORCE STOP: ${totalResearchRounds} research rounds without mutations — forcing task_complete`);
+        conversationHistory.push({
+          role: 'user',
+          content: `<<SYSTEM: FORCE STOP — ${totalResearchRounds} rounds without any code changes. ` +
+            'Call task_complete NOW with an honest summary of what you examined and found. ' +
+            'This session will not continue.>>',
+        });
+      } else if (totalResearchRounds >= TOTAL_RESEARCH_ROUND_BUDGET
+          && mode !== 'ask' && mode !== 'retriever') {
+        conversationHistory.push({
+          role: 'user',
+          content: `<<SYSTEM: You have spent ${totalResearchRounds} rounds reading without making any changes. ` +
+            'This is excessive. You MUST now: (1) make an edit based on what you know, (2) call ' +
+            'task_complete with an honest summary of findings, or (3) declare a specific blocker. ' +
+            'The next round without a mutation or task_complete will force-stop the session.>>',
+        });
+        console.log(`[aiService] Research budget warning: ${totalResearchRounds} total research rounds`);
       }
 
       // Safety compression deferred to round 0 to keep history append-only
@@ -2514,6 +2593,9 @@ async function executeToolCallDetailed(
         const result = await executeUnifiedBatch(request, ctx, options?.onBatchStepProgress);
         if (result.step_results.some(step => step.ok && step.use.startsWith('change.'))) {
           _roundHadMutations = true;
+        }
+        if (result.step_results.some(step => step.ok && step.use.startsWith('verify.'))) {
+          _hadVerification = true;
         }
 
         const lastEditRef = result.step_results
@@ -2924,23 +3006,23 @@ function buildDynamicContextBlock(
   const ctxState = useContextStore.getState();
   const bm = ctxState.batchMetrics;
   let bbStreak = ctxState.batchReadNoBbStreak;
-  if (bm.hadBbWrite) {
+  if (bm.hadSubstantiveBbWrite) {
     bbStreak = 0;
-  } else if (bm.hadReads && !bm.hadBbWrite) {
+  } else if (bm.hadReads && !bm.hadSubstantiveBbWrite) {
     bbStreak = bbStreak + 1;
   } else {
     bbStreak = 0;
   }
   useContextStore.setState({ batchReadNoBbStreak: bbStreak });
 
-  if (bm.hadReads && !bm.hadBbWrite) {
-    if (bbStreak >= 3) {
+  if (bm.hadReads && !bm.hadSubstantiveBbWrite) {
+    if (bbStreak >= 2) {
       parts.push(
-        `<<STOP: You have read files for ${bbStreak} consecutive rounds without persisting findings. Write to session.bb.write or act on what you have. Do NOT read the same files again.>>`,
+        `<<STOP: You have read files for ${bbStreak} consecutive rounds without persisting structured findings. Write conclusions (clear/bug/inconclusive) to session.bb.write or act on what you have. Progress notes do not count.>>`,
       );
     } else {
       parts.push(
-        '<<FINDINGS: batch read files with no BB write — consider session.bb.write to persist key findings before they go dormant.>>',
+        '<<FINDINGS: batch read files with no structured BB finding — write conclusions (clear/bug/inconclusive) to session.bb.write before they go dormant.>>',
       );
     }
   }

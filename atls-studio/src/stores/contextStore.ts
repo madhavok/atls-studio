@@ -129,7 +129,18 @@ function sourcePathsMatch(a: string, b: string): boolean {
   return aNorm.endsWith('/' + bNorm) || bNorm.endsWith('/' + aNorm);
 }
 
-// Max tokens for archived chunks — LRU-evicted when exceeded
+const SUBSTANTIVE_BB_CONCLUSION_PATTERN = /\b(confirmed|clear|bug|correct|incorrect|fixed|no bug|inconclusive|finding)\b/i;
+const PROGRESS_ONLY_KEY_PREFIXES = ['status:', 'findings:progress', 'findings:reading', 'findings:blocker'];
+
+function isSubstantiveBbWrite(key?: string, content?: string): boolean {
+  if (!content || content.length <= 80) return false;
+  if (key && PROGRESS_ONLY_KEY_PREFIXES.some(p => key.startsWith(p))) {
+    return SUBSTANTIVE_BB_CONCLUSION_PATTERN.test(content);
+  }
+  if (key && (key.startsWith('finding:') || key.startsWith('bug:') || key.startsWith('review:'))) return true;
+  return SUBSTANTIVE_BB_CONCLUSION_PATTERN.test(content);
+}
+
 // Max tokens for archived chunks — LRU-evicted when exceeded
 const ARCHIVE_MAX_TOKENS = 50000;
 
@@ -741,9 +752,17 @@ interface ContextStoreState {
   stagedSnippets: Map<string, StagedSnippet>;  // Staged cached editor viewport
   stageVersion: number;                        // Incremented on any stage/unstage change
   transitionBridge: TransitionBridge | null;   // Auto-surface after subtask advance (1-2 turns)
-  batchMetrics: { toolCalls: number; manageOps: number; hadReads: boolean; hadBbWrite: boolean };
+  batchMetrics: { toolCalls: number; manageOps: number; hadReads: boolean; hadBbWrite: boolean; hadSubstantiveBbWrite: boolean };
   /** Consecutive agent-loop rounds with batch reads but no BB write (for escalating nudge). */
   batchReadNoBbStreak: number;
+  /** Unique file paths touched across all rounds (for coverage-based convergence detection). */
+  cumulativeCoveragePaths: Set<string>;
+  /** New file paths touched in the current round. */
+  roundNewCoverage: number;
+  /** Consecutive rounds with zero new coverage and no mutations. */
+  coveragePlateauStreak: number;
+  /** File paths touched in the current round (accumulated per-step, reset on finishRoundCoverage). */
+  _roundCoveragePaths: Set<string>;
   /** Normalized "path|rangeKey" -> read count since last write/BB (circuit breaker). */
   fileReadSpinByPath: Record<string, number>;
   /** Normalized path -> set of rangeKeys seen since last write/BB (for nudge). */
@@ -908,6 +927,8 @@ interface ContextStoreState {
   recordFileReadSpin: (entries: Array<{ path: string; range?: string }>) => string | null;
   resetFileReadSpin: (scopedPaths?: string[]) => void;
   getPriorReadRanges: (filePath: string) => string[];
+  recordCoveragePath: (filePath: string) => void;
+  finishRoundCoverage: (hadMutations: boolean) => void;
 
   // Full-memory grep — searches across all regions (active, archive, dormant, BB, staged, dropped)
   searchMemory: (
@@ -1337,8 +1358,12 @@ export const useContextStore = create<ContextStoreState>()(
   stagedSnippets: new Map(),
   stageVersion: 0,
   transitionBridge: null,
-  batchMetrics: { toolCalls: 0, manageOps: 0, hadReads: false, hadBbWrite: false },
+  batchMetrics: { toolCalls: 0, manageOps: 0, hadReads: false, hadBbWrite: false, hadSubstantiveBbWrite: false },
   batchReadNoBbStreak: 0,
+  cumulativeCoveragePaths: new Set<string>(),
+  roundNewCoverage: 0,
+  coveragePlateauStreak: 0,
+  _roundCoveragePaths: new Set<string>(),
   fileReadSpinByPath: {},
   fileReadSpinRanges: {},
   rollingSummary: emptyRollingSummary(),
@@ -4513,13 +4538,47 @@ export const useContextStore = create<ContextStoreState>()(
   recordBatchRead: () => {
     set(state => ({ batchMetrics: { ...state.batchMetrics, hadReads: true } }));
   },
-  recordBatchBbWrite: () => {
-    set(state => ({ batchMetrics: { ...state.batchMetrics, hadBbWrite: true } }));
+  recordBatchBbWrite: (key?: string, content?: string) => {
+    const substantive = isSubstantiveBbWrite(key, content);
+    set(state => ({
+      batchMetrics: {
+        ...state.batchMetrics,
+        hadBbWrite: true,
+        hadSubstantiveBbWrite: state.batchMetrics.hadSubstantiveBbWrite || substantive,
+      },
+    }));
   },
   resetBatchMetrics: () => {
     const state = get();
     if (state.batchMetrics.toolCalls === 0 && state.batchMetrics.manageOps === 0) return;
-    set({ batchMetrics: { toolCalls: 0, manageOps: 0, hadReads: false, hadBbWrite: false } });
+    set({ batchMetrics: { toolCalls: 0, manageOps: 0, hadReads: false, hadBbWrite: false, hadSubstantiveBbWrite: false } });
+  },
+  recordCoveragePath: (filePath: string) => {
+    const normalized = filePath.replace(/\\/g, '/').toLowerCase();
+    set(state => {
+      const paths = new Set(state._roundCoveragePaths);
+      paths.add(normalized);
+      return { _roundCoveragePaths: paths };
+    });
+  },
+  /** Called once at end of each agent round to commit coverage and compute plateau. */
+  finishRoundCoverage: (hadMutations: boolean) => {
+    const state = get();
+    let newCount = 0;
+    for (const p of state._roundCoveragePaths) {
+      if (!state.cumulativeCoveragePaths.has(p)) newCount++;
+    }
+    const merged = new Set(state.cumulativeCoveragePaths);
+    for (const p of state._roundCoveragePaths) merged.add(p);
+    const plateau = (newCount === 0 && !hadMutations)
+      ? state.coveragePlateauStreak + 1
+      : 0;
+    set({
+      cumulativeCoveragePaths: merged,
+      roundNewCoverage: newCount,
+      coveragePlateauStreak: plateau,
+      _roundCoveragePaths: new Set<string>(),
+    });
   },
   getBatchMetrics: () => get().batchMetrics,
 

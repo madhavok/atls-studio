@@ -1,5 +1,10 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { useRoundHistoryStore, isMainChatRound, type RoundSnapshot } from './roundHistoryStore';
+import {
+  useRoundHistoryStore,
+  isMainChatRound,
+  computeMainChatRoundCostStats,
+  type RoundSnapshot,
+} from './roundHistoryStore';
 
 function makeSnapshot(round: number): RoundSnapshot {
   return {
@@ -82,6 +87,25 @@ describe('roundHistoryStore', () => {
     expect(isMainChatRound({ ...makeSnapshot(1), isSubagentRound: true })).toBe(false);
     expect(isMainChatRound({ ...makeSnapshot(1), isSwarmRound: true })).toBe(false);
     expect(isMainChatRound({ ...makeSnapshot(1), isSubagentRound: true, isSwarmRound: true })).toBe(false);
+  });
+
+  it('computeMainChatRoundCostStats: aggregates main rounds only; avg × n equals sum for whole cents', () => {
+    const a = { ...makeSnapshot(1), costCents: 10 };
+    const b = { ...makeSnapshot(2), costCents: 20 };
+    const sub = { ...makeSnapshot(3), costCents: 1000, isSubagentRound: true as const };
+    const r = computeMainChatRoundCostStats([a, b, sub]);
+    expect(r.mainRoundCount).toBe(2);
+    expect(r.mainRoundsCostSum).toBe(30);
+    expect(r.avgMainRoundCost).toBe(15);
+    expect(r.avgMainRoundCost * r.mainRoundCount).toBe(r.mainRoundsCostSum);
+  });
+
+  it('computeMainChatRoundCostStats: empty snapshots', () => {
+    expect(computeMainChatRoundCostStats([])).toEqual({
+      mainRoundCount: 0,
+      mainRoundsCostSum: 0,
+      avgMainRoundCost: 0,
+    });
   });
 
   it('stores optional latency telemetry on snapshots', () => {
