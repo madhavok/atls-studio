@@ -551,26 +551,31 @@ function messageToApiContent(msg: { role: string; content: unknown; parts?: Arra
         input: tc.args ?? {},
         thoughtSignature: tc.thoughtSignature,
       } as { type: string; id?: string; name?: string; input?: Record<string, unknown>; thoughtSignature?: string });
+      // Anthropic requires a tool_result for every tool_use in the prior turn. Missing results
+      // (interrupted stream, persistence gap, or new user message before completion) must not
+      // leave orphaned tool_use blocks — use a placeholder so normalizeConversationHistory can pair.
+      let resultContent: string;
       if (tc.result !== undefined && tc.result !== null) {
-        let content: string;
         if (typeof tc.result === 'string') {
-          content = tc.result;
+          resultContent = tc.result;
         } else if (typeof tc.result === 'object' && tc.result !== null) {
           try {
-            content = formatResult(tc.result);
+            resultContent = formatResult(tc.result);
           } catch {
-            content = String(tc.result);
+            resultContent = String(tc.result);
           }
           console.warn('[aiService] Tool result is non-string — serialized to TOON for API payload', { id: tc.id, name: tc.name });
         } else {
-          content = String(tc.result);
+          resultContent = String(tc.result);
         }
-        toolResults.push({
-          type: 'tool_result',
-          tool_use_id: tc.id,
-          content,
-        });
+      } else {
+        resultContent = '[cancelled]';
       }
+      toolResults.push({
+        type: 'tool_result',
+        tool_use_id: tc.id,
+        content: resultContent,
+      });
     }
   }
   if (modelBlocks.length === 0 && !msg.content) {
@@ -611,8 +616,22 @@ function normalizeConversationHistory(messages: ChatMessage[]): ApiMessage[] {
       const { modelContent, toolResults } = messageToApiContent(msg);
       const hasToolUse = Array.isArray(modelContent) && modelContent.some((block: any) => block.type === 'tool_use');
       normalized.push({ role: 'assistant', content: modelContent });
-      if (hasToolUse && toolResults && toolResults.length > 0) {
-        pendingToolResults = toolResults;
+      if (hasToolUse) {
+        const merged = [...(toolResults ?? [])];
+        if (Array.isArray(modelContent)) {
+          const seen = new Set(merged.map((r) => r.tool_use_id));
+          for (const block of modelContent) {
+            if ((block as { type?: string }).type !== 'tool_use') continue;
+            const id = (block as { id?: string }).id;
+            if (id && !seen.has(id)) {
+              merged.push({ type: 'tool_result', tool_use_id: id, content: '[cancelled]' });
+              seen.add(id);
+            }
+          }
+        }
+        if (merged.length > 0) {
+          pendingToolResults = merged;
+        }
       }
       continue;
     }
