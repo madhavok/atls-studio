@@ -744,8 +744,10 @@ interface ContextStoreState {
   batchMetrics: { toolCalls: number; manageOps: number; hadReads: boolean; hadBbWrite: boolean };
   /** Consecutive agent-loop rounds with batch reads but no BB write (for escalating nudge). */
   batchReadNoBbStreak: number;
-  /** Normalized path -> read count since last write/BB (circuit breaker). */
+  /** Normalized "path|rangeKey" -> read count since last write/BB (circuit breaker). */
   fileReadSpinByPath: Record<string, number>;
+  /** Normalized path -> set of rangeKeys seen since last write/BB (for nudge). */
+  fileReadSpinRanges: Record<string, string[]>;
   /** Distilled facts for API-only rolling summary (not in chat UI messages) */
   rollingSummary: RollingSummary;
   setRollingSummary: (summary: RollingSummary) => void;
@@ -903,8 +905,9 @@ interface ContextStoreState {
   recordManageOps: (count: number) => void;
   resetBatchMetrics: () => void;
   getBatchMetrics: () => { toolCalls: number; manageOps: number };
-  recordFileReadSpin: (paths: string[]) => string | null;
-  resetFileReadSpin: () => void;
+  recordFileReadSpin: (entries: Array<{ path: string; range?: string }>) => string | null;
+  resetFileReadSpin: (scopedPaths?: string[]) => void;
+  getPriorReadRanges: (filePath: string) => string[];
 
   // Full-memory grep — searches across all regions (active, archive, dormant, BB, staged, dropped)
   searchMemory: (
@@ -1337,6 +1340,7 @@ export const useContextStore = create<ContextStoreState>()(
   batchMetrics: { toolCalls: 0, manageOps: 0, hadReads: false, hadBbWrite: false },
   batchReadNoBbStreak: 0,
   fileReadSpinByPath: {},
+  fileReadSpinRanges: {},
   rollingSummary: emptyRollingSummary(),
   setRollingSummary: (summary) => set({ rollingSummary: summary }),
   memoryEvents: [],
@@ -4299,6 +4303,7 @@ export const useContextStore = create<ContextStoreState>()(
       rollingSummary: emptyRollingSummary(),
       batchReadNoBbStreak: 0,
       fileReadSpinByPath: {},
+      fileReadSpinRanges: {},
       freshnessMirror: {
         fileTreeChangedWithPaths: 0,
         fileTreeChangedCoarseNoPaths: 0,
@@ -4500,25 +4505,58 @@ export const useContextStore = create<ContextStoreState>()(
   },
   getBatchMetrics: () => get().batchMetrics,
 
-  recordFileReadSpin: (paths: string[]) => {
-    if (paths.length === 0) return null;
-    const SPIN_LIMIT = 3;
+  recordFileReadSpin: (entries: Array<{ path: string; range?: string }>) => {
+    if (entries.length === 0) return null;
+    const EXACT_SPIN_LIMIT = 2;
+    const RANGE_NUDGE_LIMIT = 3;
     let breaker: string | null = null;
     set(state => {
-      const next = { ...state.fileReadSpinByPath };
-      for (const p of paths) {
-        const k = p.replace(/\\/g, '/').toLowerCase();
-        next[k] = (next[k] ?? 0) + 1;
-        if (next[k] >= SPIN_LIMIT) {
-          breaker = `<<STOP: "${p}" has been read ${next[k]} times this session without a write or BB entry. Use the content you already have — session.bb.write key findings or apply an edit. Do NOT read the same file again.>>`;
+      const nextSpin = { ...state.fileReadSpinByPath };
+      const nextRanges = { ...state.fileReadSpinRanges };
+      for (const { path: p, range } of entries) {
+        const pathKey = p.replace(/\\/g, '/').toLowerCase();
+        const rangeKey = range ?? '*';
+        const compositeKey = `${pathKey}|${rangeKey}`;
+
+        nextSpin[compositeKey] = (nextSpin[compositeKey] ?? 0) + 1;
+
+        if (!nextRanges[pathKey]) nextRanges[pathKey] = [];
+        if (!nextRanges[pathKey].includes(rangeKey)) {
+          nextRanges[pathKey] = [...nextRanges[pathKey], rangeKey];
+        }
+
+        if (nextSpin[compositeKey] >= EXACT_SPIN_LIMIT) {
+          breaker = `<<STOP: "${p}" range ${rangeKey} has been read ${nextSpin[compositeKey]} times without a write or BB entry. Use the content you already have (h:ref from prior read). Do NOT re-read the same range.>>`;
+        } else if (nextRanges[pathKey].length >= RANGE_NUDGE_LIMIT && !breaker) {
+          const priorRanges = nextRanges[pathKey].filter(r => r !== rangeKey).join(', ');
+          breaker = `<<NUDGE: "${p}" has been read at ${nextRanges[pathKey].length} different ranges (${nextRanges[pathKey].join(', ')}). Prior reads: ${priorRanges}. Search or use h:refs to find the right span before reading more.>>`;
         }
       }
-      return { fileReadSpinByPath: next };
+      return { fileReadSpinByPath: nextSpin, fileReadSpinRanges: nextRanges };
     });
     return breaker;
   },
-  resetFileReadSpin: () => {
-    set({ fileReadSpinByPath: {} });
+  resetFileReadSpin: (scopedPaths?: string[]) => {
+    if (!scopedPaths || scopedPaths.length === 0) {
+      set({ fileReadSpinByPath: {}, fileReadSpinRanges: {} });
+      return;
+    }
+    set(state => {
+      const nextSpin = { ...state.fileReadSpinByPath };
+      const nextRanges = { ...state.fileReadSpinRanges };
+      for (const p of scopedPaths) {
+        const pathKey = p.replace(/\\/g, '/').toLowerCase();
+        delete nextRanges[pathKey];
+        for (const key of Object.keys(nextSpin)) {
+          if (key.startsWith(pathKey + '|')) delete nextSpin[key];
+        }
+      }
+      return { fileReadSpinByPath: nextSpin, fileReadSpinRanges: nextRanges };
+    });
+  },
+  getPriorReadRanges: (filePath: string): string[] => {
+    const pathKey = filePath.replace(/\\/g, '/').toLowerCase();
+    return get().fileReadSpinRanges[pathKey] ?? [];
   },
 
   // -----------------------------------------------------------------------

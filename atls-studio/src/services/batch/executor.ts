@@ -426,19 +426,61 @@ function normalizePath(p: string): string {
   return p.replace(/\\/g, '/').toLowerCase();
 }
 
-/** File paths embedded in file_refs step content (read.lines, read.context, etc.). */
-function extractFilePathsFromFileRefsContent(output: StepOutput): string[] {
+/** File paths + optional actual_range embedded in file_refs step content. */
+function extractFileRefsWithRanges(output: StepOutput): Array<{ path: string; range?: string }> {
   if (output.kind !== 'file_refs' || !output.ok || !output.content || typeof output.content !== 'object') return [];
   const c = output.content as Record<string, unknown>;
-  const paths: string[] = [];
-  if (typeof c.file === 'string') paths.push(c.file);
+  const entries: Array<{ path: string; range?: string }> = [];
+
+  function rangeLabel(actualRange: unknown): string | undefined {
+    if (!Array.isArray(actualRange) || actualRange.length === 0) return undefined;
+    return actualRange.map((r: unknown) => {
+      if (!Array.isArray(r)) return '';
+      const s = r[0] as number;
+      const e = r[1] as number | null;
+      return e != null ? `${s}-${e}` : `${s}`;
+    }).filter(Boolean).join(',');
+  }
+
+  if (typeof c.file === 'string') {
+    entries.push({ path: c.file, range: rangeLabel(c.actual_range) });
+  }
   const results = c.results;
   if (Array.isArray(results)) {
     for (const item of results) {
-      if (item && typeof item === 'object' && typeof (item as Record<string, unknown>).file === 'string') {
-        paths.push((item as Record<string, unknown>).file as string);
+      if (item && typeof item === 'object') {
+        const rec = item as Record<string, unknown>;
+        if (typeof rec.file === 'string') {
+          entries.push({ path: rec.file, range: rangeLabel(rec.actual_range) });
+        }
       }
     }
+  }
+  return entries;
+}
+
+/** File paths embedded in file_refs step content (read.lines, read.context, etc.). */
+function extractFilePathsFromFileRefsContent(output: StepOutput): string[] {
+  return extractFileRefsWithRanges(output).map(e => e.path);
+}
+
+/**
+ * Extract file paths mentioned in a session.bb.write step's params.
+ * Used to scope spin-counter resets to relevant files only.
+ */
+function extractBbWriteFilePaths(params: Record<string, unknown>): string[] {
+  const paths: string[] = [];
+  const key = params.key as string | undefined;
+  const derivedFrom = params.derived_from ?? params.derivedFrom;
+  if (Array.isArray(derivedFrom)) {
+    for (const d of derivedFrom) {
+      if (typeof d === 'string') paths.push(d);
+    }
+  }
+  const filePath = params.file_path ?? params.filePath;
+  if (typeof filePath === 'string') paths.push(filePath);
+  if (typeof key === 'string' && (key.includes('/') || key.includes('\\'))) {
+    paths.push(key);
   }
   return paths;
 }
@@ -1265,15 +1307,20 @@ export async function executeUnifiedBatch(
     // Track op kinds for BB-write nudge + read-spin circuit breaker
     if (output.ok && output.kind === 'file_refs') {
       ctx.store().recordBatchRead();
-      const spinPaths = extractFilePathsFromFileRefsContent(output);
-      if (spinPaths.length > 0) {
-        const br = ctx.store().recordFileReadSpin(spinPaths);
-        if (br) { spinBreaker = br; spinBlocked = true; }
+      const spinEntries = extractFileRefsWithRanges(output);
+      if (spinEntries.length > 0) {
+        const br = ctx.store().recordFileReadSpin(spinEntries);
+        if (br) {
+          const isHardBlock = br.startsWith('<<STOP:');
+          if (isHardBlock) { spinBreaker = br; spinBlocked = true; }
+          else if (!spinBlocked) { spinBreaker = br; }
+        }
       }
     }
     if (output.ok && step.use === 'session.bb.write') {
       ctx.store().recordBatchBbWrite();
-      ctx.store().resetFileReadSpin();
+      const bbPaths = extractBbWriteFilePaths(mergedParams);
+      ctx.store().resetFileReadSpin(bbPaths.length > 0 ? bbPaths : undefined);
     }
     if (output.ok && step.use.startsWith('change.')) {
       ctx.store().resetFileReadSpin();

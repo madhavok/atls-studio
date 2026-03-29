@@ -865,6 +865,7 @@ export async function executeSubagent(
   // Isolate spin state: save parent's counters, reset for this invocation,
   // and restore on exit so parent/subagent don't poison each other.
   const savedSpinState = { ...useContextStore.getState().fileReadSpinByPath };
+  const savedSpinRanges = { ...useContextStore.getState().fileReadSpinRanges };
   useContextStore.getState().resetFileReadSpin();
 
   try {
@@ -1062,7 +1063,7 @@ export async function executeSubagent(
     throw error;
   } finally {
     // Restore parent's spin state so subagent reads don't leak back
-    useContextStore.setState({ fileReadSpinByPath: savedSpinState });
+    useContextStore.setState({ fileReadSpinByPath: savedSpinState, fileReadSpinRanges: savedSpinRanges });
 
     // Clean up terminal
     if (terminalId) {

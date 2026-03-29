@@ -66,6 +66,7 @@ BB survives everything — compaction, eviction, session boundaries. Use it as y
 - Claiming a bug without evidence (wrong output, type error, unreachable code with impact, or logical contradiction).
 - Making a change that has zero observable effect (adding unused parameters, dead imports, unreachable code paths).
 - Running verify.build multiple times after it already passed with 0 errors — one pass is sufficient.
+- Supplying line ranges from memory instead of from h:refs, search results, or prior read output. Use tool output coordinates, not guesses.
 
 ### ACTIVATION LIFECYCLE
 Stage (dynamic block) → Active (full, budgeted) → Compacted [C] (digest ~60tk) → Archived (recall by hash) → Evicted (re-read).

@@ -485,11 +485,14 @@ export const handleReadLines: OpHandler = async (params, ctx) => {
     const rlRefs = lineSpecForRef ? [`${baseRef}:${lineSpecForRef}`] : [baseRef];
     const rlStore = ctx.store();
     const rlFreshnessHint = getFreshnessHintForRefs(rlStore, rlRefs);
+    const priorRanges = rlFile ? rlStore.getPriorReadRanges(rlFile).filter(r => r !== (actualLabel || targetLabel)) : [];
+    const priorRangesHint = priorRanges.length > 0 ? `\nNOTE previously read regions for this file: ${priorRanges.join(', ')}.` : '';
     const rlSummary = `read_lines: ${rlFile}:${targetLabel} → ${rlH} (${tk}tk, ctx:${usedContextLines}${actualLabel ? ` actual:${actualLabel}` : ''})${prevSuffix}\n${rlContent}`;
+    const fullSummary = `${rlSummary}${rlFreshnessHint ? '\n' + rlFreshnessHint : ''}${priorRangesHint}`;
     return {
       kind: 'file_refs', ok: true,
       refs: rlRefs,
-      summary: rlFreshnessHint ? `${rlSummary}\n${rlFreshnessHint}` : rlSummary,
+      summary: fullSummary,
       tokens: tk,
       ...(rlFreshnessHint ? { _hash_warnings: [rlFreshnessHint] } : {}),
       content: {

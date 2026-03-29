@@ -406,9 +406,10 @@ export interface ContextStoreApi {
   recordManageOps: (count: number) => void;
   recordBatchRead: () => void;
   recordBatchBbWrite: () => void;
-  /** Track repeated reads of the same file path within a chat session; returns breaker text at threshold. */
-  recordFileReadSpin: (normalizedPaths: string[]) => string | null;
-  resetFileReadSpin: () => void;
+  /** Track repeated reads of the same file+range within a chat session; returns breaker/nudge text at threshold. */
+  recordFileReadSpin: (entries: Array<{ path: string; range?: string }>) => string | null;
+  resetFileReadSpin: (scopedPaths?: string[]) => void;
+  getPriorReadRanges: (filePath: string) => string[];
 
   // Memory search — full-text grep across all regions
   searchMemory: (

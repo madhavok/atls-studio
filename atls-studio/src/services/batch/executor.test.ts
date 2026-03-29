@@ -37,6 +37,7 @@ function makeCtx() {
       recordBatchBbWrite: () => {},
       recordFileReadSpin: () => null,
       resetFileReadSpin: () => {},
+      getPriorReadRanges: () => [],
       forwardStagedHash: () => 0,
       addVerifyArtifact: () => {},
       getCurrentRev: () => 0,
