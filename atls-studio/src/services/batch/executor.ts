@@ -1311,7 +1311,9 @@ export async function executeUnifiedBatch(
       for (const entry of spinEntries) {
         ctx.store().recordCoveragePath(entry.path);
       }
-      if (spinEntries.length > 0) {
+      // Shaped reads are discovery-only — skip spin tracking so they don't
+      // pollute range counts that gate subsequent investigation reads.
+      if (spinEntries.length > 0 && step.use !== 'read.shaped') {
         const br = ctx.store().recordFileReadSpin(spinEntries);
         if (br) {
           const isHardBlock = br.startsWith('<<STOP:');
@@ -1324,13 +1326,16 @@ export async function executeUnifiedBatch(
       const bbKey = typeof mergedParams.key === 'string' ? mergedParams.key : undefined;
       const bbContent = typeof mergedParams.content === 'string' ? mergedParams.content : undefined;
       ctx.store().recordBatchBbWrite(bbKey, bbContent);
-      const bbPaths = extractBbWriteFilePaths(mergedParams);
-      if (bbPaths.length > 0) {
-        ctx.store().resetFileReadSpin(bbPaths);
-      }
+      // Any BB write counts as "acting before reading more" — full reset so the
+      // agent can proceed with new reads after writing findings.
+      ctx.store().resetFileReadSpin();
+      spinBlocked = false;
+      spinBreaker = undefined;
     }
     if (output.ok && step.use.startsWith('change.')) {
       ctx.store().resetFileReadSpin();
+      spinBlocked = false;
+      spinBreaker = undefined;
     }
 
     if (!isAutoStep) userStepIndex += 1;
