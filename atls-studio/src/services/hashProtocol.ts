@@ -372,6 +372,7 @@ export interface ScopedHppView {
  */
 export function createScopedView(): ScopedHppView {
   let localTurn = 0;
+  const startTurn = currentTurn;
 
   return {
     getTurn: () => localTurn,
@@ -383,7 +384,7 @@ export function createScopedView(): ScopedHppView {
     shouldMaterialize: (ref: ChunkRef) => {
       if (ref.visibility === 'archived' || ref.visibility === 'evicted') return false;
       if (ref.visibility !== 'materialized') return false;
-      return ref.seenAtTurn >= (currentTurn - localTurn) || !!ref.pinned;
+      return ref.seenAtTurn >= (startTurn + localTurn) || !!ref.pinned;
     },
 
     getActiveRefs: () => getActiveRefs(),

@@ -16,7 +16,7 @@ ${generateFamilyLines()}
 ### Common Params (canonical names — aliases auto-resolved)
 session.advance subtask?:name summary:required
 read.context type:smart|full|module|component|test|tree file_paths:path1,path2 depth?:N glob?:pattern line_range?:start-end max_lines?:N
-read.shaped file_paths:path1,path2 shape:sig|skeleton max_files?:N
+read.shaped file_paths:path1,path2 shape:sig max_files?:N
 read.lines hash:h:XXXX lines:15-50 | file_path:path start_line:N end_line:N context_lines?:0-5
 read.file file_paths:path1,path2 type?:smart|full — simpler than read.context, no shaped/tree/bind support
 search.code queries:term1,term2 file_paths?:path1,path2 limit?:N compact?:true
