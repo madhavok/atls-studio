@@ -501,6 +501,15 @@ export const DEFAULT_FOCUS_PROFILE: FocusProfile = {
   matrix: Object.fromEntries(ALL_CATEGORIES.map(c => [c, ['high', 'medium', 'low']])),
 };
 
+export interface PromptSnapshot {
+  systemPrompt: string;
+  messages: Array<{ role: string; content: unknown }>;
+  model: string;
+  provider: string;
+  round: number;
+  timestamp: number;
+}
+
 interface AppState {
   // Project
   projectPath: string | null;
@@ -602,6 +611,8 @@ interface AppState {
   cacheMetrics: CacheMetrics;
   addCacheMetrics: (metrics: { cacheWrite: number; cacheRead: number; uncached: number; lastRequestCachedTokens?: number }) => void;
   resetCacheMetrics: () => void;
+  lastPromptSnapshot: PromptSnapshot | null;
+  setLastPromptSnapshot: (snapshot: PromptSnapshot) => void;
   logicalCache: LogicalCacheState;
   updateLogicalCache: (state: Partial<LogicalCacheState>) => void;
   resetLogicalCache: () => void;
@@ -873,6 +884,7 @@ export const useAppStore = create<AppState>((set) => ({
         sessionRequests: 0, lastRequestHitRate: 0, sessionHitRate: 0,
         lastRequestCachedTokens: undefined,
       },
+      lastPromptSnapshot: null,
     };
   }),
   
@@ -913,6 +925,7 @@ export const useAppStore = create<AppState>((set) => ({
           sessionRequests: 0, lastRequestHitRate: 0, sessionHitRate: 0,
           lastRequestCachedTokens: undefined,
         },
+        lastPromptSnapshot: null,
       };
     }
     return { chatSessions: newSessions };
@@ -1202,6 +1215,9 @@ export const useAppStore = create<AppState>((set) => ({
       lastRequestCachedTokens: undefined,
     },
   }),
+
+  lastPromptSnapshot: null,
+  setLastPromptSnapshot: (snapshot) => set({ lastPromptSnapshot: snapshot }),
 
   logicalCache: {
     staticHit: null, bp3Hit: null,

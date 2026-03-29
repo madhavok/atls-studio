@@ -1327,6 +1327,15 @@ async function streamChatViaTauri(
         content: m.content as string | ContentBlock[],
       }));
 
+      useAppStore.getState().setLastPromptSnapshot({
+        systemPrompt: config.systemPrompt || '',
+        messages: tauriMessages,
+        model: config.model,
+        provider: config.provider,
+        round,
+        timestamp: Date.now(),
+      });
+
       const invokeFn = async () => {
         if (config.provider === 'anthropic') {
           await invoke('stream_chat_anthropic', {
@@ -2259,17 +2268,17 @@ async function streamChatViaTauri(
         hadProgressSinceLastAdvance = true;
       }
 
-      // Track consecutive read-only rounds (no mutations). After 2, inject warning.
+      // Track consecutive read-only rounds (no mutations). After 4, inject warning.
       if (!_roundHadMutations) {
         consecutiveReadOnlyRounds++;
         totalResearchRounds++;
       } else {
         consecutiveReadOnlyRounds = 0;
       }
-      if (consecutiveReadOnlyRounds >= 2 && mode !== 'ask' && mode !== 'retriever') {
+      if (consecutiveReadOnlyRounds >= 4 && mode !== 'ask' && mode !== 'retriever') {
         conversationHistory.push({
           role: 'user',
-          content: '<<SYSTEM: 2 consecutive read-only rounds without edits. You must now: ' +
+          content: `<<SYSTEM: ${consecutiveReadOnlyRounds} consecutive read-only rounds without edits. You must now: ` +
             '(1) make an edit/create, (2) write structured findings to session.bb.write, or (3) declare a specific blocker. ' +
             'Further reads of already-seen files will be blocked.>>',
         });
@@ -2620,6 +2629,17 @@ async function executeToolCallDetailed(
 
         const result = await executeUnifiedBatch(request, ctx, options?.onBatchStepProgress);
         if (result.step_results.some(step => step.ok && step.use.startsWith('change.'))) {
+          _roundHadMutations = true;
+        }
+        // Coder subagent applies edits in its own loop; parent batch has no change.* steps.
+        if (result.step_results.some(step => step.ok && step.use === 'delegate.code')) {
+          _roundHadMutations = true;
+        }
+        // Retriever subagent and substantive BB writes are real progress, not idle research.
+        if (result.step_results.some(step => step.ok && step.use === 'delegate.retrieve')) {
+          _roundHadMutations = true;
+        }
+        if (result.step_results.some(step => step.ok && step.use === 'session.bb.write')) {
           _roundHadMutations = true;
         }
         if (result.step_results.some(step => step.ok && step.use.startsWith('verify.'))) {
@@ -3044,7 +3064,7 @@ function buildDynamicContextBlock(
   useContextStore.setState({ batchReadNoBbStreak: bbStreak });
 
   if (bm.hadReads && !bm.hadSubstantiveBbWrite) {
-    if (bbStreak >= 2) {
+    if (bbStreak >= 4) {
       parts.push(
         `<<STOP: You have read files for ${bbStreak} consecutive rounds without persisting structured findings. Write conclusions (clear/bug/inconclusive) to session.bb.write or act on what you have. Progress notes do not count.>>`,
       );

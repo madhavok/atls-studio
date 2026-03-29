@@ -33,9 +33,9 @@ export const COMPACT_HISTORY_TOKEN_THRESHOLD = 18000;
 export const PHASE_ROUND_BUDGET = 5;
 
 /** Absolute ceiling on read-only rounds before force-stop (Layer 3 safety net). */
-export const TOTAL_RESEARCH_ROUND_BUDGET = 12;
+export const TOTAL_RESEARCH_ROUND_BUDGET = 25;
 /** Additional rounds after budget warning before auto task_complete. */
-export const RESEARCH_FORCE_STOP_MARGIN = 3;
+export const RESEARCH_FORCE_STOP_MARGIN = 5;
 
 /** Safety ceiling for subagent rounds — budget-based stopping is the real limiter. */
 export const SUBAGENT_MAX_ROUNDS = 100;

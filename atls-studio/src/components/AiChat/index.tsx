@@ -3658,6 +3658,20 @@ export function AiChat() {
             </svg>
           </button>
           <button
+            onClick={async () => {
+              const snapshot = useAppStore.getState().lastPromptSnapshot;
+              if (!snapshot) return;
+              await navigator.clipboard.writeText(JSON.stringify(snapshot, null, 2));
+            }}
+            className="p-1 text-studio-muted hover:text-green-400 transition-colors"
+            title="Copy context window (last API payload)"
+          >
+            <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <rect x="3" y="3" width="18" height="18" rx="2"/>
+              <path d="M3 9h18M9 3v18"/>
+            </svg>
+          </button>
+          <button
             onClick={() => setShowTokenMetrics(!showTokenMetrics)}
             className={`p-1 transition-colors ${showTokenMetrics ? 'text-studio-accent' : 'text-studio-muted hover:text-cyan-400'}`}
             title="Tool token metrics"

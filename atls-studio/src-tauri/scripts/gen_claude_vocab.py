@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+from __future__ import annotations
 """Generate claude_vocab.bin from the ctoc vocab.json.
 
 Downloads vocab.json from github.com/rohangpta/ctoc if not present locally,
@@ -7,7 +8,6 @@ then converts the verified token list into a compact binary format:
 
 Output: ../data/claude_vocab.bin
 """
-
 import json
 import struct
 import sys

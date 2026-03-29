@@ -4584,8 +4584,8 @@ export const useContextStore = create<ContextStoreState>()(
 
   recordFileReadSpin: (entries: Array<{ path: string; range?: string }>) => {
     if (entries.length === 0) return null;
-    const EXACT_SPIN_LIMIT = 2;
-    const RANGE_NUDGE_LIMIT = 3;
+    const EXACT_SPIN_LIMIT = 3;
+    const RANGE_NUDGE_LIMIT = 5;
     let breaker: string | null = null;
     set(state => {
       const nextSpin = { ...state.fileReadSpinByPath };
