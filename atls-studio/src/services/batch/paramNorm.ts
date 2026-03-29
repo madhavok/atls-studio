@@ -197,7 +197,15 @@ export function normalizeHashRefsToStrings(value: unknown): string[] {
     if (v == null) return;
     if (typeof v === 'string') {
       const t = v.trim();
-      if (t) out.push(t);
+      if (!t) return;
+      if (t.includes(',')) {
+        for (const part of t.split(',')) {
+          const p = part.trim();
+          if (p) out.push(p);
+        }
+      } else {
+        out.push(t);
+      }
       return;
     }
     if (Array.isArray(v)) {
@@ -291,6 +299,13 @@ export function normalizeStepParams(
       out.keys = [out.key];
       delete out.key;
     }
+  }
+
+  // Coerce hashes from scalar string / nested objects to string[]
+  if (out.hashes !== undefined && !Array.isArray(out.hashes)) {
+    out.hashes = normalizeHashRefsToStrings(out.hashes);
+  } else if (Array.isArray(out.hashes)) {
+    out.hashes = normalizeHashRefsToStrings(out.hashes);
   }
 
   // Pass 3: normalize symbol_names entries

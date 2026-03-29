@@ -126,8 +126,8 @@ export const handleTaskStatus: OpHandler = async (_params, ctx) => {
 // ---------------------------------------------------------------------------
 
 export const handleUnload: OpHandler = async (params, ctx) => {
-  const rawHashes = params.hashes as string[] | undefined;
-  if (!rawHashes?.length) return err('unload: ERROR missing hashes param');
+  const rawHashes = normalizeHashRefsToStrings(params.hashes);
+  if (!rawHashes.length) return err('unload: ERROR missing hashes param');
 
   const { expanded, notes } = ctx.expandSetRefsInHashes(rawHashes);
   const confirmWildcard = params.confirmWildcard === true;
@@ -143,8 +143,8 @@ export const handleUnload: OpHandler = async (params, ctx) => {
 // ---------------------------------------------------------------------------
 
 export const handleCompact: OpHandler = async (params, ctx) => {
-  const rawHashes = params.hashes as string[] | undefined;
-  if (!rawHashes?.length) return err('compact: ERROR missing hashes param');
+  const rawHashes = normalizeHashRefsToStrings(params.hashes);
+  if (!rawHashes.length) return err('compact: ERROR missing hashes param');
 
   const { expanded, notes } = ctx.expandSetRefsInHashes(rawHashes);
   const confirmWildcard = params.confirmWildcard === true;
@@ -350,9 +350,9 @@ export const handleStage: OpHandler = async (params, ctx) => {
 export const handleUnstage: OpHandler = async (params, ctx) => {
   const rawHash = params.hash as string | undefined;
   const unstageLabel = params.label as string | undefined;
-  const unstageHashes = params.hashes as string[] | undefined;
+  const unstageHashes = normalizeHashRefsToStrings(params.hashes);
 
-  if (unstageHashes && unstageHashes.length > 0) {
+  if (unstageHashes.length > 0) {
     if (unstageHashes[0] === '*') {
       const { freed } = ctx.store().unstageSnippet('*');
       const remaining = ctx.store().getStagedTokenCount();
@@ -412,8 +412,8 @@ function collectChunkDetails(
 }
 
 export const handleDrop: OpHandler = async (params, ctx) => {
-  const rawHashes = params.hashes as string[] | undefined;
-  if (!rawHashes?.length) return err('drop: ERROR missing hashes param');
+  const rawHashes = normalizeHashRefsToStrings(params.hashes);
+  if (!rawHashes.length) return err('drop: ERROR missing hashes param');
 
   const { expanded, notes } = ctx.expandSetRefsInHashes(rawHashes);
   const droppedDetail = collectChunkDetails(expanded, ctx.store);
@@ -539,8 +539,8 @@ export const handlePin: OpHandler = async (params, ctx) => {
 };
 
 export const handleUnpin: OpHandler = async (params, ctx) => {
-  const rawHashes = params.hashes as string[] | undefined;
-  if (!rawHashes?.length) return err('unpin: ERROR missing hashes param');
+  const rawHashes = normalizeHashRefsToStrings(params.hashes);
+  if (!rawHashes.length) return err('unpin: ERROR missing hashes param');
 
   const { expanded, notes } = ctx.expandSetRefsInHashes(rawHashes);
   const count = ctx.store().unpinChunks(expanded);
@@ -554,8 +554,8 @@ export const handleUnpin: OpHandler = async (params, ctx) => {
 // ---------------------------------------------------------------------------
 
 export const handleRecall: OpHandler = async (params, ctx) => {
-  const rawHashes = params.hashes as string[] | undefined;
-  if (!rawHashes?.length) return err('recall: ERROR missing hashes param');
+  const rawHashes = normalizeHashRefsToStrings(params.hashes);
+  if (!rawHashes.length) return err('recall: ERROR missing hashes param');
 
   const { expanded, notes } = ctx.expandSetRefsInHashes(rawHashes);
   const lines: string[] = [];

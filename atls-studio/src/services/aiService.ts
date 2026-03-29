@@ -209,6 +209,10 @@ export interface ChatMessage {
   role: 'user' | 'assistant' | 'system';
   /** Plain text or array of content blocks (multimodal) */
   content: string | ContentBlock[];
+  /** Structured parts from prior turns (tool_use + tool_result pairing). Passed through to messageToApiContent. */
+  parts?: Array<{ type: string; content?: string; toolCall?: { id: string; name: string; args?: Record<string, unknown>; result?: string; thoughtSignature?: string } }>;
+  /** @deprecated Legacy segments — use parts */
+  segments?: Array<{ type: string; content?: string; toolCall?: { id: string; name: string; args?: Record<string, unknown>; result?: string; thoughtSignature?: string } }>;
 }
 
 interface ToolExecutionMeta {

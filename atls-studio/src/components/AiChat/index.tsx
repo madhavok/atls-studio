@@ -2978,6 +2978,8 @@ export function AiChat() {
     const chatMessages: ChatMessage[] = recentMessages.map(m => ({
       role: m.role,
       content: m.content,
+      parts: m.parts,
+      segments: m.segments,
     }));
 
     // Build the user message content -- multimodal if images are attached
@@ -3330,6 +3332,8 @@ export function AiChat() {
     const chatMessages: ChatMessage[] = recentMessages.map(m => ({
       role: m.role,
       content: m.content,
+      parts: (m as any).parts,
+      segments: (m as any).segments,
     }));
 
     // Track tool calls for this message

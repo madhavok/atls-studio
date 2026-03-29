@@ -2856,6 +2856,16 @@ export const useContextStore = create<ContextStoreState>()(
       );
       
       if (completedId) {
+        // Build a halo of source paths from pinned chunks — chunks sharing
+        // these sources are kept live even if subtask-bound, so the model
+        // doesn't lose content it explicitly chose to retain.
+        const pinnedSourceHalo = new Set<string>();
+        for (const [, c] of newChunks) {
+          if (c.pinned && c.source) {
+            pinnedSourceHalo.add(c.source.replace(/\\/g, '/').toLowerCase());
+          }
+        }
+
         for (const [key, chunk] of newChunks) {
           if (chunk.pinned) continue;
           
@@ -2873,6 +2883,14 @@ export const useContextStore = create<ContextStoreState>()(
           // Only archive if ALL bound subtasks are done
           const allBoundDone = bindings.every(id => doneIds.has(id));
           if (!allBoundDone) continue;
+
+          // Pinned source halo: if a pinned chunk shares the same source
+          // path, keep this chunk live to avoid losing context the model
+          // deliberately kept via pin.
+          if (chunk.source) {
+            const normSource = chunk.source.replace(/\\/g, '/').toLowerCase();
+            if (pinnedSourceHalo.has(normSource)) continue;
+          }
           
           freedTokens += chunk.tokens;
           unloaded++;

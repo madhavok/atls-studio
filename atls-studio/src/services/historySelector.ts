@@ -80,6 +80,12 @@ export function selectRecentHistory<T extends HasRoleAndContent>(
   }
 
   const result = [...pinned, ...included, ...recent];
-  if (result.length > FALLBACK_HARD_CAP) return result.slice(result.length - FALLBACK_HARD_CAP);
+  if (result.length > FALLBACK_HARD_CAP) {
+    const tail = result.slice(result.length - FALLBACK_HARD_CAP);
+    if (hasFirstUser && tail[0] !== pinned[0]) {
+      tail[0] = pinned[0];
+    }
+    return tail;
+  }
   return result;
 }
