@@ -1,13 +1,19 @@
 /**
- * TOON (Token-Oriented Object Notation) serializer.
+ * TOON (Token-Oriented Object Notation) serializer + line-per-step batch parser.
  * Compact alternative to JSON for AI model outputs — typically 40-60% fewer tokens.
  *
- * Rules:
+ * Serializer rules:
  *  - Booleans: 1 / 0
  *  - Null/undefined/empty string: omitted
  *  - Strings: unquoted unless they contain special chars
  *  - Objects: {key:val,key:val}
  *  - Arrays: [val,val]
+ *
+ * Batch line-per-step format (model -> tool input):
+ *  - One step per line: ID USE key:val key:val ...
+ *  - Dataflow shorthand: in:stepId.path
+ *  - Conditional shorthand: if:stepId.ok
+ *  - Complex nested objects: inline JSON-like {...} syntax
  */
 export function toTOON(value: unknown): string {
   if (value === null || value === undefined) return '';
@@ -171,6 +177,251 @@ export function serializeForTokenEstimate(value: unknown): string {
  * Flatten Anthropic-style message content (string or block array) for token counting.
  * TOON-serializes object fields (`input`, tool_result `content`) instead of JSON.stringify.
  */
+// ============================================================================
+// Line-per-step batch parser (model tool_use input -> UnifiedBatchRequest)
+// ============================================================================
+
+const JSON_KEYWORDS = new Set(['true', 'false', 'null']);
+
+/**
+ * Minimal JS-object-to-JSON converter for inline nested objects.
+ * Quotes unquoted keys and bare non-keyword identifier values.
+ * Handles: {line:10,action:replace,content:"const x = 1;"} -> valid JSON.
+ */
+export function jsObjectToJson(input: string): string {
+  const len = input.length;
+  const out: string[] = [];
+  let i = 0;
+
+  while (i < len) {
+    const ch = input[i];
+    if (ch === '"') {
+      out.push('"');
+      i++;
+      while (i < len && input[i] !== '"') {
+        if (input[i] === '\\' && i + 1 < len) {
+          out.push(input[i], input[i + 1]);
+          i += 2;
+        } else {
+          const c = input[i];
+          if (c === '\n') out.push('\\n');
+          else if (c === '\r') out.push('\\r');
+          else if (c === '\t') out.push('\\t');
+          else out.push(c);
+          i++;
+        }
+      }
+      if (i < len) { out.push('"'); i++; }
+    } else if ((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || ch === '_') {
+      const start = i;
+      while (i < len && (/[a-zA-Z0-9_]/.test(input[i]))) i++;
+      const ident = input.slice(start, i);
+      let j = i;
+      while (j < len && (input[j] === ' ' || input[j] === '\n' || input[j] === '\r' || input[j] === '\t')) j++;
+      if (j < len && input[j] === ':') {
+        out.push('"', ident, '"');
+      } else if (JSON_KEYWORDS.has(ident)) {
+        out.push(ident);
+      } else {
+        out.push('"', ident, '"');
+      }
+    } else if (ch === ',') {
+      let j = i + 1;
+      while (j < len && (input[j] === ' ' || input[j] === '\n' || input[j] === '\r' || input[j] === '\t')) j++;
+      if (j < len && (input[j] === '}' || input[j] === ']')) {
+        i++;
+      } else {
+        out.push(',');
+        i++;
+      }
+    } else {
+      out.push(ch);
+      i++;
+    }
+  }
+  return out.join('');
+}
+
+/**
+ * Tokenize a batch line into space-separated tokens, respecting quoted strings
+ * and balanced braces/brackets (for inline JSON objects).
+ */
+function tokenizeBatchLine(line: string): string[] {
+  const tokens: string[] = [];
+  let i = 0;
+  const len = line.length;
+
+  while (i < len) {
+    while (i < len && line[i] === ' ') i++;
+    if (i >= len) break;
+
+    const start = i;
+    if (line[i] === '{' || line[i] === '[') {
+      let depth = 0;
+      let inQuote = false;
+      while (i < len) {
+        const c = line[i];
+        if (inQuote) {
+          if (c === '\\' && i + 1 < len) { i += 2; continue; }
+          if (c === '"') inQuote = false;
+        } else {
+          if (c === '"') inQuote = true;
+          else if (c === '{' || c === '[') depth++;
+          else if (c === '}' || c === ']') { depth--; if (depth === 0) { i++; break; } }
+        }
+        i++;
+      }
+      tokens.push(line.slice(start, i));
+    } else if (line[i] === '"') {
+      i++;
+      while (i < len && line[i] !== '"') {
+        if (line[i] === '\\' && i + 1 < len) i += 2; else i++;
+      }
+      if (i < len) i++;
+      tokens.push(line.slice(start, i));
+    } else {
+      while (i < len && line[i] !== ' ') {
+        if (line[i] === '"') {
+          i++;
+          while (i < len && line[i] !== '"') {
+            if (line[i] === '\\' && i + 1 < len) i += 2; else i++;
+          }
+          if (i < len) i++;
+        } else {
+          i++;
+        }
+      }
+      tokens.push(line.slice(start, i));
+    }
+  }
+  return tokens;
+}
+
+/**
+ * Parse a value string from a key:value token.
+ * Handles numbers, booleans, comma-separated arrays, JSON objects/arrays, and quoted strings.
+ */
+function parseParamValue(raw: string): unknown {
+  if (raw === '' || raw === undefined) return true;
+  if (raw === 'true') return true;
+  if (raw === 'false') return false;
+  if (raw === 'null') return null;
+
+  if (/^-?\d+(\.\d+)?$/.test(raw)) return Number(raw);
+
+  if (raw.startsWith('{') || raw.startsWith('[')) {
+    try {
+      return JSON.parse(jsObjectToJson(raw));
+    } catch {
+      return raw;
+    }
+  }
+
+  if (raw.startsWith('"') && raw.endsWith('"')) {
+    try { return JSON.parse(raw); } catch { return raw.slice(1, -1); }
+  }
+
+  if (raw.includes(',') && !raw.includes('"')) {
+    return raw.split(',').map(s => {
+      const trimmed = s.trim();
+      if (/^-?\d+(\.\d+)?$/.test(trimmed)) return Number(trimmed);
+      return trimmed;
+    });
+  }
+
+  return raw;
+}
+
+/**
+ * Expand dataflow shorthand: `in:r1.refs` -> `{ hashes: { from_step: "r1", path: "refs" } }`
+ */
+function expandDataflow(val: string): Record<string, unknown> {
+  const dotIdx = val.indexOf('.');
+  if (dotIdx === -1) return { hashes: { from_step: val, path: 'refs' } };
+  return { hashes: { from_step: val.slice(0, dotIdx), path: val.slice(dotIdx + 1) } };
+}
+
+/**
+ * Expand conditional shorthand: `if:e1.ok` -> `{ step_ok: "e1" }`
+ */
+function expandCondition(val: string): Record<string, unknown> {
+  if (val.endsWith('.ok')) return { step_ok: val.slice(0, -3) };
+  if (val.endsWith('.refs')) return { step_has_refs: val.slice(0, -5) };
+  if (val.startsWith('!')) return { not: expandCondition(val.slice(1)) };
+  return { step_ok: val };
+}
+
+/**
+ * Parse the line-per-step batch format into a UnifiedBatchRequest.
+ *
+ * Format: one step per line, first two tokens are id and operation,
+ * remaining tokens are key:value params.
+ *
+ * Example:
+ *   r1 read.context type:smart file_paths:src/api.ts,src/db.ts
+ *   p1 session.pin in:r1.refs
+ *   v1 verify.typecheck if:e1.ok
+ */
+export function parseBatchLines(q: string): { version: '1.0'; steps: Record<string, unknown>[] } {
+  const lines = q.split('\n').map(l => l.trim()).filter(Boolean);
+  const steps: Record<string, unknown>[] = [];
+
+  for (const line of lines) {
+    if (line.startsWith('@policy ')) continue;
+
+    const tokens = tokenizeBatchLine(line);
+    if (tokens.length < 2) continue;
+
+    const id = tokens[0];
+    const use = tokens[1];
+    const step: Record<string, unknown> = { id, use };
+    const withParams: Record<string, unknown> = {};
+    let hasWithParams = false;
+
+    for (let t = 2; t < tokens.length; t++) {
+      const token = tokens[t];
+      const colonIdx = token.indexOf(':');
+      if (colonIdx === -1) continue;
+
+      const key = token.slice(0, colonIdx);
+      const rawVal = token.slice(colonIdx + 1);
+
+      if (key === 'in') {
+        step.in = expandDataflow(rawVal);
+      } else if (key === 'if') {
+        step.if = expandCondition(rawVal);
+      } else if (key === 'on_error') {
+        step.on_error = rawVal;
+      } else {
+        withParams[key] = parseParamValue(rawVal);
+        hasWithParams = true;
+      }
+    }
+
+    if (hasWithParams) step.with = withParams;
+    steps.push(step);
+  }
+
+  return { version: '1.0' as const, steps };
+}
+
+/**
+ * Expand batch Q-field args to a structured request.
+ * If args.q is a string, parse it as line-per-step format.
+ * If args already has version+steps (legacy JSON), pass through unchanged.
+ * Sync and idempotent.
+ */
+export function expandBatchQ(args: Record<string, unknown>): Record<string, unknown> {
+  if (typeof args.q === 'string') {
+    return parseBatchLines(args.q);
+  }
+  return args;
+}
+
+// ============================================================================
+// Message content serialization (token estimation)
+// ============================================================================
+
 export function serializeMessageContentForTokens(content: unknown): string {
   if (typeof content === 'string') return content;
   if (!Array.isArray(content)) return serializeForTokenEstimate(content);

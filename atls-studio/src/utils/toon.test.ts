@@ -187,3 +187,149 @@ describe('serializeForTokenEstimate and formatResult limits', () => {
     expect(FORMAT_RESULT_MAX_GIT).toBeLessThan(FORMAT_RESULT_MAX_SEARCH);
   });
 });
+
+// ============================================================================
+// parseBatchLines + expandBatchQ tests
+// ============================================================================
+
+import { parseBatchLines, expandBatchQ, jsObjectToJson } from './toon';
+
+describe('jsObjectToJson', () => {
+  it('quotes unquoted keys', () => {
+    expect(JSON.parse(jsObjectToJson('{a:1,b:"hello"}'))).toEqual({ a: 1, b: 'hello' });
+  });
+
+  it('quotes bare identifier values', () => {
+    expect(JSON.parse(jsObjectToJson('{id:r1,use:search}'))).toEqual({ id: 'r1', use: 'search' });
+  });
+
+  it('preserves true/false/null as literals', () => {
+    expect(JSON.parse(jsObjectToJson('{a:true,b:false,c:null}'))).toEqual({ a: true, b: false, c: null });
+  });
+
+  it('handles nested objects', () => {
+    const input = '{line:10,action:replace,count:1,content:"const x = 1;"}';
+    const parsed = JSON.parse(jsObjectToJson(input));
+    expect(parsed).toEqual({ line: 10, action: 'replace', count: 1, content: 'const x = 1;' });
+  });
+
+  it('strips trailing commas', () => {
+    expect(JSON.parse(jsObjectToJson('{a:1,b:2,}'))).toEqual({ a: 1, b: 2 });
+  });
+
+  it('handles arrays', () => {
+    expect(JSON.parse(jsObjectToJson('[{id:r1},{id:r2}]'))).toEqual([{ id: 'r1' }, { id: 'r2' }]);
+  });
+});
+
+describe('parseBatchLines', () => {
+  it('parses a single step', () => {
+    const result = parseBatchLines('r1 read.context type:smart file_paths:src/api.ts');
+    expect(result.version).toBe('1.0');
+    expect(result.steps).toHaveLength(1);
+    expect(result.steps[0]).toEqual({
+      id: 'r1',
+      use: 'read.context',
+      with: { type: 'smart', file_paths: 'src/api.ts' },
+    });
+  });
+
+  it('parses 3 steps', () => {
+    const q = [
+      'r1 read.context depth:2 file_paths:atls-studio/src/services type:tree',
+      'r2 search.code limit:5 queries:executeUnifiedBatch',
+      'r3 session.stats',
+    ].join('\n');
+    const result = parseBatchLines(q);
+    expect(result.steps).toHaveLength(3);
+    expect(result.steps[0]).toEqual({
+      id: 'r1',
+      use: 'read.context',
+      with: { depth: 2, file_paths: 'atls-studio/src/services', type: 'tree' },
+    });
+    expect(result.steps[1]).toEqual({
+      id: 'r2',
+      use: 'search.code',
+      with: { limit: 5, queries: 'executeUnifiedBatch' },
+    });
+    expect(result.steps[2]).toEqual({ id: 'r3', use: 'session.stats' });
+  });
+
+  it('parses comma-separated arrays', () => {
+    const result = parseBatchLines('r1 read.context file_paths:src/api.ts,src/db.ts');
+    expect(result.steps[0].with).toEqual({ file_paths: ['src/api.ts', 'src/db.ts'] });
+  });
+
+  it('parses dataflow shorthand', () => {
+    const result = parseBatchLines('p1 session.pin in:r1.refs');
+    expect(result.steps[0].in).toEqual({ hashes: { from_step: 'r1', path: 'refs' } });
+    expect(result.steps[0].with).toBeUndefined();
+  });
+
+  it('parses conditional shorthand', () => {
+    const result = parseBatchLines('v1 verify.typecheck if:e1.ok');
+    expect(result.steps[0].if).toEqual({ step_ok: 'e1' });
+  });
+
+  it('parses on_error', () => {
+    const result = parseBatchLines('e1 change.edit file_path:src/api.ts on_error:continue');
+    expect(result.steps[0].on_error).toBe('continue');
+  });
+
+  it('parses inline JSON objects (line_edits)', () => {
+    const q = 'e1 change.edit file_path:src/api.ts line_edits:[{line:10,action:replace,count:1,content:"const x = 1;"}]';
+    const result = parseBatchLines(q);
+    const w = result.steps[0].with as Record<string, unknown>;
+    expect(w.file_path).toBe('src/api.ts');
+    expect(Array.isArray(w.line_edits)).toBe(true);
+    const edit = (w.line_edits as Record<string, unknown>[])[0];
+    expect(edit.line).toBe(10);
+    expect(edit.action).toBe('replace');
+    expect(edit.content).toBe('const x = 1;');
+  });
+
+  it('parses complex 5-step batch with all features', () => {
+    const q = [
+      'r1 read.context type:smart file_paths:src/api.ts,src/db.ts',
+      'p1 session.pin in:r1.refs',
+      'e1 change.edit file_path:src/api.ts line_edits:[{line:10,action:replace,count:1,content:"const x = 1;"}]',
+      'v1 verify.typecheck if:e1.ok',
+      's1 session.stats',
+    ].join('\n');
+    const result = parseBatchLines(q);
+    expect(result.steps).toHaveLength(5);
+    expect(result.steps[0].with).toEqual({ type: 'smart', file_paths: ['src/api.ts', 'src/db.ts'] });
+    expect(result.steps[1].in).toEqual({ hashes: { from_step: 'r1', path: 'refs' } });
+    expect((result.steps[2].with as Record<string, unknown>).file_path).toBe('src/api.ts');
+    expect(result.steps[3].if).toEqual({ step_ok: 'e1' });
+    expect(result.steps[4]).toEqual({ id: 's1', use: 'session.stats' });
+  });
+
+  it('skips blank lines and trims whitespace', () => {
+    const q = '\n  r1 session.stats  \n\n  r2 session.stats\n';
+    const result = parseBatchLines(q);
+    expect(result.steps).toHaveLength(2);
+  });
+
+  it('handles numeric values', () => {
+    const result = parseBatchLines('r1 read.context depth:3 max_lines:100');
+    expect(result.steps[0].with).toEqual({ depth: 3, max_lines: 100 });
+  });
+});
+
+describe('expandBatchQ', () => {
+  it('expands q string to structured request', () => {
+    const result = expandBatchQ({ q: 'r1 session.stats' });
+    expect(result).toEqual({ version: '1.0', steps: [{ id: 'r1', use: 'session.stats' }] });
+  });
+
+  it('passes through legacy structured args unchanged', () => {
+    const legacy = { version: '1.0', steps: [{ id: 'r1', use: 'session.stats' }] };
+    expect(expandBatchQ(legacy)).toBe(legacy);
+  });
+
+  it('passes through args without q field', () => {
+    const args = { foo: 'bar' };
+    expect(expandBatchQ(args)).toBe(args);
+  });
+});

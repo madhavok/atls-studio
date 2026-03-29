@@ -967,42 +967,13 @@ pub(crate) fn get_tool_definitions() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "batch",
-            description: "Unified batch execution. One schema for all operations: discover, understand, change, verify, session, annotate, delegate, and system. Steps execute sequentially with typed dataflow between them.",
+            description: "Unified batch execution. Pass steps as compact lines: one step per line, space-separated id use key:value params.",
             parameters: serde_json::json!({
                 "type": "object",
                 "properties": {
-                    "version": { "type": "string", "const": "1.0", "description": "Schema version" },
-                    "goal": { "type": "string", "description": "Semantic intent for this batch run" },
-                    "policy": {
-                        "type": "object",
-                        "description": "Optional execution constraints. Do not set execution mode here — the app enforces read-only batches only in Ask chat; agent modes always run mutable.",
-                        "properties": {
-                            "verify_after_change": { "type": "boolean", "description": "Auto-insert verify step after change.* ops" },
-                            "auto_stage_refs": { "type": "boolean", "description": "Auto-stage refs produced by each step" },
-                            "rollback_on_failure": { "type": "boolean", "description": "Rollback successful change.* steps if a later step fails" },
-                            "max_steps": { "type": "integer", "description": "Maximum user step count (server-capped)" },
-                            "stop_on_verify_failure": { "type": "boolean", "description": "Halt if a verify step fails" }
-                        }
-                    },
-                    "steps": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "id": { "type": "string", "description": "Stable handle for cross-step references" },
-                                "use": { "type": "string", "description": "Operation kind (e.g. search.code, read.context, change.edit, verify.build, session.bb.write)" },
-                                "with": { "type": "object", "description": "Operation-specific parameters" },
-                                "in": { "type": "object", "description": "Input bindings — ref expressions referencing previous step outputs" },
-                                "out": { "description": "Name(s) to expose this step's output for downstream steps" },
-                                "if": { "type": "object", "description": "Conditional execution (step_ok, step_has_refs, ref_exists, not)" },
-                                "on_error": { "type": "string", "enum": ["stop", "continue", "rollback"], "description": "Failure behavior" }
-                            },
-                            "required": ["id", "use"]
-                        },
-                        "description": "The steps to execute"
-                    }
+                    "q": { "type": "string", "description": "Batch steps, one per line: ID USE key:val key:val" }
                 },
-                "required": ["version", "steps"]
+                "required": ["q"]
             }),
         },
     ]

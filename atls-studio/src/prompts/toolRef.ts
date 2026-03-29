@@ -4,95 +4,89 @@
 
 import { generateFamilyLines } from '../services/batch/families';
 
-export const BATCH_TOOL_REF = `## Batch Tool (shell = builds/git/packages ONLY; h:XXXX = universal pointer)
-Use one native execution surface: batch({version:"1.0",steps:[...]}).
+export const BATCH_TOOL_REF = `## Batch Tool — line-per-step (shell = builds/git/packages ONLY; h:XXXX = universal pointer)
+Pass q: one step per line. Format: ID USE key:val key:val
+Arrays: comma-separated (file_paths:a.ts,b.ts). Quoted values for spaces/colons: content:"const x = 1;"
+Complex nested objects: inline JSON-like {…} syntax (line_edits, creates).
+Dataflow: in:stepId.path (e.g. in:r1.refs). Conditional: if:stepId.ok. on_error:stop|continue|rollback
 
 ### Operation Families
 ${generateFamilyLines()}
 
 ### Common Params (canonical names — aliases auto-resolved)
-session.advance subtask:optional (omit to advance to next) summary:required
-read.context type:smart|full|module|component|test|tree file_paths:[] depth?:N glob?:"" line_range?:[start,end] max_lines?:N (use full for full content; do NOT use raw)
-read.shaped file_paths:[] shape:"" max_files?:N (caps path count when bindings supply long lists)
-read.lines hash+lines ("15-50") | ref ("h:XXXX:15-50" — hash 6-16 hex) | file_path+start_line+end_line | context_lines?:0-5 (default 3, returns target_range + actual_range)
-search.code queries:[] file_paths?:[] limit?:N compact?:bool — FTS over code: short English phrases match comments, symbols, and substrings (many false positives). Prefer identifier-like queries, paths, or search.issues for correctness; treat "maybe" hits as leads to confirm with read.lines, not as proof.
-search.symbol symbol_names:[] limit?:N
-search.usage symbol_names:[] filter?:"" limit?:N
-search.similar type?:code|function|concept|pattern query?:"" threshold?:N limit?:N
-search.issues file_paths?:[] severity_filter?:high|medium|low|all category?:"" issue_mode?:correctness|all|security (default correctness — omits Style-category issues) limit?:N
-search.patterns file_paths?:[] patterns?:[]
-search.memory query:"" regions?:[active,archived,dormant,bb,staged,dropped] case_sensitive?:bool max_results?:N
-analyze.deps|calls|structure|impact|blast_radius|extract_plan file_paths:[] — common: filter?:"" limit?:N symbol_names?:[] (system.help for full params per op)
-change.edit file_path:"" line_edits:[{line:N, action:"replace", count:M, content:"new code"}] — preferred: replaces lines N..N+M-1, no old text needed
-  line: "end" | -1 (last line, no prior read) | symbol:"fn(name)" + position — Rust resolves; replace/replace_body get end_line from symbol span when omitted
-  also: line_edits:[{line:N, action:"insert_before"|"insert_after", content:"...", reindent?:true}]
-  also: line_edits:[{line:N, action:"delete", count:M}] — spans must keep valid syntax; partial deletes may fail with syntax_error_after_edit
-  also: line_edits:[{line:N, action:"move", count:M, destination:D, reindent?:true}]
-  also: line_edits:[{line:N, end_line:M, action:"replace", ...}] — end_line overrides count for inclusive span N..=M
-  Intra-step coords are snapshot-style: all numeric lines are relative to the file before any edit in the step; the batch executor rebases to sequential before apply. Then each subsequent edit's line refers to the file state after prior edits (Rust apply_line_edits).
-  legacy: edits:[{file,old,new}] — exact text match, use only for short unambiguous replacements
-  also: creates:[{path,content}] | revise:"hash" | undo:"h:$last_edit" | deletes:["path"|"h:X",...]
-change.create creates:[{path,content}]
-change.delete file_paths:["path"|"h:X",...] confirm?:true dry_run?:false
-change.refactor action:inventory|impact_analysis|execute|rollback|rename|move|extract file_paths?:[] symbol_names?:[]
-change.rollback restore:[{file,hash}] delete?:["path"|"h:X",...] — restore.hash: prefer h:$last_edit / h:$last_edit-N or hashes from execute _rollback
-change.split_module source_file:"" target_dir:"" plan:[{module,symbols:[]}] dry_run?:true mod_style?:""
-verify.build|test|lint|typecheck target_dir?:"" workspace?:"" runner?:""
-system.git action:status|diff|stage|unstage|commit|push|log|reset|restore workspace?:"" files?:[] message?:"" all?:bool — stage: all:true → git add -A; commit: all:true → git commit -a (tracked mods only; untracked need stage first)
+session.advance subtask?:name summary:required
+read.context type:smart|full|module|component|test|tree file_paths:path1,path2 depth?:N glob?:pattern line_range?:start-end max_lines?:N
+read.shaped file_paths:path1,path2 shape:sig|skeleton max_files?:N
+read.lines hash:h:XXXX lines:15-50 | file_path:path start_line:N end_line:N context_lines?:0-5
+search.code queries:term1,term2 file_paths?:path1,path2 limit?:N compact?:true
+search.symbol symbol_names:name1,name2 limit?:N
+search.usage symbol_names:name1,name2 filter?:pattern limit?:N
+search.similar type?:code|function|concept query?:text threshold?:N limit?:N
+search.issues file_paths?:path1 severity_filter?:high|medium|low|all issue_mode?:correctness|all|security limit?:N
+search.patterns file_paths?:path1 patterns?:pattern1,pattern2
+search.memory query:text regions?:active,archived,bb max_results?:N
+analyze.deps|calls|structure|impact|blast_radius|extract_plan file_paths:path1 filter?:pattern limit?:N symbol_names?:name1
+change.edit file_path:path line_edits:[{line:N,action:replace,count:M,content:"new code"}]
+  line: end | -1 | symbol:fn(name) — replace/replace_body get end_line from symbol span
+  actions: replace, insert_before, insert_after, delete, move
+  Intra-step coords: snapshot-style (relative to file before any edit in step); executor rebases
+  legacy: edits:[{file:path,old:text,new:text}] — short unambiguous replacements only
+  also: creates:[{path:p,content:c}] | revise:hash | undo:h:$last_edit | deletes:path1,path2
+change.create creates:[{path:p,content:c}]
+change.delete file_paths:path1,path2 confirm?:true dry_run?:false
+change.refactor action:inventory|impact_analysis|execute|rollback|rename|move|extract file_paths?:path1 symbol_names?:name1
+change.rollback restore:[{file:path,hash:h}] delete?:path1,path2
+change.split_module source_file:path target_dir:dir plan:[{module:name,symbols:[s1,s2]}] dry_run?:true
+verify.build|test|lint|typecheck target_dir?:dir workspace?:name runner?:name
+system.git action:status|diff|stage|unstage|commit|push|log|reset|restore files?:path1,path2 message?:"text" all?:true
 system.workspaces action:list|search|add|remove|set_active|rescan
-system.exec cmd:"" terminal_id?:""
-delegate.retrieve query:"" focus_files?:[] max_tokens?:N
-delegate.design query:"" focus_files?:[] max_tokens?:N
-session.bb.write key:"" content:"" derived_from?:[]
-session.bb.read keys:[]
-session.bb.delete keys:[]
-session.rule action?:set|delete|list key:"" content?:""
-session.emit content:"" type?:""
-session.pin hashes:["h:SHORTHASH",...] or bare step id "r1" (resolves to that step's refs) or in:{hashes:{from_step:"r1",path:"refs"}} — never use h:r1 (h: must be a real content hash, not a step id).
-session.shape|load|debug|stage|unstage|compact|unload|drop|recall|stats|compact_history — session management (system.help for params)
-annotate.note|retype|split|merge — hash-targeted metadata ops (hash:"" + op-specific params); full list includes annotate.engram|link|design — see ### Operation Families above
-intent.understand file_paths:[] force?:bool — reads, analyzes deps, stages, pins; skips steps already done
-intent.edit file_path:"" line_edits:[...] verify?:bool force?:bool — reads if needed, edits, auto-retries on stale_hash, verifies
-intent.edit_multi edits:[{file_path:"",line_edits:[...]}] verify?:bool force?:bool — per-file read/edit/retry, single verify.build at end
-intent.investigate query:"" file_paths?:[] force?:bool — search.code (capped paths) + read.shaped(sig), stages, caches in BB (not full smart read per hit)
-intent.diagnose file_paths?:[] severity?:"" query?:"" force?:bool — search.issues + analyze.impact, read-only discovery
-intent.survey directory:"" depth?:N force?:bool — read.context(tree, default depth 2, max 3), read.shaped(sig) with max_files cap, caches in BB
-intent.refactor file_path:"" strategy?:"" symbol_names?:[] target_file?:"" force?:bool — reads, pins, analyzes, extracts plan, refactors, verifies
-intent.create target_path:"" content:"" ref_files?:[] verify?:bool force?:bool — creates file with dep context, verifies types
-intent.test source_file:"" test_file?:"" force?:bool — reads source sigs + test context, read-only prep
-intent.search_replace search_query?:"" old_text:"" new_text:"" file_glob?:"" max_matches?:N verify?:bool force?:bool — literal text only, no regex
-intent.extract source_file:"" symbol_names?:[] target_file:"" force?:bool — reads source, refactors, verifies
+system.exec cmd:"command text"
+delegate.retrieve query:"what to find" focus_files?:path1,path2 max_tokens?:N
+delegate.design query:"what to design" focus_files?:path1,path2
+session.bb.write key:name content:"text"
+session.bb.read keys:key1,key2
+session.bb.delete keys:key1,key2
+session.rule action?:set|delete|list key:name content?:"text"
+session.emit content:"text" type?:name
+session.pin hashes:h:HASH1,h:HASH2 — or bare step id (in:r1.refs resolves refs)
+session.shape|load|debug|stage|unstage|compact|unload|drop|recall|stats|compact_history
+annotate.note|retype|split|merge — hash-targeted metadata ops (hash:h:XXXX + op-specific params)
+intent.understand file_paths:path1,path2 force?:true
+intent.edit file_path:path line_edits:[...] verify?:true force?:true
+intent.edit_multi edits:[{file_path:p,line_edits:[...]}] verify?:true
+intent.investigate query:text file_paths?:path1
+intent.diagnose file_paths?:path1 severity?:high query?:text
+intent.survey directory:dir depth?:N
+intent.refactor file_path:path strategy?:name symbol_names?:s1 target_file?:path
+intent.create target_path:path content:"text" ref_files?:path1 verify?:true
+intent.test source_file:path test_file?:path
+intent.search_replace old_text:"text" new_text:"text" file_glob?:pattern max_matches?:N verify?:true
+intent.extract source_file:path symbol_names?:s1 target_file:path
 
 ### Examples
-batch({version:"1.0",goal:"search then edit",steps:[{id:"s1",use:"search.code",with:{queries:["auth"]}},{id:"s2",use:"change.edit",with:{edits:[...]}},{id:"s3",use:"verify.typecheck",if:{step_ok:"s2"}}]})
-batch({version:"1.0",steps:[{id:"r1",use:"read.context",with:{type:"smart",file_paths:["src/api.ts","src/db.ts"]}},{id:"p1",use:"session.pin",in:{hashes:{from_step:"r1",path:"refs"}}}]})
-batch({version:"1.0",steps:[{id:"u1",use:"intent.understand",with:{file_paths:["src/api.ts"]}},{id:"e1",use:"intent.edit",with:{file_path:"src/api.ts",line_edits:[{line:10,action:"replace",count:1,content:"const x = 1;"}]}}]})
+s1 search.code queries:auth
+s2 change.edit file_path:src/api.ts line_edits:[{line:10,action:replace,count:1,content:"const x = 1;"}]
+s3 verify.typecheck if:s2.ok
 
-### Dataflow
-Step dataflow: in:{param:{from_step:"s1",path:"refs.0"}}.
-Literal refs: {ref:"h:X"}.
-Named bindings: {bind:"$name"}.
-Literals: {value:123}.
-Policy (optional): verify_after_change, rollback_on_failure, max_steps (capped server-side), stop_on_verify_failure, auto_stage_refs.
-Do not set policy.mode — execution mode is app-controlled (Ask chat is read-only; Agent/Designer/Reviewer/etc. always run mutable). Use verify_after_change for automatic verify.build after change.* steps.
-on_error: "stop"|"continue"|"rollback" per step.
+r1 read.context type:smart file_paths:src/api.ts,src/db.ts
+p1 session.pin in:r1.refs
 
-### Field Reference (canonical names — input aliases auto-resolved, response uses same names)
-file_path: single file (aliases: file, f, path, target_file, source_file; auto-promotes to file_paths:[] for array ops)
+u1 intent.understand file_paths:src/api.ts
+e1 intent.edit file_path:src/api.ts line_edits:[{line:10,action:replace,count:1,content:"const x = 1;"}]
+
+### Field Reference (canonical names — aliases auto-resolved, response uses same names)
+file_path: single file (aliases: file, f, path, target_file, source_file; auto-promotes to file_paths for array ops)
 file_paths: array of paths/h:refs (aliases: files, paths)
-content_hash: file content identity hash — the single authority field for mutation/stale checks (aliases: snapshot_hash, hash)
-h: short hash pointer (h:XXXX); refs/hashes: array of h:XXXX pointers (aliases: refs → hashes)
+content_hash: file content identity hash (aliases: snapshot_hash, hash)
+h: short hash pointer (h:XXXX); refs/hashes: array of h:XXXX pointers
 lines: line count in response objects (aliases: total_lines, line_count)
-truncated: bool; file_paths_truncated, output_truncated: domain-specific truncation flags
-symbol_names: symbol list (aliases: symbol, symbol_name); query/queries, key/keys, command/cmd, contents/content also auto-resolved. fn()/cls() wrappers stripped.
+symbol_names: symbol list (aliases: symbol, symbol_name); query/queries, key/keys, cmd also auto-resolved
 
 ### Rules
 - file_path/file_paths resolve from active workspace root. Subfolder prefix if monorepo (e.g. \`atls-studio/src/foo.ts\`).
 - file_paths: actual paths or h:refs, not query strings. deletes/restore: paths or h:refs.
-- verify.build|test|lint|typecheck: subprocess uses PATH with ATLS_TOOLCHAIN_PATH prepended (set env to match nvm/fnm/volta bins). system.exec runs in the PTY and may see a different PATH — use _metadata.executable_probe on verify results to see resolved tools.
-- Do not nest OpenAI multi_tool_use.parallel (or similar) inside batch steps; use multiple batch steps instead.
+- verify.*: subprocess uses PATH with ATLS_TOOLCHAIN_PATH prepended. system.exec runs in PTY (may see different PATH).
 - system.exec: PowerShell — cmd saved to temp .ps1; prefer system.git for git, verify.* for checks.
-- hash-building refactor: read.shaped(sig) -> h:SOURCE; change.create body = imports + h:XXXX:sym(Name):dedent + exports; strip source; verify.typecheck.
 - prefer cheapest tool: sigs -> read.shaped; one symbol -> search.symbol; types -> verify.typecheck; file list -> read.context(tree).
 - use delegate.retrieve/design when cheap research suffices before a bigger reasoning pass.`;
 
@@ -103,17 +97,21 @@ export const SUBAGENT_TOOL_REF = `
 • delegate.design query:"..." → planning research + writes design:research BB key
 • delegate.code query:"implement X" → edits files, verifies, writes coder:report BB key
 • delegate.test query:"test X" → writes/runs tests, iterates on failures, writes tester:results BB key
-• focus_files?:["path/hint.ts"], max_tokens?:N, token_budget?:N are optional
+• focus_files?:path1,path2, max_tokens?:N, token_budget?:N are optional
 Returns engram refs (not inline code) — pinned content appears in your next WM update.
 Example:
-batch({version:"1.0",steps:[{id:"d1",use:"delegate.retrieve",with:{query:"authentication flow",focus_files:["src/auth/"]}}]})
-batch({version:"1.0",steps:[{id:"d2",use:"delegate.code",with:{query:"add input validation to UserService.create",focus_files:["src/services/user.ts"]}}]})`;
+d1 delegate.retrieve query:"authentication flow" focus_files:src/auth/
+d2 delegate.code query:"add input validation to UserService.create" focus_files:src/services/user.ts`;
 
-export const NATIVE_TOOL_TOKENS_ESTIMATE = 1100;
+export const NATIVE_TOOL_TOKENS_ESTIMATE = 100;
 
 export const DESIGNER_TOOL_REF = `## Designer Tools — READ ONLY
-Use batch() only.
+Use batch() only. One step per line: ID USE key:val
 
 Examples
-batch({version:"1.0",steps:[{id:"s1",use:"search.code",with:{queries:["auth","login"]}},{id:"r1",use:"read.context",with:{type:"smart",file_paths:["src/api.ts"]}}]})
-batch({version:"1.0",steps:[{id:"d1",use:"annotate.design",with:{content:"# Plan\\n\\n",append:false}},{id:"bb1",use:"session.bb.write",with:{key:"design-decisions",content:"..."}}]})`;
+s1 search.code queries:auth,login
+r1 read.context type:smart file_paths:src/api.ts
+
+d1 annotate.design content:"# Plan" append:false
+bb1 session.bb.write key:design-decisions content:"..."`;
+

@@ -126,7 +126,7 @@ import { useCostStore, calculateCost, type AIProvider as CostProvider } from '..
 import { useRefactorStore } from '../stores/refactorStore';
 import { formatChunkRef, hashContentSync, isCompressedRef, sliceContentByLines, extractSearchSummary, extractSymbolSummary, extractDepsSummary, SHORT_HASH_LEN, type DigestSymbol } from '../utils/contextHash';
 import { resolveHashRefsWithMeta, setRecencyResolver, setEditRecencyResolver, setReadRecencyResolver, setStageRecencyResolver, type HashLookup, type SetRefLookup } from '../utils/hashResolver';
-import { toTOON, formatResult } from '../utils/toon';
+import { toTOON, formatResult, expandBatchQ } from '../utils/toon';
 import { countTokensSync, countTokens as countTokensAsync } from '../utils/tokenCounter';
 import { BATCH_TOOL_REF, DESIGNER_TOOL_REF, SUBAGENT_TOOL_REF, NATIVE_TOOL_TOKENS_ESTIMATE } from '../prompts/toolRef';
 import { CONTEXT_CONTROL_V4, CONTEXT_CONTROL_DESIGNER } from '../prompts/cognitiveCore';
@@ -1415,17 +1415,20 @@ async function streamChatViaTauri(
             break;
           case 'tool_input_available': {
             const idx = toolCallCounter++;
+            const expandedInput = chunk.tool_name === 'batch'
+              ? expandBatchQ(chunk.input as Record<string, unknown>)
+              : chunk.input;
             pendingToolCalls.set(idx, {
               id: chunk.tool_call_id,
               name: chunk.tool_name,
-              inputJson: JSON.stringify(chunk.input),
+              inputJson: JSON.stringify(expandedInput),
               thoughtSignature: chunk.thought_signature,
             });
-            safeCallbacks.onToolInputAvailable?.(chunk.tool_call_id, chunk.tool_name, chunk.input, chunk.thought_signature);
+            safeCallbacks.onToolInputAvailable?.(chunk.tool_call_id, chunk.tool_name, expandedInput, chunk.thought_signature);
             safeCallbacks.onToolCall({
               id: chunk.tool_call_id,
               name: chunk.tool_name,
-              args: chunk.input,
+              args: expandedInput,
               status: 'running',
               thoughtSignature: chunk.thought_signature,
             });
@@ -1702,7 +1705,8 @@ async function streamChatViaTauri(
                 for (const block of toolBlocks) {
                   const id = (block.id as string) || crypto.randomUUID();
                   const name = block.name as string;
-                  const input = block.input as Record<string, unknown> || {};
+                  const rawInput = block.input as Record<string, unknown> || {};
+                  const input = name === 'batch' ? expandBatchQ(rawInput) : rawInput;
 
                   pendingToolCalls.set(idx, { id, name, inputJson: JSON.stringify(input) });
                   safeCallbacks.onToolCall({ id, name, args: input, status: 'running' });
@@ -2486,6 +2490,10 @@ async function executeToolCallDetailed(
 
     switch (toolName) {
       case 'batch': {
+        const expanded = expandBatchQ(args);
+        if (expanded !== args) Object.keys(args).forEach(k => delete args[k]);
+        Object.assign(args, expanded);
+
         const resolved = await resolveToolParams(args);
         Object.assign(args, resolved);
 

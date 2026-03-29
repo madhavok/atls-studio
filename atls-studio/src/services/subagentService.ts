@@ -19,6 +19,7 @@ import { useRoundHistoryStore, type RoundSnapshot } from '../stores/roundHistory
 import { countTokensSync } from '../utils/tokenCounter';
 import { buildSubagentPrompt, type SubagentRole } from '../prompts/subagentPrompts';
 import { coerceBatchSteps } from './batch/coerceBatchSteps';
+import { expandBatchQ } from '../utils/toon';
 import { dematerialize, getRef } from './hashProtocol';
 import {
   SUBAGENT_MAX_ROUNDS,
@@ -363,6 +364,9 @@ async function executeSubagentToolCall(
   if (name !== 'batch') {
     return `Error: Tool '${name}' is not allowed for ${role} subagent. Use batch() only.`;
   }
+
+  const expanded = expandBatchQ(args);
+  if (expanded !== args) { Object.keys(args).forEach(k => delete args[k]); Object.assign(args, expanded); }
 
   args.steps = coerceBatchSteps(args.steps);
   const steps = args.steps as Array<Record<string, unknown>>;

@@ -731,4 +731,230 @@ mod tests {
         assert!(diff_pct < 0.30, "providers diverge too much on natural text: claude={} openai={} diff={}%",
             c_nat, o_nat, (diff_pct * 100.0) as u32);
     }
+
+    /// Empirical benchmark: compare batch tool call format alternatives.
+    /// Measures real BPE token counts for the same semantic batch call in 8+ formats
+    /// across all three providers. Run with --nocapture to see the comparison table.
+    #[test]
+    fn batch_call_format_benchmark() {
+        let providers = [
+            ("anthropic", test_models::ANTHROPIC),
+            ("openai", test_models::OPENAI),
+            ("google", test_models::GOOGLE),
+        ];
+
+        // ===================================================================
+        // 3-step batch: read.context + search.code + session.stats
+        // ===================================================================
+        let simple_3step: Vec<(&str, &str)> = vec![
+            // A: Current JSON (baseline) — native tool_use input shape
+            ("A_json",
+             r#"{"version":"1.0","goal":"Round 1: Discovery - tree, search, stats","steps":[{"id":"r1","use":"read.context","with":{"depth":2,"file_paths":["atls-studio/src/services"],"type":"tree"}},{"id":"r2","use":"search.code","with":{"limit":5,"queries":["executeUnifiedBatch"]}},{"id":"r3","use":"session.stats"}]}"#),
+
+            // B: JS-object-literal (unquoted keys, values still quoted) — what js_object_to_json parses
+            ("B_js_literal",
+             r#"{version:"1.0",goal:"Round 1: Discovery - tree, search, stats",steps:[{id:"r1",use:"read.context",with:{depth:2,file_paths:["atls-studio/src/services"],type:"tree"}},{id:"r2",use:"search.code",with:{limit:5,queries:["executeUnifiedBatch"]}},{id:"r3",use:"session.stats"}]}"#),
+
+            // C: Minimal — drop version, drop goal
+            ("C_no_ver_goal",
+             r#"[{id:"r1",use:"read.context",with:{depth:2,file_paths:["atls-studio/src/services"],type:"tree"}},{id:"r2",use:"search.code",with:{limit:5,queries:["executeUnifiedBatch"]}},{id:"r3",use:"session.stats"}]"#),
+
+            // D: Pipe-delimited flat — custom compact
+            ("D_pipe_flat",
+             r#"r1|read.context|depth:2,file_paths:atls-studio/src/services,type:tree;r2|search.code|limit:5,queries:executeUnifiedBatch;r3|session.stats"#),
+
+            // E: Positional tuple — [id, use, with?]
+            ("E_positional",
+             r#"[["r1","read.context",{"depth":2,"file_paths":["atls-studio/src/services"],"type":"tree"}],["r2","search.code",{"limit":5,"queries":["executeUnifiedBatch"]}],["r3","session.stats"]]"#),
+
+            // F: Positional + unquoted keys in with
+            ("F_pos_unquoted",
+             r#"[["r1","read.context",{depth:2,file_paths:["atls-studio/src/services"],type:"tree"}],["r2","search.code",{limit:5,queries:["executeUnifiedBatch"]}],["r3","session.stats"]]"#),
+
+            // G: Line-per-step — newline delimited, space separated
+            ("G_line_per_step",
+             "r1 read.context depth:2 file_paths:atls-studio/src/services type:tree\nr2 search.code limit:5 queries:executeUnifiedBatch\nr3 session.stats"),
+
+            // H: G inside a JSON q field (actual model output shape)
+            ("H_q_field_lines",
+             r#"{"q":"r1 read.context depth:2 file_paths:atls-studio/src/services type:tree\nr2 search.code limit:5 queries:executeUnifiedBatch\nr3 session.stats"}"#),
+
+            // I: Semicolon-delimited steps, space-separated fields
+            ("I_semi_flat",
+             "r1 read.context depth:2 file_paths:atls-studio/src/services type:tree;r2 search.code limit:5 queries:executeUnifiedBatch;r3 session.stats"),
+
+            // J: Arrow syntax — id>use>params
+            ("J_arrow",
+             "r1>read.context>depth:2,file_paths:atls-studio/src/services,type:tree;r2>search.code>limit:5,queries:executeUnifiedBatch;r3>session.stats"),
+
+            // K: Minimal JSON — just the steps array, unquoted keys, no version/goal
+            ("K_min_js_arr",
+             r#"[{id:"r1",use:"read.context",with:{depth:2,file_paths:["atls-studio/src/services"],type:"tree"}},{id:"r2",use:"search.code",with:{limit:5,queries:["executeUnifiedBatch"]}},{id:"r3",use:"session.stats"}]"#),
+
+            // L: Line-per-step inside q field with escaped newlines
+            ("L_q_escaped_nl",
+             "{\"q\":\"r1 read.context depth:2 file_paths:atls-studio/src/services type:tree\\nr2 search.code limit:5 queries:executeUnifiedBatch\\nr3 session.stats\"}"),
+        ];
+
+        eprintln!("\n=== Batch Call Format Benchmark: 3-Step ===\n");
+        eprintln!(
+            "{:<20} {:>6} {:>8} {:>8} {:>8} {:>8}",
+            "Format", "chars", "claude", "openai", "google*", "vs_json%"
+        );
+        eprintln!("{}", "-".repeat(62));
+
+        let baseline_counts: Vec<u32> = providers.iter()
+            .map(|(p, m)| count_tokens_inner(p, m, simple_3step[0].1))
+            .collect();
+
+        for (name, content) in &simple_3step {
+            let chars = content.len();
+            let counts: Vec<u32> = providers.iter()
+                .map(|(p, m)| count_tokens_inner(p, m, content))
+                .collect();
+            let pct_vs_json = ((counts[0] as f64 - baseline_counts[0] as f64) / baseline_counts[0] as f64 * 100.0) as i32;
+            eprintln!(
+                "{:<20} {:>6} {:>8} {:>8} {:>8} {:>7}%",
+                name, chars, counts[0], counts[1], counts[2], pct_vs_json
+            );
+        }
+
+        // ===================================================================
+        // 5-step batch with dataflow, conditionals, line_edits
+        // ===================================================================
+        let complex_5step: Vec<(&str, &str)> = vec![
+            // A: Current JSON (baseline)
+            ("A_json",
+             r#"{"version":"1.0","goal":"Read, analyze, edit, verify","policy":{"verify_after_change":true},"steps":[{"id":"r1","use":"read.context","with":{"type":"smart","file_paths":["src/api.ts","src/db.ts"]}},{"id":"p1","use":"session.pin","in":{"hashes":{"from_step":"r1","path":"refs"}}},{"id":"e1","use":"change.edit","with":{"file_path":"src/api.ts","line_edits":[{"line":10,"action":"replace","count":1,"content":"const x = 1;"}]}},{"id":"v1","use":"verify.typecheck","if":{"step_ok":"e1"}},{"id":"s1","use":"session.stats"}]}"#),
+
+            // B: JS-object-literal (unquoted keys)
+            ("B_js_literal",
+             r#"{version:"1.0",goal:"Read, analyze, edit, verify",policy:{verify_after_change:true},steps:[{id:"r1",use:"read.context",with:{type:"smart",file_paths:["src/api.ts","src/db.ts"]}},{id:"p1",use:"session.pin",in:{hashes:{from_step:"r1",path:"refs"}}},{id:"e1",use:"change.edit",with:{file_path:"src/api.ts",line_edits:[{line:10,action:"replace",count:1,content:"const x = 1;"}]}},{id:"v1",use:"verify.typecheck",if:{step_ok:"e1"}},{id:"s1",use:"session.stats"}]}"#),
+
+            // C: No version/goal/policy, unquoted keys
+            ("C_no_envelope",
+             r#"[{id:"r1",use:"read.context",with:{type:"smart",file_paths:["src/api.ts","src/db.ts"]}},{id:"p1",use:"session.pin",in:{hashes:{from_step:"r1",path:"refs"}}},{id:"e1",use:"change.edit",with:{file_path:"src/api.ts",line_edits:[{line:10,action:"replace",count:1,content:"const x = 1;"}]}},{id:"v1",use:"verify.typecheck",if:{step_ok:"e1"}},{id:"s1",use:"session.stats"}]"#),
+
+            // D: Pipe-delimited
+            ("D_pipe_flat",
+             "r1|read.context|type:smart,file_paths:src/api.ts+src/db.ts;p1|session.pin|in:r1.refs;e1|change.edit|file_path:src/api.ts,line_edits:10:replace:1:const x = 1;;v1|verify.typecheck|if:e1.ok;s1|session.stats"),
+
+            // G: Line-per-step
+            ("G_line_per_step",
+             "r1 read.context type:smart file_paths:src/api.ts,src/db.ts\np1 session.pin in:r1.refs\ne1 change.edit file_path:src/api.ts line_edits:[{line:10,action:replace,count:1,content:\"const x = 1;\"}]\nv1 verify.typecheck if:e1.ok\ns1 session.stats"),
+
+            // H: Line-per-step in q field
+            ("H_q_lines",
+             r#"{"q":"r1 read.context type:smart file_paths:src/api.ts,src/db.ts\np1 session.pin in:r1.refs\ne1 change.edit file_path:src/api.ts line_edits:[{line:10,action:replace,count:1,content:\"const x = 1;\"}]\nv1 verify.typecheck if:e1.ok\ns1 session.stats"}"#),
+
+            // I: Semi-delimited single line
+            ("I_semi_flat",
+             "r1 read.context type:smart file_paths:src/api.ts,src/db.ts;p1 session.pin in:r1.refs;e1 change.edit file_path:src/api.ts line_edits:[{line:10,action:replace,count:1,content:\"const x = 1;\"}];v1 verify.typecheck if:e1.ok;s1 session.stats"),
+
+            // M: Hybrid — unquoted JS array with simplified dataflow
+            ("M_hybrid_terse",
+             r#"[{id:"r1",use:"read.context",with:{type:"smart",file_paths:["src/api.ts","src/db.ts"]}},{id:"p1",use:"session.pin",in:{hashes:{from_step:"r1",path:"refs"}}},{id:"e1",use:"change.edit",with:{file_path:"src/api.ts",line_edits:[{line:10,action:"replace",count:1,content:"const x = 1;"}]}},{id:"v1",use:"verify.typecheck",if:{step_ok:"e1"}},{id:"s1",use:"session.stats"}]"#),
+        ];
+
+        eprintln!("\n=== Batch Call Format Benchmark: 5-Step (dataflow + edit) ===\n");
+        eprintln!(
+            "{:<20} {:>6} {:>8} {:>8} {:>8} {:>8}",
+            "Format", "chars", "claude", "openai", "google*", "vs_json%"
+        );
+        eprintln!("{}", "-".repeat(62));
+
+        let baseline_5: Vec<u32> = providers.iter()
+            .map(|(p, m)| count_tokens_inner(p, m, complex_5step[0].1))
+            .collect();
+
+        for (name, content) in &complex_5step {
+            let chars = content.len();
+            let counts: Vec<u32> = providers.iter()
+                .map(|(p, m)| count_tokens_inner(p, m, content))
+                .collect();
+            let pct_vs_json = ((counts[0] as f64 - baseline_5[0] as f64) / baseline_5[0] as f64 * 100.0) as i32;
+            eprintln!(
+                "{:<20} {:>6} {:>8} {:>8} {:>8} {:>7}%",
+                name, chars, counts[0], counts[1], counts[2], pct_vs_json
+            );
+        }
+
+        // ===================================================================
+        // 1-step minimal: the most common case (single operation)
+        // ===================================================================
+        let single_step: Vec<(&str, &str)> = vec![
+            ("A_json",
+             r#"{"version":"1.0","steps":[{"id":"r1","use":"read.context","with":{"type":"smart","file_paths":["src/api.ts"]}}]}"#),
+            ("B_js_literal",
+             r#"{version:"1.0",steps:[{id:"r1",use:"read.context",with:{type:"smart",file_paths:["src/api.ts"]}}]}"#),
+            ("C_no_envelope",
+             r#"[{id:"r1",use:"read.context",with:{type:"smart",file_paths:["src/api.ts"]}}]"#),
+            ("G_line",
+             "r1 read.context type:smart file_paths:src/api.ts"),
+            ("H_q_line",
+             r#"{"q":"r1 read.context type:smart file_paths:src/api.ts"}"#),
+        ];
+
+        eprintln!("\n=== Batch Call Format Benchmark: 1-Step (common case) ===\n");
+        eprintln!(
+            "{:<20} {:>6} {:>8} {:>8} {:>8} {:>8}",
+            "Format", "chars", "claude", "openai", "google*", "vs_json%"
+        );
+        eprintln!("{}", "-".repeat(62));
+
+        let baseline_1: Vec<u32> = providers.iter()
+            .map(|(p, m)| count_tokens_inner(p, m, single_step[0].1))
+            .collect();
+
+        for (name, content) in &single_step {
+            let chars = content.len();
+            let counts: Vec<u32> = providers.iter()
+                .map(|(p, m)| count_tokens_inner(p, m, content))
+                .collect();
+            let pct_vs_json = ((counts[0] as f64 - baseline_1[0] as f64) / baseline_1[0] as f64 * 100.0) as i32;
+            eprintln!(
+                "{:<20} {:>6} {:>8} {:>8} {:>8} {:>7}%",
+                name, chars, counts[0], counts[1], counts[2], pct_vs_json
+            );
+        }
+
+        // ===================================================================
+        // Schema overhead: tool definition itself (sent every request)
+        // ===================================================================
+        let schemas: Vec<(&str, &str)> = vec![
+            ("current_schema",
+             r#"{"name":"batch","description":"Unified batch execution. One schema for all operations: discover, understand, change, verify, session, annotate, delegate, and system. Steps execute sequentially with typed dataflow between them.","input_schema":{"type":"object","properties":{"version":{"type":"string","const":"1.0","description":"Schema version"},"goal":{"type":"string","description":"Semantic intent for this batch run"},"policy":{"type":"object","description":"Optional execution constraints.","properties":{"verify_after_change":{"type":"boolean"},"auto_stage_refs":{"type":"boolean"},"rollback_on_failure":{"type":"boolean"},"max_steps":{"type":"integer"},"stop_on_verify_failure":{"type":"boolean"}}},"steps":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"use":{"type":"string"},"with":{"type":"object"},"in":{"type":"object"},"out":{},"if":{"type":"object"},"on_error":{"type":"string","enum":["stop","continue","rollback"]}},"required":["id","use"]}}},"required":["version","steps"]}}"#),
+            ("q_string_schema",
+             r#"{"name":"batch","description":"Unified batch execution. Pass steps as a compact string.","input_schema":{"type":"object","properties":{"q":{"type":"string","description":"Batch steps"}},"required":["q"]}}"#),
+        ];
+
+        eprintln!("\n=== Tool Schema Token Cost ===\n");
+        eprintln!(
+            "{:<20} {:>6} {:>8} {:>8} {:>8}",
+            "Schema", "chars", "claude", "openai", "google*"
+        );
+        eprintln!("{}", "-".repeat(54));
+
+        for (name, content) in &schemas {
+            let chars = content.len();
+            let counts: Vec<u32> = providers.iter()
+                .map(|(p, m)| count_tokens_inner(p, m, content))
+                .collect();
+            eprintln!(
+                "{:<20} {:>6} {:>8} {:>8} {:>8}",
+                name, chars, counts[0], counts[1], counts[2]
+            );
+        }
+
+        eprintln!("\n*google = calibrated heuristic\n");
+
+        // Sanity: the most compact formats should beat JSON baseline
+        let json_3 = count_tokens_inner("anthropic", test_models::ANTHROPIC, simple_3step[0].1);
+        let line_3 = count_tokens_inner("anthropic", test_models::ANTHROPIC, simple_3step[6].1);
+        assert!(
+            line_3 < json_3,
+            "line-per-step ({}) should be fewer tokens than JSON ({}) for Claude",
+            line_3, json_3
+        );
+    }
 }
