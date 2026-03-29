@@ -1171,6 +1171,7 @@ async function streamChatViaTauri(
   let lastActiveSubtaskId: string | null = null;
   let totalResearchRounds = 0;
   let anyRoundHadMutations = false;
+  let forceStopInjected = false;
   _hadVerification = false;
   const advanceCountBySubtask = new Map<string, number>();
   let hadProgressSinceLastAdvance = false;
@@ -2201,6 +2202,13 @@ async function streamChatViaTauri(
       conversationHistory.push({ role: 'assistant', content: assistantContent });
       conversationHistory.push({ role: 'user', content: toolResults });
 
+      // Hard stop: model had one round after FORCE STOP and still didn't call task_complete
+      if (forceStopInjected && !taskCompleteCalled) {
+        console.log('[aiService] Research budget hard stop — model did not call task_complete after FORCE STOP');
+        useAppStore.getState().setAgentProgress({ status: 'stopped', stoppedReason: 'research_budget' });
+        break;
+      }
+
       // task_complete was called — stop the loop after recording tool results
       // Layer 3B: Verify gate — if mutations happened, require at least one verify.* before completing
       if (taskCompleteCalled) {
@@ -2311,6 +2319,7 @@ async function streamChatViaTauri(
       if (totalResearchRounds >= TOTAL_RESEARCH_ROUND_BUDGET + RESEARCH_FORCE_STOP_MARGIN
           && mode !== 'ask' && mode !== 'retriever') {
         console.log(`[aiService] FORCE STOP: ${totalResearchRounds} research rounds without mutations — forcing task_complete`);
+        forceStopInjected = true;
         conversationHistory.push({
           role: 'user',
           content: `<<SYSTEM: FORCE STOP — ${totalResearchRounds} rounds without any code changes. ` +

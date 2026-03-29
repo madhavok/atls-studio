@@ -1325,7 +1325,9 @@ export async function executeUnifiedBatch(
       const bbContent = typeof mergedParams.content === 'string' ? mergedParams.content : undefined;
       ctx.store().recordBatchBbWrite(bbKey, bbContent);
       const bbPaths = extractBbWriteFilePaths(mergedParams);
-      ctx.store().resetFileReadSpin(bbPaths.length > 0 ? bbPaths : undefined);
+      if (bbPaths.length > 0) {
+        ctx.store().resetFileReadSpin(bbPaths);
+      }
     }
     if (output.ok && step.use.startsWith('change.')) {
       ctx.store().resetFileReadSpin();

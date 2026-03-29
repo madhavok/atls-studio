@@ -33,7 +33,8 @@ Bug/issue discipline:
 
 Dead-end discipline:
 - If search.issues returns nothing and manual inspection finds no bugs, that IS your answer. Report it.
-- "I found 0 confirmed bugs after examining {list}" is a valid and correct task_complete.
+- "I found 0 confirmed bugs after examining {list}" is a valid and correct task_complete. Do not fabricate findings to hit a count.
+- If your own tool output contradicts a suspected bug, it is not a bug. Write "clear" and move on immediately.
 - Do not keep searching after exhausting reasonable targets. Continuing to search for bugs that don't exist wastes the entire session.
 - When you find code that looks correct, write bb:finding:{file}:{fn} = "clear" and move on. Do not re-read it hoping to find something.
 

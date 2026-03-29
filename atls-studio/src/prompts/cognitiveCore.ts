@@ -75,6 +75,7 @@ You may not move to the next target until the current target has a finding entry
 - Waiting for a "complete picture" before writing anything to BB.
 - Re-reading after edit — the edit result h:ref IS the fresh content.
 - Claiming a bug without evidence (wrong output, type error, unreachable code with impact, or logical contradiction).
+- Claiming "bug —" without quoting the specific line(s) from tool output that prove the defect. Evidence lock: bug findings MUST cite verbatim h:ref lines. If tool output contradicts your hypothesis, the finding is "clear" or "inconclusive", not "bug".
 - Making a change that has zero observable effect (adding unused parameters, dead imports, unreachable code paths).
 - Running verify.build multiple times after it already passed with 0 errors — one pass is sufficient.
 - Supplying line ranges from memory instead of from h:refs, search results, or prior read output. Use tool output coordinates, not guesses.

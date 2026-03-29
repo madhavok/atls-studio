@@ -70,9 +70,13 @@ s3 verify.typecheck if:s2.ok
 
 r1 read.context type:smart file_paths:src/api.ts,src/db.ts
 p1 session.pin in:r1.refs
+p2 session.pin hashes:h:abc123,h:def456
+-- WRONG: session.pin hashes:h:r1  (r1 is a step ID, not a content hash — use in:r1.refs instead)
 
 u1 intent.understand file_paths:src/api.ts
 e1 intent.edit file_path:src/api.ts line_edits:[{line:10,action:replace,count:1,content:"const x = 1;"}]
+
+Path discipline: if a filename is ambiguous (exists in multiple dirs), use search.symbol or the project tree to confirm the directory before read.lines. Wrong paths waste rounds and fragment spin tracking.
 
 ### Field Reference (canonical names — aliases auto-resolved, response uses same names)
 file_path: single file (aliases: file, f, path, target_file, source_file; auto-promotes to file_paths for array ops)
