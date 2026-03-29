@@ -411,7 +411,10 @@ export function useChatPersistence() {
     try {
       const result = await chatDb.loadFullSession(sessionId);
       if (!result) return false;
-      
+
+      // Per-session cost/subagent breakdown must not leak from the previous session.
+      useCostStore.getState().resetChat();
+
       // Restore messages; prompt/cache/cost filled from snapshot v4 or DB below
       useAppStore.setState({
         currentSessionId: sessionId,

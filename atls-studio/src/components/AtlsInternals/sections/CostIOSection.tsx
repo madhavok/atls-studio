@@ -20,7 +20,6 @@ export function CostIOSection() {
   const snapshots = useRoundHistoryStore((s) => s.snapshots);
 
   const chatCostCents = useCostStore((s) => s.chatCostCents);
-  const chatApiCalls = useCostStore((s) => s.chatApiCalls);
   const chatSubAgentCostCents = useCostStore((s) => s.chatSubAgentCostCents);
   const subAgentUsages = useCostStore((s) => s.subAgentUsages);
 
@@ -28,7 +27,7 @@ export function CostIOSection() {
   const subagentSnapshots = useMemo(() => snapshots.filter((s) => s.isSubagentRound), [snapshots]);
   const swarmSnapshots = useMemo(() => snapshots.filter((s) => s.isSwarmRound), [snapshots]);
 
-  const { chartData, totalInput, totalOutput, totalCacheRead } = useMemo(() => {
+  const { chartData, totalInput, totalOutput, totalCacheRead, avgMainRoundCost } = useMemo(() => {
     const cd = mainSnapshots.map((s) => ({
       round: s.round,
       Input: s.inputTokens,
@@ -37,17 +36,17 @@ export function CostIOSection() {
       Cost: Math.round(s.costCents * 100) / 100,
     }));
     let tIn = 0, tOut = 0, tCache = 0;
+    let mainCostSum = 0;
     for (const s of mainSnapshots) {
       tIn += s.inputTokens;
       tOut += s.outputTokens;
       tCache += s.cacheReadTokens;
+      mainCostSum += s.costCents;
     }
-    return { chartData: cd, totalInput: tIn, totalOutput: tOut, totalCacheRead: tCache };
+    const nMain = mainSnapshots.length;
+    const avgMain = nMain > 0 ? Math.round((mainCostSum / nMain) * 100) / 100 : 0;
+    return { chartData: cd, totalInput: tIn, totalOutput: tOut, totalCacheRead: tCache, avgMainRoundCost: avgMain };
   }, [mainSnapshots]);
-
-  const avgCost = chatApiCalls > 0
-    ? Math.round((chatCostCents / chatApiCalls) * 100) / 100
-    : 0;
 
   const costAxisMax = useMemo(() => {
     let m = 0;
@@ -58,7 +57,7 @@ export function CostIOSection() {
     return Math.max(headroom, 0.01);
   }, [chartData]);
 
-  if (chatApiCalls === 0 && chartData.length === 0 && subagentSnapshots.length === 0 && swarmSnapshots.length === 0) {
+  if (chatCostCents === 0 && chartData.length === 0 && subagentSnapshots.length === 0 && swarmSnapshots.length === 0) {
     return (
       <div className="text-xs text-studio-muted py-6 text-center">
         No round data yet. Cost and I/O metrics appear after the first API round.
@@ -129,7 +128,11 @@ export function CostIOSection() {
 
       <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
         <StatCard label="Total Cost" value={formatCost(chatCostCents)} accent />
-        <StatCard label="Avg Cost/Main Round" value={formatCost(avgCost)} />
+        <StatCard
+          label="Avg Cost/Main Round"
+          value={mainSnapshots.length > 0 ? formatCost(avgMainRoundCost) : '—'}
+          subtitle="mean of main rounds in history"
+        />
         <StatCard label="Main Input" value={fmtK(totalInput)} />
         <StatCard label="Main Output" value={fmtK(totalOutput)} />
         <StatCard label="Main Cache Reads" value={fmtK(totalCacheRead)} />
@@ -169,11 +172,12 @@ export function CostIOSection() {
   );
 }
 
-function StatCard({ label, value, accent }: { label: string; value: string; accent?: boolean }) {
+function StatCard({ label, value, subtitle, accent }: { label: string; value: string; subtitle?: string; accent?: boolean }) {
   return (
     <div className="bg-studio-surface/50 rounded px-2 py-1.5 border border-studio-border/30">
       <div className="text-[10px] text-studio-muted">{label}</div>
       <div className={`text-sm font-semibold font-mono ${accent ? 'text-studio-warning' : 'text-studio-text'}`}>{value}</div>
+      {subtitle && <div className="text-[9px] text-studio-muted mt-0.5 leading-tight">{subtitle}</div>}
     </div>
   );
 }

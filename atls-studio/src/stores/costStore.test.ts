@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { calculateCost } from './costStore';
+import { calculateCost, type SubAgentUsage } from './costStore';
 import type { RoundSnapshot } from './roundHistoryStore';
 
 const COST_DATA_KEY = 'atls-cost-data';
@@ -75,6 +75,61 @@ describe('calculateCost', () => {
     expect(calculateCost('openai', 'gpt-4o', 10, Number.POSITIVE_INFINITY)).toBe(0);
     expect(calculateCost('openai', 'gpt-4o', -1, 10)).toBe(0);
     expect(calculateCost('openai', 'gpt-4o', 10, -1)).toBe(0);
+  });
+});
+
+const sampleSubAgentUsage = (): SubAgentUsage => ({
+  invocationId: 'inv-1',
+  type: 'retriever',
+  provider: 'openai',
+  model: 'gpt-4o',
+  inputTokens: 100,
+  outputTokens: 50,
+  cacheReadTokens: 0,
+  cacheWriteTokens: 0,
+  costCents: 3,
+  rounds: 2,
+  toolCalls: 1,
+  pinTokens: 10,
+  timestamp: new Date(),
+});
+
+describe('restorePersistedChatTotals', () => {
+  beforeEach(() => {
+    useCostStore.getState().resetChat();
+    useCostStore.setState({ sessionInputTokens: 0, sessionOutputTokens: 0, sessionCostCents: 0, sessionApiCalls: 0 });
+  });
+
+  it('merges partial payloads without zeroing omitted subagent fields', () => {
+    useCostStore.setState({
+      chatCostCents: 10,
+      chatApiCalls: 2,
+      chatSubAgentCostCents: 4,
+      subAgentUsages: [sampleSubAgentUsage()],
+    });
+    useCostStore.getState().restorePersistedChatTotals({ chatCostCents: 5 });
+    const s = useCostStore.getState();
+    expect(s.chatCostCents).toBe(5);
+    expect(s.chatSubAgentCostCents).toBe(4);
+    expect(s.chatApiCalls).toBe(2);
+    expect(s.subAgentUsages).toHaveLength(1);
+  });
+
+  it('applies explicit zeros for subagent when provided', () => {
+    useCostStore.setState({
+      chatCostCents: 10,
+      chatSubAgentCostCents: 4,
+      subAgentUsages: [sampleSubAgentUsage()],
+    });
+    useCostStore.getState().restorePersistedChatTotals({
+      chatCostCents: 8,
+      chatSubAgentCostCents: 0,
+      subAgentUsages: [],
+    });
+    const s = useCostStore.getState();
+    expect(s.chatCostCents).toBe(8);
+    expect(s.chatSubAgentCostCents).toBe(0);
+    expect(s.subAgentUsages).toEqual([]);
   });
 });
 

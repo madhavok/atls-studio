@@ -430,16 +430,20 @@ async function runStreamRound(
       roundCacheReadTokens,
       roundCacheWriteTokens,
     );
-    useCostStore.getState().recordUsage({
-      provider: config.provider as CostProvider,
-      model: config.model,
-      inputTokens: roundInputTokens,
-      outputTokens: roundOutputTokens,
-      cacheReadTokens: roundCacheReadTokens,
-      cacheWriteTokens: roundCacheWriteTokens,
-      costCents: roundCostCents,
-      timestamp: new Date(),
-    });
+    // Only attribute spend to primary chat/session/daily metrics when this stream
+    // is the main chat agent; parallel swarm workers must not pollute chat totals.
+    if (affectMainChatMetrics) {
+      useCostStore.getState().recordUsage({
+        provider: config.provider as CostProvider,
+        model: config.model,
+        inputTokens: roundInputTokens,
+        outputTokens: roundOutputTokens,
+        cacheReadTokens: roundCacheReadTokens,
+        cacheWriteTokens: roundCacheWriteTokens,
+        costCents: roundCostCents,
+        timestamp: new Date(),
+      });
+    }
     rateLimiter.recordSuccess(provider, roundInputTokens, roundOutputTokens);
   } else {
     console.warn('[swarmChat] Round completed with zero usage — cost may show $0');

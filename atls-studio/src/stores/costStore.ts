@@ -346,7 +346,7 @@ interface CostState {
   resetChat: () => void;
   /** Restore per-conversation totals after loading a session from persistence (cold start / history). */
   restorePersistedChatTotals: (payload: {
-    chatCostCents: number;
+    chatCostCents?: number;
     chatApiCalls?: number;
     chatSubAgentCostCents?: number;
     subAgentUsages?: SubAgentUsage[];
@@ -515,11 +515,13 @@ export const useCostStore = create<CostState>((set, get) => {
     },
 
     restorePersistedChatTotals: (payload) => {
+      const state = get();
       set({
-        chatCostCents: Math.max(0, payload.chatCostCents),
-        chatApiCalls: Math.max(0, payload.chatApiCalls ?? 0),
-        chatSubAgentCostCents: Math.max(0, payload.chatSubAgentCostCents ?? 0),
-        subAgentUsages: payload.subAgentUsages ?? [],
+        chatCostCents: payload.chatCostCents !== undefined ? Math.max(0, payload.chatCostCents) : state.chatCostCents,
+        chatApiCalls: payload.chatApiCalls !== undefined ? Math.max(0, payload.chatApiCalls) : state.chatApiCalls,
+        chatSubAgentCostCents:
+          payload.chatSubAgentCostCents !== undefined ? Math.max(0, payload.chatSubAgentCostCents) : state.chatSubAgentCostCents,
+        subAgentUsages: payload.subAgentUsages !== undefined ? payload.subAgentUsages : state.subAgentUsages,
       });
     },
 

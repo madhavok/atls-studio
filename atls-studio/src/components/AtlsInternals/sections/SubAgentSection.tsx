@@ -2,6 +2,9 @@ import { useCostStore, formatCost, type SubAgentUsage } from '../../../stores/co
 import { useRoundHistoryStore } from '../../../stores/roundHistoryStore';
 import { useMemo, useState } from 'react';
 
+/** Cost store uses cents; below this residual main, subagent/main ratio is not meaningful. */
+const MAIN_RESIDUAL_EPS = 1;
+
 function fmtK(v: number): string {
   return v >= 1000 ? `${(v / 1000).toFixed(1)}k` : String(v);
 }
@@ -67,9 +70,9 @@ export function SubAgentSection() {
       ? chatSubAgentCostCents / subAgentUsages.length
       : 0;
     const mainModelCost = chatCostCents - chatSubAgentCostCents;
-    const costRatio = mainModelCost > 0
-      ? chatSubAgentCostCents / mainModelCost
-      : 0;
+    const subagentShareOfChat = chatCostCents > 0 ? chatSubAgentCostCents / chatCostCents : 0;
+    const multiplierVsMain =
+      mainModelCost > MAIN_RESIDUAL_EPS ? chatSubAgentCostCents / mainModelCost : null;
 
     return {
       invocations: subAgentUsages.length,
@@ -77,7 +80,8 @@ export function SubAgentSection() {
       totalPinTokens,
       totalToolCalls,
       avgCost,
-      costRatio,
+      subagentShareOfChat,
+      multiplierVsMain,
     };
   }, [subAgentUsages, chatSubAgentCostCents, chatCostCents, snapshots]);
 
@@ -92,7 +96,7 @@ export function SubAgentSection() {
   return (
     <div className="space-y-3">
       {/* Summary cards */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
         <div className="bg-studio-surface/50 rounded px-2 py-1.5 border border-studio-border/30">
           <div className="text-[10px] text-studio-muted">Invocations</div>
           <div className="text-sm font-semibold font-mono text-teal-400">{stats.invocations}</div>
@@ -106,11 +110,22 @@ export function SubAgentSection() {
           <div className="text-sm font-semibold font-mono">{fmtK(stats.totalPinTokens)}</div>
         </div>
         <div className="bg-studio-surface/50 rounded px-2 py-1.5 border border-studio-border/30">
-          <div className="text-[10px] text-studio-muted">Cost Ratio</div>
+          <div className="text-[10px] text-studio-muted">Share of chat cost</div>
           <div className="text-sm font-semibold font-mono">
-            {(stats.costRatio * 100).toFixed(1)}%
+            {(stats.subagentShareOfChat * 100).toFixed(1)}%
           </div>
-          <div className="text-[9px] text-studio-muted">of main model cost</div>
+          <div className="text-[9px] text-studio-muted">subagent / total chat</div>
+        </div>
+        <div className="bg-studio-surface/50 rounded px-2 py-1.5 border border-studio-border/30 sm:col-span-2 lg:col-span-1">
+          <div className="text-[10px] text-studio-muted">vs main residual</div>
+          <div className="text-sm font-semibold font-mono">
+            {stats.multiplierVsMain != null ? `${stats.multiplierVsMain.toFixed(2)}×` : 'N/A'}
+          </div>
+          <div className="text-[9px] text-studio-muted leading-tight">
+            {stats.multiplierVsMain != null
+              ? 'subagent ÷ (chat − subagent)'
+              : 'main residual under 1¢'}
+          </div>
         </div>
       </div>
 
