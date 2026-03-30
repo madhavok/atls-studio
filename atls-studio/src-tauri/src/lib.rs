@@ -454,6 +454,30 @@ pub(crate) fn flexible_replacen(content: &str, old_text: &str, new_text: &str) -
     flexible_replacen_scored(content, old_text, new_text, None).map(|(s, _, _)| s)
 }
 
+/// Read-only suggestion when exact match fails: returns the best fuzzy match
+/// location without applying it. Used for structured error feedback.
+#[allow(deprecated)]
+pub(crate) fn suggest_fuzzy_match(
+    content: &str,
+    old_text: &str,
+    expected_line: Option<u32>,
+) -> Option<serde_json::Value> {
+    let result = flexible_replacen_scored(content, old_text, "", expected_line)?;
+    let (_, match_line, confidence) = result;
+    let tier = if confidence >= 100 { "exact" } else { "whitespace_trimmed" };
+    let content_lines: Vec<&str> = content.lines().collect();
+    let ml = match_line as usize;
+    let preview_start = ml.saturating_sub(1);
+    let preview_end = (preview_start + 3).min(content_lines.len());
+    let preview: Vec<&str> = content_lines[preview_start..preview_end].to_vec();
+    Some(serde_json::json!({
+        "line": match_line,
+        "confidence": confidence,
+        "tier": tier,
+        "preview": preview.join("\n"),
+    }))
+}
+
 /// Strict exact-only replacement for write paths.
 /// Only uses byte-exact matches — no whitespace-trimmed fallback.
 /// Returns (new_content, match_line_1based) or None if not found.
@@ -570,8 +594,18 @@ fn resolve_single_edit_line(
     }
 }
 
-/// Returns (new_content, anchor_miss_warnings). Warnings are non-fatal: the edit
-/// still applies using the hint line, but callers can surface misses to the model.
+/// Per-edit metadata returned by `apply_line_edits` for downstream rebase and observability.
+#[derive(Clone, Debug, Serialize)]
+pub(crate) struct EditResolution {
+    pub resolved_line: usize,
+    pub action: String,
+    /// Number of original lines affected: body span for replace_body, source span for others.
+    pub lines_affected: usize,
+}
+
+/// Returns (new_content, anchor_miss_warnings, per_edit_resolutions).
+/// Warnings are non-fatal: the edit still applies using the hint line,
+/// but callers can surface misses to the model.
 ///
 /// Edits are applied **sequentially in array order** (top-down). Each edit resolves
 /// its line/anchor against the current state of `lines` after all prior edits, which
@@ -580,7 +614,7 @@ fn resolve_single_edit_line(
 /// **DEPRECATED as a direct write path.** Callers should route through `EditSession`
 /// for atomic writes and preimage validation. `apply_line_edits` may still be used
 /// to compute proposed content, but the result must go through `EditSession::commit()`.
-pub(crate) fn apply_line_edits(content: &str, edits: &[LineEdit]) -> Result<(String, Vec<String>), String> {
+pub(crate) fn apply_line_edits(content: &str, edits: &[LineEdit]) -> Result<(String, Vec<String>, Vec<EditResolution>), String> {
     let content = normalize_line_endings(content);
     let mut lines: Vec<String> = content.lines().map(|l| l.to_string()).collect();
     if content.ends_with('\n') {
@@ -588,6 +622,7 @@ pub(crate) fn apply_line_edits(content: &str, edits: &[LineEdit]) -> Result<(Str
     }
 
     let mut anchor_warnings: Vec<String> = Vec::new();
+    let mut resolutions: Vec<EditResolution> = Vec::with_capacity(edits.len());
 
     for edit in edits.iter() {
         let resolved_line = resolve_single_edit_line(edit, &lines, &mut anchor_warnings)?;
@@ -595,7 +630,7 @@ pub(crate) fn apply_line_edits(content: &str, edits: &[LineEdit]) -> Result<(Str
         if idx > lines.len() {
             return Err(format!("Line {} out of range (file has {} lines)", resolved_line, lines.len()));
         }
-        match edit.action.as_str() {
+        let lines_affected: usize = match edit.action.as_str() {
             "insert_before" | "prepend" => {
                 let raw = edit.content.as_deref().unwrap_or("");
                 let text = if edit.reindent && idx < lines.len() {
@@ -603,9 +638,11 @@ pub(crate) fn apply_line_edits(content: &str, edits: &[LineEdit]) -> Result<(Str
                 } else {
                     raw.to_string()
                 };
+                let count = text.lines().count();
                 for (i, l) in text.lines().enumerate() {
                     lines.insert(idx + i, l.to_string());
                 }
+                count
             }
             "insert_after" | "append" => {
                 let ins = std::cmp::min(idx + 1, lines.len());
@@ -615,9 +652,11 @@ pub(crate) fn apply_line_edits(content: &str, edits: &[LineEdit]) -> Result<(Str
                 } else {
                     raw.to_string()
                 };
+                let count = text.lines().count();
                 for (i, l) in text.lines().enumerate() {
                     lines.insert(ins + i, l.to_string());
                 }
+                count
             }
             "replace" => {
                 let mut count = if let Some(end) = edit.end_line {
@@ -627,13 +666,6 @@ pub(crate) fn apply_line_edits(content: &str, edits: &[LineEdit]) -> Result<(Str
                 };
                 let replacement: Vec<String> = edit.content.as_deref().unwrap_or("").lines().map(String::from).collect();
 
-                // Count overlap guard: when the model's replacement content ends with
-                // lines that also exist immediately after the replaced span, the model
-                // set count too short. Auto-extend count to consume those duplicates.
-                //
-                // Check: does lines[span_end+0] == replacement.last(),
-                //        lines[span_end+1] == replacement[len-2], etc.?
-                // Only contiguous matches from the boundary count. Cap at 8 lines.
                 if replacement.len() >= 1 {
                     let span_end = idx + count;
                     let mut confirmed = 0usize;
@@ -644,8 +676,6 @@ pub(crate) fn apply_line_edits(content: &str, edits: &[LineEdit]) -> Result<(Str
                         let ft = lines[file_idx].trim();
                         let rt = replacement[repl_idx].trim();
                         if ft.is_empty() || rt.is_empty() { break; }
-                        // Skip single-char structural tokens — too ambiguous
-                        // to auto-extend (prevents eating closing brackets)
                         if ft.len() <= 2 && (ft == "}" || ft == "{" || ft == ")" || ft == "(" || ft == "]" || ft == "[") { break; }
                         if ft == rt {
                             confirmed += 1;
@@ -664,6 +694,7 @@ pub(crate) fn apply_line_edits(content: &str, edits: &[LineEdit]) -> Result<(Str
 
                 let end = std::cmp::min(idx + count, lines.len());
                 lines.splice(idx..end, replacement);
+                count
             }
             "replace_body" => {
                 if idx >= lines.len() {
@@ -689,6 +720,7 @@ pub(crate) fn apply_line_edits(content: &str, edits: &[LineEdit]) -> Result<(Str
                 };
                 let replacement: Vec<String> = replacement_text.lines().map(String::from).collect();
                 lines.splice(body_start..body_end, replacement);
+                body_count // body span is the key data for rebase
             }
             "delete" => {
                 let count = if let Some(end) = edit.end_line {
@@ -698,6 +730,7 @@ pub(crate) fn apply_line_edits(content: &str, edits: &[LineEdit]) -> Result<(Str
                 };
                 let end = std::cmp::min(idx + count, lines.len());
                 lines.drain(idx..end);
+                count
             }
             "move" => {
                 let count = if let Some(end) = edit.end_line {
@@ -725,11 +758,17 @@ pub(crate) fn apply_line_edits(content: &str, edits: &[LineEdit]) -> Result<(Str
                         lines.insert(clamped + i, line);
                     }
                 }
+                count
             }
             other => return Err(format!("Unknown line_edit action: {}. Valid: insert_before|prepend|insert_after|append|replace|replace_body|delete|move", other)),
-        }
+        };
+        resolutions.push(EditResolution {
+            resolved_line,
+            action: edit.action.clone(),
+            lines_affected,
+        });
     }
-    Ok((lines.join("\n"), anchor_warnings))
+    Ok((lines.join("\n"), anchor_warnings, resolutions))
 }
 
 /// Given the lines of a symbol (function/method/class), returns (body_start, body_end)
@@ -2533,7 +2572,7 @@ mod apply_line_edits_tests {
             destination: None,
             reindent: false,
         }];
-        let (result, _) = apply_line_edits(content, &edits).unwrap();
+        let (result, ..) = apply_line_edits(content, &edits).unwrap();
         assert_eq!(result, "a\nb\nc\nd\n");
     }
 
@@ -2550,7 +2589,7 @@ mod apply_line_edits_tests {
             destination: None,
             reindent: false,
         }];
-        let (result, _) = apply_line_edits(content, &edits).unwrap();
+        let (result, ..) = apply_line_edits(content, &edits).unwrap();
         assert!(result.contains("LAST"), "{}", result);
     }
 
@@ -2568,7 +2607,7 @@ mod apply_line_edits_tests {
     fn test_apply_delete_single_line() {
         let content = "line1\nline2\nline3\n";
         let edits = vec![le(2, "delete", None, None)];
-        let (result, _) = apply_line_edits(content, &edits).unwrap();
+        let (result, ..) = apply_line_edits(content, &edits).unwrap();
         assert_eq!(result, "line1\nline3\n");
     }
 
@@ -2576,7 +2615,7 @@ mod apply_line_edits_tests {
     fn test_apply_delete_range() {
         let content = "a\nb\nc\nd\ne\n";
         let edits = vec![le(2, "delete", None, Some(4))];
-        let (result, _) = apply_line_edits(content, &edits).unwrap();
+        let (result, ..) = apply_line_edits(content, &edits).unwrap();
         assert_eq!(result, "a\ne\n");
     }
 
@@ -2584,7 +2623,7 @@ mod apply_line_edits_tests {
     fn test_apply_insert_before() {
         let content = "line1\nline2\n";
         let edits = vec![le(2, "insert_before", Some("new\n"), None)];
-        let (result, _) = apply_line_edits(content, &edits).unwrap();
+        let (result, ..) = apply_line_edits(content, &edits).unwrap();
         assert_eq!(result, "line1\nnew\nline2\n");
     }
 
@@ -2592,7 +2631,7 @@ mod apply_line_edits_tests {
     fn test_apply_replace() {
         let content = "old1\nold2\nold3\n";
         let edits = vec![le(2, "replace", Some("new2\n"), None)];
-        let (result, _) = apply_line_edits(content, &edits).unwrap();
+        let (result, ..) = apply_line_edits(content, &edits).unwrap();
         assert_eq!(result, "old1\nnew2\nold3\n");
     }
 
@@ -2604,7 +2643,7 @@ mod apply_line_edits_tests {
             le(3, "delete", None, None),
             le(1, "insert_before", Some("0\n"), None),
         ];
-        let (result, _) = apply_line_edits(content, &edits).unwrap();
+        let (result, ..) = apply_line_edits(content, &edits).unwrap();
         assert_eq!(result, "0\n1\n2\n4\n");
     }
 
@@ -2706,7 +2745,7 @@ function alsoStay() {
         }).collect();
 
         let current = std::fs::read_to_string(&src_path).unwrap();
-        let (new_content, _) = apply_line_edits(&current, &delete_edits).unwrap();
+        let (new_content, ..) = apply_line_edits(&current, &delete_edits).unwrap();
         std::fs::write(&src_path, &new_content).unwrap();
 
         // After removing lines 7-11, no blank line remains between } and function alsoStay
@@ -2768,21 +2807,21 @@ mod hard_line_edit_tests {
     #[test]
     fn trailing_newline_preserved_after_delete() {
         let content = "a\nb\nc\n";
-        let (result, _) = apply_line_edits(content, &[le(2, "delete", None, None)]).unwrap();
+        let (result, ..) = apply_line_edits(content, &[le(2, "delete", None, None)]).unwrap();
         assert_eq!(result, "a\nc\n", "trailing newline must survive delete");
     }
 
     #[test]
     fn no_trailing_newline_stays_absent() {
         let content = "a\nb\nc";
-        let (result, _) = apply_line_edits(content, &[le(2, "delete", None, None)]).unwrap();
+        let (result, ..) = apply_line_edits(content, &[le(2, "delete", None, None)]).unwrap();
         assert_eq!(result, "a\nc", "no trailing newline should not appear");
     }
 
     #[test]
     fn trailing_newline_preserved_after_insert() {
         let content = "a\nb\n";
-        let (result, _) = apply_line_edits(content, &[le(2, "insert_after", Some("c"), None)]).unwrap();
+        let (result, ..) = apply_line_edits(content, &[le(2, "insert_after", Some("c"), None)]).unwrap();
         assert_eq!(result, "a\nb\nc\n");
     }
 
@@ -2791,14 +2830,14 @@ mod hard_line_edit_tests {
     #[test]
     fn replace_one_line_with_three() {
         let content = "1\n2\n3\n";
-        let (result, _) = apply_line_edits(content, &[le(2, "replace", Some("x\ny\nz"), None)]).unwrap();
+        let (result, ..) = apply_line_edits(content, &[le(2, "replace", Some("x\ny\nz"), None)]).unwrap();
         assert_eq!(result, "1\nx\ny\nz\n3\n");
     }
 
     #[test]
     fn replace_three_lines_with_one() {
         let content = "1\n2\n3\n4\n5\n";
-        let (result, _) = apply_line_edits(content, &[le(2, "replace", Some("X"), Some(4))]).unwrap();
+        let (result, ..) = apply_line_edits(content, &[le(2, "replace", Some("X"), Some(4))]).unwrap();
         assert_eq!(result, "1\nX\n5\n");
     }
 
@@ -2807,7 +2846,7 @@ mod hard_line_edit_tests {
         // "".lines() is empty → splice replaces with nothing → line is removed.
         // This means replace(content:"") is functionally identical to delete.
         let content = "a\nb\nc\n";
-        let (result, _) = apply_line_edits(content, &[le(2, "replace", Some(""), None)]).unwrap();
+        let (result, ..) = apply_line_edits(content, &[le(2, "replace", Some(""), None)]).unwrap();
         assert_eq!(result, "a\nc\n", "replace with empty string acts as delete");
     }
 
@@ -2817,7 +2856,7 @@ mod hard_line_edit_tests {
     fn replace_import_line_by_line_number() {
         let content = "import { foo } from './foo';\nimport { bar } from './bar';\nexport default function main() {}\n";
         let edits = vec![le(1, "replace", Some("import { foo } from './new-foo';"), None)];
-        let (result, warnings) = apply_line_edits(content, &edits).unwrap();
+        let (result, warnings, _) = apply_line_edits(content, &edits).unwrap();
         assert!(warnings.is_empty());
         assert!(result.contains("from './new-foo'"));
         assert!(!result.contains("from './foo'"));
@@ -2830,7 +2869,7 @@ mod hard_line_edit_tests {
         let mut ed = le(3, "replace", Some(new_body), None);
         ed.end_line = Some(5);
         let edits = vec![ed];
-        let (result, _warnings) = apply_line_edits(content, &edits).unwrap();
+        let (result, _warnings, _) = apply_line_edits(content, &edits).unwrap();
         assert!(result.contains("return x * 2"), "replacement content should appear");
         assert!(!result.contains("return x + 1"), "old body should be fully replaced");
         assert!(!result.contains("x + 1"), "no duplicate/partial old content");
@@ -2841,7 +2880,7 @@ mod hard_line_edit_tests {
     fn replace_second_duplicate_line_by_line_number() {
         let content = "import x;\nsome code;\nimport x;\nmore code;\n";
         let edits = vec![le(3, "replace", Some("import x_new;"), None)];
-        let (result, _) = apply_line_edits(content, &edits).unwrap();
+        let (result, ..) = apply_line_edits(content, &edits).unwrap();
         let lines: Vec<&str> = result.lines().collect();
         assert_eq!(lines[0], "import x;", "first import should be untouched");
         assert_eq!(lines[2], "import x_new;", "line 3 replaced");
@@ -2857,7 +2896,7 @@ mod hard_line_edit_tests {
         let replacement = "      case 'ArrowDown':\n        e.preventDefault();\n        if (results.length > 0) setSelectedIndex(i => Math.min(i + 1, results.length - 1));\n        break;";
         // count=3 covers lines 1-3, but line 4 ("break;") duplicates the last line of replacement
         let edits = vec![le(1, "replace", Some(replacement), Some(3))];  // end_line=3 (lines 1..=3)
-        let (result, warnings) = apply_line_edits(content, &edits).unwrap();
+        let (result, warnings, _) = apply_line_edits(content, &edits).unwrap();
         let break_count = result.lines().filter(|l| l.trim() == "break;").count();
         assert_eq!(break_count, 1, "should have exactly one break; not a duplicate: {}", result);
         assert!(warnings.iter().any(|w| w.contains("count_overlap_extended")),
@@ -2868,7 +2907,7 @@ mod hard_line_edit_tests {
     fn count_overlap_no_false_positive_on_clean_replace() {
         let content = "a\nb\nc\nd\n";
         let edits = vec![le(2, "replace", Some("X\nY"), Some(3))];
-        let (result, warnings) = apply_line_edits(content, &edits).unwrap();
+        let (result, warnings, _) = apply_line_edits(content, &edits).unwrap();
         assert_eq!(result, "a\nX\nY\nd\n");
         assert!(!warnings.iter().any(|w| w.contains("count_overlap")),
             "clean replace should not trigger overlap guard: {:?}", warnings);
@@ -2879,7 +2918,7 @@ mod hard_line_edit_tests {
         // Empty trailing lines should not trigger overlap (too common, too noisy)
         let content = "a\nb\n\n\nd\n";
         let edits = vec![le(2, "replace", Some("X\n"), None)];
-        let (result, warnings) = apply_line_edits(content, &edits).unwrap();
+        let (result, warnings, _) = apply_line_edits(content, &edits).unwrap();
         assert!(!warnings.iter().any(|w| w.contains("count_overlap")),
             "empty line overlap should not trigger: {:?}", warnings);
         assert!(result.contains("X\n"), "replacement should be applied");
@@ -2920,7 +2959,7 @@ mod hard_line_edit_tests {
             le(2, "insert_before", Some("BEFORE"), None),
             le(2, "insert_after", Some("AFTER"), None),
         ];
-        let (result, _) = apply_line_edits(content, &edits).unwrap();
+        let (result, ..) = apply_line_edits(content, &edits).unwrap();
         assert_eq!(result, "A\nBEFORE\nAFTER\nB\nC\n");
     }
 
@@ -2932,21 +2971,21 @@ mod hard_line_edit_tests {
             le(1, "delete", None, None),
             le(4, "delete", None, None),
         ];
-        let (result, _) = apply_line_edits(content, &edits).unwrap();
+        let (result, ..) = apply_line_edits(content, &edits).unwrap();
         assert_eq!(result, "2\n3\n4\n");
     }
 
     #[test]
     fn delete_last_line_of_file_without_trailing_newline() {
         let content = "a\nb\nc";
-        let (result, _) = apply_line_edits(content, &[le(3, "delete", None, None)]).unwrap();
+        let (result, ..) = apply_line_edits(content, &[le(3, "delete", None, None)]).unwrap();
         assert_eq!(result, "a\nb");
     }
 
     #[test]
     fn insert_at_line_1() {
         let content = "first\nsecond\n";
-        let (result, _) = apply_line_edits(content, &[le(1, "insert_before", Some("zeroth"), None)]).unwrap();
+        let (result, ..) = apply_line_edits(content, &[le(1, "insert_before", Some("zeroth"), None)]).unwrap();
         assert_eq!(result, "zeroth\nfirst\nsecond\n");
     }
 
@@ -2955,7 +2994,7 @@ mod hard_line_edit_tests {
     #[test]
     fn crlf_normalized_before_edit() {
         let content = normalize_line_endings("a\r\nb\r\nc\r\n");
-        let (result, _) = apply_line_edits(&content, &[le(2, "replace", Some("B"), None)]).unwrap();
+        let (result, ..) = apply_line_edits(&content, &[le(2, "replace", Some("B"), None)]).unwrap();
         assert_eq!(result, "a\nB\nc\n");
         assert!(!result.contains('\r'));
     }
@@ -2971,7 +3010,7 @@ mod hard_line_edit_tests {
             le(4, "insert_after", Some("NEW"), None),
             le(6, "replace", Some("REPLACED"), None),
         ];
-        let (result, _) = apply_line_edits(content, &edits).unwrap();
+        let (result, ..) = apply_line_edits(content, &edits).unwrap();
         // After insert_after L4: L1,L2,L3,L4,NEW,L5,L6
         // L6 in post-edit state is at position 6 → replace it
         assert_eq!(result, "L1\nL2\nL3\nL4\nNEW\nREPLACED\nL6\n");
@@ -2984,7 +3023,7 @@ mod hard_line_edit_tests {
             le(1, "insert_before", Some("z"), None),
             le(4, "delete", None, None),
         ];
-        let (result, _) = apply_line_edits(content, &edits).unwrap();
+        let (result, ..) = apply_line_edits(content, &edits).unwrap();
         // After insert_before L1: z,a,b,c,d,e  (L4 is "c")
         assert_eq!(result, "z\na\nb\nd\ne\n");
     }
@@ -2994,7 +3033,7 @@ mod hard_line_edit_tests {
     #[test]
     fn insert_into_empty_file() {
         let content = "";
-        let (result, _) = apply_line_edits(content, &[le(1, "insert_before", Some("hello"), None)]).unwrap();
+        let (result, ..) = apply_line_edits(content, &[le(1, "insert_before", Some("hello"), None)]).unwrap();
         assert_eq!(result, "hello");
     }
 
@@ -3003,7 +3042,7 @@ mod hard_line_edit_tests {
     #[test]
     fn delete_all_lines() {
         let content = "a\nb\nc\n";
-        let (result, _) = apply_line_edits(content, &[le(1, "delete", None, Some(4))]).unwrap();  // end_line=4 (lines 1..=4, but clamped)
+        let (result, ..) = apply_line_edits(content, &[le(1, "delete", None, Some(4))]).unwrap();  // end_line=4 (lines 1..=4, but clamped)
         assert!(result.trim().is_empty(), "all lines deleted, result: {:?}", result);
     }
 
@@ -3013,7 +3052,7 @@ mod hard_line_edit_tests {
     fn content_hash_changes_on_edit() {
         let original = "function foo() { return 1; }\n";
         let h1 = content_hash(original);
-        let (edited, _) = apply_line_edits(original, &[le(1, "replace", Some("function foo() { return 2; }"), None)]).unwrap();
+        let (edited, ..) = apply_line_edits(original, &[le(1, "replace", Some("function foo() { return 2; }"), None)]).unwrap();
         let h2 = content_hash(&edited);
         assert_ne!(h1, h2, "hash must change when content changes");
     }
@@ -3021,7 +3060,7 @@ mod hard_line_edit_tests {
     #[test]
     fn content_hash_stable_for_identical_content() {
         let c = "same content\n";
-        let (result, _) = apply_line_edits(c, &[le(1, "replace", Some("same content"), None)]).unwrap();
+        let (result, ..) = apply_line_edits(c, &[le(1, "replace", Some("same content"), None)]).unwrap();
         assert_eq!(content_hash(c), content_hash(&result));
     }
 }
@@ -3459,7 +3498,7 @@ mod hard_refactor_pipeline_tests {
         for &(s, e) in &ranges1 { line_shifts.push((s, e.unwrap().saturating_sub(s) + 1)); }
 
         let current = std::fs::read_to_string(&src_path).unwrap();
-        let (after_op1, _) = apply_line_edits(&current, &edits1).unwrap();
+        let (after_op1, ..) = apply_line_edits(&current, &edits1).unwrap();
         std::fs::write(&src_path, &after_op1).unwrap();
 
         assert_eq!(after_op1, "L1\nL2\nL5\nL6\nL7\nL8\nL9\nL10\n",
@@ -3475,7 +3514,7 @@ mod hard_refactor_pipeline_tests {
         }).collect();
 
         let current2 = std::fs::read_to_string(&src_path).unwrap();
-        let (after_op2, _) = apply_line_edits(&current2, &edits2).unwrap();
+        let (after_op2, ..) = apply_line_edits(&current2, &edits2).unwrap();
         std::fs::write(&src_path, &after_op2).unwrap();
 
         assert_eq!(after_op2, "L1\nL2\nL5\nL6\nL9\nL10\n",
@@ -3536,7 +3575,7 @@ export function extractMe() {
             le(start, "delete", None, end)
         }).collect();
 
-        let (new_source, _) = apply_line_edits(source_content, &delete_edits).unwrap();
+        let (new_source, ..) = apply_line_edits(source_content, &delete_edits).unwrap();
         std::fs::write(root.join("src/source.ts"), &new_source).unwrap();
 
         assert!(new_source.contains("keepMe"), "keepMe should remain");
@@ -3550,7 +3589,7 @@ export function extractMe() {
                 Some("import { keepMe } from './source';\nimport { extractMe } from './extracted';"),
                 None),
         ];
-        let (new_consumer, warnings) = apply_line_edits(consumer_content, &import_edits).unwrap();
+        let (new_consumer, warnings, _) = apply_line_edits(consumer_content, &import_edits).unwrap();
         std::fs::write(root.join("src/consumer.ts"), &new_consumer).unwrap();
 
         assert!(warnings.is_empty());
@@ -3577,7 +3616,7 @@ export function extractMe() {
         let edits: Vec<LineEdit> = ranges.iter().map(|&(start, end)| {
             le(start, "delete", None, end)
         }).collect();
-        let (result, _) = apply_line_edits(content, &edits).unwrap();
+        let (result, ..) = apply_line_edits(content, &edits).unwrap();
         assert_eq!(result, "import x;\n\nfunction a() { return 1; }\n");
     }
 
@@ -3587,7 +3626,7 @@ export function extractMe() {
     fn crlf_in_edit_content_mixed_with_lf_file() {
         let content = "line1\nline2\nline3\n";
         let edits = vec![le(2, "replace", Some("new2\r\nnew3"), None)];
-        let (result, _) = apply_line_edits(content, &edits).unwrap();
+        let (result, ..) = apply_line_edits(content, &edits).unwrap();
         let normalized = normalize_line_endings(&result);
         let lines: Vec<&str> = normalized.lines().collect();
         assert!(lines.contains(&"new2"), "should contain new2: {:?}", lines);
@@ -3635,7 +3674,7 @@ export function extractMe() {
             symbol_count: None,
         });
 
-        let (content_v2, _) = apply_line_edits(content_v1, &[le(1, "replace", Some("function foo() { return 2; }"), None)]).unwrap();
+        let (content_v2, ..) = apply_line_edits(content_v1, &[le(1, "replace", Some("function foo() { return 2; }"), None)]).unwrap();
         let h2 = content_hash(&content_v2);
         reg.register(h2.clone(), HashEntry {
             source: Some("foo_v2.ts".to_string()),
@@ -3662,7 +3701,7 @@ export function extractMe() {
 
         // Op1: delete lines 100-110
         let edits1 = vec![le(100, "delete", None, Some(110))];
-        let (after1, _) = apply_line_edits(&content, &edits1).unwrap();
+        let (after1, ..) = apply_line_edits(&content, &edits1).unwrap();
         let after1_lines: Vec<&str> = after1.lines().collect();
         assert_eq!(after1_lines.len(), 489, "500 - 11 = 489 lines");
         assert_eq!(after1_lines[98], "line 99");
@@ -3670,14 +3709,14 @@ export function extractMe() {
 
         // Op2: insert 3 lines at position 200
         let edits2 = vec![le(200, "insert_after", Some("NEW_A\nNEW_B\nNEW_C"), None)];
-        let (after2, _) = apply_line_edits(&after1, &edits2).unwrap();
+        let (after2, ..) = apply_line_edits(&after1, &edits2).unwrap();
         let after2_lines: Vec<&str> = after2.lines().collect();
         assert_eq!(after2_lines.len(), 492, "489 + 3 = 492 lines");
         assert_eq!(after2_lines[200], "NEW_A");
 
         // Op3: replace lines 400-405
         let edits3 = vec![le(400, "replace", Some("REPLACED_A\nREPLACED_B"), Some(405))];
-        let (after3, _) = apply_line_edits(&after2, &edits3).unwrap();
+        let (after3, ..) = apply_line_edits(&after2, &edits3).unwrap();
         let after3_lines: Vec<&str> = after3.lines().collect();
         assert_eq!(after3_lines.len(), 488, "492 - 6 + 2 = 488 lines");
         assert_eq!(after3_lines[399], "REPLACED_A");
@@ -3698,7 +3737,7 @@ export function bar() { return 2; }
 export function baz() { return 3; }
 ";
         // Step 1: remove bar function (lines 5-5)
-        let (after_remove, _) = apply_line_edits(content, &[le(5, "delete", None, None)]).unwrap();
+        let (after_remove, ..) = apply_line_edits(content, &[le(5, "delete", None, None)]).unwrap();
         assert!(!after_remove.contains("function bar"));
 
         // Step 2: update the import (line 1 unchanged after single-line delete above)
@@ -3707,7 +3746,7 @@ export function baz() { return 3; }
                 Some("import { foo } from './module';"),
                 None),
         ];
-        let (final_content, warnings) = apply_line_edits(&after_remove, &import_edits).unwrap();
+        let (final_content, warnings, _) = apply_line_edits(&after_remove, &import_edits).unwrap();
         assert!(warnings.is_empty());
         assert!(final_content.contains("import { foo } from './module'"));
         assert!(!final_content.contains("bar"));

@@ -1900,7 +1900,7 @@ pub fn batch_edits(
             continue;
         }
 
-        let (new_content, warnings) = apply_line_edits(&content, &entry.line_edits)?;
+        let (new_content, warnings, _resolutions) = apply_line_edits(&content, &entry.line_edits)?;
 
         // Use EditSession for validation and atomic commit
         let mut session = crate::edit_session::EditSession::begin_from_snapshot(&snap, resolved_path.clone());

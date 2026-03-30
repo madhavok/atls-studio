@@ -140,7 +140,12 @@ function computeSingleEditNetDelta(e: Record<string, unknown>): number {
   }
   if (action === 'delete') return -span;
   if (action === 'replace') return contentLines - span;
-  // replace_body/move and unknown actions: delta not modeled here (same as legacy computePositionalDeltas)
+  if (action === 'move') return 0; // net global delta is 0; positional shifts handled in computePositionalDeltas
+  if (action === 'replace_body') {
+    const bodySpan = typeof e._resolved_body_span === 'number' ? e._resolved_body_span : 0;
+    if (bodySpan > 0) return contentLines - bodySpan;
+    return 0; // body span unknown pre-apply; P2 supplies _resolved_body_span from Rust response
+  }
   return 0;
 }
 
@@ -161,7 +166,27 @@ function computePositionalDeltas(lineEdits: unknown): PositionalDelta[] {
   for (const edit of lineEdits) {
     if (!edit || typeof edit !== 'object') continue;
     const e = edit as Record<string, unknown>;
+    const action = typeof e.action === 'string' ? e.action : '';
     const line = snapshotLineForRebase(e);
+
+    if (action === 'move' && line > 0) {
+      // Move produces two positional shifts mirroring Rust's drain+insert (lib.rs:702-728).
+      // Sequential line is post-prior-edits; convert back to original-file coords.
+      const span = effectiveLineSpanCount(e);
+      const dest = typeof e.destination === 'number' && e.destination > 0 ? e.destination : 0;
+      if (dest > 0) {
+        const origSource = line - cumulativeDelta;
+        // Rust: insert_at = if dest > idx+1 { dest - count } else { dest }
+        // idx = line-1 (0-based), so dest > (line-1)+1 ⟹ dest > line
+        const effectiveDest = dest > line ? dest - span : dest;
+        const origDest = effectiveDest > 0 ? effectiveDest - cumulativeDelta : 0;
+        if (origSource > 0) deltas.push({ line: origSource, delta: -span });
+        if (origDest > 0) deltas.push({ line: origDest, delta: span });
+      }
+      // Net cumulativeDelta unchanged (move is globally zero-sum)
+      continue;
+    }
+
     const d = computeSingleEditNetDelta(e);
     const originalLine = line > 0 ? line - cumulativeDelta : 0;
     if (d !== 0 && originalLine > 0) deltas.push({ line: originalLine, delta: d });
@@ -188,6 +213,27 @@ function estimateLineDeltaFromEdits(lineEdits: unknown): number {
  * of net deltas from prior edits j<i whose snapshot line is strictly before this entry's snapshot
  * line (same rule as `rebaseSubsequentSteps`). Mutates `line_edits` in place. Skips symbol-only entries.
  */
+/**
+ * Compute the positional shift that edit `e` (at snapshot line `snapLine`)
+ * contributes to a subsequent edit at `targetSnap`. For most actions this is
+ * a single delta; for `move` it's two (delete at source, insert at dest).
+ */
+function intraStepShiftFromEdit(e: Record<string, unknown>, snapLine: number, targetSnap: number): number {
+  const action = typeof e.action === 'string' ? e.action : '';
+  if (action === 'move') {
+    const span = effectiveLineSpanCount(e);
+    const dest = typeof e.destination === 'number' && e.destination > 0 ? e.destination : 0;
+    if (dest <= 0 || snapLine <= 0) return 0;
+    let shift = 0;
+    if (snapLine < targetSnap) shift -= span; // source removal shifts down
+    const effectiveDest = dest > snapLine ? dest - span : dest;
+    if (effectiveDest < targetSnap) shift += span; // dest insertion shifts up
+    return shift;
+  }
+  const d = computeSingleEditNetDelta(e);
+  return (snapLine < targetSnap) ? d : 0;
+}
+
 function rebaseIntraStepSnapshotLineEdits(lineEdits: unknown[]): void {
   if (lineEdits.length < 2) return;
   const snapshotLines: number[] = lineEdits.map((edit) => {
@@ -205,8 +251,7 @@ function rebaseIntraStepSnapshotLineEdits(lineEdits: unknown[]): void {
     for (let j = 0; j < i; j++) {
       const origJ = snapshotLines[j];
       if (origJ <= 0) continue;
-      const d = computeSingleEditNetDelta(lineEdits[j] as Record<string, unknown>);
-      if (origJ < targetSnap) shift += d;
+      shift += intraStepShiftFromEdit(lineEdits[j] as Record<string, unknown>, origJ, targetSnap);
     }
     const o = lineEdits[i] as Record<string, unknown>;
     const hasSymbol = o.symbol != null && typeof o.symbol === 'string';

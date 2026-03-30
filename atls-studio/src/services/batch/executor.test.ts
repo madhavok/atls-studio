@@ -1004,3 +1004,209 @@ describe('executeUnifiedBatch ref contamination prevention', () => {
     expect(useRetentionStore.getState().getEntry('search.code:auth')).not.toBeNull();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Inter-step rebase: move and replace_body — P0 regression tests.
+// Validates that rebaseSubsequentSteps correctly shifts line numbers in
+// step 2 after step 1 uses move or replace_body on the same file.
+// ---------------------------------------------------------------------------
+
+describe('executeUnifiedBatch inter-step rebase for move and replace_body', () => {
+  beforeEach(() => {
+    handlers.clear();
+  });
+
+  it('move-down: step1 moves lines 5-7 to dest 15, step2 line 12 shifts correctly', async () => {
+    const editCalls: Array<Record<string, unknown>> = [];
+
+    handlers.set('read.context', async () => raw('read', {
+      results: [{ file: 'src/a.ts', content_hash: 'hash-v1', content: 'x' }],
+    }));
+    handlers.set('change.edit', async (params: Record<string, unknown>) => {
+      editCalls.push({ ...params });
+      return raw('applied', { status: 'ok', drafts: [{ file: 'src/a.ts', content_hash: 'hash-v2' }] });
+    });
+
+    await executeUnifiedBatch({
+      version: '1.0',
+      steps: [
+        { id: 'r1', use: 'read.context', with: { type: 'full', file_paths: ['src/a.ts'] } },
+        {
+          id: 'e1', use: 'change.edit', with: {
+            file: 'src/a.ts',
+            line_edits: [{ line: 5, end_line: 7, action: 'move', destination: 15 }],
+          },
+        },
+        {
+          id: 'e2', use: 'change.edit', with: {
+            file: 'src/a.ts',
+            line_edits: [{ line: 12, action: 'replace', content: 'changed' }],
+          },
+        },
+      ],
+    }, makeCtx());
+
+    expect(editCalls).toHaveLength(2);
+    // Move lines 5-7 (3 lines) to dest 15:
+    // - Source at 5: delta -3 → lines >=5 shift down by 3
+    // - Effective dest: dest > source+1 → 15 - 3 = 12; delta +3 → lines >=12 shift up by 3
+    // Original line 12: shift from source (5 < 12 → -3), shift from dest (12 >= 12 → +3) = net 0
+    // BUT the positional model applies: d.line < targetLine for each delta entry
+    // Source delta at orig line 5, delta -3: 5 < 12 → applies → shift = -3
+    // Dest delta at orig line 12, delta +3: 12 < 12 is false → does NOT apply → shift stays -3
+    // So line 12 → 12 + (-3) = 9
+    const le2 = (editCalls[1] as Record<string, unknown>).line_edits as Array<Record<string, unknown>>;
+    expect(le2[0].line).toBe(9);
+  });
+
+  it('move-up: step1 moves lines 15-17 to dest 5, step2 line 10 shifts correctly', async () => {
+    const editCalls: Array<Record<string, unknown>> = [];
+
+    handlers.set('read.context', async () => raw('read', {
+      results: [{ file: 'src/a.ts', content_hash: 'hash-v1', content: 'x' }],
+    }));
+    handlers.set('change.edit', async (params: Record<string, unknown>) => {
+      editCalls.push({ ...params });
+      return raw('applied', { status: 'ok', drafts: [{ file: 'src/a.ts', content_hash: 'hash-v2' }] });
+    });
+
+    await executeUnifiedBatch({
+      version: '1.0',
+      steps: [
+        { id: 'r1', use: 'read.context', with: { type: 'full', file_paths: ['src/a.ts'] } },
+        {
+          id: 'e1', use: 'change.edit', with: {
+            file: 'src/a.ts',
+            line_edits: [{ line: 15, end_line: 17, action: 'move', destination: 5 }],
+          },
+        },
+        {
+          id: 'e2', use: 'change.edit', with: {
+            file: 'src/a.ts',
+            line_edits: [{ line: 10, action: 'replace', content: 'changed' }],
+          },
+        },
+      ],
+    }, makeCtx());
+
+    expect(editCalls).toHaveLength(2);
+    // Move lines 15-17 (3 lines) to dest 5 (move up):
+    // - Source at 15: delta -3
+    // - Effective dest: dest <= source → dest = 5; delta +3
+    // Original line 10: source delta at 15, -3: 15 < 10 is false → does not apply
+    //                    dest delta at 5, +3: 5 < 10 → applies → shift = +3
+    // So line 10 → 10 + 3 = 13
+    const le2 = (editCalls[1] as Record<string, unknown>).line_edits as Array<Record<string, unknown>>;
+    expect(le2[0].line).toBe(13);
+  });
+
+  it('move does not shift lines outside affected range', async () => {
+    const editCalls: Array<Record<string, unknown>> = [];
+
+    handlers.set('read.context', async () => raw('read', {
+      results: [{ file: 'src/a.ts', content_hash: 'hash-v1', content: 'x' }],
+    }));
+    handlers.set('change.edit', async (params: Record<string, unknown>) => {
+      editCalls.push({ ...params });
+      return raw('applied', { status: 'ok', drafts: [{ file: 'src/a.ts', content_hash: 'hash-v2' }] });
+    });
+
+    await executeUnifiedBatch({
+      version: '1.0',
+      steps: [
+        { id: 'r1', use: 'read.context', with: { type: 'full', file_paths: ['src/a.ts'] } },
+        {
+          id: 'e1', use: 'change.edit', with: {
+            file: 'src/a.ts',
+            line_edits: [{ line: 5, end_line: 7, action: 'move', destination: 15 }],
+          },
+        },
+        {
+          id: 'e2', use: 'change.edit', with: {
+            file: 'src/a.ts',
+            line_edits: [{ line: 2, action: 'replace', content: 'unchanged' }],
+          },
+        },
+      ],
+    }, makeCtx());
+
+    expect(editCalls).toHaveLength(2);
+    // Line 2 is before the source (5) — no delta applies
+    const le2 = (editCalls[1] as Record<string, unknown>).line_edits as Array<Record<string, unknown>>;
+    expect(le2[0].line).toBe(2);
+  });
+
+  it('replace_body with _resolved_body_span: step2 line shifted by body delta', async () => {
+    const editCalls: Array<Record<string, unknown>> = [];
+
+    handlers.set('read.context', async () => raw('read', {
+      results: [{ file: 'src/a.ts', content_hash: 'hash-v1', content: 'x' }],
+    }));
+    handlers.set('change.edit', async (params: Record<string, unknown>) => {
+      editCalls.push({ ...params });
+      return raw('applied', { status: 'ok', drafts: [{ file: 'src/a.ts', content_hash: 'hash-v2' }] });
+    });
+
+    await executeUnifiedBatch({
+      version: '1.0',
+      steps: [
+        { id: 'r1', use: 'read.context', with: { type: 'full', file_paths: ['src/a.ts'] } },
+        {
+          id: 'e1', use: 'change.edit', with: {
+            file: 'src/a.ts',
+            line_edits: [{
+              line: 5, action: 'replace_body',
+              content: 'line1\nline2\nline3',
+              _resolved_body_span: 10,
+            }],
+          },
+        },
+        {
+          id: 'e2', use: 'change.edit', with: {
+            file: 'src/a.ts',
+            line_edits: [{ line: 20, action: 'replace', content: 'changed' }],
+          },
+        },
+      ],
+    }, makeCtx());
+
+    expect(editCalls).toHaveLength(2);
+    // replace_body at line 5 with _resolved_body_span=10, content has 3 lines
+    // delta = 3 - 10 = -7, applied at line 5
+    // Line 20: 5 < 20 → delta -7 applies → 20 + (-7) = 13
+    const le2 = (editCalls[1] as Record<string, unknown>).line_edits as Array<Record<string, unknown>>;
+    expect(le2[0].line).toBe(13);
+  });
+
+  it('intra-step: move within same step shifts subsequent edits', async () => {
+    const editSpy = vi.fn(async (params: Record<string, unknown>) => {
+      const le = params.line_edits as Array<Record<string, unknown>>;
+      expect(le).toHaveLength(2);
+      // Move lines 5-7 (3 lines) to dest 15:
+      // Intra-step: edit[0] is move at snap 5, dest 15
+      // Subsequent edit at snap 10: source < target (5 < 10) → -3; effectiveDest = 15-3=12 < 10? no → shift = -3
+      // So line 10 → 10 + (-3) = 7
+      expect(le[1].line).toBe(7);
+      return raw('applied', { status: 'ok' });
+    });
+
+    handlers.set('change.edit', editSpy as unknown as OpHandler);
+
+    await executeUnifiedBatch({
+      version: '1.0',
+      steps: [
+        {
+          id: 'e1', use: 'change.edit', with: {
+            file: 'src/a.ts',
+            line_edits: [
+              { line: 5, end_line: 7, action: 'move', destination: 15 },
+              { line: 10, action: 'replace', content: 'x' },
+            ],
+          },
+        },
+      ],
+    }, makeCtx());
+
+    expect(editSpy).toHaveBeenCalledOnce();
+  });
+});

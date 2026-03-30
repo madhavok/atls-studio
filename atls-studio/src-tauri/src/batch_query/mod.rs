@@ -10417,18 +10417,25 @@ pub async fn atls_batch_query(
                     let new_content = match exact_replacen_for_write(&content, &old_normalized, &new_text_normalized) {
                         Ok(Some((replaced, _line))) => replaced,
                         Ok(None) => {
-                            errors.push(serde_json::json!({
+                            let mut err = serde_json::json!({
                                 "operation": "edit",
                                 "file": file,
-                                "error": "Pattern not found (exact match required)"
-                            }));
+                                "error": "Pattern not found (exact match required)",
+                                "error_class": "pattern_not_found",
+                                "_next": "Re-read the file and retry with exact content from the fresh read"
+                            });
+                            if let Some(suggestion) = suggest_fuzzy_match(&content, &old_normalized, None) {
+                                err["suggestion"] = suggestion;
+                            }
+                            errors.push(err);
                             continue;
                         }
                         Err(ambiguity) => {
                             errors.push(serde_json::json!({
                                 "operation": "edit",
                                 "file": file,
-                                "error": ambiguity
+                                "error": ambiguity,
+                                "error_class": "ambiguous_preimage"
                             }));
                             continue;
                         }
@@ -10575,7 +10582,7 @@ pub async fn atls_batch_query(
                 }
                 drop(snapshot_svc);
 
-                let (new_content, _warnings) = apply_line_edits(&content, &edits)?;
+                let (new_content, _warnings, line_edit_resolutions) = apply_line_edits(&content, &edits)?;
                 let mut written_content = new_content.clone();
                 if is_js_ts_path(&file_path) && written_content.contains("export ") {
                     written_content = dedupe_barrel_exports(&written_content);
@@ -10700,6 +10707,7 @@ pub async fn atls_batch_query(
                     "content_hash": hash,
                     "status": "applied",
                     "edits_applied": edits.len(),
+                    "edits_resolved": serde_json::to_value(&line_edit_resolutions).unwrap_or_else(|_| serde_json::json!([])),
                     "lints": lint_summary,
                     "has_errors": has_errors,
                     "index": index_result,
@@ -11008,7 +11016,20 @@ pub async fn atls_batch_query(
                         } else {
                             match exact_replacen_for_write(&base, &old, &new_text) {
                                 Ok(Some((replaced, _line))) => replaced,
-                                Ok(None) => base.to_string(),
+                                Ok(None) => {
+                                    let mut warn = serde_json::json!({
+                                        "file": file,
+                                        "warning": "pattern_not_found",
+                                        "error_class": "pattern_not_found",
+                                        "hint": "old text not found (exact match required)",
+                                        "_next": "Re-read the file and retry with exact content"
+                                    });
+                                    if let Some(suggestion) = suggest_fuzzy_match(&base, &old, None) {
+                                        warn["suggestion"] = suggestion;
+                                    }
+                                    edit_warnings.push(warn);
+                                    base.to_string()
+                                }
                                 Err(ambiguity) => {
                                     edit_warnings.push(serde_json::json!({
                                         "file": file,
@@ -11050,6 +11071,7 @@ pub async fn atls_batch_query(
                 }
 
                 let mut symbol_errors: Vec<serde_json::Value> = Vec::new();
+                let mut draft_line_edit_resolutions: Option<Vec<crate::EditResolution>> = None;
                 if let Some(symbol_edits) = params.get("symbol_edits").and_then(|v| v.as_array()) {
                     had_input = true;
                     let lookup = QuerySymbolLookup { query: project.query() };
@@ -11279,7 +11301,7 @@ pub async fn atls_batch_query(
                         }
                     }
 
-                    let (new_content, anchor_warnings) = match apply_line_edits(&base, &le) {
+                    let (new_content, anchor_warnings, edits_resolved) = match apply_line_edits(&base, &le) {
                         Ok(result) => result,
                         Err(edit_err) => {
                             let error_class = classify_line_edit_error(&edit_err);
@@ -11311,6 +11333,7 @@ pub async fn atls_batch_query(
                             "hint": w,
                         }));
                     }
+                    draft_line_edit_resolutions = Some(edits_resolved);
                     let to_insert = if is_js_ts_path(&file_path) && new_content.contains("export ") {
                         dedupe_barrel_exports(&new_content)
                     } else {
@@ -11639,6 +11662,9 @@ pub async fn atls_batch_query(
                     if !edit_warnings.is_empty() {
                         result["edit_warnings"] = serde_json::json!(edit_warnings);
                     }
+                    if let Some(ref er) = draft_line_edit_resolutions {
+                        result["edits_resolved"] = serde_json::to_value(er).unwrap_or_else(|_| serde_json::json!([]));
+                    }
                     if !behavior_warnings.is_empty() {
                         result["_behavior_warnings"] = serde_json::json!(behavior_warnings);
                     }
@@ -11668,6 +11694,9 @@ pub async fn atls_batch_query(
                 }
                 if !edit_warnings.is_empty() {
                     result["edit_warnings"] = serde_json::json!(edit_warnings);
+                }
+                if let Some(ref er) = draft_line_edit_resolutions {
+                    result["edits_resolved"] = serde_json::to_value(er).unwrap_or_else(|_| serde_json::json!([]));
                 }
                 Ok(result)
             }
@@ -11707,7 +11736,7 @@ pub async fn atls_batch_query(
                     found.ok_or_else(|| format!("Hash '{}' not found in undo store. Use draft to create content first. Pass only the hash (e.g. h:6169ed), not the full '[edit result] h:X â†’ path' string.", hash_ref_raw))?
                 };
 
-                let (new_content, _warnings) = apply_line_edits(&old_content, &edits)?;
+                let (new_content, _warnings, _resolutions) = apply_line_edits(&old_content, &edits)?;
                 let mut written_content = new_content.clone();
                 let mut new_hash = content_hash(&written_content);
                 let file_path = entry_file_path.clone();
@@ -12479,7 +12508,9 @@ pub async fn atls_batch_query(
                             results.push(serde_json::json!({
                                 "file": file_path,
                                 "error": format!("Failed to read: {}", e),
-                                "status": "error"
+                                "error_class": "file_read_failed",
+                                "status": "error",
+                                "_next": "Verify the file path exists, then retry"
                             }));
                             continue;
                         }
@@ -12490,53 +12521,63 @@ pub async fn atls_batch_query(
                     // Count occurrences (exact match)
                     let exact_count = content.matches(&old_text).count();
                     
-                    // Perform replacement: try exact first, then flexible
+                    let pattern_preview = if old_text.len() > 100 {
+                        format!("{}...", &old_text[..100])
+                    } else {
+                        old_text.clone()
+                    };
+
                     let (new_content, occurrence_count) = if replace_all {
                         if exact_count == 0 {
-                            results.push(serde_json::json!({
+                            let mut err = serde_json::json!({
                                 "file": file_path,
                                 "error": "Pattern not found",
+                                "error_class": "pattern_not_found",
                                 "status": "not_found",
-                                "pattern_preview": if old_text.len() > 100 {
-                                    format!("{}...", &old_text[..100])
-                                } else {
-                                    old_text.clone()
-                                }
-                            }));
+                                "pattern_preview": pattern_preview,
+                                "_next": "Re-read the file and retry with exact content from a fresh read"
+                            });
+                            if let Some(suggestion) = suggest_fuzzy_match(&content, &old_text, None) {
+                                err["suggestion"] = suggestion;
+                            }
+                            results.push(err);
                             continue;
                         }
                         (content.replace(&old_text, &new_text), exact_count)
                     } else if exact_count > 0 {
                         (content.replacen(&old_text, &new_text, 1), exact_count)
                     } else if flexible_match {
-                        // flexible_match flag is honored but only exact matches are used in write paths
                         match exact_replacen_for_write(&content, &old_text, &new_text) {
                             Ok(Some((replaced, _line))) => (replaced, 1),
                             _ => {
-                                results.push(serde_json::json!({
+                                let mut err = serde_json::json!({
                                     "file": file_path,
                                     "error": "Pattern not found (exact match required)",
+                                    "error_class": "pattern_not_found",
                                     "status": "not_found",
-                                    "pattern_preview": if old_text.len() > 100 {
-                                        format!("{}...", &old_text[..100])
-                                    } else {
-                                        old_text.clone()
-                                    }
-                                }));
+                                    "pattern_preview": pattern_preview,
+                                    "_next": "Re-read the file and retry with exact content from a fresh read"
+                                });
+                                if let Some(suggestion) = suggest_fuzzy_match(&content, &old_text, None) {
+                                    err["suggestion"] = suggestion;
+                                }
+                                results.push(err);
                                 continue;
                             }
                         }
                     } else {
-                        results.push(serde_json::json!({
+                        let mut err = serde_json::json!({
                             "file": file_path,
                             "error": "Pattern not found",
+                            "error_class": "pattern_not_found",
                             "status": "not_found",
-                            "pattern_preview": if old_text.len() > 100 {
-                                format!("{}...", &old_text[..100])
-                            } else {
-                                old_text.clone()
-                            }
-                        }));
+                            "pattern_preview": pattern_preview,
+                            "_next": "Re-read the file and retry with exact content from a fresh read"
+                        });
+                        if let Some(suggestion) = suggest_fuzzy_match(&content, &old_text, None) {
+                            err["suggestion"] = suggestion;
+                        }
+                        results.push(err);
                         continue;
                     };
                     
@@ -12586,7 +12627,9 @@ pub async fn atls_batch_query(
                                 results.push(serde_json::json!({
                                     "file": file_path,
                                     "error": format!("Failed to write: {}", e),
-                                    "status": "error"
+                                    "error_class": "write_failed",
+                                    "status": "error",
+                                    "_next": "Check file permissions and disk space, then retry"
                                 }));
                             }
                         }
@@ -14827,7 +14870,7 @@ pub async fn atls_batch_query(
                                     }
                                     shift_entry.sort_by_key(|&(s, _)| s);
 
-                                    let (mut new_content, _warnings) = apply_line_edits(&current, &delete_edits)
+                                    let (mut new_content, _warnings, _resolutions) = apply_line_edits(&current, &delete_edits)
                                         .map_err(|e| format!("remove_lines failed on op {}: {}", op_idx, e))?;
 
                                     // Track removal progress for deferred lint
@@ -15046,7 +15089,7 @@ pub async fn atls_batch_query(
                                 .ok_or_else(|| format!("Failed to read {} (not in snapshot and file missing)", file_path))?;
                             let old_hash = content_hash(&current);
 
-                            let (new_content, anchor_warnings) = apply_line_edits(&current, edits)
+                            let (new_content, anchor_warnings, _edits_resolved) = apply_line_edits(&current, edits)
                                 .map_err(|e| {
                                     let attempted: Vec<String> = edits.iter().map(|ed| {
                                         format!("  line:{} end_line:{:?} action:{} content:\"{}\"",

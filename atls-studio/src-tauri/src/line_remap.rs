@@ -396,7 +396,7 @@ mod tests {
         assert_eq!(edits[0].line, LineCoordinate::Abs(13)); // remapped from 8 to 13
         assert_eq!(notices.len(), 1);
 
-        let (result, warnings) = crate::apply_line_edits(&current, &edits).unwrap();
+        let (result, warnings, _) = crate::apply_line_edits(&current, &edits).unwrap();
         assert!(result.contains("REPLACED"));
         assert!(!result.contains("target_line"));
         assert!(warnings.is_empty(), "unexpected warnings: {:?}", warnings);
@@ -452,7 +452,7 @@ mod tests {
         assert_eq!(edits[0].line, LineCoordinate::Abs(13));
         assert_eq!(notices.len(), 1);
 
-        let (result, _) = crate::apply_line_edits(&current, &edits).unwrap();
+        let (result, _, _) = crate::apply_line_edits(&current, &edits).unwrap();
         let result_lines: Vec<&str> = result.lines().collect();
         assert_eq!(result_lines[12], "REPLACED"); // 0-indexed line 12 = 1-indexed line 13
     }

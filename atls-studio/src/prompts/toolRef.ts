@@ -31,8 +31,12 @@ analyze.calls symbol_names:name1,name2 depth?:N filter?:pattern limit?:N
 analyze.extract_plan file_path:path strategy?:by_cluster|by_prefix|by_kind min_lines?:N min_complexity?:N
 change.edit file_path:path line_edits:[{line:N,end_line:N,action:replace,content:"new code"}]
   line + end_line: 1-based inclusive span (single-line: end_line=line, omit end_line defaults to line). end | -1 | symbol:fn(name) resolve to concrete bounds.
-  actions: replace, insert_before, insert_after, delete, move
+  actions: replace, insert_before, insert_after, delete, move, replace_body
+  move: requires destination:N (1-based). Produces positional shifts at both source and destination — auto-rebased in multi-step batches.
+  replace_body: replaces brace-delimited body content. Body span resolved by Rust; reported in edits_resolved.
   Intra-step coords: snapshot-style (relative to file before any edit in step); executor rebases
+  content_hash: provide for drift-safe multi-step editing (enables shadow line remap when file changed since read)
+  Response: edits_resolved:[{resolved_line,action,lines_affected}] — use for chaining, not mental math. On failure: suggestion:{line,confidence,tier,preview} when fuzzy match found.
   legacy: edits:[{file:path,old:text,new:text}] — short unambiguous replacements only
   also: creates:[{path:p,content:c}] | revise:hash | undo:h:$last_edit | deletes:path1,path2
 change.create creates:[{path:p,content:c}]
