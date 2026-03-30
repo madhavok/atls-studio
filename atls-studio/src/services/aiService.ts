@@ -649,17 +649,73 @@ function collectToolUseIdsFromBlocks(content: unknown): string[] {
   return ids;
 }
 
+function toolResultIdFromBlock(block: Record<string, unknown>): string | undefined {
+  const snake = block.tool_use_id;
+  const camel = (block as { toolUseId?: unknown }).toolUseId;
+  if (typeof snake === 'string') return snake;
+  if (typeof camel === 'string') return camel;
+  return undefined;
+}
+
 function collectToolResultIdsFromBlocks(content: unknown): Set<string> {
   const s = new Set<string>();
   if (!Array.isArray(content)) return s;
   for (const block of content) {
     if (!block || typeof block !== 'object') continue;
     if ((block as { type?: string }).type === 'tool_result') {
-      const tid = (block as { tool_use_id?: string }).tool_use_id;
-      if (typeof tid === 'string') s.add(tid);
+      const tid = toolResultIdFromBlock(block as Record<string, unknown>);
+      if (tid) s.add(tid);
     }
   }
   return s;
+}
+
+/**
+ * Anthropic requires the user message after tool_use to lead with tool_result blocks,
+ * in the same order as tool_use blocks in the assistant turn. Text or other blocks
+ * must come after all tool_results.
+ */
+function reorderUserContentAfterAssistantToolUses(assistantContent: unknown, userContent: unknown): unknown {
+  if (!Array.isArray(userContent)) return userContent;
+  const order = collectToolUseIdsFromBlocks(assistantContent);
+  if (order.length === 0) return userContent;
+
+  const trById = new Map<string, Record<string, unknown>>();
+  const nonTr: unknown[] = [];
+  for (const block of userContent) {
+    if (!block || typeof block !== 'object') continue;
+    const b = block as Record<string, unknown>;
+    if (b.type !== 'tool_result') {
+      nonTr.push(block);
+      continue;
+    }
+    const tid = toolResultIdFromBlock(b);
+    if (tid) trById.set(tid, b);
+    else nonTr.push(block);
+  }
+
+  const orderedTr: unknown[] = [];
+  const seen = new Set<string>();
+  for (const id of order) {
+    const block = trById.get(id);
+    if (block) {
+      orderedTr.push(block);
+      seen.add(id);
+    }
+  }
+  for (const [id, block] of trById) {
+    if (!seen.has(id)) orderedTr.push(block);
+  }
+  return [...orderedTr, ...nonTr];
+}
+
+/** Move all tool_result blocks before any text (WM/CTX may have been appended as trailing text blocks). */
+function partitionUserContentBlocksToolResultsFirst(
+  blocks: Array<{ type: string; text?: string; name?: string; content?: string; tool_use_id?: string }>,
+): Array<{ type: string; text?: string; name?: string; content?: string; tool_use_id?: string }> {
+  const tr = blocks.filter((b) => b.type === 'tool_result');
+  const rest = blocks.filter((b) => b.type !== 'tool_result');
+  return [...tr, ...rest];
 }
 
 function prependCancelledToolResults(content: unknown, missingIds: string[]): unknown {
@@ -773,6 +829,20 @@ function repairAnthropicToolPairing(messages: ApiMessage[]): ApiMessage[] {
     }
   }
 
+  // Anthropic: user message after tool_use must start with tool_result blocks in assistant
+  // tool_use order — text or dynamic context before any tool_result causes 400.
+  for (let i = 0; i < out.length - 1; i++) {
+    const a = out[i];
+    const b = out[i + 1];
+    if (a.role !== 'assistant' || b.role !== 'user') continue;
+    if (!Array.isArray(a.content)) continue;
+    if (collectToolUseIdsFromBlocks(a.content).length === 0) continue;
+    out[i + 1] = {
+      role: 'user',
+      content: reorderUserContentAfterAssistantToolUses(a.content, b.content),
+    };
+  }
+
   return out;
 }
 
@@ -866,7 +936,7 @@ function injectCurrentRoundUserContent(
         }
       }
     }
-    return userContentBlocks;
+    return partitionUserContentBlocksToolResultsFirst(userContentBlocks);
   }
 
   if (typeof content === 'string') {
