@@ -71,6 +71,19 @@ pub(crate) fn resolve_tree_directory_path(
     if direct.is_dir() {
         return (direct, file_path.to_string());
     }
+    // When a file path is given, use its parent directory (common intent: "tree near this file")
+    if direct.is_file() {
+        if let Some(parent) = direct.parent() {
+            if parent.is_dir() {
+                let parent_display = parent.strip_prefix(project_root)
+                    .unwrap_or(parent)
+                    .to_string_lossy()
+                    .replace('\\', "/");
+                let display = if parent_display.is_empty() { ".".to_string() } else { parent_display };
+                return (parent.to_path_buf(), display);
+            }
+        }
+    }
     let norm = file_path.trim_start_matches("./").replace('\\', "/");
     for rp in workspace_rel_paths {
         let rp = rp.replace('\\', "/");
@@ -81,6 +94,19 @@ pub(crate) fn resolve_tree_directory_path(
         let alt = resolve_project_path(project_root, &combined);
         if alt.is_dir() {
             return (alt, combined);
+        }
+        // Also try parent of file in sub-workspace
+        if alt.is_file() {
+            if let Some(parent) = alt.parent() {
+                if parent.is_dir() {
+                    let parent_display = parent.strip_prefix(project_root)
+                        .unwrap_or(parent)
+                        .to_string_lossy()
+                        .replace('\\', "/");
+                    let display = if parent_display.is_empty() { ".".to_string() } else { parent_display };
+                    return (parent.to_path_buf(), display);
+                }
+            }
         }
     }
     (direct, file_path.to_string())

@@ -26,7 +26,8 @@ search.similar type?:code|function|concept query?:text threshold?:N limit?:N
 search.issues file_paths?:path1 severity_filter?:high|medium|low|all issue_mode?:correctness|all|security limit?:N
 search.patterns file_paths?:path1 patterns?:pattern1,pattern2
 search.memory query:text regions?:active,archived,bb max_results?:N
-analyze.deps|structure|impact|blast_radius file_paths:path1 filter?:pattern limit?:N
+analyze.deps|structure|impact file_paths:path1 filter?:pattern limit?:N
+analyze.blast_radius symbol_names:name1 file_paths?:path1 action?:move
 analyze.calls symbol_names:name1,name2 depth?:N filter?:pattern limit?:N
 analyze.extract_plan file_path:path strategy?:by_cluster|by_prefix|by_kind min_lines?:N min_complexity?:N
 change.edit file_path:path line_edits:[{line:N,end_line:N,action:replace,content:"new code"}]

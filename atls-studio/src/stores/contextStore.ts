@@ -302,6 +302,7 @@ export interface ReadSpan {
   endLine?: number;
   shape?: string;
   sourceRevision: string;
+  contextType?: string;
 }
 
 export interface AwarenessCacheEntry {
@@ -1799,6 +1800,7 @@ export const useContextStore = create<ContextStoreState>()(
       if (normalizeSourcePath(rs.filePath) !== normPath) continue;
       if (rs.sourceRevision !== span.sourceRevision) continue;
       if ((rs.shape ?? '') !== (span.shape ?? '')) continue;
+      if ((rs.contextType ?? '') !== (span.contextType ?? '')) continue;
       // Full-file span: both undefined means match
       if (span.startLine == null && rs.startLine == null) {
         matchHash = chunk.hash;

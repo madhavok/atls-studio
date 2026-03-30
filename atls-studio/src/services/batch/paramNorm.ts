@@ -51,6 +51,7 @@ const OP_ALIASES: Readonly<Partial<Record<OperationKind, Readonly<Record<string,
   'search.code': { query: 'queries' },
   'search.issues': { mode: 'issue_mode' },
   'search.symbol': { name: 'symbol_names', query: 'symbol_names' },
+  'analyze.calls': { name: 'symbol_names', query: 'symbol_names', symbols: 'symbol_names' },
   'analyze.impact': { from: 'file_paths' },
   'analyze.blast_radius': { from: 'file_paths' },
   'intent.understand': { file: 'file_paths', files: 'file_paths' },
@@ -293,11 +294,14 @@ export function normalizeStepParams(
     }
   }
 
-  // key → keys promotion for bb.read / bb.delete
+  // key → keys promotion for bb.read / bb.delete; also coerce bare string keys to array
   if (KEY_TO_KEYS_OPS.has(op)) {
     if (typeof out.key === 'string' && out.keys === undefined) {
       out.keys = [out.key];
       delete out.key;
+    }
+    if (typeof out.keys === 'string') {
+      out.keys = [out.keys];
     }
   }
 

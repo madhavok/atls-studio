@@ -68,6 +68,18 @@ describe('normalizeStepParams', () => {
       expect(out.symbol_names).toEqual(['Bar']);
       expect(out.symbol_name).toBeUndefined();
     });
+
+    it('normalizes "name" → "symbol_names" for analyze.calls', () => {
+      const out = normalizeStepParams('analyze.calls', { name: 'doWork' });
+      expect(out.symbol_names).toEqual(['doWork']);
+      expect(out.name).toBeUndefined();
+    });
+
+    it('normalizes "query" → "symbol_names" for analyze.calls', () => {
+      const out = normalizeStepParams('analyze.calls', { query: 'handleRequest' });
+      expect(out.symbol_names).toEqual(['handleRequest']);
+      expect(out.query).toBeUndefined();
+    });
   });
 
   describe('global edit content aliases (cross-IDE)', () => {
@@ -205,6 +217,16 @@ describe('normalizeStepParams', () => {
     it('promotes key to keys for session.bb.delete', () => {
       const out = normalizeStepParams('session.bb.delete', { key: 'old' });
       expect(out.keys).toEqual(['old']);
+    });
+
+    it('coerces bare string keys to array for session.bb.read', () => {
+      const out = normalizeStepParams('session.bb.read', { keys: 'design-decisions' });
+      expect(out.keys).toEqual(['design-decisions']);
+    });
+
+    it('coerces bare string keys to array for session.bb.delete', () => {
+      const out = normalizeStepParams('session.bb.delete', { keys: 'old-key' });
+      expect(out.keys).toEqual(['old-key']);
     });
 
     it('does not promote key for session.bb.write', () => {

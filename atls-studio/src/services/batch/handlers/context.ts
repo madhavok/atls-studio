@@ -126,7 +126,7 @@ export const handleLoad: OpHandler = async (params, ctx) => {
       ? items[0].content_hash as string : undefined;
 
     if (filePaths.length === 1 && backendHash) {
-      const reused = ctx.store().findReusableRead({ filePath: filePaths[0], sourceRevision: backendHash });
+      const reused = ctx.store().findReusableRead({ filePath: filePaths[0], sourceRevision: backendHash, contextType: loadType });
       if (reused) {
         useRetentionStore.getState().incrementReadsReused();
         lines.push(`load: ERROR redundant — ${filePaths[0]} already at h:${reused} (same rev). Content is live at that hash. Do NOT re-read. Use h:${reused} in file_path params directly, or change.edit file_path:"h:${reused}:source".`);
@@ -135,7 +135,7 @@ export const handleLoad: OpHandler = async (params, ctx) => {
     }
 
     const hash = ctx.store().addChunk(resultStr, isFull ? 'raw' : 'smart', filePaths.join(', '), symbols, undefined, backendHash, {
-      ...(backendHash && filePaths.length === 1 ? { readSpan: { filePath: filePaths[0], sourceRevision: backendHash } } : {}),
+      ...(backendHash && filePaths.length === 1 ? { readSpan: { filePath: filePaths[0], sourceRevision: backendHash, contextType: loadType } } : {}),
     });
     const tokens = countTokensSync(resultStr);
     lines.push(`load: ${filePaths.join(', ')} → h:${hash} (${(tokens / 1000).toFixed(1)}k tk)`);
@@ -172,6 +172,13 @@ export const handleRead: OpHandler = async (params, ctx) => {
   const isFull = loadType === 'raw' || loadType === 'full';
   if (isFull && !readShape) {
     lines.push('read: NOTE type:"smart" is 70% smaller and sufficient for most tasks — use full when you need canonical mutation authority');
+  }
+  if (isTreeRead) {
+    const fileExtRe = /\.\w{1,10}$/;
+    const suspiciousFiles = rawFilePaths.filter(p => fileExtRe.test(p));
+    if (suspiciousFiles.length > 0) {
+      lines.push(`read: NOTE type:"tree" is designed for directories. ${suspiciousFiles.join(', ')} look like file paths — use type:"smart" to read individual files, or provide directory paths for tree.`);
+    }
   }
 
   const { items: expandedItems, notes: expandNotes } = await ctx.expandFilePathRefs(rawFilePaths);
@@ -245,7 +252,13 @@ export const handleRead: OpHandler = async (params, ctx) => {
           for (const item of items) {
             const r = item as Record<string, unknown>;
             if (r.error) {
-              lines.push(`read: ${r.file || '?'} → ERROR ${r.error}`);
+              const errFile = String(r.file || '?');
+              const errMsg = String(r.error);
+              if (isTreeRead && (errMsg.includes('not found') || errMsg.includes('not a directory'))) {
+                lines.push(`read: ${errFile} → ERROR ${errMsg} — tree reads expect a directory path (e.g. "src/"), not an individual file. Use type:"smart" to read files.`);
+              } else {
+                lines.push(`read: ${errFile} → ERROR ${errMsg}`);
+              }
               continue;
             }
             let raw: unknown = r.content ?? r.context ?? r.text;
@@ -260,7 +273,7 @@ export const handleRead: OpHandler = async (params, ctx) => {
             const chunkType = isFull ? 'raw' : 'smart';
             const bindIds = readBind?.length ? readBind : undefined;
             if (backendHash && src) {
-              const reusedRead = ctx.store().findReusableRead({ filePath: src, sourceRevision: backendHash, shape: readShape });
+              const reusedRead = ctx.store().findReusableRead({ filePath: src, sourceRevision: backendHash, shape: readShape, contextType: loadType });
               if (reusedRead) {
                 useRetentionStore.getState().incrementReadsReused();
                 allRefs.push(`h:${reusedRead}`);
@@ -281,7 +294,7 @@ export const handleRead: OpHandler = async (params, ctx) => {
                 ...(bindIds ? { subtaskIds: bindIds } : {}),
                 ...(backendHash ? { sourceRevision: backendHash } : {}),
                 viewKind: 'latest',
-                ...(backendHash && src ? { readSpan: { filePath: src, sourceRevision: backendHash, shape: readShape } } : {}),
+                ...(backendHash && src ? { readSpan: { filePath: src, sourceRevision: backendHash, shape: readShape, contextType: loadType } } : {}),
               },
             );
             const tk = countTokensSync(content);

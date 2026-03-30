@@ -348,6 +348,36 @@ describe('parseSetExpression', () => {
       expect(result.selector).toEqual({ kind: 'edited' });
     }
   });
+
+  it('handles whitespace around union operator: @edited + h:@pinned', () => {
+    const result = parseSetExpression('h:@edited + h:@pinned');
+    expect(result).not.toBeNull();
+    if (result && 'op' in result) {
+      expect(result.op).toBe('+');
+      expect(result.left).toEqual({ kind: 'edited' });
+      expect(result.right).toEqual({ kind: 'pinned' });
+    }
+  });
+
+  it('handles whitespace around operator: @edited & @all', () => {
+    const result = parseSetExpression('h:@edited & @all');
+    expect(result).not.toBeNull();
+    if (result && 'op' in result) {
+      expect(result.op).toBe('&');
+      expect(result.left).toEqual({ kind: 'edited' });
+      expect(result.right).toEqual({ kind: 'all' });
+    }
+  });
+
+  it('handles whitespace around operator: @all - @stale', () => {
+    const result = parseSetExpression('h:@all - @stale');
+    expect(result).not.toBeNull();
+    if (result && 'op' in result) {
+      expect(result.op).toBe('-');
+      expect(result.left).toEqual({ kind: 'all' });
+      expect(result.right).toEqual({ kind: 'stale' });
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------

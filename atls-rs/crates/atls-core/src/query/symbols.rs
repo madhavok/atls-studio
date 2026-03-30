@@ -842,13 +842,13 @@ impl QueryEngine {
                 if !names.contains(&cname) { names.push(cname); }
             }
 
-            // Fallback: calls table, only function/method scopes
+            // Fallback: calls table, scoped to callable symbol kinds
             if callers.is_empty() {
                 let mut fb_stmt = conn.prepare(
                     "SELECT DISTINCT f.path, s.name
                      FROM calls c
                      JOIN symbols s ON s.file_id = c.file_id AND s.name = c.scope_name
-                        AND s.kind IN ('function', 'method')
+                        AND s.kind IN ('function', 'method', 'arrow_function', 'constructor', 'variable')
                      JOIN files f ON s.file_id = f.id
                      WHERE c.name = ?1 OR c.name LIKE '%.' || ?2
                      LIMIT 40"
@@ -1349,7 +1349,7 @@ impl QueryEngine {
                  FROM calls c
                  JOIN symbols s ON s.file_id = c.file_id AND s.name = c.scope_name
                  JOIN files f ON s.file_id = f.id
-                 WHERE c.name = ?
+                 WHERE c.name = ?1 OR c.name LIKE '%.' || ?2
                  LIMIT 20"
             )?;
 
@@ -1360,7 +1360,7 @@ impl QueryEngine {
                 |row| row.get(0),
             ).ok();
 
-            let fallback_rows: Vec<_> = fallback_stmt.query_map([symbol_name], |row| {
+            let fallback_rows: Vec<_> = fallback_stmt.query_map(rusqlite::params![symbol_name, symbol_name], |row| {
                 Ok((
                     row.get::<_, i64>(0)?,
                     row.get::<_, String>(1)?,

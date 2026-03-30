@@ -226,8 +226,8 @@ function parseCompositeSetCore(rest: string): CompositeSetRef | null {
     if (ch === '(') depth++;
     else if (ch === ')') depth = Math.max(0, depth - 1);
     else if (depth === 0 && (ch === '+' || ch === '&' || ch === '-')) {
-      const leftRaw = rest.slice(0, i);
-      const rightRaw = rest.slice(i + 1);
+      const leftRaw = rest.slice(0, i).trim();
+      const rightRaw = rest.slice(i + 1).trim();
       const left = parseSingleSetCore(leftRaw);
       const right = parseSingleSetCore(rightRaw.startsWith('h:') ? rightRaw.slice(2) : rightRaw);
       if (!left || !right || left.modifier !== 'auto') return null;

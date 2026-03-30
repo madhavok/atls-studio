@@ -83,10 +83,7 @@ export const handleSearchCode: OpHandler = async (params, ctx) => {
     const result = await ctx.atlsBatchQuery('code_search', searchParams);
     const summary = extractSearchSummary(result, queries);
     const resultStr = formatResult(result, FORMAT_RESULT_MAX_SEARCH);
-    const retained = checkRetention('search.code', params, resultStr, true, 'search_results', `search: ${queries.join(', ')}`);
-    if (retained.reused) return retained.output;
-    const hash = ctx.store().addChunk(resultStr, 'search', queries.join(', '), undefined, summary);
-    const tk = countTokensSync(resultStr);
+
     let resultFilePaths = extractFilePathsFromSearchResult(result);
     let resultLines = extractLinesFromSearchResult(result);
     let resultEndLines = extractEndLinesFromSearchResult(result);
@@ -98,12 +95,18 @@ export const handleSearchCode: OpHandler = async (params, ctx) => {
       resultLines = resultLines.slice(0, maxPaths);
       resultEndLines = resultEndLines.slice(0, maxPaths);
     }
+    const structuredContent = { file_paths: resultFilePaths, lines: resultLines, end_lines: resultEndLines };
+
+    const retained = checkRetention('search.code', params, resultStr, true, 'search_results', `search: ${queries.join(', ')}`, undefined, structuredContent);
+    if (retained.reused) return retained.output;
+    const hash = ctx.store().addChunk(resultStr, 'search', queries.join(', '), undefined, summary);
+    const tk = countTokensSync(resultStr);
     return {
       kind: 'search_results', ok: true,
       refs: [`h:${hash}`],
       summary: `search: ${queries.join(', ')} → h:${hash} (${(tk / 1000).toFixed(1)}k tk)${cappedNote}`,
       tokens: tk,
-      content: { file_paths: resultFilePaths, lines: resultLines, end_lines: resultEndLines },
+      content: structuredContent,
     };
   } catch (searchErr) {
     return err('search', searchErr instanceof Error ? searchErr.message : String(searchErr));
@@ -122,19 +125,20 @@ export const handleSearchSymbol: OpHandler = async (params, ctx) => {
   try {
     const result = await ctx.atlsBatchQuery('find_symbol', { symbol_names: queries, query: queries[0] });
     const resultStr = formatResult(result, FORMAT_RESULT_MAX_SEARCH);
-    const retained = checkRetention('search.symbol', params, resultStr, true, 'symbol_refs', `find_symbol: ${queries.join(', ')}`);
-    if (retained.reused) return retained.output;
-    const hash = ctx.store().addChunk(resultStr, 'symbol', queries.join(', '));
-    const tk = countTokensSync(resultStr);
     const resultFilePaths = extractFilePathsFromSearchResult(result);
     const resultLines = extractLinesFromSearchResult(result);
     const resultEndLines = extractEndLinesFromSearchResult(result);
+    const structuredContent = { file_paths: resultFilePaths, lines: resultLines, end_lines: resultEndLines };
+    const retained = checkRetention('search.symbol', params, resultStr, true, 'symbol_refs', `find_symbol: ${queries.join(', ')}`, undefined, structuredContent);
+    if (retained.reused) return retained.output;
+    const hash = ctx.store().addChunk(resultStr, 'symbol', queries.join(', '));
+    const tk = countTokensSync(resultStr);
     return {
       kind: 'symbol_refs', ok: true,
       refs: [`h:${hash}`],
       summary: `find_symbol: ${queries.join(', ')} → h:${hash} (${(tk / 1000).toFixed(1)}k tk)`,
       tokens: tk,
-      content: { file_paths: resultFilePaths, lines: resultLines, end_lines: resultEndLines },
+      content: structuredContent,
     };
   } catch (findErr) {
     return err('find_symbol', findErr instanceof Error ? findErr.message : String(findErr));
@@ -153,19 +157,20 @@ export const handleSearchUsage: OpHandler = async (params, ctx) => {
     const result = await ctx.atlsBatchQuery('symbol_usage', { symbol_names: symbolNames });
     const summary = extractSymbolSummary(result, symbolNames);
     const resultStr = formatResult(result, FORMAT_RESULT_MAX_SEARCH);
-    const retained = checkRetention('search.usage', params, resultStr, true, 'symbol_refs', `symbols: ${symbolNames.join(', ')}`);
-    if (retained.reused) return retained.output;
-    const hash = ctx.store().addChunk(resultStr, 'symbol', symbolNames.join(', '), undefined, summary);
-    const tk = countTokensSync(resultStr);
     const resultFilePaths = extractFilePathsFromSearchResult(result);
     const resultLines = extractLinesFromSearchResult(result);
     const resultEndLines = extractEndLinesFromSearchResult(result);
+    const structuredContent = { file_paths: resultFilePaths, lines: resultLines, end_lines: resultEndLines };
+    const retained = checkRetention('search.usage', params, resultStr, true, 'symbol_refs', `symbols: ${symbolNames.join(', ')}`, undefined, structuredContent);
+    if (retained.reused) return retained.output;
+    const hash = ctx.store().addChunk(resultStr, 'symbol', symbolNames.join(', '), undefined, summary);
+    const tk = countTokensSync(resultStr);
     return {
       kind: 'symbol_refs', ok: true,
       refs: [`h:${hash}`],
       summary: `symbols: ${symbolNames.join(', ')} → h:${hash} (${(tk / 1000).toFixed(1)}k tk)`,
       tokens: tk,
-      content: { file_paths: resultFilePaths, lines: resultLines, end_lines: resultEndLines },
+      content: structuredContent,
     };
   } catch (symErr) {
     return err('symbols', symErr instanceof Error ? symErr.message : String(symErr));
@@ -365,8 +370,22 @@ export const handleAnalyzeImpact: OpHandler = async (params, ctx) => {
 // ---------------------------------------------------------------------------
 
 export const handleAnalyzeBlastRadius: OpHandler = async (params, ctx) => {
+  const p = params as Partial<AnalyzeBlastRadiusParams>;
+  const symbolNames = p.symbol_names;
+  if (!symbolNames?.length) {
+    return err('blast_radius', 'missing symbol_names — blast_radius requires at least one symbol to analyze (use file_paths as optional anchor)');
+  }
+
+  const backendParams: Record<string, unknown> = { ...params };
+  if (!backendParams.from && !backendParams.file_path) {
+    const filePaths = backendParams.file_paths as string[] | undefined;
+    if (filePaths?.length) {
+      backendParams.from = filePaths[0];
+    }
+  }
+
   try {
-    const result = await ctx.atlsBatchQuery('impact_analysis', params);
+    const result = await ctx.atlsBatchQuery('impact_analysis', backendParams);
     const resultStr = formatResult(result);
     const retained = checkRetention('analyze.blast_radius', params, resultStr, true, 'analysis', 'impact_analysis');
     if (retained.reused) return retained.output;

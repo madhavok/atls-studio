@@ -97,7 +97,8 @@ export const handleBbWrite: OpHandler = async (params, ctx) => {
 };
 
 export const handleBbRead: OpHandler = async (params, ctx) => {
-  const keys = params.keys as string[] | undefined;
+  let keys = params.keys as string[] | string | undefined;
+  if (typeof keys === 'string') keys = [keys];
   if (!keys?.length) return err('bb_read: ERROR missing keys param');
 
   const lines: string[] = [];
@@ -141,7 +142,8 @@ export const handleBbRead: OpHandler = async (params, ctx) => {
 };
 
 export const handleBbDelete: OpHandler = async (params, ctx) => {
-  const keys = params.keys as string[];
+  let keys = params.keys as string[] | string | undefined;
+  if (typeof keys === 'string') keys = [keys];
   if (!keys?.length) return err('bb_delete: ERROR missing keys param');
 
   let deleted = 0;

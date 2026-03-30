@@ -25,6 +25,7 @@ export type RetentionCheckResult =
  * @param outputKind - The StepOutput kind for the result
  * @param summaryLabel - Human-readable label for the summary line
  * @param classification - Optional VerifyClassification for verify ops
+ * @param structuredContent - Optional structured content to preserve on collapse (e.g. file_paths for downstream bindings)
  */
 export function checkRetention(
   use: OperationKind | string,
@@ -34,6 +35,7 @@ export function checkRetention(
   outputKind: StepOutput['kind'],
   summaryLabel: string,
   classification?: string,
+  structuredContent?: unknown,
 ): RetentionCheckResult {
   const result = buildRetentionFingerprint(use, params);
   if (!result) return { reused: false };
@@ -72,6 +74,7 @@ export function checkRetention(
         summary: `${summaryLabel} (run #${action.occurrenceCount}, same outcome — reusing h:${action.latestHash})`,
         tokens: 0,
         classification: classification as StepOutput['classification'],
+        ...(structuredContent !== undefined ? { content: structuredContent } : {}),
       },
     };
   }

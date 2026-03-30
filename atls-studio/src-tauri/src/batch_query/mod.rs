@@ -5149,12 +5149,16 @@ pub async fn atls_batch_query(
                     let dir_prefix = if normalized.ends_with('/') { normalized } else { format!("{}/", normalized) };
                     filter.file_patterns = Some(vec![format!("{}%", dir_prefix)]);
                 } else if let Some(ref paths) = file_paths {
-                    let patterns: Vec<String> = paths.iter().map(|p| {
+                    let patterns: Vec<String> = paths.iter().flat_map(|p| {
                         let normalized = to_relative_path(project_root, &p.replace('\\', "/"));
                         if normalized.ends_with('/') {
-                            format!("{}%", normalized)
+                            let fwd = format!("{}%", normalized);
+                            let bwd = format!("{}%", normalized.replace('/', "\\"));
+                            vec![fwd, bwd]
                         } else {
-                            format!("%{}", normalized)
+                            let fwd = format!("%{}", normalized);
+                            let bwd = format!("%{}", normalized.replace('/', "\\"));
+                            vec![fwd, bwd]
                         }
                     }).collect();
                     filter.file_patterns = Some(patterns);
@@ -5341,11 +5345,17 @@ pub async fn atls_batch_query(
                         let clean = fp.replace('\\', "/");
                         let clean = clean.strip_prefix(r"\\?\").unwrap_or(&clean);
                         let normalized = to_relative_path(project_root, clean);
-                        filter.file_pattern = Some(if normalized.ends_with('/') {
+                        let fwd_pattern = if normalized.ends_with('/') {
                             format!("{}%", normalized)
                         } else {
                             format!("%{}", normalized)
-                        });
+                        };
+                        let bwd_pattern = if normalized.ends_with('/') {
+                            format!("{}%", normalized.replace('/', "\\"))
+                        } else {
+                            format!("%{}", normalized.replace('/', "\\"))
+                        };
+                        filter.file_patterns = Some(vec![fwd_pattern, bwd_pattern]);
                         match project.query().find_issues(&filter) {
                             Ok(mut i) => all_issues.append(&mut i),
                             Err(e) => return Err(format!("Failed to detect patterns: {}", e))
