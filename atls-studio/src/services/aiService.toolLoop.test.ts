@@ -24,7 +24,11 @@ Object.defineProperty(globalThis, 'localStorage', {
   configurable: true,
 });
 
-const { areToolsEnabledForProvider, deriveMutationCompletionBlocker } = await import('./aiService');
+const {
+  areToolsEnabledForProvider,
+  deriveMutationCompletionBlocker,
+  prepareAnthropicMessagesForApi,
+} = await import('./aiService');
 const { useAppStore } = await import('../stores/appStore');
 
 function normalizeConversationHistoryForTest(messages: Array<ChatMessage & {
@@ -194,6 +198,124 @@ describe('tool loop history normalization', () => {
     expect(userBlocks[0]?.type).toBe('tool_result');
     expect(userBlocks[0]?.tool_use_id).toBe('toolu_456');
     expect(userBlocks.some((block) => block.type === 'text' && block.text?.includes('STAGED'))).toBe(true);
+  });
+});
+
+describe('Anthropic tool pairing finalization', () => {
+  it('reorders normalized tool_result blocks ahead of trailing text context', () => {
+    const repaired = prepareAnthropicMessagesForApi([
+      {
+        role: 'assistant',
+        content: [
+          { type: 'text', text: 'Starting scan' },
+          { type: 'tool_use', id: 'toolu_norm', name: 'batch', input: { goal: 'scan' } },
+        ],
+      },
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: '\n\nSTAGED\n\nDYNAMIC' },
+          { toolUseId: 'toolu_norm', content: 'ok', name: 'batch' },
+        ],
+      },
+    ]);
+
+    expect(repaired).toHaveLength(2);
+    const userBlocks = repaired[1]?.content as Array<{
+      type?: string;
+      tool_use_id?: string;
+      toolUseId?: string;
+      text?: string;
+      content?: string;
+    }>;
+    expect(userBlocks[0]).toMatchObject({
+      type: 'tool_result',
+      tool_use_id: 'toolu_norm',
+      content: 'ok',
+    });
+    expect(userBlocks[0]?.toolUseId).toBeUndefined();
+    expect(userBlocks[1]).toMatchObject({
+      type: 'text',
+      text: '\n\nSTAGED\n\nDYNAMIC',
+    });
+  });
+
+  it('synthesizes missing tool_result coverage instead of keeping invalid user ordering', () => {
+    const repaired = prepareAnthropicMessagesForApi([
+      {
+        role: 'assistant',
+        content: [
+          { type: 'tool_use', id: 'toolu_a', name: 'batch', input: { goal: 'scan' } },
+          { type: 'tool_use', id: 'toolu_b', name: 'read', input: { path: 'src/app.ts' } },
+        ],
+      },
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: 'continue' },
+          { type: 'tool_result', tool_use_id: 'toolu_a', content: 'ok' },
+        ],
+      },
+    ]);
+
+    const userBlocks = repaired[1]?.content as Array<{ type: string; tool_use_id?: string; content?: string; text?: string }>;
+    expect(userBlocks.slice(0, 2)).toEqual([
+      { type: 'tool_result', tool_use_id: 'toolu_a', content: 'ok' },
+      { type: 'tool_result', tool_use_id: 'toolu_b', content: '[cancelled]' },
+    ]);
+    expect(userBlocks[2]).toMatchObject({ type: 'text', text: 'continue' });
+  });
+
+  it('converts string user follow-up into tool_result-first array content', () => {
+    const repaired = prepareAnthropicMessagesForApi([
+      {
+        role: 'assistant',
+        content: [
+          { type: 'text', text: 'Reading file' },
+          { type: 'tool_use', id: 'toolu_str', name: 'read', input: { path: 'src/main.ts' } },
+        ],
+      },
+      { role: 'user', content: 'please continue' },
+    ]);
+
+    const userBlocks = repaired[1]?.content as Array<{ type: string; tool_use_id?: string; content?: string; text?: string }>;
+    expect(userBlocks[0]).toEqual({
+      type: 'tool_result',
+      tool_use_id: 'toolu_str',
+      content: '[cancelled]',
+    });
+    expect(userBlocks[1]).toEqual({
+      type: 'text',
+      text: 'please continue',
+    });
+  });
+
+  it('merges consecutive user messages so tool_result user + follow-up user become one', () => {
+    const repaired = prepareAnthropicMessagesForApi([
+      { role: 'user', content: 'Scan the repo' },
+      {
+        role: 'assistant',
+        content: [
+          { type: 'tool_use', id: 'toolu_merge', name: 'batch', input: { goal: 'scan' } },
+        ],
+      },
+      {
+        role: 'user',
+        content: [
+          { type: 'tool_result', tool_use_id: 'toolu_merge', content: 'ok' },
+        ],
+      },
+      { role: 'user', content: 'Now fix the bugs' },
+    ]);
+
+    expect(repaired).toHaveLength(3);
+    expect(repaired[0]?.role).toBe('user');
+    expect(repaired[1]?.role).toBe('assistant');
+    expect(repaired[2]?.role).toBe('user');
+
+    const userBlocks = repaired[2]?.content as Array<{ type: string; tool_use_id?: string; text?: string; content?: string }>;
+    expect(userBlocks[0]).toMatchObject({ type: 'tool_result', tool_use_id: 'toolu_merge' });
+    expect(userBlocks.some(b => b.type === 'text' && b.text === 'Now fix the bugs')).toBe(true);
   });
 });
 

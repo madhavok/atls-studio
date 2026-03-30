@@ -626,13 +626,52 @@ function messageToApiContent(msg: { role: string; content: unknown; parts?: Arra
 
 type ApiMessage = { role: string; content: unknown };
 
+function toolResultIdFromBlock(block: Record<string, unknown>): string | undefined {
+  const snake = block.tool_use_id;
+  const camel = (block as { toolUseId?: unknown }).toolUseId;
+  if (typeof snake === 'string') return snake;
+  if (typeof camel === 'string') return camel;
+  return undefined;
+}
+
+/** True when this block is a user-side tool_result for Anthropic ordering. */
+function isAnthropicToolResultBlock(block: Record<string, unknown>): boolean {
+  const tid = toolResultIdFromBlock(block);
+  if (!tid) return false;
+  const t = block.type;
+  if (t === 'tool_result') return true;
+  // Serialized paths may omit type while preserving tool_use_id
+  if (t === undefined || t === null) return true;
+  return false;
+}
+
+function normalizeAnthropicToolResultBlock(block: Record<string, unknown>): Record<string, unknown> | null {
+  const tid = toolResultIdFromBlock(block);
+  if (!tid) return null;
+  const t = block.type;
+  if (t !== 'tool_result' && t !== undefined && t !== null) return null;
+  const normalized: Record<string, unknown> = { ...block, type: 'tool_result', tool_use_id: tid };
+  delete (normalized as { toolUseId?: unknown }).toolUseId;
+  return normalized;
+}
+
+function normalizeAnthropicUserContent(content: unknown): unknown {
+  if (!Array.isArray(content)) return content;
+  return content.map((block) => {
+    if (!block || typeof block !== 'object') return block;
+    return normalizeAnthropicToolResultBlock(block as Record<string, unknown>) ?? block;
+  });
+}
+
 function hasToolResultBlocks(content: unknown): boolean {
   return Array.isArray(content)
     && content.some(
       (block) => typeof block === 'object'
         && block !== null
-        && 'type' in block
-        && (block as { type?: string }).type === 'tool_result',
+        && (
+          isAnthropicToolResultBlock(block as Record<string, unknown>)
+          || (block as { type?: string }).type === 'tool_result'
+        ),
     );
 }
 
@@ -649,21 +688,14 @@ function collectToolUseIdsFromBlocks(content: unknown): string[] {
   return ids;
 }
 
-function toolResultIdFromBlock(block: Record<string, unknown>): string | undefined {
-  const snake = block.tool_use_id;
-  const camel = (block as { toolUseId?: unknown }).toolUseId;
-  if (typeof snake === 'string') return snake;
-  if (typeof camel === 'string') return camel;
-  return undefined;
-}
-
 function collectToolResultIdsFromBlocks(content: unknown): Set<string> {
   const s = new Set<string>();
   if (!Array.isArray(content)) return s;
   for (const block of content) {
     if (!block || typeof block !== 'object') continue;
-    if ((block as { type?: string }).type === 'tool_result') {
-      const tid = toolResultIdFromBlock(block as Record<string, unknown>);
+    const b = block as Record<string, unknown>;
+    if (isAnthropicToolResultBlock(b)) {
+      const tid = toolResultIdFromBlock(b);
       if (tid) s.add(tid);
     }
   }
@@ -685,7 +717,7 @@ function reorderUserContentAfterAssistantToolUses(assistantContent: unknown, use
   for (const block of userContent) {
     if (!block || typeof block !== 'object') continue;
     const b = block as Record<string, unknown>;
-    if (b.type !== 'tool_result') {
+    if (!isAnthropicToolResultBlock(b)) {
       nonTr.push(block);
       continue;
     }
@@ -709,12 +741,53 @@ function reorderUserContentAfterAssistantToolUses(assistantContent: unknown, use
   return [...orderedTr, ...nonTr];
 }
 
+function forceAnthropicToolResultCoverage(assistantContent: unknown, userContent: unknown): unknown {
+  const order = collectToolUseIdsFromBlocks(assistantContent);
+  if (order.length === 0) return normalizeAnthropicUserContent(userContent);
+
+  const normalized = normalizeAnthropicUserContent(userContent);
+  const covered = collectToolResultIdsFromBlocks(normalized);
+  const missing = order.filter((id) => !covered.has(id));
+  const withCoverage = missing.length > 0 ? prependCancelledToolResults(normalized, missing) : normalized;
+  const reordered = reorderUserContentAfterAssistantToolUses(assistantContent, withCoverage);
+  const afterIds = collectToolResultIdsFromBlocks(reordered);
+  if (order.every((id) => afterIds.has(id))) {
+    return reordered;
+  }
+
+  const canonicalized = normalizeAnthropicUserContent(withCoverage);
+  if (!Array.isArray(canonicalized)) {
+    return order.map((id) => ({ type: 'tool_result', tool_use_id: id, content: '[cancelled]' }));
+  }
+
+  const toolResultsById = new Map<string, Record<string, unknown>>();
+  const nonTr: unknown[] = [];
+  for (const block of canonicalized) {
+    if (!block || typeof block !== 'object') {
+      nonTr.push(block);
+      continue;
+    }
+    const normalizedBlock = normalizeAnthropicToolResultBlock(block as Record<string, unknown>);
+    if (normalizedBlock) {
+      const tid = toolResultIdFromBlock(normalizedBlock);
+      if (tid && !toolResultsById.has(tid)) toolResultsById.set(tid, normalizedBlock);
+      continue;
+    }
+    nonTr.push(block);
+  }
+
+  return [
+    ...order.map((id) => toolResultsById.get(id) ?? { type: 'tool_result', tool_use_id: id, content: '[cancelled]' }),
+    ...nonTr,
+  ];
+}
+
 /** Move all tool_result blocks before any text (WM/CTX may have been appended as trailing text blocks). */
 function partitionUserContentBlocksToolResultsFirst(
   blocks: Array<{ type: string; text?: string; name?: string; content?: string; tool_use_id?: string }>,
 ): Array<{ type: string; text?: string; name?: string; content?: string; tool_use_id?: string }> {
-  const tr = blocks.filter((b) => b.type === 'tool_result');
-  const rest = blocks.filter((b) => b.type !== 'tool_result');
+  const tr = blocks.filter((b) => isAnthropicToolResultBlock(b as unknown as Record<string, unknown>));
+  const rest = blocks.filter((b) => !isAnthropicToolResultBlock(b as unknown as Record<string, unknown>));
   return [...tr, ...rest];
 }
 
@@ -744,14 +817,18 @@ function repairAnthropicToolPairing(messages: ApiMessage[]): ApiMessage[] {
 
     // Forward repair: assistant with tool_use must have following user with tool_result
     if (msg.role === 'assistant' && Array.isArray(msg.content)) {
-      // Strip non-standard fields from tool_use blocks
-      const cleanedContent = msg.content.map((block: Record<string, unknown>) => {
+      // Strip non-standard fields from tool_use blocks and ensure tool_use blocks
+      // come after any text blocks (Anthropic rejects interleaved text between tool_use blocks).
+      const stripped = msg.content.map((block: Record<string, unknown>) => {
         if (block && typeof block === 'object' && (block as { type?: string }).type === 'tool_use') {
           const { thoughtSignature: _, ...rest } = block as Record<string, unknown>;
           return rest;
         }
         return block;
       });
+      const nonToolUse = stripped.filter((b: Record<string, unknown>) => (b as { type?: string }).type !== 'tool_use');
+      const toolUse = stripped.filter((b: Record<string, unknown>) => (b as { type?: string }).type === 'tool_use');
+      const cleanedContent = toolUse.length > 0 && nonToolUse.length > 0 ? [...nonToolUse, ...toolUse] : stripped;
       const cleanedMsg = { ...msg, content: cleanedContent };
 
       const toolUseIds = collectToolUseIdsFromBlocks(cleanedContent);
@@ -762,7 +839,7 @@ function repairAnthropicToolPairing(messages: ApiMessage[]): ApiMessage[] {
         out.push(cleanedMsg);
         if (missing.length > 0) {
           if (next?.role === 'user') {
-            out.push({ role: 'user', content: prependCancelledToolResults(next.content, missing) });
+            out.push({ role: 'user', content: forceAnthropicToolResultCoverage(cleanedContent, next.content) });
             i++;
           } else {
             out.push({
@@ -771,7 +848,7 @@ function repairAnthropicToolPairing(messages: ApiMessage[]): ApiMessage[] {
             });
           }
         } else if (next?.role === 'user') {
-          out.push(next);
+          out.push({ role: 'user', content: normalizeAnthropicUserContent(next.content) });
           i++;
         }
         continue;
@@ -790,7 +867,13 @@ function repairAnthropicToolPairing(messages: ApiMessage[]): ApiMessage[] {
       if (prevToolUseIds.size === 0) {
         // No preceding assistant tool_use: strip orphaned tool_result blocks from this user message
         const filtered = (msg.content as Array<Record<string, unknown>>).filter(
-          (block) => !(block && typeof block === 'object' && (block as { type?: string }).type === 'tool_result'),
+          (block) => !(
+            block && typeof block === 'object'
+            && (
+              isAnthropicToolResultBlock(block)
+              || (block as { type?: string }).type === 'tool_result'
+            )
+          ),
         );
         if (filtered.length > 0) {
           out.push({ role: 'user', content: filtered });
@@ -817,7 +900,7 @@ function repairAnthropicToolPairing(messages: ApiMessage[]): ApiMessage[] {
         if (uncovered.length > 0) {
           console.error('[aiService] PAIRING BUG after repair — inserting synthetic tool_results for:', uncovered, 'at msg index', i);
           if (next?.role === 'user') {
-            out[i + 1] = { role: 'user', content: prependCancelledToolResults(next.content, uncovered) };
+            out[i + 1] = { role: 'user', content: forceAnthropicToolResultCoverage(m.content, next.content) };
           } else {
             out.splice(i + 1, 0, {
               role: 'user',
@@ -829,6 +912,18 @@ function repairAnthropicToolPairing(messages: ApiMessage[]): ApiMessage[] {
     }
   }
 
+  // Anthropic requires alternating user/assistant roles. Merge consecutive same-role messages.
+  for (let i = out.length - 1; i > 0; i--) {
+    if (out[i].role === out[i - 1].role) {
+      const prev = out[i - 1];
+      const curr = out[i];
+      const prevBlocks = Array.isArray(prev.content) ? prev.content as unknown[] : typeof prev.content === 'string' ? [{ type: 'text', text: prev.content }] : [{ type: 'text', text: String(prev.content ?? '') }];
+      const currBlocks = Array.isArray(curr.content) ? curr.content as unknown[] : typeof curr.content === 'string' ? [{ type: 'text', text: curr.content }] : [{ type: 'text', text: String(curr.content ?? '') }];
+      out[i - 1] = { role: prev.role, content: [...prevBlocks, ...currBlocks] };
+      out.splice(i, 1);
+    }
+  }
+
   // Anthropic: user message after tool_use must start with tool_result blocks in assistant
   // tool_use order — text or dynamic context before any tool_result causes 400.
   for (let i = 0; i < out.length - 1; i++) {
@@ -836,14 +931,26 @@ function repairAnthropicToolPairing(messages: ApiMessage[]): ApiMessage[] {
     const b = out[i + 1];
     if (a.role !== 'assistant' || b.role !== 'user') continue;
     if (!Array.isArray(a.content)) continue;
-    if (collectToolUseIdsFromBlocks(a.content).length === 0) continue;
-    out[i + 1] = {
-      role: 'user',
-      content: reorderUserContentAfterAssistantToolUses(a.content, b.content),
-    };
+    const needIds = collectToolUseIdsFromBlocks(a.content);
+    if (needIds.length === 0) continue;
+    const reordered = forceAnthropicToolResultCoverage(a.content, b.content);
+    const afterIds = collectToolResultIdsFromBlocks(reordered);
+    const ok = needIds.every((id) => afterIds.has(id));
+    if (!ok) {
+      console.error('[aiService] Anthropic tool_result finalization failed — forcing cancelled placeholders', {
+        needIds,
+        had: [...collectToolResultIdsFromBlocks(b.content)],
+        after: [...afterIds],
+      });
+    }
+    out[i + 1] = { role: 'user', content: reordered };
   }
 
   return out;
+}
+
+export function prepareAnthropicMessagesForApi(messages: Array<{ role: string; content: unknown }>): Array<{ role: string; content: unknown }> {
+  return repairAnthropicToolPairing(messages.map((msg) => ({ role: msg.role, content: msg.content })));
 }
 
 function normalizeConversationHistory(messages: ChatMessage[]): ApiMessage[] {
@@ -973,7 +1080,15 @@ function assembleProviderMessages(
       // is byte-identical and Anthropic serves cache reads (0.1x).
       if (i > 0 && !isGemini) {
         const prevMsg = layeredMessages[layeredMessages.length - 1];
-        if (prevMsg) _appendBoundaryMarker(prevMsg);
+        if (prevMsg) {
+          const prevHasToolUse = Array.isArray(prevMsg.content) && (prevMsg.content as Array<{type?: string}>).some(b => b.type === 'tool_use');
+          if (prevHasToolUse) {
+            const earlierMsg = layeredMessages.length >= 2 ? layeredMessages[layeredMessages.length - 2] : undefined;
+            if (earlierMsg) _appendBoundaryMarker(earlierMsg);
+          } else {
+            _appendBoundaryMarker(prevMsg);
+          }
+        }
       }
 
       useContextStore.getState().markStagedSnippetsUsed();
@@ -1569,7 +1684,7 @@ async function streamChatViaTauri(
 
       const tauriMessages = assembledRound.messages.map(m => ({ role: m.role, content: m.content }));
       const tauriMessagesForProvider =
-        config.provider === 'anthropic' ? repairAnthropicToolPairing(tauriMessages) : tauriMessages;
+        config.provider === 'anthropic' ? prepareAnthropicMessagesForApi(tauriMessages) : tauriMessages;
       const cacheMessages = assembledRound.messages.map(m => ({
         role: m.role as 'user' | 'assistant' | 'system',
         content: m.content as string | ContentBlock[],
