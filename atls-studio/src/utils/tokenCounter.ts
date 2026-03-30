@@ -25,7 +25,6 @@ interface CacheEntry {
 
 class LRUCache {
   private map = new Map<string, number>();
-  private order: string[] = [];
   private maxSize: number;
 
   constructor(maxSize: number) {
@@ -35,36 +34,30 @@ class LRUCache {
   get(key: string): number | undefined {
     const val = this.map.get(key);
     if (val !== undefined) {
-      const idx = this.order.indexOf(key);
-      if (idx > -1) {
-        this.order.splice(idx, 1);
-        this.order.push(key);
-      }
+      // Move to end (most recent) using Map delete+re-set — O(1)
+      this.map.delete(key);
+      this.map.set(key, val);
     }
     return val;
   }
 
   set(key: string, value: number): void {
     if (this.map.has(key)) {
-      this.map.set(key, value);
-      const idx = this.order.indexOf(key);
-      if (idx > -1) {
-        this.order.splice(idx, 1);
-        this.order.push(key);
-      }
-      return;
-    }
-    if (this.order.length >= this.maxSize) {
-      const evicted = this.order.shift();
-      if (evicted) this.map.delete(evicted);
+      this.map.delete(key);
+    } else if (this.map.size >= this.maxSize) {
+      // Evict oldest (first key in Map iteration order)
+      const oldest = this.map.keys().next().value;
+      if (oldest !== undefined) this.map.delete(oldest);
     }
     this.map.set(key, value);
-    this.order.push(key);
   }
 
   clear(): void {
     this.map.clear();
-    this.order = [];
+  }
+
+  get size(): number {
+    return this.map.size;
   }
 }
 

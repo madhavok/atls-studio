@@ -50,6 +50,7 @@ export interface RefLine {
 
 let currentTurn = 0;
 const refs = new Map<string, ChunkRef>();
+const shortHashIndex = new Map<string, ChunkRef>();
 let lastTurnDelta = { dematerialized: 0, newMaterialized: 0 };
 
 export function getTurn(): number {
@@ -87,6 +88,7 @@ export async function advanceTurn(): Promise<number> {
 export function resetProtocol(): void {
   currentTurn = 0;
   refs.clear();
+  shortHashIndex.clear();
   lastTurnDelta = { dematerialized: 0, newMaterialized: 0 };
 }
 
@@ -135,6 +137,7 @@ export function materialize(
     seenAtTurn: currentTurn,
   };
   refs.set(hash, ref);
+  shortHashIndex.set(shortHash, ref);
   lastTurnDelta = { ...lastTurnDelta, newMaterialized: lastTurnDelta.newMaterialized + 1 };
   return ref;
 }
@@ -180,19 +183,22 @@ export function getRef(hash: string): ChunkRef | undefined {
   const normalized = hash.startsWith('h:') ? hash.slice(2) : hash;
   const direct = refs.get(normalized);
   if (direct) return direct;
-  // Short hash or prefix lookup — collect all matches and reject ambiguous prefixes
-  let match: ChunkRef | undefined;
-  let matchCount = 0;
-  for (const [, ref] of refs) {
-    if (ref.shortHash === normalized) {
-      return ref; // Exact short-hash match is unambiguous
+  // O(1) short-hash lookup via secondary index
+  const byShort = shortHashIndex.get(normalized);
+  if (byShort) return byShort;
+  // Prefix match (longer than shortHash but shorter than full)
+  if (normalized.length >= SHORT_HASH_LEN) {
+    let match: ChunkRef | undefined;
+    let matchCount = 0;
+    for (const [, ref] of refs) {
+      if (ref.hash.startsWith(normalized)) {
+        match = ref;
+        matchCount++;
+        if (matchCount > 1) return undefined; // ambiguous
+      }
     }
-    if (ref.hash.startsWith(normalized)) {
-      match = ref;
-      matchCount++;
-    }
+    if (matchCount === 1) return match;
   }
-  if (matchCount === 1) return match;
   return undefined;
 }
 

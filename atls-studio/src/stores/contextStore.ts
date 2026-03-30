@@ -1080,21 +1080,26 @@ function refToBaseHash(ref: string): string {
  */
 // Reverse index: shortHash → full map key. Rebuilt lazily.
 let _shortHashIndex: Map<string, string> | null = null;
-let _shortHashIndexSize = -1;
+let _shortHashIndexChunksRef: Map<string, unknown> | null = null;
 
 function getShortHashIndex(chunks: Map<string, { hash: string; shortHash: string }>): Map<string, string> {
-  if (_shortHashIndex && _shortHashIndexSize === chunks.size) return _shortHashIndex;
+  // Cache is valid if it was built from the same Map reference (identity check)
+  // AND the size hasn't changed. Zustand creates new Map refs on mutation,
+  // so identity + size is a reliable invalidation signal.
+  if (_shortHashIndex && _shortHashIndexChunksRef === chunks && _shortHashIndex.size > 0) {
+    return _shortHashIndex;
+  }
   _shortHashIndex = new Map();
+  _shortHashIndexChunksRef = chunks as Map<string, unknown>;
   for (const [key, chunk] of chunks) {
     _shortHashIndex.set(chunk.shortHash, key);
   }
-  _shortHashIndexSize = chunks.size;
   return _shortHashIndex;
 }
 
 function invalidateShortHashIndex(): void {
   _shortHashIndex = null;
-  _shortHashIndexSize = -1;
+  _shortHashIndexChunksRef = null;
 }
 
 function findChunkByRef<T extends { hash: string; shortHash: string }>(
@@ -2300,47 +2305,37 @@ export const useContextStore = create<ContextStoreState>()(
     let evicted = 0;
     const evictedHashes: string[] = [];
     set(state => {
-      const newStaged = new Map(state.stagedSnippets);
+      let newStaged: Map<string, StagedSnippet> | null = null;
       for (const [key, s] of state.stagedSnippets) {
         if (s.viewKind === 'snapshot') continue;
         if (s.source && norm(s.source) === pathNorm && s.sourceRevision != null && s.sourceRevision !== currentRevision && s.viewKind === 'derived') {
+          if (!newStaged) newStaged = new Map(state.stagedSnippets);
           newStaged.delete(key);
           evicted++;
         }
       }
-      const newChunks = new Map(state.chunks);
-      const newArchived = new Map(state.archivedChunks);
+      let newChunks: Map<string, ContextChunk> | null = null;
+      let newArchived: Map<string, ContextChunk> | null = null;
       for (const [key, c] of state.chunks) {
         if (c.viewKind === 'snapshot') continue;
         if (c.source && norm(c.source) === pathNorm && c.sourceRevision != null && c.sourceRevision !== currentRevision && c.viewKind === 'derived') {
+          if (!newChunks) newChunks = new Map(state.chunks);
           newChunks.delete(key);
-          evicted++;
           evictedHashes.push(c.hash);
+          evicted++;
+          if (!state.archivedChunks.has(key)) {
+            if (!newArchived) newArchived = new Map(state.archivedChunks);
+            newArchived.set(key, { ...c, compacted: true });
+          }
         }
       }
-      for (const [key, c] of state.archivedChunks) {
-        if (c.viewKind === 'snapshot') continue;
-        if (c.source && norm(c.source) === pathNorm && c.sourceRevision != null && c.sourceRevision !== currentRevision && c.viewKind === 'derived') {
-          newArchived.delete(key);
-          evicted++;
-          evictedHashes.push(c.hash);
-        }
-      }
-      if (evicted === 0) return {};
+      if (!newStaged && !newChunks && !newArchived) return {};
       return {
-        stagedSnippets: newStaged,
-        chunks: newChunks,
-        archivedChunks: newArchived,
-        memoryEvents: appendMemoryEvent(state.memoryEvents, {
-          action: 'invalidate',
-          reason: 'derived_revision_mismatch',
-          source: path,
-          newRevision: currentRevision,
-          freedTokens: 0,
-        }),
+        ...(newStaged ? { stagedSnippets: newStaged, stageVersion: state.stageVersion + 1 } : {}),
+        ...(newChunks ? { chunks: newChunks } : {}),
+        ...(newArchived ? { archivedChunks: newArchived } : {}),
       };
     });
-    for (const hash of evictedHashes) hppEvict(hash);
     return evicted;
   },
 
@@ -4413,21 +4408,18 @@ export const useContextStore = create<ContextStoreState>()(
     const DORMANT_BASE_TOKENS = 15;
     const DORMANT_FINDING_TOKENS = 20;
     let total = 0;
-    get().chunks.forEach(c => {
-      // Transcript lives in BP3 (conversation history); counting msg:user/msg:asst
-      // here double-counts the same tokens against WM pressure and Internals totals.
-      if (CHAT_TYPES.has(c.type)) return;
-      const isDormant = c.compacted || (() => {
-        const ref = hppGetRef(c.hash);
-        return ref && !hppShouldMaterialize(ref);
-      })();
+    const state = get();
+    for (const [, c] of state.chunks) {
+      if (CHAT_TYPES.has(c.type)) continue;
+      const ref = hppGetRef(c.hash);
+      const isDormant = c.compacted || (ref != null && !hppShouldMaterialize(ref));
       if (isDormant) {
         const hasFinding = (c.annotations?.length ?? 0) > 0 || !!c.summary;
         total += DORMANT_BASE_TOKENS + (hasFinding ? DORMANT_FINDING_TOKENS : 0);
       } else {
         total += c.tokens;
       }
-    });
+    }
     return total;
   },
 
