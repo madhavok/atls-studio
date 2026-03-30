@@ -17,6 +17,7 @@ The runtime docs describe how ATLS manages memory, freshness, and prompt assembl
 - Route user actions into hooks and services that talk to the Tauri backend.
 - Host session selection and swarm-specific views without embedding backend logic directly in the UI.
 - Surface prompt metrics in chat (including **rolling** token savings and distilled-round counts when the rolling history window is active); see [history-compression.md](./history-compression.md).
+- Offer **Copy context window (last API payload)** in the chat UI ([`AiChat/index.tsx`](../atls-studio/src/components/AiChat/index.tsx)): copies the most recently assembled provider payload JSON for debugging, regression reports, or comparing what the model actually received versus the on-screen transcript.
 
 ## Key Code Locations
 

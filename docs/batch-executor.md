@@ -73,6 +73,10 @@ Steps wire outputs to subsequent step inputs through binding expressions:
 
 - Tool calls that map to `find_issues` / `detect_patterns` may pass **`"stale_policy": "refresh_first"`** (client-side). When set, if the first freshness preflight blocks, the client runs an extra **`refreshRoundEnd`** for the request’s `file_paths` and retries preflight once before failing. This is optional; default remains strict.
 
+### Discover steps: structured `content` (`file_paths` / `lines` / `end_lines`)
+
+For **`search.symbol`** and **`search.usage`**, successful handlers attach **`content`** with parallel arrays **`file_paths`**, **`lines`**, and **`end_lines`** (one entry per unique file in result order) so later steps can bind targeted reads without re-parsing the formatted blob. **`search.code`** uses the same shape when it emits path/line metadata. Implementation: [`query.ts`](../atls-studio/src/services/batch/handlers/query.ts).
+
 ### Binding Types
 
 | Type | Syntax | Resolves To |
@@ -124,6 +128,13 @@ The Rust backend verifies this hash against the current file — if the file cha
 
 - **Within one `change.edit`**: `line_edits` apply **sequentially in array order** (top-down). Each edit’s `line` / `anchor` targets the file **after** prior edits in the same array. See **Sequential `line_edits`** in [freshness.md](./freshness.md).
 - **Across steps**: If a later step edits the same file with numeric `line` values, the executor **rebases** those lines using cumulative deltas from the completed step (model-authored steps usually assume pre-batch coordinates). See **Cross-step line rebase** in [freshness.md](./freshness.md).
+
+### `line_edits` spans, responses, and paired reads
+
+- **Inclusive 1-based spans**: Each edit uses **`line`** and **`end_line`** as **inclusive** line numbers. A single-line edit sets `end_line` equal to `line` (omitting `end_line` may default to `line` where the schema allows). Multi-line replace/delete/move spans use both ends; `replace_body` resolves a brace-delimited body in Rust and reports what was applied in **`edits_resolved`**.
+- **Chaining**: Successful edits return **`edits_resolved`** (per edit: resolved line, action, lines affected). Use these values for the next step instead of manual line math. Model-facing summaries also live in [`toolRef.ts`](../atls-studio/src/prompts/toolRef.ts) and [`editDiscipline.ts`](../atls-studio/src/prompts/editDiscipline.ts).
+- **Failures**: When an exact apply fails but a fuzzy candidate exists, the response may include a **`suggestion`** (line, confidence, tier, preview) for recovery.
+- **Reads**: **`read.lines`** requires **`start_line`** and **`end_line` together** when using explicit line ranges (not `lines` / hash slice). See [`context.ts`](../atls-studio/src/services/batch/handlers/context.ts).
 
 ## Intent System
 
@@ -192,4 +203,4 @@ Within a batch, steps execute **sequentially** (dataflow dependencies require it
 
 ---
 
-**Source**: [`executor.ts`](../atls-studio/src/services/batch/executor.ts), [`opMap.ts`](../atls-studio/src/services/batch/opMap.ts), [`types.ts`](../atls-studio/src/services/batch/types.ts), [`intents/`](../atls-studio/src/services/batch/intents/)
+**Source**: [`executor.ts`](../atls-studio/src/services/batch/executor.ts), [`opMap.ts`](../atls-studio/src/services/batch/opMap.ts), [`types.ts`](../atls-studio/src/services/batch/types.ts), [`handlers/query.ts`](../atls-studio/src/services/batch/handlers/query.ts), [`handlers/change.ts`](../atls-studio/src/services/batch/handlers/change.ts), [`intents/`](../atls-studio/src/services/batch/intents/)

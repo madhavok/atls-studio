@@ -12,7 +12,7 @@ Related:
 
 | Doc | Topics |
 |-----|--------|
-| [batch-executor.md](./batch-executor.md) | `batch()` tool, step loop, snapshot injection, intents |
+| [batch-executor.md](./batch-executor.md) | `batch()` tool, step loop, snapshot injection, intents, `line_edits` spans / `edits_resolved`, discover-step `content` (`file_paths`, `lines`, `end_lines`) |
 | [hash-protocol.md](./hash-protocol.md) | `h:` refs, modifiers, resolution rules |
 | [engrams.md](./engrams.md) | Working memory chunks and lifecycle |
 
@@ -22,10 +22,10 @@ Related:
 |-----|--------|
 | [atls-engine.md](./atls-engine.md) | ATLS engine integration |
 | [history-compression.md](./history-compression.md) | Hash deflation, rolling verbatim window, `[Rolling Summary]` API-only message, distiller, ties to **snapshot format v5** (`rollingSummary`) |
-| [prompt-assembly.md](./prompt-assembly.md) | How prompts are built |
+| [prompt-assembly.md](./prompt-assembly.md) | Cache layers, entry manifest depth (`paths` / `sigs` / `paths_sigs`), main agent tool-loop guards (research budget, verify gate, convergence nudges) |
 | [session-persistence.md](./session-persistence.md) | Session save/restore, auto-resume, memory snapshot versions (incl. v5 `rollingSummary`), freshness-after-restore timing, Tauri close flush |
 | [api-economics.md](./api-economics.md) | Token / API considerations |
-| [studio-app-shell.md](./studio-app-shell.md) | UI shell |
+| [studio-app-shell.md](./studio-app-shell.md) | UI shell, copy last API payload (debug) |
 | [tauri-backend.md](./tauri-backend.md) | Rust / Tauri layer |
 | [tauri-commands.md](./tauri-commands.md) | Enumerated Tauri `invoke` command names (`lib.rs`) |
 | [mcp-integration.md](./mcp-integration.md) | MCP |

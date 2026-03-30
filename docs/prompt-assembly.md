@@ -57,19 +57,32 @@ History compression runs only at round 0 (between user turns). Within a multi-ro
 `_buildStaticSystemPrompt()` assembles the static block, cached by key:
 
 ```
-Cache key: ${mode}|${os}|${shell}|${cwd}|${atlsReady}|${provider}|${refactorConfig}|${entryManifestDepth}
+Cache key: ${mode}|${os}|${shell}|${cwd}|${atlsReady}|${provider}|${refactorConfig}|${entryManifestDepth}|${manifestFingerprint}
 ```
+
+`manifestFingerprint` is derived from the serialized entry manifest (length of JSON) so changes to the manifest invalidate the cached static block, not only `entryManifestDepth`.
 
 Contents (in order):
 1. Mode prompt (agent, designer, reviewer, etc.)
 2. Project line (working directory)
 3. Shell guide (OS-aware shell instructions)
 4. Tool reference (`BATCH_TOOL_REF` or mode-specific subset)
-5. Entry manifest (optional project file listing)
+5. Entry manifest (optional project file listing; see **Entry manifest depth** below)
 6. Mode-specific rules
 7. Cognitive Core (`CONTEXT_CONTROL_V4`)
 8. HPP spec
 9. Provider reinforcement (Gemini-specific conciseness rules)
+
+#### Entry manifest depth
+
+Setting `entryManifestDepth` (app settings / model UI, stored in [`appStore.ts`](../atls-studio/src/stores/appStore.ts)) controls whether and how **Entry Points** are injected into the static system prompt when a workspace profile supplies `entryManifest` entries.
+
+| Depth | Behavior |
+|-------|----------|
+| `off` | No entry manifest section |
+| `paths` | `## Entry Points`: each entry as `path (method, linesL)` |
+| `sigs` | `## Entry Points`: signature text lines only (entries with a non-empty `sig`) |
+| `paths_sigs` | Both: path list first, then signature lines (same combined block as implemented in [`aiService.ts`](../atls-studio/src/services/aiService.ts) `_buildStaticSystemPrompt`) |
 
 ### Per-Round
 
@@ -82,6 +95,18 @@ Each round of the tool loop:
    - Prompt budget (prune staged if over budget)
 3. **`buildDynamicContextBlock()`**: Assemble the mutable context
 4. **`assembleProviderMessages()`**: Wire everything into the final message array
+
+### Main agent tool-loop guards
+
+The **main** chat tool loop in [`aiService.ts`](../atls-studio/src/services/aiService.ts) injects system-side nudges and stops that are separate from **delegate subagent** limits ([subagents.md](./subagents.md)). Numeric thresholds are defined in [`promptMemory.ts`](../atls-studio/src/services/promptMemory.ts):
+
+| Mechanism | Role |
+|-----------|------|
+| **Research round budget** | Caps consecutive **read-only** tool rounds (`TOTAL_RESEARCH_ROUND_BUDGET` + `RESEARCH_FORCE_STOP_MARGIN` for warnings and hard stop). Agent progress can end with `research_budget` if the model does not call `task_complete` after a force-stop path. |
+| **Verify gate** | In **agent** and **refactor** modes, if the model calls `task_complete` after making code changes without running any `verify.*` step, the loop blocks completion with a system message until verification runs (unless the force-stop margin is already active). |
+| **Coverage plateau** | When coverage tracking shows no new files or symbols examined across multiple rounds, a system message nudges the model to summarize, act, or call `task_complete`. |
+| **Read-only spin** | After several consecutive rounds without mutations (non-**ask** / non-**retriever** modes), a system message requires an edit, structured blackboard write, or explicit blocker. |
+| **Phase budget** | With an active `session.plan` subtask, `PHASE_ROUND_BUDGET` limits how many rounds can stay in the same phase before nudging `session.advance` with a summary. |
 
 ### Dynamic Context Block
 
@@ -158,4 +183,4 @@ Each mode uses a different combination of system prompt, tool reference, and con
 
 ---
 
-**Source**: [`aiService.ts`](../atls-studio/src/services/aiService.ts) (prompt assembly, round loop), [`logicalCacheMetrics.ts`](../atls-studio/src/services/logicalCacheMetrics.ts) (logical BP3/static hit model), [`contextFormatter.ts`](../atls-studio/src/services/contextFormatter.ts) (working memory formatting), [`promptMemory.ts`](../atls-studio/src/services/promptMemory.ts) (stage budgets), [`chatMiddleware.ts`](../atls-studio/src/services/chatMiddleware.ts) (middleware pipeline), [`modePrompts.ts`](../atls-studio/src/prompts/modePrompts.ts) (mode-specific prompts)
+**Source**: [`aiService.ts`](../atls-studio/src/services/aiService.ts) (prompt assembly, round loop, main agent guards), [`logicalCacheMetrics.ts`](../atls-studio/src/services/logicalCacheMetrics.ts) (logical BP3/static hit model), [`contextFormatter.ts`](../atls-studio/src/services/contextFormatter.ts) (working memory formatting), [`promptMemory.ts`](../atls-studio/src/services/promptMemory.ts) (stage budgets, research/phase budgets), [`chatMiddleware.ts`](../atls-studio/src/services/chatMiddleware.ts) (middleware pipeline), [`modePrompts.ts`](../atls-studio/src/prompts/modePrompts.ts) (mode-specific prompts)

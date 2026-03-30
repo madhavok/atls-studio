@@ -26,7 +26,7 @@ ATLS Studio is a minimal, purpose-built development environment where ATLS provi
 
 ### `line_edits` semantics
 
-Edits in `change.edit` / `line_edits` apply **sequentially in array order** (top-down). Each `line` / `anchor` resolves against the file **after** all prior edits in the same array. Multi-step batches that edit the same file with numeric lines are adjusted between steps by the executor (see `docs/freshness.md`).
+Edits in `change.edit` / `line_edits` apply **sequentially in array order** (top-down). Each `line` / `anchor` resolves against the file **after** all prior edits in the same array. Multi-step batches that edit the same file with numeric lines are adjusted between steps by the executor (see `docs/freshness.md`). Use inclusive **`line` + `end_line`** for spans and chain from **`edits_resolved`** in the step result when coordinating follow-up edits (see [`../docs/batch-executor.md`](../docs/batch-executor.md)).
 
 ## Architecture
 
