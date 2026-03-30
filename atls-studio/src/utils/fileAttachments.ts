@@ -33,32 +33,34 @@ export async function processFileAttachment(filePath: string, fileName: string):
 
 async function processCodeFile(filePath: string, fileName: string): Promise<FileAttachment> {
   const result = await invoke<FileSignatureResult>('read_file_signatures', { path: filePath });
-  
+
   return {
     type: 'code',
     name: fileName,
     path: filePath,
-    content: result.signature,
+    content: result.signatures,
     metadata: {
       language: result.language,
-      source_lines: result.source_lines
-    }
+      source_lines: result.lines,
+    },
   };
 }
 
 async function processImageFile(filePath: string, fileName: string): Promise<FileAttachment> {
   const result = await invoke<CompressedImageResult>('compress_and_read_image', { path: filePath });
-  
+  const content = result.base64
+    ?? `data:${result.media_type};base64,${result.data}`;
+
   return {
     type: 'image',
     name: fileName,
     path: filePath,
-    content: `data:${result.media_type};base64,${result.data}`,
+    content,
     metadata: {
       media_type: result.media_type,
       original_size: result.original_size,
-      compressed_size: result.compressed_size
-    }
+      compressed_size: result.compressed_size,
+    },
   };
 }
 

@@ -1,5 +1,6 @@
 import { useState, useMemo } from 'react';
 import { useAppStore, type EntryManifestEntry } from '../../../stores/appStore';
+import { countTokensSync } from '../../../utils/tokenCounter';
 
 type SortKey = 'path' | 'tokens' | 'lines' | 'importance' | 'method' | 'tier';
 
@@ -61,9 +62,16 @@ export function EntryManifestSection() {
   const [expandedPath, setExpandedPath] = useState<string | null>(null);
 
   const manifest = useAppStore((s) => s.projectProfile?.entryManifest);
+  const entryManifestDepth = useAppStore((s) => s.settings.entryManifestDepth ?? 'paths');
   const openFile = useAppStore.getState().openFile;
 
   const entries: EntryManifestEntry[] = manifest ?? [];
+
+  /** Same path line as `_buildStaticSystemPrompt` (BP1 ## Entry Points). */
+  const pathListLine = useMemo(
+    () => entries.map(e => `${e.path} (${e.method}, ${e.lines}L)`).join(' | '),
+    [entries],
+  );
 
   const stats = useMemo(() => {
     let totalTokens = 0;
@@ -74,8 +82,10 @@ export function EntryManifestSection() {
       if (e.tier === 'full') fullCount++;
       else summaryCount++;
     }
-    return { totalTokens, fullCount, summaryCount, total: entries.length };
-  }, [entries]);
+    const pathsInBp1 = entryManifestDepth === 'paths' || entryManifestDepth === 'paths_sigs';
+    const pathsTokens = pathsInBp1 && pathListLine.length > 0 ? countTokensSync(pathListLine) : 0;
+    return { totalTokens, fullCount, summaryCount, total: entries.length, pathsTokens, pathsInBp1 };
+  }, [entries, pathListLine, entryManifestDepth]);
 
   const sorted = useMemo(() => {
     const dir = sortAsc ? 1 : -1;
@@ -115,6 +125,11 @@ export function EntryManifestSection() {
       {/* Summary stats */}
       <div className="flex gap-2 flex-wrap">
         <StatCard label="Entries" value={String(stats.total)} sub={scalingTier(stats.total)} />
+        <StatCard
+          label="Paths"
+          value={stats.pathsInBp1 ? fmtK(stats.pathsTokens) : '—'}
+          sub={stats.pathsInBp1 ? 'path list line (BP1)' : `not in BP1 (${entryManifestDepth})`}
+        />
         <StatCard label="Sig Tokens" value={fmtK(stats.totalTokens)} sub={`of ${fmtK(TOKEN_BUDGET)} budget`} />
         <StatCard label="Full Sig" value={String(stats.fullCount)} />
         <StatCard label="Summary" value={String(stats.summaryCount)} />

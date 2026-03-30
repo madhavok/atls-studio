@@ -386,12 +386,100 @@ function extractKeyLines(content: string): string {
   return lines.slice(0, DIGEST_MAX_LINES).map(l => `  ${l.slice(0, 100)}`).join('\n');
 }
 
+/** One row per search hit — used for structured bindings (content.file_paths) and summaries. */
+export interface CodeSearchHitRow {
+  file: string;
+  line: number;
+  end_line?: number;
+}
+
+/**
+ * Flatten backend `code_search` JSON into hit rows.
+ * The API wraps hits as `{ results: [ { query, results: [...] }, … ] }` (per-query blocks),
+ * and may use compact (`r`), tiered (`high`/`medium`), or grouped (`groups`) shapes.
+ * Older extractors assumed `results` was a flat hit list — that left file_paths empty for bindings.
+ */
+export function flattenCodeSearchHits(result: unknown): CodeSearchHitRow[] {
+  const rows: CodeSearchHitRow[] = [];
+  if (!result || typeof result !== 'object') return rows;
+  const obj = result as Record<string, unknown>;
+  const outer = obj.results;
+  if (!Array.isArray(outer)) return rows;
+
+  function pushRow(file: string | undefined, line: unknown, endLine: unknown) {
+    if (typeof file !== 'string' || !file.trim()) return;
+    const ln = typeof line === 'number' && Number.isFinite(line) && line > 0 ? line : 1;
+    const el = typeof endLine === 'number' && Number.isFinite(endLine) && endLine >= ln ? endLine : undefined;
+    rows.push({ file: file.trim(), line: ln, end_line: el });
+  }
+
+  function walkRawHit(hit: Record<string, unknown>) {
+    const file = (hit.file ?? hit.f ?? hit.path ?? hit.file_path) as string | undefined;
+    const line = hit.line ?? hit.l;
+    const endLine = hit.end_line ?? hit.endLine;
+    pushRow(file, line, endLine);
+  }
+
+  for (const block of outer) {
+    if (!block || typeof block !== 'object') continue;
+    const b = block as Record<string, unknown>;
+
+    if (Array.isArray(b.results)) {
+      for (const h of b.results) {
+        if (h && typeof h === 'object') walkRawHit(h as Record<string, unknown>);
+      }
+      continue;
+    }
+
+    if (Array.isArray(b.r)) {
+      for (const h of b.r) {
+        if (h && typeof h === 'object') walkRawHit(h as Record<string, unknown>);
+      }
+      continue;
+    }
+
+    if (Array.isArray(b.high) || Array.isArray(b.medium)) {
+      const high = Array.isArray(b.high) ? b.high : [];
+      const medium = Array.isArray(b.medium) ? b.medium : [];
+      for (const h of high) {
+        if (h && typeof h === 'object') walkRawHit(h as Record<string, unknown>);
+      }
+      for (const h of medium) {
+        if (h && typeof h === 'object') walkRawHit(h as Record<string, unknown>);
+      }
+      continue;
+    }
+
+    if (Array.isArray(b.groups)) {
+      for (const g of b.groups) {
+        if (!g || typeof g !== 'object') continue;
+        const gObj = g as Record<string, unknown>;
+        const gf = gObj.file as string | undefined;
+        const matches = gObj.matches;
+        if (Array.isArray(matches)) {
+          for (const m of matches) {
+            if (m && typeof m === 'object') {
+              const mObj = m as Record<string, unknown>;
+              pushRow(gf, mObj.line, undefined);
+            }
+          }
+        }
+      }
+      continue;
+    }
+
+    if (b.file || b.f) {
+      walkRawHit(b);
+    }
+  }
+
+  return rows;
+}
+
 /** One-liner summary from code_search result for chunk display */
 export function extractSearchSummary(result: unknown, queries: string[]): string {
-  if (!result || typeof result !== 'object') return queries.join(', ');
-  const obj = result as Record<string, unknown>;
-  const results = obj.results as unknown[] | undefined;
-  const count = Array.isArray(results) ? results.length : 0;
+  const rows = flattenCodeSearchHits(result);
+  const count = rows.length;
   const q = queries.slice(0, 2).join(', ');
   return count > 0 ? `${count} matches for ${q}` : `search: ${q}`;
 }

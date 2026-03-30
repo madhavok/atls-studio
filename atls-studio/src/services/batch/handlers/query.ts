@@ -3,7 +3,7 @@
  */
 
 import type { OpHandler, StepOutput, SearchCodeParams, SearchSymbolParams, SearchUsageParams, AnalyzeDepsParams, AnalyzeImpactParams, AnalyzeBlastRadiusParams, AnalyzeStructureParams, SearchMemoryParams } from '../types';
-import { extractSearchSummary, extractSymbolSummary, extractDepsSummary } from '../../../utils/contextHash';
+import { extractSearchSummary, extractSymbolSummary, extractDepsSummary, flattenCodeSearchHits } from '../../../utils/contextHash';
 import { countTokensSync } from '../../../utils/tokenCounter';
 import { formatResult, FORMAT_RESULT_MAX_SEARCH } from '../../../utils/toon';
 import { checkRetention } from './retention';
@@ -12,58 +12,43 @@ function err(label: string, msg: string): StepOutput {
   return { kind: 'search_results', ok: false, refs: [], summary: `${label}: ERROR ${msg}`, error: msg };
 }
 
-/** Extract unique file paths from code_search result for from_step dataflow (e.g. intent.search_replace, intent.investigate). */
+/** Unique file paths in hit order (first occurrence per file) — feeds `content.file_paths` for from_step bindings. */
 function extractFilePathsFromSearchResult(result: unknown): string[] {
-  if (!result || typeof result !== 'object') return [];
-  const obj = result as Record<string, unknown>;
-  const results = obj.results as Array<Record<string, unknown>> | undefined;
-  if (!Array.isArray(results)) return [];
+  const rows = flattenCodeSearchHits(result);
   const seen = new Set<string>();
   const paths: string[] = [];
-  for (const r of results) {
-    const file = (r.file ?? r.path ?? r.file_path) as string | undefined;
-    if (typeof file === 'string' && file && !seen.has(file)) {
-      seen.add(file);
-      paths.push(file);
+  for (const r of rows) {
+    if (!seen.has(r.file)) {
+      seen.add(r.file);
+      paths.push(r.file);
     }
   }
   return paths;
 }
 
-/** 1-based line numbers per search hit (parallel to extractFilePathsFromSearchResult order). */
+/** 1-based line numbers per unique file (parallel to extractFilePathsFromSearchResult). */
 function extractLinesFromSearchResult(result: unknown): number[] {
-  if (!result || typeof result !== 'object') return [];
-  const obj = result as Record<string, unknown>;
-  const results = obj.results as Array<Record<string, unknown>> | undefined;
-  if (!Array.isArray(results)) return [];
+  const rows = flattenCodeSearchHits(result);
   const seen = new Set<string>();
   const lines: number[] = [];
-  for (const r of results) {
-    const file = (r.file ?? r.path ?? r.file_path) as string | undefined;
-    if (typeof file !== 'string' || !file || seen.has(file)) continue;
-    seen.add(file);
-    const ln = r.line;
-    lines.push(typeof ln === 'number' && Number.isFinite(ln) && ln > 0 ? ln : 1);
+  for (const r of rows) {
+    if (seen.has(r.file)) continue;
+    seen.add(r.file);
+    lines.push(r.line);
   }
   return lines;
 }
 
-/** Paired end_lines for search hits: end_line from result when available, otherwise same as line. */
+/** Paired end_lines for search hits: end_line when set, otherwise same as line. */
 function extractEndLinesFromSearchResult(result: unknown): number[] {
-  if (!result || typeof result !== 'object') return [];
-  const obj = result as Record<string, unknown>;
-  const results = obj.results as Array<Record<string, unknown>> | undefined;
-  if (!Array.isArray(results)) return [];
+  const rows = flattenCodeSearchHits(result);
   const seen = new Set<string>();
   const endLines: number[] = [];
-  for (const r of results) {
-    const file = (r.file ?? r.path ?? r.file_path) as string | undefined;
-    if (typeof file !== 'string' || !file || seen.has(file)) continue;
-    seen.add(file);
-    const el = r.end_line;
-    const ln = r.line;
-    const start = typeof ln === 'number' && Number.isFinite(ln) && ln > 0 ? ln : 1;
-    endLines.push(typeof el === 'number' && Number.isFinite(el) && el >= start ? el : start);
+  for (const r of rows) {
+    if (seen.has(r.file)) continue;
+    seen.add(r.file);
+    const start = r.line;
+    endLines.push(r.end_line != null && r.end_line >= start ? r.end_line : start);
   }
   return endLines;
 }

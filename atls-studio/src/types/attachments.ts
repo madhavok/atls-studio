@@ -1,16 +1,23 @@
 // Type definitions for file signature and image compression
 
+/** Matches `read_file_signatures` (chat_attachments.rs) */
 export interface FileSignatureResult {
-  signature: string;
+  signatures: string;
   language: string;
-  source_lines: number;
+  lines: number;
 }
 
+/** Matches `compress_and_read_image` (chat_attachments.rs) */
 export interface CompressedImageResult {
-  data: string; // base64 encoded
+  /** Raw base64 payload (no `data:` prefix) */
+  data: string;
   media_type: string;
+  /** Original file size on disk (bytes) */
   original_size: number;
+  /** JPEG byte length after resize/encode */
   compressed_size: number;
+  /** Full data URL — prefer building from `data` + `media_type` if both present */
+  base64?: string;
 }
 
 export type FileType = 'code' | 'image' | 'unknown';

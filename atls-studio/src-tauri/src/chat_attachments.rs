@@ -89,13 +89,19 @@ pub async fn compress_and_read_image(
 
         let bytes = buffer.into_inner();
         let base64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &bytes);
+        let original_bytes = std::fs::metadata(&p)
+            .map(|m| m.len() as usize)
+            .unwrap_or(0);
 
         Ok(json!({
             "path": path,
             "base64": format!("data:image/jpeg;base64,{}", base64),
-            "original_size": { "width": orig_width, "height": orig_height },
-            "compressed_size": { "width": resized.width(), "height": resized.height() },
-            "bytes": bytes.len(),
+            "media_type": "image/jpeg",
+            "data": base64,
+            "original_size": original_bytes,
+            "compressed_size": bytes.len(),
+            "original_dimensions": { "width": orig_width, "height": orig_height },
+            "compressed_dimensions": { "width": resized.width(), "height": resized.height() },
         }))
     })
     .await

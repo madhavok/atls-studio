@@ -118,7 +118,8 @@ export function resolveIntents(
       continue;
     }
 
-    const params = step.with ?? {};
+    const raw = step.with ?? {};
+    const params = { ...raw, _intentId: raw._intentId ?? step.id };
     const result: IntentResult = resolver(params, context);
 
     const intentId = step.id;

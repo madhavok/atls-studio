@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { estimateTokens, formatChunkTag, parseChunkTag, formatChunkRef, isCompressedRef } from './contextHash';
+import {
+  estimateTokens,
+  formatChunkTag,
+  parseChunkTag,
+  formatChunkRef,
+  isCompressedRef,
+  flattenCodeSearchHits,
+  extractSearchSummary,
+} from './contextHash';
 
 describe('contextHash chunk tags', () => {
   it('round-trips compound chunk types without a source', () => {
@@ -81,6 +89,37 @@ describe('isCompressedRef', () => {
   it('rejects non-refs', () => {
     expect(isCompressedRef('some normal text')).toBe(false);
     expect(isCompressedRef('[Rolling Summary]')).toBe(false);
+  });
+});
+
+describe('flattenCodeSearchHits (code_search API shapes)', () => {
+  it('extracts hits from nested per-query results (Rust batch_query default)', () => {
+    const payload = {
+      results: [
+        {
+          query: 'auth',
+          results: [
+            { file: 'src/a.ts', line: 10, symbol: 'login' },
+            { file: 'src/b.ts', line: 2, symbol: 'x' },
+          ],
+        },
+      ],
+    };
+    const rows = flattenCodeSearchHits(payload);
+    expect(rows.map((r) => r.file)).toEqual(['src/a.ts', 'src/b.ts']);
+    expect(extractSearchSummary(payload, ['auth'])).toContain('2 matches');
+  });
+
+  it('extracts compact r[] with f/l keys', () => {
+    const payload = {
+      results: [{ q: 'x', r: [{ f: 'm.ts', l: 5, k: 'fn', r: 0.9 }] }],
+    };
+    expect(flattenCodeSearchHits(payload).map((r) => [r.file, r.line])).toEqual([['m.ts', 5]]);
+  });
+
+  it('returns [] when outer results are query wrappers without nested hits', () => {
+    const payload = { results: [{ query: 'z', results: [] }] };
+    expect(flattenCodeSearchHits(payload)).toEqual([]);
   });
 });
 

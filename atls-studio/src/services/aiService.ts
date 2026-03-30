@@ -1964,118 +1964,6 @@ async function streamChatViaTauri(
         }
       }
 
-      // Capture per-round snapshot for Internals charts
-      {
-        const ctxState = useContextStore.getState();
-        const appState = useAppStore.getState();
-        const bm = ctxState.batchMetrics;
-        const wmTokens = ctxState.getPromptTokens();
-        const wmStoreTokens = ctxState.getStoreTokens();
-        const bbTokens = ctxState.getBlackboardTokenCount();
-        const stagedTokens = ctxState.getStagedTokenCount();
-        let archivedTokens = 0;
-        ctxState.archivedChunks.forEach(c => archivedTokens += c.tokens);
-        const overheadTokens = appState.promptMetrics.totalOverheadTokens;
-        const staticSystemTokens = getStaticSystemTokens(appState.promptMetrics);
-        const conversationHistoryTokens = await estimateHistoryTokensAsync(conversationHistory);
-        let historyBreakdownLabel: string | undefined;
-        if (conversationHistoryTokens > 5000) {
-          const { analyzeHistoryBreakdown, formatHistoryBreakdown } = await import('./historyCompressor');
-          const breakdown = analyzeHistoryBreakdown(conversationHistory, priorTurnBoundary ?? 0, round);
-          historyBreakdownLabel = formatHistoryBreakdown(breakdown) || undefined;
-        }
-        const stagedTokensBucket = getStagedTokens(appState.promptMetrics, stagedTokens);
-        const workspaceContextTokens = countTokensSync(dynamicContextBlock);
-        // Model's actual context window (includes extended 1M when enabled)
-        const modelCtx = appState.availableModels.find(m => m.id === config.model);
-        const extendedResolution = getExtendedContextResolutionFromSettings(appState.settings);
-        const maxTk = modelCtx
-          ? (getEffectiveContextWindow(modelCtx.id, modelCtx.provider, modelCtx.contextWindow, extendedResolution)
-            ?? appState.contextUsage.maxTokens
-            ?? (config.provider === 'google' || config.provider === 'vertex' ? 1000000 : 200000))
-          : (appState.contextUsage.maxTokens || (config.provider === 'google' || config.provider === 'vertex' ? 1000000 : 200000));
-        // BB is in the dynamic block (uncached). History is the only BP3 content.
-        const bp3Tokens = conversationHistoryTokens;
-        const estimatedBucketsBase: Omit<PromptPressureBuckets, 'estimatedTotalPromptTokens'> = {
-          staticSystemTokens,
-          conversationHistoryTokens: bp3Tokens,
-          stagedTokens: stagedTokensBucket,
-          wmTokens,
-          workspaceContextTokens,
-          blackboardTokens: 0,
-          providerInputTokens: roundInputTokens,
-          cacheStablePrefixTokens: staticSystemTokens + bp3Tokens + stagedTokensBucket,
-          cacheChurnTokens: workspaceContextTokens + wmTokens,
-        };
-        const estimatedTotalPromptTokens = getEstimatedTotalPromptTokens(estimatedBucketsBase);
-        const freeTk = Math.max(0, maxTk - estimatedTotalPromptTokens);
-        // Hypothetical non-batched: each manage op re-sends full input context
-        const inputShare = (roundInputTokens + roundOutputTokens) > 0
-          ? roundInputTokens / (roundInputTokens + roundOutputTokens)
-          : 0;
-        const hypothetical = bm.manageOps > 1
-          ? bm.manageOps * (roundCostCents * inputShare) + (roundCostCents * (1 - inputShare))
-          : roundCostCents;
-        const verifyArtifacts = Array.from(useContextStore.getState().verifyArtifacts.values());
-        const latestVerifyArtifact = verifyArtifacts.length > 0 ? verifyArtifacts[verifyArtifacts.length - 1] : undefined;
-        const rsSnap = useContextStore.getState().rollingSummary;
-        const trimmedRs = trimSummaryToTokenBudget(rsSnap, ROLLING_SUMMARY_MAX_TOKENS);
-        const rollingSummaryTokens = isRollingSummaryEmpty(trimmedRs)
-          ? 0
-          : countTokensSync(formatSummaryMessage(trimmedRs).content);
-        useRoundHistoryStore.getState().pushSnapshot({
-          round: round + 1,
-          timestamp: Date.now(),
-          wmTokens,
-          wmStoreTokens,
-          bbTokens,
-          stagedTokens,
-          archivedTokens,
-          overheadTokens,
-          freeTokens: freeTk,
-          maxTokens: maxTk,
-          staticSystemTokens,
-          conversationHistoryTokens,
-          stagedBucketTokens: stagedTokensBucket,
-          workspaceContextTokens,
-          providerInputTokens: roundInputTokens,
-          estimatedTotalPromptTokens,
-          cacheStablePrefixTokens: estimatedBucketsBase.cacheStablePrefixTokens,
-          cacheChurnTokens: estimatedBucketsBase.cacheChurnTokens,
-          reliefAction: lastReliefAction,
-          legacyHistoryTelemetryKnownWrong: false,
-          inputTokens: roundInputTokens,
-          outputTokens: roundOutputTokens,
-          cacheReadTokens: roundCacheReadTokens,
-          cacheWriteTokens: roundCacheWriteTokens,
-          costCents: roundCostCents,
-          compressionSavings: appState.promptMetrics.compressionSavings,
-          rollingSavings: appState.promptMetrics.rollingSavings ?? 0,
-          rolledRounds: appState.promptMetrics.rolledRounds ?? 0,
-          rollingSummaryTokens,
-          freedTokens: ctxState.freedTokens,
-          cumulativeSaved: appState.promptMetrics.cumulativeInputSaved,
-          toolCalls: bm.toolCalls,
-          manageOps: bm.manageOps,
-          hypotheticalNonBatchedCost: hypothetical,
-          actualCost: roundCostCents,
-          historyBreakdownLabel,
-          verificationConfidence: latestVerifyArtifact ? deriveVerificationConfidence(latestVerifyArtifact) : undefined,
-          verificationLabel: latestVerifyArtifact ? deriveVerificationLabel(latestVerifyArtifact) : undefined,
-          verificationReused: latestVerifyArtifact?.confidence === 'cached' || latestVerifyArtifact?.source === 'cache',
-          verificationObsolete: latestVerifyArtifact?.confidence === 'obsolete' || latestVerifyArtifact?.stale === true,
-          timeToFirstTokenMs: roundFirstTokenAtMs !== undefined
-            ? roundFirstTokenAtMs - roundStreamStartMs
-            : undefined,
-          roundLatencyMs: roundStreamEndMs - roundStreamStartMs,
-          isResearchRound: !_roundHadMutations,
-          totalResearchRounds,
-          newCoverage: ctxState.roundNewCoverage,
-          coveragePlateau: ctxState.coveragePlateauStreak >= 2,
-          substantiveBbWrites: bm.hadSubstantiveBbWrite ? 1 : 0,
-        });
-      }
-
       // Recovery: extract tool_use blocks from text when backend missed them
       // This happens when the API returns JSON content blocks as text tokens
       if (!needsToolResults && looksLikeStructuredToolPayload(assistantTextContent)) {
@@ -2135,9 +2023,119 @@ async function streamChatViaTauri(
           }
         }
       }
+
+      /** Per-round ATLS Internals snapshot. `isResearchRound` must reflect post-tool mutations when tools ran (see call sites). */
+      const captureInternalsSnapshot = async (isResearchRound: boolean): Promise<void> => {
+        const ctxState = useContextStore.getState();
+        const appState = useAppStore.getState();
+        const bm = ctxState.batchMetrics;
+        const wmTokens = ctxState.getPromptTokens();
+        const wmStoreTokens = ctxState.getStoreTokens();
+        const bbTokens = ctxState.getBlackboardTokenCount();
+        const stagedTokens = ctxState.getStagedTokenCount();
+        let archivedTokens = 0;
+        ctxState.archivedChunks.forEach(c => archivedTokens += c.tokens);
+        const overheadTokens = appState.promptMetrics.totalOverheadTokens;
+        const staticSystemTokens = getStaticSystemTokens(appState.promptMetrics);
+        const conversationHistoryTokens = await estimateHistoryTokensAsync(conversationHistory);
+        let historyBreakdownLabel: string | undefined;
+        if (conversationHistoryTokens > 5000) {
+          const { analyzeHistoryBreakdown, formatHistoryBreakdown } = await import('./historyCompressor');
+          const breakdown = analyzeHistoryBreakdown(conversationHistory, priorTurnBoundary ?? 0, round);
+          historyBreakdownLabel = formatHistoryBreakdown(breakdown) || undefined;
+        }
+        const stagedTokensBucket = getStagedTokens(appState.promptMetrics, stagedTokens);
+        const workspaceContextTokens = countTokensSync(dynamicContextBlock);
+        const modelCtx = appState.availableModels.find(m => m.id === config.model);
+        const extendedResolution = getExtendedContextResolutionFromSettings(appState.settings);
+        const maxTk = modelCtx
+          ? (getEffectiveContextWindow(modelCtx.id, modelCtx.provider, modelCtx.contextWindow, extendedResolution)
+            ?? appState.contextUsage.maxTokens
+            ?? (config.provider === 'google' || config.provider === 'vertex' ? 1000000 : 200000))
+          : (appState.contextUsage.maxTokens || (config.provider === 'google' || config.provider === 'vertex' ? 1000000 : 200000));
+        const bp3Tokens = conversationHistoryTokens;
+        const estimatedBucketsBase: Omit<PromptPressureBuckets, 'estimatedTotalPromptTokens'> = {
+          staticSystemTokens,
+          conversationHistoryTokens: bp3Tokens,
+          stagedTokens: stagedTokensBucket,
+          wmTokens,
+          workspaceContextTokens,
+          blackboardTokens: 0,
+          providerInputTokens: roundInputTokens,
+          cacheStablePrefixTokens: staticSystemTokens + bp3Tokens + stagedTokensBucket,
+          cacheChurnTokens: workspaceContextTokens + wmTokens,
+        };
+        const estimatedTotalPromptTokens = getEstimatedTotalPromptTokens(estimatedBucketsBase);
+        const freeTk = Math.max(0, maxTk - estimatedTotalPromptTokens);
+        const inputShare = (roundInputTokens + roundOutputTokens) > 0
+          ? roundInputTokens / (roundInputTokens + roundOutputTokens)
+          : 0;
+        const hypothetical = bm.manageOps > 1
+          ? bm.manageOps * (roundCostCents * inputShare) + (roundCostCents * (1 - inputShare))
+          : roundCostCents;
+        const verifyArtifacts = Array.from(useContextStore.getState().verifyArtifacts.values());
+        const latestVerifyArtifact = verifyArtifacts.length > 0 ? verifyArtifacts[verifyArtifacts.length - 1] : undefined;
+        const rsSnap = useContextStore.getState().rollingSummary;
+        const trimmedRs = trimSummaryToTokenBudget(rsSnap, ROLLING_SUMMARY_MAX_TOKENS);
+        const rollingSummaryTokens = isRollingSummaryEmpty(trimmedRs)
+          ? 0
+          : countTokensSync(formatSummaryMessage(trimmedRs).content);
+        useRoundHistoryStore.getState().pushSnapshot({
+          round: round + 1,
+          timestamp: Date.now(),
+          wmTokens,
+          wmStoreTokens,
+          bbTokens,
+          stagedTokens,
+          archivedTokens,
+          overheadTokens,
+          freeTokens: freeTk,
+          maxTokens: maxTk,
+          staticSystemTokens,
+          conversationHistoryTokens,
+          stagedBucketTokens: stagedTokensBucket,
+          workspaceContextTokens,
+          providerInputTokens: roundInputTokens,
+          estimatedTotalPromptTokens,
+          cacheStablePrefixTokens: estimatedBucketsBase.cacheStablePrefixTokens,
+          cacheChurnTokens: estimatedBucketsBase.cacheChurnTokens,
+          reliefAction: lastReliefAction,
+          legacyHistoryTelemetryKnownWrong: false,
+          inputTokens: roundInputTokens,
+          outputTokens: roundOutputTokens,
+          cacheReadTokens: roundCacheReadTokens,
+          cacheWriteTokens: roundCacheWriteTokens,
+          costCents: roundCostCents,
+          compressionSavings: appState.promptMetrics.compressionSavings,
+          rollingSavings: appState.promptMetrics.rollingSavings ?? 0,
+          rolledRounds: appState.promptMetrics.rolledRounds ?? 0,
+          rollingSummaryTokens,
+          freedTokens: ctxState.freedTokens,
+          cumulativeSaved: appState.promptMetrics.cumulativeInputSaved,
+          toolCalls: bm.toolCalls,
+          manageOps: bm.manageOps,
+          hypotheticalNonBatchedCost: hypothetical,
+          actualCost: roundCostCents,
+          historyBreakdownLabel,
+          verificationConfidence: latestVerifyArtifact ? deriveVerificationConfidence(latestVerifyArtifact) : undefined,
+          verificationLabel: latestVerifyArtifact ? deriveVerificationLabel(latestVerifyArtifact) : undefined,
+          verificationReused: latestVerifyArtifact?.confidence === 'cached' || latestVerifyArtifact?.source === 'cache',
+          verificationObsolete: latestVerifyArtifact?.confidence === 'obsolete' || latestVerifyArtifact?.stale === true,
+          timeToFirstTokenMs: roundFirstTokenAtMs !== undefined
+            ? roundFirstTokenAtMs - roundStreamStartMs
+            : undefined,
+          roundLatencyMs: roundStreamEndMs - roundStreamStartMs,
+          isResearchRound,
+          totalResearchRounds,
+          newCoverage: ctxState.roundNewCoverage,
+          coveragePlateau: ctxState.coveragePlateauStreak >= 2,
+          substantiveBbWrites: bm.hadSubstantiveBbWrite ? 1 : 0,
+        });
+      };
       
       // No tool calls - AI decided to stop
       if (!needsToolResults || pendingToolCalls.size === 0) {
+        await captureInternalsSnapshot(true);
         console.log(`[aiService] End turn without tools - stopReason: ${stopReason}, textLength: ${assistantTextContent.length}`);
         const agentProgressState = useAppStore.getState().agentProgress;
         const currentPendingAction = agentProgressState.pendingAction;
@@ -2574,9 +2572,12 @@ async function streamChatViaTauri(
 
       useAppStore.getState().clearAgentPendingAction();
       useAppStore.getState().setAgentProgress({ canTaskComplete: runtimeCompletionBlocker == null });
-      
+
+      const hadMutationsThisRound = _roundHadMutations;
+      await captureInternalsSnapshot(!hadMutationsThisRound);
+
       // Refresh entry manifest + project tree so next round/chat sees current state
-      if (_roundHadMutations) {
+      if (hadMutationsThisRound) {
         _roundHadMutations = false;
         resetProjectTreeCache();
         invoke<ProjectProfile>('atls_get_project_profile')
@@ -2628,15 +2629,15 @@ async function streamChatViaTauri(
       // --- Structured behavior enforcement ---
 
       // Finalize round coverage tracking for convergence detection
-      useContextStore.getState().finishRoundCoverage(_roundHadMutations);
+      useContextStore.getState().finishRoundCoverage(hadMutationsThisRound);
 
-      if (_roundHadMutations) {
+      if (hadMutationsThisRound) {
         anyRoundHadMutations = true;
         hadProgressSinceLastAdvance = true;
       }
 
       // Track consecutive read-only rounds (no mutations). After 4, inject warning.
-      if (!_roundHadMutations) {
+      if (!hadMutationsThisRound) {
         consecutiveReadOnlyRounds++;
         totalResearchRounds++;
       } else {
@@ -2655,7 +2656,7 @@ async function streamChatViaTauri(
 
       // Layer 2A: Coverage-based convergence detection
       const ctxConvergence = useContextStore.getState();
-      if (ctxConvergence.coveragePlateauStreak >= 2 && !_roundHadMutations
+      if (ctxConvergence.coveragePlateauStreak >= 2 && !hadMutationsThisRound
           && mode !== 'ask' && mode !== 'retriever') {
         conversationHistory.push({
           role: 'user',
@@ -2699,7 +2700,7 @@ async function streamChatViaTauri(
       }
 
       // Nudge toward task plan if the model has done a read-only round without planning
-      if (round === 1 && !useContextStore.getState().taskPlan && !_roundHadMutations
+      if (round === 1 && !useContextStore.getState().taskPlan && !hadMutationsThisRound
           && mode !== 'ask' && mode !== 'retriever' && mode !== 'designer') {
         conversationHistory.push({
           role: 'user',
@@ -3180,8 +3181,9 @@ function buildWorkspaceTOON(workspaces: WorkspaceEntry[], activeFile?: string | 
 
 /**
  * Build workspace context in TOON format.
- * @param minimal - When true, only includes volatile per-turn state (file, line, branch).
- *   Full profile is sent on first message; subsequent rounds use minimal to save ~200 tokens.
+ * @param minimal - When true, only volatile per-turn state (file, line, branch).
+ *   Entry points are not duplicated here: `entryManifestDepth` controls ## Entry Points in BP1 only.
+ *   Full profile is sent on the first tool round; later rounds use minimal to save ~200 tokens.
  */
 function buildContextTOON(context: WorkspaceContext, minimal = false): string {
   const ctx: Record<string, unknown> = {};
@@ -3204,7 +3206,7 @@ function buildContextTOON(context: WorkspaceContext, minimal = false): string {
       }
     }
   }
-  
+
   // Per-turn editor state (always included)
   if (context.activeFile) {
     ctx.file = context.activeFile;
