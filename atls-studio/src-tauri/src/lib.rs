@@ -204,9 +204,7 @@ pub(crate) struct LineEdit {
     pub action: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub content: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub count: Option<u32>,
-    /// If set, replaces `count`. Means "replace/delete lines line..=end_line" (1-based inclusive).
+    /// 1-based inclusive end line. Omitting defaults to `line` (single-line span).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub end_line: Option<u32>,
     /// Symbol name for symbol-relative positioning (resolves to a line number)
@@ -623,9 +621,9 @@ pub(crate) fn apply_line_edits(content: &str, edits: &[LineEdit]) -> Result<(Str
             }
             "replace" => {
                 let mut count = if let Some(end) = edit.end_line {
-                    (end as usize).saturating_sub(idx.saturating_sub(1))
+                    (end as usize).saturating_sub(idx)
                 } else {
-                    edit.count.unwrap_or(1) as usize
+                    1usize
                 };
                 let replacement: Vec<String> = edit.content.as_deref().unwrap_or("").lines().map(String::from).collect();
 
@@ -694,18 +692,18 @@ pub(crate) fn apply_line_edits(content: &str, edits: &[LineEdit]) -> Result<(Str
             }
             "delete" => {
                 let count = if let Some(end) = edit.end_line {
-                    (end as usize).saturating_sub(idx.saturating_sub(1))
+                    (end as usize).saturating_sub(idx)
                 } else {
-                    edit.count.unwrap_or(1) as usize
+                    1usize
                 };
                 let end = std::cmp::min(idx + count, lines.len());
                 lines.drain(idx..end);
             }
             "move" => {
                 let count = if let Some(end) = edit.end_line {
-                    (end as usize).saturating_sub(idx.saturating_sub(1))
+                    (end as usize).saturating_sub(idx)
                 } else {
-                    edit.count.unwrap_or(1) as usize
+                    1usize
                 };
                 let src_end = std::cmp::min(idx + count, lines.len());
                 let dest = edit.destination.unwrap_or(0) as usize;
@@ -799,8 +797,8 @@ pub(crate) fn find_body_bounds(symbol_lines: &[&str]) -> Option<(usize, usize)> 
     Some((open_line + 1, close_line))
 }
 
-/// Resolve `symbol` + `position` on each edit to concrete `line` / `end_line` / `count` using the symbol index.
-/// When `draft_style_delete_count` is true, auto-sets `count` for `delete` at `before` (draft semantics).
+/// Resolve `symbol` + `position` on each edit to concrete `line` / `end_line` using the symbol index.
+/// When `draft_style_delete_count` is true, auto-sets `end_line` for `delete` at `before` (draft semantics).
 /// For `replace` / `replace_body` at `before` without an explicit span, sets `end_line` to the symbol's end line.
 pub(crate) fn resolve_line_edits_symbols_for_file(
     query: &atls_core::query::QueryEngine,
@@ -863,15 +861,14 @@ pub(crate) fn resolve_line_edits_symbols_for_file(
 
             if draft_style_delete_count
                 && edit.action == "delete"
-                && edit.count.is_none()
+                && edit.end_line.is_none()
                 && pos == "before"
             {
-                edit.count = Some(range.end_line - range.start_line + 1);
+                edit.end_line = Some(range.end_line);
             }
 
             if (edit.action == "replace" || edit.action == "replace_body")
                 && edit.end_line.is_none()
-                && edit.count.is_none()
                 && pos == "before"
             {
                 edit.end_line = Some(range.end_line);
@@ -2510,13 +2507,12 @@ pub fn run() {
 mod apply_line_edits_tests {
     use super::{apply_line_edits, LineCoordinate, LineEdit};
 
-    fn le(line: u32, action: &str, content: Option<&str>, count: Option<u32>) -> LineEdit {
+    fn le(line: u32, action: &str, content: Option<&str>, end_line: Option<u32>) -> LineEdit {
         LineEdit {
             line: LineCoordinate::Abs(line),
             action: action.to_string(),
             content: content.map(String::from),
-            count,
-            end_line: None,
+            end_line,
             symbol: None,
             position: None,
             destination: None,
@@ -2531,7 +2527,6 @@ mod apply_line_edits_tests {
             line: LineCoordinate::End,
             action: "insert_after".to_string(),
             content: Some("d".to_string()),
-            count: None,
             end_line: None,
             symbol: None,
             position: None,
@@ -2549,7 +2544,6 @@ mod apply_line_edits_tests {
             line: LineCoordinate::Neg(-1),
             action: "replace".to_string(),
             content: Some("LAST".to_string()),
-            count: Some(1),
             end_line: None,
             symbol: None,
             position: None,
@@ -2565,7 +2559,7 @@ mod apply_line_edits_tests {
         let json = r#"{"line":"end","action":"insert_before","content":"x"}"#;
         let e: LineEdit = serde_json::from_str(json).unwrap();
         assert!(matches!(e.line, LineCoordinate::End));
-        let json2 = r#"{"line":-2,"action":"replace","content":"y","count":1}"#;
+        let json2 = r#"{"line":-2,"action":"replace","content":"y","end_line":2}"#;
         let e2: LineEdit = serde_json::from_str(json2).unwrap();
         assert!(matches!(e2.line, LineCoordinate::Neg(-2)));
     }
@@ -2573,7 +2567,7 @@ mod apply_line_edits_tests {
     #[test]
     fn test_apply_delete_single_line() {
         let content = "line1\nline2\nline3\n";
-        let edits = vec![le(2, "delete", None, Some(1))];
+        let edits = vec![le(2, "delete", None, None)];
         let (result, _) = apply_line_edits(content, &edits).unwrap();
         assert_eq!(result, "line1\nline3\n");
     }
@@ -2581,7 +2575,7 @@ mod apply_line_edits_tests {
     #[test]
     fn test_apply_delete_range() {
         let content = "a\nb\nc\nd\ne\n";
-        let edits = vec![le(2, "delete", None, Some(3))];
+        let edits = vec![le(2, "delete", None, Some(4))];
         let (result, _) = apply_line_edits(content, &edits).unwrap();
         assert_eq!(result, "a\ne\n");
     }
@@ -2597,7 +2591,7 @@ mod apply_line_edits_tests {
     #[test]
     fn test_apply_replace() {
         let content = "old1\nold2\nold3\n";
-        let edits = vec![le(2, "replace", Some("new2\n"), Some(1))];
+        let edits = vec![le(2, "replace", Some("new2\n"), None)];
         let (result, _) = apply_line_edits(content, &edits).unwrap();
         assert_eq!(result, "old1\nnew2\nold3\n");
     }
@@ -2606,8 +2600,8 @@ mod apply_line_edits_tests {
     fn test_apply_multiple_edits_reverse_order() {
         let content = "1\n2\n3\n4\n5\n";
         let edits = vec![
-            le(5, "delete", None, Some(1)),
-            le(3, "delete", None, Some(1)),
+            le(5, "delete", None, None),
+            le(3, "delete", None, None),
             le(1, "insert_before", Some("0\n"), None),
         ];
         let (result, _) = apply_line_edits(content, &edits).unwrap();
@@ -2617,7 +2611,7 @@ mod apply_line_edits_tests {
     #[test]
     fn test_apply_line_out_of_range_fails() {
         let content = "a\nb\n";
-        let edits = vec![le(10, "delete", None, Some(1))];
+        let edits = vec![le(10, "delete", None, None)];
         let err = apply_line_edits(content, &edits).unwrap_err();
         assert!(err.contains("out of range"));
     }
@@ -2699,16 +2693,11 @@ function alsoStay() {
         // Step 2: Remove lines 7-11 from source
         let ranges = parse_line_ranges("7-11").unwrap();
         let delete_edits: Vec<LineEdit> = ranges.iter().map(|&(start, end)| {
-            let count = match end {
-                Some(e) => e.saturating_sub(start) + 1,
-                None => 1,
-            };
             LineEdit {
                 line: LineCoordinate::Abs(start),
                 action: "delete".to_string(),
                 content: None,
-                count: Some(count),
-                end_line: None,
+                end_line: end,
                 symbol: None,
                 position: None,
                 destination: None,
@@ -2761,13 +2750,12 @@ mod hard_line_edit_tests {
     use super::{apply_line_edits, LineCoordinate, LineEdit, content_hash};
     use crate::path_utils::normalize_line_endings;
 
-    fn le(line: u32, action: &str, content: Option<&str>, count: Option<u32>) -> LineEdit {
+    fn le(line: u32, action: &str, content: Option<&str>, end_line: Option<u32>) -> LineEdit {
         LineEdit {
             line: LineCoordinate::Abs(line),
             action: action.to_string(),
             content: content.map(String::from),
-            count,
-            end_line: None,
+            end_line,
             symbol: None,
             position: None,
             destination: None,
@@ -2780,14 +2768,14 @@ mod hard_line_edit_tests {
     #[test]
     fn trailing_newline_preserved_after_delete() {
         let content = "a\nb\nc\n";
-        let (result, _) = apply_line_edits(content, &[le(2, "delete", None, Some(1))]).unwrap();
+        let (result, _) = apply_line_edits(content, &[le(2, "delete", None, None)]).unwrap();
         assert_eq!(result, "a\nc\n", "trailing newline must survive delete");
     }
 
     #[test]
     fn no_trailing_newline_stays_absent() {
         let content = "a\nb\nc";
-        let (result, _) = apply_line_edits(content, &[le(2, "delete", None, Some(1))]).unwrap();
+        let (result, _) = apply_line_edits(content, &[le(2, "delete", None, None)]).unwrap();
         assert_eq!(result, "a\nc", "no trailing newline should not appear");
     }
 
@@ -2803,14 +2791,14 @@ mod hard_line_edit_tests {
     #[test]
     fn replace_one_line_with_three() {
         let content = "1\n2\n3\n";
-        let (result, _) = apply_line_edits(content, &[le(2, "replace", Some("x\ny\nz"), Some(1))]).unwrap();
+        let (result, _) = apply_line_edits(content, &[le(2, "replace", Some("x\ny\nz"), None)]).unwrap();
         assert_eq!(result, "1\nx\ny\nz\n3\n");
     }
 
     #[test]
     fn replace_three_lines_with_one() {
         let content = "1\n2\n3\n4\n5\n";
-        let (result, _) = apply_line_edits(content, &[le(2, "replace", Some("X"), Some(3))]).unwrap();
+        let (result, _) = apply_line_edits(content, &[le(2, "replace", Some("X"), Some(4))]).unwrap();
         assert_eq!(result, "1\nX\n5\n");
     }
 
@@ -2819,7 +2807,7 @@ mod hard_line_edit_tests {
         // "".lines() is empty → splice replaces with nothing → line is removed.
         // This means replace(content:"") is functionally identical to delete.
         let content = "a\nb\nc\n";
-        let (result, _) = apply_line_edits(content, &[le(2, "replace", Some(""), Some(1))]).unwrap();
+        let (result, _) = apply_line_edits(content, &[le(2, "replace", Some(""), None)]).unwrap();
         assert_eq!(result, "a\nc\n", "replace with empty string acts as delete");
     }
 
@@ -2828,7 +2816,7 @@ mod hard_line_edit_tests {
     #[test]
     fn replace_import_line_by_line_number() {
         let content = "import { foo } from './foo';\nimport { bar } from './bar';\nexport default function main() {}\n";
-        let edits = vec![le(1, "replace", Some("import { foo } from './new-foo';"), Some(1))];
+        let edits = vec![le(1, "replace", Some("import { foo } from './new-foo';"), None)];
         let (result, warnings) = apply_line_edits(content, &edits).unwrap();
         assert!(warnings.is_empty());
         assert!(result.contains("from './new-foo'"));
@@ -2852,7 +2840,7 @@ mod hard_line_edit_tests {
     #[test]
     fn replace_second_duplicate_line_by_line_number() {
         let content = "import x;\nsome code;\nimport x;\nmore code;\n";
-        let edits = vec![le(3, "replace", Some("import x_new;"), Some(1))];
+        let edits = vec![le(3, "replace", Some("import x_new;"), None)];
         let (result, _) = apply_line_edits(content, &edits).unwrap();
         let lines: Vec<&str> = result.lines().collect();
         assert_eq!(lines[0], "import x;", "first import should be untouched");
@@ -2868,7 +2856,7 @@ mod hard_line_edit_tests {
         let content = "      case 'ArrowDown':\n        e.preventDefault();\n        setSelectedIndex(i => Math.min(i + 1, results.length - 1));\n        break;\n      case 'ArrowUp':\n";
         let replacement = "      case 'ArrowDown':\n        e.preventDefault();\n        if (results.length > 0) setSelectedIndex(i => Math.min(i + 1, results.length - 1));\n        break;";
         // count=3 covers lines 1-3, but line 4 ("break;") duplicates the last line of replacement
-        let edits = vec![le(1, "replace", Some(replacement), Some(3))];
+        let edits = vec![le(1, "replace", Some(replacement), Some(3))];  // end_line=3 (lines 1..=3)
         let (result, warnings) = apply_line_edits(content, &edits).unwrap();
         let break_count = result.lines().filter(|l| l.trim() == "break;").count();
         assert_eq!(break_count, 1, "should have exactly one break; not a duplicate: {}", result);
@@ -2879,7 +2867,7 @@ mod hard_line_edit_tests {
     #[test]
     fn count_overlap_no_false_positive_on_clean_replace() {
         let content = "a\nb\nc\nd\n";
-        let edits = vec![le(2, "replace", Some("X\nY"), Some(2))];
+        let edits = vec![le(2, "replace", Some("X\nY"), Some(3))];
         let (result, warnings) = apply_line_edits(content, &edits).unwrap();
         assert_eq!(result, "a\nX\nY\nd\n");
         assert!(!warnings.iter().any(|w| w.contains("count_overlap")),
@@ -2890,7 +2878,7 @@ mod hard_line_edit_tests {
     fn count_overlap_does_not_extend_on_empty_lines() {
         // Empty trailing lines should not trigger overlap (too common, too noisy)
         let content = "a\nb\n\n\nd\n";
-        let edits = vec![le(2, "replace", Some("X\n"), Some(1))];
+        let edits = vec![le(2, "replace", Some("X\n"), None)];
         let (result, warnings) = apply_line_edits(content, &edits).unwrap();
         assert!(!warnings.iter().any(|w| w.contains("count_overlap")),
             "empty line overlap should not trigger: {:?}", warnings);
@@ -2941,8 +2929,8 @@ mod hard_line_edit_tests {
         // Sequential: after deleting L1 ("1"), "5" shifts from L5 to L4.
         let content = "1\n2\n3\n4\n5\n";
         let edits = vec![
-            le(1, "delete", None, Some(1)),
-            le(4, "delete", None, Some(1)),
+            le(1, "delete", None, None),
+            le(4, "delete", None, None),
         ];
         let (result, _) = apply_line_edits(content, &edits).unwrap();
         assert_eq!(result, "2\n3\n4\n");
@@ -2951,7 +2939,7 @@ mod hard_line_edit_tests {
     #[test]
     fn delete_last_line_of_file_without_trailing_newline() {
         let content = "a\nb\nc";
-        let (result, _) = apply_line_edits(content, &[le(3, "delete", None, Some(1))]).unwrap();
+        let (result, _) = apply_line_edits(content, &[le(3, "delete", None, None)]).unwrap();
         assert_eq!(result, "a\nb");
     }
 
@@ -2967,7 +2955,7 @@ mod hard_line_edit_tests {
     #[test]
     fn crlf_normalized_before_edit() {
         let content = normalize_line_endings("a\r\nb\r\nc\r\n");
-        let (result, _) = apply_line_edits(&content, &[le(2, "replace", Some("B"), Some(1))]).unwrap();
+        let (result, _) = apply_line_edits(&content, &[le(2, "replace", Some("B"), None)]).unwrap();
         assert_eq!(result, "a\nB\nc\n");
         assert!(!result.contains('\r'));
     }
@@ -2981,7 +2969,7 @@ mod hard_line_edit_tests {
         let content = "L1\nL2\nL3\nL4\nL5\nL6\n";
         let edits = vec![
             le(4, "insert_after", Some("NEW"), None),
-            le(6, "replace", Some("REPLACED"), Some(1)),
+            le(6, "replace", Some("REPLACED"), None),
         ];
         let (result, _) = apply_line_edits(content, &edits).unwrap();
         // After insert_after L4: L1,L2,L3,L4,NEW,L5,L6
@@ -2994,7 +2982,7 @@ mod hard_line_edit_tests {
         let content = "a\nb\nc\nd\ne\n";
         let edits = vec![
             le(1, "insert_before", Some("z"), None),
-            le(4, "delete", None, Some(1)),
+            le(4, "delete", None, None),
         ];
         let (result, _) = apply_line_edits(content, &edits).unwrap();
         // After insert_before L1: z,a,b,c,d,e  (L4 is "c")
@@ -3015,7 +3003,7 @@ mod hard_line_edit_tests {
     #[test]
     fn delete_all_lines() {
         let content = "a\nb\nc\n";
-        let (result, _) = apply_line_edits(content, &[le(1, "delete", None, Some(4))]).unwrap();
+        let (result, _) = apply_line_edits(content, &[le(1, "delete", None, Some(4))]).unwrap();  // end_line=4 (lines 1..=4, but clamped)
         assert!(result.trim().is_empty(), "all lines deleted, result: {:?}", result);
     }
 
@@ -3025,7 +3013,7 @@ mod hard_line_edit_tests {
     fn content_hash_changes_on_edit() {
         let original = "function foo() { return 1; }\n";
         let h1 = content_hash(original);
-        let (edited, _) = apply_line_edits(original, &[le(1, "replace", Some("function foo() { return 2; }"), Some(1))]).unwrap();
+        let (edited, _) = apply_line_edits(original, &[le(1, "replace", Some("function foo() { return 2; }"), None)]).unwrap();
         let h2 = content_hash(&edited);
         assert_ne!(h1, h2, "hash must change when content changes");
     }
@@ -3033,7 +3021,7 @@ mod hard_line_edit_tests {
     #[test]
     fn content_hash_stable_for_identical_content() {
         let c = "same content\n";
-        let (result, _) = apply_line_edits(c, &[le(1, "replace", Some("same content"), Some(1))]).unwrap();
+        let (result, _) = apply_line_edits(c, &[le(1, "replace", Some("same content"), None)]).unwrap();
         assert_eq!(content_hash(c), content_hash(&result));
     }
 }
@@ -3129,7 +3117,7 @@ mod hard_batch_edits_tests {
                 content_hash: None,
                 line_edits: vec![LineEdit {
                     line: LineCoordinate::Abs(2), action: "replace".to_string(),
-                    content: Some("  return 42;".to_string()), count: Some(1),
+                    content: Some("  return 42;".to_string()),
                     end_line: None, symbol: None, position: None,
                     destination: None, reindent: false,
                 }],
@@ -3139,7 +3127,7 @@ mod hard_batch_edits_tests {
                 content_hash: None,
                 line_edits: vec![LineEdit {
                     line: LineCoordinate::Abs(2), action: "replace".to_string(),
-                    content: Some("  return 99;".to_string()), count: Some(1),
+                    content: Some("  return 99;".to_string()),
                     end_line: None, symbol: None, position: None,
                     destination: None, reindent: false,
                 }],
@@ -3168,7 +3156,7 @@ mod hard_batch_edits_tests {
                 content_hash: Some("h:deadbeef".to_string()),
                 line_edits: vec![LineEdit {
                     line: LineCoordinate::Abs(1), action: "replace".to_string(),
-                    content: Some("const a = 42;".to_string()), count: Some(1),
+                    content: Some("const a = 42;".to_string()),
                     end_line: None, symbol: None, position: None,
                     destination: None, reindent: false,
                 }],
@@ -3203,7 +3191,6 @@ mod hard_batch_edits_tests {
                     line: LineCoordinate::Abs(4),
                     action: "replace".to_string(),
                     content: Some("const target = 20;".to_string()),
-                    count: Some(1),
                     end_line: None,
                     symbol: None,
                     position: None,
@@ -3223,7 +3210,6 @@ mod hard_batch_edits_tests {
                     line: LineCoordinate::Abs(4),
                     action: "replace".to_string(),
                     content: Some("const target = 200;".to_string()),
-                    count: Some(1),
                     end_line: None,
                     symbol: None,
                     position: None,
@@ -3242,7 +3228,6 @@ mod hard_batch_edits_tests {
                     line: LineCoordinate::Abs(4),
                     action: "replace".to_string(),
                     content: Some("const target = 200;".to_string()),
-                    count: Some(1),
                     end_line: None,
                     symbol: None,
                     position: None,
@@ -3260,7 +3245,6 @@ mod hard_batch_edits_tests {
                     line: LineCoordinate::Abs(4),
                     action: "replace".to_string(),
                     content: Some("const target = 999;".to_string()),
-                    count: Some(1),
                     end_line: None,
                     symbol: None,
                     position: None,
@@ -3290,7 +3274,7 @@ mod hard_batch_edits_tests {
                 content_hash: None,
                 line_edits: vec![LineEdit {
                     line: LineCoordinate::Abs(2), action: "replace".to_string(),
-                    content: Some("  println!(\"world\");".to_string()), count: Some(1),
+                    content: Some("  println!(\"world\");".to_string()),
                     end_line: None, symbol: None, position: None,
                     destination: None, reindent: false,
                 }],
@@ -3341,7 +3325,6 @@ module.exports = {
                     content: Some(
                         "\t\trecommended: { rules: {} },\n\t\tstrict: { rules: {} },".to_string()
                     ),
-                    count: Some(1),
                     end_line: None,
                     symbol: None,
                     position: None,
@@ -3402,7 +3385,6 @@ module.exports = {
                     line: LineCoordinate::Abs(9),
                     action: "replace".to_string(),
                     content: Some("module.exports = ;".to_string()),
-                    count: Some(1),
                     end_line: None,
                     symbol: None,
                     position: None,
@@ -3426,13 +3408,12 @@ mod hard_refactor_pipeline_tests {
     use crate::hash_resolver::{self, HashEntry, HashRegistry, parse_line_ranges};
     use crate::path_utils::normalize_line_endings;
 
-    fn le(line: u32, action: &str, content: Option<&str>, count: Option<u32>) -> LineEdit {
+    fn le(line: u32, action: &str, content: Option<&str>, end_line: Option<u32>) -> LineEdit {
         LineEdit {
             line: LineCoordinate::Abs(line),
             action: action.to_string(),
             content: content.map(String::from),
-            count,
-            end_line: None,
+            end_line,
             symbol: None,
             position: None,
             destination: None,
@@ -3471,8 +3452,9 @@ mod hard_refactor_pipeline_tests {
         let ranges1 = parse_line_ranges("3-4").unwrap();
         let edits1: Vec<LineEdit> = ranges1.iter().map(|&(start, end)| {
             let adj = adjust_line_for_shifts(start, &line_shifts);
-            let count = end.unwrap().saturating_sub(start) + 1;
-            le(adj, "delete", None, Some(count))
+            let span = end.unwrap().saturating_sub(start) + 1;
+            let adj_end = adj + span - 1;
+            le(adj, "delete", None, Some(adj_end))
         }).collect();
         for &(s, e) in &ranges1 { line_shifts.push((s, e.unwrap().saturating_sub(s) + 1)); }
 
@@ -3487,8 +3469,9 @@ mod hard_refactor_pipeline_tests {
         let ranges2 = parse_line_ranges("7-8").unwrap();
         let edits2: Vec<LineEdit> = ranges2.iter().map(|&(start, end)| {
             let adj = adjust_line_for_shifts(start, &line_shifts);
-            let count = end.unwrap().saturating_sub(start) + 1;
-            le(adj, "delete", None, Some(count))
+            let span = end.unwrap().saturating_sub(start) + 1;
+            let adj_end = adj + span - 1;
+            le(adj, "delete", None, Some(adj_end))
         }).collect();
 
         let current2 = std::fs::read_to_string(&src_path).unwrap();
@@ -3550,8 +3533,7 @@ export function extractMe() {
         // Step 2: remove lines 7-11 from source (the extractMe function + blank line)
         let ranges = parse_line_ranges("7-11").unwrap();
         let delete_edits: Vec<LineEdit> = ranges.iter().map(|&(start, end)| {
-            let count = end.unwrap().saturating_sub(start) + 1;
-            le(start, "delete", None, Some(count))
+            le(start, "delete", None, end)
         }).collect();
 
         let (new_source, _) = apply_line_edits(source_content, &delete_edits).unwrap();
@@ -3566,7 +3548,7 @@ export function extractMe() {
         let import_edits = vec![
             le(1, "replace",
                 Some("import { keepMe } from './source';\nimport { extractMe } from './extracted';"),
-                Some(1)),
+                None),
         ];
         let (new_consumer, warnings) = apply_line_edits(consumer_content, &import_edits).unwrap();
         std::fs::write(root.join("src/consumer.ts"), &new_consumer).unwrap();
@@ -3593,8 +3575,7 @@ export function extractMe() {
         let content = "import x;\n\nfunction a() { return 1; }\n\nfunction b() { return 2; }\n";
         let ranges = parse_line_ranges("4-5").unwrap();
         let edits: Vec<LineEdit> = ranges.iter().map(|&(start, end)| {
-            let count = end.unwrap().saturating_sub(start) + 1;
-            le(start, "delete", None, Some(count))
+            le(start, "delete", None, end)
         }).collect();
         let (result, _) = apply_line_edits(content, &edits).unwrap();
         assert_eq!(result, "import x;\n\nfunction a() { return 1; }\n");
@@ -3605,7 +3586,7 @@ export function extractMe() {
     #[test]
     fn crlf_in_edit_content_mixed_with_lf_file() {
         let content = "line1\nline2\nline3\n";
-        let edits = vec![le(2, "replace", Some("new2\r\nnew3"), Some(1))];
+        let edits = vec![le(2, "replace", Some("new2\r\nnew3"), None)];
         let (result, _) = apply_line_edits(content, &edits).unwrap();
         let normalized = normalize_line_endings(&result);
         let lines: Vec<&str> = normalized.lines().collect();
@@ -3654,7 +3635,7 @@ export function extractMe() {
             symbol_count: None,
         });
 
-        let (content_v2, _) = apply_line_edits(content_v1, &[le(1, "replace", Some("function foo() { return 2; }"), Some(1))]).unwrap();
+        let (content_v2, _) = apply_line_edits(content_v1, &[le(1, "replace", Some("function foo() { return 2; }"), None)]).unwrap();
         let h2 = content_hash(&content_v2);
         reg.register(h2.clone(), HashEntry {
             source: Some("foo_v2.ts".to_string()),
@@ -3680,7 +3661,7 @@ export function extractMe() {
         let content = lines.join("\n") + "\n";
 
         // Op1: delete lines 100-110
-        let edits1 = vec![le(100, "delete", None, Some(11))];
+        let edits1 = vec![le(100, "delete", None, Some(110))];
         let (after1, _) = apply_line_edits(&content, &edits1).unwrap();
         let after1_lines: Vec<&str> = after1.lines().collect();
         assert_eq!(after1_lines.len(), 489, "500 - 11 = 489 lines");
@@ -3695,7 +3676,7 @@ export function extractMe() {
         assert_eq!(after2_lines[200], "NEW_A");
 
         // Op3: replace lines 400-405
-        let edits3 = vec![le(400, "replace", Some("REPLACED_A\nREPLACED_B"), Some(6))];
+        let edits3 = vec![le(400, "replace", Some("REPLACED_A\nREPLACED_B"), Some(405))];
         let (after3, _) = apply_line_edits(&after2, &edits3).unwrap();
         let after3_lines: Vec<&str> = after3.lines().collect();
         assert_eq!(after3_lines.len(), 488, "492 - 6 + 2 = 488 lines");
@@ -3717,14 +3698,14 @@ export function bar() { return 2; }
 export function baz() { return 3; }
 ";
         // Step 1: remove bar function (lines 5-5)
-        let (after_remove, _) = apply_line_edits(content, &[le(5, "delete", None, Some(1))]).unwrap();
+        let (after_remove, _) = apply_line_edits(content, &[le(5, "delete", None, None)]).unwrap();
         assert!(!after_remove.contains("function bar"));
 
         // Step 2: update the import (line 1 unchanged after single-line delete above)
         let import_edits = vec![
             le(1, "replace",
                 Some("import { foo } from './module';"),
-                Some(1)),
+                None),
         ];
         let (final_content, warnings) = apply_line_edits(&after_remove, &import_edits).unwrap();
         assert!(warnings.is_empty());

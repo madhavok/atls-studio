@@ -1078,6 +1078,25 @@ function refToBaseHash(ref: string): string {
  *
  * Namespace: h:bb:X is reserved for blackboard; never resolved here.
  */
+// Reverse index: shortHash → full map key. Rebuilt lazily.
+let _shortHashIndex: Map<string, string> | null = null;
+let _shortHashIndexSize = -1;
+
+function getShortHashIndex(chunks: Map<string, { hash: string; shortHash: string }>): Map<string, string> {
+  if (_shortHashIndex && _shortHashIndexSize === chunks.size) return _shortHashIndex;
+  _shortHashIndex = new Map();
+  for (const [key, chunk] of chunks) {
+    _shortHashIndex.set(chunk.shortHash, key);
+  }
+  _shortHashIndexSize = chunks.size;
+  return _shortHashIndex;
+}
+
+function invalidateShortHashIndex(): void {
+  _shortHashIndex = null;
+  _shortHashIndexSize = -1;
+}
+
 function findChunkByRef<T extends { hash: string; shortHash: string }>(
   chunks: Map<string, T>,
   ref: string,
@@ -1090,9 +1109,12 @@ function findChunkByRef<T extends { hash: string; shortHash: string }>(
   const direct = chunks.get(normalized);
   if (direct) return [normalized, direct];
 
-  // 2. Exact shortHash match (deterministic, O(n))
-  for (const [key, chunk] of chunks) {
-    if (chunk.shortHash === normalized) return [key, chunk];
+  // 2. O(1) shortHash lookup via reverse index
+  const shortIdx = getShortHashIndex(chunks as Map<string, { hash: string; shortHash: string }>);
+  const fullKey = shortIdx.get(normalized);
+  if (fullKey) {
+    const chunk = chunks.get(fullKey);
+    if (chunk) return [fullKey, chunk];
   }
 
   // 3. Prefix match — requires MIN_PREFIX_LEN to reduce short-prefix collisions
@@ -4671,12 +4693,18 @@ export const useContextStore = create<ContextStoreState>()(
 
     function grepContent(text: string, maxHits: number): MemorySearchHit[] {
       const hits: MemorySearchHit[] = [];
-      const lines = text.split('\n');
-      for (let i = 0; i < lines.length && hits.length < maxHits; i++) {
-        const haystack = caseSensitive ? lines[i] : lines[i].toLowerCase();
+      let lineStart = 0;
+      let lineNumber = 1;
+      while (lineStart <= text.length && hits.length < maxHits) {
+        let lineEnd = text.indexOf('\n', lineStart);
+        if (lineEnd === -1) lineEnd = text.length;
+        const rawLine = text.slice(lineStart, lineEnd);
+        const haystack = caseSensitive ? rawLine : rawLine.toLowerCase();
         if (haystack.includes(needle)) {
-          hits.push({ line: lines[i].slice(0, 200), lineNumber: i + 1 });
+          hits.push({ line: rawLine.slice(0, 200), lineNumber });
         }
+        lineStart = lineEnd + 1;
+        lineNumber++;
       }
       return hits;
     }

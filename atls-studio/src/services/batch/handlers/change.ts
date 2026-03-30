@@ -146,13 +146,15 @@ function estimateLineDeltaFromLineEdits(lineEdits: unknown): number {
     if (!edit || typeof edit !== 'object') continue;
     const entry = edit as Record<string, unknown>;
     const action = typeof entry.action === 'string' ? entry.action : '';
-    const count = typeof entry.count === 'number' && Number.isFinite(entry.count) ? entry.count : 1;
+    const line = typeof entry.line === 'number' ? entry.line : 0;
+    const endLine = typeof entry.end_line === 'number' && Number.isFinite(entry.end_line) ? entry.end_line : null;
+    const span = (endLine != null && line > 0) ? Math.max(0, endLine - line + 1) : 1;
     const contentLines = typeof entry.content === 'string' && entry.content.length > 0
       ? countContentLines(entry.content as string)
       : 0;
     if (action === 'insert_before' || action === 'insert_after') delta += contentLines;
-    else if (action === 'delete') delta -= count;
-    else if (action === 'replace') delta += contentLines - count;
+    else if (action === 'delete') delta -= span;
+    else if (action === 'replace') delta += contentLines - span;
   }
   return delta;
 }
@@ -1121,17 +1123,21 @@ export function normalizeEditParams(params: Record<string, unknown>): Record<str
   };
 }
 
-function effectiveExplicitLineEditCount(edit: Record<string, unknown>): number {
-  const raw = edit.count;
-  if (raw == null) return 1;
-  if (typeof raw !== 'number' || !Number.isFinite(raw) || raw <= 0 || !Number.isInteger(raw)) {
+function effectiveExplicitLineSpan(edit: Record<string, unknown>): number {
+  const line = edit.line;
+  const endLine = edit.end_line;
+  if (endLine == null) return 1;
+  if (typeof endLine !== 'number' || !Number.isFinite(endLine) || endLine <= 0 || !Number.isInteger(endLine)) {
     throwEditValidationError(
-      'line_edits count must be a positive integer',
+      'line_edits end_line must be a positive integer',
       'invalid_line_edit',
-      { count: raw },
+      { end_line: endLine },
     );
   }
-  return raw;
+  if (typeof line === 'number' && Number.isFinite(line) && line > 0) {
+    return Math.max(1, endLine - line + 1);
+  }
+  return 1;
 }
 
 function coalesceExplicitLineEdits(lineEdits: Array<Record<string, unknown>>): Array<Record<string, unknown>> {
@@ -1287,7 +1293,7 @@ function resolveEditOperation(params: Record<string, unknown>): { operation: str
             { index: i, destination: dest },
           );
         }
-        effectiveExplicitLineEditCount(o);
+        effectiveExplicitLineSpan(o);
         if (o.reindent != null && typeof o.reindent !== 'boolean') {
           throwEditValidationError(
             `line_edits[${i}] move reindent must be boolean when set`,
@@ -1295,6 +1301,29 @@ function resolveEditOperation(params: Record<string, unknown>): { operation: str
             { index: i },
           );
         }
+      }
+      // Legacy count on line_edits → end_line once line is known (span 1 = omit end_line).
+      if (typeof o.count === 'number' && Number.isInteger(o.count)) {
+        const c = o.count;
+        if (typeof o.line === 'number' && o.line > 0 && o.end_line == null && c > 1) {
+          o.end_line = o.line + c - 1;
+        }
+        delete o.count;
+      }
+      const spanFromStep =
+        typeof params.replace_span_lines === 'number' && Number.isFinite(params.replace_span_lines)
+          ? Math.floor(params.replace_span_lines)
+          : undefined;
+      if (
+        spanFromStep != null
+        && spanFromStep > 1
+        && leRaw.length === 1
+        && (action === 'replace' || action === 'replace_body')
+        && typeof o.line === 'number'
+        && o.line > 0
+        && o.end_line == null
+      ) {
+        o.end_line = o.line + spanFromStep - 1;
       }
       return o;
     });

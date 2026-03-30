@@ -212,7 +212,7 @@ describe('line_edits validation', () => {
         content_hash: 'abc',
         line_edits: [
           { line: 'end', action: 'insert_after', content: '// x' },
-          { line: -1, action: 'replace', count: 1, content: 'y' },
+          { line: -1, action: 'replace', content: 'y' },
         ],
       },
       ctx,
@@ -221,7 +221,7 @@ describe('line_edits validation', () => {
   });
 
   it('passes sequential line edits through without overlap rejection', async () => {
-    // Sequential semantics: replace L3 count=2, then delete L4 is valid
+    // Sequential semantics: replace L3-L4 (end_line=4), then delete L4 is valid
     // (the delete targets the post-replace state, not the original).
     const atlsBatchQuery = vi.fn().mockResolvedValue({ h: 'h:after1234', old_h: 'h:before1234' });
     const ctx = {
@@ -234,8 +234,8 @@ describe('line_edits validation', () => {
         file: 'a.ts',
         content_hash: 'feedface',
         line_edits: [
-          { line: 3, action: 'replace', count: 2, content: 'alpha' },
-          { line: 4, action: 'delete', count: 1 },
+          { line: 3, action: 'replace', end_line: 4, content: 'alpha' },
+          { line: 4, action: 'delete' },
         ],
       },
       ctx,
@@ -258,8 +258,8 @@ describe('line_edits validation', () => {
         file: 'a.ts',
         content_hash: 'feedface',
         line_edits: [
-          { line: 3, action: 'replace', count: 1, content: 'alpha' },
-          { line: 4, action: 'replace', count: 1, content: 'beta' },
+          { line: 3, action: 'replace', content: 'alpha' },
+          { line: 4, action: 'replace', content: 'beta' },
         ],
       },
       ctx,
@@ -274,7 +274,7 @@ describe('line_edits validation', () => {
     const out = await handleEdit(
       {
         file: 'a.ts',
-        line_edits: [{ line: 2, action: 'move', count: 1 }],
+        line_edits: [{ line: 2, action: 'move' }],
       },
       mockCtx,
     );
@@ -287,7 +287,7 @@ describe('line_edits validation', () => {
     const out = await handleEdit(
       {
         file: 'a.ts',
-        line_edits: [{ line: 2, action: 'move', count: 1, destination: 0 }],
+        line_edits: [{ line: 2, action: 'move', destination: 0 }],
       },
       mockCtx,
     );
@@ -299,7 +299,7 @@ describe('line_edits validation', () => {
     const out = await handleEdit(
       {
         file: 'a.ts',
-        line_edits: [{ line: 2, action: 'move', count: 1, destination: 5, reindent: 'yes' as unknown as boolean }],
+        line_edits: [{ line: 2, action: 'move', destination: 5, reindent: 'yes' as unknown as boolean }],
       },
       mockCtx,
     );
@@ -319,7 +319,7 @@ describe('line_edits validation', () => {
         file: 'a.ts',
         content_hash: 'feedface',
         line_edits: [
-          { line: 3, action: 'move', count: 2, destination: 10, reindent: true },
+          { line: 3, action: 'move', end_line: 4, destination: 10, reindent: true },
         ],
       },
       ctx,
@@ -327,7 +327,7 @@ describe('line_edits validation', () => {
 
     const [, payload] = atlsBatchQuery.mock.calls.at(-1)! as [string, Record<string, unknown>];
     expect(payload.line_edits).toEqual([
-      { line: 3, action: 'move', count: 2, destination: 10, reindent: true },
+      { line: 3, action: 'move', end_line: 4, destination: 10, reindent: true },
     ]);
   });
 });

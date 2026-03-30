@@ -48,6 +48,26 @@ function extractLinesFromSearchResult(result: unknown): number[] {
   return lines;
 }
 
+/** Paired end_lines for search hits: end_line from result when available, otherwise same as line. */
+function extractEndLinesFromSearchResult(result: unknown): number[] {
+  if (!result || typeof result !== 'object') return [];
+  const obj = result as Record<string, unknown>;
+  const results = obj.results as Array<Record<string, unknown>> | undefined;
+  if (!Array.isArray(results)) return [];
+  const seen = new Set<string>();
+  const endLines: number[] = [];
+  for (const r of results) {
+    const file = (r.file ?? r.path ?? r.file_path) as string | undefined;
+    if (typeof file !== 'string' || !file || seen.has(file)) continue;
+    seen.add(file);
+    const el = r.end_line;
+    const ln = r.line;
+    const start = typeof ln === 'number' && Number.isFinite(ln) && ln > 0 ? ln : 1;
+    endLines.push(typeof el === 'number' && Number.isFinite(el) && el >= start ? el : start);
+  }
+  return endLines;
+}
+
 // ---------------------------------------------------------------------------
 // search.code
 // ---------------------------------------------------------------------------
@@ -69,19 +89,21 @@ export const handleSearchCode: OpHandler = async (params, ctx) => {
     const tk = countTokensSync(resultStr);
     let resultFilePaths = extractFilePathsFromSearchResult(result);
     let resultLines = extractLinesFromSearchResult(result);
+    let resultEndLines = extractEndLinesFromSearchResult(result);
     const maxPaths = params.max_file_paths;
     let cappedNote = '';
     if (typeof maxPaths === 'number' && maxPaths > 0 && resultFilePaths.length > maxPaths) {
       cappedNote = ` — paths capped to ${maxPaths}`;
       resultFilePaths = resultFilePaths.slice(0, maxPaths);
       resultLines = resultLines.slice(0, maxPaths);
+      resultEndLines = resultEndLines.slice(0, maxPaths);
     }
     return {
       kind: 'search_results', ok: true,
       refs: [`h:${hash}`],
       summary: `search: ${queries.join(', ')} → h:${hash} (${(tk / 1000).toFixed(1)}k tk)${cappedNote}`,
       tokens: tk,
-      content: { file_paths: resultFilePaths, lines: resultLines },
+      content: { file_paths: resultFilePaths, lines: resultLines, end_lines: resultEndLines },
     };
   } catch (searchErr) {
     return err('search', searchErr instanceof Error ? searchErr.message : String(searchErr));
@@ -106,12 +128,13 @@ export const handleSearchSymbol: OpHandler = async (params, ctx) => {
     const tk = countTokensSync(resultStr);
     const resultFilePaths = extractFilePathsFromSearchResult(result);
     const resultLines = extractLinesFromSearchResult(result);
+    const resultEndLines = extractEndLinesFromSearchResult(result);
     return {
       kind: 'symbol_refs', ok: true,
       refs: [`h:${hash}`],
       summary: `find_symbol: ${queries.join(', ')} → h:${hash} (${(tk / 1000).toFixed(1)}k tk)`,
       tokens: tk,
-      content: { file_paths: resultFilePaths, lines: resultLines },
+      content: { file_paths: resultFilePaths, lines: resultLines, end_lines: resultEndLines },
     };
   } catch (findErr) {
     return err('find_symbol', findErr instanceof Error ? findErr.message : String(findErr));
@@ -136,12 +159,13 @@ export const handleSearchUsage: OpHandler = async (params, ctx) => {
     const tk = countTokensSync(resultStr);
     const resultFilePaths = extractFilePathsFromSearchResult(result);
     const resultLines = extractLinesFromSearchResult(result);
+    const resultEndLines = extractEndLinesFromSearchResult(result);
     return {
       kind: 'symbol_refs', ok: true,
       refs: [`h:${hash}`],
       summary: `symbols: ${symbolNames.join(', ')} → h:${hash} (${(tk / 1000).toFixed(1)}k tk)`,
       tokens: tk,
-      content: { file_paths: resultFilePaths, lines: resultLines },
+      content: { file_paths: resultFilePaths, lines: resultLines, end_lines: resultEndLines },
     };
   } catch (symErr) {
     return err('symbols', symErr instanceof Error ? symErr.message : String(symErr));

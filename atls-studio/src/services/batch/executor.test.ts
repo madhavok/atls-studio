@@ -274,7 +274,7 @@ describe('executeUnifiedBatch intra-step snapshot line rebasing', () => {
             file: 'src/a.ts',
             line_edits: [
               { line: 5, action: 'insert_before', content: 'a\nb' },
-              { line: 15, action: 'replace', content: 'x', count: 1 },
+              { line: 15, action: 'replace', content: 'x' },
             ],
           },
         },
@@ -305,7 +305,7 @@ describe('executeUnifiedBatch intra-step snapshot line rebasing', () => {
             line_numbering: 'sequential',
             line_edits: [
               { line: 5, action: 'insert_before', content: 'a\nb' },
-              { line: 15, action: 'replace', content: 'x', count: 1 },
+              { line: 15, action: 'replace', content: 'x' },
             ],
           },
         },
@@ -339,7 +339,7 @@ describe('executeUnifiedBatch intra-step snapshot line rebasing', () => {
                 file: 'src/a.ts',
                 line_edits: [
                   { line: 5, action: 'insert_before', content: 'a\nb' },
-                  { line: 10, action: 'replace', content: 'x', count: 1 },
+                  { line: 10, action: 'replace', content: 'x' },
                 ],
               },
             ],

@@ -184,6 +184,9 @@ export interface ExecutionPolicy {
    *  files modified by change steps, ensuring subsequent steps see the
    *  post-mutation hash. Default: true. */
   auto_reread_after_mutation?: boolean;
+  /** Auto-compact all non-pinned context after a successful static verify step
+   *  (verify.build, verify.lint, verify.typecheck). Default: true. */
+  compact_context_on_verify_success?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -748,12 +751,11 @@ export interface AnalyzeExtractPlanParams {
 export interface LineEdit {
   /** 1-based line, or `"end"` / negative index (resolved in Rust against file lines). */
   line?: number | string;
-  /** If set, overrides count: 1-based inclusive end line for replace/delete/move spans. */
+  /** 1-based inclusive end line. Omitting defaults to `line` (single-line span). */
   end_line?: number;
   symbol?: string;
   position?: string;
   action: 'replace' | 'insert_before' | 'insert_after' | 'delete' | 'move' | 'replace_body';
-  count?: number;
   content?: string;
   destination?: number;
   reindent?: boolean;

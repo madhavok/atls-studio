@@ -74,19 +74,17 @@ const cache = new LRUCache(CACHE_MAX);
 // FNV-1a hash (matches contextHash.ts but inlined to avoid import cycles)
 // ---------------------------------------------------------------------------
 
-function fnv1a32(content: string, offsetBasis: number): number {
-  let hash = offsetBasis;
-  for (let i = 0; i < content.length; i++) {
-    hash ^= content.charCodeAt(i);
-    hash = Math.imul(hash, 0x01000193);
-  }
-  return hash >>> 0;
-}
-
 function quickHash(content: string): string {
-  const h1 = fnv1a32(content, 0x811c9dc5);
-  const h2 = fnv1a32(content, 0x050c5d1f);
-  return h1.toString(16).padStart(8, '0') + h2.toString(16).padStart(8, '0');
+  let h1 = 0x811c9dc5;
+  let h2 = 0x050c5d1f;
+  for (let i = 0; i < content.length; i++) {
+    const c = content.charCodeAt(i);
+    h1 ^= c;
+    h1 = Math.imul(h1, 0x01000193);
+    h2 ^= c;
+    h2 = Math.imul(h2, 0x01000193);
+  }
+  return ((h1 >>> 0).toString(16).padStart(8, '0') + (h2 >>> 0).toString(16).padStart(8, '0'));
 }
 
 // ---------------------------------------------------------------------------

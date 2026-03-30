@@ -399,6 +399,9 @@ export const handleReadLines: OpHandler = async (params, ctx) => {
   if (!rlLines && fp != null && startLine != null && endLine != null) {
     rlLines = `${startLine}-${endLine}`;
   }
+  if (!rlLines && fp != null && ((startLine != null) !== (endLine != null))) {
+    return err('read_lines: start_line and end_line must be provided together (paired range required).');
+  }
   const refHint = ref && !rlLines ? ` Ref "${ref}" has no line range — provide lines (e.g. "15-50"), start_line + end_line, or use h:XXXX:15-50 format.` : '';
   if (!rlLines) {
     return err(`read_lines: requires lines (e.g. "15-50") or ref (h:XXXX:15-50) or (start_line + end_line).${refHint}`);

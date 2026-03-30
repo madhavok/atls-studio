@@ -14796,16 +14796,18 @@ pub async fn atls_batch_query(
                                         } else {
                                             adjust_line_for_shifts(start, &prior_shifts)
                                         };
-                                        let orig_count = match end {
-                                            Some(e) => e.saturating_sub(start) + 1,
-                                            None => (current.lines().count() as u32).saturating_sub(start) + 1,
+                                        let adj_end = match end {
+                                            Some(e) => {
+                                                let span = e.saturating_sub(start);
+                                                adj_start + span
+                                            }
+                                            None => current.lines().count() as u32,
                                         };
                                         LineEdit {
                                             line: crate::LineCoordinate::Abs(adj_start),
                                             action: "delete".to_string(),
                                             content: None,
-                                            count: Some(orig_count),
-                                            end_line: None,
+                                            end_line: Some(adj_end),
                                             symbol: None,
                                             position: None,
                                             destination: None,
@@ -15028,7 +15030,6 @@ pub async fn atls_batch_query(
                                 line: crate::LineCoordinate::Abs(adjusted_line),
                                 action: upd.get("action").and_then(|v| v.as_str()).unwrap_or("replace").to_string(),
                                 content: upd.get("content").and_then(|v| v.as_str()).map(|s| s.to_string()),
-                                count: upd.get("count").and_then(|v| v.as_u64()).map(|n| n as u32),
                                 end_line: upd.get("end_line").and_then(|v| v.as_u64()).map(|n| n as u32),
                                 symbol: None,
                                 position: None,

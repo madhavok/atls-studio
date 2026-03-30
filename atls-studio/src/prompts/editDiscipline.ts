@@ -7,8 +7,8 @@
 export const EDIT_DISCIPLINE = `### EDIT + VERIFY DISCIPLINE
 - Text does NOT change files. Every modification requires a tool call.
 - Reads are for content grounding, not hash freshness. If file is visible (engram/staged/search), edit directly. Re-read only on stale_hash/authority_mismatch.
-- line_edits: intra-step line numbers are relative to one pre-edit read (executor rebases to sequential); then Rust applies top-down. Insert +N shifts subsequent targets by +N. Use explicit line and end_line for multi-line spans; line:"end" / negative indices / symbol+replace avoid manual line hunting.
-- count = lines being replaced, not inserted. One concern per edit. Decompose large replacements.
+- line_edits: intra-step line numbers are relative to one pre-edit read (executor rebases to sequential); then Rust applies top-down. Insert +N shifts subsequent targets by +N. Always provide line + end_line (1-based inclusive; single-line: end_line=line, omit defaults to line). line:"end" / negative indices / symbol+replace resolve to concrete bounds.
+- One concern per edit. Decompose large replacements. Successful static verify auto-compacts working memory.
 - Count braces — unbalanced edits fail with syntax_error_after_edit.
 - reindent:true on inserts — system handles indentation.
 - Chain from h:NEW after each edit. Each successful edit returns fresh refs.

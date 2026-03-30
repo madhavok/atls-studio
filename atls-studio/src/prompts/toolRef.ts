@@ -29,8 +29,8 @@ search.memory query:text regions?:active,archived,bb max_results?:N
 analyze.deps|structure|impact|blast_radius file_paths:path1 filter?:pattern limit?:N
 analyze.calls symbol_names:name1,name2 depth?:N filter?:pattern limit?:N
 analyze.extract_plan file_path:path strategy?:by_cluster|by_prefix|by_kind min_lines?:N min_complexity?:N
-change.edit file_path:path line_edits:[{line:N,action:replace,count:M,content:"new code"}]
-  line: end | -1 | symbol:fn(name) — replace/replace_body get end_line from symbol span
+change.edit file_path:path line_edits:[{line:N,end_line:N,action:replace,content:"new code"}]
+  line + end_line: 1-based inclusive span (single-line: end_line=line, omit end_line defaults to line). end | -1 | symbol:fn(name) resolve to concrete bounds.
   actions: replace, insert_before, insert_after, delete, move
   Intra-step coords: snapshot-style (relative to file before any edit in step); executor rebases
   legacy: edits:[{file:path,old:text,new:text}] — short unambiguous replacements only
@@ -68,7 +68,7 @@ intent.extract source_file:path symbol_names?:s1 target_file:path
 
 ### Examples
 s1 search.code queries:auth
-s2 change.edit file_path:src/api.ts line_edits:[{line:10,action:replace,count:1,content:"const x = 1;"}]
+s2 change.edit file_path:src/api.ts line_edits:[{line:10,end_line:10,action:replace,content:"const x = 1;"}]
 s3 verify.typecheck if:s2.ok
 
 r1 read.context type:smart file_paths:src/api.ts,src/db.ts
@@ -77,7 +77,7 @@ p2 session.pin hashes:h:abc123,h:def456
 -- WRONG: session.pin hashes:h:r1  (r1 is a step ID, not a content hash — use in:r1.refs instead)
 
 u1 intent.understand file_paths:src/api.ts
-e1 intent.edit file_path:src/api.ts line_edits:[{line:10,action:replace,count:1,content:"const x = 1;"}]
+e1 intent.edit file_path:src/api.ts line_edits:[{line:10,end_line:10,action:replace,content:"const x = 1;"}]
 
 Path discipline: if a filename is ambiguous (exists in multiple dirs), use search.symbol or the project tree to confirm the directory before read.lines. Wrong paths waste rounds and fragment spin tracking.
 
@@ -87,6 +87,7 @@ file_paths: array of paths/h:refs (aliases: files, paths)
 content_hash: file content identity hash (aliases: snapshot_hash, hash)
 h: short hash pointer (h:XXXX); refs/hashes: array of h:XXXX pointers
 lines: line count in response objects (aliases: total_lines, line_count)
+start_line + end_line: always paired for line ranges (reads and edits); single-line = end_line equals start_line
 symbol_names: symbol list (aliases: symbol, symbol_name); query/queries, key/keys, cmd also auto-resolved
 
 ### Task Recipes (follow the matching recipe)

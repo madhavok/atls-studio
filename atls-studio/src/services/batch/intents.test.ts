@@ -308,7 +308,7 @@ describe('intent helpers', () => {
 // ---------------------------------------------------------------------------
 
 describe('intent.edit resolver', () => {
-  const params = { file_path: 'src/auth.ts', line_edits: [{ line: 10, action: 'replace', count: 1, content: 'x' }], _intentId: 'e1' };
+  const params = { file_path: 'src/auth.ts', line_edits: [{ line: 10, action: 'replace', content: 'x' }], _intentId: 'e1' };
 
   it('empty context → emits read + edit + retry + verify', () => {
     const result = resolveEdit(params, emptyContext());
@@ -553,8 +553,8 @@ describe('intent metrics', () => {
 describe('intent.edit_multi resolver', () => {
   const params = {
     edits: [
-      { file_path: 'src/a.ts', line_edits: [{ line: 10, action: 'replace', count: 1, content: 'x' }] },
-      { file_path: 'src/b.ts', line_edits: [{ line: 20, action: 'replace', count: 2, content: 'y' }] },
+      { file_path: 'src/a.ts', line_edits: [{ line: 10, action: 'replace', content: 'x' }] },
+      { file_path: 'src/b.ts', line_edits: [{ line: 20, action: 'replace', end_line: 21, content: 'y' }] },
     ],
     _intentId: 'em1',
   };
@@ -586,7 +586,7 @@ describe('intent.edit_multi resolver', () => {
 
   it('single file → verify uses step_ok on that edit', () => {
     const singleParams = {
-      edits: [{ file_path: 'src/a.ts', line_edits: [{ line: 5, action: 'replace', count: 1, content: 'z' }] }],
+      edits: [{ file_path: 'src/a.ts', line_edits: [{ line: 5, action: 'replace', content: 'z' }] }],
       _intentId: 'em2',
     };
     const result = resolveEditMulti(singleParams, emptyContext());
@@ -857,7 +857,6 @@ describe('intent.search_replace resolver', () => {
     const editStep = result.steps.find(s => s.use === 'change.edit');
     expect(editStep!.with!.line_edits).toEqual([{
       action: 'replace',
-      count: 1,
       content: 'logger.info',
     }]);
     expect(editStep!.in).toMatchObject({

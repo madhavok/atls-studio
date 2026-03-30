@@ -126,8 +126,7 @@ function effectiveLineSpanCount(e: Record<string, unknown>): number {
   const line = snapshotLineForRebase(e);
   const endLine = typeof e.end_line === 'number' && Number.isFinite(e.end_line) ? e.end_line : null;
   if (endLine != null && line > 0) return Math.max(0, endLine - line + 1);
-  const count = typeof e.count === 'number' && Number.isFinite(e.count) ? e.count : 1;
-  return count;
+  return 1;
 }
 
 function computeSingleEditNetDelta(e: Record<string, unknown>): number {
@@ -1299,6 +1298,14 @@ export async function executeUnifiedBatch(
     if (output.kind === 'verify_result') {
       verifyResults.push({ step_id: step.id, passed: output.ok, summary: output.summary, classification: output.classification });
       buildVerifyArtifact(step, output, results, stepOutputs, snapshotTracker, ctx);
+
+      const STATIC_VERIFY_OPS = new Set(['verify.build', 'verify.lint', 'verify.typecheck']);
+      if (output.ok && STATIC_VERIFY_OPS.has(step.use) && (policy?.compact_context_on_verify_success ?? true)) {
+        const { compacted, freedTokens } = ctx.store().compactChunks(['*'], { confirmWildcard: true });
+        if (compacted > 0) {
+          console.log(`[executor] post-verify compact: ${compacted} chunks compacted (${(freedTokens / 1000).toFixed(1)}k freed)`);
+        }
+      }
     }
 
     // Record result

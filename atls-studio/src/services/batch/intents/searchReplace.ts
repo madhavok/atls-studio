@@ -49,20 +49,26 @@ export const resolveSearchReplace: IntentResolver = (
 
   const editStepIds: string[] = [];
 
+  const replaceSpanLines = Math.max(1, oldText.split('\n').length);
+
   for (let i = 0; i < maxMatches; i++) {
     const editId = makeStepId(intentId, `edit_${i}`);
     editStepIds.push(editId);
 
+    const editWith: Record<string, unknown> = {
+      line_edits: [{
+        action: 'replace',
+        content: newText,
+      }],
+    };
+    if (replaceSpanLines > 1) {
+      editWith.replace_span_lines = replaceSpanLines;
+    }
+
     steps.push({
       id: editId,
       use: 'change.edit',
-      with: {
-        line_edits: [{
-          action: 'replace',
-          count: oldText.split('\n').length,
-          content: newText,
-        }],
-      },
+      with: editWith,
       in: {
         file_path: { from_step: searchId, path: `content.file_paths.${i}` },
         line: { from_step: searchId, path: `content.lines.${i}` },

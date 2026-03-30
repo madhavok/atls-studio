@@ -203,7 +203,6 @@ mod tests {
             line: LineCoordinate::Abs(line),
             action: action.to_string(),
             content: content.map(|s| s.to_string()),
-            count: None,
             end_line: None,
             symbol: None,
             position: None,

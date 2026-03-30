@@ -1726,11 +1726,12 @@ fn universal_keywords() -> &'static std::collections::HashSet<&'static str> {
 /// Extract all referenced identifiers from content, excluding language keywords.
 /// Returns a deduplicated, sorted, newline-separated identifier list.
 pub fn extract_refs(content: &str) -> String {
+    use std::sync::OnceLock;
+    static RE: OnceLock<regex::Regex> = OnceLock::new();
+    let re = RE.get_or_init(|| regex::Regex::new(r"\b[A-Za-z_$][A-Za-z0-9_$]*\b").unwrap());
+
     let neutralized = neutralize_comments_and_strings(content);
     let keywords = universal_keywords();
-
-    let re = regex::Regex::new(r"\b[A-Za-z_$][A-Za-z0-9_$]*\b").unwrap();
-
     let mut refs = std::collections::BTreeSet::new();
     for m in re.find_iter(&neutralized) {
         let ident = m.as_str();
