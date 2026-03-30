@@ -7,6 +7,7 @@ import { useSwarmStore } from '../../stores/swarmStore';
 import { useCostStore, formatCost, calculateCost, type AIProvider as CostProvider } from '../../stores/costStore';
 import { useAttachmentStore, type ChatAttachment, consumeInternalDragPayload } from '../../stores/attachmentStore';
 import { streamChat, stopChat, getProviderFromModel, resetStaticPromptCache, resetProjectTreeCache, type ChatMessage, type AIConfig, type AIProvider, type WorkspaceContext, type ChatMode } from '../../services/aiService';
+import type { SubAgentProgressEvent } from '../../services/batch/types';
 import { orchestrator } from '../../services/orchestrator';
 import { ModelModeSelector } from '../ModelModeSelector';
 import { Settings } from '../Settings';
@@ -899,6 +900,21 @@ type BatchStepCall = {
   thoughtSignature?: string;
 };
 
+/** Map UI child row id → batch step id used by delegate onSubagentProgress */
+function batchStepSubagentLookupKey(childCall: BatchStepCall): string {
+  const a = childCall.args as Record<string, unknown> | undefined;
+  if (a && typeof a.step_id === 'string' && a.step_id.trim()) return a.step_id.trim();
+  const id = childCall.id;
+  const sep = '::';
+  const idx = id.indexOf(sep);
+  if (idx >= 0) return id.slice(idx + sep.length);
+  if (id.startsWith('batch:')) {
+    const parts = id.split(':');
+    if (parts.length >= 4) return parts[2];
+  }
+  return id;
+}
+
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? value as Record<string, unknown>
@@ -1130,7 +1146,13 @@ const MessageBatchToolCalls = memo(function MessageBatchToolCalls({ toolCall }: 
   );
 });
 
-const StreamingBatchToolCalls = memo(function StreamingBatchToolCalls({ toolCall }: { toolCall: ToolCall }) {
+const StreamingBatchToolCalls = memo(function StreamingBatchToolCalls({
+  toolCall,
+  subagentProgressByStepRef,
+}: {
+  toolCall: ToolCall;
+  subagentProgressByStepRef: React.RefObject<Map<string, SubAgentProgressEvent>>;
+}) {
   const childCalls = useMemo(() => expandBatchToolCall(toolCall), [toolCall]);
   if (childCalls.length === 0) {
     return <ToolSegmentBubble toolCall={toolCall} />;
@@ -1138,21 +1160,35 @@ const StreamingBatchToolCalls = memo(function StreamingBatchToolCalls({ toolCall
   return (
     <div className="space-y-1">
       <BatchGroupLabel stepCount={childCalls.length} />
-      {childCalls.map((childCall) => (
-        <ToolSegmentBubble
-          key={childCall.id}
-          toolCall={{
-            id: childCall.id,
-            name: childCall.name,
-            args: childCall.args,
-            result: childCall.result,
-            status: childCall.status,
-            startTime: toolCall.startTime,
-            endTime: toolCall.endTime,
-            thoughtSignature: childCall.thoughtSignature,
-          }}
-        />
-      ))}
+      {childCalls.map((childCall) => {
+        const isDelegate = typeof childCall.name === 'string' && childCall.name.startsWith('delegate.');
+        const stepKey = batchStepSubagentLookupKey(childCall);
+        const progress = isDelegate ? subagentProgressByStepRef.current?.get(stepKey) : undefined;
+        return (
+          <div key={childCall.id} className="space-y-0.5">
+            <ToolSegmentBubble
+              toolCall={{
+                id: childCall.id,
+                name: childCall.name,
+                args: childCall.args,
+                result: childCall.result,
+                status: childCall.status,
+                startTime: toolCall.startTime,
+                endTime: toolCall.endTime,
+                thoughtSignature: childCall.thoughtSignature,
+              }}
+            />
+            {progress && !progress.done && (
+              <div className="ml-6 mt-0.5 flex items-center gap-1.5 text-[11px] text-studio-muted animate-pulse">
+                <span className="inline-block h-1.5 w-1.5 rounded-full bg-studio-accent animate-ping" />
+                <span>
+                  Subagent R{progress.round}: {progress.toolName} — {progress.status}
+                </span>
+              </div>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 });
@@ -2103,11 +2139,13 @@ const ToolSegmentBubble = memo(function ToolSegmentBubble({ toolCall }: { toolCa
 const StreamingBubble = memo(function StreamingBubble({ 
   segmentsRef,
   revisionRef,
+  subagentProgressByStepRef,
   isGenerating, 
   onScrollToBottom,
 }: { 
   segmentsRef: React.RefObject<StreamSegment[]>;
   revisionRef: React.RefObject<number>;
+  subagentProgressByStepRef: React.RefObject<Map<string, SubAgentProgressEvent>>;
   isGenerating: boolean;
   onScrollToBottom?: () => void;
 }) {
@@ -2255,6 +2293,7 @@ const StreamingBubble = memo(function StreamingBubble({
               <StreamingBatchToolCalls
                 key={`tool-${segment.toolCall.id}`}
                 toolCall={segment.toolCall}
+                subagentProgressByStepRef={subagentProgressByStepRef}
               />
             ) : (
               <ToolSegmentBubble 
@@ -2404,6 +2443,8 @@ export function AiChat() {
   // RAF-based StreamingBubble always detects changes (even when array length
   // and last-segment content happen to match a previous snapshot).
   const segmentsRevisionRef = useRef<number>(0);
+  /** Live subagent tool progress keyed by batch step id (delegate.* steps) */
+  const subagentProgressByStepRef = useRef<Map<string, SubAgentProgressEvent>>(new Map());
   // Accumulate text from prior rounds before onClear; merged into final/partial message
   const accumulatedTextRef = useRef<string>('');
   const isStreamingRef = useRef(false);
@@ -2914,6 +2955,7 @@ export function AiChat() {
     setIsGenerating(true);
     streamingSegmentsRef.current = [];
     seenToolCallIds.current.clear();
+    subagentProgressByStepRef.current.clear();
 
     // Check for API key
     if (!hasApiKey()) {
@@ -3104,6 +3146,11 @@ export function AiChat() {
             }
           }
           streamingSegmentsRef.current = streamingSegmentsRef.current.filter(s => s.type === 'tool');
+          subagentProgressByStepRef.current.clear();
+          segmentsRevisionRef.current++;
+        },
+        onSubagentProgress: (stepId, progress) => {
+          subagentProgressByStepRef.current.set(stepId, progress);
           segmentsRevisionRef.current++;
         },
         onToolCall: (toolCall) => {
@@ -3295,6 +3342,7 @@ export function AiChat() {
           streamingSegmentsRef.current = [];
           accumulatedTextRef.current = '';
           seenToolCallIds.current.clear();
+          subagentProgressByStepRef.current.clear();
           setIsGenerating(false);
           clearToolCalls();
           if (useAppStore.getState().agentProgress.stoppedReason === 'completed') {
@@ -3311,6 +3359,7 @@ export function AiChat() {
       setIsGenerating(false);
       streamingSegmentsRef.current = [];
       seenToolCallIds.current.clear();
+      subagentProgressByStepRef.current.clear();
     }
   };
 
@@ -3348,6 +3397,7 @@ export function AiChat() {
     setIsGenerating(true);
     streamingSegmentsRef.current = [];
     seenToolCallIds.current.clear();
+    subagentProgressByStepRef.current.clear();
 
     // Auto-initialize ATLS if needed
     if (projectPath && !atlsInitialized) {
@@ -3431,6 +3481,11 @@ export function AiChat() {
             }
           }
           streamingSegmentsRef.current = streamingSegmentsRef.current.filter(s => s.type === 'tool');
+          subagentProgressByStepRef.current.clear();
+          segmentsRevisionRef.current++;
+        },
+        onSubagentProgress: (stepId, progress) => {
+          subagentProgressByStepRef.current.set(stepId, progress);
           segmentsRevisionRef.current++;
         },
         onToolCall: (toolCall) => {
@@ -3579,6 +3634,7 @@ export function AiChat() {
           streamingSegmentsRef.current = [];
           accumulatedTextRef.current = '';
           seenToolCallIds.current.clear();
+          subagentProgressByStepRef.current.clear();
           setIsGenerating(false);
           clearToolCalls();
           if (useAppStore.getState().agentProgress.stoppedReason === 'completed') {
@@ -3595,6 +3651,7 @@ export function AiChat() {
       setIsGenerating(false);
       streamingSegmentsRef.current = [];
       seenToolCallIds.current.clear();
+      subagentProgressByStepRef.current.clear();
     }
   }, [isGenerating, agentCanContinue, setAgentCanContinue, messages, addMessage, setIsGenerating, projectPath, atlsInitialized, initAtls, getWorkspaceContext, getAIConfig, clearToolCalls, upsertToolCall, setContextUsage, chatMode]);
 
@@ -3837,6 +3894,7 @@ export function AiChat() {
             <StreamingBubble
               segmentsRef={streamingSegmentsRef}
               revisionRef={segmentsRevisionRef}
+              subagentProgressByStepRef={subagentProgressByStepRef}
               isGenerating={isGenerating}
               onScrollToBottom={() => scrollToBottom('instant')}
             />
@@ -3941,6 +3999,7 @@ export function AiChat() {
                   streamingSegmentsRef.current = [];
                   accumulatedTextRef.current = '';
                   seenToolCallIds.current.clear();
+                  subagentProgressByStepRef.current.clear();
                   clearToolCalls();
                   setAgentCanContinue(false);
                 }}

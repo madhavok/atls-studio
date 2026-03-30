@@ -714,6 +714,9 @@ function repairAnthropicToolPairing(messages: ApiMessage[]): ApiMessage[] {
               content: missing.map((id) => ({ type: 'tool_result', tool_use_id: id, content: '[cancelled]' })),
             });
           }
+        } else if (next?.role === 'user') {
+          out.push(next);
+          i++;
         }
         continue;
       }
@@ -746,7 +749,7 @@ function repairAnthropicToolPairing(messages: ApiMessage[]): ApiMessage[] {
     out.push(msg);
   }
 
-  // Final safety check: log any remaining mispairing
+  // Final safety net: repair any remaining mispairing the main loop missed
   for (let i = 0; i < out.length; i++) {
     const m = out[i];
     if (m.role === 'assistant' && Array.isArray(m.content)) {
@@ -756,7 +759,15 @@ function repairAnthropicToolPairing(messages: ApiMessage[]): ApiMessage[] {
         const covered = next?.role === 'user' ? collectToolResultIdsFromBlocks(next.content) : new Set<string>();
         const uncovered = ids.filter((id) => !covered.has(id));
         if (uncovered.length > 0) {
-          console.error('[aiService] PAIRING BUG after repair: tool_use IDs without tool_result:', uncovered, 'at msg index', i);
+          console.error('[aiService] PAIRING BUG after repair — inserting synthetic tool_results for:', uncovered, 'at msg index', i);
+          if (next?.role === 'user') {
+            out[i + 1] = { role: 'user', content: prependCancelledToolResults(next.content, uncovered) };
+          } else {
+            out.splice(i + 1, 0, {
+              role: 'user',
+              content: uncovered.map((id) => ({ type: 'tool_result', tool_use_id: id, content: '[cancelled]' })),
+            });
+          }
         }
       }
     }
@@ -972,6 +983,8 @@ export interface StreamCallbacks {
   onError: (error: Error) => void;
   onDone: () => void;
   onClear?: () => void;
+  /** Subagent progress from delegate.* batch steps */
+  onSubagentProgress?: (stepId: string, progress: import('./batch/types').SubAgentProgressEvent) => void;
   // Typed stream protocol callbacks
   onTextStart?: (id: string) => void;
   onTextEnd?: (id: string) => void;
@@ -2280,6 +2293,7 @@ async function streamChatViaTauri(
 
           const execution = await executeToolCallDetailed(tc.name, tc.args, {
             onBatchStepProgress,
+            onSubagentProgress: safeCallbacks.onSubagentProgress,
           });
           result = execution.displayText;
 
@@ -2702,7 +2716,7 @@ function getWorkspaceRelPath(name?: string): string | null {
   return ws.path;
 }
 
-function createHandlerContext(options?: { isSwarmAgent?: boolean; swarmTerminalId?: string }): HandlerContext {
+function createHandlerContext(options?: { isSwarmAgent?: boolean; swarmTerminalId?: string; onSubagentProgress?: (stepId: string, progress: import('./batch/types').SubAgentProgressEvent) => void }): HandlerContext {
   // Cast through unknown: ContextStoreState is a superset of ContextStoreApi
   // but TS can't verify structural compatibility with the minimal projection.
   const store = useContextStore.getState as unknown as HandlerContext['store'];
@@ -2729,6 +2743,7 @@ function createHandlerContext(options?: { isSwarmAgent?: boolean; swarmTerminalI
     expandSetRefsInHashes: (hashes: string[]) => expandSetRefsInHashes(hashes, setLookup),
     expandFilePathRefs: (rawPaths: string[]) => expandFilePathRefs(rawPaths, hashLookup, setLookup),
     get toolLoopState() { return _activeSession?.toolLoopState ?? _toolLoopState; },
+    onSubagentProgress: options?.onSubagentProgress,
   };
 }
 
@@ -2760,7 +2775,7 @@ function buildBatchSyntheticToolCalls(result: UnifiedBatchResult, batchArgs: Rec
 async function executeToolCallDetailed(
   toolName: string,
   args: Record<string, unknown>,
-  options?: { swarmTerminalId?: string; fileClaims?: string[]; onBatchStepProgress?: OnBatchStepComplete },
+  options?: { swarmTerminalId?: string; fileClaims?: string[]; onBatchStepProgress?: OnBatchStepComplete; onSubagentProgress?: (stepId: string, progress: import('./batch/types').SubAgentProgressEvent) => void },
 ): Promise<ToolExecutionResult> {
   console.log(`[aiService] Tool: ${toolName}`, args);
   
@@ -2785,7 +2800,7 @@ async function executeToolCallDetailed(
         const resolved = await resolveToolParams(args);
         Object.assign(args, resolved);
 
-        const ctx = createHandlerContext({ swarmTerminalId: options?.swarmTerminalId });
+        const ctx = createHandlerContext({ swarmTerminalId: options?.swarmTerminalId, onSubagentProgress: options?.onSubagentProgress });
         const request = args as unknown as UnifiedBatchRequest;
         if (!request.version) (request as unknown as Record<string, unknown>).version = '1.0';
         if (!request.steps) return { displayText: 'batch: ERROR missing steps array' };

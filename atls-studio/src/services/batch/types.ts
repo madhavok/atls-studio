@@ -294,6 +294,22 @@ export interface UnifiedBatchResult {
 }
 
 // ---------------------------------------------------------------------------
+// Subagent Progress — progress events from delegate.* subagent execution
+// ---------------------------------------------------------------------------
+
+/** Progress event from a subagent executing inside a delegate.* step. */
+export interface SubAgentProgressEvent {
+  /** Tool call the subagent is executing */
+  toolName: string;
+  /** Human-readable status line */
+  status: string;
+  /** Subagent round number */
+  round: number;
+  /** Whether this tool call is complete */
+  done: boolean;
+}
+
+// ---------------------------------------------------------------------------
 // Handler Context — dependencies injected into every op handler
 // ---------------------------------------------------------------------------
 
@@ -321,6 +337,8 @@ export interface HandlerContext {
   getStepOutput?: (stepId: string) => StepOutput | undefined;
   /** Iterate all step outputs in the current batch (for session.pin materialization). */
   forEachStepOutput?: (fn: (stepId: string, output: StepOutput) => void) => void;
+  /** Callback for subagent progress (delegate.* steps) */
+  onSubagentProgress?: (stepId: string, progress: SubAgentProgressEvent) => void;
 }
 
 export type ExpandedFilePath =
@@ -589,6 +607,7 @@ export interface TaskCompleteRecord {
 export type OpHandler = (
   params: Record<string, unknown>,
   ctx: HandlerContext,
+  stepId?: string,
 ) => Promise<StepOutput>;
 
 // ---------------------------------------------------------------------------

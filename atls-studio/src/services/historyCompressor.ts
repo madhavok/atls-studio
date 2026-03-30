@@ -225,6 +225,25 @@ function applyRollingHistoryWindow(
     history.splice(idx, 1);
   }
 
+  // Verify tool pairing integrity after splicing — if an assistant with
+  // tool_use blocks lost its paired user message, re-insert a synthetic one
+  // so downstream repairAnthropicToolPairing doesn't see orphaned tool_use.
+  for (let i = 0; i < history.length; i++) {
+    const msg = history[i];
+    if (msg.role !== 'assistant' || !Array.isArray(msg.content)) continue;
+    const toolUseIds = (msg.content as Array<{ type?: string; id?: string }>)
+      .filter(b => b.type === 'tool_use' && b.id)
+      .map(b => b.id!);
+    if (toolUseIds.length === 0) continue;
+    const next = history[i + 1];
+    if (next?.role !== 'user' || !Array.isArray(next.content)) {
+      history.splice(i + 1, 0, {
+        role: 'user',
+        content: toolUseIds.map(id => ({ type: 'tool_result', tool_use_id: id, content: '[compressed — round evicted]' })),
+      });
+    }
+  }
+
   if (tokensSaved > 0) {
     useAppStore.getState().addRollingSavings(tokensSaved, excess);
   }

@@ -1217,7 +1217,7 @@ export async function executeUnifiedBatch(
 
     let output: StepOutput;
     try {
-      output = await handler(mergedParams, ctx);
+      output = await handler(mergedParams, ctx, step.id);
     } catch (e) {
       output = {
         kind: 'raw', ok: false, refs: [],

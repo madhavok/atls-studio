@@ -2,7 +2,7 @@
  * Delegate operation handlers — subagent dispatch for all roles.
  */
 
-import type { OpHandler, StepOutput } from '../types';
+import type { HandlerContext, OpHandler, StepOutput, SubAgentProgressEvent } from '../types';
 
 function ok(summary: string, refs: string[], content?: unknown): StepOutput {
   return { kind: 'raw', ok: true, refs, summary, content };
@@ -15,6 +15,8 @@ function err(summary: string): StepOutput {
 async function runDelegate(
   role: 'retriever' | 'design' | 'coder' | 'tester',
   params: Record<string, unknown>,
+  ctx?: HandlerContext,
+  stepId?: string,
 ): Promise<StepOutput> {
   try {
     const { useAppStore } = await import('../../../stores/appStore');
@@ -30,13 +32,23 @@ async function runDelegate(
     const queryWithContext = `${String(params.query || '')} [workspace_rev=${wsRev}]`;
 
     const { executeSubagent } = await import('../../subagentService');
+    const onProgress = (ctx?.onSubagentProgress && stepId)
+      ? (p: { toolName?: string; status?: string; round?: number; done?: boolean }) => {
+          ctx.onSubagentProgress!(stepId, {
+            toolName: p.toolName ?? 'unknown',
+            status: p.status ?? '',
+            round: p.round ?? 0,
+            done: p.done ?? false,
+          } satisfies SubAgentProgressEvent);
+        }
+      : undefined;
     const result = await executeSubagent({
       type: role,
       query: queryWithContext,
       focus_files: Array.isArray(params.focus_files) ? params.focus_files as string[] : undefined,
       max_tokens: typeof params.max_tokens === 'number' ? params.max_tokens as number : undefined,
       token_budget: typeof params.token_budget === 'number' ? params.token_budget as number : undefined,
-    });
+    }, onProgress);
 
     const pinnedHashes = result.refs
       .filter(r => r.pinned || r.type === 'staged')
@@ -60,18 +72,18 @@ async function runDelegate(
   }
 }
 
-export const handleDelegateRetrieve: OpHandler = async (params) => {
-  return runDelegate('retriever', params);
+export const handleDelegateRetrieve: OpHandler = async (params, ctx, stepId) => {
+  return runDelegate('retriever', params, ctx, stepId);
 };
 
-export const handleDelegateDesign: OpHandler = async (params) => {
-  return runDelegate('design', params);
+export const handleDelegateDesign: OpHandler = async (params, ctx, stepId) => {
+  return runDelegate('design', params, ctx, stepId);
 };
 
-export const handleDelegateCode: OpHandler = async (params) => {
-  return runDelegate('coder', params);
+export const handleDelegateCode: OpHandler = async (params, ctx, stepId) => {
+  return runDelegate('coder', params, ctx, stepId);
 };
 
-export const handleDelegateTest: OpHandler = async (params) => {
-  return runDelegate('tester', params);
+export const handleDelegateTest: OpHandler = async (params, ctx, stepId) => {
+  return runDelegate('tester', params, ctx, stepId);
 };
