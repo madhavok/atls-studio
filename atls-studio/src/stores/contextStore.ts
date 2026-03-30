@@ -649,38 +649,42 @@ function pruneStagedSnippetsToBudget(
   const removed: Array<{ key: string; snippet: StagedSnippet }> = [];
   let freed = 0;
 
-  const totalTokens = () => {
-    let total = 0;
-    next.forEach((snippet) => { total += snippet.tokens; });
-    return total;
-  };
+  // Compute running total once instead of re-iterating the Map each check.
+  let runningTotal = 0;
+  next.forEach((snippet) => { runningTotal += snippet.tokens; });
 
+  // Sort candidates once; iterate in eviction order instead of re-sorting per removal.
+  const sortedCandidates = Array.from(next.entries())
+    .sort(([keyA, snippetA], [keyB, snippetB]) => {
+      const priorityDelta = getStagePriority(keyA, snippetA) - getStagePriority(keyB, snippetB);
+      if (priorityDelta !== 0) return priorityDelta;
+      const suspectA = snippetA.suspectSince ?? 0;
+      const suspectB = snippetB.suspectSince ?? 0;
+      if (suspectA !== suspectB) return suspectB - suspectA;
+      return getStageRecency(snippetA) - getStageRecency(snippetB);
+    });
+
+  let candidateIdx = 0;
   const takeLowestValue = (): boolean => {
-    const candidates = Array.from(next.entries())
-      .sort(([keyA, snippetA], [keyB, snippetB]) => {
-        const priorityDelta = getStagePriority(keyA, snippetA) - getStagePriority(keyB, snippetB);
-        if (priorityDelta !== 0) return priorityDelta;
-        const suspectA = snippetA.suspectSince ?? 0;
-        const suspectB = snippetB.suspectSince ?? 0;
-        if (suspectA !== suspectB) return suspectB - suspectA;
-        return getStageRecency(snippetA) - getStageRecency(snippetB);
-      });
-    const victim = candidates[0];
-    if (!victim) return false;
-    next.delete(victim[0]);
-    removed.push({ key: victim[0], snippet: { ...victim[1], evictionReason: reason } });
-    freed += victim[1].tokens;
-    return true;
+    // Walk the pre-sorted list, skipping already-removed entries.
+    while (candidateIdx < sortedCandidates.length) {
+      const [key, snippet] = sortedCandidates[candidateIdx++];
+      if (!next.has(key)) continue; // already removed by a prior pass
+      next.delete(key);
+      removed.push({ key, snippet });
+      freed += snippet.tokens;
+      runningTotal -= snippet.tokens;
+      return true;
+    }
+    return false;
   };
 
-  while (totalTokens() > STAGED_TOTAL_HARD_CAP_TOKENS && takeLowestValue()) {
-    // Evict lowest-value staged entries until total is under hard cap (session.stage can otherwise grow without bound).
+  while (runningTotal > STAGED_TOTAL_HARD_CAP_TOKENS && takeLowestValue()) {
+    // Evict until total tokens are within budget.
   }
-
   while (getPersistentAnchorTokens(next) > STAGED_ANCHOR_BUDGET_TOKENS && takeLowestValue()) {
-    // Persistent anchors must remain tiny.
+    // Evict until durable anchor budget is within limits.
   }
-
   while (getPersistentAnchorCount(next) > MAX_PERSISTENT_STAGE_ENTRIES && takeLowestValue()) {
     // Keep durable staged anchor count bounded.
   }
@@ -4685,14 +4689,17 @@ export const useContextStore = create<ContextStoreState>()(
 
     function grepContent(text: string, maxHits: number): MemorySearchHit[] {
       const hits: MemorySearchHit[] = [];
+      // Lowercase full text once instead of per-line allocation.
+      const searchText = caseSensitive ? text : text.toLowerCase();
       let lineStart = 0;
       let lineNumber = 1;
-      while (lineStart <= text.length && hits.length < maxHits) {
-        let lineEnd = text.indexOf('\n', lineStart);
-        if (lineEnd === -1) lineEnd = text.length;
-        const rawLine = text.slice(lineStart, lineEnd);
-        const haystack = caseSensitive ? rawLine : rawLine.toLowerCase();
+      while (lineStart <= searchText.length && hits.length < maxHits) {
+        let lineEnd = searchText.indexOf('\n', lineStart);
+        if (lineEnd === -1) lineEnd = searchText.length;
+        const haystack = searchText.slice(lineStart, lineEnd);
         if (haystack.includes(needle)) {
+          // Use original text for display (preserves original casing).
+          const rawLine = text.slice(lineStart, lineEnd);
           hits.push({ line: rawLine.slice(0, 200), lineNumber });
         }
         lineStart = lineEnd + 1;
