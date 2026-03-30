@@ -875,6 +875,8 @@ interface ContextStoreState {
   setAwareness: (entry: AwarenessCacheEntry) => void;
   invalidateAwareness: (filePath: string) => void;
   invalidateAwarenessForPaths: (paths: string[]) => void;
+  /** Clear readSpan on chunks matching given paths so findReusableRead won't block re-reads (e.g. after rollback). */
+  clearReadSpansForPaths: (paths: string[]) => void;
   /** Clear cross-batch awareness cache without marking engrams suspect (e.g. coarse file_tree_changed). */
   invalidateAllAwarenessCache: () => void;
   getAwarenessCache: () => Map<string, AwarenessCacheEntry>;
@@ -4079,6 +4081,24 @@ export const useContextStore = create<ContextStoreState>()(
         if (newCache.has(k)) { newCache.delete(k); changed = true; }
       }
       return changed ? { awarenessCache: newCache } : {};
+    });
+  },
+
+  clearReadSpansForPaths: (paths: string[]): void => {
+    if (paths.length === 0) return;
+    const keys = new Set(paths.map(p => p.replace(/\\/g, '/').toLowerCase()));
+    set(state => {
+      let changed = false;
+      const newChunks = new Map(state.chunks);
+      for (const [hash, chunk] of newChunks) {
+        if (!chunk.readSpan) continue;
+        const rsKey = chunk.readSpan.filePath.replace(/\\/g, '/').toLowerCase();
+        if (keys.has(rsKey)) {
+          newChunks.set(hash, { ...chunk, readSpan: undefined });
+          changed = true;
+        }
+      }
+      return changed ? { chunks: newChunks } : {};
     });
   },
 

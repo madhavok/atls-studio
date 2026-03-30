@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useContextStore } from '../stores/contextStore';
 import { getPreflightAutomationDecision, runFreshnessPreflight } from './freshnessPreflight';
-import { clearFreshnessJournal, recordFreshnessJournal } from './freshnessJournal';
+import { clearFreshnessJournal, getFreshnessJournal, recordFreshnessJournal } from './freshnessJournal';
 
 function resetStore() {
   useContextStore.getState().resetSession();
@@ -319,5 +319,49 @@ describe('runFreshnessPreflight', () => {
       action: 'review_required',
       reason: 'low_confidence_rebind',
     });
+  });
+
+  it('does not apply stale journal lineDelta after clearFreshnessJournal (rollback scenario)', async () => {
+    recordFreshnessJournal({
+      source: 'src/foo.rs',
+      previousRevision: 'rev-A',
+      currentRevision: 'rev-B',
+      lineDelta: 3,
+      recordedAt: Date.now(),
+    });
+    expect(getFreshnessJournal('src/foo.rs')?.lineDelta).toBe(3);
+
+    clearFreshnessJournal('src/foo.rs');
+    expect(getFreshnessJournal('src/foo.rs')).toBeUndefined();
+
+    const store = useContextStore.getState();
+    store.addChunk('fn main() {}', 'raw', 'src/foo.rs', undefined, undefined, undefined, {
+      sourceRevision: 'rev-B',
+      viewKind: 'latest',
+    });
+    useContextStore.setState((state) => ({
+      chunks: new Map([...state.chunks].map(([key, chunk]) => [
+        key,
+        chunk.source === 'src/foo.rs'
+          ? { ...chunk, freshnessCause: 'same_file_prior_edit' as const, observedRevision: 'rev-A' }
+          : chunk,
+      ])),
+    }));
+
+    const result = await runFreshnessPreflight('draft', {
+      file: 'src/foo.rs',
+      line_edits: [{ line: 10, action: 'insert_before', content: '// fresh' }],
+    }, {
+      atlsBatchQuery: async (op: string, p: Record<string, unknown>) => {
+        if (op === 'context' && Array.isArray(p.file_paths)) {
+          return { results: [{ file: 'src/foo.rs', content: 'fn main() {}\n', content_hash: 'rev-A' }] };
+        }
+        return { results: [] };
+      },
+    });
+
+    expect(result.blocked).toBe(false);
+    const journalDecision = result.decisions.find(d => d.factors?.includes('journal_line_delta'));
+    expect(journalDecision).toBeUndefined();
   });
 });

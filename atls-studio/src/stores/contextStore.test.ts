@@ -1034,3 +1034,55 @@ describe('resolveLinkRefToHash', () => {
     expect(r).toBe('nonexistent.ts');
   });
 });
+
+// ---------------------------------------------------------------------------
+// clearReadSpansForPaths (rollback readSpan invalidation)
+// ---------------------------------------------------------------------------
+
+describe('clearReadSpansForPaths', () => {
+  beforeEach(() => resetStore());
+
+  it('nullifies readSpan on chunks matching a rolled-back path', () => {
+    addTestChunk('fn main() {}', 'raw', 'src/lib.rs', {
+      readSpan: { filePath: 'src/lib.rs', sourceRevision: 'abc123' },
+    });
+    const before = Array.from(useContextStore.getState().chunks.values()).find(c => c.source === 'src/lib.rs');
+    expect(before?.readSpan).toBeDefined();
+
+    useContextStore.getState().clearReadSpansForPaths(['src/lib.rs']);
+
+    const after = Array.from(useContextStore.getState().chunks.values()).find(c => c.source === 'src/lib.rs');
+    expect(after?.readSpan).toBeUndefined();
+  });
+
+  it('causes findReusableRead to return null after clearing', () => {
+    addTestChunk('fn main() {}', 'raw', 'src/lib.rs', {
+      sourceRevision: 'abc123',
+      readSpan: { filePath: 'src/lib.rs', sourceRevision: 'abc123' },
+    });
+    const reuseBefore = useContextStore.getState().findReusableRead({ filePath: 'src/lib.rs', sourceRevision: 'abc123' });
+    expect(reuseBefore).not.toBeNull();
+
+    useContextStore.getState().clearReadSpansForPaths(['src/lib.rs']);
+
+    const reuseAfter = useContextStore.getState().findReusableRead({ filePath: 'src/lib.rs', sourceRevision: 'abc123' });
+    expect(reuseAfter).toBeNull();
+  });
+
+  it('does not affect chunks for unrelated files', () => {
+    addTestChunk('fn main() {}', 'raw', 'src/lib.rs', {
+      readSpan: { filePath: 'src/lib.rs', sourceRevision: 'abc123' },
+    });
+    addTestChunk('use super::*;', 'raw', 'src/pty.rs', {
+      readSpan: { filePath: 'src/pty.rs', sourceRevision: 'def456' },
+    });
+
+    useContextStore.getState().clearReadSpansForPaths(['src/lib.rs']);
+
+    const libChunk = Array.from(useContextStore.getState().chunks.values()).find(c => c.source === 'src/lib.rs');
+    const ptyChunk = Array.from(useContextStore.getState().chunks.values()).find(c => c.source === 'src/pty.rs');
+    expect(libChunk?.readSpan).toBeUndefined();
+    expect(ptyChunk?.readSpan).toBeDefined();
+    expect(ptyChunk?.readSpan?.sourceRevision).toBe('def456');
+  });
+});

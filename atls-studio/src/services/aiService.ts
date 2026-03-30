@@ -2756,6 +2756,7 @@ async function streamChatViaTauri(
   } catch (error) {
     console.error('[aiService] Stream error:', error);
     if (!abortSignal.aborted) {
+      useAppStore.getState().setAgentProgress({ status: 'stopped', stoppedReason: 'error', canTaskComplete: true });
       safeCallbacks.onError(error instanceof Error ? error : new Error(String(error)));
     }
   } finally {

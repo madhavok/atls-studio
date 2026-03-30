@@ -10,12 +10,21 @@ import {
   handleCreate,
   handleDelete,
   handleEdit,
+  handleRollback,
   normalizeEditParams,
 } from './change';
 
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: vi.fn(),
 }));
+
+vi.mock('../../../services/freshnessJournal', async (importOriginal) => {
+  const orig = await importOriginal<typeof import('../../../services/freshnessJournal')>();
+  return {
+    ...orig,
+    clearFreshnessJournal: vi.fn(orig.clearFreshnessJournal),
+  };
+});
 
 const invokeMock = vi.mocked(invoke);
 
@@ -1123,5 +1132,128 @@ describe('resolveEditOperation with deletes', () => {
       file_paths: ['b.ts'],
       confirm: false,
     }));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// handleRollback freshness invalidation
+// ---------------------------------------------------------------------------
+
+const { clearFreshnessJournal } = await import('../../../services/freshnessJournal');
+const clearFreshnessJournalMock = vi.mocked(clearFreshnessJournal);
+
+describe('handleRollback freshness invalidation', () => {
+
+  beforeEach(() => {
+    resetContextStore();
+    invokeMock.mockReset();
+    clearFreshnessJournalMock.mockClear();
+  });
+
+  function makeRollbackCtx(atlsBatchQuery: ReturnType<typeof vi.fn>) {
+    const store = useContextStore.getState();
+    return {
+      atlsBatchQuery,
+      store: () => store,
+    } as unknown as Parameters<typeof handleRollback>[1];
+  }
+
+  it('clears freshness journal for restored file path', async () => {
+    const atlsBatchQuery = vi.fn().mockResolvedValue({
+      status: 'ok', restored: [{ file: 'src/lib.rs', hash: 'aaa111' }],
+    });
+    const ctx = makeRollbackCtx(atlsBatchQuery);
+
+    await handleRollback({ restore: [{ file: 'src/lib.rs', hash: 'aaa111' }] }, ctx);
+
+    expect(clearFreshnessJournalMock).toHaveBeenCalledWith('src/lib.rs');
+  });
+
+  it('calls reconcileSourceRevision with restored hash', async () => {
+    const store = useContextStore.getState();
+    const spy = vi.spyOn(store, 'reconcileSourceRevision');
+    const atlsBatchQuery = vi.fn().mockResolvedValue({ status: 'ok' });
+    const ctx = makeRollbackCtx(atlsBatchQuery);
+
+    await handleRollback({ restore: [{ file: 'src/lib.rs', hash: 'h:aaa111' }] }, ctx);
+
+    expect(spy).toHaveBeenCalledWith('src/lib.rs', 'aaa111');
+    spy.mockRestore();
+  });
+
+  it('calls clearReadSpansForPaths with restored file paths', async () => {
+    const store = useContextStore.getState();
+    const spy = vi.spyOn(store, 'clearReadSpansForPaths');
+    const atlsBatchQuery = vi.fn().mockResolvedValue({ status: 'ok' });
+    const ctx = makeRollbackCtx(atlsBatchQuery);
+
+    await handleRollback({ restore: [{ file: 'src/lib.rs', hash: 'aaa' }] }, ctx);
+
+    expect(spy).toHaveBeenCalledWith(['src/lib.rs']);
+    spy.mockRestore();
+  });
+
+  it('calls invalidateAwarenessForPaths with restored file paths', async () => {
+    const store = useContextStore.getState();
+    const spy = vi.spyOn(store, 'invalidateAwarenessForPaths');
+    const atlsBatchQuery = vi.fn().mockResolvedValue({ status: 'ok' });
+    const ctx = makeRollbackCtx(atlsBatchQuery);
+
+    await handleRollback({ restore: [{ file: 'src/lib.rs', hash: 'aaa' }] }, ctx);
+
+    expect(spy).toHaveBeenCalledWith(['src/lib.rs']);
+    spy.mockRestore();
+  });
+
+  it('calls bumpWorkspaceRev with restored file paths', async () => {
+    const store = useContextStore.getState();
+    const spy = vi.spyOn(store, 'bumpWorkspaceRev');
+    const atlsBatchQuery = vi.fn().mockResolvedValue({ status: 'ok' });
+    const ctx = makeRollbackCtx(atlsBatchQuery);
+
+    await handleRollback({ restore: [{ file: 'src/lib.rs', hash: 'aaa' }] }, ctx);
+
+    expect(spy).toHaveBeenCalledWith(['src/lib.rs']);
+    spy.mockRestore();
+  });
+
+  it('still clears BB edit lessons after rollback', async () => {
+    const store = useContextStore.getState();
+    store.setBlackboardEntry('edit:lib.rs', 'stale edit lesson');
+    store.setBlackboardEntry('err:lib.rs', 'stale error');
+    const atlsBatchQuery = vi.fn().mockResolvedValue({ status: 'ok' });
+    const ctx = makeRollbackCtx(atlsBatchQuery);
+
+    await handleRollback({ restore: [{ file: 'src/lib.rs', hash: 'aaa' }] }, ctx);
+
+    expect(store.getBlackboardEntry('edit:lib.rs')).toBeNull();
+    expect(store.getBlackboardEntry('err:lib.rs')).toBeNull();
+  });
+
+  it('invalidates all files in a multi-file rollback', async () => {
+    const store = useContextStore.getState();
+    const clearSpansSpy = vi.spyOn(store, 'clearReadSpansForPaths');
+    const awarenessSpy = vi.spyOn(store, 'invalidateAwarenessForPaths');
+    const reconcileSpy = vi.spyOn(store, 'reconcileSourceRevision');
+    const atlsBatchQuery = vi.fn().mockResolvedValue({ status: 'ok' });
+    const ctx = makeRollbackCtx(atlsBatchQuery);
+
+    await handleRollback({
+      restore: [
+        { file: 'src/lib.rs', hash: 'aaa111' },
+        { file: 'src/pty.rs', hash: 'bbb222' },
+      ],
+    }, ctx);
+
+    expect(clearFreshnessJournalMock).toHaveBeenCalledWith('src/lib.rs');
+    expect(clearFreshnessJournalMock).toHaveBeenCalledWith('src/pty.rs');
+    expect(reconcileSpy).toHaveBeenCalledWith('src/lib.rs', 'aaa111');
+    expect(reconcileSpy).toHaveBeenCalledWith('src/pty.rs', 'bbb222');
+    expect(clearSpansSpy).toHaveBeenCalledWith(['src/lib.rs', 'src/pty.rs']);
+    expect(awarenessSpy).toHaveBeenCalledWith(['src/lib.rs', 'src/pty.rs']);
+
+    clearSpansSpy.mockRestore();
+    awarenessSpy.mockRestore();
+    reconcileSpy.mockRestore();
   });
 });

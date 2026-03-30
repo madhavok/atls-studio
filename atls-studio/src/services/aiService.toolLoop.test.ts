@@ -404,3 +404,40 @@ describe('context defaults', () => {
     expect(useAppStore.getState().settings.entryManifestDepth).toBe('paths');
   });
 });
+
+describe('agent progress on uncaught error', () => {
+  it('sets stopped+error instead of leaving thinking when catch block fires', () => {
+    const store = useAppStore.getState();
+    store.resetAgentProgress();
+    store.setAgentProgress({ status: 'thinking', round: 5 });
+    expect(useAppStore.getState().agentProgress.status).toBe('thinking');
+
+    // Simulate what the outer catch block now does
+    useAppStore.getState().setAgentProgress({ status: 'stopped', stoppedReason: 'error', canTaskComplete: true });
+
+    const after = useAppStore.getState().agentProgress;
+    expect(after.status).toBe('stopped');
+    expect(after.stoppedReason).toBe('error');
+  });
+
+  it('resets canTaskComplete to true on error even when mutation gate was active', () => {
+    const store = useAppStore.getState();
+    store.resetAgentProgress();
+    store.setAgentProgress({ status: 'thinking', canTaskComplete: false });
+    expect(useAppStore.getState().agentProgress.canTaskComplete).toBe(false);
+
+    useAppStore.getState().setAgentProgress({ status: 'stopped', stoppedReason: 'error', canTaskComplete: true });
+
+    expect(useAppStore.getState().agentProgress.canTaskComplete).toBe(true);
+  });
+
+  it('preserves round count when error sets stopped status', () => {
+    const store = useAppStore.getState();
+    store.resetAgentProgress();
+    store.setAgentProgress({ status: 'thinking', round: 12 });
+
+    useAppStore.getState().setAgentProgress({ status: 'stopped', stoppedReason: 'error', canTaskComplete: true });
+
+    expect(useAppStore.getState().agentProgress.round).toBe(12);
+  });
+});

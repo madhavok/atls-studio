@@ -6,7 +6,7 @@
 import type { HandlerContext, OpHandler, StepOutput } from '../types';
 import { useContextStore } from '../../../stores/contextStore';
 import { getPreflightAutomationDecision, runFreshnessPreflight } from '../../../services/freshnessPreflight';
-import { recordFreshnessJournal } from '../../../services/freshnessJournal';
+import { recordFreshnessJournal, clearFreshnessJournal } from '../../../services/freshnessJournal';
 import { invoke } from '@tauri-apps/api/core';
 import { SHORT_HASH_LEN } from '../../../utils/contextHash';
 import { parseHashRef } from '../../../utils/hashRefParsers';
@@ -1738,6 +1738,7 @@ export const handleRollback: OpHandler = async (params, ctx) => {
     const result = await ctx.atlsBatchQuery('refactor', merged);
     const refs = extractRefs(result);
     clearEditLessonsForRollback(params, ctx);
+    invalidateFreshnessForRollback(params);
     return ok(formatResult(result), refs, result);
   } catch (rbErr) {
     const msg = rbErr instanceof Error ? rbErr.message : String(rbErr);
@@ -1781,6 +1782,39 @@ function clearEditLessonsForRollback(
     }
   } catch {
     // Non-fatal
+  }
+}
+
+/**
+ * After rollback, purge all freshness state for restored files so the preflight
+ * system doesn't apply poisoned journal deltas, stale engram revisions, or
+ * redundant-read dedup from the pre-rollback edit lineage.
+ */
+function invalidateFreshnessForRollback(params: Record<string, unknown>): void {
+  try {
+    const restoreEntries = params.restore as Array<{ file?: string; hash?: string }> | undefined;
+    if (!Array.isArray(restoreEntries) || restoreEntries.length === 0) return;
+
+    const store = useContextStore.getState();
+    const allPaths: string[] = [];
+
+    for (const entry of restoreEntries) {
+      if (typeof entry?.file !== 'string') continue;
+      allPaths.push(entry.file);
+      clearFreshnessJournal(entry.file);
+      const restoredHash = typeof entry.hash === 'string' ? entry.hash.replace(/^h:/, '') : undefined;
+      if (restoredHash) {
+        store.reconcileSourceRevision(entry.file, restoredHash);
+      }
+    }
+
+    if (allPaths.length > 0) {
+      store.clearReadSpansForPaths(allPaths);
+      store.invalidateAwarenessForPaths(allPaths);
+      store.bumpWorkspaceRev(allPaths);
+    }
+  } catch {
+    // Non-fatal — freshness invalidation must not block rollback success
   }
 }
 
