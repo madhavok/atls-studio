@@ -7,7 +7,7 @@
 export const EDIT_DISCIPLINE = `### EDIT + VERIFY DISCIPLINE
 - Text does NOT change files. Every modification requires a tool call.
 - Reads are for content grounding, not hash freshness. If file is visible (engram/staged/search), edit directly. Re-read only on stale_hash/authority_mismatch.
-- Hash-ref edits: use file_path:h:XXXX:L-M line_edits:[{content:"..."}]. The hash ref carries identity + line range; only new content is needed. No old text echo, no separate content_hash, no line/end_line. Engrams show current content with line numbers — edit directly from what you see. After each edit, h:NEW ref is returned with edits_resolved. Chain within the same batch using edits_resolved line numbers. For the next batch/turn, re-read the file first.
+- Hash-ref edits: use file_path:h:XXXX:L-M line_edits:[{content:"..."}]. The hash ref carries identity + line range; only new content is needed. No old text echo, no separate content_hash, no line/end_line. Engrams show current content with line numbers — edit directly from what you see. After each edit, h:NEW ref is returned with edits_resolved. Chain within the same batch using edits_resolved line numbers. Across turns, the engram is refreshed with post-edit content — re-read only on stale_hash or external change.
 - line_edits: intra-step line numbers are relative to one pre-edit read (executor rebases to sequential); then Rust applies top-down. Insert +N shifts subsequent targets by +N. Always provide line + end_line (1-based inclusive; single-line: end_line=line, omit defaults to line). line:"end" / negative indices / symbol+replace resolve to concrete bounds. action defaults to replace when omitted. move produces positional shifts at both source and destination — subsequent same-file edits are auto-rebased. replace_body body span is resolved by Rust.
 - One concern per edit. Decompose large replacements. Successful static verify auto-compacts working memory.
 - Count braces — unbalanced edits fail with syntax_error_after_edit.
@@ -38,9 +38,8 @@ export const EDIT_DISCIPLINE = `### EDIT + VERIFY DISCIPLINE
 - Multi-file edit sessions: pin all target sigs at start, edit in sequence, unpin+drop at end.
 - If you get stale_hash: re-read ONCE, pin, then edit. Do not re-read again.
 
-### DIFF-ONLY POST-EDIT PROTOCOL
-- After each edit, you receive h:OLD..h:NEW diff ref and a compact diff in the BB edit:* entry. Full file content is NOT refreshed into working memory — the pre-edit engram is marked suspect.
-- To chain edits on the same file across turns, read.lines the target region first for fresh line numbers. Edits outside your last read.lines range are rejected with edit_outside_read_range.
-- On edit_outside_read_range: issue read.lines for the target region, then retry the edit in the same batch.
-- Intra-batch chaining from edits_resolved still works without re-reading — the executor rebases line numbers within the batch.
-- Across turns: always re-read before editing. The system clears read coverage after edits to prevent stale line drift.`;
+### POST-EDIT CONTEXT
+- After each edit, the engram is refreshed with post-edit content and correct line numbers. The h:OLD..h:NEW diff ref and compact diff in BB edit:* are also available.
+- Within a batch, chain from edits_resolved — the executor rebases line numbers between steps.
+- Across turns, the engram has correct content. Re-read only on stale_hash, authority_mismatch, or external file change.
+- On edit_outside_read_range: issue read.lines for the target region, then retry the edit in the same batch.`;

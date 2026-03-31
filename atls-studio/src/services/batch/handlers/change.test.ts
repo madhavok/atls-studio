@@ -57,6 +57,39 @@ describe('estimateLineDeltaForSource', () => {
     };
     expect(estimateLineDeltaForSource(params, 'b.ts')).toBe(0);
   });
+
+  it('counts prepend as pure insertion', () => {
+    const params = {
+      file_path: 'src/a.ts',
+      line_edits: [{ action: 'prepend', content: '// header\n// license', line: 1 }],
+    };
+    expect(estimateLineDeltaForSource(params, 'src/a.ts')).toBe(2);
+  });
+
+  it('counts append as pure insertion', () => {
+    const params = {
+      file_path: 'src/a.ts',
+      line_edits: [{ action: 'append', content: '// footer', line: 1 }],
+    };
+    expect(estimateLineDeltaForSource(params, 'src/a.ts')).toBe(1);
+  });
+
+  it('treats default (empty) action as replace', () => {
+    const params = {
+      file_path: 'src/a.ts',
+      line_edits: [{ content: 'replaced', line: 5, end_line: 7 }],
+    };
+    // span=3 lines replaced by 1 line of content → delta = 1 - 3 = -2
+    expect(estimateLineDeltaForSource(params, 'src/a.ts')).toBe(-2);
+  });
+
+  it('returns 0 for move (net-zero relocation)', () => {
+    const params = {
+      file_path: 'src/a.ts',
+      line_edits: [{ action: 'move', line: 10, end_line: 12, destination: 20 }],
+    };
+    expect(estimateLineDeltaForSource(params, 'src/a.ts')).toBe(0);
+  });
 });
 
 describe('normalizeEditParams', () => {

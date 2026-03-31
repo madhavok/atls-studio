@@ -87,7 +87,7 @@ function formatSuspectHint(
 ): string {
   if (suspectSince == null && !freshness && !freshnessCause) return '';
   if (freshness === 'shifted' || freshnessCause === 'same_file_prior_edit') {
-    return ' (safe positional drift after your previous edit)';
+    return ' [stale — edit refresh failed; re-read before editing]';
   }
   if ((freshnessCause === 'external_file_change' || freshnessCause === 'watcher_event')
     && (suspectSince != null || freshness === 'suspect')) {

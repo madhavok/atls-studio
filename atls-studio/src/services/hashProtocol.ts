@@ -70,7 +70,8 @@ export async function advanceTurn(): Promise<number> {
       dematerialized++;
     }
   }
-  lastTurnDelta = { dematerialized, newMaterialized: 0 };
+  lastTurnDelta.dematerialized = dematerialized;
+  lastTurnDelta.newMaterialized = 0;
   const hook = getRoundRefreshHook();
   if (hook) {
     try {
@@ -122,6 +123,7 @@ export function materialize(
     existing.totalLines = totalLines;
     existing.editDigest = editDigest || existing.editDigest;
     existing.source = source ?? existing.source;
+    lastTurnDelta.newMaterialized += 1;
     return existing;
   }
 
@@ -138,7 +140,7 @@ export function materialize(
   };
   refs.set(hash, ref);
   shortHashIndex.set(shortHash, ref);
-  lastTurnDelta = { ...lastTurnDelta, newMaterialized: lastTurnDelta.newMaterialized + 1 };
+  lastTurnDelta.newMaterialized += 1;
   return ref;
 }
 

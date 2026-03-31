@@ -29,7 +29,6 @@ import { buildIntentContext, resolveIntents, isPressured } from './intents';
 import { useRetentionStore } from '../../stores/retentionStore';
 import { useAppStore } from '../../stores/appStore';
 import { invoke } from '@tauri-apps/api/core';
-import { getFreshnessJournal } from '../freshnessJournal';
 import { registerOwnWrite } from '../../hooks/useAtls';
 import { serializeForTokenEstimate } from '../../utils/toon';
 import './intents/index';
@@ -612,15 +611,15 @@ function applyLineDelta(lineSpec: string, delta: number): string {
 }
 
 /**
- * Diff-only post-edit context refresh.
+ * Post-edit context refresh — resolve fresh content from the new hash.
  *
- * Instead of resolving full post-edit file content into engrams (which anchors
- * stale line numbers in the model's context), this marks existing engrams
- * suspect and unstages line-range snippets. The h:OLD..h:NEW diff ref
- * (already injected by injectDiffRefs in change.ts) provides the model a
- * compact view of what changed. Shaped snippets survive if structurally
- * unchanged. The model must re-read via read.lines to get fresh content
- * and line numbers before the next edit.
+ * Freshness is priority 0. The system performed the edit, the system has the
+ * new hash, the system resolves the truth. addChunk with the same source
+ * triggers hash forwarding (old engram auto-compacted, new one installed as
+ * fresh with correct line numbers). Staged snippets are re-resolved from the
+ * new hash rather than unstaged.
+ *
+ * markEngramsSuspect is only used as a fallback when resolution fails.
  */
 async function refreshContextAfterEdit(
   artifact: Record<string, unknown>,
@@ -632,31 +631,55 @@ async function refreshContextAfterEdit(
   const store = ctx.store();
 
   for (const ef of editedFiles) {
-    // 1. Mark full-file engrams suspect (content is now stale)
-    if (hasEngramForSource(ctx, ef.filePath)) {
-      store.markEngramsSuspect([ef.filePath], 'same_file_prior_edit' as 'unknown', 'content');
+    const bareHash = ef.newHash.replace(/^h:/, '');
+
+    // 1. Resolve fresh post-edit content and replace the engram
+    try {
+      const resolved = await invoke<{ content: string; source?: string | null }>(
+        'resolve_hash_ref', { rawRef: `h:${bareHash}` },
+      );
+      if (resolved?.content) {
+        store.addChunk(resolved.content, 'file', ef.filePath,
+          undefined, undefined, bareHash, {
+            sourceRevision: bareHash,
+            origin: 'edit-refresh',
+            viewKind: 'latest',
+          });
+      }
+    } catch (e) {
+      console.warn('[executor] engram refresh failed, marking suspect:', e);
+      if (hasEngramForSource(ctx, ef.filePath)) {
+        store.markEngramsSuspect([ef.filePath], 'same_file_prior_edit' as 'unknown', 'content');
+      }
     }
 
-    // 2. Handle staged snippets: unstage line-range (stale lines), preserve shapes
+    // 2. Refresh staged snippets from the new hash
     const snippets = store.getStagedSnippetsForRefresh(ef.filePath);
-    const bareHash = ef.newHash.replace(/^h:/, '');
     for (const snippet of snippets) {
       try {
         if (snippet.shapeSpec) {
-          // Shaped snippet: re-derive only if structurally changed
           const rawRef = `h:${bareHash}:${snippet.shapeSpec}`;
-          const resolved = await invoke<{ content: string; source?: string | null }>('resolve_hash_ref', { rawRef });
-          if (resolved?.content) {
-            store.stageSnippet(snippet.key, resolved.content, snippet.source, undefined, bareHash, snippet.shapeSpec, 'derived');
-          } else {
-            store.unstageSnippet(snippet.key);
-          }
+          const resolved = await invoke<{ content: string; source?: string | null }>(
+            'resolve_hash_ref', { rawRef },
+          );
+          resolved?.content
+            ? store.stageSnippet(snippet.key, resolved.content, snippet.source,
+                undefined, bareHash, snippet.shapeSpec, 'derived')
+            : store.unstageSnippet(snippet.key);
+        } else if (snippet.lines) {
+          const rawRef = `h:${bareHash}:${snippet.lines}`;
+          const resolved = await invoke<{ content: string; source?: string | null }>(
+            'resolve_hash_ref', { rawRef },
+          );
+          resolved?.content
+            ? store.stageSnippet(snippet.key, resolved.content, snippet.source,
+                snippet.lines, bareHash, undefined, 'latest')
+            : store.unstageSnippet(snippet.key);
         } else {
-          // Line-range and full-file snippets: unstage (line numbers are stale)
           store.unstageSnippet(snippet.key);
         }
       } catch (e) {
-        console.warn(`[executor] snippet cleanup failed for ${snippet.key}:`, e);
+        console.warn(`[executor] snippet refresh failed for ${snippet.key}:`, e);
         store.unstageSnippet(snippet.key);
       }
     }
@@ -1306,23 +1329,11 @@ export async function executeUnifiedBatch(
       }
       // Register paths as own writes to suppress spurious intel:file_change from watcher
       registerOwnWrite([...batchEditedPaths]);
-      // Synchronously rebase staged snippet line numbers from the freshness journal.
-      // This must happen before the async content refresh so the model sees
-      // correct line references in the next round's context.
-      if (output.content && typeof output.content === 'object') {
-        const editedInStep = collectEditedFiles(output.content as Record<string, unknown>);
-        for (const ef of editedInStep) {
-          const journal = getFreshnessJournal(ef.filePath);
-          if (journal?.lineDelta) {
-            ctx.store().rebaseStagedLineNumbers(ef.filePath, journal.lineDelta);
-          }
-        }
-      }
       // Evict cached verify/exec/analysis results so they re-run against the updated files
       useRetentionStore.getState().evictMutationSensitive();
-      // Refresh engram/snippet content so context reflects post-edit state
+      // Refresh engram/snippet content with real post-edit content (awaited for correctness)
       if (output.content && typeof output.content === 'object' && !Array.isArray(output.content)) {
-        refreshContextAfterEdit(output.content as Record<string, unknown>, ctx)
+        await refreshContextAfterEdit(output.content as Record<string, unknown>, ctx)
           .catch(e => console.warn('[executor] content refresh error:', e));
       }
 

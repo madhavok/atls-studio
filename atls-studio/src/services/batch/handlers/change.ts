@@ -152,9 +152,16 @@ function estimateLineDeltaFromLineEdits(lineEdits: unknown): number {
     const contentLines = typeof entry.content === 'string' && entry.content.length > 0
       ? countContentLines(entry.content as string)
       : 0;
-    if (action === 'insert_before' || action === 'insert_after') delta += contentLines;
-    else if (action === 'delete') delta -= span;
-    else if (action === 'replace') delta += contentLines - span;
+    if (action === 'insert_before' || action === 'insert_after'
+        || action === 'prepend' || action === 'append') {
+      delta += contentLines;
+    } else if (action === 'delete') {
+      delta -= span;
+    } else if (action === 'replace' || action === '') {
+      // Default action (empty string) is replace; move is net 0 by omission;
+      // replace_body span is Rust-resolved and unknowable here.
+      delta += contentLines - span;
+    }
   }
   return delta;
 }

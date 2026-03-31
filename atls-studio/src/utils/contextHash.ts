@@ -98,11 +98,13 @@ export function estimateTokens(content: string): number {
     const c = content.charCodeAt(i);
     if (c === 10) newlineCount++;
     if (c === 32 || c === 9 || c === 10 || c === 13) wsCount++;
-    if (!hasCode && (c === 123 || c === 125 || c === 91 || c === 93 || c === 40 || c === 41 || c === 59)) {
-      hasCode = true;
+    if (!hasCode) {
+      if (c === 123 || c === 125 || c === 91 || c === 93 || c === 40 || c === 41 || c === 59) {
+        hasCode = true;
+      }
     }
     // CJK Unified Ideographs + common CJK ranges
-    if ((c >= 0x4E00 && c <= 0x9FFF) || (c >= 0x3400 && c <= 0x4DBF) || (c >= 0x3000 && c <= 0x303F)) {
+    if (c >= 0x3000 && ((c >= 0x4E00 && c <= 0x9FFF) || (c >= 0x3400 && c <= 0x4DBF) || (c >= 0x3000 && c <= 0x303F))) {
       cjkCount++;
     }
   }
