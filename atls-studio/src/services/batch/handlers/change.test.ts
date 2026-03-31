@@ -1398,3 +1398,150 @@ describe('handleRollback freshness invalidation', () => {
     reconcileSpy.mockRestore();
   });
 });
+
+/**
+ * Nightmare / hallucination cases: sloppy model output we can sometimes autocorrect
+ * (count→end_line, replace_span_lines, string line digits) vs hard failures (floats, NaN).
+ */
+describe('line_edits hallucination / nightmare scenarios', () => {
+  beforeEach(() => {
+    resetContextStore();
+  });
+
+  it('autocorrects legacy count into end_line when model hallucinates span (count>1)', async () => {
+    const atlsBatchQuery = vi.fn().mockResolvedValue({ h: 'h:after', old_h: 'h:before' });
+    const ctx = {
+      atlsBatchQuery,
+      store: () => ({ getStats: () => ({}), getPinnedCount: () => 0, recordMemoryEvent: () => {}, recordRebindOutcomes: () => {} }),
+    } as unknown as Parameters<typeof handleEdit>[1];
+
+    const out = await handleEdit(
+      {
+        file: 'src/nightmare.ts',
+        content_hash: 'abc',
+        line_edits: [{ line: 10, action: 'replace', content: 'BLOCK', count: 4 }],
+      } as Record<string, unknown>,
+      ctx,
+    );
+
+    expect(out.ok).toBe(true);
+    const [, payload] = atlsBatchQuery.mock.calls.at(-1)! as [string, Record<string, unknown>];
+    const le = payload.line_edits as Array<Record<string, unknown>>;
+    expect(le[0].end_line).toBe(13);
+    expect(le[0].count).toBeUndefined();
+  });
+
+  it('autocorrects replace_span_lines at step level into end_line for single replace', async () => {
+    const atlsBatchQuery = vi.fn().mockResolvedValue({ h: 'h:after', old_h: 'h:before' });
+    const ctx = {
+      atlsBatchQuery,
+      store: () => ({ getStats: () => ({}), getPinnedCount: () => 0, recordMemoryEvent: () => {}, recordRebindOutcomes: () => {} }),
+    } as unknown as Parameters<typeof handleEdit>[1];
+
+    const out = await handleEdit(
+      {
+        file: 'src/span.ts',
+        content_hash: 'abc',
+        replace_span_lines: 20,
+        line_edits: [{ line: 5, action: 'replace', content: 'WALL' }],
+      } as Record<string, unknown>,
+      ctx,
+    );
+
+    expect(out.ok).toBe(true);
+    const [, payload] = atlsBatchQuery.mock.calls.at(-1)! as [string, Record<string, unknown>];
+    const le = payload.line_edits as Array<Record<string, unknown>>;
+    expect(le[0].end_line).toBe(24);
+  });
+
+  it('accepts stringified line digits (JSON) as valid line anchor', async () => {
+    const atlsBatchQuery = vi.fn().mockResolvedValue({ h: 'h:after', old_h: 'h:before' });
+    const ctx = {
+      atlsBatchQuery,
+      store: () => ({ getStats: () => ({}), getPinnedCount: () => 0, recordMemoryEvent: () => {}, recordRebindOutcomes: () => {} }),
+    } as unknown as Parameters<typeof handleEdit>[1];
+
+    const out = await handleEdit(
+      {
+        file: 'src/strline.ts',
+        content_hash: 'abc',
+        line_edits: [{ line: '  42  ', action: 'replace', content: 'ok' }],
+      } as Record<string, unknown>,
+      ctx,
+    );
+
+    expect(out.ok).toBe(true);
+    const [, payload] = atlsBatchQuery.mock.calls.at(-1)! as [string, Record<string, unknown>];
+    expect((payload.line_edits as Array<Record<string, unknown>>)[0].line).toBe('  42  ');
+  });
+
+  it('rejects float line hallucination (3.14)', async () => {
+    const out = await handleEdit(
+      {
+        file: 'src/float.ts',
+        content_hash: 'abc',
+        line_edits: [{ line: 3.14, action: 'replace', content: 'x' }],
+      },
+      {
+        atlsBatchQuery: async () => ({}),
+        store: () => ({ getStats: () => ({}), getPinnedCount: () => 0 }),
+      } as unknown as Parameters<typeof handleEdit>[1],
+    );
+    expect(out.ok).toBe(false);
+    expect(out.summary ?? (out as { error?: string }).error).toMatch(/integer|line/i);
+  });
+
+  it('rejects NaN line', async () => {
+    const out = await handleEdit(
+      {
+        file: 'src/nan.ts',
+        content_hash: 'abc',
+        line_edits: [{ line: Number.NaN, action: 'replace', content: 'x' }],
+      },
+      {
+        atlsBatchQuery: async () => ({}),
+        store: () => ({ getStats: () => ({}), getPinnedCount: () => 0 }),
+      } as unknown as Parameters<typeof handleEdit>[1],
+    );
+    expect(out.ok).toBe(false);
+  });
+
+  it('rejects move with hallucinated float destination', async () => {
+    const out = await handleEdit(
+      {
+        file: 'src/mv.ts',
+        content_hash: 'abc',
+        line_edits: [{ line: 2, action: 'move', destination: 3.5 as unknown as number }],
+      },
+      {
+        atlsBatchQuery: async () => ({}),
+        store: () => ({ getStats: () => ({}), getPinnedCount: () => 0 }),
+      } as unknown as Parameters<typeof handleEdit>[1],
+    );
+    expect(out.ok).toBe(false);
+    expect((out.content as { error_class?: string })?.error_class).toBe('invalid_line_edit');
+  });
+
+  it('model swaps line and end_line (reversed span) — still passes TS; Rust clamps replace', async () => {
+    const atlsBatchQuery = vi.fn().mockResolvedValue({ h: 'h:after', old_h: 'h:before' });
+    const ctx = {
+      atlsBatchQuery,
+      store: () => ({ getStats: () => ({}), getPinnedCount: () => 0, recordMemoryEvent: () => {}, recordRebindOutcomes: () => {} }),
+    } as unknown as Parameters<typeof handleEdit>[1];
+
+    const out = await handleEdit(
+      {
+        file: 'src/inverted.ts',
+        content_hash: 'abc',
+        line_edits: [{ line: 20, end_line: 5, action: 'replace', content: '?' }],
+      },
+      ctx,
+    );
+
+    expect(out.ok).toBe(true);
+    const [, payload] = atlsBatchQuery.mock.calls.at(-1)! as [string, Record<string, unknown>];
+    const le = payload.line_edits as Array<Record<string, unknown>>;
+    expect(le[0].line).toBe(20);
+    expect(le[0].end_line).toBe(5);
+  });
+});

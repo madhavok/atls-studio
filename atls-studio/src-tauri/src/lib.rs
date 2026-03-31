@@ -3063,6 +3063,277 @@ mod hard_line_edit_tests {
         let (result, ..) = apply_line_edits(c, &[le(1, "replace", Some("same content"), None)]).unwrap();
         assert_eq!(content_hash(c), content_hash(&result));
     }
+
+    // ── coordinate & validation errors ──
+
+    #[test]
+    fn line_zero_is_rejected() {
+        let content = "a\nb\n";
+        let edits = vec![LineEdit {
+            line: LineCoordinate::Abs(0),
+            action: "delete".to_string(),
+            content: None,
+            end_line: None,
+            symbol: None,
+            position: None,
+            destination: None,
+            reindent: false,
+        }];
+        let err = apply_line_edits(content, &edits).unwrap_err();
+        assert!(err.contains("line 0") || err.contains("invalid"), "{}", err);
+    }
+
+    #[test]
+    fn move_without_destination_errors() {
+        let content = "a\nb\nc\n";
+        let edits = vec![LineEdit {
+            line: LineCoordinate::Abs(1),
+            action: "move".to_string(),
+            content: None,
+            end_line: Some(2),
+            symbol: None,
+            position: None,
+            destination: None,
+            reindent: false,
+        }];
+        let err = apply_line_edits(content, &edits).unwrap_err();
+        assert!(err.contains("destination"), "{}", err);
+    }
+
+    #[test]
+    fn replace_body_errors_when_no_brace_block() {
+        let content = "const x = 1;\n";
+        let err = apply_line_edits(
+            content,
+            &[le(1, "replace_body", Some("y"), None)],
+        )
+        .unwrap_err();
+        assert!(err.contains("body bounds") || err.contains("could not find"), "{}", err);
+    }
+
+    // ── replace_body success ──
+
+    #[test]
+    fn replace_body_swaps_function_innards() {
+        let content = "function f() {\n  return 1;\n}\n";
+        let (result, ..) = apply_line_edits(
+            content,
+            &[le(1, "replace_body", Some("  return 2;\n"), None)],
+        )
+        .unwrap();
+        assert!(result.contains("return 2;"), "{}", result);
+        assert!(!result.contains("return 1;"), "{}", result);
+    }
+
+    // ── move + reindent ──
+
+    #[test]
+    fn move_block_with_reindent_targets_destination_indent() {
+        let content = "class A {\n  block() {\n    old;\n  }\n}\n";
+        let edits = vec![LineEdit {
+            line: LineCoordinate::Abs(3),
+            action: "move".to_string(),
+            content: None,
+            end_line: Some(3),
+            symbol: None,
+            position: None,
+            destination: Some(2),
+            reindent: true,
+        }];
+        let (result, ..) = apply_line_edits(content, &edits).unwrap();
+        assert!(
+            result.contains("class A") && result.contains("old"),
+            "{}",
+            result
+        );
+    }
+
+    // ── unicode & stress ──
+
+    #[test]
+    fn utf8_grapheme_line_replace_preserves_surrounding_text() {
+        let content = "prefix 你好\nmiddle 🦀 line\nsuffix\n";
+        let (result, ..) = apply_line_edits(
+            content,
+            &[le(2, "replace", Some("middle 改"), None)],
+        )
+        .unwrap();
+        assert!(result.contains("middle 改"), "{}", result);
+        assert!(result.contains("prefix 你好"), "{}", result);
+    }
+
+    #[test]
+    fn ten_sequential_edits_on_dense_file() {
+        let lines: Vec<String> = (0..40).map(|i| format!("L{i}")).collect();
+        let content = lines.join("\n") + "\n";
+        let mut edits: Vec<LineEdit> = Vec::new();
+        for i in 0..10 {
+            let line = 1 + i * 3;
+            edits.push(le(
+                line,
+                "insert_before",
+                Some(&format!("MARK{i}")),
+                None,
+            ));
+        }
+        let (result, ..) = apply_line_edits(&content, &edits).unwrap();
+        for i in 0..10 {
+            assert!(
+                result.contains(&format!("MARK{i}")),
+                "missing marker {i} in output",
+            );
+        }
+    }
+
+    #[test]
+    fn resolutions_track_each_edit_line_count() {
+        let content = "a\nb\nc\n";
+        let edits = vec![
+            le(2, "delete", None, None),
+            le(1, "insert_before", Some("z\ny"), None),
+        ];
+        let (_result, _w, res) = apply_line_edits(content, &edits).unwrap();
+        assert_eq!(res.len(), 2);
+        assert_eq!(res[0].action, "delete");
+        assert_eq!(res[1].action, "insert_before");
+    }
+
+    // ── adversarial / regression (try to break apply_line_edits) ──
+
+    /// end_line < line → count saturates to 0; replace becomes pure insertion at idx.
+    #[test]
+    fn replace_with_end_line_before_line_inserts_without_removing() {
+        let content = "l1\nl2\nl3\nl4\nl5\n";
+        let ed = le(5, "replace", Some("INJECTED"), Some(3));
+        let (result, ..) = apply_line_edits(content, &[ed]).unwrap();
+        assert!(
+            result.contains("INJECTED"),
+            "inverted span should still splice replacement in: {}",
+            result
+        );
+        assert_eq!(result.matches("l4").count(), 1, "l4 should remain once: {}", result);
+    }
+
+    #[test]
+    fn negative_index_out_of_range_errors() {
+        let content = "only\n";
+        let edits = vec![LineEdit {
+            line: LineCoordinate::Neg(-99),
+            action: "replace".to_string(),
+            content: Some("x".to_string()),
+            end_line: None,
+            symbol: None,
+            position: None,
+            destination: None,
+            reindent: false,
+        }];
+        let err = apply_line_edits(content, &edits).unwrap_err();
+        assert!(err.contains("out of range") || err.contains("line index"), "{}", err);
+    }
+
+    #[test]
+    fn insert_before_empty_string_is_noop() {
+        let content = "a\nb\n";
+        let (result, ..) = apply_line_edits(content, &[le(2, "insert_before", Some(""), None)]).unwrap();
+        assert_eq!(result, "a\nb\n");
+    }
+
+    #[test]
+    fn move_whole_file_to_top() {
+        let content = "a\nb\nc\n";
+        let edits = vec![LineEdit {
+            line: LineCoordinate::Abs(2),
+            action: "move".to_string(),
+            content: None,
+            end_line: Some(3),
+            symbol: None,
+            position: None,
+            destination: Some(1),
+            reindent: false,
+        }];
+        let (result, ..) = apply_line_edits(content, &edits).unwrap();
+        assert_eq!(result, "b\nc\na\n");
+    }
+
+    #[test]
+    fn delete_range_where_end_equals_line_deletes_one_line() {
+        let content = "x\ny\nz\n";
+        let (result, ..) = apply_line_edits(content, &[le(2, "delete", None, Some(2))]).unwrap();
+        assert_eq!(result, "x\nz\n");
+    }
+
+    #[test]
+    fn replace_body_interface_does_not_panic() {
+        let content = "interface I {\n  m(): void;\n}\n";
+        let r = apply_line_edits(content, &[le(1, "replace_body", Some("  // empty\n"), None)]);
+        assert!(r.is_ok(), "{:?}", r.as_ref().err());
+    }
+
+    #[test]
+    fn fifty_sequential_inserts_at_line_one() {
+        let content = "anchor\n";
+        let mut edits: Vec<LineEdit> = Vec::new();
+        for _ in 0..50 {
+            edits.push(le(1, "insert_before", Some("x\n"), None));
+        }
+        let (result, ..) = apply_line_edits(&content, &edits).unwrap();
+        assert_eq!(result.matches("x").count(), 50);
+        assert!(result.contains("anchor"));
+    }
+
+    #[test]
+    fn tab_only_lines_preserve_structure() {
+        let content = "fn a() {\n\t\tx\n}\n";
+        let (result, ..) = apply_line_edits(content, &[le(2, "replace", Some("\t\ty"), None)]).unwrap();
+        assert!(result.contains("\t\ty"), "{}", result);
+    }
+
+    #[test]
+    fn very_long_single_line_replace() {
+        let long = "x".repeat(50_000);
+        let content = format!("{long}\nsecond\n");
+        let (result, ..) = apply_line_edits(&content, &[le(1, "replace", Some("short"), None)]).unwrap();
+        assert!(result.starts_with("short\n"));
+        assert!(result.contains("second"));
+    }
+
+    /// Model invents line 99999 on a 4-line file — must error, not panic.
+    #[test]
+    fn hallucinated_line_far_past_eof_errors() {
+        let content = "a\nb\nc\n";
+        let err = apply_line_edits(content, &[le(99_999, "replace", Some("nope"), None)]).unwrap_err();
+        assert!(err.contains("out of range"), "{}", err);
+    }
+
+    /// Same snapshot line targeted twice (common LLM mistake) — sequential semantics apply.
+    #[test]
+    fn duplicate_replace_same_snapshot_line_sequential() {
+        let content = "keep\nold\nold\nkeep\n";
+        let edits = vec![
+            le(2, "replace", Some("first"), None),
+            le(2, "replace", Some("second"), None),
+        ];
+        let (result, ..) = apply_line_edits(content, &edits).unwrap();
+        assert!(result.contains("second"), "second edit wins at sequential L2: {}", result);
+        assert!(!result.contains("first"), "{}", result);
+    }
+
+    /// Hallucinated delete span covering "whole file + 50" lines — clamps, must not panic.
+    #[test]
+    fn delete_with_end_line_past_eof_clamps() {
+        let content = "a\nb\nc\n";
+        let (result, ..) = apply_line_edits(content, &[le(2, "delete", None, Some(500))]).unwrap();
+        assert!(!result.contains('b') && !result.contains('c'), "{}", result);
+        assert!(result.starts_with('a'), "{}", result);
+    }
+
+    /// `replace` with empty content array-equivalent — acts like delete one line (model "remove line" slip).
+    #[test]
+    fn replace_with_only_newlines_collapses_to_delete_semantics() {
+        let content = "before\nkill\nafter\n";
+        let (result, ..) = apply_line_edits(content, &[le(2, "replace", Some("\n\n"), None)]).unwrap();
+        assert!(result.contains("before") && result.contains("after"), "{}", result);
+    }
 }
 
 #[cfg(test)]

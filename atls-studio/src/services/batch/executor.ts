@@ -594,10 +594,15 @@ function applyLineDelta(lineSpec: string, delta: number): string {
 }
 
 /**
- * After a change step, refresh engram and snippet content so the context
- * window reflects the post-edit file state. Resolves h:NEW from the hash
- * registry (content already indexed after the write) and replaces content
- * in-place. Hash forwarding in addChunk compacts the old engram.
+ * Diff-only post-edit context refresh.
+ *
+ * Instead of resolving full post-edit file content into engrams (which anchors
+ * stale line numbers in the model's context), this marks existing engrams
+ * suspect and unstages line-range snippets. The h:OLD..h:NEW diff ref
+ * (already injected by injectDiffRefs in change.ts) provides the model a
+ * compact view of what changed. Shaped snippets survive if structurally
+ * unchanged. The model must re-read via read.lines to get fresh content
+ * and line numbers before the next edit.
  */
 async function refreshContextAfterEdit(
   artifact: Record<string, unknown>,
@@ -608,54 +613,19 @@ async function refreshContextAfterEdit(
 
   const store = ctx.store();
 
-  // Partition: files with full-file engrams vs snippet-only
-  const fullFileRefs: string[] = [];
-  const fullFileMap = new Map<string, { filePath: string; newHash: string }>();
-  const snippetFiles: Array<{ filePath: string; newHash: string }> = [];
-
   for (const ef of editedFiles) {
+    // 1. Mark full-file engrams suspect (content is now stale)
     if (hasEngramForSource(ctx, ef.filePath)) {
-      const ref = ef.newHash.startsWith('h:') ? ef.newHash : `h:${ef.newHash}`;
-      fullFileRefs.push(ref);
-      fullFileMap.set(ref, ef);
+      store.markEngramsSuspect([ef.filePath], 'same_file_prior_edit' as 'unknown', 'content');
     }
-    const snippets = store.getStagedSnippetsForRefresh(ef.filePath);
-    if (snippets.length > 0) {
-      snippetFiles.push(ef);
-    }
-  }
 
-  // 1. Full-file engram refresh via batch resolve (single IPC)
-  if (fullFileRefs.length > 0) {
-    try {
-      const resolved = await invoke<Array<BatchResolvedEntry | null>>('batch_resolve_hash_refs', { refs: fullFileRefs });
-      for (let i = 0; i < fullFileRefs.length; i++) {
-        const entry = resolved[i];
-        const ef = fullFileMap.get(fullFileRefs[i]);
-        if (!ef) continue;
-        if (!entry?.content) {
-          store.markEngramsSuspect([ef.filePath], 'same_file_prior_edit' as 'unknown', 'content');
-          continue;
-        }
-        store.addChunk(entry.content, 'smart', ef.filePath, undefined, undefined, undefined, {
-          sourceRevision: ef.newHash.replace(/^h:/, ''),
-          origin: 'edit-refresh',
-        });
-      }
-    } catch (e) {
-      console.warn('[executor] full-file content refresh failed:', e);
-    }
-  }
-
-  // 2. Line-range snippet refresh + 3. Shaped snippet re-derive
-  for (const ef of snippetFiles) {
+    // 2. Handle staged snippets: unstage line-range (stale lines), preserve shapes
     const snippets = store.getStagedSnippetsForRefresh(ef.filePath);
     const bareHash = ef.newHash.replace(/^h:/, '');
-
     for (const snippet of snippets) {
       try {
         if (snippet.shapeSpec) {
-          // Shaped snippet: re-derive via h:NEW:{shape}
+          // Shaped snippet: re-derive only if structurally changed
           const rawRef = `h:${bareHash}:${snippet.shapeSpec}`;
           const resolved = await invoke<{ content: string; source?: string | null }>('resolve_hash_ref', { rawRef });
           if (resolved?.content) {
@@ -663,31 +633,13 @@ async function refreshContextAfterEdit(
           } else {
             store.unstageSnippet(snippet.key);
           }
-        } else if (snippet.lines) {
-          // Line-range snippet: relocate lines then re-slice
-          const journal = getFreshnessJournal(ef.filePath);
-          const delta = journal?.lineDelta ?? 0;
-          const relocatedLines = delta !== 0 ? applyLineDelta(snippet.lines, delta) : snippet.lines;
-
-          const rawRef = `h:${bareHash}:${relocatedLines}`;
-          const resolved = await invoke<{ content: string; source?: string | null }>('resolve_hash_ref', { rawRef });
-          if (resolved?.content) {
-            store.stageSnippet(snippet.key, resolved.content, snippet.source, relocatedLines, bareHash, undefined, 'latest');
-          } else {
-            store.markEngramsSuspect([ef.filePath], 'same_file_prior_edit' as 'unknown', 'content');
-          }
         } else {
-          // Full-file staged snippet (no lines, no shape): resolve full content
-          const rawRef = `h:${bareHash}`;
-          const resolved = await invoke<{ content: string; source?: string | null }>('resolve_hash_ref', { rawRef });
-          if (resolved?.content) {
-            store.stageSnippet(snippet.key, resolved.content, snippet.source, undefined, bareHash, undefined, 'latest');
-          } else {
-            store.unstageSnippet(snippet.key);
-          }
+          // Line-range and full-file snippets: unstage (line numbers are stale)
+          store.unstageSnippet(snippet.key);
         }
       } catch (e) {
-        console.warn(`[executor] snippet refresh failed for ${snippet.key}:`, e);
+        console.warn(`[executor] snippet cleanup failed for ${snippet.key}:`, e);
+        store.unstageSnippet(snippet.key);
       }
     }
   }
@@ -1211,6 +1163,42 @@ export async function executeUnifiedBatch(
       applyIntraStepSnapshotRebaseIfNeeded(mergedParams);
     }
 
+    // Read-range edit gate: reject line edits outside prior read.lines coverage
+    if (step.use === 'change.edit' && snapshotTracker.size > 0) {
+      const gateFile = (mergedParams.file ?? mergedParams.file_path) as string | undefined;
+      const gateLineEdits = mergedParams.line_edits as Array<Record<string, unknown>> | undefined;
+      if (
+        typeof gateFile === 'string' &&
+        !gateFile.startsWith('h:') &&
+        Array.isArray(gateLineEdits) &&
+        !snapshotTracker.hasCanonicalRead(gateFile) &&
+        !batchEditedPaths.has(gateFile)
+      ) {
+        for (const le of gateLineEdits) {
+          const line = le.line;
+          const endLine = (le.end_line ?? le.line);
+          if (typeof line !== 'number' || line <= 0) continue;
+          const end = typeof endLine === 'number' ? endLine : line;
+          if (!snapshotTracker.hasReadCoverage(gateFile, line, end)) {
+            const output: StepOutput = {
+              kind: 'edit_result', ok: false, refs: [],
+              summary: `${step.id}: edit_outside_read_range — lines ${line}-${end} of ${gateFile} not covered by a prior read.lines. Read the target region first, then retry the edit.`,
+              error: `edit_outside_read_range: lines ${line}-${end} not covered by prior read.lines`,
+              content: { error_class: 'edit_outside_read_range', file: gateFile, line, end_line: end, _next: 'read.lines for the target region, then retry' },
+            };
+            stepOutputs.set(step.id, output);
+            recordStepResult(step.id, step.use, output, Date.now() - stepStart);
+            batchOk = false;
+            break;
+          }
+        }
+        if (stepOutputs.has(step.id)) {
+          if (step.on_error === 'stop') break;
+          continue;
+        }
+      }
+    }
+
     // Auto-inject workspace for verify steps when not specified and files were edited
     if (step.use.startsWith('verify.') && !mergedParams.workspace && batchEditedPaths.size > 0) {
       const inferred = inferWorkspaceFromPaths(batchEditedPaths);
@@ -1501,14 +1489,19 @@ export async function executeUnifiedBatch(
   }
 
   // Build summary
-  // Flush awareness to persistent cross-batch cache
+  // Flush awareness to persistent cross-batch cache.
+  // Edited files get downgraded awareness (no readRegions) so the next batch
+  // requires a fresh read.lines before further edits — the diff-only protocol.
   for (const [, identity] of snapshotTracker.entries()) {
+    const wasEditedInBatch = batchEditedPaths.has(identity.filePath);
     ctx.store().setAwareness({
       filePath: identity.filePath,
       snapshotHash: identity.snapshotHash,
-      level: snapshotTracker.getAwarenessLevel(identity.filePath),
-      readRegions: identity.readRegions ?? [],
-      shapeHash: identity.shapeHash,
+      level: wasEditedInBatch
+        ? AwarenessLevel.NONE
+        : snapshotTracker.getAwarenessLevel(identity.filePath),
+      readRegions: wasEditedInBatch ? [] : (identity.readRegions ?? []),
+      shapeHash: wasEditedInBatch ? undefined : identity.shapeHash,
       recordedAt: Date.now(),
     });
   }

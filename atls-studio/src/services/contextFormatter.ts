@@ -199,6 +199,21 @@ export function formatWorkingMemory(input: FormatterInput): string {
     lines.push('');
   }
 
+  // Pinned-context inventory — scannable one-liner so the model knows what it
+  // already has before deciding to read or edit.
+  const pinnedEntries: string[] = [];
+  for (const chunk of chunks.values()) {
+    if (!chunk.pinned) continue;
+    const ref = getRef(chunk.hash);
+    const basename = chunk.source?.split('/').pop() ?? '?';
+    const shape = ref?.pinnedShape ? `:${ref.pinnedShape}` : '';
+    pinnedEntries.push(`h:${chunk.shortHash} ${basename}${shape} (${chunk.tokens}tk)`);
+  }
+  if (pinnedEntries.length > 0) {
+    lines.push(`Pinned: ${pinnedEntries.join(', ')}`);
+    lines.push('');
+  }
+
   // BB summary — full content is in the dynamic context block.
   if (blackboardEntries.size > 0) {
     let activeTk = 0, activeCount = 0, supersededCount = 0;

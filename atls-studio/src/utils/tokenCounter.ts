@@ -26,6 +26,7 @@ interface CacheEntry {
 class LRUCache {
   private map = new Map<string, number>();
   private maxSize: number;
+  private lastKey: string | undefined;
 
   constructor(maxSize: number) {
     this.maxSize = maxSize;
@@ -34,9 +35,14 @@ class LRUCache {
   get(key: string): number | undefined {
     const val = this.map.get(key);
     if (val !== undefined) {
-      // Move to end (most recent) using Map delete+re-set — O(1)
-      this.map.delete(key);
-      this.map.set(key, val);
+      // Only do delete+re-set when key isn't already the most recent entry.
+      // When the last-inserted key is accessed again (common in hot loops),
+      // this avoids the O(1)-but-costly Map delete+set overhead.
+      if (this.lastKey !== key) {
+        this.map.delete(key);
+        this.map.set(key, val);
+        this.lastKey = key;
+      }
     }
     return val;
   }
@@ -50,10 +56,12 @@ class LRUCache {
       if (oldest !== undefined) this.map.delete(oldest);
     }
     this.map.set(key, value);
+    this.lastKey = key;
   }
 
   clear(): void {
     this.map.clear();
+    this.lastKey = undefined;
   }
 
   get size(): number {

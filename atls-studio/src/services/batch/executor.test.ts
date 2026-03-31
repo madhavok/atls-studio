@@ -54,6 +54,8 @@ function makeCtx() {
       getBlackboardEntryWithMeta: () => null,
       getUsedTokens: () => 0,
       maxTokens: 100000,
+      getStagedSnippetsForRefresh: () => [],
+      markEngramsSuspect: () => {},
     }),
     getProjectPath: () => null,
     resolveSearchRefs: async () => ({}),
@@ -244,6 +246,133 @@ describe('executeUnifiedBatch snapshot propagation', () => {
 
     expect(editSpy).toHaveBeenCalledOnce();
     expect(result.ok).toBe(true);
+  });
+});
+
+describe('executeUnifiedBatch read-range gate (line edits)', () => {
+  beforeEach(() => {
+    handlers.clear();
+  });
+
+  it('rejects change.edit when read.lines range does not cover edit lines', async () => {
+    const editSpy = vi.fn(async () => raw('applied', { status: 'ok' }));
+
+    handlers.set('read.lines', async () => raw('read_lines', {
+      file: 'src/demo.ts',
+      content_hash: 'cafefeed',
+      content: 'x',
+      actual_range: [[1, 5]],
+    }));
+    handlers.set('change.edit', editSpy as unknown as OpHandler);
+
+    const result = await executeUnifiedBatch({
+      version: '1.0',
+      steps: [
+        { id: 'read', use: 'read.lines', with: { file_path: 'src/demo.ts', lines: '1-5' } },
+        { id: 'edit', use: 'change.edit', with: { file: 'src/demo.ts', line_edits: [{ line: 10, action: 'replace', content: 'nope' }] } },
+      ],
+    }, makeCtx());
+
+    expect(editSpy).not.toHaveBeenCalled();
+    expect(result.ok).toBe(false);
+    const step = result.step_results.find(s => s.id === 'edit');
+    expect(step?.error).toContain('edit_outside_read_range');
+    expect((step?.artifacts as Record<string, unknown> | undefined)?.error_class).toBe('edit_outside_read_range');
+  });
+
+  it('rejects spanning edit when middle lines were never read (gap between regions)', async () => {
+    const editSpy = vi.fn(async () => raw('applied', { status: 'ok' }));
+    let readCalls = 0;
+    handlers.set('read.lines', async () => {
+      readCalls += 1;
+      return raw('read_lines', {
+        file: 'src/gap.ts',
+        content_hash: 'aaa',
+        content: 'x',
+        actual_range: readCalls === 1 ? [[1, 2]] : [[5, 6]],
+      });
+    });
+    handlers.set('change.edit', editSpy as unknown as OpHandler);
+
+    const result = await executeUnifiedBatch({
+      version: '1.0',
+      steps: [
+        { id: 'r1', use: 'read.lines', with: { file_path: 'src/gap.ts', lines: '1-2' } },
+        { id: 'r2', use: 'read.lines', with: { file_path: 'src/gap.ts', lines: '5-6' } },
+        { id: 'edit', use: 'change.edit', with: { file: 'src/gap.ts', line_edits: [{ line: 2, end_line: 5, action: 'replace', content: 'z' }] } },
+      ],
+    }, makeCtx());
+
+    expect(editSpy).not.toHaveBeenCalled();
+    expect(result.ok).toBe(false);
+  });
+
+  it('skips gate for hash-ref file paths (h:…)', async () => {
+    const editSpy = vi.fn(async () => raw('applied', { status: 'ok' }));
+    handlers.set('read.lines', async () => raw('read_lines', {
+      file: 'src/x.ts',
+      content_hash: 'zzz',
+      content: 'a',
+      actual_range: [[1, 1]],
+    }));
+    handlers.set('change.edit', editSpy as unknown as OpHandler);
+
+    const result = await executeUnifiedBatch({
+      version: '1.0',
+      steps: [
+        { id: 'read', use: 'read.lines', with: { file_path: 'src/x.ts', lines: '1-1' } },
+        {
+          id: 'edit',
+          use: 'change.edit',
+          with: { file: 'h:deadbeef:1-400', line_edits: [{ line: 200, action: 'insert_before', content: '// z' }] },
+        },
+      ],
+    }, makeCtx());
+
+    expect(result.ok).toBe(true);
+    expect(editSpy).toHaveBeenCalledOnce();
+  });
+
+  it('allows change.edit at any line after read.context (canonical read bypasses range gate)', async () => {
+    const editSpy = vi.fn(async () => raw('applied', { status: 'ok' }));
+    handlers.set('read.context', async () => raw('read', {
+      results: [{ file: 'src/wide.ts', content_hash: 'canon1', content: 'full' }],
+    }));
+    handlers.set('change.edit', editSpy as unknown as OpHandler);
+
+    const result = await executeUnifiedBatch({
+      version: '1.0',
+      steps: [
+        { id: 'read', use: 'read.context', with: { file_paths: ['src/wide.ts'] } },
+        { id: 'edit', use: 'change.edit', with: { file: 'src/wide.ts', line_edits: [{ line: 900, action: 'replace', content: 'x' }] } },
+      ],
+    }, makeCtx());
+
+    expect(result.ok).toBe(true);
+    expect(editSpy).toHaveBeenCalledOnce();
+  });
+
+  it('allows a later change.edit on the same file without fresh read.lines after first successful edit', async () => {
+    const editSpy = vi.fn(async () => raw('applied', { status: 'ok', drafts: [{ file: 'src/chained.ts', content_hash: 'h2' }] }));
+    handlers.set('read.lines', async () => raw('read_lines', {
+      file: 'src/chained.ts',
+      content_hash: 'h1',
+      content: 'code',
+      actual_range: [[1, 3]],
+    }));
+    handlers.set('change.edit', editSpy as unknown as OpHandler);
+
+    const result = await executeUnifiedBatch({
+      version: '1.0',
+      steps: [
+        { id: 'read', use: 'read.lines', with: { file_path: 'src/chained.ts', lines: '1-3' } },
+        { id: 'e1', use: 'change.edit', with: { file: 'src/chained.ts', line_edits: [{ line: 2, action: 'replace', content: 'a' }] } },
+        { id: 'e2', use: 'change.edit', with: { file: 'src/chained.ts', line_edits: [{ line: 50, action: 'insert_before', content: '// far' }] } },
+      ],
+    }, makeCtx());
+
+    expect(result.ok).toBe(true);
+    expect(editSpy).toHaveBeenCalledTimes(2);
   });
 });
 
@@ -1210,5 +1339,191 @@ describe('executeUnifiedBatch inter-step rebase for move and replace_body', () =
     }, makeCtx());
 
     expect(editSpy).toHaveBeenCalledOnce();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Adversarial stress — tries to break read-range gate, rebasing, path keys.
+// Some tests document known gaps (e.g. batch_edits without top-level file).
+// ---------------------------------------------------------------------------
+
+describe('executeUnifiedBatch line-edit pipeline stress', () => {
+  beforeEach(() => {
+    handlers.clear();
+  });
+
+  it('documents gap: batch_edits has no top-level file so read-range gate is skipped', async () => {
+    const editSpy = vi.fn(async () => raw('batch', { status: 'ok', mode: 'batch_edits' }));
+    handlers.set('read.lines', async () => raw('rl', {
+      file: 'src/only-read.ts',
+      content_hash: 'h1',
+      content: 'x',
+      actual_range: [[1, 2]],
+    }));
+    handlers.set('change.edit', editSpy as unknown as OpHandler);
+
+    const result = await executeUnifiedBatch({
+      version: '1.0',
+      steps: [
+        { id: 'read', use: 'read.lines', with: { file_path: 'src/only-read.ts', lines: '1-2' } },
+        {
+          id: 'edit',
+          use: 'change.edit',
+          with: {
+            mode: 'batch_edits',
+            edits: [
+              { file: 'src/never-read.ts', line_edits: [{ line: 500, action: 'replace', content: 'z' }] },
+            ],
+          },
+        },
+      ],
+    }, makeCtx());
+
+    expect(result.ok).toBe(true);
+    expect(editSpy).toHaveBeenCalledOnce();
+  });
+
+  it('non-numeric line anchors skip per-edit gate checks (e.g. string end)', async () => {
+    const editSpy = vi.fn(async () => raw('ok', { status: 'ok' }));
+    handlers.set('read.lines', async () => raw('rl', {
+      file: 'src/narrow.ts',
+      content_hash: 'h1',
+      content: 'one line only',
+      actual_range: [[1, 1]],
+    }));
+    handlers.set('change.edit', editSpy as unknown as OpHandler);
+
+    const result = await executeUnifiedBatch({
+      version: '1.0',
+      steps: [
+        { id: 'read', use: 'read.lines', with: { file_path: 'src/narrow.ts', lines: '1-1' } },
+        {
+          id: 'edit',
+          use: 'change.edit',
+          with: {
+            file: 'src/narrow.ts',
+            line_edits: [{ line: 'end' as unknown as number, action: 'insert_before', content: '// tail' }],
+          },
+        },
+      ],
+    }, makeCtx());
+
+    expect(editSpy).toHaveBeenCalledOnce();
+    expect(result.ok).toBe(true);
+  });
+
+  it('normalizes path keys: read.lines file vs edit file casing differ', async () => {
+    const editSpy = vi.fn(async () => raw('ok', { status: 'ok' }));
+    handlers.set('read.lines', async () => raw('rl', {
+      file: 'src/Case/File.TS',
+      content_hash: 'h1',
+      content: 'x',
+      actual_range: [[1, 10]],
+    }));
+    handlers.set('change.edit', editSpy as unknown as OpHandler);
+
+    await executeUnifiedBatch({
+      version: '1.0',
+      steps: [
+        { id: 'read', use: 'read.lines', with: { file_path: 'src/Case/File.TS', lines: '1-10' } },
+        { id: 'edit', use: 'change.edit', with: { file: 'SRC/case/file.ts', line_edits: [{ line: 5, action: 'replace', content: 'y' }] } },
+      ],
+    }, makeCtx());
+
+    expect(editSpy).toHaveBeenCalledOnce();
+  });
+
+  it('intra-step chain: insert + delete + replace + move rebases to sequential coordinates', async () => {
+    const editSpy = vi.fn(async (params: Record<string, unknown>) => {
+      const le = params.line_edits as Array<Record<string, unknown>>;
+      expect(le).toHaveLength(4);
+      expect(le[0].line).toBe(4);
+      expect(le[1].line).toBe(2);
+      expect(le[2].line).toBe(11);
+      expect(le[3].line).toBe(6);
+      return raw('ok', { status: 'ok' });
+    });
+    handlers.set('change.edit', editSpy as unknown as OpHandler);
+
+    await executeUnifiedBatch({
+      version: '1.0',
+      steps: [
+        {
+          id: 'edit',
+          use: 'change.edit',
+          with: {
+            file: 'src/chain.ts',
+            line_edits: [
+              { line: 4, action: 'insert_before', content: 'new\n' },
+              { line: 3, action: 'delete' },
+              { line: 10, action: 'replace', content: 'R' },
+              { line: 5, end_line: 7, action: 'move', destination: 12 },
+            ],
+          },
+        },
+      ],
+    }, makeCtx());
+
+    expect(editSpy).toHaveBeenCalledOnce();
+  });
+
+  it('inter-step: four edits on same file rebase later steps', async () => {
+    const calls: number[][] = [];
+    handlers.set('read.context', async () => raw('rc', {
+      results: [{ file: 'src/stack.ts', content_hash: 'v0', content: 'x' }],
+    }));
+    handlers.set('change.edit', async (params: Record<string, unknown>) => {
+      const le = params.line_edits as Array<Record<string, unknown>>;
+      calls.push(le.map(e => e.line as number));
+      return raw('ok', { status: 'ok', drafts: [{ file: 'src/stack.ts', content_hash: `v${calls.length}` }] });
+    });
+
+    await executeUnifiedBatch({
+      version: '1.0',
+      steps: [
+        { id: 'r', use: 'read.context', with: { file_paths: ['src/stack.ts'] } },
+        { id: 'e1', use: 'change.edit', with: { file: 'src/stack.ts', line_edits: [{ line: 2, action: 'insert_before', content: 'a\n' }] } },
+        { id: 'e2', use: 'change.edit', with: { file: 'src/stack.ts', line_edits: [{ line: 5, action: 'delete' }] } },
+        { id: 'e3', use: 'change.edit', with: { file: 'src/stack.ts', line_edits: [{ line: 8, action: 'replace', content: 'z' }] } },
+        { id: 'e4', use: 'change.edit', with: { file: 'src/stack.ts', line_edits: [{ line: 1, action: 'insert_before', content: '// h\n' }] } },
+      ],
+    }, makeCtx());
+
+    expect(calls).toHaveLength(4);
+    expect(calls[1][0]).toBe(6);
+    expect(calls[2][0]).toBe(8);
+    expect(calls[3][0]).toBe(1);
+  });
+
+  it('rejects when one numeric edit is out of range even if another uses end anchor', async () => {
+    const editSpy = vi.fn(async () => raw('ok', { status: 'ok' }));
+    handlers.set('read.lines', async () => raw('rl', {
+      file: 'src/mixed.ts',
+      content_hash: 'h1',
+      content: 'x',
+      actual_range: [[2, 3]],
+    }));
+    handlers.set('change.edit', editSpy as unknown as OpHandler);
+
+    const result = await executeUnifiedBatch({
+      version: '1.0',
+      steps: [
+        { id: 'read', use: 'read.lines', with: { file_path: 'src/mixed.ts', lines: '2-3' } },
+        {
+          id: 'edit',
+          use: 'change.edit',
+          with: {
+            file: 'src/mixed.ts',
+            line_edits: [
+              { line: 'end' as unknown as number, action: 'insert_before', content: '// ok' },
+              { line: 99, action: 'replace', content: 'bad' },
+            ],
+          },
+        },
+      ],
+    }, makeCtx());
+
+    expect(editSpy).not.toHaveBeenCalled();
+    expect(result.ok).toBe(false);
   });
 });

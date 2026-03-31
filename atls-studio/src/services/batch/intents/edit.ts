@@ -43,7 +43,10 @@ export const resolveEdit: IntentResolver = (
   const regionsCoverEdit = hasAwareness && editRange != null && awareness != null
     && awareness.readRegions.some(r => r.start <= editRange.start && r.end >= editRange.end);
 
-  const needsRead = force || (!hasAwareness && !staged && !regionsCoverEdit);
+  // Canonical awareness (full read in prior batch) bypasses the read-range gate,
+  // so no pre-read is needed. For anything less, require read coverage or staged content.
+  const isCanonical = awareness != null && awareness.level >= AwarenessLevel.CANONICAL;
+  const needsRead = force || (!isCanonical && !regionsCoverEdit && !staged);
 
   if (needsRead && editRange) {
     steps.push({

@@ -15,24 +15,41 @@
  *  - Conditional shorthand: if:stepId.ok
  *  - Complex nested objects: inline JSON-like {...} syntax
  */
+
+// Pre-compiled regexes for toTOON hot path (avoid per-call RegExp allocation)
+const TOON_NEEDS_QUOTE_RE = /[:\s,{}[\]]/;
+const TOON_ESCAPE_QUOTE_RE = /"/g;
+
 export function toTOON(value: unknown): string {
   if (value === null || value === undefined) return '';
   if (typeof value === 'boolean') return value ? '1' : '0';
   if (typeof value === 'number') return String(value);
   if (typeof value === 'string') {
-    if (/[:\s,{}[\]]/.test(value)) {
-      return `"${value.replace(/"/g, '\\"')}"`;
+    if (TOON_NEEDS_QUOTE_RE.test(value)) {
+      return `"${value.replace(TOON_ESCAPE_QUOTE_RE, '\\"')}"`;
     }
     return value;
   }
   if (Array.isArray(value)) {
-    return `[${value.map(toTOON).filter(Boolean).join(',')}]`;
+    // Single-pass filter+map: avoid intermediate array from .map().filter()
+    const parts: string[] = [];
+    for (let i = 0; i < value.length; i++) {
+      const s = toTOON(value[i]);
+      if (s) parts.push(s);
+    }
+    return `[${parts.join(',')}]`;
   }
   if (typeof value === 'object') {
-    const entries = Object.entries(value)
-      .filter(([, v]) => v !== null && v !== undefined && v !== '')
-      .map(([k, v]) => `${k}:${toTOON(v)}`);
-    return entries.length ? `{${entries.join(',')}}` : '';
+    // Single-pass filter+map+join: avoid .filter().map().join() triple iteration
+    const parts: string[] = [];
+    const entries = Object.entries(value);
+    for (let i = 0; i < entries.length; i++) {
+      const [k, v] = entries[i];
+      if (v !== null && v !== undefined && v !== '') {
+        parts.push(`${k}:${toTOON(v)}`);
+      }
+    }
+    return parts.length > 0 ? `{${parts.join(',')}}` : '';
   }
   return String(value);
 }
@@ -54,9 +71,12 @@ function detectFileKey(arr: unknown[]): string | null {
   for (const item of arr) {
     if (item && typeof item === 'object' && !Array.isArray(item)) {
       objCount++;
+      const rec = item as Record<string, unknown>;
       for (const key of FILE_KEYS) {
-        if (typeof (item as Record<string, unknown>)[key] === 'string') {
+        if (typeof rec[key] === 'string') {
           counts[key] = (counts[key] || 0) + 1;
+          // Early exit: if any key already exceeds 50% threshold, return immediately
+          if (counts[key] > objCount * 0.5 && objCount >= 2) return key;
         }
       }
     }

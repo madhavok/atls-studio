@@ -351,12 +351,15 @@ export function extractEditLessons(result: unknown, params: Record<string, unkno
 
 const LESSON_BB_EDIT_CAP = 400;
 
+const EDIT_SUMMARY_DIFF_CAP = 800;
+
 /**
  * Write a compact BB summary of what was just edited so the model
  * remembers across turns without pinning (which breaks caching).
  * Entries use the `edit:` namespace and are auto-evicted when stale.
+ * Includes a compact diff snippet resolved from h:OLD..h:NEW when available.
  */
-function recordEditSummary(result: unknown, params: Record<string, unknown>): void {
+async function recordEditSummary(result: unknown, params: Record<string, unknown>): Promise<void> {
   try {
     if (!result || typeof result !== 'object') return;
     const r = result as Record<string, unknown>;
@@ -374,20 +377,32 @@ function recordEditSummary(result: unknown, params: Record<string, unknown>): vo
       const hash = (entry.h ?? entry.hash) as string | undefined;
       const shortHash = hash ? `h:${hash.replace(/^h:/, '').slice(0, SHORT_HASH_LEN)}` : '';
 
-      // Build a one-line summary: "h:abc123 40L (+5) diff:h:OLD..h:NEW"
       const linesChanged = (entry.lines_changed ?? entry.lines) as number | undefined;
       const lineDelta = estimateLineDeltaForSource(params, file);
       const lineInfo = linesChanged ? ` ${linesChanged}L` : '';
       const deltaInfo = lineDelta !== 0 ? ` (${lineDelta > 0 ? '+' : ''}${lineDelta})` : '';
       const oldHash = (entry.old_h ?? entry.old_hash) as string | undefined;
-      const diffRef = (oldHash && hash)
-        ? ` diff:h:${oldHash.replace(/^h:/, '').slice(0, SHORT_HASH_LEN)}..${shortHash}`
-        : '';
+      const oldShort = oldHash ? `h:${oldHash.replace(/^h:/, '').slice(0, SHORT_HASH_LEN)}` : '';
+      const diffRef = (oldShort && shortHash) ? ` diff:${oldShort}..${shortHash}` : '';
+
+      // Resolve compact diff preview from h:OLD..h:NEW
+      let diffPreview = '';
+      if (oldHash && hash && oldHash !== hash) {
+        try {
+          const rawRef = `h:${oldHash.replace(/^h:/, '')}..h:${hash.replace(/^h:/, '')}`;
+          const resolved = await invoke<{ content?: string }>('resolve_hash_ref', { rawRef });
+          if (resolved?.content) {
+            diffPreview = resolved.content.length > EDIT_SUMMARY_DIFF_CAP
+              ? '\n' + resolved.content.slice(0, EDIT_SUMMARY_DIFF_CAP) + '\n[diff truncated]'
+              : '\n' + resolved.content;
+          }
+        } catch { /* diff resolution is best-effort */ }
+      }
 
       const awareness = store.getAwareness(file);
       store.setBlackboardEntry(
         `edit:${basename}`,
-        `${shortHash}${lineInfo}${deltaInfo}${diffRef} @${Date.now()}`,
+        `${shortHash}${lineInfo}${deltaInfo}${diffRef} @${Date.now()}${diffPreview}`,
         { filePath: file, snapshotHash: awareness?.snapshotHash },
       );
     }
@@ -1625,7 +1640,7 @@ export const handleEdit: OpHandler = async (params, ctx) => {
       invalidateStaleHashes(result);
       injectDiffRefs(result);
       extractEditLessons(result, resolved);
-      recordEditSummary(result, resolved);
+      recordEditSummary(result, resolved).catch(e => console.warn('[change] edit summary failed:', e));
       const affectedPaths = extractAffectedPaths(result);
       if (affectedPaths.length > 0) {
         useContextStore.getState().bumpWorkspaceRev(affectedPaths);
