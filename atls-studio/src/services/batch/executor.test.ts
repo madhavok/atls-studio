@@ -474,6 +474,7 @@ describe('executeUnifiedBatch multiedit multibatch stress', () => {
         file_path: 'src/x.ts',
       }),
       expect.anything(),
+      'edit',
     );
   });
 
@@ -510,6 +511,7 @@ describe('executeUnifiedBatch multiedit multibatch stress', () => {
     expect(verifySpy).toHaveBeenCalledWith(
       expect.objectContaining({ hashes: ['h:post-edit-hash'] }),
       expect.anything(),
+      'verify',
     );
   });
 

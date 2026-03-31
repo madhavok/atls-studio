@@ -7,6 +7,18 @@ import { extractSearchSummary, extractSymbolSummary, extractDepsSummary, flatten
 import { countTokensSync } from '../../../utils/tokenCounter';
 import { formatResult, FORMAT_RESULT_MAX_SEARCH } from '../../../utils/toon';
 import { checkRetention } from './retention';
+import { useAppStore } from '../../../stores/appStore';
+
+/** Check if any result file paths overlap with the entry manifest and return a nudge note. */
+function getManifestHitNote(filePaths: string[]): string {
+  if (filePaths.length === 0) return '';
+  const manifest = useAppStore.getState().projectProfile?.entryManifest;
+  if (!manifest?.length) return '';
+  const manifestPaths = new Set(manifest.map(e => e.path.replace(/\\/g, '/').toLowerCase()));
+  const hits = filePaths.filter(fp => manifestPaths.has(fp.replace(/\\/g, '/').toLowerCase()));
+  if (hits.length === 0) return '';
+  return `MANIFEST: ${hits.join(', ')} already in entry manifest (system prompt, 0tk). Use read.context or read.shaped directly — no search needed for known entry points.\n`;
+}
 
 function err(label: string, msg: string): StepOutput {
   return { kind: 'search_results', ok: false, refs: [], summary: `${label}: ERROR ${msg}`, error: msg };
@@ -86,10 +98,11 @@ export const handleSearchCode: OpHandler = async (params, ctx) => {
     if (retained.reused) return retained.output;
     const hash = ctx.store().addChunk(resultStr, 'search', queries.join(', '), undefined, summary);
     const tk = countTokensSync(resultStr);
+    const manifestNote = getManifestHitNote(resultFilePaths);
     return {
       kind: 'search_results', ok: true,
       refs: [`h:${hash}`],
-      summary: `search: ${queries.join(', ')} → h:${hash} (${(tk / 1000).toFixed(1)}k tk)${cappedNote}`,
+      summary: `${manifestNote}search: ${queries.join(', ')} → h:${hash} (${(tk / 1000).toFixed(1)}k tk)${cappedNote}`,
       tokens: tk,
       content: structuredContent,
     };
@@ -118,10 +131,11 @@ export const handleSearchSymbol: OpHandler = async (params, ctx) => {
     if (retained.reused) return retained.output;
     const hash = ctx.store().addChunk(resultStr, 'symbol', queries.join(', '));
     const tk = countTokensSync(resultStr);
+    const manifestNote = getManifestHitNote(resultFilePaths);
     return {
       kind: 'symbol_refs', ok: true,
       refs: [`h:${hash}`],
-      summary: `find_symbol: ${queries.join(', ')} → h:${hash} (${(tk / 1000).toFixed(1)}k tk)`,
+      summary: `${manifestNote}find_symbol: ${queries.join(', ')} → h:${hash} (${(tk / 1000).toFixed(1)}k tk)`,
       tokens: tk,
       content: structuredContent,
     };

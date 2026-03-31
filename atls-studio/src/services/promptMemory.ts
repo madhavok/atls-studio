@@ -32,6 +32,11 @@ export const COMPACT_HISTORY_TOKEN_THRESHOLD = 18000;
 /** Max rounds in a single task phase before nudging session.advance. */
 export const PHASE_ROUND_BUDGET = 5;
 
+/** Soft total-round budget: nudge toward consolidation regardless of mutation status. */
+export const TOTAL_ROUND_SOFT_BUDGET = 6;
+/** Escalation threshold: stronger nudge to close out the session. */
+export const TOTAL_ROUND_ESCALATION = 8;
+
 /** Absolute ceiling on read-only rounds before force-stop (Layer 3 safety net). */
 export const TOTAL_RESEARCH_ROUND_BUDGET = 25;
 /** Additional rounds after budget warning before auto task_complete. */

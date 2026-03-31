@@ -455,7 +455,9 @@ export function formatStatsLine(
   const maxK = (maxTokens / 1000).toFixed(0);
   const freedK = (freedTokens / 1000).toFixed(1);
 
-  let line = `<<CTX ${usedK}k/${maxK}k (${pct}%) | chunks:${chunkCount}`;
+  let line = `<<CTX ${usedK}k/${maxK}k (${pct}%)`;
+  if (roundCount != null && roundCount > 0) line += ` | round:${roundCount}`;
+  line += ` | chunks:${chunkCount}`;
   if (pinnedCount > 0) line += ` | pinned:${pinnedCount}`;
   if (bbTokens > 0) line += ` | bb:${(bbTokens / 1000).toFixed(1)}k`;
   if (freedTokens > 1000) line += ` | freed:${freedK}k`;

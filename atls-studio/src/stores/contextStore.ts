@@ -930,7 +930,13 @@ interface ContextStoreState {
   recordToolCall: () => void;
   recordManageOps: (count: number) => void;
   resetBatchMetrics: () => void;
-  getBatchMetrics: () => { toolCalls: number; manageOps: number };
+  getBatchMetrics: () => {
+    toolCalls: number;
+    manageOps: number;
+    hadReads: boolean;
+    hadBbWrite: boolean;
+    hadSubstantiveBbWrite: boolean;
+  };
   recordFileReadSpin: (entries: Array<{ path: string; range?: string }>) => string | null;
   resetFileReadSpin: (scopedPaths?: string[]) => void;
   getPriorReadRanges: (filePath: string) => string[];

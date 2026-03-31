@@ -165,6 +165,8 @@ import {
   WORKSPACE_CONTEXT_BUDGET_TOKENS,
   WM_BUDGET_TOKENS,
   PHASE_ROUND_BUDGET,
+  TOTAL_ROUND_SOFT_BUDGET,
+  TOTAL_ROUND_ESCALATION,
   TOTAL_RESEARCH_ROUND_BUDGET,
   RESEARCH_FORCE_STOP_MARGIN,
   createPromptLayerBudgets,
@@ -2267,6 +2269,32 @@ async function streamChatViaTauri(
             useAppStore.getState().setAgentCanContinue(canAutoContinuePendingAction(currentPendingAction));
             break;
           }
+          // Task-plan guard: don't accept end_turn when subtasks are still incomplete
+          const endTurnTaskPlan = useContextStore.getState().taskPlan;
+          const hasIncompleteSubtasks = endTurnTaskPlan
+            && endTurnTaskPlan.status === 'active'
+            && endTurnTaskPlan.subtasks.some(s => s.status !== 'done');
+          if (hasIncompleteSubtasks && !taskCompleteCalled) {
+            if (autoContinueCount < maxAutoContinues) {
+              autoContinueCount++;
+              const pending = endTurnTaskPlan.subtasks
+                .filter(s => s.status !== 'done')
+                .map(s => s.id).join(', ');
+              console.log(`[aiService] Task-plan guard: incomplete subtasks (${pending}) — auto-continuing at round ${round + 1}`);
+              useAppStore.getState().setAgentProgress({
+                status: 'auto_continuing',
+                autoContinueCount,
+              });
+              if (assistantTextContent) {
+                conversationHistory.push({ role: 'assistant', content: assistantTextContent });
+              }
+              conversationHistory.push({
+                role: 'user',
+                content: `<<SYSTEM: You have an active task plan with incomplete subtasks (${pending}). Continue working or call task_complete with a summary of what was accomplished.>>`,
+              });
+              continue;
+            }
+          }
           // Natural end_turn — accept as completion
           console.log('[aiService] Model ended turn naturally — accepting as completion');
           useAppStore.getState().clearAgentPendingAction();
@@ -2709,6 +2737,23 @@ async function streamChatViaTauri(
             'session.advance commits findings (dehydrates context) and moves to the next phase.',
         });
         console.log('[aiService] Task plan nudge injected after read-only round 1');
+      }
+
+      // Layer 2D: Total-round convergence guard (applies regardless of mutation status)
+      if (mode !== 'ask' && mode !== 'retriever' && mode !== 'designer') {
+        if (round + 1 >= TOTAL_ROUND_ESCALATION) {
+          conversationHistory.push({
+            role: 'user',
+            content: `<<SYSTEM: Round ${round + 1} — session is extended. Write final BB summary, run verify if you have mutations, and call task_complete. Remaining work should be declared as a follow-up, not attempted this session.>>`,
+          });
+          console.log(`[aiService] Convergence escalation at round ${round + 1}`);
+        } else if (round + 1 >= TOTAL_ROUND_SOFT_BUDGET) {
+          conversationHistory.push({
+            role: 'user',
+            content: `<<SYSTEM: Round ${round + 1}. You are past the target batch count. Verify your work, consolidate BB findings, and move toward task_complete. Do not advance to a new phase unless the current phase has findings.>>`,
+          });
+          console.log(`[aiService] Convergence nudge at round ${round + 1}`);
+        }
       }
 
       // Layer 3A: Total research round budget — absolute ceiling

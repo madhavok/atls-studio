@@ -85,11 +85,29 @@ export const handleBbWrite: OpHandler = async (params, ctx) => {
   const stem = key.replace(/[-_]?\d+$|[-_]?(final|latest|v\d+)$/i, '');
   if (stem && stem !== key) {
     const allEntries = ctx.store().listBlackboardEntries();
-    const superseded = allEntries
-      .filter(e => e.key !== key && e.key.startsWith(stem))
+    const stemMatches = allEntries
+      .filter(e => e.key !== key && e.key.startsWith(stem) && e.state === 'active')
       .map(e => e.key);
-    if (superseded.length > 0) {
-      line += ` | NOTE: ${superseded.length} older version(s) may be superseded: ${superseded.join(', ')} — consider session.bb.delete`;
+    if (stemMatches.length > 0) {
+      line += ` | NOTE: ${stemMatches.length} older version(s) may be superseded: ${stemMatches.join(', ')} — consider session.bb.delete`;
+    }
+  }
+
+  // Auto-clean entries the freshness system already marked as superseded
+  const allEntries = ctx.store().listBlackboardEntries();
+  const staleEntries = allEntries.filter(e => e.state === 'superseded');
+  if (staleEntries.length > 0) {
+    let freedTk = 0;
+    const cleanedKeys: string[] = [];
+    for (const e of staleEntries) {
+      const dbOk = await deleteBlackboardNote(e.key, ctx.sessionId);
+      if (dbOk && ctx.store().removeBlackboardEntry(e.key)) {
+        freedTk += e.tokens;
+        cleanedKeys.push(e.key);
+      }
+    }
+    if (cleanedKeys.length > 0) {
+      line += ` | auto-cleaned ${cleanedKeys.length} superseded: ${cleanedKeys.join(', ')} (freed ~${freedTk}tk from dynamic block)`;
     }
   }
 

@@ -219,3 +219,54 @@ describe('handleStats', () => {
     expect(result.summary).toContain('retry:1');
   });
 });
+
+describe('handleTaskAdvance advance gate', () => {
+  beforeEach(() => {
+    useContextStore.getState().resetSession();
+  });
+
+  it('warns when advancing without BB findings or edits', async () => {
+    const plan = {
+      goal: 'test advance gate',
+      subtasks: [
+        { id: 'a', title: 'phase a', status: 'active' as const },
+        { id: 'b', title: 'phase b', status: 'pending' as const },
+      ],
+      activeSubtaskId: 'a' as string | null,
+    };
+    useContextStore.getState().setTaskPlan(plan);
+
+    const result = await handleTaskAdvance(
+      { summary: 'Moving on without writing findings — this should trigger the advance gate warning.' },
+      createMockCtx() as unknown as Parameters<typeof handleTaskAdvance>[1],
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.summary).toContain('WARNING');
+    expect(result.summary).toContain('Advancing without BB findings');
+  });
+
+  it('does not warn when BB write happened before advance', async () => {
+    const plan = {
+      goal: 'test advance gate with findings',
+      subtasks: [
+        { id: 'a', title: 'phase a', status: 'active' as const },
+        { id: 'b', title: 'phase b', status: 'pending' as const },
+      ],
+      activeSubtaskId: 'a' as string | null,
+    };
+    useContextStore.getState().setTaskPlan(plan);
+    useContextStore.getState().setBlackboardEntry('finding:test', 'clear — no issues found');
+    useContextStore.setState(state => ({
+      batchMetrics: { ...state.batchMetrics, hadBbWrite: true, hadSubstantiveBbWrite: true },
+    }));
+
+    const result = await handleTaskAdvance(
+      { summary: 'Phase a complete: examined target, wrote finding, no issues found in the code.' },
+      createMockCtx() as unknown as Parameters<typeof handleTaskAdvance>[1],
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.summary).not.toContain('WARNING');
+  });
+});

@@ -102,9 +102,17 @@ export const handleTaskAdvance: OpHandler = async (params, ctx) => {
     return err('task_advance: ERROR summary required (min 50 chars) - describe what was accomplished and key findings');
   }
 
+  // Advance gate: warn when advancing without BB findings in this phase
+  const bm = ctx.store().getBatchMetrics();
+  const hadFindings = bm.hadSubstantiveBbWrite || bm.hadBbWrite;
+  let advanceWarning = '';
+  if (!hadFindings) {
+    advanceWarning = 'WARNING: Advancing without BB findings or edits in this phase. Knowledge will be lost on dehydration. Write bb:finding:{target} before advancing, or ensure summary: captures all findings.\n';
+  }
+
   const { unloaded, freedTokens } = ctx.store().advanceSubtask(subtaskId, summary);
   return ok(
-    `task_advance: ${subtaskId}(active) | ${unloaded} chunks archived (${(freedTokens / 1000).toFixed(1)}k tokens freed, recallable by hash)`,
+    `${advanceWarning}task_advance: ${subtaskId}(active) | ${unloaded} chunks archived (${(freedTokens / 1000).toFixed(1)}k tokens freed, recallable by hash)`,
     [],
     -freedTokens,
   );

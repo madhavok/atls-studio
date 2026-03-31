@@ -427,6 +427,14 @@ export interface ContextStoreApi {
   recordManageOps: (count: number) => void;
   recordBatchRead: () => void;
   recordBatchBbWrite: (key?: string, content?: string) => void;
+  /** Snapshot of per-batch tool/read/BB telemetry for the current round. */
+  getBatchMetrics: () => {
+    toolCalls: number;
+    manageOps: number;
+    hadReads: boolean;
+    hadBbWrite: boolean;
+    hadSubstantiveBbWrite: boolean;
+  };
   recordCoveragePath: (filePath: string) => void;
   /** Track repeated reads of the same file+range within a chat session; returns breaker/nudge text at threshold. */
   recordFileReadSpin: (entries: Array<{ path: string; range?: string }>) => string | null;

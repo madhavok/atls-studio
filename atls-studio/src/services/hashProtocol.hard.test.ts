@@ -123,8 +123,8 @@ describe('HPP hard tests', () => {
     materialize('aabbccdd11223344', 'file', 'src/x.ts', 100, 50, '');
     expect(getRef('aabbcc')).toBeDefined(); // shortHash (6-char)
     expect(getRef('aabbccdd')).toBeDefined(); // full hash prefix
-    // getRef does prefix matching via hash.startsWith, so 4-char prefix still matches
-    expect(getRef('aabb')).toBeDefined();
+    // Prefix scan only runs for normalized.length >= SHORT_HASH_LEN (6); shorter refs are not ambiguous-resolved
+    expect(getRef('aabb')).toBeUndefined();
   });
 
   // ── formatRefLine with and without digest ──
