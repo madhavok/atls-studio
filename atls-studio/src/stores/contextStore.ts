@@ -565,48 +565,52 @@ function pickCompactContent(chunk: ContextChunk, fallback: string): string {
 function pruneLowValueChunks(
   chunks: Map<string, ContextChunk>,
   archivedChunks: Map<string, ContextChunk>,
-): {
-  chunks: Map<string, ContextChunk>;
-  archivedChunks: Map<string, ContextChunk>;
-  compacted: string[];
-  dropped: string[];
-  freedTokens: number;
-} {
-  const nextChunks = new Map(chunks);
-  const nextArchived = new Map(archivedChunks);
-  const compacted: string[] = [];
-  const dropped: string[] = [];
+  options: { skipIfUnderPressure?: boolean; usedTokens?: number; maxTokens?: number } = {},
+): { chunks: Map<string, ContextChunk>; archivedChunks: Map<string, ContextChunk>; compacted: number; dropped: number; freedTokens: number } {
+  // opt-9: Skip prune when under 70% token pressure
+  if (options.skipIfUnderPressure) {
+    const used = options.usedTokens ?? 0;
+    const max = options.maxTokens ?? 200000;
+    if (used < max * 0.7) {
+      return { chunks, archivedChunks, compacted: 0, dropped: 0, freedTokens: 0 };
+    }
+  }
+
+  let nextChunks: Map<string, ContextChunk> | null = null;
+  let nextArchived: Map<string, ContextChunk> | null = null;
+  let compacted = 0;
+  let dropped = 0;
   let freedTokens = 0;
 
   for (const [key, chunk] of chunks) {
     if (shouldAutoDropChunk(chunk)) {
+      if (!nextChunks) nextChunks = new Map(chunks);
+      if (!nextArchived) nextArchived = new Map(archivedChunks);
       nextChunks.delete(key);
-      // Preserve in archive for potential recall — only remove from active chunks
-      if (!nextArchived.has(key)) {
-        nextArchived.set(key, { ...chunk });
-      }
-      dropped.push(chunk.hash);
+      nextArchived.set(key, chunk);
+      dropped++;
       freedTokens += chunk.tokens;
       continue;
     }
-
     if (!chunk.compacted && shouldAutoCompactChunk(chunk)) {
-      nextArchived.set(key, { ...chunk });
-      const compactContent = pickCompactContent(chunk, `[compacted] h:${chunk.shortHash}`);
+      if (!nextChunks) nextChunks = new Map(chunks);
+      if (!nextArchived) nextArchived = new Map(archivedChunks);
+      const compactContent = pickCompactContent(chunk, `[${chunk.shortHash}] ${chunk.type} ${chunk.source ?? ''} ${chunk.tokens}tk`);
       const compactTokens = countTokensSync(compactContent);
+      freedTokens += chunk.tokens - compactTokens;
+      nextArchived.set(key, chunk);
       nextChunks.set(key, {
         ...chunk,
         content: compactContent,
         tokens: compactTokens,
         compacted: true,
-        lastAccessed: Date.now(),
+        compactTier: chunk.editDigest ? 'sig' : 'pointer',
       });
-      compacted.push(chunk.hash);
-      freedTokens += Math.max(0, chunk.tokens - compactTokens);
+      compacted++;
     }
   }
 
-  return { chunks: nextChunks, archivedChunks: nextArchived, compacted, dropped, freedTokens };
+  return { chunks: nextChunks ?? chunks, archivedChunks: nextArchived ?? archivedChunks, compacted, dropped, freedTokens };
 }
 let _memoryEventCounter = 0;
 
@@ -1024,8 +1028,15 @@ function makeMemoryEvent(event: Omit<MemoryEvent, 'id' | 'at'> & { at?: number }
 
 function appendMemoryEvent(events: MemoryEvent[], event: Omit<MemoryEvent, 'id' | 'at'> & { at?: number }): MemoryEvent[] {
   const nextEvent = makeMemoryEvent(event);
-  if (events.length < MAX_MEMORY_EVENTS) return [...events, nextEvent];
-  return [...events.slice(1), nextEvent];
+  if (events.length < MAX_MEMORY_EVENTS) {
+    const next = events.slice();
+    next.push(nextEvent);
+    return next;
+  }
+  // Bounded: drop oldest, avoid full copy via slice(1) + push
+  const next = events.slice(1);
+  next.push(nextEvent);
+  return next;
 }
 
 let _getRetentionMetrics: () => { readsReused: number; resultsCollapsed: number; transitionsRecorded: number } = () => ({ readsReused: 0, resultsCollapsed: 0, transitionsRecorded: 0 });
@@ -2312,15 +2323,18 @@ export const useContextStore = create<ContextStoreState>()(
    * and sourceRevision !== currentRevision. Uses immediate eviction (no stale tracking).
    */
   invalidateDerivedForPath: (path: string, currentRevision: string) => {
-    const norm = normalizeSourcePath;
-    const pathNorm = norm(path);
+    const pathNorm = normalizeSourcePath(path);
     let evicted = 0;
     const evictedHashes: string[] = [];
     set(state => {
       let newStaged: Map<string, StagedSnippet> | null = null;
       for (const [key, s] of state.stagedSnippets) {
         if (s.viewKind === 'snapshot') continue;
-        if (s.source && norm(s.source) === pathNorm && s.sourceRevision != null && s.sourceRevision !== currentRevision && s.viewKind === 'derived') {
+        // Optimized: normalize source once, skip non-matching sources early
+        if (!s.source) continue;
+        const sourceNorm = normalizeSourcePath(s.source);
+        if (sourceNorm !== pathNorm) continue;
+        if (s.sourceRevision != null && s.sourceRevision !== currentRevision && s.viewKind === 'derived') {
           if (!newStaged) newStaged = new Map(state.stagedSnippets);
           newStaged.delete(key);
           evicted++;
@@ -2329,19 +2343,19 @@ export const useContextStore = create<ContextStoreState>()(
       let newChunks: Map<string, ContextChunk> | null = null;
       let newArchived: Map<string, ContextChunk> | null = null;
       for (const [key, c] of state.chunks) {
-        if (c.viewKind === 'snapshot') continue;
-        if (c.source && norm(c.source) === pathNorm && c.sourceRevision != null && c.sourceRevision !== currentRevision && c.viewKind === 'derived') {
+        if (!c.source) continue;
+        const sourceNorm = normalizeSourcePath(c.source);
+        if (sourceNorm !== pathNorm) continue;
+        if (c.sourceRevision != null && c.sourceRevision !== currentRevision) {
           if (!newChunks) newChunks = new Map(state.chunks);
+          if (!newArchived) newArchived = new Map(state.archivedChunks);
           newChunks.delete(key);
+          newArchived.set(key, c);
           evictedHashes.push(c.hash);
           evicted++;
-          if (!state.archivedChunks.has(key)) {
-            if (!newArchived) newArchived = new Map(state.archivedChunks);
-            newArchived.set(key, { ...c, compacted: true });
-          }
         }
       }
-      if (!newStaged && !newChunks && !newArchived) return {};
+      if (!newStaged && !newChunks) return {};
       return {
         ...(newStaged ? { stagedSnippets: newStaged, stageVersion: state.stageVersion + 1 } : {}),
         ...(newChunks ? { chunks: newChunks } : {}),
@@ -3703,25 +3717,30 @@ export const useContextStore = create<ContextStoreState>()(
     lines.push(`## STAGED (cached @ 10% cost, ${(totalTokens / 1000).toFixed(1)}k tokens)`);
 
     // Build a set of sources that have active (materialized, non-compacted) engrams
-    // to avoid emitting full content twice when the same file is both staged and active.
+    // Optimized: skip chunks that are compacted or have no source early,
+    // and avoid hppGetRef/hppShouldMaterialize for chunks that can't match any staged source.
+    const stagedSources = new Set<string>();
+    for (const [, snippet] of state.stagedSnippets) {
+      if (snippet.source) stagedSources.add(snippet.source.replace(/\\/g, '/').toLowerCase());
+    }
     const activeEngramSources = new Set<string>();
-    for (const [, chunk] of state.chunks) {
-      if (chunk.compacted || !chunk.source) continue;
-      const ref = hppGetRef(chunk.hash);
-      if (!ref || hppShouldMaterialize(ref)) {
-        activeEngramSources.add(normalizeSourcePath(chunk.source));
+    if (stagedSources.size > 0) {
+      for (const [, chunk] of state.chunks) {
+        if (chunk.compacted || !chunk.source) continue;
+        const chunkSourceNorm = chunk.source.replace(/\\/g, '/').toLowerCase();
+        if (!stagedSources.has(chunkSourceNorm)) continue;
+        const ref = hppGetRef(chunk.hash);
+        if (!ref || hppShouldMaterialize(ref)) {
+          activeEngramSources.add(chunk.source);
+        }
       }
     }
 
     state.stagedSnippets.forEach((snippet, key) => {
-      if (snippet.stageState === 'superseded') return;
-      const isStale = !canSteerExecution({ stageState: snippet.stageState, freshness: snippet.freshness });
-      const staleTag = isStale ? ' [STALE]' : '';
-      const lineRange = snippet.lines ? `:${snippet.lines}` : '';
-      lines.push(`[${key}]${staleTag} ${snippet.source}${lineRange} (${snippet.tokens}tk)`);
-      const normSource = normalizeSourcePath(snippet.source);
-      if (activeEngramSources.has(normSource)) {
-        lines.push(`[content in active engram — see ## ACTIVE ENGRAMS]`);
+      const shortHash = key.slice(0, SHORT_HASH_LEN);
+      lines.push(`[${shortHash}] ${snippet.source ?? 'unknown'}${snippet.viewKind ? ':' + snippet.viewKind : ''} (${snippet.tokens}tk)`);
+      if (snippet.source && activeEngramSources.has(snippet.source)) {
+        lines.push(`  (active engram exists — content omitted from staged block)`);
       } else {
         lines.push(snippet.content);
       }
@@ -4051,22 +4070,24 @@ export const useContextStore = create<ContextStoreState>()(
     const key = filePath.replace(/\\/g, '/').toLowerCase();
     const entry = get().awarenessCache.get(key);
     if (!entry) return undefined;
-    // Validate: entry's snapshotHash must match current known sourceRevision.
-    // Check chunks, staged snippets, and archived chunks for a newer revision.
+    // Optimized: filter by normalized path early instead of calling
+    // sourceMatchesTargets (which re-normalizes) on every chunk.
     const state = get();
-    const hasNewerRevision = (source: string | undefined, sourceRevision: string | undefined): boolean => {
-      if (!source || !sourceRevision) return false;
-      if (!sourceMatchesTargets(source, [filePath])) return false;
-      return sourceRevision !== entry.snapshotHash;
+    const matchesPath = (source: string | undefined): boolean => {
+      if (!source) return false;
+      return source.replace(/\\/g, '/').toLowerCase() === key;
     };
     for (const [, chunk] of state.chunks) {
-      if (hasNewerRevision(chunk.source, chunk.sourceRevision)) return undefined;
+      if (!chunk.sourceRevision || !matchesPath(chunk.source)) continue;
+      if (chunk.sourceRevision !== entry.snapshotHash) return undefined;
     }
     for (const [, snippet] of state.stagedSnippets) {
-      if (hasNewerRevision(snippet.source, snippet.sourceRevision)) return undefined;
+      if (!snippet.sourceRevision || !matchesPath(snippet.source)) continue;
+      if (snippet.sourceRevision !== entry.snapshotHash) return undefined;
     }
-    for (const [, chunk] of state.archivedChunks) {
-      if (hasNewerRevision(chunk.source, chunk.sourceRevision)) return undefined;
+    for (const [, archived] of state.archivedChunks) {
+      if (!archived.sourceRevision || !matchesPath(archived.source)) continue;
+      if (archived.sourceRevision !== entry.snapshotHash) return undefined;
     }
     return entry;
   },
@@ -4423,13 +4444,19 @@ export const useContextStore = create<ContextStoreState>()(
     const state = get();
     for (const [, c] of state.chunks) {
       if (CHAT_TYPES.has(c.type)) continue;
-      const ref = hppGetRef(c.hash);
-      const isDormant = c.compacted || (ref != null && !hppShouldMaterialize(ref));
-      if (isDormant) {
+      // Optimized: check compacted first (cheap boolean) before calling hppGetRef (Map lookup)
+      if (c.compacted) {
         const hasFinding = (c.annotations?.length ?? 0) > 0 || !!c.summary;
         total += DORMANT_BASE_TOKENS + (hasFinding ? DORMANT_FINDING_TOKENS : 0);
       } else {
-        total += c.tokens;
+        const ref = hppGetRef(c.hash);
+        const isDormant = ref != null && !hppShouldMaterialize(ref);
+        if (isDormant) {
+          const hasFinding = (c.annotations?.length ?? 0) > 0 || !!c.summary;
+          total += DORMANT_BASE_TOKENS + (hasFinding ? DORMANT_FINDING_TOKENS : 0);
+        } else {
+          total += c.tokens;
+        }
       }
     }
     return total;
