@@ -138,6 +138,7 @@ export async function countTokensBatch(contents: string[]): Promise<number[]> {
   const results = new Array<number>(contents.length);
   const uncachedIndices: number[] = [];
   const uncachedContents: string[] = [];
+  const uncachedHashes: string[] = [];
 
   for (let i = 0; i < contents.length; i++) {
     if (!contents[i] || contents[i].length === 0) {
@@ -152,6 +153,7 @@ export async function countTokensBatch(contents: string[]): Promise<number[]> {
     } else {
       uncachedIndices.push(i);
       uncachedContents.push(contents[i]);
+      uncachedHashes.push(hash);
     }
   }
 
@@ -165,8 +167,7 @@ export async function countTokensBatch(contents: string[]): Promise<number[]> {
       for (let j = 0; j < uncachedIndices.length; j++) {
         const idx = uncachedIndices[j];
         results[idx] = counts[j];
-        const hash = quickHash(contents[idx]);
-        const cacheKey = `${provider}:${model}:${hash}`;
+        const cacheKey = `${provider}:${model}:${uncachedHashes[j]}`;
         cache.set(cacheKey, counts[j]);
       }
     } catch {

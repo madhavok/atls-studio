@@ -49,6 +49,9 @@ const CHUNK_TAG_TYPES: ChunkType[] = [
   'analysis',
 ];
 
+/** Pre-sorted by descending length for longest-prefix matching in parseChunkTag */
+const CHUNK_TAG_TYPES_BY_LENGTH: ChunkType[] = [...CHUNK_TAG_TYPES].sort((a, b) => b.length - a.length);
+
 /**
  * FNV-1a 32-bit hash with configurable offset basis.
  * Used internally to produce two independent 32-bit hashes.
@@ -180,7 +183,7 @@ export function parseChunkTag(tag: string): {
   const tokensStr = match[2] ?? match[3];
 
   const payload = match[4];
-  const type = [...CHUNK_TAG_TYPES].sort((a, b) => b.length - a.length).find((chunkType) => payload === chunkType || payload.startsWith(`${chunkType} `) || payload.startsWith(`${chunkType}:`));
+  const type = CHUNK_TAG_TYPES_BY_LENGTH.find((chunkType) => payload === chunkType || payload.startsWith(`${chunkType} `) || payload.startsWith(`${chunkType}:`));
   if (!type) return null;
 
   const rest = payload.slice(type.length);
@@ -299,14 +302,17 @@ function formatSymbolDigestWithLines(symbols: DigestSymbol[]): string {
 /** Regex-based code digest with line numbers for each extracted symbol */
 function extractCodeDigestWithLines(content: string): string {
   const sigRe = /(?:^|\n)\s*(?:export\s+)?(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?(?:fn|function|def|func|class|struct|interface|trait|enum|type|impl)\s+(\w+)/g;
-  const lines = content.split('\n');
   const entries: string[] = [];
   let m: RegExpExecArray | null;
+  let lineNum = 1;
+  let lastIdx = 0;
   while ((m = sigRe.exec(content)) !== null && entries.length < DIGEST_MAX_SYMBOLS) {
     const name = m[1];
-    // Find the line number of this match
-    const charIdx = m.index;
-    const lineNum = content.substring(0, charIdx).split('\n').length;
+    // Count newlines incrementally from last match position
+    for (let k = lastIdx; k < m.index; k++) {
+      if (content.charCodeAt(k) === 10) lineNum++;
+    }
+    lastIdx = m.index;
     entries.push(`${name}:${lineNum}`);
   }
   if (entries.length === 0) return '';
@@ -328,17 +334,18 @@ function formatSymbolDigest(symbols: DigestSymbol[]): string {
   return `  ${line}${overflow}`;
 }
 
+const KIND_ABBREVIATIONS: Record<string, string> = {
+  function: 'fn', method: 'fn', constructor: 'ctor',
+  class: 'cls', struct: 'struct', interface: 'iface',
+  enum: 'enum', type: 'type', trait: 'trait',
+  variable: 'var', constant: 'const', property: 'prop',
+  module: 'mod', namespace: 'ns', impl: 'impl',
+  macro: 'mac', decorator: 'dec', protocol: 'proto',
+};
+
 /** Abbreviate symbol kind for compact display */
 function abbreviateKind(kind: string): string {
-  const map: Record<string, string> = {
-    function: 'fn', method: 'fn', constructor: 'ctor',
-    class: 'cls', struct: 'struct', interface: 'iface',
-    enum: 'enum', type: 'type', trait: 'trait',
-    variable: 'var', constant: 'const', property: 'prop',
-    module: 'mod', namespace: 'ns', impl: 'impl',
-    macro: 'mac', decorator: 'dec', protocol: 'proto',
-  };
-  return map[kind.toLowerCase()] || kind.slice(0, 4);
+  return KIND_ABBREVIATIONS[kind.toLowerCase()] || kind.slice(0, 4);
 }
 
 /** Fallback: extract fn/class/struct names from raw code via lightweight regex */

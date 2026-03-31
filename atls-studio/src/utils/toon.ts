@@ -234,7 +234,12 @@ export function jsObjectToJson(input: string): string {
       if (i < len) { out.push('"'); i++; }
     } else if ((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || ch === '_') {
       const start = i;
-      while (i < len && (/[a-zA-Z0-9_]/.test(input[i]))) i++;
+      i++;
+      while (i < len) {
+        const c = input.charCodeAt(i);
+        if ((c >= 97 && c <= 122) || (c >= 65 && c <= 90) || (c >= 48 && c <= 57) || c === 95) i++;
+        else break;
+      }
       const ident = input.slice(start, i);
       let j = i;
       while (j < len && (input[j] === ' ' || input[j] === '\n' || input[j] === '\r' || input[j] === '\t')) j++;
