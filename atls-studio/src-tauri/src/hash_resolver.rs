@@ -21,7 +21,7 @@ use tokio::sync::Mutex;
 
 use crate::error::AtlsError;
 use crate::path_utils::{normalize_line_endings, read_file_with_format, resolve_project_path, FileFormat};
-use crate::{apply_line_edits, content_hash, LineEdit};
+use crate::{content_hash, LineEdit};
 
 fn normalize_source_key(source: &str) -> String {
     source.replace('\\', "/").to_lowercase()
@@ -1900,7 +1900,23 @@ pub fn batch_edits(
             continue;
         }
 
-        let (new_content, warnings, _resolutions) = apply_line_edits(&content, &entry.line_edits)?;
+        // Shadow lookup for content-anchored edits when hash is stale
+        let shadow_for_batch: Option<String> = if let Some(ref expected) = entry.content_hash {
+            let expected_clean = crate::snapshot::canonicalize_hash(expected);
+            if old_hash != expected_clean {
+                registry.get_original(&expected_clean).map(|e| e.content.clone())
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        let (new_content, warnings, _resolutions) = crate::apply_line_edits_with_shadow(
+            &entry.line_edits,
+            &content,
+            shadow_for_batch.as_deref(),
+        )?;
 
         // Use EditSession for validation and atomic commit
         let mut session = crate::edit_session::EditSession::begin_from_snapshot(&snap, resolved_path.clone());

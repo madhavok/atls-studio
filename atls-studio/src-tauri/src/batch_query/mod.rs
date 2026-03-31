@@ -10592,7 +10592,25 @@ pub async fn atls_batch_query(
                 }
                 drop(snapshot_svc);
 
-                let (new_content, _warnings, line_edit_resolutions) = apply_line_edits(&content, &edits)?;
+                // Shadow lookup for content-anchored edits when hash is stale
+                let shadow_for_mutation: Option<String> = if edit_stale {
+                    if let Some(expected_hash) = params.get("content_hash").and_then(|v| v.as_str()) {
+                        let hr_state = app.state::<hash_resolver::HashRegistryState>();
+                        let registry = hr_state.registry.lock().await;
+                        let canonical = crate::snapshot::canonicalize_hash(expected_hash);
+                        registry.get_original(&canonical).map(|entry| entry.content.clone())
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+
+                let (new_content, _warnings, line_edit_resolutions) = crate::apply_line_edits_with_shadow(
+                    &edits,
+                    &content,
+                    shadow_for_mutation.as_deref(),
+                )?;
                 let mut written_content = new_content.clone();
                 if is_js_ts_path(&file_path) && written_content.contains("export ") {
                     written_content = dedupe_barrel_exports(&written_content);
@@ -11272,47 +11290,50 @@ pub async fn atls_batch_query(
                             },
                         }
                     }
-                    // Shadow diff line remapping: when the model's content_hash doesn't match
-                    // the current file, look up the model's preimage in the hash registry and
-                    // compute a line map to shift stale line numbers to current positions.
-                    // Runs on spawn_blocking to avoid stalling the async executor.
-                    if let Some(expected_hash) = params.get("content_hash").and_then(|v| v.as_str()) {
-                        let shadow_content = {
-                            let hr_state = app.state::<hash_resolver::HashRegistryState>();
-                            let registry = hr_state.registry.lock().await;
-                            let canonical = crate::snapshot::canonicalize_hash(expected_hash);
-                            registry.get_original(&canonical)
-                                .map(|entry| entry.content.clone())
-                        };
-                        if let Some(shadow) = shadow_content {
+                    // Content-anchored edit path: when the model's content_hash is stale
+                    // and we have the shadow (preimage) content, convert line edits into
+                    // ExactReplace ops that EditSession matches by content, not position.
+                    // This makes line-number rebasing irrelevant for correctness.
+                    let content_hash_refreshed = params.get("content_hash_refreshed")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false);
+
+                    let shadow_for_edit: Option<String> = if !content_hash_refreshed {
+                        if let Some(expected_hash) = params.get("content_hash").and_then(|v| v.as_str()) {
                             let actual_hash = content_hash(&base);
                             let expected_canonical = crate::snapshot::canonicalize_hash(expected_hash);
                             if actual_hash != expected_canonical {
-                                let base_clone = base.clone();
-                                let remap_result = tokio::task::spawn_blocking(move || {
-                                    let line_map = crate::line_remap::compute_line_map(&shadow, &base_clone);
-                                    (line_map, expected_canonical)
-                                }).await.ok();
-                                if let Some((line_map, exp_canonical)) = remap_result {
-                                    if !line_map.is_identity() {
-                                        let short = if exp_canonical.len() >= 6 { &exp_canonical[..6] } else { &exp_canonical };
-                                        let notices = crate::line_remap::remap_edits(&mut le, &line_map, short);
-                                        for n in notices {
-                                            edit_warnings.push(serde_json::json!({
-                                                "file": file_path,
-                                                "warning": "line_edit_notice",
-                                                "error_class": "line_edit_notice",
-                                                "hint": n,
-                                            }));
-                                        }
-                                    }
-                                }
+                                let hr_state = app.state::<hash_resolver::HashRegistryState>();
+                                let registry = hr_state.registry.lock().await;
+                                let canonical = crate::snapshot::canonicalize_hash(expected_hash);
+                                registry.get_original(&canonical)
+                                    .map(|entry| entry.content.clone())
+                            } else {
+                                None
                             }
+                        } else {
+                            None
                         }
-                    }
+                    } else {
+                        None
+                    };
 
-                    let (new_content, anchor_warnings, edits_resolved) = match apply_line_edits(&base, &le) {
-                        Ok(result) => result,
+                    let (new_content, edits_resolved) = match crate::apply_line_edits_with_shadow(
+                        &le,
+                        &base,
+                        shadow_for_edit.as_deref(),
+                    ) {
+                        Ok((content, warnings, resolutions)) => {
+                            for w in warnings {
+                                edit_warnings.push(serde_json::json!({
+                                    "file": file_path,
+                                    "warning": "line_edit_notice",
+                                    "error_class": "line_edit_notice",
+                                    "hint": w,
+                                }));
+                            }
+                            (content, resolutions)
+                        }
                         Err(edit_err) => {
                             let error_class = classify_line_edit_error(&edit_err);
                             let next_hint = match error_class {
@@ -11333,17 +11354,9 @@ pub async fn atls_batch_query(
                             }));
                         }
                     };
-                    // Successful apply_line_edits may still emit informational strings (fuzzy anchor,
-                    // hint delta, count-overlap extension). Those are not failures — only Err(...) is.
-                    for w in anchor_warnings {
-                        edit_warnings.push(serde_json::json!({
-                            "file": file_path,
-                            "warning": "line_edit_notice",
-                            "error_class": "line_edit_notice",
-                            "hint": w,
-                        }));
+                    if let Some(resolutions) = edits_resolved {
+                        draft_line_edit_resolutions = Some(resolutions);
                     }
-                    draft_line_edit_resolutions = Some(edits_resolved);
                     let to_insert = if is_js_ts_path(&file_path) && new_content.contains("export ") {
                         dedupe_barrel_exports(&new_content)
                     } else {

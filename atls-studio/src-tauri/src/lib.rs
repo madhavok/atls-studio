@@ -771,6 +771,300 @@ pub(crate) fn apply_line_edits(content: &str, edits: &[LineEdit]) -> Result<(Str
     Ok((lines.join("\n"), anchor_warnings, resolutions))
 }
 
+// ---------------------------------------------------------------------------
+// Shadow-preimage helpers for content-anchored edits
+// ---------------------------------------------------------------------------
+
+/// Extract the text from a shadow snapshot at [line, end_line] (1-based inclusive).
+/// Returns `None` if the range is out of bounds.
+pub(crate) fn extract_shadow_preimage(
+    shadow_content: &str,
+    line: u32,
+    end_line: Option<u32>,
+) -> Option<String> {
+    if line == 0 {
+        return None;
+    }
+    let shadow_lines: Vec<&str> = shadow_content.lines().collect();
+    let start_idx = (line as usize).saturating_sub(1);
+    let end_idx = end_line.map(|e| e as usize).unwrap_or(line as usize);
+    if start_idx >= shadow_lines.len() || end_idx > shadow_lines.len() || end_idx < line as usize {
+        return None;
+    }
+    Some(shadow_lines[start_idx..end_idx].join("\n"))
+}
+
+/// Convert an array of `LineEdit`s into `EditOp`s using shadow-derived preimages.
+///
+/// When the model's `content_hash` is stale, the shadow contains the file at the
+/// hash the model saw. Slicing the shadow at each edit's `line`/`end_line` yields
+/// the text the model intended to target -- the implicit preimage. Each line edit
+/// becomes an `ExactReplace` that `EditSession` matches by content, not position.
+///
+/// Edits are converted in order; a running working copy of `current_content` is
+/// updated after each op so subsequent preimage searches reflect prior mutations.
+///
+/// Returns `(ops, warnings)`. Warnings note edits that couldn't be converted
+/// (shadow extraction failed); the caller should fall back to positional for those.
+pub(crate) fn line_edits_to_edit_ops(
+    edits: &[LineEdit],
+    shadow_content: &str,
+    current_content: &str,
+) -> Result<(Vec<crate::edit_session::EditOp>, Vec<String>), String> {
+    use crate::edit_session::{EditOp, EditOpKind};
+
+    let mut ops: Vec<EditOp> = Vec::with_capacity(edits.len());
+    let mut warnings: Vec<String> = Vec::new();
+    let mut working = current_content.to_string();
+
+    for (i, edit) in edits.iter().enumerate() {
+        let abs_line = match &edit.line {
+            LineCoordinate::Abs(n) if *n > 0 => *n,
+            _ => {
+                warnings.push(format!(
+                    "edit[{}]: non-absolute line coordinate, skipping shadow conversion",
+                    i
+                ));
+                continue;
+            }
+        };
+
+        let action = edit.action.as_str();
+        match action {
+            "replace" => {
+                let preimage = match extract_shadow_preimage(shadow_content, abs_line, edit.end_line) {
+                    Some(p) => p,
+                    None => {
+                        warnings.push(format!(
+                            "edit[{}]: shadow preimage extraction failed for L{}-{:?}",
+                            i, abs_line, edit.end_line
+                        ));
+                        continue;
+                    }
+                };
+                let replacement = edit.content.as_deref().unwrap_or("").to_string();
+                let op = EditOp { kind: EditOpKind::ExactReplace, preimage: preimage.clone(), replacement: replacement.clone() };
+                apply_edit_op_to_working(&mut working, &preimage, &replacement);
+                ops.push(op);
+            }
+            "delete" => {
+                let preimage = match extract_shadow_preimage(shadow_content, abs_line, edit.end_line) {
+                    Some(p) => p,
+                    None => {
+                        warnings.push(format!(
+                            "edit[{}]: shadow preimage extraction failed for delete L{}-{:?}",
+                            i, abs_line, edit.end_line
+                        ));
+                        continue;
+                    }
+                };
+                let replacement = String::new();
+                let op = EditOp { kind: EditOpKind::ExactReplace, preimage: preimage.clone(), replacement: replacement.clone() };
+                apply_edit_op_to_working(&mut working, &preimage, &replacement);
+                ops.push(op);
+            }
+            "insert_before" | "prepend" => {
+                let context_line = match extract_shadow_preimage(shadow_content, abs_line, Some(abs_line)) {
+                    Some(p) => p,
+                    None => {
+                        warnings.push(format!(
+                            "edit[{}]: shadow context extraction failed for insert_before L{}",
+                            i, abs_line
+                        ));
+                        continue;
+                    }
+                };
+                let inserted = edit.content.as_deref().unwrap_or("");
+                let preimage = context_line.clone();
+                let replacement = format!("{}\n{}", inserted, context_line);
+                let op = EditOp { kind: EditOpKind::ExactReplace, preimage: preimage.clone(), replacement: replacement.clone() };
+                apply_edit_op_to_working(&mut working, &preimage, &replacement);
+                ops.push(op);
+            }
+            "insert_after" | "append" => {
+                let context_line = match extract_shadow_preimage(shadow_content, abs_line, Some(abs_line)) {
+                    Some(p) => p,
+                    None => {
+                        warnings.push(format!(
+                            "edit[{}]: shadow context extraction failed for insert_after L{}",
+                            i, abs_line
+                        ));
+                        continue;
+                    }
+                };
+                let inserted = edit.content.as_deref().unwrap_or("");
+                let preimage = context_line.clone();
+                let replacement = format!("{}\n{}", context_line, inserted);
+                let op = EditOp { kind: EditOpKind::ExactReplace, preimage: preimage.clone(), replacement: replacement.clone() };
+                apply_edit_op_to_working(&mut working, &preimage, &replacement);
+                ops.push(op);
+            }
+            "replace_body" => {
+                let shadow_lines: Vec<&str> = shadow_content.lines().collect();
+                let start_idx = (abs_line as usize).saturating_sub(1);
+                if start_idx >= shadow_lines.len() {
+                    warnings.push(format!(
+                        "edit[{}]: shadow out of range for replace_body L{}",
+                        i, abs_line
+                    ));
+                    continue;
+                }
+                let slice = &shadow_lines[start_idx..];
+                match find_body_bounds(slice) {
+                    Some((body_offset, body_count)) => {
+                        let body_start = start_idx + body_offset;
+                        let body_end = std::cmp::min(body_start + body_count, shadow_lines.len());
+                        let preimage = shadow_lines[body_start..body_end].join("\n");
+                        let replacement = edit.content.as_deref().unwrap_or("").to_string();
+                        let op = EditOp { kind: EditOpKind::ExactReplace, preimage: preimage.clone(), replacement: replacement.clone() };
+                        apply_edit_op_to_working(&mut working, &preimage, &replacement);
+                        ops.push(op);
+                    }
+                    None => {
+                        warnings.push(format!(
+                            "edit[{}]: could not find body bounds in shadow for replace_body L{}",
+                            i, abs_line
+                        ));
+                        continue;
+                    }
+                }
+            }
+            "move" => {
+                let preimage = match extract_shadow_preimage(shadow_content, abs_line, edit.end_line) {
+                    Some(p) => p,
+                    None => {
+                        warnings.push(format!(
+                            "edit[{}]: shadow preimage extraction failed for move L{}-{:?}",
+                            i, abs_line, edit.end_line
+                        ));
+                        continue;
+                    }
+                };
+                let dest = edit.destination.unwrap_or(0);
+                if dest == 0 {
+                    return Err(format!("edit[{}]: move action requires destination", i));
+                }
+                let dest_context = match extract_shadow_preimage(shadow_content, dest, Some(dest)) {
+                    Some(p) => p,
+                    None => {
+                        warnings.push(format!(
+                            "edit[{}]: shadow destination context extraction failed for move dest L{}",
+                            i, dest
+                        ));
+                        continue;
+                    }
+                };
+                // Delete at source
+                let delete_op = EditOp {
+                    kind: EditOpKind::ExactReplace,
+                    preimage: preimage.clone(),
+                    replacement: String::new(),
+                };
+                apply_edit_op_to_working(&mut working, &preimage, "");
+                ops.push(delete_op);
+
+                // Insert at destination (anchor on the destination context line)
+                let insert_preimage = dest_context.clone();
+                let insert_replacement = if dest > abs_line {
+                    format!("{}\n{}", dest_context, preimage)
+                } else {
+                    format!("{}\n{}", preimage, dest_context)
+                };
+                let insert_op = EditOp {
+                    kind: EditOpKind::ExactReplace,
+                    preimage: insert_preimage.clone(),
+                    replacement: insert_replacement.clone(),
+                };
+                apply_edit_op_to_working(&mut working, &insert_preimage, &insert_replacement);
+                ops.push(insert_op);
+            }
+            other => {
+                warnings.push(format!(
+                    "edit[{}]: unsupported action '{}' for shadow conversion",
+                    i, other
+                ));
+            }
+        }
+    }
+
+    Ok((ops, warnings))
+}
+
+/// Apply an ExactReplace-style edit to a working string (first occurrence only).
+fn apply_edit_op_to_working(working: &mut String, preimage: &str, replacement: &str) {
+    if let Some(pos) = working.find(preimage) {
+        let mut result = String::with_capacity(working.len() + replacement.len() - preimage.len());
+        result.push_str(&working[..pos]);
+        result.push_str(replacement);
+        result.push_str(&working[pos + preimage.len()..]);
+        *working = result;
+    }
+}
+
+/// Unified entry point for applying line edits with optional shadow-based content anchoring.
+///
+/// When `shadow` is `Some`, tries content-anchored ExactReplace via `line_edits_to_edit_ops`.
+/// Falls back to positional `apply_line_edits` when shadow is `None`, shadow extraction fails,
+/// or all ops fail to find their preimage.
+///
+/// Returns `(new_content, warnings, resolutions)`. `resolutions` is `None` when the shadow
+/// path succeeded (no positional resolution metadata), `Some` when the positional path ran.
+pub(crate) fn apply_line_edits_with_shadow(
+    edits: &[LineEdit],
+    base: &str,
+    shadow: Option<&str>,
+) -> Result<(String, Vec<String>, Option<Vec<EditResolution>>), String> {
+    let mut warnings: Vec<String> = Vec::new();
+
+    if let Some(shadow_content) = shadow {
+        match line_edits_to_edit_ops(edits, shadow_content, base) {
+            Ok((ops, conversion_warnings)) => {
+                warnings.extend(conversion_warnings);
+                if !ops.is_empty() {
+                    let mut working = base.to_string();
+                    for (idx, op) in ops.iter().enumerate() {
+                        if op.preimage.is_empty() {
+                            continue;
+                        }
+                        match working.find(&op.preimage) {
+                            Some(pos) => {
+                                let mut result = String::with_capacity(
+                                    working.len() + op.replacement.len() - op.preimage.len()
+                                );
+                                result.push_str(&working[..pos]);
+                                result.push_str(&op.replacement);
+                                result.push_str(&working[pos + op.preimage.len()..]);
+                                working = result;
+                            }
+                            None => {
+                                warnings.push(format!(
+                                    "shadow_preimage_not_found: edit[{}] preimage not found in current content, skipping",
+                                    idx
+                                ));
+                            }
+                        }
+                    }
+                    return Ok((working, warnings, None));
+                }
+                warnings.push(
+                    "shadow_conversion_empty: all edits failed preimage extraction, falling back to positional apply_line_edits".to_string()
+                );
+            }
+            Err(conv_err) => {
+                warnings.push(format!(
+                    "shadow_conversion_error: {}, falling back to positional",
+                    conv_err
+                ));
+            }
+        }
+    }
+
+    // Positional fallback (fresh hash or shadow failed)
+    let (content, anchor_warnings, resolutions) = apply_line_edits(base, edits)?;
+    warnings.extend(anchor_warnings);
+    Ok((content, warnings, Some(resolutions)))
+}
+
 /// Given the lines of a symbol (function/method/class), returns (body_start, body_end)
 /// where body_start is the offset (within symbol_lines) of the line AFTER the opening `{`,
 /// and body_end is the offset of the closing `}` line.
@@ -2661,6 +2955,285 @@ mod apply_line_edits_tests {
         let edits = vec![le(1, "invalid_action", None, None)];
         let err = apply_line_edits(content, &edits).unwrap_err();
         assert!(err.contains("Unknown line_edit action"));
+    }
+}
+
+#[cfg(test)]
+mod shadow_preimage_tests {
+    use super::*;
+
+    fn le(line: u32, action: &str, content: Option<&str>, end_line: Option<u32>) -> LineEdit {
+        LineEdit {
+            line: LineCoordinate::Abs(line),
+            action: action.to_string(),
+            content: content.map(|s| s.to_string()),
+            end_line,
+            symbol: None,
+            position: None,
+            destination: None,
+            reindent: false,
+        }
+    }
+
+    // -- extract_shadow_preimage --
+
+    #[test]
+    fn extract_single_line() {
+        let shadow = "aaa\nbbb\nccc\n";
+        assert_eq!(extract_shadow_preimage(shadow, 2, None), Some("bbb".to_string()));
+    }
+
+    #[test]
+    fn extract_multi_line_span() {
+        let shadow = "aaa\nbbb\nccc\nddd\n";
+        assert_eq!(
+            extract_shadow_preimage(shadow, 2, Some(3)),
+            Some("bbb\nccc".to_string())
+        );
+    }
+
+    #[test]
+    fn extract_out_of_range_returns_none() {
+        let shadow = "aaa\nbbb\n";
+        assert_eq!(extract_shadow_preimage(shadow, 5, None), None);
+    }
+
+    #[test]
+    fn extract_line_zero_returns_none() {
+        let shadow = "aaa\nbbb\n";
+        assert_eq!(extract_shadow_preimage(shadow, 0, None), None);
+    }
+
+    #[test]
+    fn extract_single_line_file() {
+        let shadow = "only_line";
+        assert_eq!(extract_shadow_preimage(shadow, 1, None), Some("only_line".to_string()));
+        assert_eq!(extract_shadow_preimage(shadow, 2, None), None);
+    }
+
+    // -- line_edits_to_edit_ops --
+
+    #[test]
+    fn replace_converts_to_exact_replace() {
+        let shadow = "fn foo() {\n  old_body\n}\n";
+        let current = "fn foo() {\n  old_body\n}\n";
+        let edits = vec![le(2, "replace", Some("  new_body"), None)];
+        let (ops, warnings) = line_edits_to_edit_ops(&edits, shadow, current).unwrap();
+        assert!(warnings.is_empty(), "warnings: {:?}", warnings);
+        assert_eq!(ops.len(), 1);
+        assert_eq!(ops[0].preimage, "  old_body");
+        assert_eq!(ops[0].replacement, "  new_body");
+    }
+
+    #[test]
+    fn delete_converts_to_empty_replacement() {
+        let shadow = "aaa\nbbb\nccc\n";
+        let current = "aaa\nbbb\nccc\n";
+        let edits = vec![le(2, "delete", None, None)];
+        let (ops, warnings) = line_edits_to_edit_ops(&edits, shadow, current).unwrap();
+        assert!(warnings.is_empty(), "warnings: {:?}", warnings);
+        assert_eq!(ops.len(), 1);
+        assert_eq!(ops[0].preimage, "bbb");
+        assert_eq!(ops[0].replacement, "");
+    }
+
+    #[test]
+    fn insert_before_wraps_context_line() {
+        let shadow = "aaa\nbbb\nccc\n";
+        let current = "aaa\nbbb\nccc\n";
+        let edits = vec![le(2, "insert_before", Some("inserted"), None)];
+        let (ops, warnings) = line_edits_to_edit_ops(&edits, shadow, current).unwrap();
+        assert!(warnings.is_empty(), "warnings: {:?}", warnings);
+        assert_eq!(ops.len(), 1);
+        assert_eq!(ops[0].preimage, "bbb");
+        assert_eq!(ops[0].replacement, "inserted\nbbb");
+    }
+
+    #[test]
+    fn insert_after_wraps_context_line() {
+        let shadow = "aaa\nbbb\nccc\n";
+        let current = "aaa\nbbb\nccc\n";
+        let edits = vec![le(2, "insert_after", Some("inserted"), None)];
+        let (ops, warnings) = line_edits_to_edit_ops(&edits, shadow, current).unwrap();
+        assert!(warnings.is_empty(), "warnings: {:?}", warnings);
+        assert_eq!(ops.len(), 1);
+        assert_eq!(ops[0].preimage, "bbb");
+        assert_eq!(ops[0].replacement, "bbb\ninserted");
+    }
+
+    #[test]
+    fn replace_body_extracts_body_from_shadow() {
+        // find_body_bounds returns (body_offset=1, body_count=2) for this input,
+        // meaning the preimage spans from the line after `{` through the `}` line
+        let shadow = "function foo() {\n  old_stmt;\n}\n";
+        let current = "function foo() {\n  old_stmt;\n}\n";
+        let edits = vec![le(1, "replace_body", Some("  new_stmt;\n}"), None)];
+        let (ops, warnings) = line_edits_to_edit_ops(&edits, shadow, current).unwrap();
+        assert!(warnings.is_empty(), "warnings: {:?}", warnings);
+        assert_eq!(ops.len(), 1);
+        assert_eq!(ops[0].preimage, "  old_stmt;\n}");
+        assert_eq!(ops[0].replacement, "  new_stmt;\n}");
+    }
+
+    #[test]
+    fn sequential_edits_track_working_content() {
+        let shadow = "aaa\nbbb\nccc\n";
+        let current = "aaa\nbbb\nccc\n";
+        let edits = vec![
+            le(1, "replace", Some("AAA"), None),
+            le(2, "replace", Some("BBB"), None),
+        ];
+        let (ops, warnings) = line_edits_to_edit_ops(&edits, shadow, current).unwrap();
+        assert!(warnings.is_empty(), "warnings: {:?}", warnings);
+        assert_eq!(ops.len(), 2);
+        assert_eq!(ops[0].preimage, "aaa");
+        assert_eq!(ops[0].replacement, "AAA");
+        assert_eq!(ops[1].preimage, "bbb");
+        assert_eq!(ops[1].replacement, "BBB");
+    }
+
+    #[test]
+    fn shadow_extraction_failure_emits_warning() {
+        let shadow = "aaa\nbbb\n";
+        let current = "aaa\nbbb\n";
+        let edits = vec![le(10, "replace", Some("x"), None)];
+        let (ops, warnings) = line_edits_to_edit_ops(&edits, shadow, current).unwrap();
+        assert_eq!(ops.len(), 0);
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].contains("shadow preimage extraction failed"));
+    }
+
+    // -- Content-anchored edit finds content at new position --
+
+    #[test]
+    fn shadow_preimage_finds_drifted_content() {
+        let shadow = "line1\nfn target() {}\nline3\n";
+        let current = "new_line\nline1\nfn target() {}\nline3\n";
+        let edits = vec![le(2, "replace", Some("fn replaced() {}"), None)];
+        let (ops, _) = line_edits_to_edit_ops(&edits, shadow, current).unwrap();
+        assert_eq!(ops.len(), 1);
+        assert_eq!(ops[0].preimage, "fn target() {}");
+        assert_eq!(ops[0].replacement, "fn replaced() {}");
+        // The preimage "fn target() {}" exists in current at line 3 (drifted from line 2).
+        // ExactReplace finds it by content, not position.
+        assert!(current.contains(&ops[0].preimage));
+    }
+
+    #[test]
+    fn multi_line_replace_span() {
+        let shadow = "a\nb\nc\nd\ne\n";
+        let current = "a\nb\nc\nd\ne\n";
+        let edits = vec![le(2, "replace", Some("X\nY"), Some(4))];
+        let (ops, warnings) = line_edits_to_edit_ops(&edits, shadow, current).unwrap();
+        assert!(warnings.is_empty());
+        assert_eq!(ops.len(), 1);
+        assert_eq!(ops[0].preimage, "b\nc\nd");
+        assert_eq!(ops[0].replacement, "X\nY");
+    }
+
+    #[test]
+    fn move_decomposes_into_delete_and_insert() {
+        let shadow = "a\nb\nc\nd\n";
+        let current = "a\nb\nc\nd\n";
+        let mut edit = le(2, "move", None, None);
+        edit.destination = Some(4);
+        let (ops, warnings) = line_edits_to_edit_ops(&[edit], shadow, current).unwrap();
+        assert!(warnings.is_empty(), "warnings: {:?}", warnings);
+        assert_eq!(ops.len(), 2);
+        // First op: delete source
+        assert_eq!(ops[0].preimage, "b");
+        assert_eq!(ops[0].replacement, "");
+        // Second op: insert at destination
+        assert_eq!(ops[1].preimage, "d");
+        assert!(ops[1].replacement.contains("b"));
+        assert!(ops[1].replacement.contains("d"));
+    }
+}
+
+#[cfg(test)]
+mod apply_with_shadow_tests {
+    use super::*;
+
+    fn le(line: u32, action: &str, content: Option<&str>, end_line: Option<u32>) -> LineEdit {
+        LineEdit {
+            line: LineCoordinate::Abs(line),
+            action: action.to_string(),
+            content: content.map(|s| s.to_string()),
+            end_line,
+            symbol: None,
+            position: None,
+            destination: None,
+            reindent: false,
+        }
+    }
+
+    #[test]
+    fn shadow_path_used_when_provided() {
+        let shadow = "aaa\nbbb\nccc\n";
+        let current = "aaa\nbbb\nccc\n";
+        let edits = vec![le(2, "replace", Some("BBB"), None)];
+        let (result, warnings, resolutions) =
+            apply_line_edits_with_shadow(&edits, current, Some(shadow)).unwrap();
+        assert!(resolutions.is_none(), "shadow path should return None resolutions");
+        assert!(result.contains("BBB"));
+        assert!(!result.contains("bbb"));
+        assert!(warnings.is_empty(), "warnings: {:?}", warnings);
+    }
+
+    #[test]
+    fn positional_path_when_no_shadow() {
+        let current = "aaa\nbbb\nccc";
+        let edits = vec![le(2, "replace", Some("BBB"), None)];
+        let (result, _warnings, resolutions) =
+            apply_line_edits_with_shadow(&edits, current, None).unwrap();
+        assert!(resolutions.is_some(), "positional path should return Some resolutions");
+        assert!(result.contains("BBB"));
+        assert!(!result.contains("bbb"));
+    }
+
+    #[test]
+    fn fallback_when_shadow_extraction_fails() {
+        let shadow = "x\ny\n";
+        let current = "aaa\nbbb\nccc";
+        let edits = vec![le(10, "replace", Some("ZZZ"), None)];
+        // Shadow extraction fails (line 10 out of range), should fall back to positional
+        let result = apply_line_edits_with_shadow(&edits, current, Some(shadow));
+        // Positional also fails (line 10 out of range)
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn shadow_finds_content_at_drifted_position() {
+        let shadow = "line1\ntarget_line\nline3\n";
+        let current = "inserted\nline1\ntarget_line\nline3\n";
+        let edits = vec![le(2, "replace", Some("replaced_line"), None)];
+        let (result, _warnings, resolutions) =
+            apply_line_edits_with_shadow(&edits, current, Some(shadow)).unwrap();
+        // Shadow extracts "target_line" from line 2 of shadow, finds it in current (now at line 3)
+        assert!(resolutions.is_none(), "shadow path should have handled this");
+        assert!(result.contains("replaced_line"));
+        assert!(!result.contains("target_line"));
+        assert!(result.contains("inserted"));
+        assert!(result.contains("line1"));
+    }
+
+    #[test]
+    fn shadow_multi_edit_sequential_consistency() {
+        let shadow = "aaa\nbbb\nccc\nddd\n";
+        let current = "aaa\nbbb\nccc\nddd\n";
+        let edits = vec![
+            le(1, "replace", Some("AAA"), None),
+            le(3, "replace", Some("CCC"), None),
+        ];
+        let (result, warnings, _) =
+            apply_line_edits_with_shadow(&edits, current, Some(shadow)).unwrap();
+        assert!(warnings.is_empty(), "warnings: {:?}", warnings);
+        assert!(result.contains("AAA"));
+        assert!(result.contains("CCC"));
+        assert!(!result.contains("aaa"));
+        assert!(!result.contains("ccc"));
+        assert!(result.contains("bbb"));
+        assert!(result.contains("ddd"));
     }
 }
 

@@ -259,6 +259,18 @@ function rebaseIntraStepSnapshotLineEdits(lineEdits: unknown[]): void {
     if (snap > 0 && !hasSymbol) {
       o.line = targetSnap + shift;
     }
+    const endLine = typeof o.end_line === 'number' && Number.isFinite(o.end_line as number) && (o.end_line as number) > 0
+      ? (o.end_line as number)
+      : 0;
+    if (endLine > 0) {
+      let endShift = 0;
+      for (let j2 = 0; j2 < i; j2++) {
+        const origJ2 = snapshotLines[j2];
+        if (origJ2 <= 0) continue;
+        endShift += intraStepShiftFromEdit(lineEdits[j2] as Record<string, unknown>, origJ2, endLine);
+      }
+      if (endShift !== 0) o.end_line = endLine + endShift;
+    }
   }
 }
 
@@ -308,11 +320,17 @@ function rebaseSubsequentSteps(
         const targetLine = entry.line as number;
         let shift = 0;
         for (const d of deltas) {
-          // BUG5 FIX: Only apply delta if the completed edit started strictly before
-          // the future edit's target line. Edits at the same line or after don't shift it.
           if (d.line < targetLine) shift += d.delta;
         }
         if (shift !== 0) entry.line = targetLine + shift;
+      }
+      if (typeof entry.end_line === 'number' && entry.end_line > 0) {
+        const targetEnd = entry.end_line as number;
+        let endShift = 0;
+        for (const d of deltas) {
+          if (d.line < targetEnd) endShift += d.delta;
+        }
+        if (endShift !== 0) entry.end_line = targetEnd + endShift;
       }
     }
   }

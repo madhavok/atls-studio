@@ -1526,4 +1526,134 @@ describe('executeUnifiedBatch line-edit pipeline stress', () => {
     expect(editSpy).not.toHaveBeenCalled();
     expect(result.ok).toBe(false);
   });
+
+  it('inter-step rebase shifts end_line alongside line when prior edit adds lines', async () => {
+    const editCalls: Array<Record<string, unknown>> = [];
+
+    handlers.set('read.context', async () => raw('read', {
+      results: [{ file: 'src/a.ts', content_hash: 'hash-v1', content: 'x' }],
+    }));
+    handlers.set('change.edit', async (params: Record<string, unknown>) => {
+      editCalls.push({ ...params });
+      return raw('applied', { status: 'ok', drafts: [{ file: 'src/a.ts', content_hash: 'hash-v2' }] });
+    });
+
+    await executeUnifiedBatch({
+      version: '1.0',
+      steps: [
+        { id: 'r1', use: 'read.context', with: { type: 'full', file_paths: ['src/a.ts'] } },
+        {
+          id: 'e1', use: 'change.edit', with: {
+            file: 'src/a.ts',
+            line_edits: [{ line: 10, end_line: 20, action: 'replace', content: Array(30).fill('x').join('\n') }],
+          },
+        },
+        {
+          id: 'e2', use: 'change.edit', with: {
+            file: 'src/a.ts',
+            line_edits: [{ line: 50, end_line: 60, action: 'replace', content: 'changed' }],
+          },
+        },
+      ],
+    }, makeCtx());
+
+    expect(editCalls).toHaveLength(2);
+    const le2 = (editCalls[1] as Record<string, unknown>).line_edits as Array<Record<string, unknown>>;
+    // e1 replaced 11 lines (10-20) with 30 lines → net +19
+    // delta at original line 10, delta +19
+    // line 50: d.line (10) < 50 → shift +19 → 69
+    // end_line 60: d.line (10) < 60 → shift +19 → 79
+    expect(le2[0].line).toBe(69);
+    expect(le2[0].end_line).toBe(79);
+  });
+
+  it('inter-step rebase shifts end_line when prior edit deletes lines', async () => {
+    const editCalls: Array<Record<string, unknown>> = [];
+
+    handlers.set('read.context', async () => raw('read', {
+      results: [{ file: 'src/a.ts', content_hash: 'hash-v1', content: 'x' }],
+    }));
+    handlers.set('change.edit', async (params: Record<string, unknown>) => {
+      editCalls.push({ ...params });
+      return raw('applied', { status: 'ok', drafts: [{ file: 'src/a.ts', content_hash: 'hash-v2' }] });
+    });
+
+    await executeUnifiedBatch({
+      version: '1.0',
+      steps: [
+        { id: 'r1', use: 'read.context', with: { type: 'full', file_paths: ['src/a.ts'] } },
+        {
+          id: 'e1', use: 'change.edit', with: {
+            file: 'src/a.ts',
+            line_edits: [{ line: 5, end_line: 15, action: 'replace', content: 'single' }],
+          },
+        },
+        {
+          id: 'e2', use: 'change.edit', with: {
+            file: 'src/a.ts',
+            line_edits: [{ line: 30, end_line: 40, action: 'replace', content: 'changed' }],
+          },
+        },
+      ],
+    }, makeCtx());
+
+    expect(editCalls).toHaveLength(2);
+    const le2 = (editCalls[1] as Record<string, unknown>).line_edits as Array<Record<string, unknown>>;
+    // e1 replaced 11 lines (5-15) with 1 line → net -10
+    // delta at original line 5, delta -10
+    // line 30: d.line (5) < 30 → shift -10 → 20
+    // end_line 40: d.line (5) < 40 → shift -10 → 30
+    expect(le2[0].line).toBe(20);
+    expect(le2[0].end_line).toBe(30);
+  });
+
+  it('inter-step rebase shifts line numbers but preserves content_hash from tracker', async () => {
+    // Contract test: rebaseSubsequentSteps modifies line/end_line but does NOT
+    // touch content_hash. The executor's injectSnapshotHashes fills content_hash
+    // from the tracker (which holds the post-edit hash after step 1 completes).
+    // This prevents Rust line_remap from double-adjusting coordinates.
+    const editCalls: Array<Record<string, unknown>> = [];
+
+    handlers.set('read.context', async () => raw('read', {
+      results: [{ file: 'src/f.ts', content_hash: 'hash-original', content: 'x' }],
+    }));
+    handlers.set('change.edit', async (params: Record<string, unknown>) => {
+      editCalls.push({ ...params });
+      return raw('applied', {
+        status: 'ok',
+        drafts: [{ file: 'src/f.ts', content_hash: 'hash-after-step1' }],
+      });
+    });
+
+    await executeUnifiedBatch({
+      version: '1.0',
+      steps: [
+        { id: 'r1', use: 'read.context', with: { type: 'full', file_paths: ['src/f.ts'] } },
+        {
+          id: 'e1', use: 'change.edit', with: {
+            file: 'src/f.ts',
+            line_edits: [{ line: 10, end_line: 20, action: 'replace', content: Array(30).fill('x').join('\n') }],
+          },
+        },
+        {
+          id: 'e2', use: 'change.edit', with: {
+            file: 'src/f.ts',
+            line_edits: [{ line: 50, action: 'replace', content: 'changed' }],
+          },
+        },
+      ],
+    }, makeCtx());
+
+    expect(editCalls).toHaveLength(2);
+
+    // Step 2 params: line should be rebased (50 + 19 = 69)
+    const step2Params = editCalls[1] as Record<string, unknown>;
+    const le2 = step2Params.line_edits as Array<Record<string, unknown>>;
+    expect(le2[0].line).toBe(69);
+
+    // content_hash should be the POST-edit hash from step 1 (injected by tracker),
+    // NOT the original model hash. When Rust sees this hash matches the current file,
+    // it skips line_remap entirely — no double-adjustment.
+    expect(step2Params.content_hash).toBe('hash-after-step1');
+  });
 });

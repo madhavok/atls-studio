@@ -1125,23 +1125,45 @@ const MessageBatchToolCalls = memo(function MessageBatchToolCalls({ toolCall }: 
   return (
     <div className="space-y-1">
       <BatchGroupLabel stepCount={childCalls.length} />
-      {childCalls.map((childCall) => (
-        <MessageToolCallBubble
-          key={childCall.id}
-          toolCall={{
-            id: childCall.id,
-            name: childCall.name,
-            args: childCall.args,
-            result: childCall.result,
-            status:
-              childCall.status === 'failed' ? 'failed'
-              : childCall.status === 'running' ? 'running'
-              : childCall.status === 'pending' ? 'pending'
-              : 'completed',
-            thoughtSignature: childCall.thoughtSignature,
-          }}
-        />
-      ))}
+      {childCalls.map((childCall) => {
+        const isDelegate = childCall.name.startsWith('delegate.');
+        if (isDelegate) {
+          return (
+            <SubAgentCard
+              key={childCall.id}
+              toolCall={{
+                id: childCall.id,
+                name: childCall.name,
+                args: childCall.args,
+                result: childCall.result,
+                startTime: new Date(),
+                status:
+                  childCall.status === 'failed' ? 'failed'
+                  : childCall.status === 'running' ? 'running'
+                  : childCall.status === 'pending' ? 'pending'
+                  : 'completed',
+              }}
+            />
+          );
+        }
+        return (
+          <MessageToolCallBubble
+            key={childCall.id}
+            toolCall={{
+              id: childCall.id,
+              name: childCall.name,
+              args: childCall.args,
+              result: childCall.result,
+              status:
+                childCall.status === 'failed' ? 'failed'
+                : childCall.status === 'running' ? 'running'
+                : childCall.status === 'pending' ? 'pending'
+                : 'completed',
+              thoughtSignature: childCall.thoughtSignature,
+            }}
+          />
+        );
+      })}
     </div>
   );
 });
