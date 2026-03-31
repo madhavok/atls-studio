@@ -566,20 +566,25 @@ function pruneLowValueChunks(
   chunks: Map<string, ContextChunk>,
   archivedChunks: Map<string, ContextChunk>,
   options: { skipIfUnderPressure?: boolean; usedTokens?: number; maxTokens?: number } = {},
-): { chunks: Map<string, ContextChunk>; archivedChunks: Map<string, ContextChunk>; compacted: number; dropped: number; freedTokens: number } {
-  // opt-9: Skip prune when under 70% token pressure
+): {
+  chunks: Map<string, ContextChunk>;
+  archivedChunks: Map<string, ContextChunk>;
+  compacted: string[];
+  dropped: string[];
+  freedTokens: number;
+} {
   if (options.skipIfUnderPressure) {
     const used = options.usedTokens ?? 0;
     const max = options.maxTokens ?? 200000;
     if (used < max * 0.7) {
-      return { chunks, archivedChunks, compacted: 0, dropped: 0, freedTokens: 0 };
+      return { chunks, archivedChunks, compacted: [], dropped: [], freedTokens: 0 };
     }
   }
 
   let nextChunks: Map<string, ContextChunk> | null = null;
   let nextArchived: Map<string, ContextChunk> | null = null;
-  let compacted = 0;
-  let dropped = 0;
+  const compacted: string[] = [];
+  const dropped: string[] = [];
   let freedTokens = 0;
 
   for (const [key, chunk] of chunks) {
@@ -588,16 +593,16 @@ function pruneLowValueChunks(
       if (!nextArchived) nextArchived = new Map(archivedChunks);
       nextChunks.delete(key);
       nextArchived.set(key, chunk);
-      dropped++;
+      dropped.push(chunk.hash);
       freedTokens += chunk.tokens;
       continue;
     }
     if (!chunk.compacted && shouldAutoCompactChunk(chunk)) {
       if (!nextChunks) nextChunks = new Map(chunks);
       if (!nextArchived) nextArchived = new Map(archivedChunks);
-      const compactContent = pickCompactContent(chunk, `[${chunk.shortHash}] ${chunk.type} ${chunk.source ?? ''} ${chunk.tokens}tk`);
+      const compactContent = pickCompactContent(chunk, `[compacted] h:${chunk.shortHash}`);
       const compactTokens = countTokensSync(compactContent);
-      freedTokens += chunk.tokens - compactTokens;
+      freedTokens += Math.max(0, chunk.tokens - compactTokens);
       nextArchived.set(key, chunk);
       nextChunks.set(key, {
         ...chunk,
@@ -605,8 +610,9 @@ function pruneLowValueChunks(
         tokens: compactTokens,
         compacted: true,
         compactTier: chunk.editDigest ? 'sig' : 'pointer',
+        lastAccessed: Date.now(),
       });
-      compacted++;
+      compacted.push(chunk.hash);
     }
   }
 
