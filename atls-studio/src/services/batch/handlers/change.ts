@@ -1098,6 +1098,54 @@ export function normalizeEditParams(params: Record<string, unknown>): Record<str
     }
   }
 
+  // Case 1b: legacy edits:[{file, old, new}] with line range — promote to line_edits
+  // When the model sends old/new but also carries line targeting (edit_target_range or start_line/end_line),
+  // convert to the canonical line_edits path so the old text is only used as an anchor validation, not a search key.
+  if (Array.isArray(edits) && edits.length === 1 && !normalizedParams.mode && !hasTopLevelLineEdits) {
+    const entry = edits[0];
+    const hasOld = typeof entry.old === 'string';
+    const hasNew = typeof entry.new === 'string';
+    if (hasOld && hasNew) {
+      const fileVal = (typeof entry.file === 'string' ? entry.file : (entry.file_path ?? normalizedParams.file ?? normalizedParams.file_path)) as string | undefined;
+      const range = entry.edit_target_range as [number, number | null][] | undefined;
+      const startLine = typeof entry.start_line === 'number' ? entry.start_line
+        : (typeof normalizedParams.start_line === 'number' ? normalizedParams.start_line : undefined);
+      const endLine = typeof entry.end_line === 'number' ? entry.end_line
+        : (typeof normalizedParams.end_line === 'number' ? normalizedParams.end_line : undefined);
+
+      let promotedLine: number | undefined;
+      let promotedEndLine: number | undefined;
+      if (Array.isArray(range) && range.length > 0 && typeof range[0][0] === 'number') {
+        promotedLine = range[0][0];
+        promotedEndLine = typeof range[0][1] === 'number' ? range[0][1] : promotedLine;
+      } else if (typeof startLine === 'number' && startLine > 0) {
+        promotedLine = startLine;
+        promotedEndLine = typeof endLine === 'number' && endLine >= startLine ? endLine : promotedLine;
+      }
+
+      if (typeof fileVal === 'string' && promotedLine != null) {
+        const { edits: _edits, start_line: _sl, end_line: _el, ...rest } = normalizedParams;
+        const targetMeta = deriveEditTargetMeta(fileVal);
+        const contentHash = canonicalizeContentHash(
+          entry.content_hash ?? entry.snapshot_hash ?? normalizedParams.content_hash ?? normalizedParams.snapshot_hash,
+          targetMeta.edit_target_hash,
+        );
+        return {
+          ...rest,
+          file: fileVal,
+          line_edits: [{
+            line: promotedLine,
+            end_line: promotedEndLine,
+            action: 'replace',
+            content: entry.new as string,
+          }],
+          ...(contentHash ? { content_hash: contentHash } : {}),
+          ...targetMeta,
+        };
+      }
+    }
+  }
+
   // Case 2: line_edits present but no file — try edits[0].file or edits[0].file_path
   if (hasTopLevelLineEdits && !hasFile && Array.isArray(edits) && edits[0]) {
     const f = edits[0].file ?? edits[0].file_path;
@@ -1245,10 +1293,13 @@ function resolveEditOperation(params: Record<string, unknown>): { operation: str
     ]);
     const VALID_ACTIONS_HINT =
       'insert_before|insert_after|prepend|append|replace|replace_body|delete|move';
-    // Validate each entry: must have (symbol or line) and explicit valid action. No silent defaults.
-    // Backend accepts line as number, "end", or negative index; symbol-only uses line=0 for resolve-from-symbol.
+    // Inject line/end_line from top-level params or edit_target_range when line_edits entries omit them.
+    // Priority: explicit params.line > edit_target_range from hash ref (e.g. h:XXXX:15-50).
     const injectedLine = typeof params.line === 'number' && Number.isFinite(params.line) && params.line > 0
       ? params.line as number
+      : undefined;
+    const rangeFromRef = Array.isArray(params.edit_target_range) && (params.edit_target_range as [number, number | null][]).length > 0
+      ? params.edit_target_range as [number, number | null][]
       : undefined;
 
     let le = leRaw.map((e: unknown, i: number) => {
@@ -1256,13 +1307,23 @@ function resolveEditOperation(params: Record<string, unknown>): { operation: str
       if (injectedLine != null && o.line == null) {
         o.line = injectedLine;
       }
+      if (o.line == null && rangeFromRef != null) {
+        const [start, end] = rangeFromRef[0];
+        if (typeof start === 'number' && start > 0) {
+          o.line = start;
+          if (o.end_line == null && typeof end === 'number' && end >= start) {
+            o.end_line = end;
+          }
+        }
+      }
       const hasSymbol = o.symbol != null && typeof o.symbol === 'string';
       const hasLine = o.line != null;
       if (!hasSymbol && !hasLine) {
         throwEditValidationError(`line_edits[${i}] requires symbol or line`, 'invalid_line_edit', { index: i });
       }
+      if (o.action == null) o.action = 'replace';
       const action = o.action;
-      if (action == null || typeof action !== 'string') {
+      if (typeof action !== 'string') {
         throwEditValidationError(
           `line_edits[${i}] requires action (${VALID_ACTIONS_HINT})`,
           'invalid_line_edit',

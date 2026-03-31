@@ -147,23 +147,76 @@ describe('normalizeEditParams', () => {
     expect(out.content_hash).toBe('feedbeef');
   });
 
-  it('inherits top-level file target metadata into a single text edit entry', () => {
+  it('promotes top-level exact-span text edit to line_edits via auto-promotion', () => {
     const out = normalizeEditParams({
       file_path: 'h:aabb1122:10-20',
       content_hash: 'fresh-hash-1',
       edits: [{ old: 'before', new: 'after' }],
     });
 
-    expect(out.edits).toEqual([{
-      file: 'h:aabb1122:10-20',
-      old: 'before',
-      new: 'after',
-      content_hash: 'fresh-hash-1',
-      edit_target_ref: 'h:aabb1122:10-20',
-      edit_target_kind: 'exact_span',
-      edit_target_range: [[10, 20]],
-      edit_target_hash: 'h:aabb1122',
+    expect(out.line_edits).toEqual([{
+      line: 10,
+      end_line: 20,
+      action: 'replace',
+      content: 'after',
     }]);
+    expect(out.file).toBe('h:aabb1122:10-20');
+    expect(out.content_hash).toBe('fresh-hash-1');
+    expect(out.edit_target_kind).toBe('exact_span');
+    expect(out.edit_target_range).toEqual([[10, 20]]);
+    expect(out.edits).toBeUndefined();
+  });
+
+  it('promotes legacy old/new edit to line_edits when edit_target_range is available', () => {
+    const out = normalizeEditParams({
+      edits: [{
+        file: 'h:aabb1122:10-20',
+        old: 'before',
+        new: 'after',
+        edit_target_range: [[10, 20]],
+      }],
+    });
+
+    expect(out.line_edits).toEqual([{
+      line: 10,
+      end_line: 20,
+      action: 'replace',
+      content: 'after',
+    }]);
+    expect(out.file).toBe('h:aabb1122:10-20');
+    expect(out.edits).toBeUndefined();
+  });
+
+  it('promotes legacy old/new edit to line_edits when start_line/end_line present', () => {
+    const out = normalizeEditParams({
+      file: 'src/api.ts',
+      content_hash: 'feedbeef',
+      edits: [{
+        old: 'const x = 1;',
+        new: 'const x = 2;',
+        start_line: 5,
+        end_line: 5,
+      }],
+    });
+
+    expect(out.line_edits).toEqual([{
+      line: 5,
+      end_line: 5,
+      action: 'replace',
+      content: 'const x = 2;',
+    }]);
+    expect(out.file).toBe('src/api.ts');
+    expect(out.content_hash).toBe('feedbeef');
+    expect(out.edits).toBeUndefined();
+  });
+
+  it('does not promote legacy old/new when no line range info is available', () => {
+    const out = normalizeEditParams({
+      edits: [{ file: 'a.ts', old: 'x', new: 'y' }],
+    });
+
+    expect(out.line_edits).toBeUndefined();
+    expect(out.edits).toBeDefined();
   });
 });
 
@@ -187,17 +240,24 @@ describe('line_edits validation', () => {
     expect((out.content as { repro_pack?: { error_class?: string } })?.repro_pack?.error_class).toBe('invalid_line_edit');
   });
 
-  it('rejects missing action', async () => {
+  it('defaults missing action to replace', async () => {
+    const atlsBatchQuery = vi.fn().mockResolvedValue({ h: 'h:result1234', old_h: 'h:before1234' });
+    const ctx = {
+      atlsBatchQuery,
+      store: () => ({ getStats: () => ({}), getPinnedCount: () => 0, recordMemoryEvent: () => {}, recordRebindOutcomes: () => {} }),
+    } as unknown as Parameters<typeof handleEdit>[1];
     const out = await handleEdit(
       {
         file: 'a.ts',
+        content_hash: 'abc',
         line_edits: [{ line: 1, content: 'x' }],
       } as Record<string, unknown>,
-      mockCtx
+      ctx,
     );
-    expect(out.ok).toBe(false);
-    expect(out.summary ?? (out as { error?: string }).error).toMatch(/requires action/);
-    expect((out.content as { error_class?: string })?.error_class).toBe('invalid_line_edit');
+    expect(out.ok).toBe(true);
+    const [, payload] = atlsBatchQuery.mock.calls.at(-1)! as [string, Record<string, unknown>];
+    const le = payload.line_edits as Array<Record<string, unknown>>;
+    expect(le[0].action).toBe('replace');
   });
 
   it('accepts line as end or negative index', async () => {
@@ -329,6 +389,85 @@ describe('line_edits validation', () => {
     expect(payload.line_edits).toEqual([
       { line: 3, action: 'move', end_line: 4, destination: 10, reindent: true },
     ]);
+  });
+
+  it('injects line/end_line from edit_target_range when line_edits omit them', async () => {
+    invokeMock.mockResolvedValueOnce([
+      { source: 'src/demo.ts', content: 'export const demo = 1;\n', tokens: 4 },
+    ]);
+    const atlsBatchQuery = vi
+      .fn()
+      .mockResolvedValueOnce({ results: [{ file: 'src/demo.ts', content_hash: 'fresh-hash-1' }] })
+      .mockResolvedValueOnce({ h: 'h:result1234', old_h: 'h:fresh-hash-1' });
+    const ctx = {
+      atlsBatchQuery,
+      store: () => ({ getStats: () => ({}), getPinnedCount: () => 0, recordMemoryEvent: () => {}, recordRebindOutcomes: () => {} }),
+    } as unknown as Parameters<typeof handleEdit>[1];
+    const out = await handleEdit(
+      {
+        file_path: 'h:aabb1122:15-50',
+        line_edits: [{ content: 'replacement code' }],
+      },
+      ctx,
+    );
+    expect(out.ok).toBe(true);
+    const [, payload] = atlsBatchQuery.mock.calls.at(-1)! as [string, Record<string, unknown>];
+    const le = payload.line_edits as Array<Record<string, unknown>>;
+    expect(le[0].line).toBe(15);
+    expect(le[0].end_line).toBe(50);
+    expect(le[0].action).toBe('replace');
+    expect(le[0].content).toBe('replacement code');
+  });
+
+  it('injects content_hash from hash ref when not explicitly provided', async () => {
+    invokeMock.mockResolvedValueOnce([
+      { source: 'src/demo.ts', content: 'export const demo = 1;\n', tokens: 4 },
+    ]);
+    const atlsBatchQuery = vi
+      .fn()
+      .mockResolvedValueOnce({ results: [{ file: 'src/demo.ts', content_hash: 'fresh-hash-1' }] })
+      .mockResolvedValueOnce({ h: 'h:result1234', old_h: 'h:fresh-hash-1' });
+    const ctx = {
+      atlsBatchQuery,
+      store: () => ({ getStats: () => ({}), getPinnedCount: () => 0, recordMemoryEvent: () => {}, recordRebindOutcomes: () => {} }),
+    } as unknown as Parameters<typeof handleEdit>[1];
+    const out = await handleEdit(
+      {
+        file_path: 'h:feedbeef:10-20',
+        line_edits: [{ content: 'new code' }],
+      },
+      ctx,
+    );
+    expect(out.ok).toBe(true);
+    const [, payload] = atlsBatchQuery.mock.calls.at(-1)! as [string, Record<string, unknown>];
+    expect(payload.content_hash).toBeDefined();
+    expect(payload.edit_target_kind).toBe('exact_span');
+  });
+
+  it('does not override explicit line/end_line with edit_target_range', async () => {
+    invokeMock.mockResolvedValueOnce([
+      { source: 'src/demo.ts', content: 'export const demo = 1;\n', tokens: 4 },
+    ]);
+    const atlsBatchQuery = vi
+      .fn()
+      .mockResolvedValueOnce({ results: [{ file: 'src/demo.ts', content_hash: 'fresh-hash-1' }] })
+      .mockResolvedValueOnce({ h: 'h:result1234', old_h: 'h:fresh-hash-1' });
+    const ctx = {
+      atlsBatchQuery,
+      store: () => ({ getStats: () => ({}), getPinnedCount: () => 0, recordMemoryEvent: () => {}, recordRebindOutcomes: () => {} }),
+    } as unknown as Parameters<typeof handleEdit>[1];
+    const out = await handleEdit(
+      {
+        file_path: 'h:aabb1122:15-50',
+        line_edits: [{ line: 20, end_line: 25, content: 'partial replacement' }],
+      },
+      ctx,
+    );
+    expect(out.ok).toBe(true);
+    const [, payload] = atlsBatchQuery.mock.calls.at(-1)! as [string, Record<string, unknown>];
+    const le = payload.line_edits as Array<Record<string, unknown>>;
+    expect(le[0].line).toBe(20);
+    expect(le[0].end_line).toBe(25);
   });
 });
 
@@ -465,23 +604,18 @@ describe('freshness safety', () => {
 
     expect(out.ok).toBe(true);
     expect(atlsBatchQuery).toHaveBeenNthCalledWith(2, 'draft', {
-      file_path: 'src/demo.ts',
       content_hash: 'fresh-hash-1',
       content_hash_refreshed: true,
       edit_target_ref: 'h:aabb1122:10-11',
       edit_target_kind: 'exact_span',
       edit_target_range: [[10, 11]],
       edit_target_hash: 'fresh-hash-1',
-      edits: [{
-        file: 'src/demo.ts',
-        old: 'before',
-        new: 'after',
-        content_hash: 'fresh-hash-1',
-        content_hash_refreshed: true,
-        edit_target_ref: 'h:aabb1122:10-11',
-        edit_target_kind: 'exact_span',
-        edit_target_range: [[10, 11]],
-        edit_target_hash: 'fresh-hash-1',
+      file: 'src/demo.ts',
+      line_edits: [{
+        line: 10,
+        end_line: 11,
+        action: 'replace',
+        content: 'after',
       }],
       stale_policy: 'follow_latest',
     });
@@ -724,18 +858,19 @@ describe('freshness safety', () => {
 
     expect(out.ok).toBe(true);
     expect(atlsBatchQuery).toHaveBeenNthCalledWith(4, 'draft', {
-      edits: [{
-        file: 'src/demo.ts',
-        old: 'before',
-        new: 'after',
-        content_hash: 'fresh-hash-2',
-        content_hash_refreshed: true,
-        edit_target_ref: 'h:aabb1122:10-12',
-        edit_target_kind: 'exact_span',
-        edit_target_range: [[10, 12]],
-        edit_target_hash: 'fresh-hash-2',
+      content_hash: 'fresh-hash-2',
+      content_hash_refreshed: true,
+      edit_target_ref: 'h:aabb1122:10-12',
+      edit_target_kind: 'exact_span',
+      edit_target_range: [[10, 12]],
+      edit_target_hash: 'fresh-hash-2',
+      file: 'src/demo.ts',
+      line_edits: [{
+        line: 10,
+        end_line: 12,
+        action: 'replace',
+        content: 'after',
       }],
-      retry_on_failure: true,
       stale_policy: 'follow_latest',
     });
   });
@@ -819,16 +954,18 @@ describe('freshness safety', () => {
 
     expect(out.ok).toBe(true);
     expect(atlsBatchQuery).toHaveBeenNthCalledWith(2, 'draft', {
-      edits: [{
-        file: 'src/demo.ts',
-        old: 'before',
-        new: 'after',
-        content_hash: 'fresh-hash-1',
-        content_hash_refreshed: true,
-        edit_target_ref: 'h:aabb1122:10-12',
-        edit_target_kind: 'exact_span',
-        edit_target_range: [[10, 12]],
-        edit_target_hash: 'fresh-hash-1',
+      content_hash: 'fresh-hash-1',
+      content_hash_refreshed: true,
+      edit_target_ref: 'h:aabb1122:10-12',
+      edit_target_kind: 'exact_span',
+      edit_target_range: [[10, 12]],
+      edit_target_hash: 'fresh-hash-1',
+      file: 'src/demo.ts',
+      line_edits: [{
+        line: 10,
+        end_line: 12,
+        action: 'replace',
+        content: 'after',
       }],
       stale_policy: 'follow_latest',
     });
@@ -959,7 +1096,7 @@ describe('freshness safety', () => {
     expect(atlsBatchQuery).not.toHaveBeenCalled();
   });
 
-  it('uses exact-span target hash and strips read_lines numbering for draft old text', async () => {
+  it('promotes exact-span text edit with display-prefixed old text to line_edits', async () => {
     invokeMock.mockResolvedValueOnce([
       { source: 'src/demo.ts', content: 'export const demo = 1;\n', tokens: 4 },
     ]);
@@ -989,22 +1126,24 @@ describe('freshness safety', () => {
 
     expect(out.ok).toBe(true);
     expect(atlsBatchQuery).toHaveBeenNthCalledWith(2, 'draft', {
-      edits: [{
-        file: 'src/demo.ts',
-        old: 'before\nafter',
-        new: 'replaced',
-        content_hash: 'fresh-hash-1',
-        content_hash_refreshed: true,
-        edit_target_ref: 'h:aabb1122:10-11',
-        edit_target_kind: 'exact_span',
-        edit_target_range: [[10, 11]],
-        edit_target_hash: 'fresh-hash-1',
+      content_hash: 'fresh-hash-1',
+      content_hash_refreshed: true,
+      edit_target_ref: 'h:aabb1122:10-11',
+      edit_target_kind: 'exact_span',
+      edit_target_range: [[10, 11]],
+      edit_target_hash: 'fresh-hash-1',
+      file: 'src/demo.ts',
+      line_edits: [{
+        line: 10,
+        end_line: 11,
+        action: 'replace',
+        content: 'replaced',
       }],
       stale_policy: 'follow_latest',
     });
   });
 
-  it('canonicalizes edits[].file_path exact-span refs to file before draft dispatch', async () => {
+  it('promotes edits[].file_path exact-span refs to line_edits before draft dispatch', async () => {
     invokeMock.mockResolvedValueOnce([
       { source: 'src/demo.ts', content: 'export const demo = 1;\n', tokens: 4 },
     ]);
@@ -1034,16 +1173,18 @@ describe('freshness safety', () => {
 
     expect(out.ok).toBe(true);
     expect(atlsBatchQuery).toHaveBeenNthCalledWith(2, 'draft', {
-      edits: [{
-        file: 'src/demo.ts',
-        old: 'before\nafter',
-        new: 'replaced',
-        content_hash: 'fresh-hash-1',
-        content_hash_refreshed: true,
-        edit_target_ref: 'h:aabb1122:10-11',
-        edit_target_kind: 'exact_span',
-        edit_target_range: [[10, 11]],
-        edit_target_hash: 'fresh-hash-1',
+      content_hash: 'fresh-hash-1',
+      content_hash_refreshed: true,
+      edit_target_ref: 'h:aabb1122:10-11',
+      edit_target_kind: 'exact_span',
+      edit_target_range: [[10, 11]],
+      edit_target_hash: 'fresh-hash-1',
+      file: 'src/demo.ts',
+      line_edits: [{
+        line: 10,
+        end_line: 11,
+        action: 'replace',
+        content: 'replaced',
       }],
       stale_policy: 'follow_latest',
     });

@@ -30,15 +30,16 @@ analyze.deps|structure|impact file_paths:path1 filter?:pattern limit?:N
 analyze.blast_radius symbol_names:name1 file_paths?:path1 action?:move
 analyze.calls symbol_names:name1,name2 depth?:N filter?:pattern limit?:N
 analyze.extract_plan file_path:path strategy?:by_cluster|by_prefix|by_kind min_lines?:N min_complexity?:N
-change.edit file_path:path line_edits:[{line:N,end_line:N,action:replace,content:"new code"}]
-  line + end_line: 1-based inclusive span (single-line: end_line=line, omit end_line defaults to line). end | -1 | symbol:fn(name) resolve to concrete bounds.
-  actions: replace, insert_before, insert_after, delete, move, replace_body
+change.edit file_path:h:XXXX:L-M line_edits:[{content:"new code"}]
+  Hash-ref editing: file_path carries hash identity + line range. content is the only required field per line_edit entry.
+  Minimal form: file_path:h:XXXX:15-50 line_edits:[{content:"replacement"}] — hash proves snapshot, :L-M targets span, content is new text. No old text, no separate content_hash, no line/end_line needed.
+  Explicit form: file_path:path content_hash:h:XXXX line_edits:[{line:N,end_line:M,content:"new code"}] — when editing by path or targeting a different range than the hash ref.
+  line + end_line: 1-based inclusive span. Auto-injected from hash ref range when omitted. end | -1 | symbol:fn(name) resolve to concrete bounds.
+  action: defaults to replace when omitted. Other actions: insert_before, insert_after, delete, move, replace_body.
   move: requires destination:N (1-based). Produces positional shifts at both source and destination — auto-rebased in multi-step batches.
   replace_body: replaces brace-delimited body content. Body span resolved by Rust; reported in edits_resolved.
-  Intra-step coords: snapshot-style (relative to file before any edit in step); executor rebases
-  content_hash: provide for drift-safe multi-step editing (enables shadow line remap when file changed since read)
+  Intra-step coords: snapshot-style (relative to file before any edit in step); executor rebases.
   Response: edits_resolved:[{resolved_line,action,lines_affected}] — use for chaining, not mental math. On failure: suggestion:{line,confidence,tier,preview} when fuzzy match found.
-  legacy: edits:[{file:path,old:text,new:text}] — short unambiguous replacements only
   also: creates:[{path:p,content:c}] | revise:hash | undo:h:$last_edit | deletes:path1,path2
 change.create creates:[{path:p,content:c}]
 change.delete file_paths:path1,path2 confirm?:true dry_run?:false
@@ -72,17 +73,19 @@ intent.search_replace old_text:"text" new_text:"text" file_glob?:pattern max_mat
 intent.extract source_file:path symbol_names?:s1 target_file:path
 
 ### Examples
-s1 search.code queries:auth
-s2 change.edit file_path:src/api.ts line_edits:[{line:10,end_line:10,action:replace,content:"const x = 1;"}]
-s3 verify.typecheck if:s2.ok
-
 r1 read.context type:smart file_paths:src/api.ts,src/db.ts
 p1 session.pin in:r1.refs
+e1 change.edit file_path:h:abc123:15-22 line_edits:[{content:"function auth() { return true; }"}]
+-- minimal: hash ref carries identity + line range; only new content needed. No old text, no separate content_hash, no line/end_line.
+e2 change.edit file_path:src/api.ts content_hash:h:abc123 line_edits:[{line:30,end_line:30,content:"const x = 1;"}]
+-- explicit form: when editing by path or targeting a range not in the hash ref.
+v1 verify.typecheck if:e2.ok
+
 p2 session.pin hashes:h:abc123,h:def456
 -- WRONG: session.pin hashes:h:r1  (r1 is a step ID, not a content hash — use in:r1.refs instead)
 
 u1 intent.understand file_paths:src/api.ts
-e1 intent.edit file_path:src/api.ts line_edits:[{line:10,end_line:10,action:replace,content:"const x = 1;"}]
+e3 intent.edit file_path:h:abc123:10-10 line_edits:[{content:"const x = 1;"}]
 
 Path discipline: if a filename is ambiguous (exists in multiple dirs), use search.symbol or the project tree to confirm the directory before read.lines. Wrong paths waste rounds and fragment spin tracking.
 

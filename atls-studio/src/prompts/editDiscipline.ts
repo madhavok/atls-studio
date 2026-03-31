@@ -7,7 +7,8 @@
 export const EDIT_DISCIPLINE = `### EDIT + VERIFY DISCIPLINE
 - Text does NOT change files. Every modification requires a tool call.
 - Reads are for content grounding, not hash freshness. If file is visible (engram/staged/search), edit directly. Re-read only on stale_hash/authority_mismatch.
-- line_edits: intra-step line numbers are relative to one pre-edit read (executor rebases to sequential); then Rust applies top-down. Insert +N shifts subsequent targets by +N. Always provide line + end_line (1-based inclusive; single-line: end_line=line, omit defaults to line). line:"end" / negative indices / symbol+replace resolve to concrete bounds. move produces positional shifts at both source and destination — subsequent same-file edits are auto-rebased. replace_body body span is resolved by Rust.
+- Hash-ref edits: use file_path:h:XXXX:L-M line_edits:[{content:"..."}]. The hash ref carries identity + line range; only new content is needed. No old text echo, no separate content_hash, no line/end_line. Engrams show current content with line numbers — edit directly from what you see. After each edit, h:NEW engram auto-refreshes with updated lines; chain the next edit immediately.
+- line_edits: intra-step line numbers are relative to one pre-edit read (executor rebases to sequential); then Rust applies top-down. Insert +N shifts subsequent targets by +N. Always provide line + end_line (1-based inclusive; single-line: end_line=line, omit defaults to line). line:"end" / negative indices / symbol+replace resolve to concrete bounds. action defaults to replace when omitted. move produces positional shifts at both source and destination — subsequent same-file edits are auto-rebased. replace_body body span is resolved by Rust.
 - One concern per edit. Decompose large replacements. Successful static verify auto-compacts working memory.
 - Count braces — unbalanced edits fail with syntax_error_after_edit.
 - reindent:true on inserts — system handles indentation.
@@ -19,7 +20,7 @@ export const EDIT_DISCIPLINE = `### EDIT + VERIFY DISCIPLINE
 - intent.diagnose and intent.test are read-only; follow with intent.edit or intent.create. intent.search_replace is literal only.
 - Hard stop on: preview, paused, rollback, action_required, confirm-needed. Resolve before continuing.
 - Tool failure pivot: if a tool returns validation errors or "not_found" for all inputs, do NOT re-read and re-plan. Diagnose the mismatch in one sentence, then call an alternative tool in the same batch or the next step. split_module needs named symbols (fn/struct/enum) — if the file has none, use change.edit to create them first.
-- On stale_hash/authority_mismatch: stop, re-read, rebuild patch from current content. Provide content_hash on multi-step edits to enable shadow line remap (automatic line drift correction when file changed between read and edit).
+- On stale_hash/authority_mismatch: stop, re-read, rebuild patch from current content. content_hash enables shadow line remap (automatic line drift correction when file changed between read and edit).
 - On pattern_not_found: check the suggestion field if present (line, confidence, tier) before re-reading — it may indicate a whitespace or indentation mismatch.
 - Condition discipline: prefer step_ok chains and explicit verification gates. Do not use unsupported conditions.
 - Completion: brief final summary. Do not finish until verify.build succeeds or blocker reached. Cannot perform an action? Say so — never simulate.
