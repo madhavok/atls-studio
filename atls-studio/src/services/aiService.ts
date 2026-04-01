@@ -1199,6 +1199,12 @@ export interface AIConfig {
   baseUrl?: string;
   /** Anthropic beta headers (e.g. ["context-1m-2025-08-07"] for 1M context) */
   anthropicBeta?: string[];
+  /** OpenAI Responses API verbosity (GPT-5 family) */
+  outputVerbosity?: 'low' | 'medium' | 'high';
+  /** OpenAI reasoning effort (Responses / Chat Completions reasoning models) */
+  reasoningEffort?: string;
+  /** Anthropic thinking budget_tokens or Gemini thinkingBudget; null = disabled */
+  thinkingBudget?: number | null;
 }
 
 /**
@@ -1713,6 +1719,7 @@ async function streamChatViaTauri(
             streamId,
             enableTools: toolsEnabled,
             anthropicBeta: config.anthropicBeta ?? null,
+            thinkingBudget: config.thinkingBudget ?? null,
           });
         } else if (config.provider === 'openai') {
           await invoke('stream_chat_openai', {
@@ -1724,6 +1731,8 @@ async function streamChatViaTauri(
             systemPrompt: config.systemPrompt || '',
             streamId,
             enableTools: toolsEnabled,
+            reasoningEffort: config.reasoningEffort ?? null,
+            verbosity: config.outputVerbosity ?? null,
           });
         } else if (config.provider === 'lmstudio') {
           await invoke('stream_chat_lmstudio', {
@@ -1735,6 +1744,7 @@ async function streamChatViaTauri(
             systemPrompt: config.systemPrompt || '',
             streamId,
             enableTools: toolsEnabled,
+            reasoningEffort: config.reasoningEffort ?? null,
           });
         } else if (config.provider === 'vertex') {
           const { cacheName: vertexCache, cachedMessageCount: vertexCachedCount } = await manageGeminiRollingCache('vertex', config.apiKey, config.model, config.systemPrompt || '', cacheMessages, config.projectId, config.region);
@@ -1753,6 +1763,7 @@ async function streamChatViaTauri(
             enableTools: toolsEnabled,
             cachedContent: vertexCache,
             dynamicContext: geminiDynamicContext || null,
+            thinkingBudget: config.thinkingBudget ?? null,
           });
         } else {
           const { cacheName: googleCache, cachedMessageCount: googleCachedCount } = await manageGeminiRollingCache('google', config.apiKey, config.model, config.systemPrompt || '', cacheMessages);
@@ -1769,6 +1780,7 @@ async function streamChatViaTauri(
             enableTools: toolsEnabled,
             cachedContent: googleCache,
             dynamicContext: geminiDynamicContext || null,
+            thinkingBudget: config.thinkingBudget ?? null,
           });
         }
       };

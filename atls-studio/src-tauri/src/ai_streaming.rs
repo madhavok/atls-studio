@@ -1108,6 +1108,7 @@ pub async fn stream_chat_anthropic(
     stream_id: String,
     enable_tools: Option<bool>,
     anthropic_beta: Option<Vec<String>>,
+    thinking_budget: Option<u32>,
 ) -> Result<(), String> {
     let stream_state = app.state::<ChatStreamState>();
     let client = reqwest::Client::new();
@@ -1238,6 +1239,16 @@ pub async fn stream_chat_anthropic(
         "messages": anthropic_messages,
         "stream": true,
     });
+
+    // Extended thinking: budget_tokens must be >= 1024 and < max_tokens
+    if let Some(budget) = thinking_budget {
+        if budget >= 1024 && budget < max_tokens {
+            body["thinking"] = serde_json::json!({
+                "type": "enabled",
+                "budget_tokens": budget
+            });
+        }
+    }
     
     // Add tools if enabled
     if enable_tools.unwrap_or(true) {
@@ -1555,6 +1566,8 @@ pub(crate) async fn stream_responses_openai_inner(
     system_prompt: Option<String>,
     stream_id: String,
     enable_tools: bool,
+    reasoning_effort: Option<String>,
+    verbosity: Option<String>,
 ) -> Result<(), String> {
     let stream_state = app.state::<ChatStreamState>();
     let client = reqwest::Client::new();
@@ -1571,6 +1584,14 @@ pub(crate) async fn stream_responses_openai_inner(
         || model.starts_with("o4") || model.starts_with("gpt-5");
     if !is_reasoning {
         body["temperature"] = serde_json::json!(temperature);
+    }
+    // Responses API: reasoning.effort (nested object)
+    if let Some(ref effort) = reasoning_effort {
+        body["reasoning"] = serde_json::json!({"effort": effort});
+    }
+    // GPT-5 verbosity
+    if let Some(ref v) = verbosity {
+        body["verbosity"] = serde_json::json!(v);
     }
     if enable_tools {
         body["tools"] = get_atls_tools_responses();
@@ -1877,6 +1898,8 @@ pub async fn stream_chat_openai(
     system_prompt: Option<String>,
     stream_id: String,
     enable_tools: Option<bool>,
+    reasoning_effort: Option<String>,
+    verbosity: Option<String>,
 ) -> Result<(), String> {
     if openai_model_requires_responses_api(&model) {
         return stream_responses_openai_inner(
@@ -1889,6 +1912,8 @@ pub async fn stream_chat_openai(
             system_prompt,
             stream_id,
             enable_tools.unwrap_or(true),
+            reasoning_effort,
+            verbosity,
         )
         .await;
     }
@@ -1906,6 +1931,11 @@ pub async fn stream_chat_openai(
         "stream": true,
         "stream_options": { "include_usage": true },
     });
+
+    // Reasoning effort (Chat Completions path — non-Responses models)
+    if let Some(ref effort) = reasoning_effort {
+        body["reasoning_effort"] = serde_json::json!(effort);
+    }
     
     // Add tools if enabled
     if enable_tools.unwrap_or(true) {
@@ -2157,6 +2187,7 @@ pub async fn stream_chat_lmstudio(
     system_prompt: Option<String>,
     stream_id: String,
     enable_tools: Option<bool>,
+    reasoning_effort: Option<String>,
 ) -> Result<(), String> {
     let stream_state = app.state::<ChatStreamState>();
     let client = reqwest::Client::new();
@@ -2171,6 +2202,11 @@ pub async fn stream_chat_lmstudio(
         "stream": true,
         "stream_options": { "include_usage": true },
     });
+
+    // Best-effort passthrough for OpenAI-compatible local servers
+    if let Some(ref effort) = reasoning_effort {
+        body["reasoning_effort"] = serde_json::json!(effort);
+    }
 
     if enable_tools.unwrap_or(false) {
         body["tools"] = get_atls_tools("openai");
@@ -2361,6 +2397,7 @@ pub async fn stream_chat_google(
     enable_tools: Option<bool>,
     cached_content: Option<String>,
     dynamic_context: Option<String>,
+    thinking_budget: Option<i32>,
 ) -> Result<(), String> {
     let stream_state = app.state::<ChatStreamState>();
     let client = reqwest::Client::new();
@@ -2439,21 +2476,28 @@ pub async fn stream_chat_google(
     validate_gemini_contents("Google", &merged_contents);
     log_gemini_contents_summary("Google", &merged_contents, cached_content.is_some());
 
+    let mut gen_config = serde_json::json!({
+        "maxOutputTokens": max_tokens,
+        "temperature": temperature,
+    });
+
+    // Gemini thinkingConfig for 2.5/3+ models
+    if let Some(budget) = thinking_budget {
+        gen_config["thinkingConfig"] = serde_json::json!({
+            "thinkingBudget": budget,
+            "includeThoughts": true
+        });
+    }
+
     let mut body = serde_json::json!({
         "contents": merged_contents,
-        "generationConfig": {
-            "maxOutputTokens": max_tokens,
-            "temperature": temperature,
-        },
+        "generationConfig": gen_config,
     });
 
     // Use cached content only if explicitly provided by frontend (single source of truth)
     let tools_enabled = enable_tools.unwrap_or(true);
     if let Some(ref cache_name) = cached_content {
         body["cachedContent"] = serde_json::json!(cache_name);
-        // Tools are baked into cachedContent, but Gemini also accepts them alongside
-        // cachedContent for overrides. Send them so function calling works even if the
-        // cache was created without tools (backward compat).
         if tools_enabled {
             body["tools"] = get_atls_tools("google");
             body["toolConfig"] = serde_json::json!({

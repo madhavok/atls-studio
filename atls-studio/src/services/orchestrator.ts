@@ -14,6 +14,7 @@ import { getTerminalStore } from '../stores/terminalStore';
 import { chatDb, type TaskStatus as ChatTaskStatus } from './chatDb';
 import { rateLimiter } from './rateLimiter';
 import { streamChatForSwarm, BATCH_TOOL_REF, type AIConfig, type ChatMessage, type AIProvider } from './aiService';
+import { resolveModelSettings } from '../utils/modelSettings';
 import { EDIT_DISCIPLINE } from '../prompts/editDiscipline';
 import { toTOON } from '../utils/toon';
 import { countTokensSync } from '../utils/tokenCounter';
@@ -964,12 +965,18 @@ Based on the research above, create a detailed task plan.
     ];
     
     // Call orchestrator model
+    const appSettings = useAppStore.getState().settings;
+    const planModelSettings = resolveModelSettings(
+      appSettings.modelOutputSpeed, appSettings.modelThinking,
+      config.model, config.provider, 4096,
+    );
     const aiConfig: AIConfig = {
       provider: config.provider,
       model: config.model,
       apiKey: resolveApiKey(config.provider),
       maxTokens: 4096,
       temperature: 0.3,
+      ...planModelSettings,
     };
     
     let planJson = '';
@@ -1368,12 +1375,18 @@ ${swarmStore.userRequest || '(unknown)'}
 Synthesize the swarm outcome.`;
 
     // Use the orchestrator model (or a cheaper one if available)
+    const synthAppSettings = useAppStore.getState().settings;
+    const synthModelSettings = resolveModelSettings(
+      synthAppSettings.modelOutputSpeed, synthAppSettings.modelThinking,
+      config.model, config.provider, 2048,
+    );
     const synthConfig: AIConfig = {
       provider: config.provider,
       model: config.model,
       apiKey: resolveApiKey(config.provider),
       maxTokens: 2048,
       temperature: 0.2,
+      ...synthModelSettings,
     };
 
     let synthJson = '';
@@ -1653,13 +1666,21 @@ Synthesize the swarm outcome.`;
         },
       ];
       
-      // AI config
+      // AI config — use per-agent speed/thinking overrides when set, else main settings
+      const agentSettings = useAppStore.getState().settings;
+      const agentCfg = swarmStore.agentConfigs.find(c => c.role === task.assignedRole);
+      const agentModelSettings = resolveModelSettings(
+        agentCfg?.outputSpeed ?? agentSettings.modelOutputSpeed,
+        agentCfg?.thinking ?? agentSettings.modelThinking,
+        task.assignedModel, task.assignedProvider, 8192,
+      );
       const aiConfig: AIConfig = {
         provider: task.assignedProvider,
         model: task.assignedModel,
         apiKey: resolveApiKey(task.assignedProvider),
         maxTokens: 8192,
-        temperature: 0.4, // Slightly lower for more deterministic agent behavior
+        temperature: 0.4,
+        ...agentModelSettings,
       };
       
       // Stream chat with tools — per-round cost in costStore + rateLimiter; main chat context bar/round counter skipped by default (affectMainChatMetrics false).

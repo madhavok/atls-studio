@@ -278,6 +278,7 @@ pub async fn stream_chat_vertex(
     enable_tools: Option<bool>,
     cached_content: Option<String>,
     dynamic_context: Option<String>,
+    thinking_budget: Option<i32>,
 ) -> Result<(), String> {
     let stream_state = app.state::<ChatStreamState>();
     let client = reqwest::Client::new();
@@ -353,12 +354,22 @@ pub async fn stream_chat_vertex(
     validate_gemini_contents("Vertex", &merged_contents);
     log_gemini_contents_summary("Vertex", &merged_contents, cached_content.is_some());
 
+    let mut gen_config = serde_json::json!({
+        "maxOutputTokens": max_tokens,
+        "temperature": temperature,
+    });
+
+    // Gemini thinkingConfig for 2.5/3+ models
+    if let Some(budget) = thinking_budget {
+        gen_config["thinkingConfig"] = serde_json::json!({
+            "thinkingBudget": budget,
+            "includeThoughts": true
+        });
+    }
+
     let mut body = serde_json::json!({
         "contents": merged_contents,
-        "generationConfig": {
-            "maxOutputTokens": max_tokens,
-            "temperature": temperature,
-        },
+        "generationConfig": gen_config,
     });
 
     // Use cached content only if explicitly provided by frontend (single source of truth)

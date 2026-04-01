@@ -10,6 +10,7 @@ import {
 } from '../../utils/modelCapabilities';
 import { useSwarmStore, type AgentRole } from '../../stores/swarmStore';
 import { useRefactorStore } from '../../stores/refactorStore';
+import type { OutputSpeedLevel, ThinkingLevel } from '../../utils/modelSettings';
 
 // Icons
 const ChevronDownIcon = () => (
@@ -530,6 +531,75 @@ export function ModelModeSelector() {
         )}
       </div>
 
+      {/* Speed / Thinking controls */}
+      {(() => {
+        const speed = settings.modelOutputSpeed ?? 'medium';
+        const thinking = settings.modelThinking ?? 'medium';
+        const setSpeed = (v: OutputSpeedLevel) => useAppStore.getState().setSettings({ modelOutputSpeed: v });
+        const setThinking = (v: ThinkingLevel) => useAppStore.getState().setSettings({ modelThinking: v });
+
+        const speedLevels: { id: OutputSpeedLevel; label: string; title: string }[] = [
+          { id: 'low', label: 'Lo', title: 'Low — terse, fast responses' },
+          { id: 'medium', label: 'Med', title: 'Medium — balanced verbosity' },
+          { id: 'high', label: 'Hi', title: 'High — detailed, verbose responses' },
+        ];
+        const thinkingLevels: { id: ThinkingLevel; label: string; title: string }[] = [
+          { id: 'off', label: 'Off', title: 'No extended thinking / reasoning' },
+          { id: 'low', label: 'Lo', title: 'Low reasoning budget' },
+          { id: 'medium', label: 'Med', title: 'Medium reasoning budget' },
+          { id: 'high', label: 'Hi', title: 'High reasoning budget' },
+        ];
+        const speedColor = (id: OutputSpeedLevel) =>
+          speed === id
+            ? id === 'low' ? 'bg-sky-500/80 text-white'
+              : id === 'medium' ? 'bg-emerald-500/80 text-white'
+              : 'bg-amber-500/80 text-white'
+            : 'bg-studio-surface/30 text-studio-muted hover:bg-studio-surface';
+        const thinkColor = (id: ThinkingLevel) =>
+          thinking === id
+            ? id === 'off' ? 'bg-studio-border text-studio-text'
+              : id === 'low' ? 'bg-sky-500/80 text-white'
+              : id === 'medium' ? 'bg-emerald-500/80 text-white'
+              : 'bg-violet-500/80 text-white'
+            : 'bg-studio-surface/30 text-studio-muted hover:bg-studio-surface';
+        return (
+          <>
+            <span className="text-studio-border">|</span>
+            <div className="flex items-center gap-1" title="Output speed / verbosity">
+              <span className="text-[10px] text-studio-muted">Spd</span>
+              <div className="flex rounded overflow-hidden border border-studio-border/60">
+                {speedLevels.map(l => (
+                  <button
+                    key={l.id}
+                    onClick={() => setSpeed(l.id)}
+                    title={l.title}
+                    className={`px-1.5 py-0.5 text-[9px] font-medium transition-colors ${speedColor(l.id)}`}
+                  >
+                    {l.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <span className="text-studio-border">|</span>
+            <div className="flex items-center gap-1" title="Reasoning depth / extended thinking">
+              <span className="text-[10px] text-studio-muted">Thk</span>
+              <div className="flex rounded overflow-hidden border border-studio-border/60">
+                {thinkingLevels.map(l => (
+                  <button
+                    key={l.id}
+                    onClick={() => setThinking(l.id)}
+                    title={l.title}
+                    className={`px-1.5 py-0.5 text-[9px] font-medium transition-colors ${thinkColor(l.id)}`}
+                  >
+                    {l.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </>
+        );
+      })()}
+
       {/* Entry Manifest depth selector (next to model selector) */}
       {chatMode !== 'ask' && chatMode !== 'swarm' && (() => {
         const depth = settings.entryManifestDepth ?? 'sigs';
@@ -679,6 +749,41 @@ export function ModelModeSelector() {
                             </option>
                           ))}
                         </select>
+                        <div className="flex gap-2 mt-1.5">
+                          <label className="flex items-center gap-1 text-[10px] text-studio-muted">
+                            Spd
+                            <select
+                              value={config.outputSpeed ?? ''}
+                              onChange={(e) => {
+                                const v = e.target.value as OutputSpeedLevel | '';
+                                setAgentConfig(config.role, { outputSpeed: v || undefined });
+                              }}
+                              className="px-1.5 py-0.5 bg-studio-bg border border-studio-border rounded text-[10px]"
+                            >
+                              <option value="">(inherit)</option>
+                              <option value="low">Low</option>
+                              <option value="medium">Med</option>
+                              <option value="high">High</option>
+                            </select>
+                          </label>
+                          <label className="flex items-center gap-1 text-[10px] text-studio-muted">
+                            Thk
+                            <select
+                              value={config.thinking ?? ''}
+                              onChange={(e) => {
+                                const v = e.target.value as ThinkingLevel | '';
+                                setAgentConfig(config.role, { thinking: v || undefined });
+                              }}
+                              className="px-1.5 py-0.5 bg-studio-bg border border-studio-border rounded text-[10px]"
+                            >
+                              <option value="">(inherit)</option>
+                              <option value="off">Off</option>
+                              <option value="low">Low</option>
+                              <option value="medium">Med</option>
+                              <option value="high">High</option>
+                            </select>
+                          </label>
+                        </div>
                       </div>
                     );
                   })}

@@ -29,6 +29,7 @@ import {
   isExtendedContextEnabled,
   modelSupportsExtendedContext,
 } from '../../utils/modelCapabilities';
+import { resolveModelSettings } from '../../utils/modelSettings';
 import { useRoundHistoryStore } from '../../stores/roundHistoryStore';
 import { parseTaskCompleteArgs } from '../../utils/structuredOutput';
 import { selectRecentHistory } from '../../services/historySelector';
@@ -2706,6 +2707,13 @@ export function AiChat() {
       modelSupportsExtendedContext(settings.selectedModel, 'anthropic')
         ? ['context-1m-2025-08-07']
         : undefined;
+    const modelSettings = resolveModelSettings(
+      settings.modelOutputSpeed,
+      settings.modelThinking,
+      settings.selectedModel,
+      provider,
+      settings.maxTokens,
+    );
     return {
       provider,
       model: settings.selectedModel,
@@ -2716,6 +2724,7 @@ export function AiChat() {
       region: provider === 'vertex' ? settings.vertexRegion : undefined,
       baseUrl: provider === 'lmstudio' ? settings.lmstudioBaseUrl : undefined,
       anthropicBeta,
+      ...modelSettings,
     };
   }, [settings, getApiKeyForProvider, getSelectedModelProvider]);
 

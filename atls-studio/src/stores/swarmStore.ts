@@ -79,6 +79,10 @@ export interface AgentConfig {
   provider: AIProvider;
   maxConcurrent: number;
   systemPromptOverride?: string;
+  /** Override output speed/verbosity for this agent; undefined = inherit from main settings */
+  outputSpeed?: 'low' | 'medium' | 'high';
+  /** Override thinking/reasoning depth for this agent; undefined = inherit from main settings */
+  thinking?: 'off' | 'low' | 'medium' | 'high';
 }
 
 export interface RateLimiterState {

@@ -326,6 +326,7 @@ async function runStreamRound(
         streamId,
         enableTools,
         anthropicBeta: config.anthropicBeta ?? null,
+        thinkingBudget: config.thinkingBudget ?? null,
       });
     } else if (provider === 'openai') {
       await invoke('stream_chat_openai', {
@@ -337,6 +338,8 @@ async function runStreamRound(
         systemPrompt,
         streamId,
         enableTools,
+        reasoningEffort: config.reasoningEffort ?? null,
+        verbosity: config.outputVerbosity ?? null,
       });
     } else if (provider === 'lmstudio') {
       await invoke('stream_chat_lmstudio', {
@@ -348,6 +351,7 @@ async function runStreamRound(
         systemPrompt,
         streamId,
         enableTools,
+        reasoningEffort: config.reasoningEffort ?? null,
       });
     } else if (provider === 'vertex') {
       const { manageGeminiRollingCache } = await import('./geminiCache');
@@ -375,6 +379,7 @@ async function runStreamRound(
         enableTools,
         cachedContent: vertexCache,
         dynamicContext: null,
+        thinkingBudget: config.thinkingBudget ?? null,
       });
     } else if (provider === 'google') {
       const { manageGeminiRollingCache } = await import('./geminiCache');
@@ -398,6 +403,7 @@ async function runStreamRound(
         enableTools,
         cachedContent: googleCache,
         dynamicContext: null,
+        thinkingBudget: config.thinkingBudget ?? null,
       });
     } else {
       throw new Error(`Swarm streaming not supported for provider: ${provider}`);

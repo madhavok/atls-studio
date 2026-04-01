@@ -481,6 +481,10 @@ export interface Settings {
   extendedContextByModelId: Record<string, boolean>;
   // Entry manifest depth: 'off' = skip, 'paths' = file list only, 'sigs' = signatures only, 'paths_sigs' = both
   entryManifestDepth: 'off' | 'paths' | 'sigs' | 'paths_sigs';
+  // Model output speed / verbosity: controls brevity of model responses (maps to OpenAI verbosity for GPT-5)
+  modelOutputSpeed: 'low' | 'medium' | 'high';
+  // Model thinking / reasoning depth: controls extended thinking budget / reasoning effort
+  modelThinking: 'off' | 'low' | 'medium' | 'high';
 }
 
 /** Per-category severity enables. Key = category, value = enabled severities */
@@ -1270,6 +1274,8 @@ export const useAppStore = create<AppState>((set) => ({
       extendedContext: {},
       extendedContextByModelId: {},
       entryManifestDepth: 'paths',
+      modelOutputSpeed: 'medium',
+      modelThinking: 'medium',
     };
     let parsed: Record<string, unknown> = {};
     try { parsed = saved ? JSON.parse(saved) : {}; } catch { /* corrupt settings — use defaults */ }
