@@ -1234,20 +1234,25 @@ pub async fn stream_chat_anthropic(
     let mut body = serde_json::json!({
         "model": model,
         "max_tokens": max_tokens,
-        "temperature": temperature,
         "system": system_value,
         "messages": anthropic_messages,
         "stream": true,
     });
 
-    // Extended thinking: budget_tokens must be >= 1024 and < max_tokens
-    if let Some(budget) = thinking_budget {
-        if budget >= 1024 && budget < max_tokens {
-            body["thinking"] = serde_json::json!({
-                "type": "enabled",
-                "budget_tokens": budget
-            });
-        }
+    // Anthropic thinking is incompatible with temperature/top_k modifications.
+    // When thinking is active, omit temperature so the API uses its default;
+    // otherwise pass the user's manual temperature value through.
+    let thinking_active = thinking_budget
+        .filter(|&b| b >= 1024 && b < max_tokens)
+        .is_some();
+
+    if thinking_active {
+        body["thinking"] = serde_json::json!({
+            "type": "enabled",
+            "budget_tokens": thinking_budget.unwrap()
+        });
+    } else {
+        body["temperature"] = serde_json::json!(temperature);
     }
     
     // Add tools if enabled
