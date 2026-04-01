@@ -5,6 +5,7 @@ const {
   getProviderFromModel,
   areToolsEnabledForProvider,
   deriveMutationCompletionBlocker,
+  mergeCompletionBlockers,
 } = await import('./aiService');
 
 describe('aiService exported helpers', () => {
@@ -29,5 +30,46 @@ describe('aiService exported helpers', () => {
       step_results: [],
     };
     expect(deriveMutationCompletionBlocker(empty)).toBeUndefined();
+  });
+});
+
+describe('mergeCompletionBlockers', () => {
+  it('returns null when no entries', () => {
+    expect(mergeCompletionBlockers([])).toBeNull();
+  });
+
+  it('returns null when all blockers are null', () => {
+    expect(mergeCompletionBlockers([
+      { toolName: 'task_complete', blocker: null },
+      { toolName: 'batch', blocker: null },
+    ])).toBeNull();
+  });
+
+  it('returns first non-null blocker (batch before task_complete)', () => {
+    expect(mergeCompletionBlockers([
+      { toolName: 'batch', blocker: 'verify.build failed.' },
+      { toolName: 'task_complete', blocker: null },
+    ])).toBe('verify.build failed.');
+  });
+
+  it('returns non-null blocker even when task_complete entry appears first', () => {
+    expect(mergeCompletionBlockers([
+      { toolName: 'task_complete', blocker: null },
+      { toolName: 'batch', blocker: 'Final verification is still required before task completion.' },
+    ])).toBe('Final verification is still required before task completion.');
+  });
+
+  it('returns first non-null when multiple blockers exist', () => {
+    expect(mergeCompletionBlockers([
+      { toolName: 'batch', blocker: 'verify.build failed.' },
+      { toolName: 'batch', blocker: 'Verify artifact stale.' },
+    ])).toBe('verify.build failed.');
+  });
+
+  it('treats undefined blocker as non-blocking (skips it)', () => {
+    expect(mergeCompletionBlockers([
+      { toolName: 'batch', blocker: undefined },
+      { toolName: 'batch', blocker: 'verify needed' },
+    ])).toBe('verify needed');
   });
 });

@@ -31,6 +31,7 @@ Every read/edit/search returns h:ref — use it, never repeat content.
 Large file (>500L) -> pin(sig) + extract_plan + change.refactor + verify per batch. NEVER use shell for code extraction.
 Cross-file symbol move -> change.refactor(extract). Localized change -> change.edit.
 Multi-round -> pin(sig) + persist plan to BB.
+**Advance before complete:** With an active session.plan, finish each phase via session.advance(summary:"...") before calling task_complete. task_complete is for session exit, not for skipping phases. Advance even if a subtask had no edits — the summary captures what was examined and decided.
 
 ### PIN DISCIPLINE (CRITICAL)
 Pinning is how you keep knowledge across turns. Without pins, reads go dormant → compacted → evicted → you re-read → loop.

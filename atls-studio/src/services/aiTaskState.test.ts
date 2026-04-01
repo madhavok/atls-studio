@@ -8,7 +8,7 @@ vi.mock('../stores/contextStore', () => ({
   },
 }));
 
-import { allSubtasksDone } from './aiTaskState';
+import { allSubtasksDone, hasActivePlanWithIncompleteSubtasks, getIncompleteSubtaskIds } from './aiTaskState';
 
 describe('allSubtasksDone', () => {
   beforeEach(() => {
@@ -44,5 +44,104 @@ describe('allSubtasksDone', () => {
       },
     });
     expect(allSubtasksDone()).toBe(false);
+  });
+});
+
+describe('hasActivePlanWithIncompleteSubtasks', () => {
+  beforeEach(() => {
+    mockGetState.mockReset();
+  });
+
+  it('returns false when no plan', () => {
+    mockGetState.mockReturnValue({ taskPlan: null });
+    expect(hasActivePlanWithIncompleteSubtasks()).toBe(false);
+  });
+
+  it('returns false when plan is superseded', () => {
+    mockGetState.mockReturnValue({
+      taskPlan: {
+        status: 'superseded',
+        subtasks: [{ id: 'a', status: 'pending' }],
+      },
+    });
+    expect(hasActivePlanWithIncompleteSubtasks()).toBe(false);
+  });
+
+  it('returns false when all subtasks are done', () => {
+    mockGetState.mockReturnValue({
+      taskPlan: {
+        status: 'active',
+        subtasks: [
+          { id: 'a', status: 'done' },
+          { id: 'b', status: 'done' },
+        ],
+      },
+    });
+    expect(hasActivePlanWithIncompleteSubtasks()).toBe(false);
+  });
+
+  it('returns true when active plan has pending subtasks', () => {
+    mockGetState.mockReturnValue({
+      taskPlan: {
+        status: 'active',
+        subtasks: [
+          { id: 'a', status: 'done' },
+          { id: 'b', status: 'active' },
+          { id: 'c', status: 'pending' },
+        ],
+      },
+    });
+    expect(hasActivePlanWithIncompleteSubtasks()).toBe(true);
+  });
+
+  it('returns true when active plan has blocked subtasks', () => {
+    mockGetState.mockReturnValue({
+      taskPlan: {
+        status: 'active',
+        subtasks: [
+          { id: 'a', status: 'done' },
+          { id: 'b', status: 'blocked' },
+        ],
+      },
+    });
+    expect(hasActivePlanWithIncompleteSubtasks()).toBe(true);
+  });
+});
+
+describe('getIncompleteSubtaskIds', () => {
+  beforeEach(() => {
+    mockGetState.mockReset();
+  });
+
+  it('returns empty array when no plan', () => {
+    mockGetState.mockReturnValue({ taskPlan: null });
+    expect(getIncompleteSubtaskIds()).toEqual([]);
+  });
+
+  it('returns only non-done subtask ids', () => {
+    mockGetState.mockReturnValue({
+      taskPlan: {
+        status: 'active',
+        subtasks: [
+          { id: 'a', status: 'done' },
+          { id: 'b', status: 'active' },
+          { id: 'c', status: 'pending' },
+        ],
+      },
+    });
+    expect(getIncompleteSubtaskIds()).toEqual(['b', 'c']);
+  });
+
+  it('returns empty array when all done', () => {
+    mockGetState.mockReturnValue({
+      taskPlan: {
+        status: 'active',
+        subtasks: [
+          { id: 'a', status: 'done' },
+          { id: 'b', status: 'done' },
+        ],
+      },
+    });
+    expect(getIncompleteSubtaskIds()).toEqual([]);
   });
 });

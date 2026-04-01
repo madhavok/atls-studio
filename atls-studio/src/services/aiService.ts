@@ -209,6 +209,7 @@ import { createTauriChatStream } from './chatTransport';
 import { fetchModels, type AIProvider } from './modelFetcher';
 import { parseHashRef } from '../utils/hashRefParsers';
 import { executeWithConcurrency } from './aiConcurrency';
+import { hasActivePlanWithIncompleteSubtasks, getIncompleteSubtaskIds } from './aiTaskState';
 import { canSteerExecution } from './universalFreshness';
 
 /** Content block types for multimodal messages */
@@ -527,6 +528,19 @@ export function deriveMutationCompletionBlocker(result: UnifiedBatchResult): str
     return 'Final verification is still required before task completion.';
   }
   return undefined;
+}
+
+/**
+ * Merge per-tool completion blockers collected during a parallel execution round.
+ * Any non-null blocker wins — prevents task_complete from racing with batch verify gates.
+ */
+export function mergeCompletionBlockers(
+  entries: ReadonlyArray<{ toolName: string; blocker: string | null | undefined }>,
+): string | null {
+  for (const entry of entries) {
+    if (entry.blocker != null) return entry.blocker;
+  }
+  return null;
 }
 
 /** Markers for extended-thinking text bridged into plain `text` blocks (all providers). */
@@ -2336,7 +2350,9 @@ async function streamChatViaTauri(
               }
               conversationHistory.push({
                 role: 'user',
-                content: `<<SYSTEM: You have an active task plan with incomplete subtasks (${pending}). Continue working or call task_complete with a summary of what was accomplished.>>`,
+                content: `<<SYSTEM: You have an active task plan with incomplete subtasks (${pending}). ` +
+                  'Continue working on the current phase. When a phase is complete, call session.advance(summary:"...") (min 50 chars) to commit findings and move to the next subtask. ' +
+                  'Only call task_complete after all subtasks are advanced.>>',
               });
               continue;
             }
@@ -2401,6 +2417,7 @@ async function streamChatViaTauri(
       let roundPendingAction = useAppStore.getState().agentProgress.pendingAction;
       const startedWithStateChanged = roundPendingAction.kind === 'state_changed';
       let roundObservedNonCompletionTool = false;
+      const roundCompletionBlockers: Array<{ toolName: string; blocker: string | null | undefined }> = [];
 
       const toolTasks = toolCallEntries.map((tc) => async () => {
         // Skip execution if already aborted
@@ -2570,16 +2587,9 @@ async function streamChatViaTauri(
             roundPendingAction = mergePendingAction(roundPendingAction, execution.meta.pendingAction);
           }
           if (execution.meta && 'completionBlocker' in execution.meta) {
-            const prev = runtimeCompletionBlocker;
-            runtimeCompletionBlocker = execution.meta.completionBlocker ?? null;
-            useAppStore.getState().setAgentProgress({ canTaskComplete: runtimeCompletionBlocker == null });
-            if (runtimeCompletionBlocker !== prev) {
-              console.log(`[aiService][telemetry] completionBlocker changed: ${prev ?? '(none)'} → ${runtimeCompletionBlocker ?? '(none)'} (round=${round}, tool=${tc.name})`);
-            }
+            roundCompletionBlockers.push({ toolName: tc.name, blocker: execution.meta.completionBlocker ?? null });
           }
           if (tc.name === 'task_complete') {
-            runtimeCompletionBlocker = null;
-            useAppStore.getState().setAgentProgress({ canTaskComplete: true });
             taskCompleteCalled = true;
           }
           safeCallbacks.onToolResult(tc.id, result);
@@ -2622,7 +2632,17 @@ async function streamChatViaTauri(
       });
       
       const toolResults = await executeWithConcurrency(toolTasks, MAX_CONCURRENT_TOOLS, abortSignal);
-      
+
+      // Deterministic blocker merge: any non-null blocker wins over task_complete's implicit clear
+      if (roundCompletionBlockers.length > 0) {
+        const prev: string | null = runtimeCompletionBlocker;
+        runtimeCompletionBlocker = mergeCompletionBlockers(roundCompletionBlockers);
+        useAppStore.getState().setAgentProgress({ canTaskComplete: runtimeCompletionBlocker == null });
+        if (runtimeCompletionBlocker !== prev) {
+          console.log(`[aiService][telemetry] completionBlocker merged: ${prev ?? '(none)'} → ${runtimeCompletionBlocker ?? '(none)'} (round=${round}, sources=${roundCompletionBlockers.map(b => b.toolName).join(',')})`);
+        }
+      }
+
       // If aborted during tool execution, exit immediately
       if (abortSignal.aborted) {
         console.log('[aiService] Aborted during tool execution');
@@ -2691,6 +2711,16 @@ async function streamChatViaTauri(
           conversationHistory.push({
             role: 'user',
             content: '<<SYSTEM: You made code changes but did not verify them. Run verify.build before calling task_complete.>>',
+          });
+        } else if (hasActivePlanWithIncompleteSubtasks() && !forceStopActive) {
+          const pending = getIncompleteSubtaskIds();
+          console.log(`[aiService] Task-plan gate: task_complete called with incomplete subtasks (${pending.join(', ')}) — injecting advance hint`);
+          taskCompleteCalled = false;
+          conversationHistory.push({
+            role: 'user',
+            content: `<<SYSTEM: You called task_complete but your task plan has incomplete subtasks (${pending.join(', ')}). ` +
+              'You must advance each phase with session.advance(summary:"...") (min 50 chars describing accomplishments) before calling task_complete. ' +
+              'If remaining subtasks are no longer needed, advance them with a summary explaining why they were skipped, then call task_complete.>>',
           });
         } else {
           console.log('[aiService] task_complete called — stopping tool loop');
