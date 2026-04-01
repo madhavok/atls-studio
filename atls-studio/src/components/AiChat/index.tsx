@@ -3356,8 +3356,9 @@ export function AiChat() {
           
           const hasToolCalls = finalParts.some(s => s.type === 'tool');
           const hasErrors = finalParts.some(s => s.type === 'error');
+          const hasReasoning = finalParts.some(s => s.type === 'reasoning');
           
-          if (resolvedContent || hasToolCalls || hasErrors) {
+          if (resolvedContent || hasToolCalls || hasErrors || hasReasoning) {
             const asstChunkHash = resolvedContent
               ? contextStore.addChunk(resolvedContent, 'msg:asst')
               : undefined;
@@ -3365,7 +3366,7 @@ export function AiChat() {
             addMessage({ 
               role: 'assistant', 
               content: resolvedContent || finalTaskSummary || '*(Tool execution completed)*',
-              parts: finalSegments.length > 0 ? finalSegments : (finalParts.length > 0 ? finalParts : undefined),
+              parts: finalParts.length > 0 ? finalParts : undefined,
               segments: finalSegments.length > 0 ? finalSegments : undefined,
               chunkHash: asstChunkHash,
             });

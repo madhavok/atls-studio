@@ -529,6 +529,24 @@ export function deriveMutationCompletionBlocker(result: UnifiedBatchResult): str
   return undefined;
 }
 
+/** Markers for extended-thinking text bridged into plain `text` blocks (all providers). */
+const PRIOR_THOUGHT_START = '<<PRIOR_THOUGHT>>';
+const PRIOR_THOUGHT_END = '<</PRIOR_THOUGHT>>';
+
+function formatPriorThoughtForApi(body: string): string {
+  const t = body.trim();
+  if (!t) return '';
+  return `${PRIOR_THOUGHT_START}\n${t}\n${PRIOR_THOUGHT_END}`;
+}
+
+/** Merge streamed reasoning + visible text for one assistant turn (tool loop history). */
+function mergeRoundAssistantVisibleText(reasoning: string, text: string): string {
+  const th = formatPriorThoughtForApi(reasoning);
+  const te = text.trim();
+  if (th && te) return `${th}\n\n${te}`;
+  return th || te;
+}
+
 /**
  * Convert a stored Message (with segments/parts) to API content format for Gemini/OpenAI/Anthropic.
  * Assistant messages with tool calls are expanded to model content + optional tool_result user message.
@@ -578,6 +596,8 @@ function messageToApiContent(msg: { role: string; content: unknown; parts?: Arra
   for (const p of parts) {
     if (p.type === 'text' && p.content) {
       modelBlocks.push({ type: 'text', text: p.content });
+    } else if (p.type === 'reasoning' && p.content?.trim()) {
+      modelBlocks.push({ type: 'text', text: formatPriorThoughtForApi(p.content) });
     } else if (p.type === 'tool' && p.toolCall) {
       const tc = p.toolCall;
       modelBlocks.push({
@@ -1681,6 +1701,7 @@ async function streamChatViaTauri(
       const pendingToolCalls: Map<number, PendingToolCall> = new Map();
       let needsToolResults = false;
       let assistantTextContent = '';
+      let assistantReasoningContent = '';
 
       // Track usage - use latest values (Anthropic sends final totals at end)
       let roundInputTokens = 0;
@@ -1813,6 +1834,7 @@ async function streamChatViaTauri(
             safeCallbacks.onReasoningStart?.(chunk.id);
             break;
           case 'reasoning_delta':
+            assistantReasoningContent += chunk.delta;
             safeCallbacks.onReasoningDelta?.(chunk.delta);
             break;
           case 'reasoning_end':
@@ -2170,8 +2192,11 @@ async function streamChatViaTauri(
                 status: 'auto_continuing',
                 autoContinueCount,
               });
-              if (assistantTextContent) {
-                conversationHistory.push({ role: 'assistant', content: assistantTextContent });
+              {
+                const merged = mergeRoundAssistantVisibleText(assistantReasoningContent, assistantTextContent);
+                if (merged) {
+                  conversationHistory.push({ role: 'assistant', content: merged });
+                }
               }
               conversationHistory.push({
                 role: 'user',
@@ -2230,8 +2255,11 @@ async function streamChatViaTauri(
               autoContinueCount,
             });
 
-            if (assistantTextContent) {
-              conversationHistory.push({ role: 'assistant', content: assistantTextContent });
+            {
+              const merged = mergeRoundAssistantVisibleText(assistantReasoningContent, assistantTextContent);
+              if (merged) {
+                conversationHistory.push({ role: 'assistant', content: merged });
+              }
             }
             conversationHistory.push({
               role: 'user',
@@ -2257,8 +2285,11 @@ async function streamChatViaTauri(
                 status: 'auto_continuing',
                 autoContinueCount,
               });
-              if (assistantTextContent) {
-                conversationHistory.push({ role: 'assistant', content: assistantTextContent });
+              {
+                const merged = mergeRoundAssistantVisibleText(assistantReasoningContent, assistantTextContent);
+                if (merged) {
+                  conversationHistory.push({ role: 'assistant', content: merged });
+                }
               }
               conversationHistory.push({
                 role: 'user',
@@ -2297,8 +2328,11 @@ async function streamChatViaTauri(
                 status: 'auto_continuing',
                 autoContinueCount,
               });
-              if (assistantTextContent) {
-                conversationHistory.push({ role: 'assistant', content: assistantTextContent });
+              {
+                const merged = mergeRoundAssistantVisibleText(assistantReasoningContent, assistantTextContent);
+                if (merged) {
+                  conversationHistory.push({ role: 'assistant', content: merged });
+                }
               }
               conversationHistory.push({
                 role: 'user',
@@ -2336,8 +2370,9 @@ async function streamChatViaTauri(
       
       // Build assistant message with tool_use blocks
       const assistantContent: unknown[] = [];
-      if (assistantTextContent) {
-        assistantContent.push({ type: 'text', text: assistantTextContent });
+      const mergedRoundText = mergeRoundAssistantVisibleText(assistantReasoningContent, assistantTextContent);
+      if (mergedRoundText) {
+        assistantContent.push({ type: 'text', text: mergedRoundText });
       }
       
       // Build tool calls array for parallel execution
@@ -3362,9 +3397,12 @@ function _extractRecentReasoning(): string {
     } else if (Array.isArray(msg.content)) {
       for (const block of msg.content) {
         if (!block || typeof block !== 'object') continue;
-        const b = block as { type?: string; text?: string };
+        const b = block as { type?: string; text?: string; thinking?: string };
         if (b.type === 'text' && b.text) {
           const t = b.text.trim();
+          if (t && !isCompressedRef(t)) textChunks.unshift(t);
+        } else if ((b.type === 'reasoning' || b.type === 'thinking') && (b.text || b.thinking)) {
+          const t = (b.text ?? b.thinking ?? '').trim();
           if (t && !isCompressedRef(t)) textChunks.unshift(t);
         }
       }
