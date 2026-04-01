@@ -30,7 +30,8 @@ Related:
 | [tauri-commands.md](./tauri-commands.md) | Enumerated Tauri `invoke` command names (`lib.rs`) |
 | [mcp-integration.md](./mcp-integration.md) | MCP |
 | [swarm-orchestration.md](./swarm-orchestration.md) | Multi-agent orchestration |
-| [subagents.md](./subagents.md) | Delegate subagents: four roles, snapshot loop, scoped HPP, budgets, batch ops |
+| [subagents.md](./subagents.md) | Delegate subagents: four roles, snapshot loop, scoped HPP, batch ops |
+| [test-coverage-backlog.md](./test-coverage-backlog.md) | Remaining test gaps (stores, `useAtls`, Rust without `cfg(test)`, E2E); quick-win tests implemented |
 
 ## Repo layout
 
