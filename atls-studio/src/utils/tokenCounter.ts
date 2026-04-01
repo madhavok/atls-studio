@@ -108,11 +108,9 @@ function getActiveProviderModel(): { provider: string; model: string } {
  * Count tokens for a single string using the real provider-specific tokenizer.
  * Results are LRU-cached to avoid redundant IPC for repeated content.
  */
-export async function countTokens(content: string): Promise<number> {
-  if (!content || content.length === 0) return 0;
-
+export async function countTokens(content: string, precomputedHash?: string): Promise<number> {
   const { provider, model } = getActiveProviderModel();
-  const hash = quickHash(content);
+  const hash = precomputedHash || quickHash(content);
   const cacheKey = `${provider}:${model}:${hash}`;
 
   const cached = cache.get(cacheKey);
@@ -131,9 +129,7 @@ export async function countTokens(content: string): Promise<number> {
  * Count tokens for multiple strings in a single IPC call.
  * Checks cache for each item; only sends uncached items to the backend.
  */
-export async function countTokensBatch(contents: string[]): Promise<number[]> {
-  if (contents.length === 0) return [];
-
+export async function countTokensBatch(contents: string[], precomputedHashes?: string[]): Promise<number[]> {
   const { provider, model } = getActiveProviderModel();
   const results = new Array<number>(contents.length);
   const uncachedIndices: number[] = [];
@@ -145,7 +141,7 @@ export async function countTokensBatch(contents: string[]): Promise<number[]> {
       results[i] = 0;
       continue;
     }
-    const hash = quickHash(contents[i]);
+    const hash = precomputedHashes?.[i] || quickHash(contents[i]);
     const cacheKey = `${provider}:${model}:${hash}`;
     const cached = cache.get(cacheKey);
     if (cached !== undefined) {
@@ -197,17 +193,15 @@ export async function countToolDefTokens(): Promise<number> {
  * Use this only when async is impossible (initial renders, synchronous loops).
  * Checks the LRU cache first for previously counted content.
  */
-export function countTokensSync(content: string): number {
-  if (!content || content.length === 0) return 0;
-
+export function countTokensSync(content: string, precomputedHash?: string): number {
   const { provider, model } = getActiveProviderModel();
-  const hash = quickHash(content);
+  const hash = precomputedHash || quickHash(content);
   const cacheKey = `${provider}:${model}:${hash}`;
-
   const cached = cache.get(cacheKey);
   if (cached !== undefined) return cached;
-
-  return estimateTokens(content);
+  const estimate = estimateTokens(content);
+  cache.set(cacheKey, estimate);
+  return estimate;
 }
 
 /**

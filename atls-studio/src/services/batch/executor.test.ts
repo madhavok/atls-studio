@@ -1657,3 +1657,242 @@ describe('executeUnifiedBatch line-edit pipeline stress', () => {
     expect(step2Params.content_hash).toBe('hash-after-step1');
   });
 });
+
+// ---------------------------------------------------------------------------
+// Inter-step rebase: batch_edits mode — validates that rebaseSubsequentSteps
+// correctly builds per-file delta maps from batch_edits entries and applies
+// shifts to both single-file and nested batch_edits future steps.
+// ---------------------------------------------------------------------------
+
+describe('executeUnifiedBatch inter-step rebase for batch_edits mode', () => {
+  beforeEach(() => {
+    handlers.clear();
+  });
+
+  it('batch_edits step followed by single-file step: lines are rebased', async () => {
+    const editCalls: Array<Record<string, unknown>> = [];
+
+    handlers.set('read.context', async () => raw('read', {
+      results: [
+        { file: 'src/a.ts', content_hash: 'hash-a1', content: 'x' },
+        { file: 'src/b.ts', content_hash: 'hash-b1', content: 'y' },
+      ],
+    }));
+    handlers.set('change.edit', async (params: Record<string, unknown>) => {
+      editCalls.push(JSON.parse(JSON.stringify(params)));
+      return raw('applied', {
+        status: 'ok',
+        mode: 'batch_edits',
+        drafts: [
+          { file: 'src/a.ts', content_hash: 'hash-a2' },
+          { file: 'src/b.ts', content_hash: 'hash-b2' },
+        ],
+      });
+    });
+
+    await executeUnifiedBatch({
+      version: '1.0',
+      steps: [
+        { id: 'r1', use: 'read.context', with: { type: 'full', file_paths: ['src/a.ts', 'src/b.ts'] } },
+        {
+          id: 'e1', use: 'change.edit', with: {
+            mode: 'batch_edits',
+            edits: [
+              {
+                file: 'src/a.ts',
+                line_edits: [{ line: 5, action: 'insert_before', content: 'new1\nnew2\nnew3' }],
+              },
+              {
+                file: 'src/b.ts',
+                line_edits: [{ line: 10, end_line: 15, action: 'delete' }],
+              },
+            ],
+          },
+        },
+        {
+          id: 'e2', use: 'change.edit', with: {
+            file: 'src/a.ts',
+            line_edits: [{ line: 20, action: 'replace', content: 'changed-a' }],
+          },
+        },
+        {
+          id: 'e3', use: 'change.edit', with: {
+            file: 'src/b.ts',
+            line_edits: [{ line: 30, end_line: 35, action: 'replace', content: 'changed-b' }],
+          },
+        },
+      ],
+    }, makeCtx());
+
+    expect(editCalls).toHaveLength(3);
+
+    // e1 inserted 3 lines at line 5 in src/a.ts → delta +3 at line 5
+    // e2 targets src/a.ts line 20: 5 < 20 → shift +3 → line 23
+    const le2 = (editCalls[1] as Record<string, unknown>).line_edits as Array<Record<string, unknown>>;
+    expect(le2[0].line).toBe(23);
+
+    // e1 deleted 6 lines (10-15) in src/b.ts → delta -6 at line 10
+    // e3 targets src/b.ts line 30: 10 < 30 → shift -6 → line 24; end_line 35 → 29
+    const le3 = (editCalls[2] as Record<string, unknown>).line_edits as Array<Record<string, unknown>>;
+    expect(le3[0].line).toBe(24);
+    expect(le3[0].end_line).toBe(29);
+  });
+
+  it('batch_edits step followed by another batch_edits step: nested edits rebased', async () => {
+    const editCalls: Array<Record<string, unknown>> = [];
+
+    handlers.set('read.context', async () => raw('read', {
+      results: [
+        { file: 'src/a.ts', content_hash: 'hash-a1', content: 'x' },
+        { file: 'src/b.ts', content_hash: 'hash-b1', content: 'y' },
+      ],
+    }));
+    handlers.set('change.edit', async (params: Record<string, unknown>) => {
+      editCalls.push(JSON.parse(JSON.stringify(params)));
+      return raw('applied', {
+        status: 'ok',
+        mode: 'batch_edits',
+        drafts: [
+          { file: 'src/a.ts', content_hash: 'hash-a2' },
+          { file: 'src/b.ts', content_hash: 'hash-b2' },
+        ],
+      });
+    });
+
+    await executeUnifiedBatch({
+      version: '1.0',
+      steps: [
+        { id: 'r1', use: 'read.context', with: { type: 'full', file_paths: ['src/a.ts', 'src/b.ts'] } },
+        {
+          id: 'e1', use: 'change.edit', with: {
+            mode: 'batch_edits',
+            edits: [
+              {
+                file: 'src/a.ts',
+                line_edits: [{ line: 10, action: 'insert_before', content: 'x1\nx2\nx3\nx4\nx5' }],
+              },
+            ],
+          },
+        },
+        {
+          id: 'e2', use: 'change.edit', with: {
+            mode: 'batch_edits',
+            edits: [
+              {
+                file: 'src/a.ts',
+                line_edits: [{ line: 25, action: 'replace', content: 'replaced' }],
+              },
+              {
+                file: 'src/b.ts',
+                line_edits: [{ line: 8, action: 'replace', content: 'untouched' }],
+              },
+            ],
+          },
+        },
+      ],
+    }, makeCtx());
+
+    expect(editCalls).toHaveLength(2);
+
+    // e1 inserted 5 lines at line 10 in src/a.ts → delta +5 at line 10
+    // e2 nested edits: src/a.ts line 25 → 10 < 25 → shift +5 → 30
+    const e2Edits = (editCalls[1] as Record<string, unknown>).edits as Array<Record<string, unknown>>;
+    const leA = e2Edits[0].line_edits as Array<Record<string, unknown>>;
+    expect(leA[0].line).toBe(30);
+
+    // e2 nested edits: src/b.ts line 8 — not touched by e1 → stays 8
+    const leB = e2Edits[1].line_edits as Array<Record<string, unknown>>;
+    expect(leB[0].line).toBe(8);
+  });
+
+  it('replace_body without _resolved_body_span uses edits_resolved backfill', async () => {
+    const editCalls: Array<Record<string, unknown>> = [];
+
+    handlers.set('read.context', async () => raw('read', {
+      results: [{ file: 'src/a.ts', content_hash: 'hash-v1', content: 'x' }],
+    }));
+    handlers.set('change.edit', async (params: Record<string, unknown>) => {
+      editCalls.push(JSON.parse(JSON.stringify(params)));
+      return raw('applied', {
+        status: 'ok',
+        drafts: [{ file: 'src/a.ts', content_hash: 'hash-v2' }],
+        edits_resolved: [{ resolved_line: 5, action: 'replace_body', lines_affected: 12 }],
+      });
+    });
+
+    await executeUnifiedBatch({
+      version: '1.0',
+      steps: [
+        { id: 'r1', use: 'read.context', with: { type: 'full', file_paths: ['src/a.ts'] } },
+        {
+          id: 'e1', use: 'change.edit', with: {
+            file: 'src/a.ts',
+            line_edits: [{ line: 5, action: 'replace_body', content: 'a\nb\nc' }],
+          },
+        },
+        {
+          id: 'e2', use: 'change.edit', with: {
+            file: 'src/a.ts',
+            line_edits: [{ line: 30, action: 'replace', content: 'changed' }],
+          },
+        },
+      ],
+    }, makeCtx());
+
+    expect(editCalls).toHaveLength(2);
+
+    // replace_body at line 5: content has 3 lines, body span was 12 (from edits_resolved)
+    // delta = 3 - 12 = -9 at line 5
+    // e2 line 30: 5 < 30 → shift -9 → 21
+    const le2 = (editCalls[1] as Record<string, unknown>).line_edits as Array<Record<string, unknown>>;
+    expect(le2[0].line).toBe(21);
+  });
+
+  it('single-file step followed by batch_edits step: nested edits on same file rebased', async () => {
+    const editCalls: Array<Record<string, unknown>> = [];
+
+    handlers.set('read.context', async () => raw('read', {
+      results: [{ file: 'src/a.ts', content_hash: 'hash-v1', content: 'x' }],
+    }));
+    handlers.set('change.edit', async (params: Record<string, unknown>) => {
+      editCalls.push(JSON.parse(JSON.stringify(params)));
+      return raw('applied', {
+        status: 'ok',
+        drafts: [{ file: 'src/a.ts', content_hash: 'hash-v2' }],
+      });
+    });
+
+    await executeUnifiedBatch({
+      version: '1.0',
+      steps: [
+        { id: 'r1', use: 'read.context', with: { type: 'full', file_paths: ['src/a.ts'] } },
+        {
+          id: 'e1', use: 'change.edit', with: {
+            file: 'src/a.ts',
+            line_edits: [{ line: 5, end_line: 14, action: 'delete' }],
+          },
+        },
+        {
+          id: 'e2', use: 'change.edit', with: {
+            mode: 'batch_edits',
+            edits: [
+              {
+                file: 'src/a.ts',
+                line_edits: [{ line: 40, end_line: 45, action: 'replace', content: 'new' }],
+              },
+            ],
+          },
+        },
+      ],
+    }, makeCtx());
+
+    expect(editCalls).toHaveLength(2);
+
+    // e1 deleted 10 lines (5-14) in src/a.ts → delta -10 at line 5
+    // e2 nested edits: src/a.ts line 40 → 5 < 40 → shift -10 → 30; end_line 45 → 35
+    const e2Edits = (editCalls[1] as Record<string, unknown>).edits as Array<Record<string, unknown>>;
+    const leA = e2Edits[0].line_edits as Array<Record<string, unknown>>;
+    expect(leA[0].line).toBe(30);
+    expect(leA[0].end_line).toBe(35);
+  });
+});

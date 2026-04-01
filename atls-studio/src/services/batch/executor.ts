@@ -199,6 +199,64 @@ function estimateLineDeltaFromEdits(lineEdits: unknown): number {
 }
 
 /**
+ * After Rust applies line edits, `edits_resolved` contains per-edit metadata
+ * including `lines_affected` (the actual body span for replace_body).
+ * Patch `_resolved_body_span` back into the corresponding `line_edits` entries
+ * so `computePositionalDeltas` can compute accurate deltas for replace_body.
+ * Must be called before `rebaseSubsequentSteps`.
+ */
+function backfillResolvedBodySpans(
+  mergedParams: Record<string, unknown>,
+  output: StepOutput,
+): void {
+  if (!output.ok || !output.content || typeof output.content !== 'object' || Array.isArray(output.content)) return;
+  const artifact = output.content as Record<string, unknown>;
+
+  const patchFromResolutions = (lineEdits: unknown[], resolutions: unknown[]) => {
+    for (let k = 0; k < lineEdits.length && k < resolutions.length; k++) {
+      const le = lineEdits[k];
+      const res = resolutions[k];
+      if (!le || typeof le !== 'object' || !res || typeof res !== 'object') continue;
+      const entry = le as Record<string, unknown>;
+      const resolution = res as Record<string, unknown>;
+      if (entry.action === 'replace_body' && typeof entry._resolved_body_span !== 'number') {
+        const linesAffected = resolution.lines_affected;
+        if (typeof linesAffected === 'number' && linesAffected > 0) {
+          entry._resolved_body_span = linesAffected;
+        }
+      }
+    }
+  };
+
+  // Single-file draft path: edits_resolved at top level
+  const topResolutions = artifact.edits_resolved;
+  if (Array.isArray(topResolutions) && Array.isArray(mergedParams.line_edits)) {
+    patchFromResolutions(mergedParams.line_edits as unknown[], topResolutions);
+  }
+
+  // batch_edits path: each drafts[] entry may carry its own edits_resolved
+  const drafts = artifact.drafts ?? artifact.batch ?? artifact.results;
+  if (Array.isArray(drafts) && mergedParams.mode === 'batch_edits' && Array.isArray(mergedParams.edits)) {
+    const paramEdits = mergedParams.edits as Array<Record<string, unknown>>;
+    for (const draftEntry of drafts) {
+      if (!draftEntry || typeof draftEntry !== 'object') continue;
+      const draft = draftEntry as Record<string, unknown>;
+      const draftFile = (draft.f ?? draft.file ?? draft.file_path) as string | undefined;
+      const draftResolutions = draft.edits_resolved;
+      if (!draftFile || !Array.isArray(draftResolutions)) continue;
+      const draftKey = normalizePathForRebase(draftFile);
+      for (const pe of paramEdits) {
+        const peFile = extractEditTargetFile(pe);
+        if (!peFile || normalizePathForRebase(peFile) !== draftKey) continue;
+        if (Array.isArray(pe.line_edits)) {
+          patchFromResolutions(pe.line_edits as unknown[], draftResolutions);
+        }
+      }
+    }
+  }
+}
+
+/**
  * After a successful change.edit step, shift line numbers in subsequent
  * same-file steps so they reflect insertions/deletions from earlier steps.
  * Only adjusts explicit `line` values (symbol-only edits resolve at apply time).
@@ -290,46 +348,99 @@ function applyIntraStepSnapshotRebaseIfNeeded(params: Record<string, unknown>): 
   if (params.line_numbering !== undefined) delete params.line_numbering;
 }
 
+/**
+ * Build a per-file positional delta map from completed step params.
+ * Handles both single-file (top-level line_edits) and multi-file
+ * (batch_edits mode with edits[]) payloads.
+ */
+function buildPerFileDeltaMap(
+  completedParams: Record<string, unknown>,
+): Map<string, PositionalDelta[]> {
+  const map = new Map<string, PositionalDelta[]>();
+
+  const topFile = extractEditTargetFile(completedParams);
+  if (topFile && Array.isArray(completedParams.line_edits)) {
+    const deltas = computePositionalDeltas(completedParams.line_edits);
+    if (deltas.length > 0) map.set(normalizePathForRebase(topFile), deltas);
+  }
+
+  if (completedParams.mode === 'batch_edits' && Array.isArray(completedParams.edits)) {
+    for (const ed of completedParams.edits) {
+      if (!ed || typeof ed !== 'object') continue;
+      const entry = ed as Record<string, unknown>;
+      const file = extractEditTargetFile(entry);
+      if (!file || !Array.isArray(entry.line_edits)) continue;
+      const key = normalizePathForRebase(file);
+      const deltas = computePositionalDeltas(entry.line_edits);
+      if (deltas.length === 0) continue;
+      const existing = map.get(key);
+      if (existing) existing.push(...deltas);
+      else map.set(key, deltas);
+    }
+  }
+
+  return map;
+}
+
+/** Apply positional deltas to a single line_edits array in-place. */
+function applyDeltasToLineEdits(
+  lineEdits: unknown[],
+  deltas: PositionalDelta[],
+): void {
+  for (const le of lineEdits) {
+    if (!le || typeof le !== 'object') continue;
+    const entry = le as Record<string, unknown>;
+    if (typeof entry.line === 'number' && entry.line > 0 && !entry.symbol) {
+      const targetLine = entry.line as number;
+      let shift = 0;
+      for (const d of deltas) {
+        if (d.line < targetLine) shift += d.delta;
+      }
+      if (shift !== 0) entry.line = targetLine + shift;
+    }
+    if (typeof entry.end_line === 'number' && entry.end_line > 0) {
+      const targetEnd = entry.end_line as number;
+      let endShift = 0;
+      for (const d of deltas) {
+        if (d.line < targetEnd) endShift += d.delta;
+      }
+      if (endShift !== 0) entry.end_line = targetEnd + endShift;
+    }
+  }
+}
+
 function rebaseSubsequentSteps(
   completedParams: Record<string, unknown>,
   stepsToRun: Array<{ id: string; use: string; with?: Record<string, unknown> }>,
   startIndex: number,
 ): void {
-  const editedFile = extractEditTargetFile(completedParams);
-  if (!editedFile) return;
-  const editedKey = normalizePathForRebase(editedFile);
-
-  const deltas = Array.isArray(completedParams.line_edits)
-    ? computePositionalDeltas(completedParams.line_edits)
-    : [];
-  if (deltas.length === 0) return;
+  const deltaMap = buildPerFileDeltaMap(completedParams);
+  if (deltaMap.size === 0) return;
 
   for (let j = startIndex; j < stepsToRun.length; j++) {
     const future = stepsToRun[j];
     if (!future.use.startsWith('change.') || !future.with) continue;
-    const futureFile = extractEditTargetFile(future.with);
-    if (!futureFile || normalizePathForRebase(futureFile) !== editedKey) continue;
 
-    const futureEdits = future.with.line_edits;
-    if (!Array.isArray(futureEdits)) continue;
-    for (const le of futureEdits) {
-      if (!le || typeof le !== 'object') continue;
-      const entry = le as Record<string, unknown>;
-      if (typeof entry.line === 'number' && entry.line > 0 && !entry.symbol) {
-        const targetLine = entry.line as number;
-        let shift = 0;
-        for (const d of deltas) {
-          if (d.line < targetLine) shift += d.delta;
-        }
-        if (shift !== 0) entry.line = targetLine + shift;
+    // Rebase top-level line_edits when the future step targets a file we edited
+    const futureFile = extractEditTargetFile(future.with);
+    if (futureFile) {
+      const deltas = deltaMap.get(normalizePathForRebase(futureFile));
+      if (deltas && Array.isArray(future.with.line_edits)) {
+        applyDeltasToLineEdits(future.with.line_edits as unknown[], deltas);
       }
-      if (typeof entry.end_line === 'number' && entry.end_line > 0) {
-        const targetEnd = entry.end_line as number;
-        let endShift = 0;
-        for (const d of deltas) {
-          if (d.line < targetEnd) endShift += d.delta;
+    }
+
+    // Rebase nested edits[] entries (batch_edits mode in a future step)
+    if (Array.isArray(future.with.edits)) {
+      for (const ed of future.with.edits) {
+        if (!ed || typeof ed !== 'object') continue;
+        const entry = ed as Record<string, unknown>;
+        const entryFile = extractEditTargetFile(entry);
+        if (!entryFile) continue;
+        const deltas = deltaMap.get(normalizePathForRebase(entryFile));
+        if (deltas && Array.isArray(entry.line_edits)) {
+          applyDeltasToLineEdits(entry.line_edits as unknown[], deltas);
         }
-        if (endShift !== 0) entry.end_line = targetEnd + endShift;
       }
     }
   }
@@ -1309,6 +1420,7 @@ export async function executeUnifiedBatch(
     if (output.ok && step.use.startsWith('change.')) {
       // Rebase line numbers in subsequent same-file change steps
       if (step.use === 'change.edit') {
+        backfillResolvedBodySpans(mergedParams, output);
         rebaseSubsequentSteps(mergedParams, stepsToRun, i + 1);
       }
       // Track edited file paths for auto-workspace inference on verify steps
