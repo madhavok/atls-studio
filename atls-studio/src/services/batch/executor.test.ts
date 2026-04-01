@@ -1340,6 +1340,37 @@ describe('executeUnifiedBatch inter-step rebase for move and replace_body', () =
 
     expect(editSpy).toHaveBeenCalledOnce();
   });
+
+  it('intra-step: move source after subsequent snap but dest before — insertion shift applies', async () => {
+    const editSpy = vi.fn(async (params: Record<string, unknown>) => {
+      const le = params.line_edits as Array<Record<string, unknown>>;
+      expect(le).toHaveLength(2);
+      // Move 45-50 (6 lines) to dest 5. Subsequent edit at snap 20:
+      // Source removal at 45 does not shift 20 (45 < 20 is false).
+      // Insertion at effective dest 5 does (5 < 20) → +6 → 20 + 6 = 26.
+      expect(le[1].line).toBe(26);
+      return raw('applied', { status: 'ok' });
+    });
+
+    handlers.set('change.edit', editSpy as unknown as OpHandler);
+
+    await executeUnifiedBatch({
+      version: '1.0',
+      steps: [
+        {
+          id: 'e1', use: 'change.edit', with: {
+            file: 'src/a.ts',
+            line_edits: [
+              { line: 45, end_line: 50, action: 'move', destination: 5 },
+              { line: 20, action: 'replace', content: 'x' },
+            ],
+          },
+        },
+      ],
+    }, makeCtx());
+
+    expect(editSpy).toHaveBeenCalledOnce();
+  });
 });
 
 // ---------------------------------------------------------------------------
