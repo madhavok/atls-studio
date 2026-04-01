@@ -32,6 +32,17 @@ import {
 
 export type { AIProvider };
 
+const PRIOR_THOUGHT_START = '<<PRIOR_THOUGHT>>';
+const PRIOR_THOUGHT_END = '<</PRIOR_THOUGHT>>';
+
+function mergeReasoningAndText(reasoning: string, text: string): string {
+  const r = reasoning.trim();
+  const t = text.trim();
+  const wrapped = r ? `${PRIOR_THOUGHT_START}\n${r}\n${PRIOR_THOUGHT_END}` : '';
+  if (wrapped && t) return `${wrapped}\n\n${t}`;
+  return wrapped || t;
+}
+
 // ============================================================================
 // Types
 // ============================================================================
@@ -195,6 +206,7 @@ async function runSubagentRound(
   region?: string,
 ): Promise<{
   fullResponse: string;
+  reasoningContent: string;
   pendingToolCalls: PendingToolCall[];
   stopReason: string | null;
   inputTokens: number;
@@ -203,6 +215,7 @@ async function runSubagentRound(
   cacheWriteTokens: number;
 }> {
   let fullResponse = '';
+  let reasoningContent = '';
   const pendingToolCalls: PendingToolCall[] = [];
   let stopReason: string | null = null;
   let streamError: string | null = null;
@@ -223,6 +236,9 @@ async function runSubagentRound(
       switch (chunk.type) {
         case 'text_delta':
           fullResponse += chunk.delta;
+          break;
+        case 'reasoning_delta':
+          reasoningContent += chunk.delta;
           break;
         case 'tool_input_available':
           pendingToolCalls.push({
@@ -298,7 +314,7 @@ async function runSubagentRound(
   }
 
   console.log(`[subagent] Round complete (${streamId}): ${pendingToolCalls.length} tool calls, stop=${stopReason}, in=${inputTokens} out=${outputTokens}`);
-  return { fullResponse, pendingToolCalls, stopReason, inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens };
+  return { fullResponse, reasoningContent, pendingToolCalls, stopReason, inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens };
 }
 
 // ============================================================================
@@ -1017,8 +1033,9 @@ export async function executeSubagent(
 
       // Save last exchange for next round's snapshot rebuild
       const assistantContent: unknown[] = [];
-      if (result.fullResponse) {
-        assistantContent.push({ type: 'text', text: result.fullResponse });
+      const mergedText = mergeReasoningAndText(result.reasoningContent, result.fullResponse);
+      if (mergedText) {
+        assistantContent.push({ type: 'text', text: mergedText });
       }
       for (const tc of result.pendingToolCalls) {
         assistantContent.push({

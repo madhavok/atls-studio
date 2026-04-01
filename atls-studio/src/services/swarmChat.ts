@@ -71,6 +71,17 @@ function looksLikeNaturalStop(text: string): boolean {
 
 }
 
+const PRIOR_THOUGHT_START = '<<PRIOR_THOUGHT>>';
+const PRIOR_THOUGHT_END = '<</PRIOR_THOUGHT>>';
+
+function mergeReasoningAndText(reasoning: string, text: string): string {
+  const r = reasoning.trim();
+  const t = text.trim();
+  const wrapped = r ? `${PRIOR_THOUGHT_START}\n${r}\n${PRIOR_THOUGHT_END}` : '';
+  if (wrapped && t) return `${wrapped}\n\n${t}`;
+  return wrapped || t;
+}
+
 function createHashLookup(sessionId: string | null): HashLookup {
   return async (hash: string): Promise<{ content: string; source?: string } | null> => {
     const ctx = useContextStore.getState();
@@ -179,6 +190,7 @@ async function runStreamRound(
   affectMainChatMetrics: boolean,
 ): Promise<{
   fullResponse: string;
+  reasoningContent: string;
   pendingToolCalls: PendingToolCall[];
   stopReason: string | null;
   roundInputTokens: number;
@@ -190,6 +202,7 @@ async function runStreamRound(
   roundLatencyMs: number;
 }> {
   let fullResponse = '';
+  let reasoningContent = '';
   const pendingToolCalls: PendingToolCall[] = [];
   let stopReason: string | null = null;
 
@@ -213,6 +226,9 @@ async function runStreamRound(
         if (firstTokenAtMs === null) firstTokenAtMs = performance.now();
         fullResponse += chunk.delta;
         callbacks.onToken(chunk.delta);
+        break;
+      case 'reasoning_delta':
+        reasoningContent += chunk.delta;
         break;
       case 'tool_input_available':
         pendingToolCalls.push({
@@ -457,6 +473,7 @@ async function runStreamRound(
 
   return {
     fullResponse,
+    reasoningContent,
     pendingToolCalls,
     stopReason,
     roundInputTokens,
@@ -575,8 +592,9 @@ export async function streamChatForSwarm(
           looksLikeNaturalStop(fullResponse)
         ) {
           autoContinueCount++;
+          const continueText = mergeReasoningAndText(roundResult.reasoningContent, fullResponse);
           apiMessages.push(
-            { role: 'assistant', content: fullResponse },
+            { role: 'assistant', content: continueText || fullResponse },
             { role: 'user', content: 'Continue. You have not called task_complete yet. Finish the remaining work or call task_complete with your summary.' },
           );
           continue;
@@ -615,10 +633,10 @@ export async function streamChatForSwarm(
       // If task_complete was called or a blocking result was seen, run one
       // final round so the model can acknowledge, then stop.
       if (explicitTaskCompleteCalled || blockingToolResultSeen) {
-        // Build assistant content block with text + tool_use entries
         const assistantContent: unknown[] = [];
-        if (fullResponse) {
-          assistantContent.push({ type: 'text', text: fullResponse });
+        const mergedText = mergeReasoningAndText(roundResult.reasoningContent, fullResponse);
+        if (mergedText) {
+          assistantContent.push({ type: 'text', text: mergedText });
         }
         for (const tc of roundResult.pendingToolCalls) {
           assistantContent.push({ type: 'tool_use', id: tc.id, name: tc.name, input: tc.args });
@@ -646,8 +664,9 @@ export async function streamChatForSwarm(
 
       // Append this round's exchange to the conversation for the next round
       const assistantContent: unknown[] = [];
-      if (fullResponse) {
-        assistantContent.push({ type: 'text', text: fullResponse });
+      const mergedRoundText = mergeReasoningAndText(roundResult.reasoningContent, fullResponse);
+      if (mergedRoundText) {
+        assistantContent.push({ type: 'text', text: mergedRoundText });
       }
       for (const tc of roundResult.pendingToolCalls) {
         assistantContent.push({ type: 'tool_use', id: tc.id, name: tc.name, input: tc.args });

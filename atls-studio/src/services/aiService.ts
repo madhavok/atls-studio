@@ -2856,6 +2856,9 @@ async function streamChatViaTauri(
         console.log(`[aiService] Research budget warning: ${totalResearchRounds} total research rounds`);
       }
 
+      // Signal UI to save current-round text before next round streams new tokens
+      safeCallbacks.onClear?.();
+
       // Safety compression deferred to round 0 to keep history append-only
       // within a tool loop (preserves prefix cache stability). Only compress
       // mid-loop at a much higher threshold to prevent context overflow.
