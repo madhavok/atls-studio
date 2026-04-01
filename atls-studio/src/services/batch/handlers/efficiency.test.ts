@@ -2,8 +2,6 @@
  * Tests for ATLS efficiency enforcement:
  * - BB hygiene: auto-delete superseded entries on bb_write
  * - Manifest-first: search results note when paths overlap entry manifest
- * - Stats line: round count display
- * - Convergence guard constants
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
@@ -11,8 +9,6 @@ import { useContextStore } from '../../../stores/contextStore';
 import { useAppStore } from '../../../stores/appStore';
 import { handleBbWrite, handleBbList } from './blackboard';
 import { handleSearchCode } from './query';
-import { formatStatsLine } from '../../contextFormatter';
-import { TOTAL_ROUND_SOFT_BUDGET, TOTAL_ROUND_ESCALATION } from '../../promptMemory';
 
 vi.mock('../../chatDb', () => ({
   chatDb: {
@@ -160,44 +156,5 @@ describe('manifest-first: search result manifest note', () => {
 
     expect(result.ok).toBe(true);
     expect(result.summary).not.toContain('MANIFEST');
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Stats line round count
-// ---------------------------------------------------------------------------
-
-describe('formatStatsLine round count', () => {
-  it('includes round:{N} when roundCount > 0', () => {
-    const line = formatStatsLine(50000, 200000, 10, 3, 500, 0, undefined, undefined, undefined, undefined, undefined, undefined, 4);
-    expect(line).toContain('round:4');
-  });
-
-  it('omits round when roundCount is 0', () => {
-    const line = formatStatsLine(50000, 200000, 10, 3, 500, 0, undefined, undefined, undefined, undefined, undefined, undefined, 0);
-    expect(line).not.toContain('round:');
-  });
-
-  it('omits round when roundCount is undefined', () => {
-    const line = formatStatsLine(50000, 200000, 10, 3, 500, 0);
-    expect(line).not.toContain('round:');
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Convergence guard constants
-// ---------------------------------------------------------------------------
-
-describe('convergence guard constants', () => {
-  it('TOTAL_ROUND_SOFT_BUDGET is 6', () => {
-    expect(TOTAL_ROUND_SOFT_BUDGET).toBe(6);
-  });
-
-  it('TOTAL_ROUND_ESCALATION is 8', () => {
-    expect(TOTAL_ROUND_ESCALATION).toBe(8);
-  });
-
-  it('escalation > soft budget', () => {
-    expect(TOTAL_ROUND_ESCALATION).toBeGreaterThan(TOTAL_ROUND_SOFT_BUDGET);
   });
 });

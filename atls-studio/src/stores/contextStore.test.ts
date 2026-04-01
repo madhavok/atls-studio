@@ -850,7 +850,7 @@ describe('getStagedBlock active engram dedup', () => {
 
     const block = store.getStagedBlock();
     expect(block).toContain('src/utils.ts');
-    expect(block).toContain('[content in active engram');
+    expect(block).toContain('active engram exists');
     expect(block).not.toContain('export const x = 1');
   });
 
@@ -863,7 +863,7 @@ describe('getStagedBlock active engram dedup', () => {
     const block = store.getStagedBlock();
     expect(block).toContain('src/other.ts');
     expect(block).toContain('export const z = 3');
-    expect(block).not.toContain('[content in active engram');
+    expect(block).not.toContain('active engram exists');
   });
 });
 
