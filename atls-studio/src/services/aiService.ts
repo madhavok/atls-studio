@@ -1199,9 +1199,9 @@ export interface AIConfig {
   baseUrl?: string;
   /** Anthropic beta headers (e.g. ["context-1m-2025-08-07"] for 1M context) */
   anthropicBeta?: string[];
-  /** OpenAI Responses API verbosity (GPT-5 family) */
+  /** OpenAI GPT-5 family: sent as `text.verbosity` on Responses API; Chat Completions unchanged */
   outputVerbosity?: 'low' | 'medium' | 'high';
-  /** OpenAI reasoning effort (Responses / Chat Completions reasoning models) */
+  /** OpenAI: `reasoning.effort` (Responses) or `reasoning_effort` (Chat Completions) */
   reasoningEffort?: string;
   /** Anthropic thinking budget_tokens or Gemini thinkingBudget; null = disabled */
   thinkingBudget?: number | null;

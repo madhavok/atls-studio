@@ -1589,9 +1589,10 @@ pub(crate) async fn stream_responses_openai_inner(
     if let Some(ref effort) = reasoning_effort {
         body["reasoning"] = serde_json::json!({"effort": effort});
     }
-    // GPT-5 verbosity
+    // GPT-5 verbosity — top-level `verbosity` was removed; use `text.verbosity`
+    // https://platform.openai.com/docs/api-reference/responses/create
     if let Some(ref v) = verbosity {
-        body["verbosity"] = serde_json::json!(v);
+        body["text"] = serde_json::json!({"verbosity": v});
     }
     if enable_tools {
         body["tools"] = get_atls_tools_responses();
