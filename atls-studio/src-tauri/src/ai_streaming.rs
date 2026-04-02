@@ -25,9 +25,9 @@ pub(crate) fn convert_image_block_for_openai(block: &serde_json::Value) -> serde
 }
 
 /// Convert a content block to OpenAI Responses API format.
-/// Responses API expects input_text / input_image (not image_url).
-/// See: https://developers.openai.com/api/docs/guides/images-vision
-pub(crate) fn convert_block_for_responses_api(block: &serde_json::Value) -> serde_json::Value {
+/// User/developer text uses `input_text`; assistant prior-turn text uses `output_text` (required by the API).
+/// Images use `input_image` (not image_url). See: https://developers.openai.com/api/docs/guides/images-vision
+pub(crate) fn convert_block_for_responses_api(block: &serde_json::Value, role: &str) -> serde_json::Value {
     let boundary = "<<PRIOR_TURN_BOUNDARY>>";
     let staged_boundary = "<<STAGED_CONTEXT_BOUNDARY>>";
     if let Some(block_type) = block.get("type").and_then(|t| t.as_str()) {
@@ -35,7 +35,8 @@ pub(crate) fn convert_block_for_responses_api(block: &serde_json::Value) -> serd
             "text" => {
                 let text = block.get("text").and_then(|t| t.as_str()).unwrap_or("")
                     .replace(boundary, "").replace(staged_boundary, "");
-                return serde_json::json!({ "type": "input_text", "text": text });
+                let content_type = if role == "assistant" { "output_text" } else { "input_text" };
+                return serde_json::json!({ "type": content_type, "text": text });
             }
             "image" => {
                 if let Some(source) = block.get("source") {
@@ -292,7 +293,7 @@ pub(crate) fn convert_messages_for_responses_api(messages: &[ChatMessage], syste
                     let converted: Vec<serde_json::Value> = blocks.iter()
                         .filter(|b| b.get("type").and_then(|t| t.as_str()) != Some("tool_use")
                                   && b.get("type").and_then(|t| t.as_str()) != Some("tool_result"))
-                        .map(|b| convert_block_for_responses_api(b))
+                        .map(|b| convert_block_for_responses_api(b, msg.role.as_str()))
                         .collect();
                     if !converted.is_empty() {
                         items.push(serde_json::json!({
@@ -2466,14 +2467,14 @@ pub async fn stream_chat_google(
     }
 
     // Inject dynamic context (WM, task state, project tree) into the conversation.
-    // When cachedContent is active, systemInstruction is forbidden, so we append
-    // to the last user message instead. When no cache, it goes into systemInstruction.
-    // Appended (not prepended) so the user's actual instruction has primacy position.
+    // When cachedContent is active, systemInstruction is forbidden, so we prepend
+    // to the last user message parts. Prepended (not appended) so the user's actual
+    // instruction retains recency primacy — Gemini attends most to the last content.
     if let Some(ref dyn_ctx) = dynamic_context {
         if !dyn_ctx.is_empty() && cached_content.is_some() {
             if let Some(last_user) = merged_contents.iter_mut().rev().find(|m| m.get("role").and_then(|r| r.as_str()) == Some("user")) {
                 if let Some(parts) = last_user.get_mut("parts").and_then(|p| p.as_array_mut()) {
-                    parts.push(serde_json::json!({"text": dyn_ctx}));
+                    parts.insert(0, serde_json::json!({"text": dyn_ctx}));
                 }
             }
         }
@@ -2481,6 +2482,14 @@ pub async fn stream_chat_google(
 
     validate_gemini_contents("Google", &merged_contents);
     log_gemini_contents_summary("Google", &merged_contents, cached_content.is_some());
+
+    if cached_content.is_some() && merged_contents.is_empty() {
+        return Err(
+            "Gemini stream_chat_google: cachedContent is set but contents is empty after merge; \
+             uncached messages tail must be non-empty (same invariant as OpenAI full messages)."
+                .to_string(),
+        );
+    }
 
     let mut gen_config = serde_json::json!({
         "maxOutputTokens": max_tokens,
@@ -2803,4 +2812,37 @@ pub async fn stream_chat_google(
     });
     
     Ok(())
+}
+
+#[cfg(test)]
+mod responses_api_conversion_tests {
+    use super::*;
+
+    #[test]
+    fn assistant_array_text_maps_to_output_text() {
+        let messages = vec![ChatMessage {
+            role: "assistant".to_string(),
+            content: serde_json::json!([{ "type": "text", "text": "Hello" }]),
+        }];
+        let items = convert_messages_for_responses_api(&messages, None);
+        assert_eq!(items.len(), 1);
+        let content = items[0].get("content").unwrap();
+        let arr = content.as_array().expect("array content");
+        assert_eq!(arr[0].get("type").and_then(|t| t.as_str()), Some("output_text"));
+        assert_eq!(arr[0].get("text").and_then(|t| t.as_str()), Some("Hello"));
+    }
+
+    #[test]
+    fn user_array_text_maps_to_input_text() {
+        let messages = vec![ChatMessage {
+            role: "user".to_string(),
+            content: serde_json::json!([{ "type": "text", "text": "Hi" }]),
+        }];
+        let items = convert_messages_for_responses_api(&messages, None);
+        assert_eq!(items.len(), 1);
+        let content = items[0].get("content").unwrap();
+        let arr = content.as_array().expect("array content");
+        assert_eq!(arr[0].get("type").and_then(|t| t.as_str()), Some("input_text"));
+        assert_eq!(arr[0].get("text").and_then(|t| t.as_str()), Some("Hi"));
+    }
 }
