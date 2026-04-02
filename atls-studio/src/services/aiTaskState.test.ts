@@ -106,6 +106,43 @@ describe('hasActivePlanWithIncompleteSubtasks', () => {
     });
     expect(hasActivePlanWithIncompleteSubtasks()).toBe(true);
   });
+
+  it('returns false when only the final subtask is active (single phase)', () => {
+    mockGetState.mockReturnValue({
+      taskPlan: {
+        status: 'active',
+        subtasks: [{ id: 'only', status: 'active' }],
+      },
+    });
+    expect(hasActivePlanWithIncompleteSubtasks()).toBe(false);
+  });
+
+  it('returns false when last subtask is active and all prior are done', () => {
+    mockGetState.mockReturnValue({
+      taskPlan: {
+        status: 'active',
+        subtasks: [
+          { id: 'a', status: 'done' },
+          { id: 'b', status: 'done' },
+          { id: 'c', status: 'active' },
+        ],
+      },
+    });
+    expect(hasActivePlanWithIncompleteSubtasks()).toBe(false);
+  });
+
+  it('returns true when active is not last and later subtasks are pending', () => {
+    mockGetState.mockReturnValue({
+      taskPlan: {
+        status: 'active',
+        subtasks: [
+          { id: 'a', status: 'active' },
+          { id: 'b', status: 'pending' },
+        ],
+      },
+    });
+    expect(hasActivePlanWithIncompleteSubtasks()).toBe(true);
+  });
 });
 
 describe('getIncompleteSubtaskIds', () => {
@@ -130,6 +167,29 @@ describe('getIncompleteSubtaskIds', () => {
       },
     });
     expect(getIncompleteSubtaskIds()).toEqual(['b', 'c']);
+  });
+
+  it('excludes final active tail when only last subtask is active', () => {
+    mockGetState.mockReturnValue({
+      taskPlan: {
+        status: 'active',
+        subtasks: [{ id: 'tail', status: 'active' }],
+      },
+    });
+    expect(getIncompleteSubtaskIds()).toEqual([]);
+  });
+
+  it('excludes final active tail when prior subtasks are done', () => {
+    mockGetState.mockReturnValue({
+      taskPlan: {
+        status: 'active',
+        subtasks: [
+          { id: 'a', status: 'done' },
+          { id: 'b', status: 'active' },
+        ],
+      },
+    });
+    expect(getIncompleteSubtaskIds()).toEqual([]);
   });
 
   it('returns empty array when all done', () => {

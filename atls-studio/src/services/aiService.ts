@@ -2327,16 +2327,11 @@ async function streamChatViaTauri(
             break;
           }
           // Task-plan guard: don't accept end_turn when subtasks are still incomplete
-          const endTurnTaskPlan = useContextStore.getState().taskPlan;
-          const hasIncompleteSubtasks = endTurnTaskPlan
-            && endTurnTaskPlan.status === 'active'
-            && endTurnTaskPlan.subtasks.some(s => s.status !== 'done');
+          const hasIncompleteSubtasks = hasActivePlanWithIncompleteSubtasks();
           if (hasIncompleteSubtasks && !taskCompleteCalled) {
             if (autoContinueCount < maxAutoContinues) {
               autoContinueCount++;
-              const pending = endTurnTaskPlan.subtasks
-                .filter(s => s.status !== 'done')
-                .map(s => s.id).join(', ');
+              const pending = getIncompleteSubtaskIds().join(', ');
               console.log(`[aiService] Task-plan guard: incomplete subtasks (${pending}) — auto-continuing at round ${round + 1}`);
               useAppStore.getState().setAgentProgress({
                 status: 'auto_continuing',
