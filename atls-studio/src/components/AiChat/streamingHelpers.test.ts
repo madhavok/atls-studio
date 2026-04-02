@@ -16,6 +16,7 @@ function makeRefs(): StreamingRefs {
     segmentsRevisionRef: { current: 0 },
     seenToolCallIds: { current: new Set() },
     accumulatedTextRef: { current: '' },
+    accumulatedReasoningRef: { current: '' },
     isStreamingRef: { current: false },
   };
 }
@@ -80,10 +81,12 @@ describe('streamingHelpers', () => {
     const refs = makeRefs();
     appendTextToSegments(refs, 'x');
     refs.accumulatedTextRef.current = 'acc';
+    refs.accumulatedReasoningRef.current = 'think';
     refs.seenToolCallIds.current.add('a');
     resetStreamingState(refs);
     expect(refs.streamingSegmentsRef.current).toEqual([]);
     expect(refs.accumulatedTextRef.current).toBe('');
+    expect(refs.accumulatedReasoningRef.current).toBe('');
     expect(refs.seenToolCallIds.current.size).toBe(0);
     expect(refs.isStreamingRef.current).toBe(true);
     expect(refs.segmentsRevisionRef.current).toBeGreaterThan(0);

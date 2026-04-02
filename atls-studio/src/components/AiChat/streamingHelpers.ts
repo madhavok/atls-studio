@@ -11,6 +11,7 @@ export interface StreamingRefs {
   segmentsRevisionRef: React.MutableRefObject<number>;
   seenToolCallIds: React.MutableRefObject<Set<string>>;
   accumulatedTextRef: React.MutableRefObject<string>;
+  accumulatedReasoningRef: React.MutableRefObject<string>;
   isStreamingRef: React.MutableRefObject<boolean>;
 }
 
@@ -101,6 +102,7 @@ export function upsertToolSegment(
 export function resetStreamingState(refs: StreamingRefs): void {
   refs.streamingSegmentsRef.current = [];
   refs.accumulatedTextRef.current = '';
+  refs.accumulatedReasoningRef.current = '';
   refs.seenToolCallIds.current.clear();
   refs.isStreamingRef.current = true;
 }
@@ -111,5 +113,6 @@ export function resetStreamingState(refs: StreamingRefs): void {
 export function clearStreamingState(refs: StreamingRefs): void {
   refs.streamingSegmentsRef.current = [];
   refs.accumulatedTextRef.current = '';
+  refs.accumulatedReasoningRef.current = '';
   refs.seenToolCallIds.current.clear();
 }

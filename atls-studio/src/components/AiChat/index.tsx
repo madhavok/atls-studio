@@ -82,89 +82,55 @@ function getTaskCompleteSummaryFromParts(parts: MessagePart[]): string {
   return getTaskCompleteArgs(taskCompletePart.toolCall).summary.trim();
 }
 
-// Clean streaming content - remove JSON tool_use artifacts that may leak into text
+// Clean streaming content - remove JSON tool_use artifacts that may leak into text.
+// Only applies aggressive stripping when the content looks like a pure leaked JSON
+// fragment, not when it contains mixed prose + JSON.
 function cleanStreamingContent(content: string): string {
   if (!content) return '';
-  
-  // Preserve chunk references like [-> hash, Ntk | desc]
+
   if (/^\s*\[->\s+.+\]\s*$/.test(content)) return content;
-  
+
   const trimmed = content.trim();
-  
-  // Suppress partial JSON prefixes that leak during streaming
-  // Anthropic: '[{"type"', '[{"type":"tool_use"' etc.
-  // Gemini: '{"functionCall"', '{"functionResponse"' etc.
-  if (/^\[?\{?"?(?:type)?:?"?(?:tool_use|tool_result|text)?"?\s*,?\s*$/s.test(trimmed)) {
-    return '';
-  }
-  if (/^\{?\s*"?(?:functionCall|functionResponse)"?\s*:?\s*\{?\s*$/s.test(trimmed)) {
-    return '';
-  }
+
+  // --- Phase 1: Tiny fragments that are clearly partial JSON wire artifacts ---
   if (trimmed === '[' || trimmed === '[{' || trimmed === '[]') {
     return '';
   }
-  
-  // Try to detect and parse JSON array format (Anthropic content blocks)
-  if (trimmed.startsWith('[{') && trimmed.includes('"type"')) {
+  // Short partial prefixes with no prose at all (< ~80 chars, no whitespace-separated words)
+  if (trimmed.length < 80 && !/\s\w+\s/.test(trimmed)) {
+    if (/^\[?\{?"?(?:type)?:?"?(?:tool_use|tool_result|text)?"?\s*,?\s*$/s.test(trimmed)) {
+      return '';
+    }
+    if (/^\{?\s*"?(?:functionCall|functionResponse)"?\s*:?\s*\{?\s*$/s.test(trimmed)) {
+      return '';
+    }
+  }
+
+  // --- Phase 2: Entire content is a valid JSON array of content blocks ---
+  if (trimmed.startsWith('[{') && trimmed.endsWith(']') && trimmed.includes('"type"')) {
     try {
       const parsed = JSON.parse(trimmed);
-      if (Array.isArray(parsed)) {
-        // If it's purely tool_use/tool_result blocks, suppress entirely
+      if (Array.isArray(parsed) && parsed.every((b: any) => typeof b === 'object' && b.type)) {
         const hasOnlyTools = parsed.every((b: any) => b.type === 'tool_use' || b.type === 'tool_result');
         if (hasOnlyTools) return '';
-        
-        // Extract only text blocks
+
         const textParts = parsed
           .filter((block: any) => block.type === 'text' && block.text)
           .map((block: any) => block.text);
-        if (textParts.length > 0) {
-          return textParts.join('\n');
-        }
-        return '';
+        return textParts.length > 0 ? textParts.join('\n') : '';
       }
     } catch {
-      // Not valid JSON, continue with pattern removal
+      // Not valid JSON array — fall through, do NOT apply regex stripping
     }
   }
-  
-  // Remove partial JSON tool_use blocks that may appear during streaming
+
+  // --- Phase 3: Strip trailing partial JSON leaked at the end of real prose ---
+  // Only strip when the fragment is clearly an incomplete JSON object at the tail.
   let cleaned = content;
-  
-  // Remove JSON array wrapper with tool_use
-  cleaned = cleaned.replace(/\[\{"type":"text","text":"([^"]*)".*$/s, '$1');
-  
-  // Remove trailing tool_use JSON fragments
-  cleaned = cleaned.replace(/,?\s*\{"type":"tool_use".*$/s, '');
-  
-  // Remove leading JSON artifacts
-  cleaned = cleaned.replace(/^\[\{"type":"text","text":"/s, '');
-  cleaned = cleaned.replace(/^"\},\s*\{"type":"tool_use".*$/s, '');
-  
-  // Gemini: suppress partial functionCall JSON that may leak into text during streaming
+  // Trailing incomplete tool_use / functionCall object appended after prose
+  cleaned = cleaned.replace(/,?\s*\{"type"\s*:\s*"tool_use"[^}]*$/s, '');
   cleaned = cleaned.replace(/\{\s*"functionCall"\s*:\s*\{[^}]*$/s, '');
   cleaned = cleaned.replace(/\{\s*"functionResponse"\s*:\s*\{[^}]*$/s, '');
-  
-  const cleanedTrimmed = cleaned.trim();
-
-  try {
-    const parsed = JSON.parse(cleanedTrimmed);
-    if (Array.isArray(parsed)) {
-      return parsed
-        .map((item) => {
-          if (typeof item === 'string') {
-            return item;
-          }
-          return String(item ?? '');
-        })
-        .join('');
-    }
-
-    if (typeof parsed === 'string') {
-      return parsed;
-    }
-  } catch {
-    // Ignore parse errors and fall back to text cleanup.
-  }
 
   return cleaned;
 }
@@ -1542,9 +1508,9 @@ const MessageBubble = memo(function MessageBubble({ message, isEditing, onStartE
                 )
               ) : (() => {
                 const summary = getTaskCompleteSummaryFromParts(parts);
-                if (summary && !String(message.content || '').trim()) return null;
                 const contentTrimmed = String(message.content || '').trim();
                 if (summary && contentTrimmed && contentTrimmed === summary) return null;
+                if (summary && !contentTrimmed) return <MarkdownMessage content={summary} />;
                 return <MarkdownMessage content={message.content} />;
               })()}
               
@@ -2470,6 +2436,7 @@ export function AiChat() {
   const subagentProgressByStepRef = useRef<Map<string, SubAgentProgressEvent>>(new Map());
   // Accumulate text from prior rounds before onClear; merged into final/partial message
   const accumulatedTextRef = useRef<string>('');
+  const accumulatedReasoningRef = useRef<string>('');
   const isStreamingRef = useRef(false);
   const mountedRef = useRef(true); // Track if component is mounted
   const updateTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -3109,7 +3076,7 @@ export function AiChat() {
       clearToolCalls();
       
       // Reset streaming segments and mark as streaming
-      const streamRefs: StreamingRefs = { streamingSegmentsRef, segmentsRevisionRef, seenToolCallIds, accumulatedTextRef, isStreamingRef };
+      const streamRefs: StreamingRefs = { streamingSegmentsRef, segmentsRevisionRef, seenToolCallIds, accumulatedTextRef, accumulatedReasoningRef, isStreamingRef };
       resetStreamingState(streamRefs);
       
       // Active text/reasoning block IDs for the typed stream protocol
@@ -3175,6 +3142,13 @@ export function AiChat() {
             if (cleaned) {
               accumulatedTextRef.current += (accumulatedTextRef.current ? '\n\n' : '') + cleaned;
             }
+          }
+          const reasoningFromCurrent = streamingSegmentsRef.current
+            .filter((s): s is { type: 'reasoning'; content: string } => s.type === 'reasoning')
+            .map(s => s.content)
+            .join('');
+          if (reasoningFromCurrent) {
+            accumulatedReasoningRef.current += (accumulatedReasoningRef.current ? '\n\n' : '') + reasoningFromCurrent;
           }
           streamingSegmentsRef.current = streamingSegmentsRef.current.filter(s => s.type === 'tool');
           subagentProgressByStepRef.current.clear();
@@ -3306,6 +3280,10 @@ export function AiChat() {
           const finalParts: MessagePart[] = [];
           const finalSegments: MessageSegment[] = [];
           
+          // Prepend accumulated reasoning from prior tool rounds
+          if (accumulatedReasoningRef.current) {
+            finalParts.push({ type: 'reasoning', content: accumulatedReasoningRef.current });
+          }
           if (accumulatedTextRef.current) {
             finalParts.push({ type: 'text', content: accumulatedTextRef.current });
             finalSegments.push({ type: 'text', content: accumulatedTextRef.current });
@@ -3373,6 +3351,7 @@ export function AiChat() {
           }
           streamingSegmentsRef.current = [];
           accumulatedTextRef.current = '';
+          accumulatedReasoningRef.current = '';
           seenToolCallIds.current.clear();
           subagentProgressByStepRef.current.clear();
           setIsGenerating(false);
@@ -3453,7 +3432,7 @@ export function AiChat() {
     const messageToolCalls: Map<string, MessageToolCall> = new Map();
     clearToolCalls();
     // Reset streaming segments and mark as streaming
-    const streamRefs: StreamingRefs = { streamingSegmentsRef, segmentsRevisionRef, seenToolCallIds, accumulatedTextRef, isStreamingRef };
+    const streamRefs: StreamingRefs = { streamingSegmentsRef, segmentsRevisionRef, seenToolCallIds, accumulatedTextRef, accumulatedReasoningRef, isStreamingRef };
     resetStreamingState(streamRefs);
 
     // Active text/reasoning block IDs for the typed stream protocol
@@ -3511,6 +3490,13 @@ export function AiChat() {
             if (cleaned) {
               accumulatedTextRef.current += (accumulatedTextRef.current ? '\n\n' : '') + cleaned;
             }
+          }
+          const reasoningFromCurrent = streamingSegmentsRef.current
+            .filter((s): s is { type: 'reasoning'; content: string } => s.type === 'reasoning')
+            .map(s => s.content)
+            .join('');
+          if (reasoningFromCurrent) {
+            accumulatedReasoningRef.current += (accumulatedReasoningRef.current ? '\n\n' : '') + reasoningFromCurrent;
           }
           streamingSegmentsRef.current = streamingSegmentsRef.current.filter(s => s.type === 'tool');
           subagentProgressByStepRef.current.clear();
@@ -3602,6 +3588,9 @@ export function AiChat() {
           
           const finalParts: MessagePart[] = [];
           const finalSegments: MessageSegment[] = [];
+          if (accumulatedReasoningRef.current) {
+            finalParts.push({ type: 'reasoning', content: accumulatedReasoningRef.current });
+          }
           if (accumulatedTextRef.current) {
             finalParts.push({ type: 'text', content: accumulatedTextRef.current });
             finalSegments.push({ type: 'text', content: accumulatedTextRef.current });
@@ -3650,8 +3639,9 @@ export function AiChat() {
           
           const hasToolCalls = finalParts.some(s => s.type === 'tool');
           const hasErrors = finalParts.some(s => s.type === 'error');
+          const hasReasoning = finalParts.some(s => s.type === 'reasoning');
           
-          if (resolvedContent || hasToolCalls || hasErrors) {
+          if (resolvedContent || hasToolCalls || hasErrors || hasReasoning) {
             const contAsstHash = resolvedContent
               ? contextStore.addChunk(resolvedContent, 'msg:asst')
               : undefined;
@@ -3665,6 +3655,7 @@ export function AiChat() {
           }
           streamingSegmentsRef.current = [];
           accumulatedTextRef.current = '';
+          accumulatedReasoningRef.current = '';
           seenToolCallIds.current.clear();
           subagentProgressByStepRef.current.clear();
           setIsGenerating(false);
@@ -3990,6 +3981,9 @@ export function AiChat() {
                     ? accumulatedTextRef.current + (cleanedCurrent ? '\n\n' + cleanedCurrent : '')
                     : cleanedCurrent;
                   const partialParts: MessagePart[] = [];
+                  if (accumulatedReasoningRef.current) {
+                    partialParts.push({ type: 'reasoning', content: accumulatedReasoningRef.current });
+                  }
                   if (accumulatedTextRef.current) {
                     partialParts.push({ type: 'text', content: accumulatedTextRef.current });
                   }
@@ -3997,6 +3991,8 @@ export function AiChat() {
                     if (seg.type === 'text') {
                       const cleaned = cleanStreamingContent(seg.content);
                       if (cleaned) partialParts.push({ type: 'text', content: cleaned });
+                    } else if (seg.type === 'reasoning') {
+                      if (seg.content) partialParts.push({ type: 'reasoning', content: seg.content });
                     } else if (seg.type === 'tool') {
                       const status = seg.toolCall.status;
                       partialParts.push({
@@ -4009,6 +4005,10 @@ export function AiChat() {
                           status: (status === 'completed' || status === 'failed' ? status : 'failed') as 'completed' | 'failed',
                         },
                       });
+                    } else if (seg.type === 'step-boundary') {
+                      partialParts.push({ type: 'step-boundary' });
+                    } else if (seg.type === 'error') {
+                      partialParts.push({ type: 'error', errorText: seg.errorText });
                     }
                   }
                   if (fullText || partialParts.length > 0) {
@@ -4030,6 +4030,7 @@ export function AiChat() {
                   setIsGenerating(false);
                   streamingSegmentsRef.current = [];
                   accumulatedTextRef.current = '';
+                  accumulatedReasoningRef.current = '';
                   seenToolCallIds.current.clear();
                   subagentProgressByStepRef.current.clear();
                   clearToolCalls();

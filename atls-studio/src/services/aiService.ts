@@ -2028,10 +2028,15 @@ async function streamChatViaTauri(
           try {
             const trimmedText = assistantTextContent.trim();
             let contentBlocks: Array<Record<string, unknown>> = [];
+            let preJsonProse = '';
 
             if (trimmedText.startsWith('[{')) {
               contentBlocks = JSON.parse(trimmedText);
             } else {
+              const jsonStart = trimmedText.indexOf('[{');
+              if (jsonStart > 0) {
+                preJsonProse = trimmedText.slice(0, jsonStart).trim();
+              }
               const jsonMatch = trimmedText.match(/\[(\{[^]*)\]/);
               if (jsonMatch) {
                 contentBlocks = JSON.parse(jsonMatch[0]);
@@ -2045,7 +2050,7 @@ async function streamChatViaTauri(
 
               const toolBlocks = contentBlocks.filter((b) => b.type === 'tool_use' && b.name);
 
-              assistantTextContent = textParts.join('\n');
+              assistantTextContent = [preJsonProse, ...textParts].filter(Boolean).join('\n');
 
               if (toolBlocks.length > 0) {
                 let idx = pendingToolCalls.size;
