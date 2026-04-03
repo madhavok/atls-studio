@@ -60,14 +60,23 @@ pub struct ScanFilter {
 /// Policy for incremental single-file indexing (`index_file` / `on_file_change`).
 #[derive(Clone, Copy, Debug)]
 pub struct IncrementalParsePolicy {
-    /// When true, run tree-sitter structural pattern detectors and refresh `code_issues`.
-    /// When false (default for incremental), skip pattern detectors and preserve existing issues.
+    /// When true (default), run tree-sitter structural pattern detectors and refresh `code_issues`.
+    /// When false, skip pattern detectors and leave existing `code_issues` rows unchanged (rare opt-out).
     pub run_structural_patterns: bool,
 }
 
 impl IncrementalParsePolicy {
-    /// Fast incremental path: symbols, imports, calls; preserve existing pattern issues in DB.
-    pub fn fast_incremental() -> Self {
+    /// Full incremental index after a touch: symbols, imports, calls, structural patterns, and `code_issues`.
+    /// Use this for normal `on_file_change` / post-edit indexing; work can still run in the background
+    /// so the UI/agent does not block on completion.
+    pub fn full() -> Self {
+        Self {
+            run_structural_patterns: true,
+        }
+    }
+
+    /// Skip structural pattern detectors; preserve existing pattern issues in DB. For tests or special cases only.
+    pub fn skip_structural_patterns() -> Self {
         Self {
             run_structural_patterns: false,
         }
@@ -76,7 +85,7 @@ impl IncrementalParsePolicy {
 
 impl Default for IncrementalParsePolicy {
     fn default() -> Self {
-        Self::fast_incremental()
+        Self::full()
     }
 }
 
@@ -789,7 +798,7 @@ impl Indexer {
     pub async fn on_file_change<P: AsRef<Path>>(&self, path: P) -> Result<(), IndexerError> {
         let path = path.as_ref();
         let hash = self.calculate_file_hash(path)?;
-        self.index_file(path, &hash, IncrementalParsePolicy::fast_incremental())
+        self.index_file(path, &hash, IncrementalParsePolicy::default())
             .await
     }
 
