@@ -16,6 +16,8 @@
  *  - Complex nested objects: inline JSON-like {...} syntax
  */
 
+import { normalizeOperationUse } from '../services/batch/opShorthand';
+
 // Pre-compiled regexes for toTOON hot path (avoid per-call RegExp allocation)
 const TOON_NEEDS_QUOTE_RE = /[:\s,{}[\]]/;
 const TOON_ESCAPE_QUOTE_RE = /"/g;
@@ -399,7 +401,7 @@ export function parseBatchLines(q: string): { version: '1.0'; steps: Record<stri
     if (tokens.length < 2) continue;
 
     const id = tokens[0];
-    const use = tokens[1];
+    const use = normalizeOperationUse(tokens[1]);
     const step: Record<string, unknown> = { id, use };
     const withParams: Record<string, unknown> = {};
     let hasWithParams = false;

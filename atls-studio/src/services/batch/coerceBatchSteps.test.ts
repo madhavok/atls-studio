@@ -50,4 +50,30 @@ describe('coerceBatchSteps', () => {
     ]);
     expect(steps[1].if).toEqual({ step_ok: 'e1' });
   });
+
+  it('normalizes op shorthand codes in JSON steps', () => {
+    const steps = coerceBatchSteps([
+      { id: 'r1', use: 'sc', with: { queries: ['auth'] } },
+      { id: 'e1', use: 'ce', with: { file_path: 'a.ts' } },
+      { id: 'v1', use: 'vk' },
+    ]);
+    expect(steps[0].use).toBe('search.code');
+    expect(steps[1].use).toBe('change.edit');
+    expect(steps[2].use).toBe('verify.typecheck');
+  });
+
+  it('normalizes shorthand in JSON-stringified steps', () => {
+    const json = JSON.stringify([
+      { id: 'r1', use: 'rc', with: { type: 'smart', file_paths: ['x.ts'] } },
+    ]);
+    const steps = coerceBatchSteps(json);
+    expect(steps[0].use).toBe('read.context');
+  });
+
+  it('leaves canonical op names unchanged', () => {
+    const steps = coerceBatchSteps([
+      { id: 'r1', use: 'search.code' },
+    ]);
+    expect(steps[0].use).toBe('search.code');
+  });
 });

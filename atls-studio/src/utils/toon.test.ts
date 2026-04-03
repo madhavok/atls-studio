@@ -315,6 +315,38 @@ describe('parseBatchLines', () => {
     const result = parseBatchLines('r1 read.context depth:3 max_lines:100');
     expect(result.steps[0].with).toEqual({ depth: 3, max_lines: 100 });
   });
+
+  it('normalizes op shorthand codes to canonical names', () => {
+    const result = parseBatchLines('r1 sc qs:foo ps:a.ts');
+    expect(result.steps[0].use).toBe('search.code');
+    expect(result.steps[0].with).toEqual({ qs: 'foo', ps: 'a.ts' });
+  });
+
+  it('normalizes 3-char shorthand codes', () => {
+    const q = [
+      'p1 spl goal:"refactor"',
+      'r1 rec',
+      's1 srv directory:src depth:2',
+    ].join('\n');
+    const result = parseBatchLines(q);
+    expect(result.steps[0].use).toBe('session.plan');
+    expect(result.steps[1].use).toBe('session.recall');
+    expect(result.steps[2].use).toBe('intent.survey');
+  });
+
+  it('normalizes mixed shorthand and canonical in same batch', () => {
+    const q = [
+      'r1 rc type:smart ps:src/api.ts',
+      'p1 session.pin in:r1.refs',
+      'e1 ce f:h:abc:10-20 le:[{content:"x"}]',
+      'v1 vk if:e1.ok',
+    ].join('\n');
+    const result = parseBatchLines(q);
+    expect(result.steps[0].use).toBe('read.context');
+    expect(result.steps[1].use).toBe('session.pin');
+    expect(result.steps[2].use).toBe('change.edit');
+    expect(result.steps[3].use).toBe('verify.typecheck');
+  });
 });
 
 describe('expandBatchQ', () => {

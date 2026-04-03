@@ -41,6 +41,15 @@ const GLOBAL_ALIASES: Readonly<Record<string, string>> = {
   command: 'cmd',
   contents: 'content',
   refs: 'hashes',
+  // Token-efficient shorthands (v1 — high-frequency keys)
+  ps: 'file_paths',
+  sn: 'symbol_names',
+  qs: 'queries',
+  le: 'line_edits',
+  sl: 'start_line',
+  el: 'end_line',
+  sf: 'severity_filter',
+  ff: 'focus_files',
 };
 
 /**

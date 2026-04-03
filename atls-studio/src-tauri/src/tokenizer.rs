@@ -958,3 +958,7 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "tokenizer_shorthand_audit.rs"]
+mod shorthand_audit;

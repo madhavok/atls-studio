@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { BATCH_TOOL_REF } from './toolRef';
 import { ALL_OPERATIONS, OPERATION_FAMILIES, FAMILY_NAMES } from '../services/batch/families';
 import { getHandler } from '../services/batch/opMap';
+import { SHORT_TO_OP, OP_TO_SHORT } from '../services/batch/opShorthand';
 
 describe('BATCH_TOOL_REF drift detection', () => {
   it('contains every operation from families.ts in the Operation Families section', () => {
@@ -34,37 +35,57 @@ describe('BATCH_TOOL_REF drift detection', () => {
       expect(OPERATION_FAMILIES[family].ops.length).toBeGreaterThan(0);
     }
   });
+
+  it('contains the shorthand legend with all short codes', () => {
+    expect(BATCH_TOOL_REF).toContain('### Short codes');
+    expect(BATCH_TOOL_REF).toContain('sc=search.code');
+    expect(BATCH_TOOL_REF).toContain('ps=file_paths');
+  });
 });
 
 describe('BATCH_TOOL_REF param-shape accuracy', () => {
   const commonParams = BATCH_TOOL_REF.match(/### Common Params[\s\S]*?(?=\n### Examples)/)?.[0] ?? '';
 
-  it('documents analyze.calls with symbol_names as primary param (not grouped with file_paths ops)', () => {
-    const callsLine = commonParams.split('\n').find(l => l.startsWith('analyze.calls'));
-    expect(callsLine, 'analyze.calls must have its own param line in Common Params').toBeTruthy();
-    expect(callsLine).toContain('symbol_names');
-    expect(callsLine).not.toContain('file_paths');
+  it('documents analyze.calls (ac) with sn as primary param', () => {
+    const callsLine = commonParams.split('\n').find(l => l.startsWith('ac '));
+    expect(callsLine, 'ac (analyze.calls) must have its own param line').toBeTruthy();
+    expect(callsLine).toContain('sn:');
   });
 
-  it('documents analyze.extract_plan with singular file_path', () => {
-    const extractLine = commonParams.split('\n').find(l => l.startsWith('analyze.extract_plan'));
-    expect(extractLine, 'analyze.extract_plan must have its own param line in Common Params').toBeTruthy();
-    expect(extractLine).toContain('file_path:');
+  it('documents analyze.extract_plan (ax) with singular file_path', () => {
+    const extractLine = commonParams.split('\n').find(l => l.startsWith('ax '));
+    expect(extractLine, 'ax (analyze.extract_plan) must have its own param line').toBeTruthy();
+    expect(extractLine).toContain('f:');
     expect(extractLine).toContain('strategy');
   });
 
-  it('does not group analyze.calls with file_paths-primary analyze ops', () => {
+  it('does not group ac with ps-primary analyze ops', () => {
     const groupedAnalyzeLine = commonParams.split('\n').find(l =>
-      l.startsWith('analyze.') && l.includes('|') && l.includes('file_paths'),
+      l.startsWith('ad|') && l.includes('ps:'),
     );
     if (groupedAnalyzeLine) {
-      expect(groupedAnalyzeLine).not.toContain('calls');
+      expect(groupedAnalyzeLine).not.toMatch(/\bac\b/);
     }
   });
 
-  it('documents read.file with its own param line', () => {
-    const readFileLine = commonParams.split('\n').find(l => l.startsWith('read.file'));
-    expect(readFileLine, 'read.file must have its own param line in Common Params').toBeTruthy();
-    expect(readFileLine).toContain('file_paths');
+  it('documents read.file (rf) with its own param line', () => {
+    const readFileLine = commonParams.split('\n').find(l => l.startsWith('rf '));
+    expect(readFileLine, 'rf (read.file) must have its own param line').toBeTruthy();
+    expect(readFileLine).toContain('ps:');
+  });
+});
+
+describe('opShorthand consistency with BATCH_TOOL_REF', () => {
+  it('every shorthand in SHORT_TO_OP maps to a valid OperationKind', () => {
+    const allOps = new Set(ALL_OPERATIONS);
+    for (const op of Object.values(SHORT_TO_OP)) {
+      expect(allOps.has(op), `SHORT_TO_OP value ${op} not in ALL_OPERATIONS`).toBe(true);
+    }
+  });
+
+  it('OP_TO_SHORT has exactly one entry per OperationKind', () => {
+    for (const op of ALL_OPERATIONS) {
+      expect(OP_TO_SHORT[op]).toBeDefined();
+    }
   });
 });

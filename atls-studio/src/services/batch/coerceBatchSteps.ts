@@ -1,4 +1,5 @@
 import { expandBatchIfShorthand } from '../../utils/toon';
+import { normalizeOperationUse } from './opShorthand';
 
 /**
  * Normalize `batch({ steps })` when models stringify `steps` as JSON instead of an array.
@@ -23,6 +24,9 @@ export function coerceBatchSteps(raw: unknown): Record<string, unknown>[] {
     }
   }
   for (const step of steps) {
+    if (typeof step.use === 'string') {
+      step.use = normalizeOperationUse(step.use);
+    }
     const iff = step.if;
     if (typeof iff === 'string') {
       step.if = expandBatchIfShorthand(iff);
