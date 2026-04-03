@@ -13,6 +13,7 @@ import { ModelModeSelector } from '../ModelModeSelector';
 import { Settings } from '../Settings';
 import { useAtls } from '../../hooks/useAtls';
 import { useChatPersistence } from '../../hooks/useChatPersistence';
+import { chatDb } from '../../services/chatDb';
 import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWebview } from '@tauri-apps/api/webview';
 import { open as openFileDialog } from '@tauri-apps/plugin-dialog';
@@ -3267,17 +3268,16 @@ export function AiChat() {
               partialParts.push({ type: 'reasoning', content: seg.content });
             } else if (seg.type === 'tool') {
               const tc = messageToolCalls.get(seg.toolCall.id);
-              if (tc) {
-                partialParts.push({
-                  type: 'tool',
-                  toolCall: {
-                    id: tc.id, name: tc.name, args: tc.args, result: tc.result,
-                    status: (tc.status === 'completed' ? 'completed' : 'failed') as 'completed' | 'failed',
-                    thoughtSignature: tc.thoughtSignature,
-                    ...(tc.syntheticChildren?.length ? { syntheticChildren: tc.syntheticChildren } : {}),
-                  },
-                });
-              }
+              const src = tc || seg.toolCall;
+              partialParts.push({
+                type: 'tool',
+                toolCall: {
+                  id: src.id, name: src.name, args: src.args, result: src.result,
+                  status: (src.status === 'completed' ? 'completed' : 'failed') as 'completed' | 'failed',
+                  ...(tc?.thoughtSignature ? { thoughtSignature: tc.thoughtSignature } : {}),
+                  ...((tc?.syntheticChildren?.length) ? { syntheticChildren: tc.syntheticChildren } : {}),
+                },
+              });
             }
           }
           const priorText = partialParts
@@ -3345,18 +3345,19 @@ export function AiChat() {
               }
             } else if (seg.type === 'tool') {
               const tc = messageToolCalls.get(seg.toolCall.id);
-              if (tc) {
-                const toolPart = {
-                  type: 'tool' as const,
-                  toolCall: {
-                    id: tc.id, name: tc.name, args: tc.args, result: tc.result,
-                    status: tc.status, thoughtSignature: tc.thoughtSignature,
-                    ...(tc.syntheticChildren?.length ? { syntheticChildren: tc.syntheticChildren } : {}),
-                  },
-                };
-                finalParts.push(toolPart);
-                finalSegments.push(toolPart);
-              }
+              const src = tc || seg.toolCall;
+              if (!tc) console.warn('[AiChat] onDone: tool segment id not in messageToolCalls map, using segment data:', seg.toolCall.id);
+              const toolPart = {
+                type: 'tool' as const,
+                toolCall: {
+                  id: src.id, name: src.name, args: src.args, result: src.result,
+                  status: (src.status === 'completed' || src.status === 'failed' ? src.status : 'completed') as 'completed' | 'failed',
+                  ...(tc?.thoughtSignature ? { thoughtSignature: tc.thoughtSignature } : {}),
+                  ...((tc?.syntheticChildren?.length) ? { syntheticChildren: tc.syntheticChildren } : {}),
+                },
+              };
+              finalParts.push(toolPart);
+              finalSegments.push(toolPart);
             } else if (seg.type === 'step-boundary') {
               finalParts.push({ type: 'step-boundary' });
             } else if (seg.type === 'error') {
@@ -3642,17 +3643,16 @@ export function AiChat() {
               partialParts.push({ type: 'reasoning', content: seg.content });
             } else if (seg.type === 'tool') {
               const tc = messageToolCalls.get(seg.toolCall.id);
-              if (tc) {
-                partialParts.push({
-                  type: 'tool',
-                  toolCall: {
-                    id: tc.id, name: tc.name, args: tc.args, result: tc.result,
-                    status: (tc.status === 'completed' ? 'completed' : 'failed') as 'completed' | 'failed',
-                    thoughtSignature: tc.thoughtSignature,
-                    ...(tc.syntheticChildren?.length ? { syntheticChildren: tc.syntheticChildren } : {}),
-                  },
-                });
-              }
+              const src = tc || seg.toolCall;
+              partialParts.push({
+                type: 'tool',
+                toolCall: {
+                  id: src.id, name: src.name, args: src.args, result: src.result,
+                  status: (src.status === 'completed' ? 'completed' : 'failed') as 'completed' | 'failed',
+                  ...(tc?.thoughtSignature ? { thoughtSignature: tc.thoughtSignature } : {}),
+                  ...((tc?.syntheticChildren?.length) ? { syntheticChildren: tc.syntheticChildren } : {}),
+                },
+              });
             }
           }
           const priorText = partialParts
@@ -3699,18 +3699,19 @@ export function AiChat() {
               finalParts.push({ type: 'reasoning', content: seg.content });
             } else if (seg.type === 'tool') {
               const tc = messageToolCalls.get(seg.toolCall.id);
-              if (tc) {
-                const toolPart = {
-                  type: 'tool' as const,
-                  toolCall: {
-                    id: tc.id, name: tc.name, args: tc.args, result: tc.result,
-                    status: tc.status, thoughtSignature: tc.thoughtSignature,
-                    ...(tc.syntheticChildren?.length ? { syntheticChildren: tc.syntheticChildren } : {}),
-                  },
-                };
-                finalParts.push(toolPart);
-                finalSegments.push(toolPart);
-              }
+              const src = tc || seg.toolCall;
+              if (!tc) console.warn('[AiChat] continue onDone: tool segment id not in messageToolCalls map, using segment data:', seg.toolCall.id);
+              const toolPart = {
+                type: 'tool' as const,
+                toolCall: {
+                  id: src.id, name: src.name, args: src.args, result: src.result,
+                  status: (src.status === 'completed' || src.status === 'failed' ? src.status : 'completed') as 'completed' | 'failed',
+                  ...(tc?.thoughtSignature ? { thoughtSignature: tc.thoughtSignature } : {}),
+                  ...((tc?.syntheticChildren?.length) ? { syntheticChildren: tc.syntheticChildren } : {}),
+                },
+              };
+              finalParts.push(toolPart);
+              finalSegments.push(toolPart);
             } else if (seg.type === 'step-boundary') {
               finalParts.push({ type: 'step-boundary' });
             } else if (seg.type === 'error') {
@@ -3877,7 +3878,15 @@ export function AiChat() {
           </button>
           {messages.length > 0 && (
             <button
-              onClick={clearMessages}
+              onClick={async () => {
+                const sessionId = useAppStore.getState().currentSessionId;
+                clearMessages();
+                if (sessionId) {
+                  try { await chatDb.deleteAllSessionMessages(sessionId); } catch (e) {
+                    console.warn('[AiChat] Failed to clear messages in DB:', e);
+                  }
+                }
+              }}
               className="p-1 text-studio-muted hover:text-studio-text transition-colors"
               title="Clear chat"
             >

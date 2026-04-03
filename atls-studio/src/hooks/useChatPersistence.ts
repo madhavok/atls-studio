@@ -390,6 +390,13 @@ export function useChatPersistence() {
       console.log('[ChatPersistence] Session saved:', sessionId);
     } catch (error) {
       console.error('[ChatPersistence] Failed to save session:', error);
+      try {
+        useAppStore.getState().addToast({
+          type: 'error',
+          message: `Chat save failed: ${error instanceof Error ? error.message : 'unknown error'}. Your latest messages may not persist across restart.`,
+          duration: 8000,
+        });
+      } catch { /* toast system may not be available */ }
     }
   }, []);
 

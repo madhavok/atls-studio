@@ -2767,6 +2767,7 @@ pub fn run() {
             // Message Edit / Restore
             commands::chat_db_delete_messages_after,
             commands::chat_db_delete_messages_from,
+            commands::chat_db_delete_all_session_messages,
             commands::chat_db_update_message_content,
             // Staged Snippets
             commands::chat_db_save_staged_snippets,

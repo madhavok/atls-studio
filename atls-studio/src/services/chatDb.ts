@@ -12,6 +12,7 @@
 
 import { invoke } from '@tauri-apps/api/core';
 import type { Message, MessagePart, MessageSegment, ChatSession } from '../stores/appStore';
+import type { ChatAttachment } from '../stores/attachmentStore';
 import { extractFirstTextFromMessage, getMessageParts } from '../stores/appStore';
 import type { ContextChunk, ChunkType, BlackboardEntry, CognitiveRule, ManifestEntry, ReconcileStats, StagedSnippet, TaskPlan, TransitionBridge, MemoryEvent } from '../stores/contextStore';
 import type { GeminiCacheSnapshot } from './aiService';
@@ -45,13 +46,14 @@ export interface DbMessage {
   content: string;
   agent_id?: string;
   timestamp: string;
+  metadata?: string;
 }
 
 export interface DbSegment {
   id: number;
   message_id: string;
   seq: number;
-  type: 'text' | 'tool' | 'reasoning';
+  type: 'text' | 'tool' | 'reasoning' | 'step-boundary' | 'error';
   content: string;
   tool_name?: string;
   tool_args?: string;
@@ -289,7 +291,8 @@ class ChatDbService {
     role: 'user' | 'assistant' | 'system' | 'agent',
     content: string,
     agentId?: string,
-    messageId?: string
+    messageId?: string,
+    metadata?: string,
   ): Promise<string> {
     const id = messageId || crypto.randomUUID();
     await invoke('chat_db_add_message', { 
@@ -298,6 +301,7 @@ class ChatDbService {
       role, 
       content,
       agentId,
+      metadata: metadata ?? null,
     });
     return id;
   }
@@ -312,16 +316,18 @@ class ChatDbService {
   /**
    * Add segments to a message (for tool calls)
    */
-  async addSegments(messageId: string, segments: MessageSegment[]): Promise<void> {
+  async addSegments(messageId: string, segments: Array<MessageSegment | { type: 'step-boundary'; content: '' } | { type: 'error'; content: string }>): Promise<void> {
     const dbSegments = segments.map((seg, idx) => {
-      if (seg.type === 'text' || seg.type === 'reasoning') {
+      if (seg.type === 'text' || seg.type === 'reasoning' || seg.type === 'step-boundary' || seg.type === 'error') {
         return { message_id: messageId, seq: idx, type: seg.type, content: seg.content, tool_name: undefined, tool_args: undefined, tool_result: undefined };
       }
-      const tc = seg.toolCall;
+      const tc = (seg as Extract<MessageSegment, { type: 'tool' }>).toolCall;
       const argsPayload = {
         ...tc.args,
         ...(tc.syntheticChildren?.length ? { __syntheticChildren: tc.syntheticChildren } : {}),
         ...(tc.thoughtSignature ? { __thoughtSignature: tc.thoughtSignature } : {}),
+        __toolCallId: tc.id,
+        ...(tc.status ? { __toolCallStatus: tc.status } : {}),
       };
       return {
         message_id: messageId, seq: idx, type: seg.type, content: '',
@@ -350,16 +356,18 @@ class ChatDbService {
   /**
    * Atomically replace all segments for a message (delete + re-insert)
    */
-  async replaceSegments(messageId: string, segments: MessageSegment[]): Promise<void> {
+  async replaceSegments(messageId: string, segments: Array<MessageSegment | { type: 'step-boundary'; content: '' } | { type: 'error'; content: string }>): Promise<void> {
     const dbSegments = segments.map((seg, idx) => {
-      if (seg.type === 'text' || seg.type === 'reasoning') {
+      if (seg.type === 'text' || seg.type === 'reasoning' || seg.type === 'step-boundary' || seg.type === 'error') {
         return { message_id: messageId, seq: idx, type: seg.type, content: seg.content, tool_name: undefined, tool_args: undefined, tool_result: undefined };
       }
-      const tc = seg.toolCall;
+      const tc = (seg as Extract<MessageSegment, { type: 'tool' }>).toolCall;
       const argsPayload = {
         ...tc.args,
         ...(tc.syntheticChildren?.length ? { __syntheticChildren: tc.syntheticChildren } : {}),
         ...(tc.thoughtSignature ? { __thoughtSignature: tc.thoughtSignature } : {}),
+        __toolCallId: tc.id,
+        ...(tc.status ? { __toolCallStatus: tc.status } : {}),
       };
       return {
         message_id: messageId, seq: idx, type: seg.type, content: '',
@@ -621,38 +629,56 @@ class ChatDbService {
     const messages: Message[] = await Promise.all(
       dbMessages.map(async (msg) => {
         const segments = await this.getSegments(msg.id);
-        const messageSegments: MessageSegment[] = segments.map(seg => {
+        const messageSegments: Array<MessageSegment | { type: 'step-boundary' } | { type: 'error'; errorText: string }> = segments.map(seg => {
           if (seg.type === 'text') {
             return { type: 'text' as const, content: seg.content };
           }
           if (seg.type === 'reasoning') {
             return { type: 'reasoning' as const, content: seg.content };
           }
+          if (seg.type === 'step-boundary') {
+            return { type: 'step-boundary' as const };
+          }
+          if (seg.type === 'error') {
+            return { type: 'error' as const, errorText: seg.content };
+          }
           let parsedArgs: Record<string, unknown> | undefined;
           let syntheticChildren: Array<{ id: string; name: string; args?: Record<string, unknown>; result?: string; status?: string }> | undefined;
           let thoughtSignature: string | undefined;
+          let toolCallId: string = seg.id.toString();
+          let toolCallStatus: 'completed' | 'failed' = 'completed';
           if (seg.tool_args) {
-            const raw = JSON.parse(seg.tool_args);
-            if (raw && typeof raw.__thoughtSignature === 'string') {
-              thoughtSignature = raw.__thoughtSignature;
-            }
-            if (raw && Array.isArray(raw.__syntheticChildren)) {
-              syntheticChildren = raw.__syntheticChildren;
-              const { __syntheticChildren: _, __thoughtSignature: _ts, ...rest } = raw;
-              parsedArgs = Object.keys(rest).length > 0 ? rest : undefined;
-            } else {
-              const { __thoughtSignature: _ts, ...rest } = raw ?? {};
-              parsedArgs = Object.keys(rest).length > 0 ? rest : undefined;
+            try {
+              const raw = JSON.parse(seg.tool_args);
+              if (raw && typeof raw.__thoughtSignature === 'string') {
+                thoughtSignature = raw.__thoughtSignature;
+              }
+              if (raw && typeof raw.__toolCallId === 'string') {
+                toolCallId = raw.__toolCallId;
+              }
+              if (raw && (raw.__toolCallStatus === 'completed' || raw.__toolCallStatus === 'failed')) {
+                toolCallStatus = raw.__toolCallStatus;
+              }
+              if (raw && Array.isArray(raw.__syntheticChildren)) {
+                syntheticChildren = raw.__syntheticChildren;
+                const { __syntheticChildren: _, __thoughtSignature: _ts, __toolCallId: _id, __toolCallStatus: _st, ...rest } = raw;
+                parsedArgs = Object.keys(rest).length > 0 ? rest : undefined;
+              } else {
+                const { __thoughtSignature: _ts, __toolCallId: _id, __toolCallStatus: _st, ...rest } = raw ?? {};
+                parsedArgs = Object.keys(rest).length > 0 ? rest : undefined;
+              }
+            } catch (e) {
+              console.warn('[chatDb] Failed to parse tool_args for segment', seg.id, e);
             }
           }
           return {
             type: 'tool' as const,
             toolCall: {
-              id: seg.id.toString(),
+              id: toolCallId,
               name: seg.tool_name || '',
               args: parsedArgs,
               result: seg.tool_result,
-              status: 'completed' as const,
+              status: toolCallStatus,
               ...(syntheticChildren?.length ? { syntheticChildren } : {}),
               ...(thoughtSignature ? { thoughtSignature } : {}),
             },
@@ -660,12 +686,26 @@ class ChatDbService {
         });
 
         const messageParts: MessagePart[] | undefined = messageSegments.length > 0
-          ? messageSegments.map((seg): MessagePart =>
-              seg.type === 'text' ? { type: 'text', content: seg.content }
-              : seg.type === 'reasoning' ? { type: 'reasoning', content: seg.content }
-              : { type: 'tool', toolCall: (seg as Extract<MessageSegment, { type: 'tool' }>).toolCall },
-            )
+          ? messageSegments.map((seg): MessagePart => {
+              if (seg.type === 'text') return { type: 'text', content: (seg as { type: 'text'; content: string }).content };
+              if (seg.type === 'reasoning') return { type: 'reasoning', content: (seg as { type: 'reasoning'; content: string }).content };
+              if (seg.type === 'step-boundary') return { type: 'step-boundary' };
+              if (seg.type === 'error') return { type: 'error', errorText: (seg as { type: 'error'; errorText: string }).errorText };
+              return { type: 'tool', toolCall: (seg as Extract<MessageSegment, { type: 'tool' }>).toolCall };
+            })
           : undefined;
+
+        const legacySegments: MessageSegment[] | undefined = messageSegments.length > 0
+          ? messageSegments.filter((s): s is MessageSegment => s.type === 'text' || s.type === 'reasoning' || s.type === 'tool') as MessageSegment[]
+          : undefined;
+
+        let attachments: ChatAttachment[] | undefined;
+        if (msg.metadata) {
+          try {
+            const meta = JSON.parse(msg.metadata);
+            if (Array.isArray(meta?.attachments)) attachments = meta.attachments;
+          } catch { /* ignore corrupt metadata */ }
+        }
 
         return {
           id: msg.id,
@@ -673,7 +713,8 @@ class ChatDbService {
           content: msg.content,
           timestamp: new Date(msg.timestamp),
           parts: messageParts,
-          segments: messageSegments.length > 0 ? messageSegments : undefined,
+          segments: legacySegments && legacySegments.length > 0 ? legacySegments : undefined,
+          ...(attachments?.length ? { attachments } : {}),
         };
       })
     );
@@ -694,15 +735,17 @@ class ChatDbService {
     return { session, messages, blackboard, tasks };
   }
 
-  /** Convert MessageParts to persistable MessageSegments. */
-  private partsToSegments(msg: Message): MessageSegment[] {
+  /** Convert MessageParts to persistable segments (includes step-boundary and error). */
+  private partsToSegments(msg: Message): Array<MessageSegment | { type: 'step-boundary'; content: '' } | { type: 'error'; content: string }> {
     return getMessageParts(msg)
-      .filter((p) => p.type === 'text' || p.type === 'tool' || p.type === 'reasoning')
-      .map((p) =>
-        p.type === 'text' ? { type: 'text' as const, content: p.content }
-          : p.type === 'reasoning' ? { type: 'reasoning' as const, content: p.content }
-          : { type: 'tool' as const, toolCall: p.toolCall },
-      );
+      .filter((p) => p.type === 'text' || p.type === 'tool' || p.type === 'reasoning' || p.type === 'step-boundary' || p.type === 'error')
+      .map((p) => {
+        if (p.type === 'text') return { type: 'text' as const, content: p.content };
+        if (p.type === 'reasoning') return { type: 'reasoning' as const, content: p.content };
+        if (p.type === 'step-boundary') return { type: 'step-boundary' as const, content: '' as const };
+        if (p.type === 'error') return { type: 'error' as const, content: p.errorText };
+        return { type: 'tool' as const, toolCall: p.toolCall };
+      });
   }
 
   /**
@@ -723,22 +766,22 @@ class ChatDbService {
       const existing = existingById.get(msg.id);
 
       if (!existing) {
-        await this.addMessage(sessionId, msg.role, msg.content, undefined, msg.id);
+        const meta = msg.attachments?.length ? JSON.stringify({ attachments: msg.attachments }) : undefined;
+        await this.addMessage(sessionId, msg.role, msg.content, undefined, msg.id, meta);
         if (segmentsToSave.length > 0) {
           await this.addSegments(msg.id, segmentsToSave);
         }
       } else {
         const contentChanged = msg.content !== existing.content;
-        const existingSegments = await this.getSegments(msg.id);
-        const segCountChanged = segmentsToSave.length !== existingSegments.length;
 
         if (contentChanged) {
           await this.updateMessageContent(msg.id, msg.content);
         }
-        if (segCountChanged || contentChanged) {
-          if (segmentsToSave.length > 0) {
-            await this.replaceSegments(msg.id, segmentsToSave);
-          } else if (existingSegments.length > 0) {
+        if (segmentsToSave.length > 0) {
+          await this.replaceSegments(msg.id, segmentsToSave);
+        } else if (contentChanged) {
+          const existingSegments = await this.getSegments(msg.id);
+          if (existingSegments.length > 0) {
             await this.deleteSegments(msg.id);
           }
         }
@@ -915,6 +958,11 @@ class ChatDbService {
   /** Delete the target message and all messages after it (inclusive). */
   async deleteMessagesFrom(sessionId: string, messageId: string): Promise<number> {
     return await invoke<number>('chat_db_delete_messages_from', { sessionId, messageId });
+  }
+
+  /** Delete all messages (and their segments) for a session. */
+  async deleteAllSessionMessages(sessionId: string): Promise<number> {
+    return await invoke<number>('chat_db_delete_all_session_messages', { sessionId });
   }
 
   async updateMessageContent(messageId: string, content: string): Promise<void> {

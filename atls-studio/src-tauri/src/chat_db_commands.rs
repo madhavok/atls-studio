@@ -74,9 +74,10 @@ pub async fn chat_db_add_message(
     role: String,
     content: String,
     agent_id: Option<String>,
+    metadata: Option<String>,
     state: tauri::State<'_, ChatDbState>
 ) -> Result<(), String> {
-    chat_db::add_message(&state, &id, &session_id, &role, &content, agent_id.as_deref())
+    chat_db::add_message(&state, &id, &session_id, &role, &content, agent_id.as_deref(), metadata.as_deref())
 }
 
 #[tauri::command]
@@ -368,6 +369,14 @@ pub async fn chat_db_delete_messages_from(
     state: tauri::State<'_, ChatDbState>,
 ) -> Result<i64, String> {
     chat_db::delete_messages_from(&state, &session_id, &message_id)
+}
+
+#[tauri::command]
+pub async fn chat_db_delete_all_session_messages(
+    session_id: String,
+    state: tauri::State<'_, ChatDbState>,
+) -> Result<i64, String> {
+    chat_db::delete_all_session_messages(&state, &session_id)
 }
 
 #[tauri::command]

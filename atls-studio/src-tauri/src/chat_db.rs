@@ -41,6 +41,7 @@ pub struct DbMessage {
     pub content: String,
     pub agent_id: Option<String>,
     pub timestamp: String,
+    pub metadata: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -468,6 +469,20 @@ impl ChatDbState {
                 .map_err(|e| format!("Migration v4 version bump: {}", e))?;
         }
 
+        // v5: add metadata column to messages for attachments/multimodal data.
+        if current_version < 5 {
+            let has_metadata: bool = conn
+                .prepare("SELECT COUNT(*) FROM pragma_table_info('messages') WHERE name='metadata'")
+                .and_then(|mut s| s.query_row([], |r| r.get::<_, i64>(0)))
+                .unwrap_or(0) > 0;
+            if !has_metadata {
+                conn.execute_batch("ALTER TABLE messages ADD COLUMN metadata TEXT;")
+                    .map_err(|e| format!("Migration v5 messages metadata: {}", e))?;
+            }
+            conn.execute("INSERT INTO schema_version (version) VALUES (5)", [])
+                .map_err(|e| format!("Migration v5 version bump: {}", e))?;
+        }
+
         Ok(())
     }
 }
@@ -597,13 +612,12 @@ pub fn delete_session(state: &ChatDbState, session_id: &str) -> Result<(), Strin
 // Message Operations
 // ============================================================================
 
-pub fn add_message(state: &ChatDbState, id: &str, session_id: &str, role: &str, content: &str, agent_id: Option<&str>) -> Result<(), String> {
+pub fn add_message(state: &ChatDbState, id: &str, session_id: &str, role: &str, content: &str, agent_id: Option<&str>, metadata: Option<&str>) -> Result<(), String> {
     state.with_conn(|conn| {
         conn.execute(
-            "INSERT INTO messages (id, session_id, role, content, agent_id) VALUES (?1, ?2, ?3, ?4, ?5)",
-            params![id, session_id, role, content, agent_id],
+            "INSERT INTO messages (id, session_id, role, content, agent_id, metadata) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![id, session_id, role, content, agent_id, metadata],
         )?;
-        // Update session timestamp
         conn.execute(
             "UPDATE sessions SET updated_at = CURRENT_TIMESTAMP WHERE id = ?1",
             [session_id],
@@ -615,7 +629,7 @@ pub fn add_message(state: &ChatDbState, id: &str, session_id: &str, role: &str, 
 pub fn get_messages(state: &ChatDbState, session_id: &str) -> Result<Vec<DbMessage>, String> {
     state.with_conn(|conn| {
         let mut stmt = conn.prepare(
-            "SELECT id, session_id, role, content, agent_id, timestamp 
+            "SELECT id, session_id, role, content, agent_id, timestamp, metadata 
              FROM messages WHERE session_id = ?1 ORDER BY timestamp ASC"
         )?;
         
@@ -627,6 +641,7 @@ pub fn get_messages(state: &ChatDbState, session_id: &str) -> Result<Vec<DbMessa
                 content: row.get(3)?,
                 agent_id: row.get(4)?,
                 timestamp: row.get(5)?,
+                metadata: row.get(6)?,
             })
         })?.collect::<Result<Vec<_>, _>>()?;
         
@@ -1602,6 +1617,24 @@ pub fn delete_messages_from(state: &ChatDbState, session_id: &str, message_id: &
                 Err(err)
             }
         }
+    })
+}
+
+pub fn delete_all_session_messages(state: &ChatDbState, session_id: &str) -> Result<i64, String> {
+    state.with_conn(|conn| {
+        conn.execute(
+            "DELETE FROM segments WHERE message_id IN (SELECT id FROM messages WHERE session_id = ?1)",
+            params![session_id],
+        )?;
+        let deleted = conn.execute(
+            "DELETE FROM messages WHERE session_id = ?1",
+            params![session_id],
+        )?;
+        conn.execute(
+            "DELETE FROM session_state WHERE session_id = ?1 AND key LIKE '__restore_point__%'",
+            params![session_id],
+        )?;
+        Ok(deleted as i64)
     })
 }
 
