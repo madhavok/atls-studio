@@ -2269,6 +2269,8 @@ pub async fn stream_chat_lmstudio(
         let mut block_counter: u32 = 0;
 
         let mut text_batcher = TextBatcher::new(next_block_id(&mut block_counter));
+        let mut reasoning_batcher = ReasoningBatcher::new(next_block_id(&mut block_counter));
+        let mut is_reasoning = false;
         let mut pending_tc: std::collections::HashMap<usize, (String, String, String, bool)> = std::collections::HashMap::new();
         let mut last_stop_reason: Option<String> = None;
 
@@ -2285,6 +2287,7 @@ pub async fn stream_chat_lmstudio(
                             let data = &line[6..];
                             if data.trim() == "[DONE]" {
                                 text_batcher.close(&app_clone, &stream_id_clone);
+                                reasoning_batcher.close(&app_clone, &stream_id_clone);
                                 for (_, (id, name, args, _)) in pending_tc.drain() {
                                     if !name.is_empty() {
                                         let input = serde_json::from_str::<serde_json::Value>(&args).unwrap_or(serde_json::json!({}));
@@ -2318,11 +2321,28 @@ pub async fn stream_chat_lmstudio(
                                 if let Some(choices) = event.get("choices").and_then(|c| c.as_array()) {
                                     if let Some(choice) = choices.first() {
                                         if let Some(delta) = choice.get("delta") {
+                                            let reasoning_text = delta.get("reasoning_content")
+                                                .or_else(|| delta.get("reasoning"))
+                                                .and_then(|r| r.as_str());
+                                            if let Some(reasoning) = reasoning_text {
+                                                if !is_reasoning {
+                                                    text_batcher.close(&app_clone, &stream_id_clone);
+                                                    is_reasoning = true;
+                                                }
+                                                reasoning_batcher.push(reasoning, &app_clone, &stream_id_clone);
+                                            }
                                             if let Some(content) = delta.get("content").and_then(|c| c.as_str()) {
+                                                if is_reasoning {
+                                                    reasoning_batcher.close(&app_clone, &stream_id_clone);
+                                                    reasoning_batcher = ReasoningBatcher::new(next_block_id(&mut block_counter));
+                                                    text_batcher = TextBatcher::new(next_block_id(&mut block_counter));
+                                                    is_reasoning = false;
+                                                }
                                                 text_batcher.push(content, &app_clone, &stream_id_clone);
                                             }
                                             if let Some(tool_calls) = delta.get("tool_calls").and_then(|tc| tc.as_array()) {
                                                 text_batcher.close(&app_clone, &stream_id_clone);
+                                                reasoning_batcher.close(&app_clone, &stream_id_clone);
                                                 for tool_call in tool_calls {
                                                     let idx = tool_call.get("index").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
                                                     if let Some(func) = tool_call.get("function") {
@@ -2378,6 +2398,7 @@ pub async fn stream_chat_lmstudio(
         }
 
         text_batcher.close(&app_clone, &stream_id_clone);
+        reasoning_batcher.close(&app_clone, &stream_id_clone);
         for (_, (id, name, args, _)) in pending_tc.drain() {
             if !name.is_empty() {
                 let input = serde_json::from_str::<serde_json::Value>(&args).unwrap_or(serde_json::json!({}));

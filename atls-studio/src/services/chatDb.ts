@@ -51,7 +51,7 @@ export interface DbSegment {
   id: number;
   message_id: string;
   seq: number;
-  type: 'text' | 'tool';
+  type: 'text' | 'tool' | 'reasoning';
   content: string;
   tool_name?: string;
   tool_args?: string;
@@ -314,13 +314,15 @@ class ChatDbService {
    */
   async addSegments(messageId: string, segments: MessageSegment[]): Promise<void> {
     const dbSegments = segments.map((seg, idx) => {
-      if (seg.type === 'text') {
+      if (seg.type === 'text' || seg.type === 'reasoning') {
         return { message_id: messageId, seq: idx, type: seg.type, content: seg.content, tool_name: undefined, tool_args: undefined, tool_result: undefined };
       }
       const tc = seg.toolCall;
-      const argsPayload = tc.syntheticChildren?.length
-        ? { ...tc.args, __syntheticChildren: tc.syntheticChildren }
-        : tc.args;
+      const argsPayload = {
+        ...tc.args,
+        ...(tc.syntheticChildren?.length ? { __syntheticChildren: tc.syntheticChildren } : {}),
+        ...(tc.thoughtSignature ? { __thoughtSignature: tc.thoughtSignature } : {}),
+      };
       return {
         message_id: messageId, seq: idx, type: seg.type, content: '',
         tool_name: tc.name,
@@ -590,22 +592,30 @@ class ChatDbService {
         const segments = await this.getSegments(msg.id);
         const messageSegments: MessageSegment[] = segments.map(seg => {
           if (seg.type === 'text') {
-            return { type: 'text', content: seg.content };
+            return { type: 'text' as const, content: seg.content };
+          }
+          if (seg.type === 'reasoning') {
+            return { type: 'reasoning' as const, content: seg.content };
           }
           let parsedArgs: Record<string, unknown> | undefined;
           let syntheticChildren: Array<{ id: string; name: string; args?: Record<string, unknown>; result?: string; status?: string }> | undefined;
+          let thoughtSignature: string | undefined;
           if (seg.tool_args) {
             const raw = JSON.parse(seg.tool_args);
+            if (raw && typeof raw.__thoughtSignature === 'string') {
+              thoughtSignature = raw.__thoughtSignature;
+            }
             if (raw && Array.isArray(raw.__syntheticChildren)) {
               syntheticChildren = raw.__syntheticChildren;
-              const { __syntheticChildren: _, ...rest } = raw;
+              const { __syntheticChildren: _, __thoughtSignature: _ts, ...rest } = raw;
               parsedArgs = Object.keys(rest).length > 0 ? rest : undefined;
             } else {
-              parsedArgs = raw;
+              const { __thoughtSignature: _ts, ...rest } = raw ?? {};
+              parsedArgs = Object.keys(rest).length > 0 ? rest : undefined;
             }
           }
           return {
-            type: 'tool',
+            type: 'tool' as const,
             toolCall: {
               id: seg.id.toString(),
               name: seg.tool_name || '',
@@ -613,6 +623,7 @@ class ChatDbService {
               result: seg.tool_result,
               status: 'completed' as const,
               ...(syntheticChildren?.length ? { syntheticChildren } : {}),
+              ...(thoughtSignature ? { thoughtSignature } : {}),
             },
           };
         });
@@ -664,9 +675,11 @@ class ChatDbService {
         
         const parts = getMessageParts(msg);
         const segmentsToSave: MessageSegment[] = parts
-          .filter((p) => p.type === 'text' || p.type === 'tool')
+          .filter((p) => p.type === 'text' || p.type === 'tool' || p.type === 'reasoning')
           .map((p) =>
-            p.type === 'text' ? { type: 'text' as const, content: p.content } : { type: 'tool' as const, toolCall: p.toolCall },
+            p.type === 'text' ? { type: 'text' as const, content: p.content }
+              : p.type === 'reasoning' ? { type: 'reasoning' as const, content: p.content }
+              : { type: 'tool' as const, toolCall: p.toolCall },
           );
         if (segmentsToSave.length > 0) {
           await this.addSegments(msg.id, segmentsToSave);

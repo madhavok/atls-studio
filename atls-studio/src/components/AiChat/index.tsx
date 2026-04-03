@@ -3337,8 +3337,13 @@ export function AiChat() {
           const hasReasoning = finalParts.some(s => s.type === 'reasoning');
           
           if (resolvedContent || hasToolCalls || hasErrors || hasReasoning) {
-            const asstChunkHash = resolvedContent
-              ? contextStore.addChunk(resolvedContent, 'msg:asst')
+            const hashContent = finalParts
+              .filter((s): s is { type: 'text'; content: string } | { type: 'reasoning'; content: string } =>
+                s.type === 'text' || s.type === 'reasoning')
+              .map(s => s.content)
+              .join('\n');
+            const asstChunkHash = hashContent
+              ? contextStore.addChunk(hashContent, 'msg:asst')
               : undefined;
             
             addMessage({ 
@@ -3642,8 +3647,13 @@ export function AiChat() {
           const hasReasoning = finalParts.some(s => s.type === 'reasoning');
           
           if (resolvedContent || hasToolCalls || hasErrors || hasReasoning) {
-            const contAsstHash = resolvedContent
-              ? contextStore.addChunk(resolvedContent, 'msg:asst')
+            const contHashContent = finalParts
+              .filter((s): s is { type: 'text'; content: string } | { type: 'reasoning'; content: string } =>
+                s.type === 'text' || s.type === 'reasoning')
+              .map(s => s.content)
+              .join('\n');
+            const contAsstHash = contHashContent
+              ? contextStore.addChunk(contHashContent, 'msg:asst')
               : undefined;
             addMessage({ 
               role: 'assistant', 
@@ -4016,7 +4026,12 @@ export function AiChat() {
                     const content = fullText
                       ? fullText + '\n\n*[Stopped]*'
                       : (taskCompleteSummary ? taskCompleteSummary + '\n\n*[Stopped]*' : '*(Stopped)*');
-                    const stopHash = content ? useContextStore.getState().addChunk(content, 'msg:asst') : undefined;
+                    const stopHashContent = partialParts
+                      .filter((s): s is { type: 'text'; content: string } | { type: 'reasoning'; content: string } =>
+                        s.type === 'text' || s.type === 'reasoning')
+                      .map(s => s.content)
+                      .join('\n') || content;
+                    const stopHash = stopHashContent ? useContextStore.getState().addChunk(stopHashContent, 'msg:asst') : undefined;
                     addMessage({
                       role: 'assistant',
                       content,

@@ -33,7 +33,9 @@ export function getMessageParts(msg: Message | { parts?: MessagePart[]; segments
     return msg.segments.map((s) =>
       s.type === 'text'
         ? { type: 'text' as const, content: s.content }
-        : { type: 'tool' as const, toolCall: s.toolCall },
+        : s.type === 'reasoning'
+          ? { type: 'reasoning' as const, content: s.content }
+          : { type: 'tool' as const, toolCall: (s as Extract<MessageSegment, { type: 'tool' }>).toolCall },
     );
   }
   if (msg.toolCalls && msg.toolCalls.length > 0) {
@@ -165,6 +167,7 @@ export type MessagePart =
 // Legacy segment type (backward compat alias)
 export type MessageSegment = 
   | { type: 'text'; content: string }
+  | { type: 'reasoning'; content: string }
   | { type: 'tool'; toolCall: MessageToolCall };
 
 export interface Message {
