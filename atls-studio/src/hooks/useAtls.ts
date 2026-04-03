@@ -13,7 +13,8 @@ import { resetProjectTreeCache } from '../services/aiService';
 
 // ---------------------------------------------------------------------------
 // Own-write suppression: paths recently written by ATLS edits are excluded
-// from file_tree_changed processing to prevent spurious intel:file_change.
+// from file_tree_changed AND canonical_revision_changed processing to prevent
+// spurious suspect/shifted freshness on our own writes.
 // ---------------------------------------------------------------------------
 const OWN_WRITE_TTL_MS = 3000;
 const ownWritePaths = new Map<string, number>();
@@ -23,13 +24,22 @@ export function registerOwnWrite(paths: string[]): void {
   for (const p of paths) ownWritePaths.set(normPath(p).toLowerCase(), now);
 }
 
+function pruneOwnWrites(): void {
+  const cutoff = Date.now() - OWN_WRITE_TTL_MS;
+  for (const [k, t] of ownWritePaths) {
+    if (t < cutoff) ownWritePaths.delete(k);
+  }
+}
+
+export function isOwnWrite(path: string): boolean {
+  if (ownWritePaths.size === 0) return false;
+  pruneOwnWrites();
+  return ownWritePaths.has(normPath(path).toLowerCase());
+}
+
 function filterOwnWrites(paths: string[]): string[] {
   if (ownWritePaths.size === 0) return paths;
-  const now = Date.now();
-  // Prune expired entries
-  for (const [k, t] of ownWritePaths) {
-    if (now - t > OWN_WRITE_TTL_MS) ownWritePaths.delete(k);
-  }
+  pruneOwnWrites();
   return paths.filter(p => !ownWritePaths.has(normPath(p).toLowerCase()));
 }
 
@@ -328,13 +338,15 @@ export function useAtls() {
     catch { /* ignore */ }
   }, []);
 
-  // Listener for canonical_revision_changed — reconcile same-source engrams when file content changes
+  // Listener for canonical_revision_changed — reconcile same-source engrams when file content changes.
+  // Own writes are skipped: refreshContextAfterEdit is the authoritative refresh path for edits we made.
   useEffect(() => {
     let unlisten: UnlistenFn | null = null;
     (async () => {
       unlisten = await safeListen<CanonicalRevisionChangedEvent>('canonical_revision_changed', (ev) => {
         const { path, revision } = ev.payload;
         pendingChangedPathsRef.current.delete(normPath(path).toLowerCase());
+        if (isOwnWrite(path)) return;
         const stats = useContextStore.getState().reconcileSourceRevision(path, revision);
         useContextStore.getState().invalidateArtifactsForPaths([path]);
         useContextStore.getState().bumpWorkspaceRev([path]);

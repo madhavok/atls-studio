@@ -2440,7 +2440,10 @@ export const useContextStore = create<ContextStoreState>()(
         }
         const nextChunk = { ...chunk, sourceRevision: currentRevision, observedRevision: currentRevision };
         delete nextChunk.suspectSince;
-        if (isSameFilePriorEdit) {
+        const alreadyFreshFromEdit = isSameFilePriorEdit
+          && chunk.origin === 'edit-refresh'
+          && chunk.sourceRevision === currentRevision;
+        if (isSameFilePriorEdit && !alreadyFreshFromEdit) {
           nextChunk.freshness = 'shifted';
           nextChunk.freshnessCause = effectiveCause;
         } else {
@@ -2476,7 +2479,10 @@ export const useContextStore = create<ContextStoreState>()(
         }
         const nextChunk = { ...chunk, sourceRevision: currentRevision, observedRevision: currentRevision };
         delete nextChunk.suspectSince;
-        if (isSameFilePriorEdit) {
+        const alreadyFreshFromEdit = isSameFilePriorEdit
+          && chunk.origin === 'edit-refresh'
+          && chunk.sourceRevision === currentRevision;
+        if (isSameFilePriorEdit && !alreadyFreshFromEdit) {
           nextChunk.freshness = 'shifted';
           nextChunk.freshnessCause = effectiveCause;
         } else {
@@ -2502,7 +2508,10 @@ export const useContextStore = create<ContextStoreState>()(
         }
         const nextSnippet = { ...snippet, sourceRevision: currentRevision, observedRevision: currentRevision };
         delete nextSnippet.suspectSince;
-        if (isSameFilePriorEdit) {
+        const alreadyFreshFromEdit = isSameFilePriorEdit
+          && snippet.origin === 'edit-refresh'
+          && snippet.sourceRevision === currentRevision;
+        if (isSameFilePriorEdit && !alreadyFreshFromEdit) {
           nextSnippet.freshness = 'shifted';
           nextSnippet.freshnessCause = effectiveCause;
           nextSnippet.stageState = 'stale';

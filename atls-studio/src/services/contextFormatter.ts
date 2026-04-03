@@ -79,15 +79,18 @@ function formatEngramMeta(chunk: ContextChunk): string[] {
   return meta;
 }
 
-function formatSuspectHint(
+export function formatSuspectHint(
   suspectSince?: number,
   freshness?: string,
   freshnessCause?: string,
   origin?: string,
 ): string {
   if (suspectSince == null && !freshness && !freshnessCause) return '';
-  if (freshness === 'shifted' || freshnessCause === 'same_file_prior_edit') {
+  if (freshness === 'suspect' && freshnessCause === 'same_file_prior_edit') {
     return ' [stale — edit refresh failed; re-read before editing]';
+  }
+  if (freshness === 'shifted') {
+    return ' [revision shifted — verify line refs before editing]';
   }
   if ((freshnessCause === 'external_file_change' || freshnessCause === 'watcher_event')
     && (suspectSince != null || freshness === 'suspect')) {

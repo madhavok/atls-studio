@@ -283,6 +283,31 @@ describe('same-source reconciliation', () => {
     expect(latestEvent?.action).toBe('reconcile');
   });
 
+  it('same_file_prior_edit does not apply shifted to edit-refresh engrams already at currentRevision', () => {
+    const store = useContextStore.getState();
+    const hash = store.addChunk(
+      'export const refreshed = true;',
+      'smart',
+      'src/edited.ts',
+      undefined,
+      undefined,
+      'rev-new',
+      { sourceRevision: 'rev-new', viewKind: 'latest', origin: 'edit-refresh' },
+    );
+
+    // Simulate the cause that change.ts would record
+    store.recordRevisionAdvance('src/edited.ts', 'rev-new', 'same_file_prior_edit');
+
+    const stats = store.reconcileSourceRevision('src/edited.ts', 'rev-new');
+    const chunk = Array.from(useContextStore.getState().chunks.values())
+      .find(c => c.shortHash === hash);
+
+    expect(stats.updated).toBeGreaterThanOrEqual(1);
+    expect(chunk?.freshness).toBeUndefined();
+    expect(chunk?.freshnessCause).toBeUndefined();
+    expect(chunk?.suspectSince).toBeUndefined();
+  });
+
   it('clears external-change freshness hints after a successful reread', () => {
     const store = useContextStore.getState();
     const latestHash = store.addChunk(
