@@ -9,15 +9,6 @@ pub struct LineMap {
 }
 
 impl LineMap {
-    #[cfg(test)]
-    pub fn identity(line_count: usize) -> Self {
-        let mut map = vec![None; line_count + 1];
-        for i in 1..=line_count {
-            map[i] = Some(i as u32);
-        }
-        Self { map }
-    }
-
     pub fn remap(&self, old_line: u32) -> Option<u32> {
         let idx = old_line as usize;
         if idx < self.map.len() {
