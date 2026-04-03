@@ -61,6 +61,21 @@ function migrateLocalStorage(): void {
   }
 }
 
+/** Tauri `invoke` often rejects with a string or non-Error payload; surface it in UI. */
+function describeUnknownError(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (typeof error === 'string') return error;
+  if (error && typeof error === 'object' && 'message' in error) {
+    const m = (error as { message: unknown }).message;
+    if (typeof m === 'string') return m;
+  }
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return String(error);
+  }
+}
+
 function subAgentUsagesToRows(usages: SubAgentUsage[]): PersistedSubAgentUsageRow[] {
   return usages.map((u) => ({
     invocationId: u.invocationId,
@@ -232,6 +247,8 @@ export function useChatPersistence() {
 
   const lastSaveRef = useRef<number>(0);
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** Avoid spamming identical save-failure toasts while auto-save retries. */
+  const lastSaveErrorToastAtRef = useRef<number>(0);
   // Track the session ID across debounced saves to avoid re-creating on each invocation
   const pendingSessionIdRef = useRef<string | null>(null);
   /** Always points at latest saveSession (avoids stale closures in timeouts / effect cleanups). */
@@ -388,12 +405,20 @@ export function useChatPersistence() {
         syncCurrentSessionIdToLocalStorage(sessionId);
       }
       console.log('[ChatPersistence] Session saved:', sessionId);
+      lastSaveErrorToastAtRef.current = 0;
     } catch (error) {
       console.error('[ChatPersistence] Failed to save session:', error);
+      const detail = describeUnknownError(error);
+      const now = Date.now();
+      const cooldownMs = 90_000;
+      if (now - lastSaveErrorToastAtRef.current < cooldownMs) {
+        return;
+      }
+      lastSaveErrorToastAtRef.current = now;
       try {
         useAppStore.getState().addToast({
           type: 'error',
-          message: `Chat save failed: ${error instanceof Error ? error.message : 'unknown error'}. Your latest messages may not persist across restart.`,
+          message: `Chat save failed: ${detail}. Your latest messages may not persist across restart.`,
           duration: 8000,
         });
       } catch { /* toast system may not be available */ }
