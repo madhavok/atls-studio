@@ -81,42 +81,55 @@ export function CodeViewer() {
     return path.replace(/\\/g, '/');
   }, []);
 
-  // Load file content when activeFile changes
-  useEffect(() => {
-    if (!activeFile) return;
-    
-    const normalizedPath = normalizePath(activeFile);
-    
-    // Skip if already loaded (check both original and normalized path)
-    if (fileContents[activeFile] !== undefined || fileContents[normalizedPath] !== undefined) return;
-    
-    // Skip if already loading
-    if (loading[activeFile] || loading[normalizedPath]) return;
+  const hasDesignPreview =
+    chatMode === 'designer' && designPreviewContent.length > 0;
+  const showDesignPreview =
+    hasDesignPreview && (openFiles.length === 0 || designPreviewTabActive);
 
+  // Load or refresh file content when the active editor tab changes.
+  // Inactive tabs keep a cached buffer; activating a tab re-reads from disk so it stays fresh (unless dirty).
+  useEffect(() => {
+    if (!activeFile || activeFile === INTERNALS_TAB_ID) return;
+    if (showDesignPreview) return;
+
+    const path = activeFile;
+    const normalizedPath = normalizePath(path);
+    const fc = fileContentsRef.current;
+    const oc = originalContentsRef.current;
+    const hasDirtyEdits =
+      fc[path] !== oc[path] && oc[path] !== undefined;
+    if (hasDirtyEdits) return;
+
+    const root = activeRoot ?? projectPath;
+    if (!root) return;
 
     const loadFile = async () => {
-      setLoading(prev => ({ ...prev, [activeFile]: true, [normalizedPath]: true }));
-      setErrors(prev => ({ ...prev, [activeFile]: '', [normalizedPath]: '' }));
-      
+      setLoading((prev) => ({ ...prev, [path]: true, [normalizedPath]: true }));
+      setErrors((prev) => ({ ...prev, [path]: '', [normalizedPath]: '' }));
+
       try {
-        const root = activeRoot ?? projectPath;
-        const content = await invoke<string>('read_file_contents', { path: activeFile, projectRoot: root });
-        setFileContents(prev => ({ ...prev, [activeFile]: content, [normalizedPath]: content }));
-        setOriginalContents(prev => ({ ...prev, [activeFile]: content, [normalizedPath]: content }));
+        const content = await invoke<string>('read_file_contents', {
+          path,
+          projectRoot: root,
+        });
+        if (activeFileRef.current !== path) return;
+        setFileContents((prev) => ({ ...prev, [path]: content, [normalizedPath]: content }));
+        setOriginalContents((prev) => ({ ...prev, [path]: content, [normalizedPath]: content }));
       } catch (error) {
-        console.error('[CodeViewer] Failed to read file:', activeFile, error);
-        setErrors(prev => ({ 
-          ...prev, 
-          [activeFile]: `Failed to read file: ${error}`,
-          [normalizedPath]: `Failed to read file: ${error}` 
+        if (activeFileRef.current !== path) return;
+        console.error('[CodeViewer] Failed to read file:', path, error);
+        setErrors((prev) => ({
+          ...prev,
+          [path]: `Failed to read file: ${error}`,
+          [normalizedPath]: `Failed to read file: ${error}`,
         }));
       } finally {
-        setLoading(prev => ({ ...prev, [activeFile]: false, [normalizedPath]: false }));
+        setLoading((prev) => ({ ...prev, [path]: false, [normalizedPath]: false }));
       }
     };
 
     loadFile();
-  }, [activeFile, fileContents, loading, normalizePath, projectPath, activeRoot]);
+  }, [activeFile, showDesignPreview, normalizePath, projectPath, activeRoot]);
 
   // Scroll to pending line when set by SearchPanel or AtlsPanel
   useEffect(() => {
@@ -206,9 +219,19 @@ export function CodeViewer() {
         });
         if (!matchedFile) return;
 
+        const currentActive = activeFileRef.current;
+        const activeNorm = currentActive?.replace(/\\/g, '/');
+        const matchedNormForActive = matchedFile.replace(/\\/g, '/');
+        if (
+          currentActive !== matchedFile &&
+          activeNorm !== matchedNormForActive
+        ) {
+          return;
+        }
+
         // Skip files we're currently saving (our own write triggered this event)
         const currentSaving = savingRef.current;
-        const matchedNorm = matchedFile.replace(/\\/g, '/');
+        const matchedNorm = matchedNormForActive;
         if (currentSaving[matchedFile] || currentSaving[matchedNorm]) return;
 
         const currentContents = fileContentsRef.current;
@@ -266,9 +289,13 @@ export function CodeViewer() {
           });
           if (!matchedFile) continue;
 
+          const currentActive = activeFileRef.current;
+          const activeNorm = currentActive?.replace(/\\/g, '/');
+          const matchedNorm = matchedFile.replace(/\\/g, '/');
+          if (currentActive !== matchedFile && activeNorm !== matchedNorm) continue;
+
           // Skip files we're currently saving
           const currentSaving = savingRef.current;
-          const matchedNorm = matchedFile.replace(/\\/g, '/');
           if (currentSaving[matchedFile] || currentSaving[matchedNorm]) continue;
 
           const currentContents = fileContentsRef.current;
@@ -291,8 +318,16 @@ export function CodeViewer() {
             }
 
             // Update content from disk
-            setFileContents(prev => ({ ...prev, [matchedFile]: diskContent }));
-            setOriginalContents(prev => ({ ...prev, [matchedFile]: diskContent }));
+            setFileContents((prev) => ({
+              ...prev,
+              [matchedFile]: diskContent,
+              [matchedNorm]: diskContent,
+            }));
+            setOriginalContents((prev) => ({
+              ...prev,
+              [matchedFile]: diskContent,
+              [matchedNorm]: diskContent,
+            }));
           } catch {
             // File may have been deleted — ignore
           }
@@ -491,8 +526,6 @@ export function CodeViewer() {
     closeFile(file);
   }, [closeFile, isDirty, normalizePath]);
 
-  const hasDesignPreview = chatMode === 'designer' && designPreviewContent.length > 0;
-  const showDesignPreview = hasDesignPreview && (openFiles.length === 0 || designPreviewTabActive);
   const isInternalsActive = activeFile === INTERNALS_TAB_ID;
 
   if (openFiles.length === 0 && !hasDesignPreview) {
