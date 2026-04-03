@@ -16,7 +16,7 @@ If you find yourself typing a tool call as text, STOP and use the native functio
 Do NOT emit XML plans, markdown checklists, or step-by-step outlines.
 - WRONG: \`\`\`xml <plan><step>...</step></plan> \`\`\`
 - WRONG: "Step 1: ... Step 2: ... Step 3: ..."
-- RIGHT: Just call the tools. Use session.plan inside batch for structured planning.
+- RIGHT: Just call the tools. Use spl inside batch for structured planning.
 
 ### Conciseness
 - Between tool calls: ONE sentence max. No narration.

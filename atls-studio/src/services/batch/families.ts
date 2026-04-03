@@ -6,6 +6,7 @@
  */
 
 import type { OperationKind } from './types';
+import { OP_TO_SHORT } from './opShorthand';
 
 // ---------------------------------------------------------------------------
 // Core data structure
@@ -180,7 +181,8 @@ export function generateFamilyLines(): string {
     const { ops } = OPERATION_FAMILIES[family];
     const opList = ops.map(e => {
       const entry = e as OpEntry;
-      return entry.hint ? `${entry.op} ${entry.hint}` : entry.op;
+      const short = OP_TO_SHORT[entry.op] ?? entry.op;
+      return entry.hint ? `${short} ${entry.hint}` : short;
     }).join(', ');
     return `${family}: ${opList}`;
   }).join('\n');

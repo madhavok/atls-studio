@@ -13,21 +13,21 @@ export const EDIT_DISCIPLINE = `### EDIT + VERIFY DISCIPLINE
 - Count braces — unbalanced edits fail with syntax_error_after_edit.
 - reindent:true on inserts — system handles indentation.
 - Chain from h:NEW after each edit. Each successful edit returns fresh refs and edits_resolved (per-edit resolved_line, action, lines_affected). Use edits_resolved for chaining, not mental math.
-- Verify cadence: batch related change.* steps, then one verify.build at milestone or task end. Verify earlier only for public API / schema / dep / config changes.
+- Verify cadence: batch related change.* steps, then one vb at milestone or task end. Verify earlier only for public API / schema / dep / config changes.
 - Batch discipline: max 8-10 steps; split into discovery -> mutation -> verify batches.
 - Use refactor (not edit) for cross-file extract/move/rename.
-- Intents are macros (plumbing, not thinking). Explore with primitives first, then intent.edit with confident changes. Don't chain intents unless outputs feed inputs. intent.edit auto-retries stale_hash.
-- intent.diagnose and intent.test are read-only; follow with intent.edit or intent.create. intent.search_replace is literal only.
+- Intents are macros (plumbing, not thinking). Explore with primitives first, then ie with confident changes. Don't chain intents unless outputs feed inputs. ie auto-retries stale_hash.
+- id and it are read-only; follow with ie or ic. is is literal only.
 - Hard stop on: preview, paused, rollback, action_required, confirm-needed. Resolve before continuing.
-- Tool failure pivot: if a tool returns validation errors or "not_found" for all inputs, do NOT re-read and re-plan. Diagnose the mismatch in one sentence, then call an alternative tool in the same batch or the next step. split_module needs named symbols (fn/struct/enum) — if the file has none, use change.edit to create them first.
+- Tool failure pivot: if a tool returns validation errors or "not_found" for all inputs, do NOT re-read and re-plan. Diagnose the mismatch in one sentence, then call an alternative tool in the same batch or the next step. cm needs named symbols (fn/struct/enum) — if the file has none, use ce to create them first.
 - On stale_hash/authority_mismatch: stop, re-read, rebuild patch from current content. content_hash enables shadow line remap (automatic line drift correction when file changed between read and edit).
 - On pattern_not_found: check the suggestion field if present (line, confidence, tier) before re-reading — it may indicate a whitespace or indentation mismatch.
 - Condition discipline: prefer step_ok chains and explicit verification gates. Do not use unsupported conditions.
-- Completion: brief final summary. Do not finish until verify.build succeeds or blocker reached. Cannot perform an action? Say so — never simulate.
+- Completion: brief final summary. Do not finish until vb succeeds or blocker reached. Cannot perform an action? Say so — never simulate.
 - No filler, echo, narration. Flag risks with «WARNING»/«DECISION»/«ASSUMPTION» tags.
 
 ### CHANGE JUSTIFICATION
-- Before any change.edit or intent.edit, state in one sentence: what is broken and what observable behavior changes. "Adds reject parameter" is not justification if reject is never called.
+- Before any ce or ie, state in one sentence: what is broken and what observable behavior changes. "Adds reject parameter" is not justification if reject is never called.
 - Behavioral changes (e.g., switching from right-neighbor to left-neighbor tab selection) require acknowledging the behavior change, not framing it as a "bug fix."
 - Do not rewrite comments to match your edit and call that "fixing the comment/code mismatch." If the comment is wrong, say so; if the code is wrong, prove it.
 
@@ -42,4 +42,4 @@ export const EDIT_DISCIPLINE = `### EDIT + VERIFY DISCIPLINE
 - After each edit, the engram is refreshed with post-edit content and correct line numbers. The h:OLD..h:NEW diff ref and compact diff in BB edit:* are also available.
 - Within a batch, chain from edits_resolved — the executor rebases line numbers between steps.
 - Across turns, the engram has correct content. Re-read only on stale_hash, authority_mismatch, or external file change.
-- On edit_outside_read_range: issue read.lines for the target region, then retry the edit in the same batch.`;
+- On edit_outside_read_range: issue rl for the target region, then retry the edit in the same batch.`;

@@ -25,13 +25,13 @@ rl hash:h:XXXX lines:15-50 | f:path sl:N el:N context_lines?:0-5
 rf ps:path1,path2 type?:smart|full — simpler than rc, no shaped/tree/bind support
 sc qs:term1,term2 ps?:path1,path2 limit?:N compact?:true
 sy sn:name1,name2 limit?:N
-search.usage sn:name1,name2 filter?:pattern limit?:N
-search.similar type?:code|function|concept query?:text threshold?:N limit?:N
+su sn:name1,name2 filter?:pattern limit?:N
+sv type?:code|function|concept query?:text threshold?:N limit?:N
 si ps?:path1 sf?:high|medium|low|all issue_mode?:correctness|all|security limit?:N
-search.patterns ps?:path1 patterns?:pattern1,pattern2
+sp ps?:path1 patterns?:pattern1,pattern2
 sm query:text regions?:active,archived,bb max_results?:N
-ad|analyze.structure|analyze.impact ps:path1 filter?:pattern limit?:N
-analyze.blast_radius sn:name1 ps?:path1 action?:move
+ad|at|ai ps:path1 filter?:pattern limit?:N
+ab sn:name1 ps?:path1 action?:move
 ac sn:name1,name2 depth?:N filter?:pattern limit?:N
 ax f:path strategy?:by_cluster|by_prefix|by_kind min_lines?:N min_complexity?:N
 ce f:h:XXXX:L-M le:[{content:"new code"}]
@@ -51,28 +51,28 @@ cf action:inventory|impact_analysis|execute|rollback|rename|move|extract ps?:pat
 cb restore:[{file:path,hash:h}] delete?:path1,path2
 cm source_file:path target_dir:dir plan:[{module:name,symbols:[s1,s2]}] dry_run?:true
 vb|vt|vl|vk target_dir?:dir workspace?:name runner?:name
-system.git action:status|diff|stage|unstage|commit|push|log|reset|restore files?:path1,path2 message?:"text" all?:true
-system.workspaces action:list|search|add|remove|set_active|rescan
+xg action:status|diff|stage|unstage|commit|push|log|reset|restore files?:path1,path2 message?:"text" all?:true
+xw action:list|search|add|remove|set_active|rescan
 xe cmd:"command text"
 dr query:"what to find" ff?:path1,path2 max_tokens?:N
-delegate.design query:"what to design" ff?:path1,path2
+dd query:"what to design" ff?:path1,path2
 bw key:name content:"text"
 br keys:key1,key2
-session.bb.delete keys:key1,key2
-session.rule action?:set|delete|list key:name content?:"text"
-session.emit content:"text" type?:name
+bd keys:key1,key2
+ru action?:set|delete|list key:name content?:"text"
+em content:"text" type?:name
 pi hashes:h:HASH1,h:HASH2 — or bare step id (in:r1.refs resolves refs)
-session.shape|load|debug|sg|ust|pc|ulo|dro|rec|st|session.compact_history
-annotate.note|retype|split|merge — hash-targeted metadata ops (hash:h:XXXX + op-specific params)
+sh|ld|db|sg|ust|pc|ulo|dro|rec|st|ch
+nn|nr|ns|nm — hash-targeted metadata ops (hash:h:XXXX + op-specific params)
 iu ps:path1,path2 force?:true
 ie f:path le:[...] verify?:true force?:true
-intent.edit_multi edits:[{f:p,le:[...]}] verify?:true
+im edits:[{f:p,le:[...]}] verify?:true
 iv query:text ps?:path1
-intent.diagnose ps?:path1 severity?:high query?:text
+id ps?:path1 severity?:high query?:text
 srv directory:dir depth?:N
 ifr f:path strategy?:name sn?:s1 target_file?:path
-intent.create target_path:path content:"text" ref_files?:path1 verify?:true
-intent.test source_file:path test_file?:path
+ic target_path:path content:"text" ref_files?:path1 verify?:true
+it source_file:path test_file?:path
 is old_text:"text" new_text:"text" file_glob?:pattern max_matches?:N verify?:true
 ix source_file:path sn?:s1 target_file:path
 
@@ -120,15 +120,15 @@ Review: rs(sig) → full-read changed fns → BB review findings → task_comple
 - f/ps resolve from active workspace root. Subfolder prefix if monorepo (e.g. \`atls-studio/src/foo.ts\`).
 - ps: actual paths or h:refs, not query strings. deletes/restore: paths or h:refs.
 - vb|vt|vl|vk: subprocess uses PATH with ATLS_TOOLCHAIN_PATH prepended. xe runs in PTY (may see different PATH).
-- xe: PowerShell — cmd saved to temp .ps1; prefer system.git for git, vb|vt|vl|vk for checks.
+- xe: PowerShell — cmd saved to temp .ps1; prefer xg for git, vb|vt|vl|vk for checks.
 - prefer cheapest tool: sigs -> rs; one symbol -> sy; types -> vk; file list -> rc(tree).
-- use dr/delegate.design when cheap research suffices before a bigger reasoning pass.`;
+- use dr/dd when cheap research suffices before a bigger reasoning pass.`;
 
 export const SUBAGENT_TOOL_REF = `
 
 **DELEGATE** — dispatch a cheaper model as a specialized subagent inside batch
 • dr query:"what to find" → searches code, pins relevant blocks, writes retriever:findings BB key
-• delegate.design query:"..." → planning research + writes design:research BB key
+• dd query:"..." → planning research + writes design:research BB key
 • dc query:"implement X" → edits files, verifies, writes coder:report BB key
 • dt query:"test X" → writes/runs tests, iterates on failures, writes tester:results BB key
 • ff?:path1,path2, max_tokens?:N, token_budget?:N are optional
@@ -146,6 +146,6 @@ Examples
 s1 sc qs:auth,login
 r1 rc type:smart ps:src/api.ts
 
-d1 annotate.design content:"# Plan" append:false
+d1 nd content:"# Plan" append:false
 bb1 bw key:design-decisions content:"..."`;
 

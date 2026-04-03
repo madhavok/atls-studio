@@ -5,16 +5,19 @@ import { getHandler } from '../services/batch/opMap';
 import { SHORT_TO_OP, OP_TO_SHORT } from '../services/batch/opShorthand';
 
 describe('BATCH_TOOL_REF drift detection', () => {
-  it('contains every operation from families.ts in the Operation Families section', () => {
+  it('contains every operation (via shorthand) from families.ts in the Operation Families section', () => {
     const familiesMatch = BATCH_TOOL_REF.match(/### Operation Families\n([\s\S]*?)(?=\n###)/);
     expect(familiesMatch).toBeTruthy();
     const familiesBlock = familiesMatch![1];
 
-    const missing = ALL_OPERATIONS.filter(op => !familiesBlock.includes(op));
+    const missing = ALL_OPERATIONS.filter(op => {
+      const short = OP_TO_SHORT[op];
+      return short ? !familiesBlock.includes(short) : !familiesBlock.includes(op);
+    });
     if (missing.length > 0) {
       throw new Error(
         `Operations missing from BATCH_TOOL_REF "Operation Families":\n  ${missing.join('\n  ')}\n` +
-        'These are defined in families.ts but not appearing in the generated output.',
+        'These are defined in families.ts but their shorthands are not in the generated output.',
       );
     }
   });

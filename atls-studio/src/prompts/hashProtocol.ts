@@ -15,7 +15,7 @@ Recency: h:$last (most recent), h:$last-1, h:$last-2. Works within batch request
 CONTENT-AS-REF: create.content:"h:XXXX:fn(name):dedent" auto-resolves. from_ref/from_refs for explicit intent.
 EXTRACT: refactor(extract:"fn(name)", from:"h:XXXX", to:"target.ts") — declarative, fully automatic.
 BATCH EXTRACT: refactor(action:"extract",extractions:[{target_file,methods}]) — multi-target, same-target merges.
-Advanced syntax (sets, search expressions, semantic shapes, full symbol kinds): system.help topic:"uhpp"`;
+Advanced syntax (sets, search expressions, semantic shapes, full symbol kinds): xh topic:"uhpp"`;
 
 export const HASH_PROTOCOL_ADVANCED = `## UHPP — Advanced Syntax
 Semantic: h:XXXX:concept(auth), h:XXXX:pattern(error-handling), h:XXXX:if(has(TODO)).

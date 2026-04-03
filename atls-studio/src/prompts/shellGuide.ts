@@ -6,9 +6,9 @@
 const POWERSHELL_DOCS = `## SHELL: PowerShell (Windows)
 Shell is for system operations ONLY: builds, packages, process management.
 For ALL code operations (read, search, edit, refactor): use ATLS tools.
-For git: use system.git (not system.exec). For checks: use verify.*.
+For git: use xg (not xe). For checks: use verify.*.
 NEVER use Get-Content, Select-String, or regex scripts on code files.
-system.exec: your command is written to a temp **.ps1** and run with \`& 'path'\`; the file wraps it in \`& { … } 2>&1 | Out-String\` plus markers. Valid PowerShell; stray \`}\` can still break the inner block.
+xe: your command is written to a temp **.ps1** and run with \`& 'path'\`; the file wraps it in \`& { … } 2>&1 | Out-String\` plus markers. Valid PowerShell; stray \`}\` can still break the inner block.
 | Task | Command |
 |------|---------|
 | Build | cargo build, npm run build |
@@ -20,7 +20,7 @@ system.exec: your command is written to a temp **.ps1** and run with \`& 'path'\
 const UNIX_SHELL_DOCS = `## SHELL: Bash/Zsh
 Shell is for system operations ONLY: builds, packages, process management.
 For ALL code operations (read, search, edit, refactor): use ATLS tools.
-For git: use system.git (not system.exec). For checks: use verify.*.
+For git: use xg (not xe). For checks: use verify.*.
 NEVER use cat, grep, sed, awk, or find for code reading or modification.
 | Task | Command |
 |------|---------|
