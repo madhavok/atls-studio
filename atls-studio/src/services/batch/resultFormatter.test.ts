@@ -72,3 +72,52 @@ describe('resultFormatter verification confidence', () => {
     expect(formatBatchResult(result)).toContain('(stale-suspect)');
   });
 });
+
+describe('resultFormatter truncation anchors', () => {
+  const longSummary = 'x'.repeat(2500);
+
+  it('appends file:range from artifacts when summary is middle-truncated', () => {
+    const result: UnifiedBatchResult = {
+      ok: true,
+      duration_ms: 1,
+      step_results: [
+        {
+          id: 'r1',
+          use: 'read.lines',
+          ok: true,
+          duration_ms: 1,
+          summary: longSummary,
+          artifacts: {
+            file: 'src/components/index.tsx',
+            actual_range: [[628, 682]],
+          },
+        },
+      ],
+    };
+
+    const out = formatBatchResult(result);
+    expect(out).toContain('chars omitted —');
+    expect(out).toContain('index.tsx:628-682');
+  });
+
+  it('appends h: ref + line span from first hash ref when artifacts absent', () => {
+    const result: UnifiedBatchResult = {
+      ok: true,
+      duration_ms: 1,
+      step_results: [
+        {
+          id: 's1',
+          use: 'search.code',
+          ok: true,
+          duration_ms: 1,
+          summary: longSummary,
+          refs: ['h:abcdef012345:628-682'],
+        },
+      ],
+    };
+
+    const out = formatBatchResult(result);
+    expect(out).toContain('chars omitted —');
+    expect(out).toContain('h:abcdef:628-682');
+  });
+});

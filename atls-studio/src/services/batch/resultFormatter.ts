@@ -9,6 +9,10 @@ import type {
   VerifyClassification,
   VerifyConfidence,
 } from './types';
+import { SHORT_HASH_LEN } from '../../utils/contextHash';
+import { parseHashRef } from '../../utils/hashRefParsers';
+import type { HashModifierV2 } from '../../utils/uhppTypes';
+import { getRef } from '../hashProtocol';
 import { useContextStore } from '../../stores/contextStore';
 
 // ---------------------------------------------------------------------------
@@ -93,7 +97,88 @@ function capSummary(text: string): string {
   return text.substring(0, MAX_STEP_SUMMARY_CHARS) + '... [truncated]';
 }
 
-function capStepSummary(text: string, stepUse: string): string {
+function fileBasename(path: string): string {
+  return path.replace(/\\/g, '/').split('/').pop() ?? path;
+}
+
+function actualRangeLabel(actualRange: unknown): string | undefined {
+  if (!Array.isArray(actualRange) || actualRange.length === 0) return undefined;
+  return actualRange
+    .map((r: unknown) => {
+      if (!Array.isArray(r)) return '';
+      const s = r[0] as number;
+      const e = r[1] as number | null;
+      return e != null ? `${s}-${e}` : `${s}`;
+    })
+    .filter(Boolean)
+    .join(',');
+}
+
+/** Mirrors executor extractFileRefsWithRanges — file + line spans for omission anchors. */
+function collectArtifactAnchors(artifacts: Record<string, unknown>): string[] {
+  const out: string[] = [];
+
+  function pushFileRange(file: string, actualRange: unknown): void {
+    const base = fileBasename(file);
+    const range = actualRangeLabel(actualRange);
+    out.push(range ? `${base}:${range}` : base);
+  }
+
+  if (typeof artifacts.file === 'string') {
+    pushFileRange(artifacts.file, artifacts.actual_range);
+  }
+  const results = artifacts.results;
+  if (Array.isArray(results)) {
+    for (const item of results) {
+      if (item && typeof item === 'object') {
+        const rec = item as Record<string, unknown>;
+        if (typeof rec.file === 'string') {
+          pushFileRange(rec.file, rec.actual_range);
+        }
+      }
+    }
+  }
+  return out;
+}
+
+function formatModifierLines(mod: HashModifierV2): string | undefined {
+  if (typeof mod === 'object' && mod !== null && 'lines' in mod) {
+    const lines = (mod as { lines: [number, number | null][] }).lines;
+    if (Array.isArray(lines)) {
+      return lines.map(([s, e]) => (e != null ? `${s}-${e}` : `${s}`)).join(',');
+    }
+  }
+  return undefined;
+}
+
+function anchorFromRefs(refs: string[] | undefined): string | undefined {
+  const raw = refs?.find(r => r.trimStart().startsWith('h:'));
+  if (!raw) return undefined;
+  const parsed = parseHashRef(raw.trim());
+  if (!parsed) return undefined;
+  const short = parsed.hash.slice(0, SHORT_HASH_LEN);
+  const cref = getRef(parsed.hash);
+  const base = cref?.source ? fileBasename(cref.source) : undefined;
+  const lineSpec = formatModifierLines(parsed.modifier);
+  const head = `h:${short}${base ? ` ${base}` : ''}`;
+  return lineSpec ? `${head}:${lineSpec}` : head;
+}
+
+/** Provenance hint when middle-truncating a step summary (pins / file reads). */
+function buildTruncationAnchor(step: StepResult): string | undefined {
+  const art = step.artifacts;
+  if (art && typeof art === 'object' && !Array.isArray(art)) {
+    const anchors = collectArtifactAnchors(art as Record<string, unknown>);
+    if (anchors.length > 0) {
+      const shown = anchors.slice(0, 3);
+      const suffix = anchors.length > 3 ? ' …' : '';
+      return `${shown.join(', ')}${suffix}`;
+    }
+  }
+  return anchorFromRefs(step.refs);
+}
+
+function capStepSummary(text: string, stepUse: string, step: StepResult): string {
   const limit = stepUse === 'system.git' ? MAX_GIT_SUMMARY_CHARS : MAX_STEP_SUMMARY_CHARS;
   if (text.length <= limit) return text;
   const headBudget = Math.floor(limit * 0.75);
@@ -101,7 +186,11 @@ function capStepSummary(text: string, stepUse: string): string {
   const head = text.substring(0, headBudget);
   const tail = text.substring(text.length - tailBudget);
   const omitted = text.length - headBudget - tailBudget;
-  return `${head}\n...[${omitted} chars omitted]...\n${tail}`;
+  const anchor = buildTruncationAnchor(step);
+  const omission = anchor
+    ? `[${omitted} chars omitted — ${anchor}]`
+    : `[${omitted} chars omitted]`;
+  return `${head}\n...${omission}...\n${tail}`;
 }
 
 export function formatBatchResult(result: UnifiedBatchResult): string {
@@ -120,9 +209,9 @@ export function formatBatchResult(result: UnifiedBatchResult): string {
       ? ' [STALE: cached verification result — rerun canonical command]'
       : '';
     if (step.summary) {
-      lines.push(`${label} ${step.id}: ${capStepSummary(step.summary, step.use)}${suffix}${staleSuffix}${durationTag}`);
+      lines.push(`${label} ${step.id}: ${capStepSummary(step.summary, step.use, step)}${suffix}${staleSuffix}${durationTag}`);
     } else if (step.error) {
-      lines.push(`${label} ${step.id}: ${capStepSummary(step.error, step.use)}${durationTag}`);
+      lines.push(`${label} ${step.id}: ${capStepSummary(step.error, step.use, step)}${durationTag}`);
     }
   }
 
