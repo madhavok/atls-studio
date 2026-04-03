@@ -121,7 +121,9 @@ export async function countTokens(content: string, precomputedHash?: string): Pr
     cache.set(cacheKey, count);
     return count;
   } catch {
-    return estimateTokens(content);
+    const estimate = estimateTokens(content);
+    cache.set(cacheKey, estimate);
+    return estimate;
   }
 }
 
