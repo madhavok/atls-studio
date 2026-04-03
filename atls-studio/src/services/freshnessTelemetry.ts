@@ -12,6 +12,11 @@ export const freshnessTelemetry = {
   /** Coarse event: awareness cleared without marking every engram suspect */
   coarseAwarenessOnlyInvalidations: 0,
 
+  suspectSkippedDirKeys: 0,
+  suspectMarkedUnresolvable: 0,
+  suspectBulkMarkedCoarse: 0,
+  clearSuspectFullClears: 0,
+
   bbEntriesSuperseded: 0,
   stagedSnippetsMarkedStale: 0,
   taskDirectivesSuperseded: 0,
@@ -24,6 +29,10 @@ export const freshnessTelemetry = {
     this.fileTreeChangedCoarseNoPaths = 0;
     this.engramsMarkedSuspectFromPaths = 0;
     this.coarseAwarenessOnlyInvalidations = 0;
+    this.suspectSkippedDirKeys = 0;
+    this.suspectMarkedUnresolvable = 0;
+    this.suspectBulkMarkedCoarse = 0;
+    this.clearSuspectFullClears = 0;
     this.bbEntriesSuperseded = 0;
     this.stagedSnippetsMarkedStale = 0;
     this.taskDirectivesSuperseded = 0;
@@ -46,6 +55,10 @@ export function getFreshnessMetrics(): Record<string, number> {
     fileTreeChangedCoarseNoPaths: freshnessTelemetry.fileTreeChangedCoarseNoPaths,
     engramsMarkedSuspectFromPaths: freshnessTelemetry.engramsMarkedSuspectFromPaths,
     coarseAwarenessOnlyInvalidations: freshnessTelemetry.coarseAwarenessOnlyInvalidations,
+    suspectSkippedDirKeys: freshnessTelemetry.suspectSkippedDirKeys,
+    suspectMarkedUnresolvable: freshnessTelemetry.suspectMarkedUnresolvable,
+    suspectBulkMarkedCoarse: freshnessTelemetry.suspectBulkMarkedCoarse,
+    clearSuspectFullClears: freshnessTelemetry.clearSuspectFullClears,
     bbEntriesSuperseded: freshnessTelemetry.bbEntriesSuperseded,
     stagedSnippetsMarkedStale: freshnessTelemetry.stagedSnippetsMarkedStale,
     taskDirectivesSuperseded: freshnessTelemetry.taskDirectivesSuperseded,

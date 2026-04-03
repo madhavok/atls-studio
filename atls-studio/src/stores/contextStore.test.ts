@@ -437,9 +437,10 @@ describe('refreshRoundEnd', () => {
     expect(derived).toBeUndefined();
   });
 
-  it('bulk resolver: unresolvable paths record memory event without marking engrams suspect', async () => {
+  it('bulk resolver: unresolvable file-like paths are marked suspect; directory-like paths are skipped', async () => {
     const store = useContextStore.getState();
-    const hash = store.addChunk('export const c = 1;', 'smart', 'src/c.ts', undefined, undefined, 'rev-1', { sourceRevision: 'rev-1', viewKind: 'latest' });
+    const fileHash = store.addChunk('export const c = 1;', 'smart', 'src/c.ts', undefined, undefined, 'rev-1', { sourceRevision: 'rev-1', viewKind: 'latest' });
+    store.addChunk('tree listing', 'smart', 'src/', undefined, undefined, 'rev-dir', { sourceRevision: 'rev-dir', viewKind: 'latest' });
 
     const stats = await store.refreshRoundEnd({
       bulkGetRevisions: async (paths) => new Map(paths.map(p => [p, null])),
@@ -448,12 +449,15 @@ describe('refreshRoundEnd', () => {
     expect(stats.updated).toBe(0);
     expect(stats.invalidated).toBe(0);
 
-    const chunk = Array.from(useContextStore.getState().chunks.values()).find(c => c.shortHash === hash);
-    expect(chunk?.suspectSince).toBeUndefined();
+    const fileChunk = Array.from(useContextStore.getState().chunks.values()).find(c => c.shortHash === fileHash);
+    expect(fileChunk?.suspectSince).toBeDefined();
+    expect(fileChunk?.freshness).toBe('suspect');
 
     const events = useContextStore.getState().memoryEvents;
     const unresolved = events.filter(e => e.reason === 'refresh_unresolved_paths');
     expect(unresolved.length).toBeGreaterThanOrEqual(1);
+    const refs = unresolved[0]?.refs ?? [];
+    expect(refs.some(r => r.startsWith('file_marked:'))).toBe(true);
   });
 
   it('bulk resolver takes precedence over per-path resolver', async () => {

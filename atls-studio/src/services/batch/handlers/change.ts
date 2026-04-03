@@ -1726,6 +1726,7 @@ export const handleEdit: OpHandler = async (params, ctx) => {
       const affectedPaths = extractAffectedPaths(result);
       if (affectedPaths.length > 0) {
         store.bumpWorkspaceRev(affectedPaths);
+        store.invalidateArtifactsForPaths(affectedPaths);
       }
     }
     const errorPayload = extractTopLevelError(result);
@@ -1842,6 +1843,7 @@ export const handleCreate: OpHandler = async (params, ctx) => {
     const affectedPaths = extractAffectedPaths(result);
     if (affectedPaths.length > 0) {
       useContextStore.getState().bumpWorkspaceRev(affectedPaths);
+      useContextStore.getState().invalidateArtifactsForPaths(affectedPaths);
     }
     return ok(formatResult(result), refs, result);
   } catch (createErr) {
@@ -1864,6 +1866,7 @@ export const handleDelete: OpHandler = async (params, ctx) => {
     const affectedPaths = extractAffectedPaths(result);
     if (affectedPaths.length > 0) {
       useContextStore.getState().bumpWorkspaceRev(affectedPaths);
+      useContextStore.getState().invalidateArtifactsForPaths(affectedPaths);
     }
     return ok(formatResult(result), [], result);
   } catch (delErr) {
@@ -1884,6 +1887,7 @@ export const handleRefactor: OpHandler = async (params, ctx) => {
     const affectedPaths = extractAffectedPaths(result);
     if (affectedPaths.length > 0) {
       useContextStore.getState().bumpWorkspaceRev(affectedPaths);
+      useContextStore.getState().invalidateArtifactsForPaths(affectedPaths);
     }
     const refs = extractRefs(result);
     return ok(formatResult(result), refs, result);
@@ -1981,6 +1985,7 @@ function invalidateFreshnessForRollback(params: Record<string, unknown>): void {
       store.clearReadSpansForPaths(allPaths);
       store.invalidateAwarenessForPaths(allPaths);
       store.bumpWorkspaceRev(allPaths);
+      store.invalidateArtifactsForPaths(allPaths);
     }
   } catch {
     // Non-fatal — freshness invalidation must not block rollback success
@@ -1998,6 +2003,7 @@ export const handleSplitModule: OpHandler = async (params, ctx) => {
     const affectedPaths = extractAffectedPaths(result);
     if (affectedPaths.length > 0) {
       useContextStore.getState().bumpWorkspaceRev(affectedPaths);
+      useContextStore.getState().invalidateArtifactsForPaths(affectedPaths);
     }
     return ok(formatResult(result), refs, result);
   } catch (splitErr) {

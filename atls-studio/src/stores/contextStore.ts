@@ -902,6 +902,10 @@ interface ContextStoreState {
     fileTreeChangedCoarseNoPaths: number;
     engramsMarkedSuspectFromPaths: number;
     coarseAwarenessOnlyInvalidations: number;
+    suspectSkippedDirKeys: number;
+    suspectMarkedUnresolvable: number;
+    suspectBulkMarkedCoarse: number;
+    clearSuspectFullClears: number;
   };
   syncFreshnessMirror: () => void;
 
@@ -1255,10 +1259,18 @@ function findOrPromoteEngram(
   const archived = findChunkByRef(archivedChunks, ref);
   if (archived) {
     const [, arc] = archived;
-    chunksMap.set(arc.hash, { ...arc, lastAccessed: Date.now() });
-    // HPP: re-materialize — chunk is back in working memory
-    hppMaterialize(arc.hash, arc.type, arc.source, arc.tokens, (arc.content.match(/\n/g) || []).length + 1, arc.editDigest || arc.digest || '');
-    return [arc.hash, chunksMap.get(arc.hash)!];
+    const promoted: ContextChunk = { ...arc, lastAccessed: Date.now() };
+    if (promoted.source && isFileBackedType(promoted.type) && promoted.sourceRevision) {
+      const awareness = useContextStore.getState().getAwareness(promoted.source);
+      if (awareness && awareness.snapshotHash !== promoted.sourceRevision) {
+        promoted.suspectSince = Date.now();
+        promoted.freshness = 'suspect' as FreshnessState;
+        promoted.freshnessCause = 'unknown' as FreshnessCause;
+      }
+    }
+    chunksMap.set(promoted.hash, promoted);
+    hppMaterialize(promoted.hash, promoted.type, promoted.source, promoted.tokens, (promoted.content.match(/\n/g) || []).length + 1, promoted.editDigest || promoted.digest || '');
+    return [promoted.hash, chunksMap.get(promoted.hash)!];
   }
 
   const staged = findStagedByRef(stagedSnippets, ref);
@@ -1443,6 +1455,10 @@ export const useContextStore = create<ContextStoreState>()(
     fileTreeChangedCoarseNoPaths: 0,
     engramsMarkedSuspectFromPaths: 0,
     coarseAwarenessOnlyInvalidations: 0,
+    suspectSkippedDirKeys: 0,
+    suspectMarkedUnresolvable: 0,
+    suspectBulkMarkedCoarse: 0,
+    clearSuspectFullClears: 0,
   },
   syncFreshnessMirror: () => set({
     freshnessMirror: {
@@ -1450,6 +1466,10 @@ export const useContextStore = create<ContextStoreState>()(
       fileTreeChangedCoarseNoPaths: freshnessTelemetry.fileTreeChangedCoarseNoPaths,
       engramsMarkedSuspectFromPaths: freshnessTelemetry.engramsMarkedSuspectFromPaths,
       coarseAwarenessOnlyInvalidations: freshnessTelemetry.coarseAwarenessOnlyInvalidations,
+      suspectSkippedDirKeys: freshnessTelemetry.suspectSkippedDirKeys,
+      suspectMarkedUnresolvable: freshnessTelemetry.suspectMarkedUnresolvable,
+      suspectBulkMarkedCoarse: freshnessTelemetry.suspectBulkMarkedCoarse,
+      clearSuspectFullClears: freshnessTelemetry.clearSuspectFullClears,
     },
   }),
 
@@ -2642,14 +2662,32 @@ export const useContextStore = create<ContextStoreState>()(
       preserved += stats.preserved;
     }
 
-    // Paths with no revision from bulk/IPC resolver — do not bulk-mark suspect (that caused
-    // refreshRoundEnd + preflight feedback loops for tree roots / directory keys). Observability only.
     if (unresolvablePaths.length > 0) {
+      const isLikelyDirectory = (p: string) => {
+        const norm = p.replace(/\\/g, '/');
+        if (norm.endsWith('/')) return true;
+        const basename = norm.split('/').pop() ?? '';
+        return !basename.includes('.');
+      };
+      const dirPaths = unresolvablePaths.filter(isLikelyDirectory);
+      const filePaths = unresolvablePaths.filter(p => !isLikelyDirectory(p));
+
+      if (filePaths.length > 0) {
+        get().markEngramsSuspect(filePaths, 'external_file_change');
+        freshnessTelemetry.suspectMarkedUnresolvable += filePaths.length;
+      }
+      if (dirPaths.length > 0) {
+        freshnessTelemetry.suspectSkippedDirKeys += dirPaths.length;
+      }
       get().recordMemoryEvent({
         action: 'reconcile',
         reason: 'refresh_unresolved_paths',
         source: unresolvablePaths.slice(0, 3).join(', ') + (unresolvablePaths.length > 3 ? ` +${unresolvablePaths.length - 3}` : ''),
-        refs: [`unresolved:${unresolvablePaths.length}`],
+        refs: [
+          `unresolved:${unresolvablePaths.length}`,
+          ...(dirPaths.length > 0 ? [`dir_skipped:${dirPaths.length}`] : []),
+          ...(filePaths.length > 0 ? [`file_marked:${filePaths.length}`] : []),
+        ],
       });
     }
 
@@ -2786,6 +2824,9 @@ export const useContextStore = create<ContextStoreState>()(
         if (chunk.suspectSince == null || !shouldClear(chunk.source)) continue;
         const nextChunk = { ...chunk };
         delete nextChunk.suspectSince;
+        delete nextChunk.freshness;
+        delete nextChunk.freshnessCause;
+        delete nextChunk.suspectKind;
         newChunks.set(key, nextChunk);
         result.cleared++;
       }
@@ -2793,6 +2834,9 @@ export const useContextStore = create<ContextStoreState>()(
         if (chunk.suspectSince == null || !shouldClear(chunk.source)) continue;
         const nextChunk = { ...chunk };
         delete nextChunk.suspectSince;
+        delete nextChunk.freshness;
+        delete nextChunk.freshnessCause;
+        delete nextChunk.suspectKind;
         newArchived.set(key, nextChunk);
         result.cleared++;
       }
@@ -2800,11 +2844,15 @@ export const useContextStore = create<ContextStoreState>()(
         if (snippet.suspectSince == null || !shouldClear(snippet.source)) continue;
         const nextSnippet = { ...snippet };
         delete nextSnippet.suspectSince;
+        delete nextSnippet.freshness;
+        delete nextSnippet.freshnessCause;
+        delete nextSnippet.suspectKind;
         newStaged.set(key, nextSnippet);
         result.cleared++;
       }
 
       if (result.cleared === 0) return {};
+      freshnessTelemetry.clearSuspectFullClears++;
       return { chunks: newChunks, archivedChunks: newArchived, stagedSnippets: newStaged, stageVersion: state.stageVersion + 1 };
     });
     return result.cleared;
@@ -3632,6 +3680,14 @@ export const useContextStore = create<ContextStoreState>()(
       annotations: allAnnotations.length > 0 ? allAnnotations : undefined,
       synapses: allSynapses.length > 0 ? allSynapses : undefined,
       freshness: sourceChunks.some(c => c.freshness === 'suspect' || c.freshness === 'changed') ? 'suspect' as FreshnessState : 'fresh' as FreshnessState,
+      suspectSince: sourceChunks.reduce<number | undefined>(
+        (earliest, c) => c.suspectSince != null
+          ? (earliest != null ? Math.min(earliest, c.suspectSince) : c.suspectSince)
+          : earliest,
+        undefined,
+      ),
+      freshnessCause: sourceChunks.find(c => c.suspectSince != null)?.freshnessCause,
+      suspectKind: sourceChunks.find(c => c.suspectSince != null)?.suspectKind,
       sourceRevision: sourceChunks[0]?.sourceRevision,
     };
     for (const [, c] of resolved) {
@@ -4428,6 +4484,10 @@ export const useContextStore = create<ContextStoreState>()(
         fileTreeChangedCoarseNoPaths: 0,
         engramsMarkedSuspectFromPaths: 0,
         coarseAwarenessOnlyInvalidations: 0,
+        suspectSkippedDirKeys: 0,
+        suspectMarkedUnresolvable: 0,
+        suspectBulkMarkedCoarse: 0,
+        clearSuspectFullClears: 0,
       },
     });
     freshnessTelemetry.reset();

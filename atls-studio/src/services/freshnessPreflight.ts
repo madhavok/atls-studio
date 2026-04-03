@@ -451,17 +451,21 @@ export async function runFreshnessPreflight(
     /** Allow context/read_lines to reach handlers that clear suspect + reconcile (see context.ts handleRead). */
     const healingReadOps = operation === 'context' || operation === 'read_lines';
     if (healingReadOps) {
+      let reconciledCount = 0;
       if (refreshedHashes && refreshedHashes.size > 0) {
         const store = useContextStore.getState();
         for (const f of targetFiles) {
           const h = refreshedHashes.get(normalizePathKey(f));
           if (typeof h === 'string') {
-            store.reconcileSourceRevision(f, h);
+            const stats = store.reconcileSourceRevision(f, h);
+            reconciledCount += stats.updated;
           }
         }
       }
       warnings.push(
-        'Freshness: suspect engrams matched target paths; allowing context/read_lines to proceed so authority can refresh.',
+        reconciledCount > 0
+          ? `Freshness: ${reconciledCount} suspect engram(s) reconciled via healing read.`
+          : 'Freshness: suspect engrams NOT reconciled — content may still be stale; re-read to clear.',
       );
     } else {
       return {

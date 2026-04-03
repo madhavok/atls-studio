@@ -389,12 +389,16 @@ export function useAtls() {
           freshnessTelemetry.fileTreeChangedCoarseNoPaths++;
           freshnessTelemetry.coarseAwarenessOnlyInvalidations++;
           ctxState.syncFreshnessMirror();
+          const coarseMarked = ctxState.markEngramsSuspect(undefined, 'watcher_event', 'unknown');
+          freshnessTelemetry.suspectBulkMarkedCoarse += coarseMarked;
           ctxState.invalidateAllAwarenessCache();
           ctxState.bumpWorkspaceRev();
           ctxState.downgradeVerifyToStale();
+          const verifyPaths = [...ctxState.verifyArtifacts.values()].flatMap(a => a.filesObserved);
+          if (verifyPaths.length > 0) ctxState.invalidateArtifactsForPaths(verifyPaths);
           resetProjectTreeCache();
           useRetentionStore.getState().evictMutationSensitive();
-          console.warn('[useAtls] file_tree_changed missing exact paths; bounded invalidation (awareness + workspace rev) — not marking all engrams suspect');
+          console.warn('[useAtls] file_tree_changed missing exact paths; all engrams marked suspect, artifacts invalidated');
         }
         if (refreshTimeoutRef.current) clearTimeout(refreshTimeoutRef.current);
         refreshTimeoutRef.current = setTimeout(async () => {
