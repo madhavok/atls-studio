@@ -370,7 +370,7 @@ async function runStreamRound(
         reasoningEffort: config.reasoningEffort ?? null,
       });
     } else if (provider === 'vertex') {
-      const { manageGeminiRollingCache } = await import('./geminiCache');
+      const { manageGeminiRollingCache, geminiUncachedMessagesStartIndex } = await import('./geminiCache');
       const { cacheName: vertexCache, cachedMessageCount: vertexCachedCount } = await manageGeminiRollingCache(
         'vertex',
         config.apiKey,
@@ -380,7 +380,9 @@ async function runStreamRound(
         config.projectId,
         config.region,
       );
-      const vertexUncachedStart = vertexCache ? Math.min(vertexCachedCount, messages.length - 1) : 0;
+      const vertexUncachedStart = vertexCache
+        ? geminiUncachedMessagesStartIndex(vertexCachedCount, messages.length)
+        : 0;
       const vertexMessages = vertexCache ? messages.slice(vertexUncachedStart) : messages;
       await invoke('stream_chat_vertex', {
         accessToken: config.apiKey,
@@ -398,7 +400,7 @@ async function runStreamRound(
         thinkingBudget: config.thinkingBudget ?? null,
       });
     } else if (provider === 'google') {
-      const { manageGeminiRollingCache } = await import('./geminiCache');
+      const { manageGeminiRollingCache, geminiUncachedMessagesStartIndex } = await import('./geminiCache');
       const { cacheName: googleCache, cachedMessageCount: googleCachedCount } = await manageGeminiRollingCache(
         'google',
         config.apiKey,
@@ -406,7 +408,9 @@ async function runStreamRound(
         systemPrompt,
         cacheMessages,
       );
-      const googleUncachedStart = googleCache ? Math.min(googleCachedCount, messages.length - 1) : 0;
+      const googleUncachedStart = googleCache
+        ? geminiUncachedMessagesStartIndex(googleCachedCount, messages.length)
+        : 0;
       const googleMessages = googleCache ? messages.slice(googleUncachedStart) : messages;
       await invoke('stream_chat_google', {
         apiKey: config.apiKey,

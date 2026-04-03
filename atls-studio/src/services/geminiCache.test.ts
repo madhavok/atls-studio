@@ -20,6 +20,7 @@ import {
   getGeminiCacheSnapshot,
   restoreGeminiCacheSnapshot,
   manageGeminiRollingCache,
+  geminiUncachedMessagesStartIndex,
 } from './geminiCache';
 
 describe('geminiCache', () => {
@@ -64,5 +65,31 @@ describe('geminiCache', () => {
       'gemini_create_cache',
       expect.objectContaining({ provider: 'google', model: 'gemini-2.0-flash' }),
     );
+  });
+
+  it('geminiUncachedMessagesStartIndex: prefix + tail covers full history', () => {
+    expect(geminiUncachedMessagesStartIndex(3, 3)).toBe(2);
+    expect(geminiUncachedMessagesStartIndex(2, 3)).toBe(2);
+    expect(geminiUncachedMessagesStartIndex(1, 0)).toBe(0);
+    expect(geminiUncachedMessagesStartIndex(1, 1)).toBe(0);
+    expect(geminiUncachedMessagesStartIndex(1, 2)).toBe(1);
+  });
+
+  it('caches prefix only when multiple messages so stream tail is non-empty', async () => {
+    invoke.mockResolvedValueOnce('cache-name-2');
+    // Combined size must exceed ZONE_B_LIMIT (~128k tokens) so rolling cache runs.
+    const big = 'x'.repeat(225_000);
+    const messages = [
+      { role: 'user' as const, content: big },
+      { role: 'assistant' as const, content: big },
+    ];
+    const r = await manageGeminiRollingCache('google', 'k', 'gemini-2.0-flash', 'sys', messages);
+    expect(r.cacheName).toBe('cache-name-2');
+    expect(r.cachedMessageCount).toBe(1);
+    const call = invoke.mock.calls.find((c) => c[0] === 'gemini_create_cache');
+    expect(call).toBeDefined();
+    const payload = call![1] as { messages: { role: string; content: string }[] };
+    expect(payload.messages).toHaveLength(1);
+    expect(payload.messages[0].role).toBe('user');
   });
 });

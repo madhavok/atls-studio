@@ -339,13 +339,13 @@ pub async fn stream_chat_vertex(
     }
 
     // Inject dynamic context: when cachedContent is active, systemInstruction is
-    // forbidden, so append to last user message. Otherwise goes into systemInstruction.
-    // Appended (not prepended) so the user's actual instruction has primacy position.
+    // forbidden, so prepend to last user message parts. Prepended (not appended)
+    // so the user's actual instruction retains recency primacy.
     if let Some(ref dyn_ctx) = dynamic_context {
         if !dyn_ctx.is_empty() && cached_content.is_some() {
             if let Some(last_user) = merged_contents.iter_mut().rev().find(|m| m.get("role").and_then(|r| r.as_str()) == Some("user")) {
                 if let Some(parts) = last_user.get_mut("parts").and_then(|p| p.as_array_mut()) {
-                    parts.push(serde_json::json!({"text": dyn_ctx}));
+                    parts.insert(0, serde_json::json!({"text": dyn_ctx}));
                 }
             }
         }
@@ -353,6 +353,14 @@ pub async fn stream_chat_vertex(
 
     validate_gemini_contents("Vertex", &merged_contents);
     log_gemini_contents_summary("Vertex", &merged_contents, cached_content.is_some());
+
+    if cached_content.is_some() && merged_contents.is_empty() {
+        return Err(
+            "Gemini stream_chat_vertex: cachedContent is set but contents is empty after merge; \
+             uncached messages tail must be non-empty (same invariant as OpenAI full messages)."
+                .to_string(),
+        );
+    }
 
     let mut gen_config = serde_json::json!({
         "maxOutputTokens": max_tokens,

@@ -64,6 +64,7 @@ import {
   manageGeminiRollingCache,
   cleanupGeminiCache,
   resetHppHydrationCache,
+  geminiUncachedMessagesStartIndex,
 } from './geminiCache';
 import {
   resolveSearchRefs,
@@ -839,29 +840,34 @@ function prependCancelledToolResults(content: unknown, missingIds: string[]): un
 }
 
 /**
- * Anthropic requires: every assistant message that contains tool_use blocks must be followed
- * immediately by a user message whose content includes a tool_result for each tool_use id.
- * Repairs history when normalization or persistence dropped pairings.
+ * Provider-agnostic tool pairing repair. All providers require:
+ * - Every assistant tool_use has a matching user tool_result (orphans get [cancelled])
+ * - No orphaned tool_result without a preceding tool_use
+ * - Alternating user/assistant roles (consecutive same-role merged)
+ * - tool_result blocks ordered first in user message after tool_use
  *
- * Also strips orphaned tool_result user messages whose preceding assistant tool_use was dropped,
- * and removes non-standard fields (thoughtSignature) from tool_use blocks.
+ * When provider is 'anthropic', also strips non-standard fields (thoughtSignature)
+ * from tool_use blocks since the Anthropic API rejects them.
  */
-function repairAnthropicToolPairing(messages: ApiMessage[]): ApiMessage[] {
+function repairToolPairing(messages: ApiMessage[], provider?: string): ApiMessage[] {
+  const isAnthropic = provider === 'anthropic';
   const out: ApiMessage[] = [];
   for (let i = 0; i < messages.length; i++) {
     const msg = messages[i];
 
     // Forward repair: assistant with tool_use must have following user with tool_result
     if (msg.role === 'assistant' && Array.isArray(msg.content)) {
-      // Strip non-standard fields from tool_use blocks and ensure tool_use blocks
-      // come after any text blocks (Anthropic rejects interleaved text between tool_use blocks).
-      const stripped = msg.content.map((block: Record<string, unknown>) => {
-        if (block && typeof block === 'object' && (block as { type?: string }).type === 'tool_use') {
-          const { thoughtSignature: _, ...rest } = block as Record<string, unknown>;
-          return rest;
-        }
-        return block;
-      });
+      // Anthropic: strip thoughtSignature + reorder text before tool_use.
+      // Other providers: keep fields but still ensure pairing.
+      const stripped = isAnthropic
+        ? msg.content.map((block: Record<string, unknown>) => {
+            if (block && typeof block === 'object' && (block as { type?: string }).type === 'tool_use') {
+              const { thoughtSignature: _, ...rest } = block as Record<string, unknown>;
+              return rest;
+            }
+            return block;
+          })
+        : (msg.content as Record<string, unknown>[]);
       const nonToolUse = stripped.filter((b: Record<string, unknown>) => (b as { type?: string }).type !== 'tool_use');
       const toolUse = stripped.filter((b: Record<string, unknown>) => (b as { type?: string }).type === 'tool_use');
       const cleanedContent = toolUse.length > 0 && nonToolUse.length > 0 ? [...nonToolUse, ...toolUse] : stripped;
@@ -901,7 +907,6 @@ function repairAnthropicToolPairing(messages: ApiMessage[]): ApiMessage[] {
         : new Set<string>();
 
       if (prevToolUseIds.size === 0) {
-        // No preceding assistant tool_use: strip orphaned tool_result blocks from this user message
         const filtered = (msg.content as Array<Record<string, unknown>>).filter(
           (block) => !(
             block && typeof block === 'object'
@@ -914,7 +919,6 @@ function repairAnthropicToolPairing(messages: ApiMessage[]): ApiMessage[] {
         if (filtered.length > 0) {
           out.push({ role: 'user', content: filtered });
         } else {
-          // Entire message was tool_results with no matching tool_use; drop it
           console.warn('[aiService] Dropped orphaned tool_result user message at index', i);
         }
         continue;
@@ -948,7 +952,7 @@ function repairAnthropicToolPairing(messages: ApiMessage[]): ApiMessage[] {
     }
   }
 
-  // Anthropic requires alternating user/assistant roles. Merge consecutive same-role messages.
+  // Merge consecutive same-role messages (required by Anthropic/Gemini, good hygiene for OpenAI).
   for (let i = out.length - 1; i > 0; i--) {
     if (out[i].role === out[i - 1].role) {
       const prev = out[i - 1];
@@ -960,8 +964,7 @@ function repairAnthropicToolPairing(messages: ApiMessage[]): ApiMessage[] {
     }
   }
 
-  // Anthropic: user message after tool_use must start with tool_result blocks in assistant
-  // tool_use order — text or dynamic context before any tool_result causes 400.
+  // User message after tool_use must start with tool_result blocks in tool_use order.
   for (let i = 0; i < out.length - 1; i++) {
     const a = out[i];
     const b = out[i + 1];
@@ -973,7 +976,7 @@ function repairAnthropicToolPairing(messages: ApiMessage[]): ApiMessage[] {
     const afterIds = collectToolResultIdsFromBlocks(reordered);
     const ok = needIds.every((id) => afterIds.has(id));
     if (!ok) {
-      console.error('[aiService] Anthropic tool_result finalization failed — forcing cancelled placeholders', {
+      console.error('[aiService] tool_result finalization failed — forcing cancelled placeholders', {
         needIds,
         had: [...collectToolResultIdsFromBlocks(b.content)],
         after: [...afterIds],
@@ -986,7 +989,7 @@ function repairAnthropicToolPairing(messages: ApiMessage[]): ApiMessage[] {
 }
 
 export function prepareAnthropicMessagesForApi(messages: Array<{ role: string; content: unknown }>): Array<{ role: string; content: unknown }> {
-  return repairAnthropicToolPairing(messages.map((msg) => ({ role: msg.role, content: msg.content })));
+  return repairToolPairing(messages.map((msg) => ({ role: msg.role, content: msg.content })), 'anthropic');
 }
 
 function normalizeConversationHistory(messages: ChatMessage[]): ApiMessage[] {
@@ -1099,9 +1102,6 @@ function assembleProviderMessages(
   mode: ChatMode,
   dynamicContextBlock: string,
 ): { messages: ApiMessage[]; geminiDynamicContext: string; assembly: PromptAssemblyState } {
-  // Assembled provider messages are ephemeral output; durable state lives in
-  // structured turn history, staged lifecycle state, working-memory state,
-  // and round telemetry.
   const layeredMessages: ApiMessage[] = [];
   const isGemini = provider === 'google' || provider === 'vertex';
   let geminiDynamicContext = '';
@@ -1665,7 +1665,7 @@ async function streamChatViaTauri(
         mode,
         dynamicContextBlock,
       );
-      let { geminiDynamicContext } = assembledRound;
+      const { geminiDynamicContext } = assembledRound;
       lastReliefAction = reliefAction;
 
       if (config.provider === 'anthropic') {
@@ -1725,9 +1725,8 @@ async function streamChatViaTauri(
       let stopReason: string | null = null;
       let toolCallCounter = 0;
 
-      const tauriMessages = assembledRound.messages.map(m => ({ role: m.role, content: m.content }));
-      const tauriMessagesForProvider =
-        config.provider === 'anthropic' ? prepareAnthropicMessagesForApi(tauriMessages) : tauriMessages;
+      const tauriMessagesRaw = assembledRound.messages.map(m => ({ role: m.role, content: m.content }));
+      const tauriMessages = repairToolPairing(tauriMessagesRaw, config.provider);
       const cacheMessages = assembledRound.messages.map(m => ({
         role: m.role as 'user' | 'assistant' | 'system',
         content: m.content as string | ContentBlock[],
@@ -1735,7 +1734,7 @@ async function streamChatViaTauri(
 
       useAppStore.getState().setLastPromptSnapshot({
         systemPrompt: config.systemPrompt || '',
-        messages: tauriMessagesForProvider,
+        messages: tauriMessages,
         model: config.model,
         provider: config.provider,
         round,
@@ -1747,7 +1746,7 @@ async function streamChatViaTauri(
           await invoke('stream_chat_anthropic', {
             apiKey: config.apiKey,
             model: config.model,
-            messages: tauriMessagesForProvider,
+            messages: tauriMessages,
             maxTokens: config.maxTokens,
             temperature: config.temperature,
             systemPrompt: config.systemPrompt || '',
@@ -1783,7 +1782,9 @@ async function streamChatViaTauri(
           });
         } else if (config.provider === 'vertex') {
           const { cacheName: vertexCache, cachedMessageCount: vertexCachedCount } = await manageGeminiRollingCache('vertex', config.apiKey, config.model, config.systemPrompt || '', cacheMessages, config.projectId, config.region);
-          const vertexUncachedStart = vertexCache ? Math.min(vertexCachedCount, tauriMessages.length) : 0;
+          const vertexUncachedStart = vertexCache
+            ? geminiUncachedMessagesStartIndex(vertexCachedCount, tauriMessages.length)
+            : 0;
           const vertexMessages = vertexCache ? tauriMessages.slice(vertexUncachedStart) : tauriMessages;
           await invoke('stream_chat_vertex', {
             accessToken: config.apiKey,
@@ -1802,7 +1803,9 @@ async function streamChatViaTauri(
           });
         } else {
           const { cacheName: googleCache, cachedMessageCount: googleCachedCount } = await manageGeminiRollingCache('google', config.apiKey, config.model, config.systemPrompt || '', cacheMessages);
-          const googleUncachedStart = googleCache ? Math.min(googleCachedCount, tauriMessages.length) : 0;
+          const googleUncachedStart = googleCache
+            ? geminiUncachedMessagesStartIndex(googleCachedCount, tauriMessages.length)
+            : 0;
           const googleMessages = googleCache ? tauriMessages.slice(googleUncachedStart) : tauriMessages;
           await invoke('stream_chat_google', {
             apiKey: config.apiKey,
@@ -2197,7 +2200,10 @@ async function streamChatViaTauri(
         const completionOnlyBlocked = currentPendingAction.kind === 'none'
           && runtimeCompletionBlocker != null
           && !agentProgressState.canTaskComplete;
-        const hasBlockingPendingAction = currentPendingAction.kind !== 'none'
+        // state_changed = new user message this run; informational for prompts, not a stop gate.
+        // Tool rounds clear it after execution; text-only rounds must not stop here or follow-ups never complete.
+        const hasBlockingPendingAction =
+          (currentPendingAction.kind !== 'none' && currentPendingAction.kind !== 'state_changed')
           || completionOnlyBlocked;
 
         // Detect st:done marker as implicit completion

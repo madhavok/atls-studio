@@ -133,8 +133,13 @@ export async function manageGeminiRollingCache(
     return { cacheName: null, cachedMessageCount: 0 };
   }
 
-  let messagesToCache = messages.length;
   const hydratedMessages = hydrateHppReferences(messages);
+
+  // Cache only a prefix so stream_chat_* always receives a non-empty tail when len > 1
+  // (cached prefix + uncached tail ≡ full tauriMessages, same as OpenAI/Anthropic).
+  // Single-message turns: cache the full message; slice logic uses min(count, len-1) so tail is still full.
+  const messagesToCache =
+    hydratedMessages.length > 1 ? hydratedMessages.length - 1 : hydratedMessages.length;
 
   let currentSize = systemPrompt.length + hydratedMessages.reduce((sum, m) => {
     const content = typeof m.content === 'string' ? m.content : serializeMessageContentForTokens(m.content);
@@ -147,7 +152,7 @@ export async function manageGeminiRollingCache(
 ## GEMINI CACHE CONTEXT
 This conversation history is cached for efficiency. The cache contains:
 - System prompt
-- ${messagesToCache} message(s)
+- ${messagesToCache} cached message(s) (prefix; latest turn(s) are sent with the request)
 - Total estimated tokens: ~${currentTokens}
 
 Cache will be refreshed when significant new context is added.
@@ -205,6 +210,19 @@ Cache will be refreshed when significant new context is added.
     }
     return { cacheName: null, cachedMessageCount: 0 };
   }
+}
+
+/**
+ * Start index for the uncached `messages` tail when using Gemini `cachedContent`.
+ * Ensures server prefix + request tail ≡ full history; tail is never empty when history is non-empty
+ * (main-chat parity with OpenAI/Anthropic full `messages` per round).
+ */
+export function geminiUncachedMessagesStartIndex(
+  cachedMessageCount: number,
+  totalMessagesLength: number,
+): number {
+  if (totalMessagesLength <= 0) return 0;
+  return Math.min(cachedMessageCount, Math.max(0, totalMessagesLength - 1));
 }
 
 export async function cleanupGeminiCache(apiKey?: string, vertexAccessToken?: string, projectId?: string, region?: string): Promise<void> {
