@@ -12,7 +12,7 @@ Related:
 
 | Doc | Topics |
 |-----|--------|
-| [batch-executor.md](./batch-executor.md) | `batch()` tool, step loop, snapshot injection, intents, `line_edits` spans / `edits_resolved`, discover-step `content` (`file_paths`, `lines`, `end_lines`) |
+| [batch-executor.md](./batch-executor.md) | `batch()` tool, step loop, snapshot injection, intents, `line_edits` spans / `edits_resolved`, discover-step `content` (`file_paths`, `lines`, `end_lines`), **op/param shorthands** (`opShorthand.ts`, `paramNorm.ts`, prompt legend) |
 | [hash-protocol.md](./hash-protocol.md) | `h:` refs, modifiers, resolution rules |
 | [engrams.md](./engrams.md) | Working memory chunks and lifecycle |
 

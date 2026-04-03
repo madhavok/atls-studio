@@ -18,7 +18,7 @@ ATLS Studio is a minimal, purpose-built development environment where ATLS provi
 ## Documentation
 
 - **Freshness & edits** (universal `canSteerExecution`, staged `stageState`, snapshot hashes, sequential `line_edits`, cross-step rebase): [`../docs/freshness.md`](../docs/freshness.md)
-- **Batch executor** (`batch()` tool, intents, snapshot injection): [`../docs/batch-executor.md`](../docs/batch-executor.md)
+- **Batch executor** (`batch()` tool, intents, snapshot injection, optional op/param shorthands): [`../docs/batch-executor.md`](../docs/batch-executor.md)
 - **Docs index**: [`../docs/README.md`](../docs/README.md)
 - **Subagents** (delegate roles, budgets, scoped HPP): [`../docs/subagents.md`](../docs/subagents.md)
 - **Architecture overview**: [`../ARCHITECTURE.md`](../ARCHITECTURE.md)

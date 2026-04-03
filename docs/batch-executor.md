@@ -31,6 +31,21 @@ interface Step {
 }
 ```
 
+### Operation and parameter shorthands
+
+Models may emit **short codes** for `use` and for a small set of high-frequency parameter keys to save tokens on batch payloads. **Canonical dotted names and full parameter names always work**; shorthands are optional.
+
+| Concern | Behavior |
+|--------|----------|
+| **Where it applies** | Line-per-step `q` text (second field per line is the operation), and JSON `steps[]` before execution (`coerceBatchSteps`). |
+| **Operations** | Map short codes → `OperationKind` via `normalizeOperationUse` in [`opShorthand.ts`](../atls-studio/src/services/batch/opShorthand.ts) (`SHORT_TO_OP` / `OP_TO_SHORT`). Examples: `sc` → `search.code`, `ce` → `change.edit`, `vk` → `verify.typecheck`. |
+| **Parameters** | Aliases like `ps` → `file_paths`, `le` → `line_edits`, `sl`/`el` → `start_line` / `end_line` are merged with existing aliases in [`paramNorm.ts`](../atls-studio/src/services/batch/paramNorm.ts) (`GLOBAL_ALIASES`). The same v1 set is listed as `PARAM_SHORT` in `opShorthand.ts` for the prompt legend. |
+| **After normalization** | Handlers, subagent allowlists, UI summaries, and spin detection all see **canonical** `use` strings and param keys. |
+| **System prompt** | [`toolRef.ts`](../atls-studio/src/prompts/toolRef.ts) embeds `generateShorthandLegend()` into `BATCH_TOOL_REF` so the model has a compact `code=canonical` key. |
+| **Token audit (Rust)** | [`tokenizer_shorthand_audit.rs`](../atls-studio/src-tauri/src/tokenizer_shorthand_audit.rs) (included from `tokenizer.rs` under `cfg(test)`) compares long vs short forms across tokenizer backends. |
+
+Do not duplicate the full code table in this doc; **`opShorthand.ts` is the source of truth** for operation codes alongside [`families.ts`](../atls-studio/src/services/batch/families.ts) for the canonical `OperationKind` list.
+
 ## Operation Families
 
 The authoritative list of `use` strings is [`atls-studio/src/services/batch/families.ts`](../atls-studio/src/services/batch/families.ts) (`OPERATION_FAMILIES`); the batch tool reference builds its “Operation Families” block from that file. The table below summarizes the same surface.

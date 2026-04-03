@@ -25,6 +25,8 @@ In a typical 10-round ATLS tool loop:
 
 The dynamic block — blackboard, staged snippets, working memory, dormant manifest, workspace context — accounts for **60-70% of input tokens** and is charged at **full uncached price** on every round.
 
+**Batch payload shape:** The agent can use **operation and parameter shorthands** in `batch` steps (line-per-step `q` or JSON) so repeated tool calls use fewer tokens; the client normalizes to canonical names before execution. The system prompt pays a small one-time legend cost; net savings grow with multi-step batches. See [batch-executor.md](./batch-executor.md#operation-and-parameter-shorthands).
+
 ## Why Caching Doesn't Help
 
 Anthropic's prompt caching is prefix-based: everything before a `cache_control` breakpoint must be byte-identical between requests to get cache reads. ATLS's dynamic block changes every round by design:

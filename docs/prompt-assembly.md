@@ -50,6 +50,10 @@ History compression runs only at round 0 (between user turns). Within a multi-ro
 
 [`logicalCacheMetrics.ts`](../atls-studio/src/services/logicalCacheMetrics.ts) computes **expected** static (system+tools) and BP3 hits from our own rules (e.g. append-only BP3 prefix ⇒ hit). **`updateLogicalCache`** in the app store records these for the UI. They are **not** the same numbers as provider-reported cache read/write tokens — those still come from API usage metadata. See [api-economics.md](./api-economics.md).
 
+## Batch tool reference and shorthands
+
+The static system block includes **`BATCH_TOOL_REF`** ([`toolRef.ts`](../atls-studio/src/prompts/toolRef.ts)): operation families, examples, and a generated **shorthand legend** from `generateShorthandLegend()` in [`opShorthand.ts`](../atls-studio/src/services/batch/opShorthand.ts). Short codes reduce tokens in model-authored `batch` payloads; the runtime normalizes them to canonical `OperationKind` and parameter names before dispatch (see [batch-executor.md](./batch-executor.md#operation-and-parameter-shorthands)).
+
 ## Assembly Flow
 
 ### Per-Session (once)

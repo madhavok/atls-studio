@@ -197,6 +197,8 @@ All model-initiated actions flow through a single tool: `batch()`. This collapse
 }
 ```
 
+Optional **operation and parameter shorthands** (for example `sc` / `search.code`, `ps` / `file_paths`) reduce tokens in model-authored steps. The client normalizes them to canonical names before handlers run; full names remain valid everywhere. Details: [docs/batch-executor.md](docs/batch-executor.md#operation-and-parameter-shorthands).
+
 ### 4.1 Operation Families
 
 | Family | Operations | Purpose |
