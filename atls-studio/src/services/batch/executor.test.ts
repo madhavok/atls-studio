@@ -509,6 +509,117 @@ describe('executeUnifiedBatch intra-step snapshot line rebasing', () => {
 
     expect(editSpy).toHaveBeenCalledOnce();
   });
+
+  it('rebases insert_before/insert_after after implicit replace (no action field)', async () => {
+    // Batch 1 regression: replace lines 3-7 with 8 lines (+3 delta), then
+    // insert_before at snapshot 9, insert_after at snapshot 16.
+    const editSpy = vi.fn(async (params: Record<string, unknown>) => {
+      const le = params.line_edits as Array<Record<string, unknown>>;
+      expect(le).toHaveLength(3);
+      // Edit A: implicit replace at 3-7 (no action) — stays at 3
+      expect(le[0].line).toBe(3);
+      // Edit B: insert_before at snapshot 9 → 9 + 3 = 12
+      expect(le[1].line).toBe(12);
+      // Edit C: insert_after at snapshot 16 → 16 + 3 (from A) + 1 (from B) = 20
+      expect(le[2].line).toBe(20);
+      return raw('applied', { status: 'ok' });
+    });
+
+    handlers.set('change.edit', editSpy as unknown as OpHandler);
+
+    await executeUnifiedBatch({
+      version: '1.0',
+      steps: [
+        {
+          id: 'edit',
+          use: 'change.edit',
+          with: {
+            file: 'src/user.ts',
+            line_edits: [
+              { line: 3, end_line: 7, content: 'a\nb\nc\nd\ne\nf\ng\nh' },
+              { line: 9, action: 'insert_before', content: '/** JSDoc */' },
+              { line: 16, action: 'insert_after', content: 'function normalizeEmail() {}' },
+            ],
+          },
+        },
+      ],
+    }, makeCtx());
+
+    expect(editSpy).toHaveBeenCalledOnce();
+  });
+
+  it('rebases move destination after prior delete', async () => {
+    // Batch 2 regression: delete lines 35-37 (-3 delta), then move lines 31-33
+    // to destination 41. Destination should shift to 38 (41 - 3).
+    const editSpy = vi.fn(async (params: Record<string, unknown>) => {
+      const le = params.line_edits as Array<Record<string, unknown>>;
+      expect(le).toHaveLength(2);
+      // Edit A: delete at 35 — stays at 35
+      expect(le[0].line).toBe(35);
+      // Edit B: move at snapshot 31 — source is before the delete (31 < 35), no shift
+      expect(le[1].line).toBe(31);
+      // Move destination: snapshot 41 → 41 - 3 = 38
+      expect(le[1].destination).toBe(38);
+      return raw('applied', { status: 'ok' });
+    });
+
+    handlers.set('change.edit', editSpy as unknown as OpHandler);
+
+    await executeUnifiedBatch({
+      version: '1.0',
+      steps: [
+        {
+          id: 'edit',
+          use: 'change.edit',
+          with: {
+            file: 'src/users.ts',
+            line_edits: [
+              { line: 35, end_line: 37, action: 'delete' },
+              { line: 31, end_line: 33, action: 'move', destination: 41 },
+            ],
+          },
+        },
+      ],
+    }, makeCtx());
+
+    expect(editSpy).toHaveBeenCalledOnce();
+  });
+
+  it('propagates cumulative delta across mixed action types', async () => {
+    // 3 edits: replace (implicit) +2, insert_before +1, insert_after at end
+    const editSpy = vi.fn(async (params: Record<string, unknown>) => {
+      const le = params.line_edits as Array<Record<string, unknown>>;
+      expect(le).toHaveLength(3);
+      expect(le[0].line).toBe(5);
+      // Edit B: snapshot 10, +2 from implicit replace at 5 → 12
+      expect(le[1].line).toBe(12);
+      // Edit C: snapshot 20, +2 from A, +1 from B → 23
+      expect(le[2].line).toBe(23);
+      return raw('applied', { status: 'ok' });
+    });
+
+    handlers.set('change.edit', editSpy as unknown as OpHandler);
+
+    await executeUnifiedBatch({
+      version: '1.0',
+      steps: [
+        {
+          id: 'edit',
+          use: 'change.edit',
+          with: {
+            file: 'src/mixed.ts',
+            line_edits: [
+              { line: 5, end_line: 6, content: 'a\nb\nc\nd' },                  // implicit replace: 4 - 2 = +2
+              { line: 10, action: 'insert_before', content: '// comment' },      // +1
+              { line: 20, action: 'insert_after', content: '// trailing' },
+            ],
+          },
+        },
+      ],
+    }, makeCtx());
+
+    expect(editSpy).toHaveBeenCalledOnce();
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -1400,6 +1511,45 @@ describe('executeUnifiedBatch inter-step rebase for move and replace_body', () =
     }, makeCtx());
 
     expect(editSpy).toHaveBeenCalledOnce();
+  });
+
+  it('cross-step: delete in step1 shifts move destination in step2', async () => {
+    const editCalls: Array<Record<string, unknown>> = [];
+
+    handlers.set('read.context', async () => raw('read', {
+      results: [{ file: 'src/a.ts', content_hash: 'hash-v1', content: 'x' }],
+    }));
+    handlers.set('change.edit', async (params: Record<string, unknown>) => {
+      editCalls.push({ ...params });
+      return raw('applied', { status: 'ok', drafts: [{ file: 'src/a.ts', content_hash: 'hash-v2' }] });
+    });
+
+    await executeUnifiedBatch({
+      version: '1.0',
+      steps: [
+        { id: 'r1', use: 'read.context', with: { type: 'full', file_paths: ['src/a.ts'] } },
+        {
+          id: 'e1', use: 'change.edit', with: {
+            file: 'src/a.ts',
+            line_edits: [{ line: 10, end_line: 14, action: 'delete' }],
+          },
+        },
+        {
+          id: 'e2', use: 'change.edit', with: {
+            file: 'src/a.ts',
+            line_edits: [{ line: 5, end_line: 7, action: 'move', destination: 30 }],
+          },
+        },
+      ],
+    }, makeCtx());
+
+    expect(editCalls).toHaveLength(2);
+    // Step 1 deletes lines 10-14 (5 lines, delta -5 at original line 10).
+    // Step 2 move: line 5 is before deletion (10 < 5 is false) → no shift → stays 5.
+    // destination 30: 10 < 30 → delta -5 applies → 30 - 5 = 25.
+    const le2 = (editCalls[1] as Record<string, unknown>).line_edits as Array<Record<string, unknown>>;
+    expect(le2[0].line).toBe(5);
+    expect(le2[0].destination).toBe(25);
   });
 });
 

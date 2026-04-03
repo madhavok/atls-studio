@@ -128,8 +128,14 @@ function effectiveLineSpanCount(e: Record<string, unknown>): number {
   return 1;
 }
 
+/** Normalize action: missing/empty → 'replace' (mirrors change.edit handler default). */
+function normalizeEditAction(e: Record<string, unknown>): string {
+  const raw = typeof e.action === 'string' ? e.action : '';
+  return raw === '' ? 'replace' : raw;
+}
+
 function computeSingleEditNetDelta(e: Record<string, unknown>): number {
-  const action = typeof e.action === 'string' ? e.action : '';
+  const action = normalizeEditAction(e);
   const span = effectiveLineSpanCount(e);
   const contentLines = typeof e.content === 'string' && e.content.length > 0
     ? countContentLines(e.content as string)
@@ -165,7 +171,7 @@ function computePositionalDeltas(lineEdits: unknown): PositionalDelta[] {
   for (const edit of lineEdits) {
     if (!edit || typeof edit !== 'object') continue;
     const e = edit as Record<string, unknown>;
-    const action = typeof e.action === 'string' ? e.action : '';
+    const action = normalizeEditAction(e);
     const line = snapshotLineForRebase(e);
 
     if (action === 'move' && line > 0) {
@@ -276,7 +282,7 @@ function backfillResolvedBodySpans(
  * a single delta; for `move` it's two (delete at source, insert at dest).
  */
 function intraStepShiftFromEdit(e: Record<string, unknown>, snapLine: number, targetSnap: number): number {
-  const action = typeof e.action === 'string' ? e.action : '';
+  const action = normalizeEditAction(e);
   if (action === 'move') {
     const span = effectiveLineSpanCount(e);
     const dest = typeof e.destination === 'number' && e.destination > 0 ? e.destination : 0;
@@ -327,6 +333,18 @@ function rebaseIntraStepSnapshotLineEdits(lineEdits: unknown[]): void {
         endShift += intraStepShiftFromEdit(lineEdits[j2] as Record<string, unknown>, origJ2, endLine);
       }
       if (endShift !== 0) o.end_line = endLine + endShift;
+    }
+    const dest = typeof o.destination === 'number' && Number.isFinite(o.destination as number) && (o.destination as number) > 0
+      ? (o.destination as number)
+      : 0;
+    if (dest > 0) {
+      let destShift = 0;
+      for (let j3 = 0; j3 < i; j3++) {
+        const origJ3 = snapshotLines[j3];
+        if (origJ3 <= 0) continue;
+        destShift += intraStepShiftFromEdit(lineEdits[j3] as Record<string, unknown>, origJ3, dest);
+      }
+      if (destShift !== 0) o.destination = dest + destShift;
     }
   }
 }
@@ -405,6 +423,14 @@ function applyDeltasToLineEdits(
         if (d.line < targetEnd) endShift += d.delta;
       }
       if (endShift !== 0) entry.end_line = targetEnd + endShift;
+    }
+    if (typeof entry.destination === 'number' && entry.destination > 0) {
+      const targetDest = entry.destination as number;
+      let destShift = 0;
+      for (const d of deltas) {
+        if (d.line < targetDest) destShift += d.delta;
+      }
+      if (destShift !== 0) entry.destination = targetDest + destShift;
     }
   }
 }
