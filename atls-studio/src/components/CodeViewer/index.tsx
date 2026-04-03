@@ -244,6 +244,64 @@ export function CodeViewer() {
     return () => { unlisten?.(); };
   }, []);
 
+  // ── Auto-refresh open files on external filesystem changes (git, other editors, CLI tools) ──
+  useEffect(() => {
+    let unlisten: UnlistenFn | null = null;
+    (async () => {
+      unlisten = await safeListen<{ root: string; count: number; paths: string[] }>('file_tree_changed', async (ev) => {
+        const changedPaths: string[] = ev.payload.paths ?? [];
+        if (changedPaths.length === 0) return;
+
+        const currentOpenFiles = openFilesRef.current;
+        if (currentOpenFiles.length === 0) return;
+
+        const root = useAppStore.getState().activeRoot ?? useAppStore.getState().projectPath;
+        if (!root) return;
+
+        for (const changedPath of changedPaths) {
+          const changedNorm = changedPath.replace(/\\/g, '/');
+          const matchedFile = currentOpenFiles.find((f) => {
+            const fNorm = f.replace(/\\/g, '/');
+            return fNorm === changedNorm || f === changedPath;
+          });
+          if (!matchedFile) continue;
+
+          // Skip files we're currently saving
+          const currentSaving = savingRef.current;
+          const matchedNorm = matchedFile.replace(/\\/g, '/');
+          if (currentSaving[matchedFile] || currentSaving[matchedNorm]) continue;
+
+          const currentContents = fileContentsRef.current;
+          const currentOriginals = originalContentsRef.current;
+          const hasDirtyEdits = currentContents[matchedFile] !== currentOriginals[matchedFile]
+            && currentOriginals[matchedFile] !== undefined;
+
+          try {
+            const diskContent = await invoke<string>('read_file_contents', { path: matchedFile, projectRoot: root });
+
+            // No-op if content already matches
+            if (diskContent === currentContents[matchedFile]) continue;
+
+            if (hasDirtyEdits) {
+              useAppStore.getState().addToast({
+                type: 'warning',
+                message: `"${matchedFile.split(/[/\\]/).pop()}" was modified externally. Save or discard your local changes.`,
+              });
+              continue;
+            }
+
+            // Update content from disk
+            setFileContents(prev => ({ ...prev, [matchedFile]: diskContent }));
+            setOriginalContents(prev => ({ ...prev, [matchedFile]: diskContent }));
+          } catch {
+            // File may have been deleted — ignore
+          }
+        }
+      });
+    })();
+    return () => { unlisten?.(); };
+  }, []);
+
   // Get word at cursor position
   const getWordAtCursor = useCallback((): string | null => {
     if (!editorRef.current || !monacoRef.current) return null;
