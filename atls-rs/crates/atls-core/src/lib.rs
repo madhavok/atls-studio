@@ -13,6 +13,6 @@ pub use db::{Database, DatabaseError};
 pub use parser::{ParserRegistry, RegistryError};
 pub use detector::*;
 pub use watcher::{Watcher, WatcherEvent, WatcherHandle, FileFilter, WatcherError, SKIP_DIRS, is_skip_dir};
-pub use indexer::{Indexer, IndexerError, ScanFilter, ScanProgress, ScanStats};
+pub use indexer::{Indexer, IndexerError, IncrementalParsePolicy, ScanFilter, ScanProgress, ScanStats};
 pub use query::{CategoryStat, IssueFilterOptions, QueryEngine, QueryError};
 pub use project::{AtlsProject, ProjectError};

@@ -4,7 +4,7 @@ pub mod scanner;
 pub mod symbols;
 pub mod uhpp_extractor;
 
-pub use scanner::{Indexer, ScanFilter, ScanProgress, ScanStats};
+pub use scanner::{Indexer, IncrementalParsePolicy, ScanFilter, ScanProgress, ScanStats};
 pub use relations::RelationTracker;
 pub use uhpp_extractor::uhpp_extract_symbols;
 pub use relations::extract_imports_regex;

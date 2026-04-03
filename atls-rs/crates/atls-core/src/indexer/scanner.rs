@@ -57,6 +57,29 @@ pub struct ScanFilter {
     pub matrix: Option<FocusMatrix>,
 }
 
+/// Policy for incremental single-file indexing (`index_file` / `on_file_change`).
+#[derive(Clone, Copy, Debug)]
+pub struct IncrementalParsePolicy {
+    /// When true, run tree-sitter structural pattern detectors and refresh `code_issues`.
+    /// When false (default for incremental), skip pattern detectors and preserve existing issues.
+    pub run_structural_patterns: bool,
+}
+
+impl IncrementalParsePolicy {
+    /// Fast incremental path: symbols, imports, calls; preserve existing pattern issues in DB.
+    pub fn fast_incremental() -> Self {
+        Self {
+            run_structural_patterns: false,
+        }
+    }
+}
+
+impl Default for IncrementalParsePolicy {
+    fn default() -> Self {
+        Self::fast_incremental()
+    }
+}
+
 /// Indexer orchestrates scanning and indexing
 pub struct Indexer {
     db: Arc<Database>,
@@ -730,6 +753,7 @@ impl Indexer {
         &self,
         path: P,
         hash: &str,
+        policy: IncrementalParsePolicy,
     ) -> Result<(), IndexerError> {
         let path = path.as_ref();
         
@@ -743,15 +767,20 @@ impl Indexer {
         let content = fs::read_to_string(path)
             .map_err(|e| IndexerError::Io(e))?;
         
-        // Parse file (placeholder - will use parser registry from Agent 2)
-        // For now, we'll create a minimal parse result
-        let parse_result = self.parse_file(&content, language, path).await?;
+        let parse_result = self
+            .parse_file(&content, language, path, policy.run_structural_patterns)
+            .await?;
         
         // Get or create file ID
         let file_id = self.upsert_file(path, hash, language, &content).await?;
         
-        // Store symbols, imports, calls, issues
-        self.store_parse_result(file_id, &parse_result, language).await?;
+        self.store_parse_result(
+            file_id,
+            &parse_result,
+            language,
+            policy.run_structural_patterns,
+        )
+        .await?;
         
         Ok(())
     }
@@ -760,7 +789,8 @@ impl Indexer {
     pub async fn on_file_change<P: AsRef<Path>>(&self, path: P) -> Result<(), IndexerError> {
         let path = path.as_ref();
         let hash = self.calculate_file_hash(path)?;
-        self.index_file(path, &hash).await
+        self.index_file(path, &hash, IncrementalParsePolicy::fast_incremental())
+            .await
     }
 
     /// Handle file create event from watcher
@@ -810,8 +840,7 @@ impl Indexer {
             result.line_count,
         ).await?;
         
-        // Store symbols, imports, calls, issues
-        self.store_parse_result(file_id, &result.parse_result, result.language).await?;
+        self.store_parse_result(file_id, &result.parse_result, result.language, true).await?;
         
         Ok(())
     }
@@ -901,18 +930,28 @@ impl Indexer {
         content: &str,
         language: Language,
         path: &Path,
+        run_structural_patterns: bool,
     ) -> Result<ParseResult, IndexerError> {
         // UHPP regex symbols + regex imports (tree-sitter-free)
         let lang_str = language.as_str();
         let symbols = uhpp_extract_symbols(content, Some(lang_str));
         let imports = extract_imports_regex(content, language);
 
-        // Lazy tree-sitter: only parse when calls or pattern detection are needed
+        // Align with parallel scan (scan_filtered): tree-sitter for calls and/or patterns
         let patterns = self.detector_registry.get_patterns_for_language(language);
-        let needs_tree = !patterns.is_empty();
+        let needs_tree = !patterns.is_empty()
+            || (matches!(
+                language,
+                Language::Php | Language::Dart | Language::Swift
+            ) && !symbols.is_empty());
+        let needs_calls_regex = matches!(language, Language::Kotlin);
 
         let mut calls = Vec::new();
         let mut issues = Vec::new();
+
+        if needs_calls_regex && !needs_tree {
+            calls = extract_calls_regex(content, language);
+        }
 
         if needs_tree {
             let tree = self.parser_registry.parse(language, content)
@@ -920,21 +959,23 @@ impl Indexer {
 
             calls = RelationTracker::extract_calls(&tree, content, language);
 
-            for pattern in patterns {
-                if pattern.structural_hints.as_ref()
-                    .and_then(|h| h.tree_sitter_query.as_ref())
-                    .is_some()
-                {
-                    let detector = TreeSitterDetector::new(pattern.clone(), language);
-                    match detector.detect(content, &tree) {
-                        Ok(mut detected) => {
-                            for issue in &mut detected {
-                                issue.file_path = Some(path.to_string_lossy().to_string());
+            if run_structural_patterns {
+                for pattern in patterns {
+                    if pattern.structural_hints.as_ref()
+                        .and_then(|h| h.tree_sitter_query.as_ref())
+                        .is_some()
+                    {
+                        let detector = TreeSitterDetector::new(pattern.clone(), language);
+                        match detector.detect(content, &tree) {
+                            Ok(mut detected) => {
+                                for issue in &mut detected {
+                                    issue.file_path = Some(path.to_string_lossy().to_string());
+                                }
+                                issues.extend(detected);
                             }
-                            issues.extend(detected);
-                        }
-                        Err(e) => {
-                            debug!("Pattern {} detection failed: {}", pattern.id, e);
+                            Err(e) => {
+                                debug!("Pattern {} detection failed: {}", pattern.id, e);
+                            }
                         }
                     }
                 }
@@ -1319,6 +1360,7 @@ impl Indexer {
         file_id: i64,
         result: &ParseResult,
         language: Language,
+        update_code_issues: bool,
     ) -> Result<(), IndexerError> {
         let conn = self.db.conn();
         
@@ -1441,41 +1483,43 @@ impl Indexer {
             }
         }
         
-        // Clear existing issues for this file before inserting new ones
-        conn.execute(
-            "DELETE FROM code_issues WHERE file_id = ?1",
-            params![file_id],
-        )?;
-        
-        // Store issues detected by pattern detectors (deduplicated)
-        let mut seen_issues: HashSet<(String, u32, u32)> = HashSet::new();
-        for issue in &result.issues {
-            // Deduplicate by (pattern_id, line, col) per file
-            let key = (issue.pattern_id.clone(), issue.line, issue.col);
-            if !seen_issues.insert(key) {
-                continue;
-            }
-
-            let category = self.detector_registry
-                .get_pattern(&issue.pattern_id)
-                .map(|p| p.category.to_lowercase())
-                .unwrap_or_else(|| "code_quality".to_string());
-            
+        if update_code_issues {
+            // Clear existing issues for this file before inserting new ones
             conn.execute(
-                "INSERT INTO code_issues (file_id, type, severity, message, line, col, end_line, end_col, category) 
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-                params![
-                    file_id,
-                    issue.pattern_id,
-                    format!("{:?}", issue.severity).to_lowercase(),
-                    issue.message,
-                    issue.line,
-                    issue.col,
-                    issue.end_line,
-                    issue.end_col,
-                    category
-                ],
+                "DELETE FROM code_issues WHERE file_id = ?1",
+                params![file_id],
             )?;
+            
+            // Store issues detected by pattern detectors (deduplicated)
+            let mut seen_issues: HashSet<(String, u32, u32)> = HashSet::new();
+            for issue in &result.issues {
+                // Deduplicate by (pattern_id, line, col) per file
+                let key = (issue.pattern_id.clone(), issue.line, issue.col);
+                if !seen_issues.insert(key) {
+                    continue;
+                }
+
+                let category = self.detector_registry
+                    .get_pattern(&issue.pattern_id)
+                    .map(|p| p.category.to_lowercase())
+                    .unwrap_or_else(|| "code_quality".to_string());
+                
+                conn.execute(
+                    "INSERT INTO code_issues (file_id, type, severity, message, line, col, end_line, end_col, category) 
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                    params![
+                        file_id,
+                        issue.pattern_id,
+                        format!("{:?}", issue.severity).to_lowercase(),
+                        issue.message,
+                        issue.line,
+                        issue.col,
+                        issue.end_line,
+                        issue.end_col,
+                        category
+                    ],
+                )?;
+            }
         }
         
         Ok(())

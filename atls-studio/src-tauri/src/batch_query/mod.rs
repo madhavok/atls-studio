@@ -1822,7 +1822,7 @@ pub async fn atls_batch_query(
                 let index_result = if !dry_run && !modified_file_paths.is_empty() {
                     let indexer = project.indexer().clone();
                     // Lock already released at function entry
-                    index_modified_files(&app, &indexer, &project_root_owned, &modified_file_paths).await
+                    index_modified_files(&app, indexer.clone(), project_root_owned.clone(), modified_file_paths.clone()).await
                 } else {
                     serde_json::json!(null)
                 };
@@ -8439,7 +8439,7 @@ pub async fn atls_batch_query(
                 let index_result = if !dry_run && !all_modified_files.is_empty() {
                     let indexer = project.indexer().clone();
                     // Lock already released at function entry
-                    index_modified_files(&app, &indexer, &project_root_owned, &all_modified_files).await
+                    index_modified_files(&app, indexer.clone(), project_root_owned.clone(), all_modified_files.clone()).await
                 } else {
                     serde_json::json!(null)
                 };
@@ -9677,7 +9677,7 @@ pub async fn atls_batch_query(
                 let index_result = if !move_modified_files.is_empty() {
                     let indexer = project.indexer().clone();
                     // Lock already released at function entry
-                    index_modified_files(&app, &indexer, &project_root_owned, &move_modified_files).await
+                    index_modified_files(&app, indexer.clone(), project_root_owned.clone(), move_modified_files.clone()).await
                 } else {
                     serde_json::json!(null)
                 };
@@ -10212,7 +10212,7 @@ pub async fn atls_batch_query(
                 let index_result = if !dry_run && !rename_modified_files.is_empty() {
                     let indexer = project.indexer().clone();
                     // Lock already released at function entry
-                    index_modified_files(&app, &indexer, &project_root_owned, &rename_modified_files).await
+                    index_modified_files(&app, indexer.clone(), project_root_owned.clone(), rename_modified_files.clone()).await
                 } else {
                     serde_json::json!(null)
                 };
@@ -10480,7 +10480,7 @@ pub async fn atls_batch_query(
                 let index_result = if !ce_all_modified.is_empty() {
                     let indexer = project.indexer().clone();
                     // Lock already released at function entry
-                    index_modified_files(&app, &indexer, &project_root_owned, &ce_all_modified).await
+                    index_modified_files(&app, indexer.clone(), project_root_owned.clone(), ce_all_modified.clone()).await
                 } else {
                     serde_json::json!(null)
                 };
@@ -10724,7 +10724,7 @@ pub async fn atls_batch_query(
                 };
                 let indexer = project.indexer().clone();
                 // Lock already released at function entry
-                let index_result = index_modified_files(&app, &indexer, &project_root_owned, &[file_path.clone()]).await;
+                let index_result = index_modified_files(&app, indexer.clone(), project_root_owned.clone(), vec![file_path.clone()]).await;
                 let has_errors = lint_summary.as_ref()
                     .map(|s| s.by_severity.get("error").copied().unwrap_or(0) > 0)
                     .unwrap_or(false);
@@ -11632,7 +11632,7 @@ pub async fn atls_batch_query(
                     let index_result = if !written.is_empty() {
                         let indexer = project.indexer().clone();
                         // Lock already released at function entry
-                        index_modified_files(&app, &indexer, &project_root_owned, &written).await
+                        index_modified_files(&app, indexer.clone(), project_root_owned.clone(), written.clone()).await
                     } else {
                         serde_json::json!(null)
                     };
@@ -11861,7 +11861,7 @@ pub async fn atls_batch_query(
                     let index_result = if write_ok {
                         let indexer = project.indexer().clone();
                         // Lock already released at function entry
-                        index_modified_files(&app, &indexer, &project_root_owned, &[file_path.clone()]).await
+                        index_modified_files(&app, indexer.clone(), project_root_owned.clone(), vec![file_path.clone()]).await
                     } else {
                         serde_json::json!(null)
                     };
@@ -12087,7 +12087,7 @@ pub async fn atls_batch_query(
                 let index_result = if !modified_paths.is_empty() {
                     let indexer = project.indexer().clone();
                     // Lock already released at function entry
-                    index_modified_files(&app, &indexer, &project_root_owned, &modified_paths).await
+                    index_modified_files(&app, indexer.clone(), project_root_owned.clone(), modified_paths.clone()).await
                 } else {
                     serde_json::json!(null)
                 };
@@ -12217,7 +12217,7 @@ pub async fn atls_batch_query(
                                         crate::file_ops::emit_file_tree_changed(&app, &root_str, &[&file_path]);
                                         let indexer = project.indexer().clone();
                                         let index_result = index_modified_files(
-                                            &app, &indexer, &project_root_owned, &[file_path.clone()]
+                                            &app, indexer.clone(), project_root_owned.clone(), vec![file_path.clone()]
                                         ).await;
                                         let restored_short = format!("h:{}", &restored_hash[..std::cmp::min(8, restored_hash.len())]);
                                         let undone_short = format!("h:{}", &entry.hash[..std::cmp::min(8, entry.hash.len())]);
@@ -12297,7 +12297,7 @@ pub async fn atls_batch_query(
                                                 }
                                                 let indexer = project.indexer().clone();
                                                 let index_result = index_modified_files(
-                                                    &app, &indexer, &project_root_owned, &[file_path.clone()]
+                                                    &app, indexer.clone(), project_root_owned.clone(), vec![file_path.clone()]
                                                 ).await;
                                                 let restored_short = format!("h:{}", &restored_hash[..std::cmp::min(8, restored_hash.len())]);
                                                 let undone_short = format!("h:{}", &entry.hash[..std::cmp::min(8, entry.hash.len())]);
@@ -12689,7 +12689,7 @@ pub async fn atls_batch_query(
                 let index_result = if !dry_run && !replace_modified_paths.is_empty() {
                     let indexer = project.indexer().clone();
                     // Lock already released at function entry
-                    index_modified_files(&app, &indexer, &project_root_owned, &replace_modified_paths).await
+                    index_modified_files(&app, indexer.clone(), project_root_owned.clone(), replace_modified_paths.clone()).await
                 } else {
                     serde_json::json!(null)
                 };
@@ -12986,7 +12986,7 @@ pub async fn atls_batch_query(
                 let index_result = if !created.is_empty() {
                     let indexer = project.indexer().clone();
                     // Lock already released at function entry
-                    index_modified_files(&app, &indexer, &project_root_owned, &created).await
+                    index_modified_files(&app, indexer.clone(), project_root_owned.clone(), created.clone()).await
                 } else {
                     serde_json::json!(null)
                 };
@@ -14007,7 +14007,7 @@ pub async fn atls_batch_query(
                 // Re-index restored files
                 let index_result = if !modified_files.is_empty() {
                     let indexer = project.indexer().clone();
-                    index_modified_files(&app, &indexer, &project_root_owned, &modified_files).await
+                    index_modified_files(&app, indexer.clone(), project_root_owned.clone(), modified_files.clone()).await
                 } else {
                     serde_json::json!(null)
                 };
@@ -15339,7 +15339,7 @@ pub async fn atls_batch_query(
                     // â”€â”€ re-index modified files â”€â”€
                     if !all_modified.is_empty() {
                         let indexer = project.indexer().clone();
-                        let _ = index_modified_files(&app, &indexer, &project_root_owned, &all_modified).await;
+                        let _ = index_modified_files(&app, indexer.clone(), project_root_owned.clone(), all_modified.clone()).await;
                     }
 
                     let skipped_count = all_results.iter()
@@ -15475,7 +15475,7 @@ pub async fn atls_batch_query(
                     }
                     if !modified.is_empty() && !dry_run {
                         let indexer = project.indexer().clone();
-                        let _ = index_modified_files(&app, &indexer, &project_root, &modified).await;
+                        let _ = index_modified_files(&app, indexer.clone(), project_root.to_path_buf(), modified.clone()).await;
                     }
 
                     let mut all_fixes = fixes;

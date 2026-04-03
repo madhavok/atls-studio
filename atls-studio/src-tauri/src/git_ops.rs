@@ -184,19 +184,13 @@ pub(crate) fn filter_powershell_stderr(stderr: &str) -> String {
         .join("\n")
 }
 
-/// Index modified files incrementally after write operations.
-/// Emits `index_progress` events so the UI can show scan status.
-/// Returns a summary suitable for inclusion in TOON responses.
-pub(crate) async fn index_modified_files(
+/// Runs incremental index work (mutex + per-file `on_file_change`). Used by the background queue.
+async fn index_modified_files_run(
     app: &AppHandle,
     indexer: &tokio::sync::Mutex<atls_core::Indexer>,
     project_root: &std::path::Path,
     files: &[String],
 ) -> serde_json::Value {
-    if files.is_empty() {
-        return serde_json::json!(null);
-    }
-
     let total = files.len();
     let _ = app.emit("index_progress", serde_json::json!({
         "phase": "start",
@@ -235,6 +229,33 @@ pub(crate) async fn index_modified_files(
     serde_json::json!({
         "files_indexed": indexed.len(),
         "errors": if index_errors.is_empty() { None } else { Some(&index_errors) }
+    })
+}
+
+/// Index modified files incrementally after write operations.
+/// Emits `index_progress` from a background task so the edit/batch path is not blocked on the indexer mutex.
+/// Returns immediately with `status: "queued"`; completion is observable via `index_progress` events.
+pub(crate) async fn index_modified_files(
+    app: &AppHandle,
+    indexer: std::sync::Arc<tokio::sync::Mutex<atls_core::Indexer>>,
+    project_root: std::path::PathBuf,
+    mut files: Vec<String>,
+) -> serde_json::Value {
+    if files.is_empty() {
+        return serde_json::json!(null);
+    }
+
+    files.sort();
+    files.dedup();
+    let total = files.len();
+    let app = app.clone();
+    tokio::spawn(async move {
+        let _ = index_modified_files_run(&app, indexer.as_ref(), &project_root, &files).await;
+    });
+
+    serde_json::json!({
+        "status": "queued",
+        "files_queued": total,
     })
 }
 
