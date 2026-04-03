@@ -321,6 +321,18 @@ pub(crate) fn convert_messages_for_responses_api(messages: &[ChatMessage], syste
     items
 }
 
+/// Build `reasoning` for OpenAI Responses API. Raw reasoning tokens are not exposed;
+/// always request [`summary: "auto"`](https://platform.openai.com/docs/guides/reasoning) whenever
+/// we send `reasoning` so streamed `response.reasoning_summary_text.delta` (and output items)
+/// include a readable summary. Reasoning token cost is driven by `effort`; the summary is the
+/// API-supported way to surface what you paid for in the UI.
+pub(crate) fn reasoning_body_for_responses_api(effort: &str) -> serde_json::Value {
+    serde_json::json!({
+        "effort": effort,
+        "summary": "auto"
+    })
+}
+
 /// Convert multimodal content to Google Gemini parts format.
 /// Handles text, image, and Anthropic-format tool_use/tool_result blocks.
 /// Strips both BP3 and BP4 boundary markers.
@@ -1591,9 +1603,9 @@ pub(crate) async fn stream_responses_openai_inner(
     if !is_reasoning {
         body["temperature"] = serde_json::json!(temperature);
     }
-    // Responses API: reasoning.effort (nested object)
+    // Responses API: reasoning.effort + optional reasoning.summary (required for visible summaries)
     if let Some(ref effort) = reasoning_effort {
-        body["reasoning"] = serde_json::json!({"effort": effort});
+        body["reasoning"] = reasoning_body_for_responses_api(effort);
     }
     // GPT-5 verbosity — top-level `verbosity` was removed; use `text.verbosity`
     // https://platform.openai.com/docs/api-reference/responses/create
@@ -2844,5 +2856,19 @@ mod responses_api_conversion_tests {
         let arr = content.as_array().expect("array content");
         assert_eq!(arr[0].get("type").and_then(|t| t.as_str()), Some("input_text"));
         assert_eq!(arr[0].get("text").and_then(|t| t.as_str()), Some("Hi"));
+    }
+
+    #[test]
+    fn reasoning_body_none_includes_summary_auto() {
+        let v = reasoning_body_for_responses_api("none");
+        assert_eq!(v.get("effort").and_then(|x| x.as_str()), Some("none"));
+        assert_eq!(v.get("summary").and_then(|x| x.as_str()), Some("auto"));
+    }
+
+    #[test]
+    fn reasoning_body_high_includes_summary_auto() {
+        let v = reasoning_body_for_responses_api("high");
+        assert_eq!(v.get("effort").and_then(|x| x.as_str()), Some("high"));
+        assert_eq!(v.get("summary").and_then(|x| x.as_str()), Some("auto"));
     }
 }
