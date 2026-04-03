@@ -262,7 +262,7 @@ export function useChatPersistence() {
     if (!chatDb.isInitialized()) return [];
     
     try {
-      const dbSessions = await chatDb.getSessions(50);
+      const dbSessions = await chatDb.getSessions(200);
       
       // Convert to ChatSession format (lightweight - no messages loaded)
       const sessions: ChatSession[] = dbSessions.map((dbSession) => ({
@@ -396,16 +396,28 @@ export function useChatPersistence() {
   saveSessionRef.current = saveSession;
 
   /**
+   * Cancel any pending debounce timer and immediately execute a save.
+   * Bypasses the debounce gate so the most recent state is always flushed.
+   */
+  const flushPendingSave = useCallback(async () => {
+    if (saveTimeoutRef.current) {
+      clearTimeout(saveTimeoutRef.current);
+      saveTimeoutRef.current = null;
+    }
+    lastSaveRef.current = 0;
+    await saveSessionRef.current();
+  }, []);
+
+  /**
    * Load a specific session with its blackboard and restore to stores
    */
   const loadSession = useCallback(async (sessionId: string): Promise<boolean> => {
     if (!chatDb.isInitialized()) return false;
 
-    // Save outgoing session before switching to prevent data loss
+    // Flush any pending debounced save before switching sessions
     const outgoing = useAppStore.getState();
     if (outgoing.currentSessionId && outgoing.currentSessionId !== sessionId && outgoing.messages.length > 0) {
-      lastSaveRef.current = 0; // Bypass debounce for session switch
-      try { await saveSession(); } catch { /* best effort */ }
+      try { await flushPendingSave(); } catch { /* best effort */ }
     }
     
     try {
@@ -669,9 +681,9 @@ export function useChatPersistence() {
     if (!chatDb.isInitialized()) return null;
     
     try {
-      // Save current session first
+      // Flush any pending debounced save before creating a new session
       if (messages.length > 0) {
-        await saveSession();
+        await flushPendingSave();
       }
       
       // Create new session
@@ -816,10 +828,14 @@ export function useChatPersistence() {
       const isSwitch = prevPath !== null && prevPath !== projectPath;
 
       const init = async () => {
-        // Save outgoing session before switching DB (read store + ref so we never use stale message state)
+        // Flush any pending debounced save before switching DB
         if (isSwitch && useAppStore.getState().messages.length > 0) {
-          lastSaveRef.current = 0;
           try {
+            if (saveTimeoutRef.current) {
+              clearTimeout(saveTimeoutRef.current);
+              saveTimeoutRef.current = null;
+            }
+            lastSaveRef.current = 0;
             await saveSessionRef.current();
           } catch {
             /* best effort */
@@ -876,8 +892,12 @@ export function useChatPersistence() {
     } else {
       const closeWithoutProject = async () => {
         if (chatDb.isInitialized() && useAppStore.getState().messages.length > 0) {
-          lastSaveRef.current = 0;
           try {
+            if (saveTimeoutRef.current) {
+              clearTimeout(saveTimeoutRef.current);
+              saveTimeoutRef.current = null;
+            }
+            lastSaveRef.current = 0;
             await saveSessionRef.current();
           } catch {
             /* best effort */
@@ -903,7 +923,11 @@ export function useChatPersistence() {
   useEffect(() => {
     const handleBeforeUnload = () => {
       if (!chatDb.isInitialized() || useAppStore.getState().messages.length === 0) return;
-      lastSaveRef.current = 0; // Bypass debounce
+      if (saveTimeoutRef.current) {
+        clearTimeout(saveTimeoutRef.current);
+        saveTimeoutRef.current = null;
+      }
+      lastSaveRef.current = 0;
       void saveSessionRef.current();
     };
     window.addEventListener('beforeunload', handleBeforeUnload);
@@ -923,6 +947,11 @@ export function useChatPersistence() {
           event.preventDefault();
           finishing = true;
           try {
+            if (saveTimeoutRef.current) {
+              clearTimeout(saveTimeoutRef.current);
+              saveTimeoutRef.current = null;
+            }
+            lastSaveRef.current = 0;
             await saveSessionRef.current();
           } catch (err) {
             console.warn('[ChatPersistence] Final save on close failed:', err);
@@ -1109,6 +1138,7 @@ export function useChatPersistence() {
     loadSessions,
     loadSession,
     saveSession,
+    flushPendingSave,
     createNewSession,
     deleteSession,
     syncBlackboardEntry,

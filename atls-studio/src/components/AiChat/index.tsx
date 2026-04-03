@@ -3251,10 +3251,54 @@ export function AiChat() {
         },
         onError: (error) => {
           console.error('AI error:', error);
+          // Preserve accumulated reasoning/text from prior tool rounds
+          const partialParts: MessagePart[] = [];
+          if (accumulatedReasoningRef.current) {
+            partialParts.push({ type: 'reasoning', content: accumulatedReasoningRef.current });
+          }
+          if (accumulatedTextRef.current) {
+            partialParts.push({ type: 'text', content: accumulatedTextRef.current });
+          }
+          for (const seg of streamingSegmentsRef.current) {
+            if (seg.type === 'text') {
+              const cleaned = cleanStreamingContent(seg.content);
+              if (cleaned) partialParts.push({ type: 'text', content: cleaned });
+            } else if (seg.type === 'reasoning' && seg.content) {
+              partialParts.push({ type: 'reasoning', content: seg.content });
+            } else if (seg.type === 'tool') {
+              const tc = messageToolCalls.get(seg.toolCall.id);
+              if (tc) {
+                partialParts.push({
+                  type: 'tool',
+                  toolCall: {
+                    id: tc.id, name: tc.name, args: tc.args, result: tc.result,
+                    status: (tc.status === 'completed' ? 'completed' : 'failed') as 'completed' | 'failed',
+                    thoughtSignature: tc.thoughtSignature,
+                    ...(tc.syntheticChildren?.length ? { syntheticChildren: tc.syntheticChildren } : {}),
+                  },
+                });
+              }
+            }
+          }
+          const priorText = partialParts
+            .filter((s): s is { type: 'text'; content: string } => s.type === 'text')
+            .map(s => s.content)
+            .join('\n');
+          if (priorText || partialParts.some(s => s.type === 'tool' || s.type === 'reasoning')) {
+            addMessage({
+              role: 'assistant',
+              content: priorText || '*(Partial response before error)*',
+              parts: partialParts.length > 0 ? partialParts : undefined,
+            });
+          }
           addMessage({
             role: 'assistant',
             content: `❌ **Error**: ${error.message}\n\nPlease check your API key and try again.`,
           });
+          streamingSegmentsRef.current = [];
+          accumulatedTextRef.current = '';
+          accumulatedReasoningRef.current = '';
+          seenToolCallIds.current.clear();
         },
         onDone: () => {
           isStreamingRef.current = false;
@@ -3582,10 +3626,54 @@ export function AiChat() {
         },
         onError: (error) => {
           console.error('AI error:', error);
+          // Preserve accumulated reasoning/text from prior tool rounds
+          const partialParts: MessagePart[] = [];
+          if (accumulatedReasoningRef.current) {
+            partialParts.push({ type: 'reasoning', content: accumulatedReasoningRef.current });
+          }
+          if (accumulatedTextRef.current) {
+            partialParts.push({ type: 'text', content: accumulatedTextRef.current });
+          }
+          for (const seg of streamingSegmentsRef.current) {
+            if (seg.type === 'text') {
+              const cleaned = cleanStreamingContent(seg.content);
+              if (cleaned) partialParts.push({ type: 'text', content: cleaned });
+            } else if (seg.type === 'reasoning' && seg.content) {
+              partialParts.push({ type: 'reasoning', content: seg.content });
+            } else if (seg.type === 'tool') {
+              const tc = messageToolCalls.get(seg.toolCall.id);
+              if (tc) {
+                partialParts.push({
+                  type: 'tool',
+                  toolCall: {
+                    id: tc.id, name: tc.name, args: tc.args, result: tc.result,
+                    status: (tc.status === 'completed' ? 'completed' : 'failed') as 'completed' | 'failed',
+                    thoughtSignature: tc.thoughtSignature,
+                    ...(tc.syntheticChildren?.length ? { syntheticChildren: tc.syntheticChildren } : {}),
+                  },
+                });
+              }
+            }
+          }
+          const priorText = partialParts
+            .filter((s): s is { type: 'text'; content: string } => s.type === 'text')
+            .map(s => s.content)
+            .join('\n');
+          if (priorText || partialParts.some(s => s.type === 'tool' || s.type === 'reasoning')) {
+            addMessage({
+              role: 'assistant',
+              content: priorText || '*(Partial response before error)*',
+              parts: partialParts.length > 0 ? partialParts : undefined,
+            });
+          }
           addMessage({
             role: 'assistant',
             content: `❌ **Error**: ${error.message}\n\nPlease check your API key and try again.`,
           });
+          streamingSegmentsRef.current = [];
+          accumulatedTextRef.current = '';
+          accumulatedReasoningRef.current = '';
+          seenToolCallIds.current.clear();
         },
         onDone: () => {
           isStreamingRef.current = false;

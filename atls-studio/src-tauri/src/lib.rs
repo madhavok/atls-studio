@@ -2731,6 +2731,8 @@ pub fn run() {
             commands::chat_db_get_messages,
             commands::chat_db_add_segments,
             commands::chat_db_get_segments,
+            commands::chat_db_delete_segments,
+            commands::chat_db_replace_segments,
             commands::chat_db_add_blackboard_entry,
             commands::chat_db_get_blackboard_entries,
             commands::chat_db_get_content_by_hash,

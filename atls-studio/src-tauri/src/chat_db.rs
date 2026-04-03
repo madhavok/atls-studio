@@ -664,6 +664,33 @@ pub fn add_segments(state: &ChatDbState, message_id: &str, segments: Vec<Segment
     })
 }
 
+pub fn delete_segments(state: &ChatDbState, message_id: &str) -> Result<i64, String> {
+    state.with_conn(|conn| {
+        let deleted = conn.execute(
+            "DELETE FROM segments WHERE message_id = ?1",
+            params![message_id],
+        )?;
+        Ok(deleted as i64)
+    })
+}
+
+pub fn replace_segments(state: &ChatDbState, message_id: &str, segments: Vec<SegmentInput>) -> Result<(), String> {
+    state.with_conn(|conn| {
+        conn.execute(
+            "DELETE FROM segments WHERE message_id = ?1",
+            params![message_id],
+        )?;
+        for seg in segments {
+            conn.execute(
+                "INSERT INTO segments (message_id, seq, type, content, tool_name, tool_args, tool_result) 
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                params![message_id, seg.seq, seg.segment_type, seg.content, seg.tool_name, seg.tool_args, seg.tool_result],
+            )?;
+        }
+        Ok(())
+    })
+}
+
 pub fn get_segments(state: &ChatDbState, message_id: &str) -> Result<Vec<DbSegment>, String> {
     state.with_conn(|conn| {
         let mut stmt = conn.prepare(

@@ -99,6 +99,20 @@ pub async fn chat_db_get_segments(message_id: String, state: tauri::State<'_, Ch
 }
 
 #[tauri::command]
+pub async fn chat_db_delete_segments(message_id: String, state: tauri::State<'_, ChatDbState>) -> Result<i64, String> {
+    chat_db::delete_segments(&state, &message_id)
+}
+
+#[tauri::command]
+pub async fn chat_db_replace_segments(
+    message_id: String,
+    segments: Vec<chat_db::SegmentInput>,
+    state: tauri::State<'_, ChatDbState>,
+) -> Result<(), String> {
+    chat_db::replace_segments(&state, &message_id, segments)
+}
+
+#[tauri::command]
 pub async fn chat_db_add_blackboard_entry(
     session_id: String,
     hash: String,

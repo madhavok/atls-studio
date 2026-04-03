@@ -11,7 +11,7 @@
  */
 
 import { invoke } from '@tauri-apps/api/core';
-import type { Message, MessageSegment, ChatSession } from '../stores/appStore';
+import type { Message, MessagePart, MessageSegment, ChatSession } from '../stores/appStore';
 import { extractFirstTextFromMessage, getMessageParts } from '../stores/appStore';
 import type { ContextChunk, ChunkType, BlackboardEntry, CognitiveRule, ManifestEntry, ReconcileStats, StagedSnippet, TaskPlan, TransitionBridge, MemoryEvent } from '../stores/contextStore';
 import type { GeminiCacheSnapshot } from './aiService';
@@ -340,6 +340,37 @@ class ChatDbService {
     return await invoke<DbSegment[]>('chat_db_get_segments', { messageId });
   }
 
+  /**
+   * Delete all segments for a message
+   */
+  async deleteSegments(messageId: string): Promise<number> {
+    return await invoke<number>('chat_db_delete_segments', { messageId });
+  }
+
+  /**
+   * Atomically replace all segments for a message (delete + re-insert)
+   */
+  async replaceSegments(messageId: string, segments: MessageSegment[]): Promise<void> {
+    const dbSegments = segments.map((seg, idx) => {
+      if (seg.type === 'text' || seg.type === 'reasoning') {
+        return { message_id: messageId, seq: idx, type: seg.type, content: seg.content, tool_name: undefined, tool_args: undefined, tool_result: undefined };
+      }
+      const tc = seg.toolCall;
+      const argsPayload = {
+        ...tc.args,
+        ...(tc.syntheticChildren?.length ? { __syntheticChildren: tc.syntheticChildren } : {}),
+        ...(tc.thoughtSignature ? { __thoughtSignature: tc.thoughtSignature } : {}),
+      };
+      return {
+        message_id: messageId, seq: idx, type: seg.type, content: '',
+        tool_name: tc.name,
+        tool_args: JSON.stringify(argsPayload),
+        tool_result: tc.result,
+      };
+    });
+    await invoke('chat_db_replace_segments', { messageId, segments: dbSegments });
+  }
+
   // ==========================================================================
   // Blackboard Operations (Context Persistence)
   // ==========================================================================
@@ -628,11 +659,20 @@ class ChatDbService {
           };
         });
 
+        const messageParts: MessagePart[] | undefined = messageSegments.length > 0
+          ? messageSegments.map((seg): MessagePart =>
+              seg.type === 'text' ? { type: 'text', content: seg.content }
+              : seg.type === 'reasoning' ? { type: 'reasoning', content: seg.content }
+              : { type: 'tool', toolCall: (seg as Extract<MessageSegment, { type: 'tool' }>).toolCall },
+            )
+          : undefined;
+
         return {
           id: msg.id,
           role: msg.role as 'user' | 'assistant',
           content: msg.content,
           timestamp: new Date(msg.timestamp),
+          parts: messageParts,
           segments: messageSegments.length > 0 ? messageSegments : undefined,
         };
       })
@@ -654,8 +694,20 @@ class ChatDbService {
     return { session, messages, blackboard, tasks };
   }
 
+  /** Convert MessageParts to persistable MessageSegments. */
+  private partsToSegments(msg: Message): MessageSegment[] {
+    return getMessageParts(msg)
+      .filter((p) => p.type === 'text' || p.type === 'tool' || p.type === 'reasoning')
+      .map((p) =>
+        p.type === 'text' ? { type: 'text' as const, content: p.content }
+          : p.type === 'reasoning' ? { type: 'reasoning' as const, content: p.content }
+          : { type: 'tool' as const, toolCall: p.toolCall },
+      );
+  }
+
   /**
-   * Save a full session (messages + context)
+   * Save a full session (messages + context).
+   * Inserts new messages and **updates** existing ones whose content or segments changed.
    */
   async saveFullSession(
     sessionId: string,
@@ -663,26 +715,32 @@ class ChatDbService {
     blackboard: ContextChunk[],
     contextUsage?: { inputTokens: number; outputTokens: number; costCents?: number }
   ): Promise<void> {
-    // Get existing messages once to avoid repeated queries
     const existingMessages = await this.getMessages(sessionId);
-    const existingMessageIds = new Set(existingMessages.map(m => m.id));
-    
-    // Save messages with segments
+    const existingById = new Map(existingMessages.map(m => [m.id, m]));
+
     for (const msg of messages) {
-      if (!existingMessageIds.has(msg.id)) {
-        // Pass the original message ID to maintain FK consistency
+      const segmentsToSave = this.partsToSegments(msg);
+      const existing = existingById.get(msg.id);
+
+      if (!existing) {
         await this.addMessage(sessionId, msg.role, msg.content, undefined, msg.id);
-        
-        const parts = getMessageParts(msg);
-        const segmentsToSave: MessageSegment[] = parts
-          .filter((p) => p.type === 'text' || p.type === 'tool' || p.type === 'reasoning')
-          .map((p) =>
-            p.type === 'text' ? { type: 'text' as const, content: p.content }
-              : p.type === 'reasoning' ? { type: 'reasoning' as const, content: p.content }
-              : { type: 'tool' as const, toolCall: p.toolCall },
-          );
         if (segmentsToSave.length > 0) {
           await this.addSegments(msg.id, segmentsToSave);
+        }
+      } else {
+        const contentChanged = msg.content !== existing.content;
+        const existingSegments = await this.getSegments(msg.id);
+        const segCountChanged = segmentsToSave.length !== existingSegments.length;
+
+        if (contentChanged) {
+          await this.updateMessageContent(msg.id, msg.content);
+        }
+        if (segCountChanged || contentChanged) {
+          if (segmentsToSave.length > 0) {
+            await this.replaceSegments(msg.id, segmentsToSave);
+          } else if (existingSegments.length > 0) {
+            await this.deleteSegments(msg.id);
+          }
         }
       }
     }
