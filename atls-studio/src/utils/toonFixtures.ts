@@ -27,7 +27,7 @@ export function makeGitDiffResult(hunkLineCount: number) {
       },
     ],
     _next:
-      'Review changes, then: batch({version:"1.0",steps:[{id:"g1",use:"system.git",with:{action:"stage",files:[...]}}]}) or batch({version:"1.0",steps:[{id:"g1",use:"system.git",with:{action:"commit",message:"..."}}]})',
+      'Review changes, then pass q:\ng1 system.git action:stage files:...\nor\ng2 system.git action:commit message:"..."',
   };
 }
 
@@ -42,7 +42,7 @@ export function makeGitStatusResult() {
     untracked: [],
     deleted: [],
     clean: false,
-    _next: 'Stage files: batch({version:"1.0",steps:[{id:"g1",use:"system.git",with:{action:"stage",files:[...]}}]})',
+    _next: 'Stage files: q: g1 system.git action:stage files:...',
   };
 }
 
@@ -74,7 +74,7 @@ export function makeLineEditResult() {
     },
     has_errors: true,
     index: { indexed: 1, duration_ms: 45 },
-    _next: 'Fix 1 error in system.ts:153. Run verify(type:typecheck) to validate',
+    _next: 'Fix 1 error in system.ts:153. Run q: v1 verify.typecheck to validate',
   };
 }
 
@@ -88,7 +88,7 @@ export function makeCreateFilesResult() {
     index: { indexed: 2, duration_ms: 30 },
     summary: { created_count: 2, edited_count: 0, error_count: 0, lints: 0 },
     _next:
-      'All operations completed. Run batch({version:"1.0",steps:[{id:"v1",use:"verify.typecheck"}]}) to validate',
+      'All operations completed. Run q: v1 verify.typecheck to validate',
   };
 }
 
@@ -100,7 +100,7 @@ export function makeGitCommitResult() {
     message: 'fix: convert model-facing handlers from JSON to TOON serialization',
     output:
       '[main abc1234] fix: convert model-facing handlers from JSON to TOON serialization\n 6 files changed, 42 insertions(+), 18 deletions(-)\n',
-    _next: 'Push to remote: batch({version:"1.0",steps:[{id:"g1",use:"system.git",with:{action:"push"}}]})',
+    _next: 'Push to remote: q: g1 system.git action:push',
   };
 }
 

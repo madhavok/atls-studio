@@ -1588,7 +1588,7 @@ export const handleEdit: OpHandler = async (params, ctx) => {
           reason: 'suspect_engrams',
           error_class: 'stale_hash',
           suspect_refs: suspectRefs,
-          action: "run read.context(type:'full', file_paths:[...]) or read.file for those files, then retry",
+          action: "run q: r1 read.context type:full file_paths:... or read.file for those files, then retry",
         };
         useContextStore.getState().recordMemoryEvent({
           action: 'block',

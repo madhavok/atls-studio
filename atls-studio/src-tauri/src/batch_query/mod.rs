@@ -155,23 +155,23 @@ pub async fn atls_batch_query(
                             "1. context/code_search - understand code",
                             "2. edit(creates/edits/line_edits) - auto-lint + auto-write on success",
                             "3. if lint issues: edit(revise:'hash',line_edits:[...]) - fix and re-write (optional)",
-                            "4. verify(type:typecheck) - full type validation",
-                            "5. verify(type:test) - run tests",
-                            "6. git(action:commit) - commit changes"
+                            "4. verify.typecheck - full type validation",
+                            "5. verify.test - run tests",
+                            "6. system.git action:commit - commit changes"
                         ],
                         "safe_refactoring_pipeline": [
                             "1. refactor(action:inventory) - find targets by complexity",
                             "2. refactor(action:impact_analysis, symbol, from) - full blast radius",
                             "3. refactor(action:execute, create, source:'h:X', remove_lines, import_updates) - atomic HPP pipeline with auto-rollback",
-                            "4. verify(type:typecheck) - catch cross-file semantic issues",
+                            "4. verify.typecheck - catch cross-file semantic issues",
                             "5. if errors: refactor(action:rollback, restore:[{file, hash}]) - restore pre-refactor state"
                         ],
                         "hash_building_refactor": [
-                            "1. context(type:'full') + session.pin - get h:SOURCE with FULL content (required for symbol anchors)",
+                            "1. read.context type:full + session.pin - get h:SOURCE with FULL content (required for symbol anchors)",
                             "2. edit(creates:[{path, content:'imports\\n\\nh:SOURCE:cls(Name):dedent\\n'}]) - compose file from hash refs",
                             "3. edit(line_edits:[{action:'delete', line:N, count:M}]) - remove extracted code from source",
                             "4. refactor(action:'rewire_consumers', source_file, target_file, symbol_names:[...]) - auto-rewrite imports in all consumer files",
-                            "5. verify(type:typecheck) - validate all files",
+                            "5. verify.typecheck - validate all files",
                             "CRITICAL: Source hash MUST have full content (not sig/shaped). Symbol anchors (cls/fn/sym) against shaped content will error."
                         ]
                     },
@@ -2073,9 +2073,9 @@ pub async fn atls_batch_query(
                             "deleted": deleted,
                             "clean": staged.is_empty() && modified.is_empty() && untracked.is_empty() && deleted.is_empty(),
                             "_next": if !staged.is_empty() {
-                                "Ready to commit: batch({version:\"1.0\",steps:[{id:\"g1\",use:\"system.git\",with:{action:\"commit\",message:\"...\"}}]})"
+                                "Ready to commit: q: g1 system.git action:commit message:\"...\""
                             } else if !modified.is_empty() || !untracked.is_empty() {
-                                "Stage files: batch({version:\"1.0\",steps:[{id:\"g1\",use:\"system.git\",with:{action:\"stage\",files:[...]}}]})"
+                                "Stage files: q: g1 system.git action:stage files:..."
                             } else {
                                 "Working tree clean"
                             }
@@ -2203,7 +2203,7 @@ pub async fn atls_batch_query(
                             "staged": staged,
                             "summary": stat_output.lines().last().unwrap_or(""),
                             "files": file_diffs,
-                            "_next": "Review changes, then: batch({version:\"1.0\",steps:[{id:\"g1\",use:\"system.git\",with:{action:\"stage\",files:[...]}}]}) or batch({version:\"1.0\",steps:[{id:\"g1\",use:\"system.git\",with:{action:\"commit\",message:\"...\"}}]})"
+                            "_next": "Review changes, then pass q:\ng1 system.git action:stage files:...\nor\ng2 system.git action:commit message:\"...\""
                         }))
                     }
                     "stage" => {
@@ -2240,7 +2240,7 @@ pub async fn atls_batch_query(
                             "action": "stage",
                             "staged": if all { vec!["all".to_string()] } else { file_paths },
                             "success": true,
-                            "_next": "Commit: batch({version:\"1.0\",steps:[{id:\"g1\",use:\"system.git\",with:{action:\"commit\",message:\"...\"}}]})"
+                            "_next": "Commit: q: g1 system.git action:commit message:\"...\""
                         }))
                     }
                     "unstage" => {
@@ -2309,7 +2309,7 @@ pub async fn atls_batch_query(
                             "commit": commit_hash,
                             "message": message,
                             "output": stdout.to_string(),
-                            "_next": "Push to remote: batch({version:\"1.0\",steps:[{id:\"g1\",use:\"system.git\",with:{action:\"push\"}}]})"
+                            "_next": "Push to remote: q: g1 system.git action:push"
                         }))
                     }
                     "push" => {
@@ -3208,9 +3208,9 @@ pub async fn atls_batch_query(
                         let (output_val, test_truncated, test_total_lines) = truncate_output_tail_biased(&combined, 5000, 15, 50);
                         let _ = output_truncated; // superseded by test_truncated
                         let test_next = if success {
-                            "Tests passed. Ready to commit: batch({version:\"1.0\",steps:[{id:\"g1\",use:\"system.git\",with:{action:\"stage\",all:true}}]})"
+                            "Tests passed. Ready to commit: q: g1 system.git action:stage all:true"
                         } else {
-                            "Fix failing tests, then re-run: batch({version:\"1.0\",steps:[{id:\"v1\",use:\"verify.test\"}]})"
+                            "Fix failing tests, then re-run: q: v1 verify.test"
                         };
                         let status = if !output.status.success() || failed > 0 {
                             "fail"
@@ -3436,9 +3436,9 @@ pub async fn atls_batch_query(
                                 "warning_count": warnings.len()
                             },
                             "_next": if success {
-                                "Build succeeded. Run tests: batch({version:\"1.0\",steps:[{id:\"v1\",use:\"verify.test\"}]})"
+                                "Build succeeded. Run tests: q: v1 verify.test"
                             } else {
-                                "Fix build errors, then re-run: batch({version:\"1.0\",steps:[{id:\"v1\",use:\"verify.build\"}]})"
+                                "Fix build errors, then re-run: q: v1 verify.build"
                             }
                         });
                         if !success {
@@ -3601,9 +3601,9 @@ pub async fn atls_batch_query(
                                     "warning_count": warnings.len()
                                 },
                                 "_next": if success {
-                                    "Types are valid. Run tests: batch({version:\"1.0\",steps:[{id:\"v1\",use:\"verify.test\"}]})"
+                                    "Types are valid. Run tests: q: v1 verify.test"
                                 } else {
-                                    "Fix type errors using batch({version:\"1.0\",steps:[{id:\"e1\",use:\"change.edit\",with:{line_edits:[...]}}]}), then re-run: batch({version:\"1.0\",steps:[{id:\"v1\",use:\"verify.typecheck\"}]})"
+                                    "Fix type errors using q: e1 change.edit file_path:... line_edits:[...], then re-run: v2 verify.typecheck"
                                 }
                             });
                             result["_metadata"] = verify_metadata(&work_dir, &manifest_file, &"cargo check --message-format=json", &selection_reason);
@@ -3687,9 +3687,9 @@ pub async fn atls_batch_query(
                                     "error_count": errors.len()
                                 },
                                 "_next": if success {
-                                    "Types are valid. Run tests: batch({version:\"1.0\",steps:[{id:\"v1\",use:\"verify.test\"}]})"
+                                    "Types are valid. Run tests: q: v1 verify.test"
                                 } else {
-                                    "Fix type errors using batch({version:\"1.0\",steps:[{id:\"e1\",use:\"change.edit\",with:{line_edits:[...]}}]}), then re-run: batch({version:\"1.0\",steps:[{id:\"v1\",use:\"verify.typecheck\"}]})"
+                                    "Fix type errors using q: e1 change.edit file_path:... line_edits:[...], then re-run: v2 verify.typecheck"
                                 }
                             });
                             result["_metadata"] = verify_metadata(&work_dir, &manifest_file, &"npx -p typescript tsc -b --pretty false", &selection_reason);
@@ -3712,7 +3712,7 @@ pub async fn atls_batch_query(
                             let combined = combine_output(&stdout, &stderr);
                             let success = output.status.success();
                             let (java_output, java_truncated, java_total) = truncate_output_tail_biased(&combined, 5000, 15, 50);
-                            let java_next = if success { "Compilation passed." } else { "Fix compilation errors, then re-run: batch({version:\"1.0\",steps:[{id:\"v1\",use:\"verify.typecheck\"}]})" };
+                            let java_next = if success { "Compilation passed." } else { "Fix compilation errors, then re-run: q: v1 verify.typecheck" };
                             Ok(serde_json::json!({
                                 "type": "typecheck",
                                 "toolchain": "java",
@@ -3729,7 +3729,7 @@ pub async fn atls_batch_query(
                             let combined = combine_output(&stdout, &stderr);
                             let success = output.status.success();
                             let (csharp_output, csharp_truncated, csharp_total) = truncate_output_tail_biased(&combined, 5000, 15, 50);
-                            let csharp_next = if success { "Build passed." } else { "Fix build errors, then re-run: batch({version:\"1.0\",steps:[{id:\"v1\",use:\"verify.build\"}]})" };
+                            let csharp_next = if success { "Build passed." } else { "Fix build errors, then re-run: q: v1 verify.build" };
                             Ok(serde_json::json!({
                                 "type": "typecheck",
                                 "toolchain": "csharp",
@@ -3746,7 +3746,7 @@ pub async fn atls_batch_query(
                             let combined = combine_output(&stdout, &stderr);
                             let success = output.status.success();
                             let (swift_output, swift_truncated, swift_total) = truncate_output_tail_biased(&combined, 5000, 15, 50);
-                            let swift_next = if success { "Build passed." } else { "Fix build errors, then re-run: batch({version:\"1.0\",steps:[{id:\"v1\",use:\"verify.build\"}]})" };
+                            let swift_next = if success { "Build passed." } else { "Fix build errors, then re-run: q: v1 verify.build" };
                             Ok(serde_json::json!({
                                 "type": "typecheck",
                                 "toolchain": "swift",
@@ -3811,9 +3811,9 @@ pub async fn atls_batch_query(
                                     "error_count": errors.len()
                                 },
                                 "_next": if success {
-                                    "go vet passed. Run tests: batch({version:\"1.0\",steps:[{id:\"v1\",use:\"verify.test\"}]})"
+                                    "go vet passed. Run tests: q: v1 verify.test"
                                 } else {
-                                    "Fix vet errors, then re-run: batch({version:\"1.0\",steps:[{id:\"v1\",use:\"verify.typecheck\",with:{toolchain:\"go\"}}]})"
+                                    "Fix vet errors, then re-run: q: v1 verify.typecheck toolchain:go"
                                 }
                             }))
                         } else if use_python {
@@ -3936,9 +3936,9 @@ pub async fn atls_batch_query(
                                     "error_count": errors.len()
                                 },
                                 "_next": if success {
-                                    "Type check passed. Run tests: batch({version:\"1.0\",steps:[{id:\"v1\",use:\"verify.test\"}]})"
+                                    "Type check passed. Run tests: q: v1 verify.test"
                                 } else {
-                                    "Fix type errors, then re-run: batch({version:\"1.0\",steps:[{id:\"v1\",use:\"verify.typecheck\",with:{toolchain:\"python\"}}]})"
+                                    "Fix type errors, then re-run: q: v1 verify.typecheck toolchain:python"
                                 }
                             }))
                         } else if use_c {
@@ -4010,9 +4010,9 @@ pub async fn atls_batch_query(
                                     "error_count": errors.len()
                                 },
                                 "_next": if success {
-                                    "Build passed. Run tests: batch({version:\"1.0\",steps:[{id:\"v1\",use:\"verify.test\"}]})"
+                                    "Build passed. Run tests: q: v1 verify.test"
                                 } else {
-                                    "Fix compilation errors, then re-run: batch({version:\"1.0\",steps:[{id:\"v1\",use:\"verify.typecheck\",with:{toolchain:\"c\"}}]})"
+                                    "Fix compilation errors, then re-run: q: v1 verify.typecheck toolchain:c"
                                 }
                             }))
                         } else {
@@ -4142,7 +4142,7 @@ pub async fn atls_batch_query(
                                 "error": "Lint tool not available",
                                 "stderr": if stderr.len() < 1000 { stderr.clone() } else { stderr[..1000].to_string() },
                                 "hint": "Install the required linter. E.g.: pip install flake8, npm i -g eslint, cargo install clippy",
-                                "_next": "Install the missing tool and retry: batch({version:\"1.0\",steps:[{id:\"v1\",use:\"verify.lint\"}]})"
+                                "_next": "Install the missing tool and retry: q: v1 verify.lint"
                             }));
                         }
 
@@ -4154,9 +4154,9 @@ pub async fn atls_batch_query(
                             "issues": issues,
                             "issue_count": real_issue_count,
                             "_next": if success {
-                                "Linting passed. Run: batch({version:\"1.0\",steps:[{id:\"v1\",use:\"verify.test\"}]})"
+                                "Linting passed. Run: q: v1 verify.test"
                             } else {
-                                "Fix lint issues with batch({version:\"1.0\",steps:[{id:\"e1\",use:\"change.edit\",with:{line_edits:[...]}}]})"
+                                "Fix lint issues with q: e1 change.edit file_path:... line_edits:[...]"
                             }
                         });
                         if !stderr.is_empty() && stderr.len() < 500 {
@@ -5082,7 +5082,7 @@ pub async fn atls_batch_query(
                 Ok(serde_json::json!({
                     "concepts": concepts,
                     "results": all_results,
-                    "_next": "Use batch({version:\"1.0\",steps:[{id:\"r1\",use:\"read.context\",with:{type:\"smart\",file_paths:[...]}}]}) to read the matched code"
+                    "_next": "Use q: r1 read.context type:smart file_paths:... to read the matched code"
                 }))
             }
             "find_issues" => {
@@ -5274,7 +5274,7 @@ pub async fn atls_batch_query(
                                 "offset": applied_offset,
                                 "has_more": has_more
                             },
-                            "_next": "summary.matching_total is the full matching row count; summary.total is this page. Use limit/offset to paginate, batch({version:\"1.0\",steps:[{id:\"e1\",use:\"change.edit\",with:{line_edits:[...]}}]}) to fix, batch({version:\"1.0\",steps:[{id:\"s1\",use:\"search.issues\",with:{mark_noise:true,...}}]}) to suppress"
+                            "_next": "summary.matching_total is the full matching row count; summary.total is this page. Use limit/offset to paginate, q: e1 change.edit file_path:... line_edits:[...] to fix, q: s1 search.issues mark_noise:true ... to suppress"
                         });
                         if filtered.is_empty() {
                             result["_hint"] = serde_json::json!(
@@ -6098,7 +6098,7 @@ pub async fn atls_batch_query(
                         "unassigned": unassigned.len(),
                         "modules": proposed_modules.len(),
                     },
-                    "_next": "To execute: change.refactor(action:\"extract\", file_path:source, extractions: proposed_modules.map(m => {target_file:m.target, methods:m.symbols}), dry_run:true)"
+                    "_next": "To execute: q: r1 change.refactor action:extract file_paths:<source> ... dry_run:true (see change.refactor for extractions / target modules)"
                 });
 
                 if !hubs.is_empty() {
@@ -6414,7 +6414,7 @@ pub async fn atls_batch_query(
                     } else if !lint_results.is_empty() {
                         "Split complete with lint errors. Fix errors and run verify."
                     } else {
-                        "Split complete. Run batch({version:\"1.0\",steps:[{id:\"v1\",use:\"verify.typecheck\"}]}) to validate."
+                        "Split complete. Run q: v1 verify.typecheck to validate."
                     }
                 }))
             }
@@ -8466,9 +8466,9 @@ pub async fn atls_batch_query(
                     } else if all_extracted_methods.is_empty() {
                         "No methods found in symbol index. Re-index the project and retry."
                     } else if source_removal_result.is_some() {
-                        "Extraction complete. Methods removed from source and target files created. Verify with: batch({version:\"1.0\",steps:[{id:\"v1\",use:\"verify.typecheck\"}]})"
+                        "Extraction complete. Methods removed from source and target files created. Verify with: q: v1 verify.typecheck"
                     } else {
-                        "Target files created. Verify with: batch({version:\"1.0\",steps:[{id:\"v1\",use:\"verify.typecheck\"}]})"
+                        "Target files created. Verify with: q: v1 verify.typecheck"
                     }
                 });
                 if was_reordered {
@@ -10244,7 +10244,7 @@ pub async fn atls_batch_query(
                     } else if dry_run {
                         "Preview complete. Set dry_run:false to apply rename"
                     } else {
-                        "Rename applied. Run batch({version:\"1.0\",steps:[{id:\"v1\",use:\"verify.typecheck\"}]}) to check for errors"
+                        "Rename applied. Run q: v1 verify.typecheck to check for errors"
                     }
                 });
 
@@ -10499,7 +10499,7 @@ pub async fn atls_batch_query(
                         "lints": lint_summary.as_ref().map(|s| s.total).unwrap_or(0)
                     },
                     "_next": if errors.is_empty() {
-                        "All operations completed. Run batch({version:\"1.0\",steps:[{id:\"v1\",use:\"verify.typecheck\"}]}) to validate"
+                        "All operations completed. Run q: v1 verify.typecheck to validate"
                     } else {
                         "Some operations failed. Check errors array"
                     }
@@ -10584,7 +10584,7 @@ pub async fn atls_batch_query(
                                     "actual_hash": old_hash,
                                     "content_hash": old_hash,
                                     "stale_hash_root_cause": "file_bytes_changed",
-                                    "_next": "Re-read the file with context(type:'full',file_paths:[...]) to get a fresh hash, then retry",
+                                    "_next": "Re-read the file with q: r1 read.context type:full file_paths:... to get a fresh hash, then retry",
                                 }));
                             }
                         },
@@ -10720,7 +10720,7 @@ pub async fn atls_batch_query(
                 let next_hint = if let Some(ref summary) = lint_summary {
                     build_lint_fix_hint(summary, &hashes)
                 } else {
-                    "Applied. Run verify(type:typecheck) to validate".to_string()
+                    "Applied. Run q: v1 verify.typecheck to validate".to_string()
                 };
                 let indexer = project.indexer().clone();
                 // Lock already released at function entry
@@ -10986,7 +10986,7 @@ pub async fn atls_batch_query(
                                                             "expected_hash": canonicalize_expected_content_hash(expected_hash),
                                                             "actual_hash": actual_hash,
                                                             "stale_hash_root_cause": "file_bytes_changed",
-                                                            "_next": "Re-read the file with context(type:'full',file_paths:[...]) to get a fresh hash, then retry",
+                                                            "_next": "Re-read the file with q: r1 read.context type:full file_paths:... to get a fresh hash, then retry",
                                                         }));
                                                     }
                                                 }
@@ -10998,7 +10998,7 @@ pub async fn atls_batch_query(
                                                         "expected_hash": canonicalize_expected_content_hash(expected_hash),
                                                         "actual_hash": actual_hash,
                                                         "stale_hash_root_cause": "file_bytes_changed",
-                                                        "_next": "Re-read the file with context(type:'full',file_paths:[...]) to get a fresh hash, then retry",
+                                                        "_next": "Re-read the file with q: r1 read.context type:full file_paths:... to get a fresh hash, then retry",
                                                     }));
                                                 }
                                             }
@@ -11270,7 +11270,7 @@ pub async fn atls_batch_query(
                                                     "expected_hash": canonicalize_expected_content_hash(expected_hash),
                                                     "actual_hash": actual_hash,
                                                     "stale_hash_root_cause": "file_bytes_changed",
-                                                    "_next": "Re-read the file with context(type:'full',file_paths:[...]) to get a fresh hash, then retry",
+                                                    "_next": "Re-read the file with q: r1 read.context type:full file_paths:... to get a fresh hash, then retry",
                                                 }));
                                             }
                                         }
@@ -11282,7 +11282,7 @@ pub async fn atls_batch_query(
                                                 "expected_hash": canonicalize_expected_content_hash(expected_hash),
                                                 "actual_hash": actual_hash,
                                                 "stale_hash_root_cause": "file_bytes_changed",
-                                                "_next": "Re-read the file with context(type:'full',file_paths:[...]) to get a fresh hash, then retry",
+                                                "_next": "Re-read the file with q: r1 read.context type:full file_paths:... to get a fresh hash, then retry",
                                             }));
                                         }
                                     }
@@ -11339,7 +11339,7 @@ pub async fn atls_batch_query(
                             let next_hint = match error_class {
                                 "overlapping_line_edits" => "Make line_edits non-overlapping, or re-read the file and retry with narrower anchors",
                                 "line_out_of_range" => "Re-read the latest file content and retry with current anchors or line ranges",
-                                "anchor_not_found" => "Re-read the target file with batch({version:\"1.0\",steps:[{id:\"r1\",use:\"read.context\",with:{type:\"full\",file_paths:[...]}}]}), then retry with current anchors",
+                                "anchor_not_found" => "Re-read the target file with q: r1 read.context type:full file_paths:..., then retry with current anchors",
                                 _ => "Re-read the target file and retry with current anchors or old text",
                             };
                             return Ok(serde_json::json!({
@@ -11384,7 +11384,7 @@ pub async fn atls_batch_query(
                             "error": "all_edits_failed",
                             "error_class": error_class,
                             "edit_warnings": edit_warnings,
-                            "_next": "Re-read the target file with batch({version:\"1.0\",steps:[{id:\"r1\",use:\"read.context\",with:{type:\"full\",file_paths:[...]}}]}), then retry with correct old text",
+                            "_next": "Re-read the target file with q: r1 read.context type:full file_paths:..., then retry with correct old text",
                             "_retry_payload": {
                                 "file_paths": retry_files,
                                 "strategy": "read_shaped_sig_then_retry",
@@ -11405,7 +11405,7 @@ pub async fn atls_batch_query(
                         "error": "no_files_produced_for_draft",
                         "error_class": "no_files_produced_for_draft",
                         "_next": "No draft files were produced — all edits, creates, and line_edits either failed to match or were no-ops. \
-                                  Re-read the target with read.shaped(sig) + read.lines for targeted edits, or context(type:'full',file_paths:[...]) for broad changes, then retry with exact content from the fresh read.",
+                                  Re-read the target with read.shaped(sig) + read.lines for targeted edits, or q: r1 read.context type:full file_paths:... for broad changes, then retry with exact content from the fresh read.",
                     }));
                 }
 
@@ -11471,7 +11471,7 @@ pub async fn atls_batch_query(
                             entry["h"] = serde_json::json!(new_short);
                             let diff_ref = format!("{}..{}", old_short, new_short);
                             entry["diff_ref"] = serde_json::json!(diff_ref);
-                            entry["_cite"] = serde_json::json!(format!("\"Changes: {}\" â€” UI renders colored diff", diff_ref));
+                            entry["q"] = serde_json::json!(format!("\"Changes: {}\" — UI renders colored diff", diff_ref));
                         }
                     }
                     draft_results.push(entry);
@@ -11608,7 +11608,7 @@ pub async fn atls_batch_query(
                             if let Some(old_short) = draft.get("old_h").and_then(|v| v.as_str()) {
                                 let diff_ref = format!("{}..{}", old_short, new_short);
                                 draft["diff_ref"] = serde_json::json!(diff_ref.clone());
-                                draft["_cite"] = serde_json::json!(format!("\"Changes: {}\" â€” UI renders colored diff", diff_ref));
+                                draft["q"] = serde_json::json!(format!("\"Changes: {}\" — UI renders colored diff", diff_ref));
                             }
                         }
                     }
@@ -11650,7 +11650,7 @@ pub async fn atls_batch_query(
                     } else if !write_errors.is_empty() {
                         "Some files failed to write — see write_errors. Others written. Run verify when ready.".to_string()
                     } else {
-                        "Written to disk. Run batch({version:\"1.0\",steps:[{id:\"v1\",use:\"verify.typecheck\"}]}) to validate".to_string()
+                        "Written to disk. Run q: v1 verify.typecheck to validate".to_string()
                     };
                     let mut result = serde_json::json!({
                         "mode": "draft+written",
@@ -11697,7 +11697,7 @@ pub async fn atls_batch_query(
                 let next_hint = if let Some(ref summary) = lint_summary {
                     build_lint_fix_hint(summary, &all_hashes)
                 } else {
-                    "Clean (buffered). Use batch({version:\"1.0\",steps:[{id:\"e1\",use:\"change.edit\",with:{flush:[...]}}]}) to write".to_string()
+                    "Clean (buffered). Use q: e1 change.edit flush:... to write".to_string()
                 };
 
                 let has_errors = lint_summary.as_ref()
@@ -11883,7 +11883,7 @@ pub async fn atls_batch_query(
                         "diff_ref": diff_ref,
                         "index": index_result,
                         "_next": if write_ok {
-                            "Written to disk. Run batch({version:\"1.0\",steps:[{id:\"v1\",use:\"verify.typecheck\"}]}) to validate"
+                            "Written to disk. Run q: v1 verify.typecheck to validate"
                         } else {
                             "Disk write failed — see write_errors"
                         }
@@ -11922,7 +11922,7 @@ pub async fn atls_batch_query(
                 let next_hint = if let Some(ref summary) = lint_summary {
                     build_lint_fix_hint(summary, &hashes)
                 } else {
-                    "Clean (buffered). Use batch({version:\"1.0\",steps:[{id:\"e1\",use:\"change.edit\",with:{flush:[...]}}]}) to write".to_string()
+                    "Clean (buffered). Use q: e1 change.edit flush:... to write".to_string()
                 };
                 let new_short = format!("h:{}", &new_hash[..std::cmp::min(8, new_hash.len())]);
                 let old_short = format!("h:{}", &old_hash[..std::cmp::min(8, old_hash.len())]);
@@ -12098,7 +12098,7 @@ pub async fn atls_batch_query(
                     "errors": errors,
                     "index": index_result,
                     "_next": if errors.is_empty() {
-                        "Files written. Run batch({version:\"1.0\",steps:[{id:\"v1\",use:\"verify.typecheck\"}]}) to validate"
+                        "Files written. Run q: v1 verify.typecheck to validate"
                     } else {
                         "Some flushes failed. Check errors array"
                     }
@@ -12137,7 +12137,7 @@ pub async fn atls_batch_query(
                         "mode": "undo_list",
                         "entries": entries,
                         "count": entries.len(),
-                        "_next": "Use batch({version:\"1.0\",steps:[{id:\"e1\",use:\"change.edit\",with:{undo:\"<hash>\"}}]}) or batch({version:\"1.0\",steps:[{id:\"e1\",use:\"change.edit\",with:{undo:\"<file_path>\"}}]}) to restore"
+                        "_next": "Use q: e1 change.edit undo:<hash> OR e2 change.edit undo:<file_path> to restore"
                     }));
                 }
 
@@ -12234,7 +12234,7 @@ pub async fn atls_batch_query(
                                             "diff_ref": diff_ref,
                                             "status": "restored",
                                             "index": index_result,
-                                            "_next": "File restored. Run batch({version:\"1.0\",steps:[{id:\"v1\",use:\"verify.typecheck\"}]}) to validate"
+                                            "_next": "File restored. Run q: v1 verify.typecheck to validate"
                                         }))
                                     }
                                     Err(e) => Ok(serde_json::json!({
@@ -12314,7 +12314,7 @@ pub async fn atls_batch_query(
                                                     "diff_ref": diff_ref,
                                                     "status": "restored_from_registry",
                                                     "index": index_result,
-                                                    "_next": "Restored from hash registry. Run batch({version:\"1.0\",steps:[{id:\"v1\",use:\"verify.typecheck\"}]}) to validate"
+                                                    "_next": "Restored from hash registry. Run q: v1 verify.typecheck to validate"
                                                 }))
                                             }
                                             Err(e) => Ok(serde_json::json!({
@@ -12338,7 +12338,7 @@ pub async fn atls_batch_query(
                     None => {
                         let entry_count: usize = undo_store.values().map(|s| s.len()).sum();
                         Ok(serde_json::json!({
-                            "error": "Not found in undo store. Use batch({version:\"1.0\",steps:[{id:\"e1\",use:\"change.edit\",with:{undo:\"list\"}}]}) to see available entries.",
+                            "error": "Not found in undo store. Use q: e1 change.edit undo:list to see available entries.",
                             "ref": undo_ref,
                             "_hint": "Entry may have been evicted or already undone. Use edit({undo:'list'}}) to see available entries.",
                             "undo_store_entries": entry_count
@@ -12368,9 +12368,9 @@ pub async fn atls_batch_query(
                     "drafts": drafts,
                     "count": drafts.len(),
                     "_next": if drafts.is_empty() {
-                        "No buffered drafts. Use batch({version:\"1.0\",steps:[{id:\"e1\",use:\"change.edit\",with:{draft:true,...}}]}) to create one."
+                        "No buffered drafts. Use q: e1 change.edit draft:true ... to create one."
                     } else {
-                        "Use batch({version:\"1.0\",steps:[{id:\"e1\",use:\"change.edit\",with:{revise:\"<hash>\",...}}]}) to patch, batch({version:\"1.0\",steps:[{id:\"e1\",use:\"change.edit\",with:{flush:[\"<hash>\"]}}]}) to write, or batch({version:\"1.0\",steps:[{id:\"e1\",use:\"change.edit\",with:{undo:\"<hash>\"}}]}) to rollback"
+                        "Use q: e1 change.edit revise:<hash> ... to patch, q: e2 change.edit flush:<hash> to write, or q: e3 change.edit undo:<hash> to rollback"
                     }
                 }))
             }
@@ -12450,7 +12450,7 @@ pub async fn atls_batch_query(
                             "_next": if changes == 0 {
                                 "No differences between buffer and disk"
                             } else {
-                                "Use batch({version:\"1.0\",steps:[{id:\"e1\",use:\"change.edit\",with:{flush:[\"<hash>\"]}}]}) to write buffer to disk, or batch({version:\"1.0\",steps:[{id:\"e1\",use:\"change.edit\",with:{undo:\"<hash>\"}}]}) to discard"
+                                "Use q: e1 change.edit flush:<hash> to write buffer to disk, or q: e2 change.edit undo:<hash> to discard"
                             }
                         }))
                     }
@@ -12458,7 +12458,7 @@ pub async fn atls_batch_query(
                         Ok(serde_json::json!({
                             "error": "Hash not found in buffer",
                             "hash": hash,
-                            "hint": "Use batch({version:\"1.0\",steps:[{id:\"e1\",use:\"change.edit\",with:{list_drafts:true}}]}) to see available hashes"
+                            "hint": "Use q: e1 change.edit list_drafts:true to see available hashes"
                         }))
                     }
                 }
@@ -14024,7 +14024,7 @@ pub async fn atls_batch_query(
                     },
                     "_rollback_applied": format!("Applied {} restore and {} delete entries.", restored.len(), deleted.len()),
                     "_next": if errors.is_empty() {
-                        "All files restored and created files deleted. Run batch({version:\"1.0\",steps:[{id:\"v1\",use:\"verify.typecheck\"}]}) to validate."
+                        "All files restored and created files deleted. Run q: v1 verify.typecheck to validate."
                     } else {
                         "Some files could not be restored. Check errors array."
                     }
@@ -15538,7 +15538,7 @@ pub async fn atls_batch_query(
         };
 
     // Post-process: inject status field and hash warnings.
-    // _next/hint/_hint are intentionally preserved â€” they provide state-dependent
+    // _next/hint/_hint are intentionally preserved — they provide state-dependent
     // workflow guidance that models rely on for chaining (e.g. "Run verify after edit").
     if let Ok(ref mut val) = result {
         if let Some(obj) = val.as_object_mut() {

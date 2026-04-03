@@ -136,7 +136,7 @@ d2 delegate.code query:"add input validation to UserService.create" focus_files:
 export const NATIVE_TOOL_TOKENS_ESTIMATE = 100;
 
 export const DESIGNER_TOOL_REF = `## Designer Tools — READ ONLY
-Use batch() only. One step per line: ID USE key:val
+Use batch with q: only — one step per line: ID USE key:val
 
 Examples
 s1 search.code queries:auth,login

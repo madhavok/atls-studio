@@ -51,7 +51,7 @@ interface SnapshotIdentity {
 
 | Level | Acquired By | Authorizes |
 |-------|-------------|------------|
-| **CANONICAL** (3) | `read.context(type: full)` | Full-file edits |
+| **CANONICAL** (3) | `read.context type:full` | Full-file edits |
 | **TARGETED** (2) | `read.lines` | Edits within the read range |
 | **SHAPED** (1) | `read.shaped` | Structural awareness only (no edits) |
 | **NONE** (0) | — | Nothing |

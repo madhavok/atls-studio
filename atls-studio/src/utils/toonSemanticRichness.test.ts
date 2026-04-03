@@ -37,7 +37,7 @@ describe('TOON semantic retention + token efficiency', () => {
       'src-tauri/src/batch_query/mod.rs',
       'src/stores/appStore.ts',
       '2 files changed, 275 insertions(+), 73 deletions(-)',
-      'Review changes, then:',
+      'Review changes, then pass q:',
       'system.git',
     ]);
   });
@@ -56,7 +56,7 @@ describe('TOON semantic retention + token efficiency', () => {
       'error',
       'warning',
       'Fix 1 error in system.ts:153',
-      'verify(type:typecheck)',
+      'verify.typecheck',
     ]);
   });
 

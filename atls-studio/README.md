@@ -176,11 +176,11 @@ ATLS Studio supports a content-as-ref composition model for code extraction and 
 
 ### Pipeline Steps
 
-1. `context(type:'full')` + `session.pin` - obtain `h:SOURCE` with full file content
+1. `read.context type:full` + `session.pin` - obtain `h:SOURCE` with full file content
 2. `edit(creates:[{path, content}])` - compose new file using `h:SOURCE:cls(Name):dedent` refs in content
 3. `edit(line_edits:[{action:'delete', line:N, count:M}])` - remove extracted code from source
 4. `refactor(action:'rewire_consumers', source_file, target_file, symbol_names:[...])` - auto-rewrite imports in all consumer files + add source import
-5. `verify(type:typecheck)` - validate all files
+5. `verify.typecheck` - validate all files
 
 ### Requirements
 

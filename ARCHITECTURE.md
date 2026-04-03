@@ -264,7 +264,7 @@ Awareness is tiered:
 
 | Level | Meaning | Acquired By |
 |-------|---------|-------------|
-| **CANONICAL** | Full file content read | `read.context(type: full)` |
+| **CANONICAL** | Full file content read | `read.context type:full` |
 | **TARGETED** | Specific line range read | `read.lines` |
 | **SHAPED** | Structural signature only | `read.shaped` |
 | **NONE** | No awareness | — |

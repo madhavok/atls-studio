@@ -121,7 +121,7 @@ pub async fn handle_find_issues(
             },
             "issues": {},
             "total": 0,
-            "_next": "Retry without filters or run manage({action:'scan'}) based on the hint above"
+            "_next": "Retry without filters or run manage({action:'scan'}) to refresh the index — see hint above"
         }));
     }
     // Batch resolve file IDs to paths (avoids N+1 queries)
@@ -187,6 +187,6 @@ pub async fn handle_find_issues(
     Ok(serde_json::json!({
         "issues": by_file,
         "total": total,
-        "_next": "Use find_issues(file_paths:[...]) to drill into specific files"
+        "_next": "Use find_issues with file_paths narrowed to specific files to drill down"
     }))
 }

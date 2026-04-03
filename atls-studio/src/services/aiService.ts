@@ -2432,7 +2432,7 @@ async function streamChatViaTauri(
         }
         // Guard: reject empty tool names before execution
         if (!tc.name?.trim()) {
-          const errMsg = 'Invalid or empty tool name. Use batch({version:"1.0",steps:[...]}) with a valid step list.';
+          const errMsg = 'Invalid or empty tool name. Use batch with q: one step per line (see BATCH_TOOL_REF), or structured steps.';
           safeCallbacks.onToolResult(tc.id, errMsg);
           safeCallbacks.onToolCall({ id: tc.id, name: tc.name || '', args: tc.args, status: 'failed', result: errMsg });
           return { type: 'tool_result', tool_use_id: tc.id, name: tc.name || '', content: errMsg };
@@ -2815,8 +2815,8 @@ async function streamChatViaTauri(
           && mode !== 'ask' && mode !== 'retriever' && mode !== 'designer') {
         conversationHistory.push({
           role: 'user',
-          content: 'You completed a research round without a task plan. For multi-step work, create one now:\n' +
-            'batch({version:"1.0",steps:[{id:"plan",use:"session.plan",with:{goal:"...",subtasks:["analyze","implement","verify"]}}]})\n' +
+          content: 'You completed a research round without a task plan. For multi-step work, create one now (pass q: one step per line):\n' +
+            'p1 session.plan goal:"..." subtasks:analyze,implement,verify\n' +
             'session.advance commits findings (dehydrates context) and moves to the next phase.',
         });
         console.log('[aiService] Task plan nudge injected after read-only round 1');
@@ -3733,7 +3733,7 @@ function _buildStaticSystemPrompt(
   let toolRef = atlsReady 
     ? (mode === 'designer' ? DESIGNER_TOOL_REF : BATCH_TOOL_REF)
     : `## Terminal Only (ATLS not initialized - open a project first)
-batch({version:"1.0",steps:[{id:"exec",use:"system.exec",with:{cmd:"..."}}]}) → write cmd to temp .ps1 and run in agent shell`;
+q: exec system.exec cmd:"..." → write cmd to temp .ps1 and run in agent shell`;
 
   // Append subagent tool ref when subagent enabled
   if (subagentEnabled) {
