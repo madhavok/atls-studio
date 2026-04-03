@@ -7,8 +7,22 @@ import {
   isCompressedRef,
   flattenCodeSearchHits,
   extractSearchSummary,
+  generateEditReadyDigest,
 } from './contextHash';
 
+
+describe('generateEditReadyDigest regex fallback line numbers', () => {
+  it('counts newline at match start so symbols are on correct 1-based lines', () => {
+    const content = '// comment\nfunction foo(){}\nfunction bar(){}';
+    const digest = generateEditReadyDigest(content, 'file', undefined);
+    expect(digest).toContain('foo:2');
+    expect(digest).toContain('bar:3');
+  });
+
+  it('line 1 when declaration starts at BOF', () => {
+    expect(generateEditReadyDigest('function foo(){}', 'file', undefined)).toContain('foo:1');
+  });
+});
 describe('contextHash chunk tags', () => {
   it('round-trips compound chunk types without a source', () => {
     const tag = formatChunkTag('abc123', 450, 'msg:user');

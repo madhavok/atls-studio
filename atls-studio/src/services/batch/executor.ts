@@ -503,6 +503,27 @@ function injectSnapshotHashes(
 }
 
 /**
+ * Map change.edit `file` to a tracker path key: prefer content_hash resolution, then raw path,
+ * then treat `file` as a snapshot hash id (so read.lines coverage matches prior reads).
+ */
+function resolveGatePathForTracker(
+  mergedParams: Record<string, unknown>,
+  tracker: SnapshotTracker,
+): string {
+  const raw = (mergedParams.file ?? mergedParams.file_path) as string | undefined;
+  if (typeof raw !== 'string') return '';
+  const ch = mergedParams.content_hash ?? mergedParams.snapshot_hash;
+  if (typeof ch === 'string') {
+    const p = tracker.findFilePathForSnapshotHash(ch);
+    if (p) return p;
+  }
+  if (!raw.startsWith('h:') && tracker.getIdentity(raw)) return raw;
+  const fromRaw = tracker.findFilePathForSnapshotHash(raw);
+  if (fromRaw) return fromRaw;
+  return raw;
+}
+
+/**
  * Record snapshot hashes from step output into the tracker.
  * Handles read ops (lines, shaped, canonical) and change ops (invalidate + re-record).
  */
@@ -1317,26 +1338,28 @@ export async function executeUnifiedBatch(
 
     // Read-range edit gate: reject line edits outside prior read.lines coverage
     if (step.use === 'change.edit' && snapshotTracker.size > 0) {
-      const gateFile = (mergedParams.file ?? mergedParams.file_path) as string | undefined;
+      const gateFileRaw = (mergedParams.file ?? mergedParams.file_path) as string | undefined;
       const gateLineEdits = mergedParams.line_edits as Array<Record<string, unknown>> | undefined;
+      const gatePath = gateFileRaw ? resolveGatePathForTracker(mergedParams, snapshotTracker) : '';
       if (
-        typeof gateFile === 'string' &&
-        !gateFile.startsWith('h:') &&
+        typeof gateFileRaw === 'string' &&
+        !gateFileRaw.startsWith('h:') &&
         Array.isArray(gateLineEdits) &&
-        !snapshotTracker.hasCanonicalRead(gateFile) &&
-        !batchEditedPaths.has(gateFile)
+        !snapshotTracker.hasCanonicalRead(gatePath) &&
+        !batchEditedPaths.has(gateFileRaw) &&
+        !batchEditedPaths.has(gatePath)
       ) {
         for (const le of gateLineEdits) {
           const line = le.line;
           const endLine = (le.end_line ?? le.line);
           if (typeof line !== 'number' || line <= 0) continue;
           const end = typeof endLine === 'number' ? endLine : line;
-          if (!snapshotTracker.hasReadCoverage(gateFile, line, end)) {
+          if (!snapshotTracker.hasReadCoverage(gatePath, line, end)) {
             const output: StepOutput = {
               kind: 'edit_result', ok: false, refs: [],
-              summary: `${step.id}: edit_outside_read_range — lines ${line}-${end} of ${gateFile} not covered by a prior read.lines. Read the target region first, then retry the edit.`,
+              summary: `${step.id}: edit_outside_read_range — lines ${line}-${end} of ${gatePath} not covered by a prior read.lines. Read the target region first, then retry the edit.`,
               error: `edit_outside_read_range: lines ${line}-${end} not covered by prior read.lines`,
-              content: { error_class: 'edit_outside_read_range', file: gateFile, line, end_line: end, _next: 'read.lines for the target region, then retry' },
+              content: { error_class: 'edit_outside_read_range', file: gatePath, line, end_line: end, _next: 'read.lines for the target region, then retry' },
             };
             stepOutputs.set(step.id, output);
             recordStepResult(step.id, step.use, output, Date.now() - stepStart);

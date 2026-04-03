@@ -471,6 +471,46 @@ function normalizeSourcePath(value: string): string {
   return value.replace(/\\/g, '/').toLowerCase();
 }
 
+/**
+ * Split non-hash `file` values with a trailing line target (`:L`, `:L-M`, or `:L-`) e.g. `.gitignore:1`
+ * into a real path plus `edit_target_range`. Hash refs (`h:…`) are left to `deriveEditTargetMeta`.
+ */
+function isLikelyFilePathSegmentForLineSuffix(path: string): boolean {
+  return (
+    path.includes('/') || path.includes('\\') || path.startsWith('.') || path.includes('.')
+  );
+}
+
+function splitPathTrailingLineSpan(raw: string): { path: string; range: [number, number | null][] } | null {
+  if (!raw || raw.startsWith('h:')) return null;
+  const closed = /^(.+):(\d+)-(\d+)$/.exec(raw);
+  if (closed) {
+    const p = closed[1]!;
+    const a = parseInt(closed[2]!, 10);
+    const b = parseInt(closed[3]!, 10);
+    if (a <= 0 || b < a) return null;
+    if (!isLikelyFilePathSegmentForLineSuffix(p)) return null;
+    return { path: p, range: [[a, b]] };
+  }
+  const open = /^(.+):(\d+)-$/.exec(raw);
+  if (open) {
+    const p = open[1]!;
+    const a = parseInt(open[2]!, 10);
+    if (a <= 0) return null;
+    if (!isLikelyFilePathSegmentForLineSuffix(p)) return null;
+    return { path: p, range: [[a, null]] };
+  }
+  const single = /^(.+):(\d+)$/.exec(raw);
+  if (single) {
+    const p = single[1]!;
+    const n = parseInt(single[2]!, 10);
+    if (n <= 0) return null;
+    if (!isLikelyFilePathSegmentForLineSuffix(p)) return null;
+    return { path: p, range: [[n, n]] };
+  }
+  return null;
+}
+
 /** Reject values that are clearly content, not file paths or refs. */
 function validatePathParam(value: unknown, paramName: string): string | null {
   if (value == null) return null;
@@ -1091,7 +1131,17 @@ function normalizeCreateParams(params: Record<string, unknown>): Record<string, 
 
 /** Canonicalize line_edits payloads to { file, line_edits } before dispatch. Exported for tests. */
 export function normalizeEditParams(params: Record<string, unknown>): Record<string, unknown> {
-  const normalizedParams = inheritSingleEditContext(normalizeExactSpanEditPayload(params));
+  let normalizedParams = inheritSingleEditContext(normalizeExactSpanEditPayload(params));
+  const pathKey =
+    typeof normalizedParams.file === 'string' ? 'file'
+      : typeof normalizedParams.file_path === 'string' ? 'file_path' : null;
+  if (pathKey != null && normalizedParams.edit_target_range == null) {
+    const raw = normalizedParams[pathKey] as string;
+    const split = splitPathTrailingLineSpan(raw);
+    if (split) {
+      normalizedParams = { ...normalizedParams, [pathKey]: split.path, edit_target_range: split.range };
+    }
+  }
   const edits = normalizedParams.edits as Array<Record<string, unknown>> | undefined;
   const hasTopLevelLineEdits = Array.isArray(normalizedParams.line_edits) && (normalizedParams.line_edits as unknown[]).length > 0;
   const hasFile = typeof normalizedParams.file === 'string' || typeof normalizedParams.file_path === 'string';
@@ -1102,11 +1152,17 @@ export function normalizeEditParams(params: Record<string, unknown>): Record<str
     const hasOldNew = edits.some(e => e.old != null || e.new != null);
     if (hasBatchLineEdits && !hasOldNew) {
       const first = edits[0];
-      const fileVal = (typeof first.file === 'string' ? first.file : first.file_path) as string | undefined;
+      const rawFileVal = (typeof first.file === 'string' ? first.file : first.file_path) as string | undefined;
       const le = first.line_edits as unknown[] | undefined;
-      if (edits.length === 1 && typeof fileVal === 'string' && Array.isArray(le) && le.length > 0) {
+      if (edits.length === 1 && typeof rawFileVal === 'string' && Array.isArray(le) && le.length > 0) {
+        const pathSplit = splitPathTrailingLineSpan(rawFileVal);
+        const fileVal = pathSplit ? pathSplit.path : rawFileVal;
         const { edits: _edits, ...rest } = normalizedParams;
-        const targetMeta = deriveEditTargetMeta(fileVal);
+        const targetMeta = deriveEditTargetMeta(rawFileVal);
+        const spanFromPath =
+          pathSplit && targetMeta.edit_target_range == null
+            ? { edit_target_range: pathSplit.range, edit_target_kind: 'exact_span' as EditTargetKind }
+            : {};
         const contentHash = canonicalizeContentHash(first.content_hash ?? first.snapshot_hash, targetMeta.edit_target_hash);
         return {
           ...rest,
@@ -1114,6 +1170,7 @@ export function normalizeEditParams(params: Record<string, unknown>): Record<str
           line_edits: le,
           ...(contentHash ? { content_hash: contentHash } : {}),
           ...targetMeta,
+          ...spanFromPath,
         };
       }
       return { ...normalizedParams, mode: 'batch_edits' };

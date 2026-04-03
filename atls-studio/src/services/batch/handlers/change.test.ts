@@ -131,6 +131,24 @@ describe('normalizeEditParams', () => {
     expect(out.line_edits).toEqual(lineEdits);
   });
 
+  it('splits plain path file with trailing :L-M into path and edit_target_range', () => {
+    const out = normalizeEditParams({
+      file: '.gitignore:1-1',
+      line_edits: [{ content: '# ATLS test' }],
+    });
+    expect(out.file).toBe('.gitignore');
+    expect(out.edit_target_range).toEqual([[1, 1]]);
+  });
+
+  it('splits plain path file with trailing single :L into path and one-line edit_target_range', () => {
+    const out = normalizeEditParams({
+      file: '.gitignore:1',
+      line_edits: [{ content: '# ATLS test' }],
+    });
+    expect(out.file).toBe('.gitignore');
+    expect(out.edit_target_range).toEqual([[1, 1]]);
+  });
+
   it('returns params unchanged when no promotion needed', () => {
     const input = { file: 'a.ts', line_edits: [{ line: 1, action: 'delete' }] };
     const out = normalizeEditParams(input);

@@ -310,11 +310,13 @@ function extractCodeDigestWithLines(content: string): string {
   let lastIdx = 0;
   while ((m = sigRe.exec(content)) !== null && entries.length < DIGEST_MAX_SYMBOLS) {
     const name = m[1];
-    // Count newlines incrementally from last match position
-    for (let k = lastIdx; k < m.index; k++) {
+    // Count newlines in [lastIdx, m.index] inclusive. The match may start at `\n`
+    // from `(?:^|\n)`; that newline is at m.index and must count toward this symbol's
+    // line, not the next (exclusive end would defer it and shift every line down by 1).
+    for (let k = lastIdx; k <= m.index; k++) {
       if (content.charCodeAt(k) === 10) lineNum++;
     }
-    lastIdx = m.index;
+    lastIdx = m.index + 1;
     entries.push(`${name}:${lineNum}`);
   }
   if (entries.length === 0) return '';

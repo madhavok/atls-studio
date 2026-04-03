@@ -121,6 +121,13 @@ describe('SnapshotTracker hasReadCoverage / canonical gate', () => {
     ]);
   });
 
+  it('findFilePathForSnapshotHash resolves hash to first recorded path', () => {
+    const t = new SnapshotTracker();
+    t.record('src/z.ts', 'abc123def456', 'lines', { readRegion: { start: 1, end: 5 } });
+    expect(t.findFilePathForSnapshotHash('h:abc123def456')).toBe('src/z.ts');
+    expect(t.findFilePathForSnapshotHash('abc123def456')).toBe('src/z.ts');
+  });
+
   it('point-range read (1,1) covers only that line', () => {
     const t = new SnapshotTracker();
     t.record('src/pt.ts', 'h', 'lines', { readRegion: { start: 1, end: 1 } });

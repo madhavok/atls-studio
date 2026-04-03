@@ -333,6 +333,36 @@ describe('executeUnifiedBatch read-range gate (line edits)', () => {
     expect(editSpy).toHaveBeenCalledOnce();
   });
 
+  it('allows change.edit when file param is not the path key but content_hash matches a tracked read', async () => {
+    const editSpy = vi.fn(async () => raw('applied', { status: 'ok' }));
+    handlers.set('read.lines', async () => raw('read_lines', {
+      file: 'src/demo.ts',
+      content_hash: 'cafefeed',
+      content: 'x',
+      actual_range: [[1, 5]],
+    }));
+    handlers.set('change.edit', editSpy as unknown as OpHandler);
+
+    const result = await executeUnifiedBatch({
+      version: '1.0',
+      steps: [
+        { id: 'read', use: 'read.lines', with: { file_path: 'src/demo.ts', lines: '1-5' } },
+        {
+          id: 'edit',
+          use: 'change.edit',
+          with: {
+            file: 'wrong-path-label',
+            content_hash: 'cafefeed',
+            line_edits: [{ line: 3, action: 'replace', content: 'y' }],
+          },
+        },
+      ],
+    }, makeCtx());
+
+    expect(result.ok).toBe(true);
+    expect(editSpy).toHaveBeenCalledOnce();
+  });
+
   it('allows change.edit at any line after read.context (canonical read bypasses range gate)', async () => {
     const editSpy = vi.fn(async () => raw('applied', { status: 'ok' }));
     handlers.set('read.context', async () => raw('read', {

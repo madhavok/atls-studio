@@ -38,6 +38,7 @@ ce f:h:XXXX:L-M le:[{content:"new code"}]
   Hash-ref editing: f carries hash identity + line range. content is the only required field per le entry.
   Minimal form: f:h:XXXX:15-50 le:[{content:"replacement"}] — hash proves snapshot, :L-M targets span, content is new text. No old text, no separate content_hash, no sl/el needed.
   Explicit form: f:path content_hash:h:XXXX le:[{line:N,end_line:M,content:"new code"}] — when editing by path or targeting a different range than the hash ref.
+  Path minimal: f:.gitignore:1 le:[{content:"..."}] or f:.gitignore:1-1 — trailing :L or :L-M on a real path is split to path + range (same idea as hash :L-M).
   line + end_line: 1-based inclusive span. Auto-injected from hash ref range when omitted. end | -1 | symbol:fn(name) resolve to concrete bounds.
   action: defaults to replace when omitted. Other actions: insert_before, insert_after, delete, move, replace_body.
   move: requires destination:N (1-based). Produces positional shifts at both source and destination — auto-rebased in multi-step batches.

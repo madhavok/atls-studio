@@ -138,6 +138,18 @@ export class SnapshotTracker {
     return this.snapshots.get(normalizePathKey(filePath));
   }
 
+  /**
+   * First file path whose tracked snapshot hash matches (e.g. resolve content_hash to path).
+   * If multiple files share a hash, the first map insertion order wins.
+   */
+  findFilePathForSnapshotHash(hashOrRef: string): string | undefined {
+    const bare = canonicalizeSnapshotHash(hashOrRef);
+    for (const [, v] of this.snapshots) {
+      if (v.snapshotHash === bare) return v.filePath;
+    }
+    return undefined;
+  }
+
   /** Check if a hash is stale (differs from the tracked snapshot). */
   isStale(filePath: string, hash: string): boolean {
     const tracked = this.getHash(filePath);
