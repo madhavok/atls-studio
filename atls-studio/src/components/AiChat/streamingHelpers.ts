@@ -85,11 +85,25 @@ export function upsertToolSegment(
     refs.seenToolCallIds.current.add(toolCall.id);
     segments.push({ type: 'tool', toolCall });
   } else {
+    // Search live segments first, then archived segments (tool may have been
+    // moved to the archive by onClear before a late status update arrived).
+    let found = false;
     for (let i = segments.length - 1; i >= 0; i--) {
       const seg = segments[i];
       if (seg.type === 'tool' && seg.toolCall.id === toolCall.id) {
         seg.toolCall = { ...seg.toolCall, ...toolCall };
+        found = true;
         break;
+      }
+    }
+    if (!found) {
+      const archived = refs.accumulatedSegmentsRef.current;
+      for (let i = archived.length - 1; i >= 0; i--) {
+        const seg = archived[i];
+        if (seg.type === 'tool' && seg.toolCall.id === toolCall.id) {
+          seg.toolCall = { ...seg.toolCall, ...toolCall };
+          break;
+        }
       }
     }
   }

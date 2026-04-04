@@ -3135,15 +3135,20 @@ export function AiChat() {
         onClear: () => {
           fullResponse = '';
           for (const seg of streamingSegmentsRef.current) {
-            if (seg.type !== 'tool') {
-              accumulatedSegmentsRef.current.push(
-                seg.type === 'text' || seg.type === 'reasoning'
-                  ? { ...seg, state: 'done' as const }
-                  : seg
-              );
+            if (seg.type === 'text' || seg.type === 'reasoning') {
+              accumulatedSegmentsRef.current.push({ ...seg, state: 'done' as const });
+            } else if (seg.type === 'tool') {
+              const status = seg.toolCall.status;
+              if (status === 'completed' || status === 'failed') {
+                accumulatedSegmentsRef.current.push(seg);
+              }
+            } else {
+              accumulatedSegmentsRef.current.push(seg);
             }
           }
-          streamingSegmentsRef.current = streamingSegmentsRef.current.filter(s => s.type === 'tool');
+          streamingSegmentsRef.current = streamingSegmentsRef.current.filter(
+            s => s.type === 'tool' && s.toolCall.status !== 'completed' && s.toolCall.status !== 'failed'
+          );
           subagentProgressByStepRef.current.clear();
           segmentsRevisionRef.current++;
         },
@@ -3513,15 +3518,20 @@ export function AiChat() {
         onClear: () => {
           fullResponse = '';
           for (const seg of streamingSegmentsRef.current) {
-            if (seg.type !== 'tool') {
-              accumulatedSegmentsRef.current.push(
-                seg.type === 'text' || seg.type === 'reasoning'
-                  ? { ...seg, state: 'done' as const }
-                  : seg
-              );
+            if (seg.type === 'text' || seg.type === 'reasoning') {
+              accumulatedSegmentsRef.current.push({ ...seg, state: 'done' as const });
+            } else if (seg.type === 'tool') {
+              const status = seg.toolCall.status;
+              if (status === 'completed' || status === 'failed') {
+                accumulatedSegmentsRef.current.push(seg);
+              }
+            } else {
+              accumulatedSegmentsRef.current.push(seg);
             }
           }
-          streamingSegmentsRef.current = streamingSegmentsRef.current.filter(s => s.type === 'tool');
+          streamingSegmentsRef.current = streamingSegmentsRef.current.filter(
+            s => s.type === 'tool' && s.toolCall.status !== 'completed' && s.toolCall.status !== 'failed'
+          );
           subagentProgressByStepRef.current.clear();
           segmentsRevisionRef.current++;
         },
