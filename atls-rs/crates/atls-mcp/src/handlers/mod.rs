@@ -245,3 +245,18 @@ impl Default for Handlers {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn levenshtein_identical_is_zero() {
+        assert_eq!(levenshtein("batch", "batch"), 0);
+    }
+
+    #[test]
+    fn find_nearest_tool_typo_hint() {
+        assert_eq!(find_nearest_valid_tool("batch_qury"), Some("batch_query"));
+    }
+}

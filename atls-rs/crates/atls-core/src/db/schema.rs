@@ -263,3 +263,24 @@ impl<'a> DatabaseSchema<'a> {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rusqlite::Connection;
+
+    #[test]
+    fn create_tables_in_memory_succeeds() {
+        let conn = Connection::open_in_memory().unwrap();
+        let schema = DatabaseSchema::new(&conn);
+        schema.create_tables().unwrap();
+        let n: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(n >= 5);
+    }
+}

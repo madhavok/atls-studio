@@ -103,3 +103,26 @@ pub fn create_parser(lang: Language) -> Result<Parser, LanguageError> {
         .map_err(|e| LanguageError::ParserCreationError(format!("{:?}", e)))?;
     Ok(parser)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn is_supported_false_for_unknown() {
+        assert!(!is_supported(Language::Unknown));
+    }
+
+    #[test]
+    fn load_language_kotlin_is_unsupported() {
+        assert!(matches!(
+            load_language(Language::Kotlin),
+            Err(LanguageError::UnsupportedLanguage(_))
+        ));
+    }
+
+    #[test]
+    fn create_parser_rust_smoke() {
+        assert!(create_parser(Language::Rust).is_ok());
+    }
+}

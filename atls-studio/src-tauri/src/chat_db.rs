@@ -1728,3 +1728,23 @@ pub fn get_staged_snippets(state: &ChatDbState, session_id: &str) -> Result<Vec<
     })
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    #[test]
+    fn init_create_session_round_trip() {
+        let dir = TempDir::new().unwrap();
+        let root = dir.path().to_string_lossy().to_string();
+        let state = ChatDbState::default();
+        state.init(&root).unwrap();
+        create_session(&state, "s1", "Title", "agent", false).unwrap();
+        let sessions = get_sessions(&state, 10).unwrap();
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].id, "s1");
+        assert_eq!(sessions[0].title, "Title");
+        state.close().unwrap();
+    }
+}
+

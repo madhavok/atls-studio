@@ -194,3 +194,13 @@ pub async fn ai_kill_background(app: AppHandle, id: String) -> Result<i32, Strin
         Err(format!("Background process not found: {}", id))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::strip_ansi;
+
+    #[test]
+    fn strip_ansi_removes_color_codes() {
+        assert_eq!(strip_ansi("\x1b[31merr\x1b[0m"), "err");
+    }
+}

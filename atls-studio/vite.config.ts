@@ -11,6 +11,16 @@ export default defineConfig(async () => ({
     include: ["src/**/*.test.ts", "src/**/*.test.tsx"],
     environment: "node",
     globals: true,
+    environmentMatchGlobs: [
+      ["**/*.dom.test.ts", "happy-dom"],
+      ["**/*.dom.test.tsx", "happy-dom"],
+    ],
+    coverage: {
+      provider: "v8",
+      reporter: ["text", "json-summary"],
+      include: ["src/**/*.{ts,tsx}"],
+      exclude: ["src/**/*.test.ts", "src/**/*.test.tsx", "src/**/*.dom.test.tsx"],
+    },
   },
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`

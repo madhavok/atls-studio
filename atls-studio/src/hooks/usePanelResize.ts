@@ -9,15 +9,16 @@ interface UsePanelResizeProps {
   setBottomHeight: (height: number) => void;
 }
 
-function clampLeft(v: number): number {
+/** Exported for unit tests (panel layout bounds). */
+export function clampLeft(v: number): number {
   return Math.max(160, Math.min(Math.min(500, window.innerWidth * 0.3), v));
 }
 
-function clampRight(v: number): number {
+export function clampRight(v: number): number {
   return Math.max(360, Math.min(Math.min(900, window.innerWidth * 0.45), v));
 }
 
-function clampBottom(v: number): number {
+export function clampBottom(v: number): number {
   return Math.max(100, Math.min(Math.min(700, window.innerHeight * 0.65), v));
 }
 

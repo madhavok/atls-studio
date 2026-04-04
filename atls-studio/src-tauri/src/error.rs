@@ -134,7 +134,8 @@ impl AtlsError {
     
     /// Remove internal path prefixes for cleaner user messages.
     fn sanitize_path(path: &str) -> String {
-        path.trim_start_matches(r"\\?\\").to_string()
+        // Windows canonical paths use the 4-char prefix \\?\
+        path.strip_prefix("\\\\?\\").unwrap_or(path).to_string()
     }
 }
 
@@ -146,5 +147,44 @@ pub trait IoResultExt<T> {
 impl<T> IoResultExt<T> for io::Result<T> {
     fn with_path(self, path: impl Into<String>) -> Result<T, AtlsError> {
         self.map_err(|e| AtlsError::io_error(path, e))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io;
+
+    #[test]
+    fn display_includes_context() {
+        let e = AtlsError::ValidationError {
+            field: "x".to_string(),
+            message: "bad".to_string(),
+        };
+        assert!(format!("{}", e).contains("x"));
+        assert!(format!("{}", e).contains("bad"));
+    }
+
+    #[test]
+    fn to_user_message_io_not_found() {
+        let e = AtlsError::io_error(
+            r"\\?\C:\no\such",
+            io::Error::new(io::ErrorKind::NotFound, "nope"),
+        );
+        let msg = e.to_user_message();
+        assert!(msg.contains("not found") || msg.contains("File"));
+        assert!(!msg.contains("\\\\?\\"), "msg should strip \\\\?\\ prefix: {msg}");
+    }
+
+    #[test]
+    fn to_user_message_truncates_long_hash() {
+        let long = "a".repeat(80);
+        let e = AtlsError::HashResolutionError {
+            hash: long.clone(),
+            reason: "missing".to_string(),
+        };
+        let msg = e.to_user_message();
+        assert!(msg.contains("missing"));
+        assert!(msg.len() < long.len() + 50);
     }
 }

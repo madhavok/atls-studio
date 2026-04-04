@@ -222,3 +222,29 @@ pub fn next_block_id(counter: &mut u32) -> String {
         counter
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stream_chunk_text_delta_serde_round_trip() {
+        let c = StreamChunk::TextDelta {
+            id: "t1".to_string(),
+            delta: "hi".to_string(),
+        };
+        let v = serde_json::to_value(&c).unwrap();
+        assert_eq!(v.get("type").and_then(|x| x.as_str()), Some("text_delta"));
+        assert_eq!(v.get("id").and_then(|x| x.as_str()), Some("t1"));
+    }
+
+    #[test]
+    fn next_block_id_increments_counter() {
+        let mut n = 0u32;
+        let a = next_block_id(&mut n);
+        let b = next_block_id(&mut n);
+        assert_ne!(a, b);
+        assert_eq!(n, 2);
+        assert!(a.starts_with("blk_"));
+    }
+}

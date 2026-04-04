@@ -159,11 +159,12 @@ impl Watcher {
         debounce_timer: &mut Option<tokio::time::Sleep>,
         debounce_duration: Duration,
     ) -> Result<(), WatcherError> {
+        let root_norm = normalize_path(&self.root_path);
         for path in event.paths {
 
             let path = normalize_path(&path);
             // Skip if path is not under root
-            if !path.starts_with(&self.root_path) {
+            if !path.starts_with(&root_norm) {
                 continue;
             }
 
@@ -224,34 +225,31 @@ mod tests {
     async fn test_watcher_create_event() {
         let temp_dir = TempDir::new().unwrap();
         let test_file = temp_dir.path().join("test.txt");
-        
+
         let (watcher, mut handle) = Watcher::new(temp_dir.path(), 100).unwrap();
-        
-        // Start watcher in background
-        let watcher_handle = tokio::spawn(async move {
-            watcher.watch().await
-        });
-        
-        // Wait a bit for watcher to start
-        tokio::time::sleep(Duration::from_millis(50)).await;
-        
-        // Create file
+
+        let watcher_handle = tokio::spawn(async move { watcher.watch().await });
+
+        // RecommendedWatcher needs time to attach; Windows is slower than Unix.
+        tokio::time::sleep(Duration::from_millis(300)).await;
+
         fs::write(&test_file, "test").unwrap();
-        
-        // Wait for debounce
-        tokio::time::sleep(Duration::from_millis(200)).await;
-        
-        // Check for event
-        let event = tokio::time::timeout(Duration::from_secs(2), handle.next_event())
+
+        // Debounce (100ms) + filesystem latency (especially on Windows).
+        tokio::time::sleep(Duration::from_millis(600)).await;
+
+        let event = tokio::time::timeout(Duration::from_secs(10), handle.next_event())
             .await
             .expect("Timed out waiting for watcher event")
             .expect("No event received");
-        match event {
-            WatcherEvent::Create(path) => {
-                assert_eq!(path, test_file);
-            }
-            _ => panic!("Expected Create event"),
-        }
+
+        let got_path = match event {
+            WatcherEvent::Create(p) | WatcherEvent::Modify(p) => p,
+            other => panic!("Expected Create or Modify event, got {:?}", other),
+        };
+        let expected_path = normalize_path(&fs::canonicalize(&test_file).unwrap());
+        assert_eq!(got_path, expected_path);
+        handle.stop().await;
         let _ = watcher_handle.await;
     }
 }

@@ -168,3 +168,24 @@ impl JsonRpcNotification {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn json_rpc_response_error_serde_round_trip() {
+        let r = JsonRpcResponse::error(Some(serde_json::json!(42)), -32700, "parse".to_string());
+        let json = serde_json::to_string(&r).unwrap();
+        let back: JsonRpcResponse = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.error.as_ref().unwrap().code, -32700);
+        assert_eq!(back.id, Some(serde_json::json!(42)));
+    }
+
+    #[test]
+    fn json_rpc_success_shape() {
+        let r = JsonRpcResponse::success(Some(serde_json::json!(0)), serde_json::json!({"ok": true}));
+        assert!(r.result.is_some());
+        assert!(r.error.is_none());
+    }
+}

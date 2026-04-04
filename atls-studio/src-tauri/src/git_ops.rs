@@ -297,3 +297,28 @@ pub(crate) async fn index_deleted_files(
         "errors": if index_errors.is_empty() { None } else { Some(&index_errors) }
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn run_git_command_rejects_empty_cwd() {
+        let r = run_git_command(vec!["status".into()], "".to_string()).await;
+        assert!(r.is_err());
+        assert!(r.unwrap_err().contains("empty"));
+    }
+
+    #[test]
+    fn path_for_atls_subprocess_smoke() {
+        let _ = path_for_atls_subprocess();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn filter_powershell_stderr_strips_native_command_noise() {
+        let raw = "Program 'npm' failed to run:\r\n+ CategoryInfo : NotSpecified\r\nNativeCommandError\r\n";
+        let cleaned = filter_powershell_stderr(raw);
+        assert!(!cleaned.contains("NativeCommandError"));
+    }
+}

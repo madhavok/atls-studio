@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  js-and-rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: atls-studio/package-lock.json
+
+      - name: Install JS dependencies
+        working-directory: atls-studio
+        run: npm ci
+
+      - name: Typecheck
+        working-directory: atls-studio
+        run: npm run typecheck
+
+      - name: Vitest
+        working-directory: atls-studio
+        run: npm run test
+
+      - name: Vitest coverage
+        working-directory: atls-studio
+        run: npm run test:coverage
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Cargo test (Tauri backend)
+        working-directory: atls-studio/src-tauri
+        run: cargo test
+
+      - name: Cargo test (atls-rs workspace)
+        working-directory: atls-rs
+        run: cargo test

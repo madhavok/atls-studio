@@ -12,6 +12,7 @@ node_modules
 *.tsbuildinfo
 dist
 dist-ssr
+coverage
 *.local
 
 # Editor directories and files

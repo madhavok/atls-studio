@@ -16,7 +16,10 @@
     "tauri:build": "tauri build",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:all": "vitest run && cd src-tauri && cargo test",
+    "test:atls-rs": "cd ../atls-rs && cargo test",
+    "test:all": "vitest run && cd src-tauri && cargo test && cd ../../atls-rs && cargo test",
+    "test:coverage": "vitest run --coverage",
+    "test:e2e": "playwright test",
     "test:validation-fixes": "cd src-tauri && cargo test path_utils --no-fail-fast && cargo test refactor_engine --no-fail-fast",
     "models:fetch": "tsx scripts/fetch-models.ts"
   },
@@ -49,11 +52,15 @@
     "zustand": "^5.0.10"
   },
   "devDependencies": {
+    "@playwright/test": "^1.49.1",
+    "@testing-library/react": "^16.3.0",
+    "@vitest/coverage-v8": "^4.0.18",
     "@tauri-apps/cli": "^2",
     "@types/node": "^25.5.0",
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",
     "@vitejs/plugin-react": "^4.6.0",
+    "happy-dom": "^15.11.0",
     "monaco-editor": "^0.55.1",
     "tsx": "^4.19.0",
     "typescript": "~5.8.3",
