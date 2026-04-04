@@ -213,6 +213,17 @@ export function formatBatchResult(result: UnifiedBatchResult): string {
     } else if (step.error) {
       lines.push(`${label} ${step.id}: ${capStepSummary(step.error, step.use, step)}${durationTag}`);
     }
+
+    if (step.use.startsWith('delegate.') && step.ok) {
+      if (step.refs?.length) {
+        lines.push(`  refs: ${step.refs.join(' ')}`);
+      }
+      const art = step.artifacts as Record<string, unknown> | undefined;
+      const bbKeys = art?.bbKeys as string[] | undefined;
+      if (bbKeys?.length) {
+        lines.push(`  BB: ${bbKeys.map(k => `h:bb:${k}`).join(' ')}`);
+      }
+    }
   }
 
   if (result.interruption) {
