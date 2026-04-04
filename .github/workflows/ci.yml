@@ -33,6 +33,14 @@ jobs:
         working-directory: atls-studio
         run: npm run test:coverage
 
+      - name: Install Playwright Chromium
+        working-directory: atls-studio
+        run: npx playwright install --with-deps chromium
+
+      - name: Playwright E2E
+        working-directory: atls-studio
+        run: npm run test:e2e
+
       - uses: dtolnay/rust-toolchain@stable
 
       - name: Cargo test (Tauri backend)

@@ -15,11 +15,20 @@ export default defineConfig(async () => ({
       ["**/*.dom.test.ts", "happy-dom"],
       ["**/*.dom.test.tsx", "happy-dom"],
     ],
+    // Instrumented sources: all app code; test files excluded from denominator.
+    // *.dom.test.tsx matches **/*.test.tsx — same exclusion as other tests; imported modules still gain coverage when run under happy-dom.
     coverage: {
       provider: "v8",
       reporter: ["text", "json-summary"],
       include: ["src/**/*.{ts,tsx}"],
-      exclude: ["src/**/*.test.ts", "src/**/*.test.tsx", "src/**/*.dom.test.tsx"],
+      exclude: ["src/**/*.test.ts", "src/**/*.test.tsx"],
+      thresholds: {
+        // Baseline ~36% stmts / 32% branch / 27% funcs / 38% lines (see coverage-baseline.json). Tighten over time.
+        statements: 35,
+        branches: 29,
+        functions: 25,
+        lines: 36,
+      },
     },
   },
 

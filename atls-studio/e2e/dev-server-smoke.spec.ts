@@ -1,8 +1,9 @@
 import { test, expect } from "@playwright/test";
 
 /**
- * Requires the Vite dev server on port 1420 (npm run dev).
- * Validates that the SPA shell loads without a blank document.
+ * Smoke: SPA root returns HTML and body is visible.
+ * CI: Playwright starts Vite via webServer (see playwright.config.ts).
+ * Local: `npm run dev` or rely on webServer when CI is unset.
  */
 test("dev server root responds with HTML", async ({ page }) => {
   const res = await page.goto("/");

@@ -1,0 +1,12 @@
+{
+  "recordedAt": "2026-04-04",
+  "source": "npm run test:coverage (vitest v8)",
+  "global": {
+    "statements": 36.64,
+    "branches": 32.1,
+    "functions": 27.9,
+    "lines": 38.08
+  },
+  "bottomQuartileNotes": "Lowest coverage areas (see full report): src/App.tsx, src/components/** (except partial AiChat/helpers), src/hooks/useAtls.ts (hook body), orchestrator.ts, swarmChat.ts, subagentService.ts, many large panels. Services/utils batch pipeline are comparatively strong.",
+  "ciThresholds": "See vite.config.ts coverage.thresholds — set slightly below this baseline to catch regressions."
+}
