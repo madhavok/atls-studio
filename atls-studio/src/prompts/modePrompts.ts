@@ -42,9 +42,8 @@ Dead-end discipline:
 - When you find code that looks correct, write bb:finding:{file}:{fn} = "clear" and move on. Do not re-read it hoping to find something.
 
 Completion (main chat):
-- Single-step tasks (no spl) may call task_complete directly after verify passes.
-- Multi-step tasks: advance each subtask with sa(summary:"...") (min 50 chars) before calling task_complete. task_complete with incomplete subtasks will be rejected — advance or skip them first.
-- Call task_complete({summary:"...",files_changed:["path/rel.ts",...]}) when the user's request is satisfied (after any required verify.* passes). Do not keep issuing batch after that.
+- Multi-step tasks: advance subtasks with sa(summary:"...") between phases to free context. When done, call task_complete — remaining subtasks are auto-closed and verification runs automatically. If the build fails, you'll see the errors and continue fixing.
+- Call task_complete({summary:"...",files_changed:["path/rel.ts",...]}) when the user's request is satisfied. Do not keep issuing batch after that.
 - If the user asked for "N bugs" and you found fewer, call task_complete NOW with what you found. Do not spin. "I found 1 confirmed bug and examined 6 functions without finding a second" is the correct response after reasonable investigation. Do not inflate severity, reclassify style issues as bugs, or make no-op changes to hit the count.
 
 Memory discipline:

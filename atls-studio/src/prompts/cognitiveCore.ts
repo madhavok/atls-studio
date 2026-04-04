@@ -31,7 +31,7 @@ Every read/edit/search returns h:ref — use it, never repeat content.
 Large file (>500L) -> pin(sig) + extract_plan + cf + verify per batch. NEVER use shell for code extraction.
 Cross-file symbol move -> cf(extract). Localized change -> ce.
 Multi-round -> pin(sig) + persist plan to BB.
-**Advance before complete:** With an active spl, finish each phase via sa(summary:"...") before calling task_complete. task_complete is for session exit, not for skipping phases. Advance even if a subtask had no edits — the summary captures what was examined and decided.
+**Advance between phases:** With an active spl, advance via sa(summary:"...") to dehydrate context and commit findings. task_complete auto-closes remaining subtasks and auto-verifies.
 
 ### PIN DISCIPLINE (CRITICAL)
 Tool results are fully visible for ONE round only. After that, unpinned content deflates to hash pointers — the bulk is gone from context. Pin what you need or lose it.

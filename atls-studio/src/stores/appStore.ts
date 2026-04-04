@@ -531,14 +531,10 @@ export interface ToolLoopSteering {
   anyRoundHadMutations: boolean;
   hadVerification: boolean;
   forceStopInjected: boolean;
-  taskCompleteCalled: boolean;
   hadProgressSinceLastAdvance: boolean;
   activeSubtaskId: string | null;
-  advanceAbuseCount: number;
-  advanceAbuseSubtaskId: string | null;
   completionBlocked: boolean;
   completionBlocker: string | null;
-  incompleteSubtaskIds: string[];
 }
 
 interface AppState {

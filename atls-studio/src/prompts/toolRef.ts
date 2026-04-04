@@ -104,9 +104,9 @@ qs/queries, le/line_edits, sl/start_line, el/end_line, sf/severity_filter, ff/fo
 key/keys, cmd also auto-resolved
 
 ### Task Recipes (follow the matching recipe)
-Bug hunt: si → rs(sig) top 3-5 suspects → full-read + BB finding per fn → fix confirmed bugs → vb → task_complete (report honestly if < N found)
-Feature: rs(sig) targets → spl → ce per subtask → vb → task_complete
-Refactor: ax → spl → cf per extraction → vb → task_complete
+Bug hunt: si → rs(sig) top 3-5 suspects → full-read + BB finding per fn → fix confirmed bugs → task_complete (report honestly if < N found)
+Feature: rs(sig) targets → spl → ce per subtask → task_complete
+Refactor: ax → spl → cf per extraction → task_complete
 Investigation (no edits): iv → BB structured findings → task_complete with report
 Review: rs(sig) → full-read changed fns → BB review findings → task_complete with summary
 

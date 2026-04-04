@@ -210,7 +210,7 @@ import { createTauriChatStream } from './chatTransport';
 import { fetchModels, type AIProvider } from './modelFetcher';
 import { parseHashRef } from '../utils/hashRefParsers';
 import { executeWithConcurrency } from './aiConcurrency';
-import { hasActivePlanWithIncompleteSubtasks, getIncompleteSubtaskIds } from './aiTaskState';
+import { classifyVerifyResult } from './batch/handlers/verify';
 import { canSteerExecution } from './universalFreshness';
 
 /** Content block types for multimodal messages */
@@ -1702,14 +1702,10 @@ async function streamChatViaTauri(
         anyRoundHadMutations,
         hadVerification: _hadVerification,
         forceStopInjected,
-        taskCompleteCalled,
         hadProgressSinceLastAdvance,
         activeSubtaskId: lastActiveSubtaskId,
-        advanceAbuseCount: 0,
-        advanceAbuseSubtaskId: null,
         completionBlocked: runtimeCompletionBlocker != null,
         completionBlocker: runtimeCompletionBlocker,
-        incompleteSubtaskIds: getIncompleteSubtaskIds(),
       });
 
       const dynamicContextBlock = buildDynamicContextBlock(
@@ -2396,26 +2392,6 @@ async function streamChatViaTauri(
             useAppStore.getState().setAgentCanContinue(canAutoContinuePendingAction(currentPendingAction));
             break;
           }
-          // Task-plan guard: don't accept end_turn when subtasks are still incomplete
-          const hasIncompleteSubtasks = hasActivePlanWithIncompleteSubtasks();
-          if (hasIncompleteSubtasks && !taskCompleteCalled) {
-            if (autoContinueCount < maxAutoContinues) {
-              autoContinueCount++;
-              console.log(`[aiService] Task-plan guard: incomplete subtasks — auto-continuing at round ${round + 1} (steering via state block)`);
-              useAppStore.getState().setAgentProgress({
-                status: 'auto_continuing',
-                autoContinueCount,
-              });
-              {
-                const merged = mergeRoundAssistantVisibleText(assistantReasoningContent, assistantTextContent);
-                if (merged) {
-                  conversationHistory.push({ role: 'assistant', content: merged });
-                }
-              }
-              conversationHistory.push({ role: 'user', content: 'Continue.' });
-              continue;
-            }
-          }
           // Natural end_turn — accept as completion
           console.log('[aiService] Model ended turn naturally — accepting as completion');
           useAppStore.getState().clearAgentPendingAction();
@@ -2759,25 +2735,37 @@ async function streamChatViaTauri(
         break;
       }
 
-      // task_complete was called — stop the loop after recording tool results
-      // Gates (verify, plan) now emit via state block; here we only reset taskCompleteCalled
-      // so the model gets another round with the steering signal visible.
+      // task_complete was called — auto-verify if needed, then stop.
       if (taskCompleteCalled) {
         const forceStopActive = totalResearchRounds >= TOTAL_RESEARCH_ROUND_BUDGET + RESEARCH_FORCE_STOP_MARGIN;
         if (anyRoundHadMutations && !_hadVerification && !forceStopActive
             && (mode === 'agent' || mode === 'refactor')) {
-          console.log('[aiService] Verify gate: mutations detected but no verify.* ran — steering via state block');
-          taskCompleteCalled = false;
-        } else if (hasActivePlanWithIncompleteSubtasks() && !forceStopActive) {
-          console.log(`[aiService] Task-plan gate: task_complete called with incomplete subtasks — steering via state block`);
-          taskCompleteCalled = false;
-        } else {
-          console.log('[aiService] task_complete called — stopping tool loop');
-          useAppStore.getState().clearAgentPendingAction();
-          useAppStore.getState().setAgentProgress({ status: 'stopped', stoppedReason: 'completed' });
-          useAppStore.getState().setAgentCanContinue(false);
-          break;
+          try {
+            console.log('[aiService] Auto-verify: running verify.build after task_complete');
+            const verifyResult = await atlsBatchQuery('verify', { type: 'build' });
+            const { passed } = classifyVerifyResult(verifyResult);
+            _hadVerification = true;
+            if (!passed) {
+              const r = verifyResult as Record<string, unknown>;
+              const errors = typeof r.output === 'string' ? r.output : (typeof r.summary === 'string' ? r.summary : 'verify.build failed');
+              console.log('[aiService] Auto-verify failed — injecting errors, model continues');
+              taskCompleteCalled = false;
+              conversationHistory.push({
+                role: 'user',
+                content: `Auto-verify failed after task_complete:\n${errors}\nFix these build errors.`,
+              });
+              continue;
+            }
+            console.log('[aiService] Auto-verify passed');
+          } catch (e) {
+            console.log('[aiService] Auto-verify tool error — not blocking completion:', e);
+          }
         }
+        console.log('[aiService] task_complete called — stopping tool loop');
+        useAppStore.getState().clearAgentPendingAction();
+        useAppStore.getState().setAgentProgress({ status: 'stopped', stoppedReason: 'completed' });
+        useAppStore.getState().setAgentCanContinue(false);
+        break;
       }
 
       // --- Structured behavior enforcement ---
@@ -3167,8 +3155,6 @@ async function executeToolCallDetailed(
       }
 
       case 'task_complete': {
-        // Swarm agents still call task_complete via executeToolCall.
-        // In main chat mode this is a no-op passthrough — the model just stops naturally.
         const summary = args.summary as string || 'Task completed';
         const rawFilesChanged = Array.isArray(args.files_changed)
           ? args.files_changed
@@ -3177,6 +3163,17 @@ async function executeToolCallDetailed(
             : [];
         const filesChanged = rawFilesChanged.filter((f): f is string => typeof f === 'string');
         const filesList = filesChanged.length > 0 ? `\nFiles: ${filesChanged.join(', ')}` : '';
+
+        // Auto-advance any remaining subtasks so plan state is clean on exit
+        const plan = useContextStore.getState().taskPlan;
+        if (plan) {
+          for (const st of plan.subtasks) {
+            if (st.status !== 'done') {
+              useContextStore.getState().advanceSubtask(st.id, summary);
+            }
+          }
+        }
+
         return { displayText: `✓ Task complete: ${summary}${filesList}` };
       }
 
@@ -3588,23 +3585,11 @@ function buildDynamicContextBlock(
         parts.push('<<SYSTEM: Continue any remaining implementation. When complete, run final verification and provide a summary.>>');
       }
     }
-    if (tls.incompleteSubtaskIds.length > 0 && !tls.taskCompleteCalled) {
-      parts.push(`<<SYSTEM: Active task plan has incomplete subtasks (${tls.incompleteSubtaskIds.join(', ')}). Continue working on current phase. Call session.advance(summary:"...") (min 50 chars) when a phase is complete. Only call task_complete after all subtasks are advanced.>>`);
-    }
-    if (tls.taskCompleteCalled && tls.anyRoundHadMutations && !tls.hadVerification) {
-      parts.push('<<SYSTEM: You made code changes but did not verify them. Run verify.build before calling task_complete.>>');
-    }
-    if (tls.taskCompleteCalled && tls.incompleteSubtaskIds.length > 0) {
-      parts.push(`<<SYSTEM: task_complete called but task plan has incomplete subtasks (${tls.incompleteSubtaskIds.join(', ')}). Advance each phase with session.advance(summary:"...") (min 50 chars) before calling task_complete. If subtasks are unneeded, advance with a skip explanation.>>`);
-    }
     if (tls.consecutiveReadOnlyRounds >= 4) {
       parts.push(`<<SYSTEM: ${tls.consecutiveReadOnlyRounds} consecutive read-only rounds without edits. You must now: (1) make an edit/create, (2) write structured findings to session.bb.write, or (3) declare a specific blocker.>>`);
     }
     if (useContextStore.getState().coveragePlateauStreak >= 2) {
       parts.push('<<SYSTEM: No new files or symbols examined in the last 2 rounds. You are re-examining known content. Write findings on what you have and either act or call task_complete.>>');
-    }
-    if (tls.advanceAbuseCount > 1 && !tls.hadProgressSinceLastAdvance && tls.advanceAbuseSubtaskId) {
-      parts.push(`<<SYSTEM: session.advance called ${tls.advanceAbuseCount}x for "${tls.advanceAbuseSubtaskId}" without intervening edits or structured findings. Advancing phases does not create progress. You must act or complete.>>`);
     }
     if (tls.roundsInCurrentPhase >= PHASE_ROUND_BUDGET && tls.activeSubtaskId) {
       parts.push(`<<SYSTEM: You have spent ${tls.roundsInCurrentPhase} rounds in the "${tls.activeSubtaskId}" phase. Commit findings with session.advance(summary:"...") and move to the next phase. If blocked, declare the blocker in BB and advance anyway.>>`);
