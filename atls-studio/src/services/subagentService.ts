@@ -72,6 +72,7 @@ export interface SubAgentResult {
   refs: SubAgentRef[];
   bbKeys: string[];
   summary: string;
+  finalText?: string;
   pinCount: number;
   pinTokens: number;
   costCents: number;
@@ -651,20 +652,23 @@ function dematerializeSubagentChunks(
 }
 
 /**
- * Drop staged snippets created during the subagent run. session.stage resolves
- * full file bodies into stagedSnippets; bulk intent.survey can stage hundreds
- * of grammar/assets files and blow the prompt (see STAGED_TOTAL_HARD_CAP_TOKENS).
- * Findings should live in BB + delegate refs, not the staged cache.
+ * Drop staged snippets created during the subagent run, **except** those
+ * included in the returned refs. session.stage resolves full file bodies
+ * into stagedSnippets; bulk intent.survey can stage hundreds of files and
+ * blow the prompt. But staged refs that were selected for handoff must
+ * survive so the parent can dereference them.
  */
-function unstageSubagentAdded(preExistingStagedKeys: Set<string>): void {
+function unstageSubagentAdded(preExistingStagedKeys: Set<string>, preserveKeys?: Set<string>): void {
   const ctx = useContextStore.getState();
-  const keys = Array.from(ctx.stagedSnippets.keys()).filter(k => !preExistingStagedKeys.has(k));
+  const keys = Array.from(ctx.stagedSnippets.keys())
+    .filter(k => !preExistingStagedKeys.has(k) && !preserveKeys?.has(k));
   if (keys.length === 0) return;
   let freed = 0;
   for (const key of keys) {
     freed += ctx.unstageSnippet(key).freed;
   }
-  console.log(`[subagent] Unstaged ${keys.length} subagent-added snippets, freed ~${(freed / 1000).toFixed(1)}k tokens`);
+  const preserved = preserveKeys ? preserveKeys.size : 0;
+  console.log(`[subagent] Unstaged ${keys.length} subagent-added snippets (preserved ${preserved} ref'd), freed ~${(freed / 1000).toFixed(1)}k tokens`);
 }
 
 // ============================================================================
@@ -869,6 +873,7 @@ export async function executeSubagent(
   let totalCostCents = 0;
 
   let lastAssistantContent: unknown[] | null = null;
+  let lastAssistantText: string | null = null;
   let lastToolResults: Array<{ type: string; tool_use_id: string; name: string; content: string }> | null = null;
   let lastBatchOutcome: string | null = null;
   let lastErrors: string[] = [];
@@ -971,8 +976,9 @@ export async function executeSubagent(
       };
       useRoundHistoryStore.getState().pushSnapshot(snapshot);
 
-      // Check for empty round (no tools)
+      // Check for empty round (no tools) — capture text before breaking
       if (result.pendingToolCalls.length === 0) {
+        if (result.fullResponse.trim()) lastAssistantText = result.fullResponse.trim();
         const stop = checkStopConditions(
           role, round, totalInputTokens, totalOutputTokens,
           tokenBudget, pinBudget, preExistingHashes, preExistingSources,
@@ -1047,6 +1053,7 @@ export async function executeSubagent(
       }
 
       lastAssistantContent = assistantContent;
+      if (result.fullResponse.trim()) lastAssistantText = result.fullResponse.trim();
       lastToolResults = toolResults;
       lastBatchOutcome = toolResults.map(tr => tr.content).join('\n').slice(0, 2000);
       lastErrors = toolResults
@@ -1110,7 +1117,8 @@ export async function executeSubagent(
   // Pinned chunks are left alone — HPP exempts them from shouldMaterialize checks
   // and the parent will see them as compact ref lines.
   dematerializeSubagentChunks(preExistingHashes, preExistingSources);
-  unstageSubagentAdded(preExistingStagedKeys);
+  const stagedRefKeys = new Set(refs.filter(r => r.type === 'staged').map(r => r.hash));
+  unstageSubagentAdded(preExistingStagedKeys, stagedRefKeys);
 
   // Collect BB keys written by this subagent
   const bbKeys: string[] = [];
@@ -1150,6 +1158,7 @@ export async function executeSubagent(
     refs,
     bbKeys,
     summary,
+    finalText: lastAssistantText ?? undefined,
     pinCount,
     pinTokens,
     costCents: totalCostCents,

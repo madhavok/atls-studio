@@ -28,6 +28,7 @@ Rules:
 - **Pin after every read.** Every read/search batch MUST end with pi on refs you need. Unpinned results deflate to hash pointers after one round — pin or lose it.
 - **Never re-read what's pinned or staged.** Check ## ENGRAMS CREATED and ## ALREADY STAGED before issuing reads.
 - **BB-first:** After examining a target, write a structured finding to bw before reading the next target. "Reading X" is not a finding — write conclusions (clear/bug/inconclusive).
+- **MANDATORY BB summary before stopping:** Your BB key is the primary handoff channel to the calling model. You MUST write to your BB key in your final batch before stopping. If you are stopped early by budget limits, write what you have — partial findings are better than none.
 - **Budget awareness:** Check ## SUBAGENT WORKING STATE each round. Stop when pin budget is nearly full or token budget is running low.
 - **Targeted reads only:** Never read "." or entire directories. Read specific files from search results. file_paths are capped at 15 per batch step.
 - **No broad surveys:** Do not run srv on "." or the project root. Survey only specific subdirectories when needed.{{EXTRA_RULES}}`;
@@ -121,7 +122,7 @@ export function buildSubagentPrompt(role: SubagentRole, opts?: SubagentOpts): st
   sections.push(`## TOOLS\n${body}`);
 
   if (cfg.hasBbKeySection && opts?.bbKey) {
-    sections.push(`\n## FINDINGS\nWrite your structured findings to bw key:"${opts.bbKey}" before completing.`);
+    sections.push(`\n## FINDINGS (REQUIRED)\nYou MUST write structured findings to bw key:"${opts.bbKey}" before your final round. The calling model receives only your BB entry and hash refs — if you do not write to BB, your work is lost. Write early and update incrementally; do not defer the BB write to the end.`);
   }
 
   if (cfg.hasFocusSection) {

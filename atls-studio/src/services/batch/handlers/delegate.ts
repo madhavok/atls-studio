@@ -4,6 +4,8 @@
 
 import type { HandlerContext, OpHandler, StepOutput, SubAgentProgressEvent } from '../types';
 
+const DELEGATE_FINAL_TEXT_CAP = 2000;
+
 function ok(summary: string, refs: string[], content?: unknown): StepOutput {
   return { kind: 'raw', ok: true, refs, summary, content };
 }
@@ -54,8 +56,15 @@ async function runDelegate(
       .filter(r => r.pinned || r.type === 'staged')
       .map(r => `h:${r.hash}`);
     const refHashes = result.refs.map(r => `h:${r.shortHash}`);
-    const summary = `${role}: ${result.refs.length} refs (${(result.pinTokens / 1000).toFixed(1)}k tk), ${result.rounds} rounds` +
+    let summary = `${role}: ${result.refs.length} refs (${(result.pinTokens / 1000).toFixed(1)}k tk), ${result.rounds} rounds` +
       (result.bbKeys.length > 0 ? ` | BB: ${result.bbKeys.join(', ')}` : '');
+
+    if (result.finalText) {
+      const capped = result.finalText.length > DELEGATE_FINAL_TEXT_CAP
+        ? result.finalText.slice(0, DELEGATE_FINAL_TEXT_CAP) + '... [truncated]'
+        : result.finalText;
+      summary += `\n\n--- Delegate Findings ---\n${capped}`;
+    }
 
     return ok(summary, pinnedHashes, {
       refs: result.refs,
@@ -65,6 +74,7 @@ async function runDelegate(
       rounds: result.rounds,
       toolCalls: result.toolCalls,
       invocationId: result.invocationId,
+      finalText: result.finalText,
       refHashes,
     });
   } catch (delegateErr) {
