@@ -68,7 +68,7 @@ pub async fn fetch_vertex_models(access_token: String, _project_id: String, regi
                 .filter_map(|m| {
                     let name = m.get("name")?.as_str()?;
                     // Filter to Gemini models only
-                    let model_id = name.split('/').last().unwrap_or(name);
+                    let model_id = vertex_model_id_from_publisher_name(name);
                     if !model_id.starts_with("gemini") {
                         return None;
                     }
@@ -93,6 +93,11 @@ pub async fn fetch_vertex_models(access_token: String, _project_id: String, regi
     };
 
     Ok(models)
+}
+
+/// Last path segment from a Vertex publisher model resource name (e.g. `publishers/google/models/gemini-pro`).
+pub(crate) fn vertex_model_id_from_publisher_name(name: &str) -> &str {
+    name.split('/').last().unwrap_or(name)
 }
 
 // ============================================================================
@@ -203,13 +208,7 @@ pub async fn fetch_openai_models(api_key: String) -> Result<Vec<AIModel>, String
         .iter()
         .filter_map(|m| {
             let id = m.get("id")?.as_str()?;
-            let is_chat = id.contains("gpt") || id.contains("chatgpt") || id.starts_with("o1")
-                || id.starts_with("o3") || id.starts_with("o4");
-            let is_non_chat = id.contains("embedding") || id.contains("whisper") || id.contains("tts-")
-                || id.contains("davinci") || id.contains("babbage") || id.contains("dall-e")
-                || id.contains("gpt-image") || id.contains("text-moderation") || id.contains("omni-moderation")
-                || id.contains("codex-mini") || id.starts_with("sora");
-            if !is_chat || is_non_chat {
+            if !is_openai_chat_model_id(id) {
                 return None;
             }
             Some(AIModel {
@@ -224,7 +223,28 @@ pub async fn fetch_openai_models(api_key: String) -> Result<Vec<AIModel>, String
     Ok(models)
 }
 
-fn format_openai_model_name(id: &str) -> String {
+/// Whether an OpenAI `/v1/models` id should appear in the chat model picker.
+pub(crate) fn is_openai_chat_model_id(id: &str) -> bool {
+    let is_chat = id.contains("gpt")
+        || id.contains("chatgpt")
+        || id.starts_with("o1")
+        || id.starts_with("o3")
+        || id.starts_with("o4");
+    let is_non_chat = id.contains("embedding")
+        || id.contains("whisper")
+        || id.contains("tts-")
+        || id.contains("davinci")
+        || id.contains("babbage")
+        || id.contains("dall-e")
+        || id.contains("gpt-image")
+        || id.contains("text-moderation")
+        || id.contains("omni-moderation")
+        || id.contains("codex-mini")
+        || id.starts_with("sora");
+    is_chat && !is_non_chat
+}
+
+pub(crate) fn format_openai_model_name(id: &str) -> String {
     id.replace("gpt-", "GPT-")
         .replace("-turbo", " Turbo")
         .replace("-preview", " Preview")
@@ -379,4 +399,37 @@ pub async fn fetch_google_models(api_key: String) -> Result<Vec<AIModel>, String
         .collect();
 
     Ok(models)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn vertex_model_id_from_publisher_name_trims_prefix() {
+        assert_eq!(
+            vertex_model_id_from_publisher_name("publishers/google/models/gemini-pro"),
+            "gemini-pro"
+        );
+        assert_eq!(
+            vertex_model_id_from_publisher_name("gemini-flash"),
+            "gemini-flash"
+        );
+    }
+
+    #[test]
+    fn is_openai_chat_model_id_accepts_chat_and_rejects_embeddings() {
+        assert!(is_openai_chat_model_id("gpt-4o"));
+        assert!(is_openai_chat_model_id("o1-preview"));
+        assert!(!is_openai_chat_model_id("text-embedding-3-small"));
+        assert!(!is_openai_chat_model_id("dall-e-3"));
+    }
+
+    #[test]
+    fn format_openai_model_name_inserts_title_case_segments() {
+        assert_eq!(
+            format_openai_model_name("gpt-4-turbo-preview").as_str(),
+            "GPT-4 Turbo Preview"
+        );
+    }
 }

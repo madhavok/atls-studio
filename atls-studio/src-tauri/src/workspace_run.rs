@@ -17,6 +17,25 @@ pub struct WorkspaceScriptsResult {
     pub default: Option<String>,
 }
 
+pub(crate) fn package_json_has_tauri_dep(pkg: &serde_json::Value) -> bool {
+    let deps = pkg.get("dependencies").or_else(|| pkg.get("devDependencies"));
+    deps.and_then(|d| d.as_object())
+        .map(|o| o.keys().any(|k| k.starts_with("@tauri-apps/")))
+        .unwrap_or(false)
+}
+
+pub(crate) fn npm_script_sort_key(name: &str) -> u8 {
+    if name == "tauri:dev" || name == "tauri dev" {
+        0
+    } else if name == "dev" {
+        1
+    } else if name == "start" {
+        2
+    } else {
+        3
+    }
+}
+
 /// List all runnable scripts for a workspace directory.
 /// Returns scripts with optional default (smart detection for Tauri, dev, etc.).
 #[tauri::command]
@@ -141,23 +160,17 @@ fn node_scripts(pkg_path: &std::path::Path) -> Result<WorkspaceScriptsResult, St
 
     // Sort for consistent order: dev-like first, then alphabetical
     list.sort_by(|a, b| {
-        let priority = |n: &str| -> u8 {
-            if n == "tauri:dev" || n == "tauri dev" { 0 }
-            else if n == "dev" { 1 }
-            else if n == "start" { 2 }
-            else { 3 }
-        };
-        let pa = priority(&a.name);
-        let pb = priority(&b.name);
-        if pa != pb { pa.cmp(&pb) } else { a.name.cmp(&b.name) }
+        let pa = npm_script_sort_key(&a.name);
+        let pb = npm_script_sort_key(&b.name);
+        if pa != pb {
+            pa.cmp(&pb)
+        } else {
+            a.name.cmp(&b.name)
+        }
     });
 
     // Smart default: Tauri project -> tauri:dev; else dev; else start; else first
-    let deps = pkg.get("dependencies").or_else(|| pkg.get("devDependencies"));
-    let has_tauri = deps
-        .and_then(|d| d.as_object())
-        .map(|o| o.keys().any(|k| k.starts_with("@tauri-apps/")))
-        .unwrap_or(false);
+    let has_tauri = package_json_has_tauri_dep(&pkg);
 
     let default = if has_tauri {
         list.iter().find(|s| s.name == "tauri:dev" || s.name == "tauri dev")
@@ -173,4 +186,31 @@ fn node_scripts(pkg_path: &std::path::Path) -> Result<WorkspaceScriptsResult, St
         scripts: list,
         default: default_name.or(fallback),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{npm_script_sort_key, package_json_has_tauri_dep};
+
+    #[test]
+    fn sort_key_prefers_tauri_dev() {
+        assert!(npm_script_sort_key("tauri:dev") < npm_script_sort_key("build"));
+        assert!(npm_script_sort_key("dev") < npm_script_sort_key("z"));
+    }
+
+    #[test]
+    fn detects_tauri_from_dev_dependencies() {
+        let pkg: serde_json::Value = serde_json::json!({
+            "devDependencies": { "@tauri-apps/api": "2.0.0" }
+        });
+        assert!(package_json_has_tauri_dep(&pkg));
+    }
+
+    #[test]
+    fn no_false_positive_without_tauri() {
+        let pkg: serde_json::Value = serde_json::json!({
+            "devDependencies": { "react": "^18" }
+        });
+        assert!(!package_json_has_tauri_dep(&pkg));
+    }
 }

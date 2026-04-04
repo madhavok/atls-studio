@@ -42,10 +42,20 @@ jobs:
         run: npm run test:e2e
 
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
 
-      - name: Cargo test (Tauri backend)
+      - uses: taiki-e/install-action@cargo-llvm-cov
+
+      - name: Rust coverage (Tauri backend)
         working-directory: atls-studio/src-tauri
-        run: cargo test
+        run: cargo llvm-cov --all-features --lcov --output-path lcov.info
+
+      - name: Upload Tauri LCOV coverage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tauri-lcov
+          path: atls-studio/src-tauri/lcov.info
 
       - name: Cargo test (atls-rs workspace)
         working-directory: atls-rs

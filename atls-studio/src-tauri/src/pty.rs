@@ -4,13 +4,16 @@ use super::*;
 // PTY Terminal Commands (Human Interactive Terminal)
 // ============================================================================
 
+/// Returns `Some` when `cwd` is non-empty (explicit working directory from the UI).
+pub(crate) fn explicit_terminal_cwd(cwd: Option<String>) -> Option<String> {
+    cwd.filter(|d| !d.is_empty())
+}
+
 /// Resolve the working directory for a terminal/command.
 /// Priority: explicit cwd > project root from AtlsProjectState > std::env::current_dir()
 pub(crate) fn resolve_working_dir(app: &AppHandle, cwd: Option<String>) -> String {
-    if let Some(dir) = cwd {
-        if !dir.is_empty() {
-            return dir;
-        }
+    if let Some(dir) = explicit_terminal_cwd(cwd) {
+        return dir;
     }
     // Try to get the project root from ATLS state (non-async, use try_lock).
     if let Some(state) = app.try_state::<AtlsProjectState>() {
@@ -24,6 +27,25 @@ pub(crate) fn resolve_working_dir(app: &AppHandle, cwd: Option<String>) -> Strin
     std::env::current_dir()
         .map(|p| p.to_string_lossy().to_string())
         .unwrap_or_else(|_| ".".to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::explicit_terminal_cwd;
+
+    #[test]
+    fn explicit_cwd_none_or_empty_means_unset() {
+        assert_eq!(explicit_terminal_cwd(None), None);
+        assert_eq!(explicit_terminal_cwd(Some(String::new())), None);
+    }
+
+    #[test]
+    fn explicit_cwd_returns_nonempty() {
+        assert_eq!(
+            explicit_terminal_cwd(Some("/tmp/proj".into())),
+            Some("/tmp/proj".into())
+        );
+    }
 }
 
 /// Spawn a new PTY terminal instance

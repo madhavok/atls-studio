@@ -1733,17 +1733,130 @@ mod tests {
     use super::*;
     use tempfile::TempDir;
 
-    #[test]
-    fn init_create_session_round_trip() {
+    fn test_state() -> (TempDir, ChatDbState) {
         let dir = TempDir::new().unwrap();
         let root = dir.path().to_string_lossy().to_string();
         let state = ChatDbState::default();
         state.init(&root).unwrap();
+        (dir, state)
+    }
+
+    #[test]
+    fn init_create_session_round_trip() {
+        let (_dir, state) = test_state();
         create_session(&state, "s1", "Title", "agent", false).unwrap();
         let sessions = get_sessions(&state, 10).unwrap();
         assert_eq!(sessions.len(), 1);
         assert_eq!(sessions[0].id, "s1");
         assert_eq!(sessions[0].title, "Title");
+        state.close().unwrap();
+    }
+
+    #[test]
+    fn operations_fail_when_not_initialized() {
+        let state = ChatDbState::default();
+        assert!(create_session(&state, "s1", "t", "agent", false).is_err());
+    }
+
+    #[test]
+    fn messages_round_trip_with_metadata() {
+        let (_dir, state) = test_state();
+        create_session(&state, "s1", "T", "agent", false).unwrap();
+        add_message(&state, "m1", "s1", "user", "hello", None, None).unwrap();
+        add_message(
+            &state,
+            "m2",
+            "s1",
+            "assistant",
+            "world",
+            None,
+            Some(r#"{"img":true}"#),
+        )
+        .unwrap();
+        let msgs = get_messages(&state, "s1").unwrap();
+        assert_eq!(msgs.len(), 2);
+        assert_eq!(msgs[0].role, "user");
+        assert_eq!(msgs[0].content, "hello");
+        assert_eq!(msgs[1].metadata.as_deref(), Some(r#"{"img":true}"#));
+        state.close().unwrap();
+    }
+
+    #[test]
+    fn segments_round_trip() {
+        let (_dir, state) = test_state();
+        create_session(&state, "s1", "T", "agent", false).unwrap();
+        add_message(&state, "m1", "s1", "user", "x", None, None).unwrap();
+        add_segments(
+            &state,
+            "m1",
+            vec![SegmentInput {
+                message_id: "m1".into(),
+                seq: 0,
+                segment_type: "text".into(),
+                content: "chunk".into(),
+                tool_name: None,
+                tool_args: None,
+                tool_result: None,
+            }],
+        )
+        .unwrap();
+        let segs = get_segments(&state, "m1").unwrap();
+        assert_eq!(segs.len(), 1);
+        assert_eq!(segs[0].content, "chunk");
+        assert_eq!(delete_segments(&state, "m1").unwrap(), 1);
+        assert!(get_segments(&state, "m1").unwrap().is_empty());
+        state.close().unwrap();
+    }
+
+    #[test]
+    fn update_session_title_and_context_usage() {
+        let (_dir, state) = test_state();
+        create_session(&state, "s1", "Old", "agent", false).unwrap();
+        update_session_title(&state, "s1", "New").unwrap();
+        update_context_usage(&state, "s1", 1, 2, 3, 0.5).unwrap();
+        let s = get_session(&state, "s1").unwrap().expect("session");
+        assert_eq!(s.title, "New");
+        let u = s.context_usage.expect("usage");
+        assert_eq!(u.input_tokens, 1);
+        assert_eq!(u.output_tokens, 2);
+        assert_eq!(u.total_tokens, 3);
+        assert!((u.cost_cents - 0.5).abs() < f64::EPSILON);
+        state.close().unwrap();
+    }
+
+    #[test]
+    fn blackboard_and_get_content_by_hash() {
+        let (_dir, state) = test_state();
+        create_session(&state, "s1", "T", "agent", false).unwrap();
+        add_blackboard_entry(
+            &state,
+            "s1",
+            "abcdef123456",
+            "abcd",
+            "snippet",
+            Some("src/a.rs"),
+            "body",
+            42,
+            false,
+        )
+        .unwrap();
+        let entries = get_blackboard_entries(&state, "s1").unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].content, "body");
+        let got = get_content_by_hash(&state, "s1", "abcd").unwrap();
+        assert_eq!(got, Some(("body".into(), Some("src/a.rs".into()))));
+        update_blackboard_pinned(&state, "s1", "abcd", true).unwrap();
+        assert!(get_blackboard_entries(&state, "s1").unwrap()[0].pinned);
+        state.close().unwrap();
+    }
+
+    #[test]
+    fn delete_session_removes_data() {
+        let (_dir, state) = test_state();
+        create_session(&state, "s1", "T", "agent", false).unwrap();
+        add_message(&state, "m1", "s1", "user", "hi", None, None).unwrap();
+        delete_session(&state, "s1").unwrap();
+        assert!(get_session(&state, "s1").unwrap().is_none());
         state.close().unwrap();
     }
 }

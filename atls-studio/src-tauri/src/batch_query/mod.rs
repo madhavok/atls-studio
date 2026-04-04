@@ -52,40 +52,7 @@ pub async fn atls_batch_query(
     }
 
     // Edit dispatcher: route operation "edit" to the correct backend op (delete_files, draft, batch_edits, etc.)
-    let (operation, params) = if operation.as_str() == "edit" {
-        if let Some(obj) = params.as_object_mut() {
-            let deletes = obj.get("deletes").and_then(|v| v.as_array()).cloned();
-            let mode = obj.get("mode").and_then(|v| v.as_str());
-            let edits = obj.get("edits").and_then(|v| v.as_array());
-            let resolved = if obj.get("undo").is_some() {
-                String::from("undo")
-            } else if obj.get("revise").is_some() {
-                if let Some(h) = obj.remove("revise") {
-                    obj.insert("hash".to_string(), h);
-                }
-                String::from("revise")
-            } else if let Some(d) = &deletes {
-                if !d.is_empty() {
-                    obj.insert("file_paths".to_string(), serde_json::Value::Array(d.clone()));
-                    obj.remove("deletes");
-                    String::from("delete_files")
-                } else {
-                    String::from("draft")
-                }
-            } else if mode == Some("delete_files") && obj.contains_key("file_paths") {
-                String::from("delete_files")
-            } else if mode == Some("batch_edits") && edits.map(|e| !e.is_empty()).unwrap_or(false) {
-                String::from("batch_edits")
-            } else {
-                String::from("draft")
-            };
-            (resolved, serde_json::Value::Object(std::mem::take(obj)))
-        } else {
-            (operation, params)
-        }
-    } else {
-        (operation, params)
-    };
+    let (operation, params) = resolve_edit_operation(operation, params);
 
     let mut result: Result<serde_json::Value, String> = match operation.as_str() {
             "help" => {

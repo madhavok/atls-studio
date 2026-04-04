@@ -1,6 +1,28 @@
 use super::*;
 use crate::ai_streaming::{ChatMessage, convert_content_for_google, get_atls_tools, is_gemini3_model, inject_dummy_thought_signatures, validate_gemini_contents, log_gemini_contents_summary, retry_with_backoff, extract_text_tool_calls, MAX_RETRIES};
 
+/// Merge consecutive Gemini `contents` entries with the same role (API prefers alternating roles).
+pub(crate) fn merge_consecutive_same_role_contents(contents: Vec<serde_json::Value>) -> Vec<serde_json::Value> {
+    let mut merged_contents: Vec<serde_json::Value> = Vec::new();
+    for entry in contents {
+        let role = entry.get("role").and_then(|r| r.as_str()).unwrap_or("user");
+        let parts = entry.get("parts").cloned().unwrap_or(serde_json::json!([]));
+        if let Some(last) = merged_contents.last_mut() {
+            let last_role = last.get("role").and_then(|r| r.as_str()).unwrap_or("");
+            if last_role == role {
+                if let Some(last_parts) = last.get_mut("parts").and_then(|p| p.as_array_mut()) {
+                    if let Some(new_parts) = parts.as_array() {
+                        last_parts.extend(new_parts.iter().cloned());
+                    }
+                }
+                continue;
+            }
+        }
+        merged_contents.push(serde_json::json!({ "role": role, "parts": parts }));
+    }
+    merged_contents
+}
+
 // ============================================================================
 // Gemini Context Caching API
 // ============================================================================
@@ -314,24 +336,7 @@ pub async fn stream_chat_vertex(
         }
     }
 
-    // Merge consecutive same-role messages (Gemini requires alternating roles)
-    let mut merged_contents: Vec<serde_json::Value> = Vec::new();
-    for entry in contents {
-        let role = entry.get("role").and_then(|r| r.as_str()).unwrap_or("user");
-        let parts = entry.get("parts").cloned().unwrap_or(serde_json::json!([]));
-        if let Some(last) = merged_contents.last_mut() {
-            let last_role = last.get("role").and_then(|r| r.as_str()).unwrap_or("");
-            if last_role == role {
-                if let Some(last_parts) = last.get_mut("parts").and_then(|p| p.as_array_mut()) {
-                    if let Some(new_parts) = parts.as_array() {
-                        last_parts.extend(new_parts.iter().cloned());
-                    }
-                }
-                continue;
-            }
-        }
-        merged_contents.push(serde_json::json!({ "role": role, "parts": parts }));
-    }
+    let mut merged_contents = merge_consecutive_same_role_contents(contents);
 
     // Gemini 3+ requires thoughtSignature on functionCall parts in conversation history
     if is_gemini3_model(&model) {
@@ -681,4 +686,32 @@ pub async fn stream_chat_vertex(
     });
 
     Ok(())
+}
+
+#[cfg(test)]
+mod merge_tests {
+    use super::merge_consecutive_same_role_contents;
+    use serde_json::json;
+
+    #[test]
+    fn merges_consecutive_user_messages() {
+        let contents = vec![
+            json!({"role": "user", "parts": [{"text": "a"}]}),
+            json!({"role": "user", "parts": [{"text": "b"}]}),
+        ];
+        let merged = merge_consecutive_same_role_contents(contents);
+        assert_eq!(merged.len(), 1);
+        let parts = merged[0].get("parts").and_then(|p| p.as_array()).unwrap();
+        assert_eq!(parts.len(), 2);
+    }
+
+    #[test]
+    fn preserves_alternation_without_merge() {
+        let contents = vec![
+            json!({"role": "user", "parts": [{"text": "u"}]}),
+            json!({"role": "model", "parts": [{"text": "m"}]}),
+        ];
+        let merged = merge_consecutive_same_role_contents(contents);
+        assert_eq!(merged.len(), 2);
+    }
 }

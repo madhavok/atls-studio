@@ -110,3 +110,86 @@ pub(crate) fn extract_quoted_value(s: &str) -> Option<&str> {
     let end = s[start + 1..].find('\'')?;
     Some(&s[start + 1..start + 1 + end])
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn empty_condition_is_tautology() {
+        assert_eq!(parse_ast_condition(""), "1=1");
+    }
+
+    #[test]
+    fn extract_quoted_value_finds_first_pair() {
+        assert_eq!(
+            extract_quoted_value(r#"name contains 'foo'"#),
+            Some("foo")
+        );
+        assert_eq!(extract_quoted_value("no quotes"), None);
+    }
+
+    #[test]
+    fn parse_name_predicates() {
+        assert_eq!(
+            parse_ast_condition("name contains 'bar'"),
+            "name LIKE '%bar%'"
+        );
+        assert_eq!(
+            parse_ast_condition("name starts_with 'pre'"),
+            "name LIKE 'pre%'"
+        );
+        assert_eq!(
+            parse_ast_condition("name ends_with 'suf'"),
+            "name LIKE '%suf'"
+        );
+        assert_eq!(
+            parse_ast_condition("name = 'exact'"),
+            "name = 'exact'"
+        );
+    }
+
+    #[test]
+    fn parse_kind_and_complexity() {
+        assert_eq!(
+            parse_ast_condition("kind = 'function'"),
+            "kind = 'function'"
+        );
+        assert_eq!(
+            parse_ast_condition("complexity > 5"),
+            "complexity > 5"
+        );
+        assert_eq!(
+            parse_ast_condition("lines < 100"),
+            "line_count < 100"
+        );
+    }
+
+    #[test]
+    fn parse_file_and_fallback() {
+        assert_eq!(
+            parse_ast_condition("file = 'src/foo.rs'"),
+            "file_path LIKE '%src/foo.rs%'"
+        );
+        assert_eq!(
+            parse_ast_condition("unknown_token"),
+            "name LIKE '%unknown_token%'"
+        );
+    }
+
+    #[test]
+    fn not_negates_clause() {
+        let out = parse_ast_condition("not name contains 'x'");
+        assert!(out.starts_with("NOT ("));
+        assert!(out.contains("name LIKE '%x%'"));
+    }
+
+    #[test]
+    fn multiple_and_joins() {
+        let out = parse_ast_condition("kind = 'fn' and name contains 'foo'");
+        assert_eq!(
+            out,
+            "kind = 'fn' AND name LIKE '%foo%'"
+        );
+    }
+}

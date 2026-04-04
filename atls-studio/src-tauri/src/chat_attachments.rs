@@ -150,3 +150,32 @@ fn extract_signatures(content: &str, lang: &str) -> String {
         signatures.join("\n")
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::extract_signatures;
+
+    #[test]
+    fn extract_signatures_rust_collects_pub_fn_and_struct() {
+        let src = "pub fn foo() {}\npub struct Bar {}\n";
+        let sig = extract_signatures(src, "rust");
+        assert!(sig.contains("pub fn foo"));
+        assert!(sig.contains("pub struct Bar"));
+    }
+
+    #[test]
+    fn extract_signatures_typescript_finds_export_function() {
+        let src = "export function baz() {}\nconst x = 1;\n";
+        let sig = extract_signatures(src, "typescript");
+        assert!(sig.contains("export function baz"));
+    }
+
+    #[test]
+    fn extract_signatures_empty_fallback_first_lines() {
+        let lines: Vec<String> = (0..60).map(|i| format!("line {i}")).collect();
+        let src = lines.join("\n");
+        let sig = extract_signatures(&src, "rust");
+        assert!(sig.contains("line 0"));
+        assert!(!sig.contains("line 55"));
+    }
+}

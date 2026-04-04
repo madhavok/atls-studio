@@ -34,6 +34,45 @@ pub(crate) fn combine_output(stdout: &str, stderr: &str) -> String {
     }
 }
 
+/// Routes `operation == "edit"` to concrete backend ops (`draft`, `batch_edits`, `delete_files`, etc.).
+pub(crate) fn resolve_edit_operation(
+    operation: String,
+    mut params: serde_json::Value,
+) -> (String, serde_json::Value) {
+    if operation.as_str() != "edit" {
+        return (operation, params);
+    }
+    let Some(obj) = params.as_object_mut() else {
+        return (operation, params);
+    };
+    let deletes = obj.get("deletes").and_then(|v| v.as_array()).cloned();
+    let mode = obj.get("mode").and_then(|v| v.as_str());
+    let edits = obj.get("edits").and_then(|v| v.as_array());
+    let resolved = if obj.get("undo").is_some() {
+        String::from("undo")
+    } else if obj.get("revise").is_some() {
+        if let Some(h) = obj.remove("revise") {
+            obj.insert("hash".to_string(), h);
+        }
+        String::from("revise")
+    } else if let Some(d) = &deletes {
+        if !d.is_empty() {
+            obj.insert("file_paths".to_string(), serde_json::Value::Array(d.clone()));
+            obj.remove("deletes");
+            String::from("delete_files")
+        } else {
+            String::from("draft")
+        }
+    } else if mode == Some("delete_files") && obj.contains_key("file_paths") {
+        String::from("delete_files")
+    } else if mode == Some("batch_edits") && edits.map(|e| !e.is_empty()).unwrap_or(false) {
+        String::from("batch_edits")
+    } else {
+        String::from("draft")
+    };
+    (resolved, serde_json::Value::Object(std::mem::take(obj)))
+}
+
 /// Extract raw hash for undo/revise/flush lookup from various formats the model may pass.
 /// Handles: "h:6169ed", "[edit result] h:6169ed → path", "6169ed", "6169ed_edit", etc.
 /// Returns the hash suitable for matching entry.hash (which has no "h:" prefix).
@@ -502,5 +541,66 @@ mod draft_hash_tests {
             Some("matching-hash"),
             "matching-hash"
         ), "should not emit when hashes match");
+    }
+}
+
+#[cfg(test)]
+mod edit_dispatch_tests {
+    use super::resolve_edit_operation;
+    use serde_json::json;
+
+    #[test]
+    fn non_edit_passthrough() {
+        let (op, p) = resolve_edit_operation("context".into(), json!({}));
+        assert_eq!(op, "context");
+        assert_eq!(p, json!({}));
+    }
+
+    #[test]
+    fn edit_non_object_unchanged() {
+        let (op, p) = resolve_edit_operation("edit".into(), json!("raw"));
+        assert_eq!(op, "edit");
+        assert_eq!(p, json!("raw"));
+    }
+
+    #[test]
+    fn edit_undo() {
+        let (op, p) = resolve_edit_operation("edit".into(), json!({"undo": "h:x"}));
+        assert_eq!(op, "undo");
+        assert!(p.get("undo").is_some());
+    }
+
+    #[test]
+    fn edit_revise_moves_hash() {
+        let (op, p) = resolve_edit_operation(
+            "edit".into(),
+            json!({"revise": "h:abc", "line_edits": []}),
+        );
+        assert_eq!(op, "revise");
+        assert_eq!(p.get("hash"), Some(&json!("h:abc")));
+        assert!(p.get("revise").is_none());
+    }
+
+    #[test]
+    fn edit_deletes_to_delete_files() {
+        let (op, p) = resolve_edit_operation("edit".into(), json!({"deletes": ["a.ts"]}));
+        assert_eq!(op, "delete_files");
+        assert_eq!(p.get("file_paths"), Some(&json!(["a.ts"])));
+        assert!(p.get("deletes").is_none());
+    }
+
+    #[test]
+    fn edit_empty_deletes_is_draft() {
+        let (op, _) = resolve_edit_operation("edit".into(), json!({"deletes": []}));
+        assert_eq!(op, "draft");
+    }
+
+    #[test]
+    fn edit_batch_edits_mode() {
+        let (op, _) = resolve_edit_operation(
+            "edit".into(),
+            json!({"mode": "batch_edits", "edits": [{"f": 1}]}),
+        );
+        assert_eq!(op, "batch_edits");
     }
 }
