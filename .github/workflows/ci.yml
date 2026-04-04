@@ -41,6 +41,17 @@ jobs:
         working-directory: atls-studio
         run: npm run test:e2e
 
+      # Tauri links against WebKitGTK on Linux; pkg-config needs glib-2.0.pc etc.
+      - name: Install Linux dependencies for Tauri (Rust build)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            libwebkit2gtk-4.1-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libxdo-dev
+
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: llvm-tools-preview
