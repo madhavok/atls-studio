@@ -2128,18 +2128,20 @@ const ToolSegmentBubble = memo(function ToolSegmentBubble({ toolCall }: { toolCa
 
 const StreamingBubble = memo(function StreamingBubble({ 
   segmentsRef,
+  accumulatedSegmentsRef,
   revisionRef,
   subagentProgressByStepRef,
   isGenerating, 
   onScrollToBottom,
 }: { 
   segmentsRef: React.RefObject<StreamSegment[]>;
+  accumulatedSegmentsRef: React.RefObject<StreamSegment[]>;
   revisionRef: React.RefObject<number>;
   subagentProgressByStepRef: React.RefObject<Map<string, SubAgentProgressEvent>>;
   isGenerating: boolean;
   onScrollToBottom?: () => void;
 }) {
-  const [segments, setSegments] = useState<StreamSegment[]>([]);
+  const [allSegments, setAllSegments] = useState<StreamSegment[]>([]);
   const [, startTransition] = useTransition();
   const rafRef = useRef<number | null>(null);
   const lastScrollRef = useRef<number>(0);
@@ -2147,7 +2149,7 @@ const StreamingBubble = memo(function StreamingBubble({
   
   useEffect(() => {
     if (!isGenerating) {
-      setSegments([]);
+      setAllSegments([]);
       lastRevisionRef.current = 0;
       return;
     }
@@ -2161,10 +2163,12 @@ const StreamingBubble = memo(function StreamingBubble({
       
       if (currentRevision !== lastRevisionRef.current) {
         lastRevisionRef.current = currentRevision;
-        const currentSegments = segmentsRef.current || [];
+        const accumulated = accumulatedSegmentsRef.current || [];
+        const live = segmentsRef.current || [];
+        const combined = [...accumulated, ...live];
         
         startTransition(() => {
-          setSegments(currentSegments.map(s =>
+          setAllSegments(combined.map(s =>
             s.type === 'tool' ? { ...s, toolCall: { ...s.toolCall } } : { ...s }
           ));
         });
@@ -2190,16 +2194,15 @@ const StreamingBubble = memo(function StreamingBubble({
         rafRef.current = null;
       }
     };
-  }, [isGenerating, segmentsRef, revisionRef, onScrollToBottom]);
+  }, [isGenerating, segmentsRef, accumulatedSegmentsRef, revisionRef, onScrollToBottom]);
   
-  // Check if we have any content
-  const hasContent = segments.some(s => 
+  const hasContent = allSegments.some(s => 
     (s.type === 'text' && s.content) || 
     s.type === 'tool' ||
     s.type === 'reasoning' ||
     s.type === 'error'
   );
-  const hasOnlyReasoning = hasContent && segments.every(s => s.type === 'reasoning' || (s.type === 'text' && !s.content));
+  const hasOnlyReasoning = hasContent && allSegments.every(s => s.type === 'reasoning' || (s.type === 'text' && !s.content));
   const isThinking = isGenerating && (!hasContent || hasOnlyReasoning);
   
   if (!hasContent && !isGenerating) {
@@ -2219,16 +2222,14 @@ const StreamingBubble = memo(function StreamingBubble({
         )}
       </div>
       <div className="max-w-[80%] space-y-2">
-        {/* Thinking indicator - shows before any output */}
         {isThinking && !hasOnlyReasoning && (
           <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-gradient-to-r from-studio-accent/10 to-studio-surface/50 border border-studio-accent/30">
             <span className="text-sm text-studio-accent font-medium">Thinking...</span>
           </div>
         )}
         
-        {/* Render segments in order */}
-        {segments.map((segment, idx, arr) => {
-          const isLast = idx === segments.length - 1;
+        {allSegments.map((segment, idx, arr) => {
+          const isLast = idx === allSegments.length - 1;
           
           if (segment.type === 'text') {
             if (!segment.content) return null;
@@ -2255,7 +2256,7 @@ const StreamingBubble = memo(function StreamingBubble({
           } else if (segment.type === 'step-boundary') {
             return (
               <StepBoundary key={`step-${idx}`} stepNumber={
-                segments.slice(0, idx).filter(s => s.type === 'step-boundary').length + 2
+                allSegments.slice(0, idx).filter(s => s.type === 'step-boundary').length + 2
               } />
             );
           } else if (segment.type === 'status') {
@@ -2435,9 +2436,8 @@ export function AiChat() {
   const segmentsRevisionRef = useRef<number>(0);
   /** Live subagent tool progress keyed by batch step id (delegate.* steps) */
   const subagentProgressByStepRef = useRef<Map<string, SubAgentProgressEvent>>(new Map());
-  // Accumulate text from prior rounds before onClear; merged into final/partial message
-  const accumulatedTextRef = useRef<string>('');
-  const accumulatedReasoningRef = useRef<string>('');
+  // Ordered archive of segments from prior tool-loop rounds (append-only activity log)
+  const accumulatedSegmentsRef = useRef<StreamSegment[]>([]);
   const isStreamingRef = useRef(false);
   const mountedRef = useRef(true); // Track if component is mounted
   const updateTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -3077,7 +3077,7 @@ export function AiChat() {
       clearToolCalls();
       
       // Reset streaming segments and mark as streaming
-      const streamRefs: StreamingRefs = { streamingSegmentsRef, segmentsRevisionRef, seenToolCallIds, accumulatedTextRef, accumulatedReasoningRef, isStreamingRef };
+      const streamRefs: StreamingRefs = { streamingSegmentsRef, segmentsRevisionRef, seenToolCallIds, accumulatedSegmentsRef, isStreamingRef };
       resetStreamingState(streamRefs);
       
       // Active text/reasoning block IDs for the typed stream protocol
@@ -3134,22 +3134,14 @@ export function AiChat() {
         },
         onClear: () => {
           fullResponse = '';
-          const textFromCurrent = streamingSegmentsRef.current
-            .filter((s): s is { type: 'text'; content: string } => s.type === 'text')
-            .map(s => s.content)
-            .join('');
-          if (textFromCurrent) {
-            const cleaned = cleanStreamingContent(textFromCurrent);
-            if (cleaned) {
-              accumulatedTextRef.current += (accumulatedTextRef.current ? '\n\n' : '') + cleaned;
+          for (const seg of streamingSegmentsRef.current) {
+            if (seg.type !== 'tool') {
+              accumulatedSegmentsRef.current.push(
+                seg.type === 'text' || seg.type === 'reasoning'
+                  ? { ...seg, state: 'done' as const }
+                  : seg
+              );
             }
-          }
-          const reasoningFromCurrent = streamingSegmentsRef.current
-            .filter((s): s is { type: 'reasoning'; content: string } => s.type === 'reasoning')
-            .map(s => s.content)
-            .join('');
-          if (reasoningFromCurrent) {
-            accumulatedReasoningRef.current += (accumulatedReasoningRef.current ? '\n\n' : '') + reasoningFromCurrent;
           }
           streamingSegmentsRef.current = streamingSegmentsRef.current.filter(s => s.type === 'tool');
           subagentProgressByStepRef.current.clear();
@@ -3252,15 +3244,9 @@ export function AiChat() {
         },
         onError: (error) => {
           console.error('AI error:', error);
-          // Preserve accumulated reasoning/text from prior tool rounds
+          const allSegments = [...accumulatedSegmentsRef.current, ...streamingSegmentsRef.current];
           const partialParts: MessagePart[] = [];
-          if (accumulatedReasoningRef.current) {
-            partialParts.push({ type: 'reasoning', content: accumulatedReasoningRef.current });
-          }
-          if (accumulatedTextRef.current) {
-            partialParts.push({ type: 'text', content: accumulatedTextRef.current });
-          }
-          for (const seg of streamingSegmentsRef.current) {
+          for (const seg of allSegments) {
             if (seg.type === 'text') {
               const cleaned = cleanStreamingContent(seg.content);
               if (cleaned) partialParts.push({ type: 'text', content: cleaned });
@@ -3278,6 +3264,10 @@ export function AiChat() {
                   ...((tc?.syntheticChildren?.length) ? { syntheticChildren: tc.syntheticChildren } : {}),
                 },
               });
+            } else if (seg.type === 'step-boundary') {
+              partialParts.push({ type: 'step-boundary' });
+            } else if (seg.type === 'error') {
+              partialParts.push({ type: 'error', errorText: seg.errorText });
             }
           }
           const priorText = partialParts
@@ -3296,8 +3286,7 @@ export function AiChat() {
             content: `❌ **Error**: ${error.message}\n\nPlease check your API key and try again.`,
           });
           streamingSegmentsRef.current = [];
-          accumulatedTextRef.current = '';
-          accumulatedReasoningRef.current = '';
+          accumulatedSegmentsRef.current = [];
           seenToolCallIds.current.clear();
         },
         onDone: () => {
@@ -3320,19 +3309,12 @@ export function AiChat() {
           // Guard against updates after unmount
           if (!mountedRef.current) return;
           
-          // Convert streaming segments to rich MessageParts (new) and legacy MessageSegments
+          // Serialize accumulated + current segments in natural chronological order
           const finalParts: MessagePart[] = [];
           const finalSegments: MessageSegment[] = [];
+          const allSegments = [...accumulatedSegmentsRef.current, ...streamingSegmentsRef.current];
           
-          // Prepend accumulated reasoning from prior tool rounds
-          if (accumulatedReasoningRef.current) {
-            finalParts.push({ type: 'reasoning', content: accumulatedReasoningRef.current });
-          }
-          if (accumulatedTextRef.current) {
-            finalParts.push({ type: 'text', content: accumulatedTextRef.current });
-            finalSegments.push({ type: 'text', content: accumulatedTextRef.current });
-          }
-          for (const seg of streamingSegmentsRef.current) {
+          for (const seg of allSegments) {
             if (seg.type === 'text') {
               const cleaned = cleanStreamingContent(seg.content);
               if (cleaned) {
@@ -3400,8 +3382,7 @@ export function AiChat() {
             });
           }
           streamingSegmentsRef.current = [];
-          accumulatedTextRef.current = '';
-          accumulatedReasoningRef.current = '';
+          accumulatedSegmentsRef.current = [];
           seenToolCallIds.current.clear();
           subagentProgressByStepRef.current.clear();
           setIsGenerating(false);
@@ -3482,7 +3463,7 @@ export function AiChat() {
     const messageToolCalls: Map<string, MessageToolCall> = new Map();
     clearToolCalls();
     // Reset streaming segments and mark as streaming
-    const streamRefs: StreamingRefs = { streamingSegmentsRef, segmentsRevisionRef, seenToolCallIds, accumulatedTextRef, accumulatedReasoningRef, isStreamingRef };
+    const streamRefs: StreamingRefs = { streamingSegmentsRef, segmentsRevisionRef, seenToolCallIds, accumulatedSegmentsRef, isStreamingRef };
     resetStreamingState(streamRefs);
 
     // Active text/reasoning block IDs for the typed stream protocol
@@ -3531,22 +3512,14 @@ export function AiChat() {
         },
         onClear: () => {
           fullResponse = '';
-          const textFromCurrent = streamingSegmentsRef.current
-            .filter((s): s is { type: 'text'; content: string } => s.type === 'text')
-            .map(s => s.content)
-            .join('');
-          if (textFromCurrent) {
-            const cleaned = cleanStreamingContent(textFromCurrent);
-            if (cleaned) {
-              accumulatedTextRef.current += (accumulatedTextRef.current ? '\n\n' : '') + cleaned;
+          for (const seg of streamingSegmentsRef.current) {
+            if (seg.type !== 'tool') {
+              accumulatedSegmentsRef.current.push(
+                seg.type === 'text' || seg.type === 'reasoning'
+                  ? { ...seg, state: 'done' as const }
+                  : seg
+              );
             }
-          }
-          const reasoningFromCurrent = streamingSegmentsRef.current
-            .filter((s): s is { type: 'reasoning'; content: string } => s.type === 'reasoning')
-            .map(s => s.content)
-            .join('');
-          if (reasoningFromCurrent) {
-            accumulatedReasoningRef.current += (accumulatedReasoningRef.current ? '\n\n' : '') + reasoningFromCurrent;
           }
           streamingSegmentsRef.current = streamingSegmentsRef.current.filter(s => s.type === 'tool');
           subagentProgressByStepRef.current.clear();
@@ -3627,15 +3600,9 @@ export function AiChat() {
         },
         onError: (error) => {
           console.error('AI error:', error);
-          // Preserve accumulated reasoning/text from prior tool rounds
+          const allSegments = [...accumulatedSegmentsRef.current, ...streamingSegmentsRef.current];
           const partialParts: MessagePart[] = [];
-          if (accumulatedReasoningRef.current) {
-            partialParts.push({ type: 'reasoning', content: accumulatedReasoningRef.current });
-          }
-          if (accumulatedTextRef.current) {
-            partialParts.push({ type: 'text', content: accumulatedTextRef.current });
-          }
-          for (const seg of streamingSegmentsRef.current) {
+          for (const seg of allSegments) {
             if (seg.type === 'text') {
               const cleaned = cleanStreamingContent(seg.content);
               if (cleaned) partialParts.push({ type: 'text', content: cleaned });
@@ -3653,6 +3620,10 @@ export function AiChat() {
                   ...((tc?.syntheticChildren?.length) ? { syntheticChildren: tc.syntheticChildren } : {}),
                 },
               });
+            } else if (seg.type === 'step-boundary') {
+              partialParts.push({ type: 'step-boundary' });
+            } else if (seg.type === 'error') {
+              partialParts.push({ type: 'error', errorText: seg.errorText });
             }
           }
           const priorText = partialParts
@@ -3671,8 +3642,7 @@ export function AiChat() {
             content: `❌ **Error**: ${error.message}\n\nPlease check your API key and try again.`,
           });
           streamingSegmentsRef.current = [];
-          accumulatedTextRef.current = '';
-          accumulatedReasoningRef.current = '';
+          accumulatedSegmentsRef.current = [];
           seenToolCallIds.current.clear();
         },
         onDone: () => {
@@ -3681,14 +3651,9 @@ export function AiChat() {
           
           const finalParts: MessagePart[] = [];
           const finalSegments: MessageSegment[] = [];
-          if (accumulatedReasoningRef.current) {
-            finalParts.push({ type: 'reasoning', content: accumulatedReasoningRef.current });
-          }
-          if (accumulatedTextRef.current) {
-            finalParts.push({ type: 'text', content: accumulatedTextRef.current });
-            finalSegments.push({ type: 'text', content: accumulatedTextRef.current });
-          }
-          for (const seg of streamingSegmentsRef.current) {
+          const allSegments = [...accumulatedSegmentsRef.current, ...streamingSegmentsRef.current];
+          
+          for (const seg of allSegments) {
             if (seg.type === 'text') {
               const cleaned = cleanStreamingContent(seg.content);
               if (cleaned) {
@@ -3753,8 +3718,7 @@ export function AiChat() {
             });
           }
           streamingSegmentsRef.current = [];
-          accumulatedTextRef.current = '';
-          accumulatedReasoningRef.current = '';
+          accumulatedSegmentsRef.current = [];
           seenToolCallIds.current.clear();
           subagentProgressByStepRef.current.clear();
           setIsGenerating(false);
@@ -3823,7 +3787,7 @@ export function AiChat() {
                 agentProgress,
                 liveToolCalls: toolCalls,
                 streamingSegments: streamingSegmentsRef.current,
-                accumulatedText: accumulatedTextRef.current,
+                accumulatedSegments: accumulatedSegmentsRef.current,
                 messageCount: messages.length,
                 messages: messages.map(serializeMessageForDebug),
               };
@@ -4023,6 +3987,7 @@ export function AiChat() {
             {/* Streaming response with inline tool calls */}
             <StreamingBubble
               segmentsRef={streamingSegmentsRef}
+              accumulatedSegmentsRef={accumulatedSegmentsRef}
               revisionRef={segmentsRevisionRef}
               subagentProgressByStepRef={subagentProgressByStepRef}
               isGenerating={isGenerating}
@@ -4078,23 +4043,10 @@ export function AiChat() {
                     updateTimeoutRef.current = null;
                   }
                   
-                  // Save partial response - merge accumulated + current round, include segments
-                  const currentText = streamingSegmentsRef.current
-                    .filter((s): s is { type: 'text'; content: string } => s.type === 'text')
-                    .map(s => s.content)
-                    .join('');
-                  const cleanedCurrent = cleanStreamingContent(currentText);
-                  const fullText = accumulatedTextRef.current
-                    ? accumulatedTextRef.current + (cleanedCurrent ? '\n\n' + cleanedCurrent : '')
-                    : cleanedCurrent;
+                  // Save partial response in chronological order
+                  const allSegments = [...accumulatedSegmentsRef.current, ...streamingSegmentsRef.current];
                   const partialParts: MessagePart[] = [];
-                  if (accumulatedReasoningRef.current) {
-                    partialParts.push({ type: 'reasoning', content: accumulatedReasoningRef.current });
-                  }
-                  if (accumulatedTextRef.current) {
-                    partialParts.push({ type: 'text', content: accumulatedTextRef.current });
-                  }
-                  for (const seg of streamingSegmentsRef.current) {
+                  for (const seg of allSegments) {
                     if (seg.type === 'text') {
                       const cleaned = cleanStreamingContent(seg.content);
                       if (cleaned) partialParts.push({ type: 'text', content: cleaned });
@@ -4118,6 +4070,10 @@ export function AiChat() {
                       partialParts.push({ type: 'error', errorText: seg.errorText });
                     }
                   }
+                  const fullText = partialParts
+                    .filter((s): s is { type: 'text'; content: string } => s.type === 'text')
+                    .map(s => s.content)
+                    .join('\n');
                   if (fullText || partialParts.length > 0) {
                     const taskCompleteSummary = fullText ? '' : getTaskCompleteSummaryFromParts(partialParts);
                     const content = fullText
@@ -4141,8 +4097,7 @@ export function AiChat() {
                   // Reset all state
                   setIsGenerating(false);
                   streamingSegmentsRef.current = [];
-                  accumulatedTextRef.current = '';
-                  accumulatedReasoningRef.current = '';
+                  accumulatedSegmentsRef.current = [];
                   seenToolCallIds.current.clear();
                   subagentProgressByStepRef.current.clear();
                   clearToolCalls();
