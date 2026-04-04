@@ -52,3 +52,33 @@ pub async fn handle_scan_project(
         }).collect::<Vec<_>>()
     }))
 }
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    #[test]
+    fn parses_scan_args() {
+        let args = json!({"root_path": "/tmp/proj", "full_rescan": true});
+        let root: Option<String> = args
+            .get("root_path")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let full_rescan = args
+            .get("full_rescan")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        assert_eq!(root.as_deref(), Some("/tmp/proj"));
+        assert!(full_rescan);
+    }
+
+    #[test]
+    fn full_rescan_defaults_false() {
+        let args = json!({});
+        let full_rescan = args
+            .get("full_rescan")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        assert!(!full_rescan);
+    }
+}

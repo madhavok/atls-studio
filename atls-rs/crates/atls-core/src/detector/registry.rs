@@ -372,7 +372,6 @@ impl Default for DetectorRegistry {
 mod tests {
     use super::*;
     use std::fs;
-    use std::path::PathBuf;
 
     #[test]
     fn test_registry_load() {

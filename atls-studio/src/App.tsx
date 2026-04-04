@@ -331,6 +331,7 @@ function App() {
   return (
     <div 
       ref={rootRef}
+      data-testid="app-root"
       className={`h-screen w-screen flex flex-col bg-studio-bg text-studio-text overflow-hidden ${isMac ? 'mac-style' : 'win-style'}`}
       style={{ touchAction: 'manipulation', overscrollBehavior: 'none' }}
     >
@@ -404,7 +405,7 @@ function App() {
       />
 
       {/* Main Content */}
-      <div className="flex-1 flex overflow-hidden">
+      <div className="flex-1 flex overflow-hidden" data-testid="main-layout">
         {/* Left Panel - File Explorer */}
         <div 
           className={`shrink-0 bg-studio-surface border-r border-studio-border overflow-hidden ${isResizing ? '' : 'transition-[width] duration-150'}`}

@@ -149,3 +149,16 @@ impl AtlsProject {
         &self.parser_registry
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::AtlsProject;
+
+    #[tokio::test]
+    async fn open_creates_atls_dir_and_db() {
+        let dir = tempfile::tempdir().unwrap();
+        let proj = AtlsProject::open(dir.path()).await.expect("open temp project");
+        assert!(dir.path().join(".atls").join("atls.db").exists());
+        assert_eq!(proj.root_path(), dir.path().canonicalize().unwrap());
+    }
+}

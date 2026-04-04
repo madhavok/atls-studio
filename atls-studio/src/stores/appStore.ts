@@ -75,7 +75,7 @@ export function extractFirstTextFromMessage(msg: Message): string {
 const TITLE_MAX_LENGTH = 50;
 
 // Generate chat title from first user message (handles multimodal/segmented)
-function generateTitle(messages: Message[]): string {
+export function generateTitle(messages: Message[]): string {
   // Find first user message with actual text content
   const userMsg = messages.find(m => m.role === 'user');
   if (!userMsg) return 'New Conversation';

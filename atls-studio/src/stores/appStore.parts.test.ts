@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { extractFirstTextFromMessage, getMessageParts } from './appStore';
+import { extractFirstTextFromMessage, generateTitle, getMessageParts } from './appStore';
 import type { Message } from './appStore';
 
 describe('getMessageParts / extractFirstTextFromMessage', () => {
@@ -23,5 +23,21 @@ describe('getMessageParts / extractFirstTextFromMessage', () => {
       timestamp: new Date(),
     };
     expect(extractFirstTextFromMessage(msg)).toBe('Title me');
+  });
+
+  it('generateTitle uses first user line up to six words', () => {
+    const messages: Message[] = [
+      {
+        id: '1',
+        role: 'user',
+        content: 'hello world from the test suite today extra',
+        timestamp: new Date(),
+      },
+    ];
+    expect(generateTitle(messages)).toBe('hello world from the test suite');
+  });
+
+  it('generateTitle falls back when no user text', () => {
+    expect(generateTitle([])).toBe('New Conversation');
   });
 });

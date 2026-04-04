@@ -475,3 +475,17 @@ impl<'a> DatabaseMigrations<'a> {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::DatabaseMigrations;
+
+    #[test]
+    fn run_all_succeeds_on_initialized_database() {
+        let db = crate::db::Database::open_in_memory().expect("db");
+        let conn = db.conn();
+        DatabaseMigrations::new(&*conn)
+            .run_all()
+            .expect("migrations");
+    }
+}
+

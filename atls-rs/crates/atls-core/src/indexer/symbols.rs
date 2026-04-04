@@ -1841,6 +1841,7 @@ impl SymbolExtractor {
 }
 
 #[cfg(test)]
+#[allow(deprecated)]
 mod tests {
     use super::*;
     use crate::parser::create_parser;

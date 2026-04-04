@@ -491,3 +491,22 @@ pub async fn chat_db_get_shadow_version(
 ) -> Result<Option<chat_db::DbShadowVersion>, String> {
     chat_db::get_shadow_version(&state, &session_id, &hash)
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::chat_db;
+    use crate::chat_db::ChatDbState;
+
+    #[test]
+    fn create_session_delegates_to_chat_db() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().to_str().unwrap();
+        let state = ChatDbState::default();
+        state.init(root).unwrap();
+        chat_db::create_session(&state, "s-deleg", "Title", "agent", false).unwrap();
+        let sessions = chat_db::get_sessions(&state, 10).unwrap();
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].id, "s-deleg");
+        state.close().unwrap();
+    }
+}

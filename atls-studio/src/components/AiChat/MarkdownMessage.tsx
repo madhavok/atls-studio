@@ -25,7 +25,7 @@ function escAttr(s: string): string {
  * the markdown pipeline. Status markers are deduplicated; template markers
  * are converted to <span class="tpl-card"> with encoded data attributes.
  */
-function injectMarkerHtml(text: string): string {
+export function injectMarkerHtml(text: string): string {
   let result = text;
 
   // Template markers — must run first (before status markers consume «»)

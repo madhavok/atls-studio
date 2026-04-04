@@ -666,3 +666,22 @@ pub async fn scan_project(
         }))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn default_focus_profiles_has_expected_shape() {
+        let v = super::default_focus_profiles_json();
+        assert!(v.get("profiles").is_some());
+        assert_eq!(
+            v.get("activeProfile").and_then(|x| x.as_str()),
+            Some("Full Scan")
+        );
+    }
+
+    #[test]
+    fn focus_profiles_path_ends_with_json() {
+        let p = super::focus_profiles_path();
+        assert_eq!(p.file_name().and_then(|n| n.to_str()), Some("focus-profiles.json"));
+    }
+}

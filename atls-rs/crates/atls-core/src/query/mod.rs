@@ -45,3 +45,20 @@ impl QueryEngine {
         &self.db
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::QueryEngine;
+    use crate::db::Database;
+
+    #[test]
+    fn query_engine_new_uses_database() {
+        let db = Database::open_in_memory().expect("in-memory db");
+        let q = QueryEngine::new(db);
+        let n: i64 = q
+            .conn()
+            .query_row("SELECT COUNT(*) FROM sqlite_master WHERE type='table'", [], |r| r.get(0))
+            .expect("sqlite");
+        assert!(n > 0);
+    }
+}

@@ -67,7 +67,7 @@ interface FileTreeChangedEvent {
 }
 
 /** Compute focus-profile filters for issue queries. */
-function buildIssueFilters(): { catFilter?: string[]; sevFilter?: string[] } {
+export function buildIssueFilters(): { catFilter?: string[]; sevFilter?: string[] } {
   const { focusProfile, focusProfileName } = useAppStore.getState();
   const activeCats = Object.keys(focusProfile.matrix).filter(
     k => (focusProfile.matrix[k]?.length ?? 0) > 0,

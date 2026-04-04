@@ -1602,3 +1602,18 @@ impl Indexer {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod incremental_policy_tests {
+    use super::IncrementalParsePolicy;
+
+    #[test]
+    fn default_runs_structural_patterns() {
+        assert!(IncrementalParsePolicy::default().run_structural_patterns);
+    }
+
+    #[test]
+    fn skip_structural_patterns_opt_out() {
+        assert!(!IncrementalParsePolicy::skip_structural_patterns().run_structural_patterns);
+    }
+}

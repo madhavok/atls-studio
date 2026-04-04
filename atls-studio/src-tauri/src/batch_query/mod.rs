@@ -15527,3 +15527,15 @@ pub async fn atls_batch_query(
 // ============================================================================
 // Search Commands
 // ============================================================================
+
+#[cfg(test)]
+mod batch_query_mod_tests {
+    /// Guard: `atls_batch_query` uses `resolve_edit_operation` from helpers before dispatch.
+    #[test]
+    fn resolve_edit_undo_routes_to_undo() {
+        use super::helpers::resolve_edit_operation;
+        use serde_json::json;
+        let (op, _) = resolve_edit_operation("edit".into(), json!({ "undo": "h:abc" }));
+        assert_eq!(op, "undo");
+    }
+}

@@ -611,3 +611,19 @@ pub(crate) fn expand_concept(concept: &str) -> String {
     // Default: just return the concept
     concept.to_string()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::expand_concept;
+
+    #[test]
+    fn expand_concept_maps_auth() {
+        let s = expand_concept("user auth flow");
+        assert!(s.contains("authenticate"));
+    }
+
+    #[test]
+    fn expand_concept_unknown_passes_through() {
+        assert_eq!(expand_concept("xyz_unknown_token"), "xyz_unknown_token");
+    }
+}

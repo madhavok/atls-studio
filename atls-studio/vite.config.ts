@@ -5,7 +5,9 @@ import react from "@vitejs/plugin-react";
 const host = process.env.TAURI_DEV_HOST;
 
 // https://vite.dev/config/
-export default defineConfig(async () => ({
+export default defineConfig(({ mode }) => ({
+  // Vitest runs Vite in `test` mode; suppress toolchain deprecation noise (esbuild vs oxc) there only.
+  logLevel: mode === "test" ? "error" : "info",
   plugins: [react()],
   test: {
     include: ["src/**/*.test.ts", "src/**/*.test.tsx"],
@@ -23,11 +25,11 @@ export default defineConfig(async () => ({
       include: ["src/**/*.{ts,tsx}"],
       exclude: ["src/**/*.test.ts", "src/**/*.test.tsx"],
       thresholds: {
-        // Baseline ~36% stmts / 32% branch / 27% funcs / 38% lines (see coverage-baseline.json). Tighten over time.
-        statements: 35,
-        branches: 29,
-        functions: 25,
-        lines: 36,
+        // Baseline ~37% stmts / 32% branch / 28% funcs / 38% lines. Tighten over time.
+        statements: 36,
+        branches: 30,
+        functions: 27,
+        lines: 37,
       },
     },
   },

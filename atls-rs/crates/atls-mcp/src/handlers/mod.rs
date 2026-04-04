@@ -259,4 +259,12 @@ mod tests {
     fn find_nearest_tool_typo_hint() {
         assert_eq!(find_nearest_valid_tool("batch_qury"), Some("batch_query"));
     }
+
+    #[test]
+    fn list_tools_includes_primary_tools() {
+        let h = Handlers::new();
+        let names: Vec<String> = h.list_tools().into_iter().map(|t| t.name).collect();
+        assert!(names.iter().any(|n| n == "batch_query"));
+        assert!(names.iter().any(|n| n == "scan_project"));
+    }
 }
