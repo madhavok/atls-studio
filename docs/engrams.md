@@ -4,6 +4,8 @@ Engrams are the fundamental data unit in ATLS — content-addressed chunks of kn
 
 ## Data Model
 
+The snippet below lists **core fields** for orientation. The production type has additional fields (`digest`, `editDigest`, `summary`, `createdAt`, `suspectKind`, subtask binding, revision metadata, `readSpan`, etc.). See [`ContextChunk` in `contextStore.ts`](../atls-studio/src/stores/contextStore.ts).
+
 ```typescript
 interface ContextChunk {
   hash: string;           // 16-char content hash (two FNV-1a 32-bit)
@@ -33,19 +35,27 @@ interface ContextChunk {
 }
 ```
 
-### Content Types
+### Content types (`ChunkType`)
+
+Canonical union: [`ChunkType` in `contextHash.ts`](../atls-studio/src/utils/contextHash.ts). Summary:
 
 | Type | Source | Description |
 |------|--------|-------------|
+| `msg:user` | Chat | User message |
+| `msg:asst` | Chat | Assistant message |
+| `call` | Tools | Tool call (request) |
+| `result` | Tools | Tool result |
 | `file` | File read | Raw file content |
+| `exec:cmd` | Terminal | Command line |
+| `exec:out` | Terminal | Command output |
 | `smart` | Smart read | Parsed with imports, exports, symbols |
+| `raw` | Read path | Raw file content (alternate path) |
 | `search` | Code search | Search result set |
 | `symbol` | Symbol lookup | Symbol definitions and references |
 | `deps` | Dependency analysis | Import/export graph |
-| `tree` | Project tree | Directory structure |
 | `issues` | Issue finder | Lint/type errors |
-| `result` | Tool output | Generic tool result |
-| `call` | Tool call | The request that produced a result |
+| `tree` | Project tree | Directory structure |
+| `analysis` | Batch / analyze | Structured analysis outputs (e.g. deps, extract_plan) |
 
 ### Content Hashing
 

@@ -88,7 +88,7 @@ Paths below are from the **Git repository root** (the folder that contains `ARCH
 | **`atls-rs/`** | Rust ATLS engine (`atls-core`) and MCP crate |
 | **`atls-studio/`** | Desktop app package — **run all npm scripts from here** |
 
-The Tauri app’s frontend and `src-tauri/` live under **`atls-studio/atls-studio/`** (nested folder). Do not confuse with a top-level `src-tauri/` at repo root (that path is gitignored if present).
+The Tauri app’s frontend and `src-tauri/` live under the **`atls-studio/`** app package directory at the repository root (same level as `docs/` and `atls-rs/`). Do not confuse with a top-level `src-tauri/` at repo root (that path is gitignored if present).
 
 ## Setup
 

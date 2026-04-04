@@ -4,7 +4,7 @@ AI-First IDE powered by ATLS - where the AI is the developer and you are the dir
 
 ## Repository layout
 
-This file lives in the **app package** folder (`…/atls-studio/atls-studio/` from the clone root). Paths in docs often write `atls-studio/src/…` meaning **this** folder’s `src/`, not the repository root.
+This file lives in the **app package** folder (`<clone>/atls-studio/` — one directory inside the repository root, alongside `docs/` and `atls-rs/`). Paths in docs often write `atls-studio/src/…` meaning **this** folder’s `src/`, not the repository root.
 
 | Location | Role |
 |----------|------|

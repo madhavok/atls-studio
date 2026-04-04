@@ -88,7 +88,7 @@ For subsystem-oriented overviews that complement this runtime-focused architectu
 
 ## 3. Engrams: Hash-Addressed Units of Knowledge
 
-The fundamental data unit is the **engram** — a content-addressed chunk of knowledge with lifecycle metadata:
+The fundamental data unit is the **engram** — a content-addressed chunk of knowledge with lifecycle metadata. The interface below is **simplified**; the full schema is [`ContextChunk` in `atls-studio/src/stores/contextStore.ts`](atls-studio/src/stores/contextStore.ts), with `ChunkType` in [`contextHash.ts`](atls-studio/src/utils/contextHash.ts).
 
 ```typescript
 interface ContextChunk {

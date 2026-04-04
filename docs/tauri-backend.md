@@ -38,6 +38,7 @@ Tauri gives the app a desktop-native boundary while still letting the UI be writ
 - `atls-studio/src-tauri/src/refactor_engine.rs`: refactor and edit-oriented backend behavior.
 - `atls-studio/src-tauri/src/pty.rs`: terminal and process integration (PTY used with `system.exec` / shell capture paths coordinated from the TypeScript `system` handler).
 - `atls-studio/src-tauri/src/ai_execute.rs` and `atls-studio/src-tauri/src/ai_streaming.rs`: provider-facing AI execution and streaming.
+- `atls-studio/src-tauri/src/tokenizer.rs`: BPE token counting (`count_tokens`, `count_tokens_batch`, `count_tool_def_tokens`).
 - `atls-studio/src-tauri/src/chat_db_commands.rs` and `atls-studio/src-tauri/src/chat_db.rs`: session persistence and SQLite-backed chat storage.
 - `atls-studio/src-tauri/src/hash_commands.rs`: hash and UHPP-related backend commands.
 

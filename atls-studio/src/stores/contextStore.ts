@@ -255,7 +255,7 @@ function consumeRevisionAdvanceCause(path: string): FreshnessCause | undefined {
 // Context chunk (Engram) - a living unit of knowledge in the Cognitive Core
 export interface ContextChunk {
   hash: string;        // Full hash (or sync hash)
-  shortHash: string;   // First 8 chars for display
+  shortHash: string;   // First SHORT_HASH_LEN (6) chars for display; see contextHash.ts
   type: ChunkType;     // Granular content type
   source?: string;     // Tool name, file path, command
   sourceRevision?: string; // Source file revision when this engram was created

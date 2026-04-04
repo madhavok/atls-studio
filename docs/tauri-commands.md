@@ -33,9 +33,13 @@ IPC command names registered in [`atls-studio/src-tauri/src/lib.rs`](../atls-stu
 
 - `ai_execute`, `ai_execute_background`, `ai_get_background_output`, `ai_kill_background`
 
+## Tokenizer (BPE)
+
+- `count_tokens`, `count_tokens_batch`, `count_tool_def_tokens`
+
 ## AI streaming
 
-- `stream_chat_anthropic`, `estimate_tool_def_tokens`, `stream_chat_openai`, `stream_chat_lmstudio`, `stream_chat_google`, `stream_chat_vertex`, `cancel_chat_stream`, `cancel_all_chat_streams`
+- `stream_chat_anthropic`, `estimate_tool_def_tokens`, `stream_chat_openai`, `stream_chat_lmstudio`, `stream_chat_google`, `stream_chat_vertex` (implemented in `gemini_cache`; other stream handlers in `ai_streaming`), `cancel_chat_stream`, `cancel_all_chat_streams`
 
 ## Gemini cache
 
@@ -47,7 +51,7 @@ IPC command names registered in [`atls-studio/src-tauri/src/lib.rs`](../atls-stu
 
 ## Chat database and session
 
-- `chat_db_init`, `chat_db_close`, `chat_db_create_session`, `chat_db_get_sessions`, `chat_db_get_session`, `chat_db_update_session_title`, `chat_db_update_session_mode`, `chat_db_update_swarm_status`, `chat_db_update_context_usage`, `chat_db_delete_session`, `chat_db_add_message`, `chat_db_get_messages`, `chat_db_add_segments`, `chat_db_get_segments`, `chat_db_add_blackboard_entry`, `chat_db_get_blackboard_entries`, `chat_db_get_content_by_hash`, `chat_db_update_blackboard_pinned`, `chat_db_remove_blackboard_entries`, `chat_db_clear_blackboard`, `chat_db_create_task`, `chat_db_get_tasks`, `chat_db_get_task`, `chat_db_update_task_status`, `chat_db_update_task_result`, `chat_db_update_task_error`, `chat_db_update_task_stats`, `chat_db_record_agent_stats`, `chat_db_get_agent_stats`, `chat_db_get_session_total_stats`, `chat_db_set_note`, `chat_db_get_notes`, `chat_db_delete_note`, `chat_db_clear_notes`, `chat_db_save_archived_chunks`, `chat_db_get_archived_chunks`, `chat_db_clear_archived_chunks`, `chat_db_set_session_state`, `chat_db_get_session_state`, `chat_db_get_all_session_state`, `chat_db_set_session_state_batch`, `chat_db_save_memory_snapshot`, `chat_db_get_memory_snapshot`, `chat_db_delete_messages_after`, `chat_db_delete_messages_from`, `chat_db_update_message_content`, `chat_db_save_staged_snippets`, `chat_db_get_staged_snippets`
+- `chat_db_init`, `chat_db_close`, `chat_db_create_session`, `chat_db_get_sessions`, `chat_db_get_session`, `chat_db_update_session_title`, `chat_db_update_session_mode`, `chat_db_update_swarm_status`, `chat_db_update_context_usage`, `chat_db_delete_session`, `chat_db_add_message`, `chat_db_get_messages`, `chat_db_add_segments`, `chat_db_get_segments`, `chat_db_delete_segments`, `chat_db_replace_segments`, `chat_db_add_blackboard_entry`, `chat_db_get_blackboard_entries`, `chat_db_get_content_by_hash`, `chat_db_update_blackboard_pinned`, `chat_db_remove_blackboard_entries`, `chat_db_clear_blackboard`, `chat_db_create_task`, `chat_db_get_tasks`, `chat_db_get_task`, `chat_db_update_task_status`, `chat_db_update_task_result`, `chat_db_update_task_error`, `chat_db_update_task_stats`, `chat_db_record_agent_stats`, `chat_db_get_agent_stats`, `chat_db_get_session_total_stats`, `chat_db_set_note`, `chat_db_get_notes`, `chat_db_delete_note`, `chat_db_clear_notes`, `chat_db_save_archived_chunks`, `chat_db_get_archived_chunks`, `chat_db_clear_archived_chunks`, `chat_db_set_session_state`, `chat_db_get_session_state`, `chat_db_get_all_session_state`, `chat_db_set_session_state_batch`, `chat_db_save_memory_snapshot`, `chat_db_get_memory_snapshot`, `chat_db_delete_messages_after`, `chat_db_delete_messages_from`, `chat_db_delete_all_session_messages`, `chat_db_update_message_content`, `chat_db_save_staged_snippets`, `chat_db_get_staged_snippets`
 
 ## Hash / UHPP
 
@@ -58,3 +62,5 @@ IPC command names registered in [`atls-studio/src-tauri/src/lib.rs`](../atls-stu
 - `chat_db_insert_shadow_version`, `chat_db_list_shadow_versions`, `chat_db_get_shadow_version`
 
 When adding commands, update this file and the `generate_handler` block together.
+
+**Maintenance:** The authoritative list is `tauri::generate_handler![...]` in [`lib.rs`](../atls-studio/src-tauri/src/lib.rs). After editing Rust, diff that block against this file (search for `invoke_handler` in `lib.rs`).

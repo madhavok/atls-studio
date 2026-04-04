@@ -35,6 +35,7 @@ Related:
 
 ## Repo layout
 
+- **Audit log** ([`DOCUMENTATION_AUDIT.md`](./DOCUMENTATION_AUDIT.md)): what each doc is for and last accuracy pass.
 - **Repository root** (contains this `docs/` folder): clone root; [`ARCHITECTURE.md`](../ARCHITECTURE.md) lives here.
 - **App package** (npm scripts, `src/`, `src-tauri/`): [`../atls-studio/README.md`](../atls-studio/README.md) — run `npm install` and `npm run tauri:dev` from `atls-studio/` inside the clone.
 - Optional Cursor rule (local only; `.cursor/` is gitignored): if present, `.cursor/rules/edit-freshness.mdc` — not required for builds.
