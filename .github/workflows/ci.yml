@@ -58,6 +58,11 @@ jobs:
 
       - uses: taiki-e/install-action@cargo-llvm-cov
 
+      # tauri-build requires ../dist/index.html relative to src-tauri/
+      - name: Build frontend for Tauri
+        working-directory: atls-studio
+        run: npm run build
+
       - name: Rust coverage (Tauri backend)
         working-directory: atls-studio/src-tauri
         run: cargo llvm-cov --all-features --lcov --output-path lcov.info
