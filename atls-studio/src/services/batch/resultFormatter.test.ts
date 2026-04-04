@@ -76,7 +76,8 @@ describe('resultFormatter verification confidence', () => {
 describe('resultFormatter truncation anchors', () => {
   const longSummary = 'x'.repeat(2500);
 
-  it('appends file:range from artifacts when summary is middle-truncated', () => {
+  it('does not truncate read.lines steps regardless of summary length', () => {
+    const readSummary = 'x'.repeat(5000);
     const result: UnifiedBatchResult = {
       ok: true,
       duration_ms: 1,
@@ -84,6 +85,51 @@ describe('resultFormatter truncation anchors', () => {
         {
           id: 'r1',
           use: 'read.lines',
+          ok: true,
+          duration_ms: 1,
+          summary: readSummary,
+          artifacts: {
+            file: 'src/components/index.tsx',
+            actual_range: [[628, 682]],
+          },
+        },
+      ],
+    };
+
+    const out = formatBatchResult(result);
+    expect(out).not.toContain('chars omitted');
+    expect(out).toContain(readSummary);
+  });
+
+  it('does not truncate read.context steps', () => {
+    const readSummary = 'x'.repeat(5000);
+    const result: UnifiedBatchResult = {
+      ok: true,
+      duration_ms: 1,
+      step_results: [
+        {
+          id: 'r1',
+          use: 'read.context',
+          ok: true,
+          duration_ms: 1,
+          summary: readSummary,
+        },
+      ],
+    };
+
+    const out = formatBatchResult(result);
+    expect(out).not.toContain('chars omitted');
+    expect(out).toContain(readSummary);
+  });
+
+  it('appends file:range anchor when non-read summary is middle-truncated', () => {
+    const result: UnifiedBatchResult = {
+      ok: true,
+      duration_ms: 1,
+      step_results: [
+        {
+          id: 's1',
+          use: 'search.code',
           ok: true,
           duration_ms: 1,
           summary: longSummary,

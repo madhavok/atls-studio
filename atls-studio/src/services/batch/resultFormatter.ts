@@ -179,6 +179,7 @@ function buildTruncationAnchor(step: StepResult): string | undefined {
 }
 
 function capStepSummary(text: string, stepUse: string, step: StepResult): string {
+  if (stepUse.startsWith('read.')) return text;
   const limit = stepUse === 'system.git' ? MAX_GIT_SUMMARY_CHARS : MAX_STEP_SUMMARY_CHARS;
   if (text.length <= limit) return text;
   const headBudget = Math.floor(limit * 0.75);
