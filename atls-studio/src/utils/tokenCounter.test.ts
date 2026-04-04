@@ -49,6 +49,16 @@ describe('tokenCounter', () => {
     expect(n).toBe(estimateTokens('abc'));
   });
 
+  it('countTokens retries IPC after failure instead of caching estimate', async () => {
+    invokeMock.mockRejectedValueOnce(new Error('ipc'));
+    const first = await countTokens('hello world');
+    expect(first).toBe(estimateTokens('hello world'));
+    invokeMock.mockResolvedValueOnce(42);
+    const second = await countTokens('hello world');
+    expect(second).toBe(42);
+    expect(invokeMock).toHaveBeenCalledTimes(2);
+  });
+
   it('countTokensBatch returns zeros for empty strings and batches uncached', async () => {
     invokeMock.mockResolvedValueOnce([5, 7]);
     const out = await countTokensBatch(['', 'x', 'y']);

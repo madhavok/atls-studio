@@ -121,9 +121,8 @@ export async function countTokens(content: string, precomputedHash?: string): Pr
     cache.set(cacheKey, count);
     return count;
   } catch {
-    const estimate = estimateTokens(content);
-    cache.set(cacheKey, estimate);
-    return estimate;
+    // Do not cache estimates: a later call should retry IPC and store the real count.
+    return estimateTokens(content);
   }
 }
 

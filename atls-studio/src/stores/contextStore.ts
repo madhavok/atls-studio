@@ -1134,6 +1134,27 @@ function invalidateShortHashIndex(): void {
   _shortHashIndexChunksRef = null;
 }
 
+// Reverse index: shortHash → staged map key (same pattern as getShortHashIndex).
+let _stagedShortHashIndex: Map<string, string> | null = null;
+let _stagedShortHashIndexRef: Map<string, StagedSnippet> | null = null;
+
+function getStagedShortHashIndex(staged: Map<string, StagedSnippet>): Map<string, string> {
+  if (
+    _stagedShortHashIndex
+    && _stagedShortHashIndexRef === staged
+    && _stagedShortHashIndex.size > 0
+  ) {
+    return _stagedShortHashIndex;
+  }
+  _stagedShortHashIndex = new Map();
+  _stagedShortHashIndexRef = staged;
+  for (const [key] of staged) {
+    const keyBase = refToBaseHash(key.startsWith('h:') ? key : `h:${key}`);
+    _stagedShortHashIndex.set(keyBase.slice(0, SHORT_HASH_LEN), key);
+  }
+  return _stagedShortHashIndex;
+}
+
 function findChunkByRef<T extends { hash: string; shortHash: string }>(
   chunks: Map<string, T>,
   ref: string,
@@ -1186,6 +1207,14 @@ function findStagedByRef(staged: Map<string, StagedSnippet>, ref: string): [stri
   for (const candidate of [ref, normalized, baseHash, `h:${baseHash}`]) {
     const snippet = staged.get(candidate);
     if (snippet) return [candidate, snippet];
+  }
+  const shortIdx = getStagedShortHashIndex(staged);
+  const indexedKey =
+    shortIdx.get(baseHash)
+    ?? (baseHash.length >= SHORT_HASH_LEN ? shortIdx.get(baseHash.slice(0, SHORT_HASH_LEN)) : undefined);
+  if (indexedKey) {
+    const snippet = staged.get(indexedKey);
+    if (snippet) return [indexedKey, snippet];
   }
   let best: [string, StagedSnippet] | null = null;
   let bestLen = 0;
@@ -1374,14 +1403,15 @@ function evictArchiveIfNeeded(archive: Map<string, ContextChunk>): Map<string, C
   if (totalTokens <= ARCHIVE_MAX_TOKENS) return archive;
 
   const sorted = snapshot.sort(([, a], [, b]) => a.lastAccessed - b.lastAccessed);
+  const out = new Map(archive);
 
   for (const [key, chunk] of sorted) {
     if (totalTokens <= ARCHIVE_MAX_TOKENS) break;
     totalTokens -= chunk.tokens;
-    archive.delete(key);
+    out.delete(key);
     hppEvict(chunk.hash);
   }
-  return archive;
+  return out;
 }
 
 const CHAT_TYPES = new Set(['msg:user', 'msg:asst']);
@@ -2581,11 +2611,15 @@ export const useContextStore = create<ContextStoreState>()(
       set(s => {
         const newChunks = new Map(s.chunks);
         let newDropped = s.droppedManifest;
+        let droppedCopied = false;
         for (const [key, chunk] of chunksWithTtl) {
           const remaining = (chunk.ttl ?? 0) - 1;
           if (remaining <= 0) {
             newChunks.delete(key);
-            newDropped = new Map(newDropped);
+            if (!droppedCopied) {
+              newDropped = new Map(s.droppedManifest);
+              droppedCopied = true;
+            }
             newDropped.set(chunk.hash, {
               hash: chunk.hash,
               shortHash: chunk.shortHash,
