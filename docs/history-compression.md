@@ -54,9 +54,9 @@ Beyond hash deflation, the compressor maintains a **verbatim window** of the mos
 
 When the number of **rounds** in history exceeds the window, the **oldest** round is removed from the verbatim transcript and **distilled** into structured facts by [`historyDistiller.ts`](../atls-studio/src/services/historyDistiller.ts). The distiller fills a [`RollingSummary`](../atls-studio/src/services/historyDistiller.ts) in the context store (`decisions`, `filesChanged`, `userPreferences`, `workDone`, `findings`, `errors`).
 
-### API-only rolling summary message
+### Rolling summary in the state preamble
 
-The distilled summary is **not** appended as a normal chat UI message. When building the provider request, [`aiService.ts`](../atls-studio/src/services/aiService.ts) **prepends** a synthetic assistant message whose body starts with the marker `[Rolling Summary]` (see `formatSummaryMessage` / `ROLLING_SUMMARY_MARKER` in the distiller). That message exists only in the **in-memory history** sent to the API. The visible transcript stays append-only for user/assistant turns; BP3 still treats the history prefix as stable for caching **within** a tool loop (see [Prompt Assembly](./prompt-assembly.md) for synthetic prefix vs UI transcript).
+The distilled summary is **not** appended as a normal chat UI message. When building the provider request, [`aiService.ts`](../atls-studio/src/services/aiService.ts) includes the rolling summary as part of the **state preamble** — a synthetic first user message in the assembled payload that also carries session state (task/plan, BB, WM, steering signals). The summary is merged into this preamble via `conversationHistory.unshift(formatSummaryMessage(...))` and then combined with the state block by `assembleProviderMessages()`. The visible transcript stays append-only for user/assistant turns; BP3 still treats the history prefix as stable for caching **within** a tool loop (see [Prompt Assembly](./prompt-assembly.md)).
 
 ### Interaction with compression
 

@@ -1,6 +1,13 @@
-# Prompt Assembly & Cache Strategy
+# Prompt Assembly: State vs Chat
 
-ATLS constructs the LLM prompt in cache-aware layers, separating static content (cached cheaply) from dynamic cognitive state (rebuilt every round). This document describes how the prompt is built, what goes where, and how the caching strategy works.
+ATLS constructs the LLM prompt by cleanly separating **chat** (the event log) from **session state** (current truth). State is assembled fresh each round and never persisted into the conversation transcript. This document describes how the prompt is built, what goes where, and how the caching strategy works.
+
+## Core Principle
+
+**Chat is a log. Everything else is state.**
+
+- **Chat log**: user text, assistant text/reasoning, tool_use, tool_result. Append-only, compactable. "What happened."
+- **Session state**: task/plan, blackboard, engram inventory, staged snippets, working memory, steering signals, workspace context. "What is true now." Assembled fresh, never in transcript.
 
 ## Prompt Structure
 
@@ -12,16 +19,19 @@ ATLS constructs the LLM prompt in cache-aware layers, separating static content 
 │   HPP spec · Provider reinforcement                         │
 │                                     cache_control ──┤       │
 ├─────────────────────────────────────────────────────────────┤
-│ CACHED: Prior conversation history (append-only)     BP3    │
-│   Optional synthetic `[Rolling Summary]` assistant msg ·      │
+│ STATE PREAMBLE (non-durable, rebuilt every round)           │
+│   1. Rolling summary (distilled chat facts)                 │
+│   2. Staged snippets                                        │
+│   3. Dynamic context (task, stats, BB, steering, TOON)      │
+│   4. Working memory (active engrams, metadata)              │
+├─────────────────────────────────────────────────────────────┤
+│ CACHED: Conversation history (append-only, clean)    BP3    │
 │   All prior user / assistant / tool_result turns            │
+│   (no state embedded — just what happened)                  │
 │                            PRIOR_TURN_BOUNDARY ──┤          │
 ├─────────────────────────────────────────────────────────────┤
-│ UNCACHED: Dynamic block (last user message)                 │
-│   1. Staged snippets                                        │
-│   2. Dynamic context (task, stats, BB, dormant, TOON)       │
-│   3. Working memory (active engrams, metadata)              │
-│   4. User content / tool results                            │
+│ UNCACHED: Last user message (clean)                         │
+│   User text and/or tool results — no state injected         │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -32,19 +42,23 @@ Anthropic allows up to 4 cache breakpoints. ATLS uses 2:
 | Breakpoint | Placement | Content | Stability |
 |-----------|-----------|---------|-----------|
 | **BP1+BP2** | `cache_control` on last tool definition | System prompt + all tool schemas | Static per session (5min TTL) |
-| **BP3** | `<<PRIOR_TURN_BOUNDARY>>` marker on last prior turn | All conversation history before the current (last) user message | Append-only **for the saved transcript** within a tool loop; see below |
+| **BP3** | `<<PRIOR_TURN_BOUNDARY>>` marker on last prior turn | All conversation history before the current (last) user message | Append-only within a tool loop |
 
-### Synthetic rolling summary (not in chat UI)
+### State preamble (non-durable)
 
-When the context store holds distilled facts from the [rolling history window](./history-compression.md), [`aiService.ts`](../atls-studio/src/services/aiService.ts) **prepends** one synthetic assistant message (body starts with `[Rolling Summary]`) to the **in-memory** message list passed to the provider. That message is **not** stored as a normal chat row — the visible transcript remains append-only. BP3 hashes and cache behavior for the combined list are modeled by [`logicalCacheMetrics.ts`](../atls-studio/src/services/logicalCacheMetrics.ts) (append-only extension ⇒ logical hit; compression or edits ⇒ logical miss).
+Session state — task/plan, blackboard, staged snippets, working memory, steering signals, workspace context — is assembled fresh each round by `buildStateBlock()` and placed in a **non-durable** position in the API payload. For non-Gemini providers, it is merged into a synthetic first user message (the "state preamble") that also includes the rolling summary. For Gemini, it goes via the `dynamicContext` parameter to the Rust backend. The state preamble is **never stored** in `conversationHistory`.
 
-### Why Mutable Content Is Uncached
+### Rolling summary
 
-Blackboard entries, dormant engrams, staged snippets, and active working memory change every round. If they were placed before a breakpoint, every mutation would invalidate the cache, wasting the cache write cost. By isolating them in the uncached tail, the cached prefix remains stable.
+When the context store holds distilled facts from the [rolling history window](./history-compression.md), the rolling summary is included as part of the state preamble (merged into the first user message). It is **not** stored as a normal chat row. BP3 hashes and cache behavior are modeled by [`logicalCacheMetrics.ts`](../atls-studio/src/services/logicalCacheMetrics.ts).
 
-### History Stability
+### Clean history: why it matters for caching
 
-History compression runs only at round 0 (between user turns). Within a multi-round tool loop, the **persisted** chat messages are strictly append-only — no insertions, no modifications to prior turns. The runtime may still **prepend** the synthetic `[Rolling Summary]` message when assembling the provider payload; logical BP3 hit/miss accounts for whether the effective history prefix grew only by appends. This keeps the intended cache-read behavior aligned with prefix stability rules.
+Because state is never merged into `conversationHistory`, old turns contain only real content — no stale `<<TASK>>`, `<<PLAN>>`, or `<<SYSTEM:` strings. This makes the BP3 history prefix **more byte-stable** between rounds, improving cache hit rates. Within a multi-round tool loop, the saved transcript is strictly append-only — no insertions, no modifications to prior turns.
+
+### Tool-loop steering signals
+
+Steering signals (phase budget, verify gate, convergence, force stop, etc.) are **conditional sections within the state preamble**, not fake user messages in chat history. When a condition is true (e.g. `roundsInCurrentPhase >= PHASE_ROUND_BUDGET`), the signal appears in the state block. When the condition is false, it is absent. Tool-loop counters are published via `toolLoopSteering` on `appStore` and read by `buildDynamicContextBlock()`.
 
 ### Logical cache metrics vs provider metrics
 
@@ -97,24 +111,34 @@ Each round of the tool loop:
    - History compression (round 0 only, threshold-based; includes [rolling window](./history-compression.md) / distillation)
    - Context hygiene (after 20+ rounds, aggressive compression)
    - Prompt budget (prune staged if over budget)
-3. **`buildDynamicContextBlock()`**: Assemble the mutable context
-4. **`assembleProviderMessages()`**: Wire everything into the final message array
+3. **Publish tool-loop steering**: `setToolLoopSteering()` writes current counters/conditions to `appStore`
+4. **`buildDynamicContextBlock()`**: Assemble mutable context + conditional steering signals
+5. **`buildStateBlock()`**: Combine dynamic context + staged snippets + working memory
+6. **`assembleProviderMessages()`**: Place state preamble + clean history into the final message array
 
 ### Main agent tool-loop guards
 
-The **main** chat tool loop in [`aiService.ts`](../atls-studio/src/services/aiService.ts) injects system-side nudges and stops that are separate from **delegate subagent** limits ([subagents.md](./subagents.md)). Numeric thresholds are defined in [`promptMemory.ts`](../atls-studio/src/services/promptMemory.ts):
+The **main** chat tool loop in [`aiService.ts`](../atls-studio/src/services/aiService.ts) enforces behavioral guardrails via **conditional steering signals in the state preamble** — not by injecting fake user messages into chat history. Numeric thresholds are defined in [`promptMemory.ts`](../atls-studio/src/services/promptMemory.ts). Counter updates remain in the tool loop; the corresponding text is emitted by `buildDynamicContextBlock()` when conditions are true:
 
 | Mechanism | Role |
 |-----------|------|
 | **Research round budget** | Caps consecutive **read-only** tool rounds (`TOTAL_RESEARCH_ROUND_BUDGET` + `RESEARCH_FORCE_STOP_MARGIN` for warnings and hard stop). Agent progress can end with `research_budget` if the model does not call `task_complete` after a force-stop path. |
-| **Verify gate** | In **agent** and **refactor** modes, if the model calls `task_complete` after making code changes without running any `verify.*` step, the loop blocks completion with a system message until verification runs (unless the force-stop margin is already active). |
-| **Coverage plateau** | When coverage tracking shows no new files or symbols examined across multiple rounds, a system message nudges the model to summarize, act, or call `task_complete`. |
-| **Read-only spin** | After several consecutive rounds without mutations (non-**ask** / non-**retriever** modes), a system message requires an edit, structured blackboard write, or explicit blocker. |
+| **Verify gate** | In **agent** and **refactor** modes, if the model calls `task_complete` after making code changes without running any `verify.*` step, the state preamble signals that verification is required (unless the force-stop margin is already active). |
+| **Coverage plateau** | When coverage tracking shows no new files or symbols examined across multiple rounds, the state preamble nudges the model to summarize, act, or call `task_complete`. |
+| **Read-only spin** | After several consecutive rounds without mutations (non-**ask** / non-**retriever** modes), the state preamble requires an edit, structured blackboard write, or explicit blocker. |
 | **Phase budget** | With an active `session.plan` subtask, `PHASE_ROUND_BUDGET` limits how many rounds can stay in the same phase before nudging `session.advance` with a summary. |
+| **Incomplete subtasks** | When `hasActivePlanWithIncompleteSubtasks()` is true, the state preamble reminds the model to advance or complete phases. |
+| **Convergence** | After `TOTAL_ROUND_SOFT_BUDGET` / `TOTAL_ROUND_ESCALATION` rounds, escalating nudges toward `task_complete`. |
 
-### Dynamic Context Block
+### State Block (dynamic context + staged + WM)
 
-Built fresh every round by `buildDynamicContextBlock()`. Components that could steer behavior (blackboard lines, working-memory inclusion, staged snippets for intents, subagent pins, task lines) are filtered through **`canSteerExecution`** from [`universalFreshness.ts`](../atls-studio/src/services/universalFreshness.ts) so superseded, stale, or suspect artifacts do not present as the default next action. See [freshness.md](./freshness.md) (universal freshness).
+Built fresh every round by `buildStateBlock()`, which composes:
+
+1. **`buildDynamicContextBlock()`** — orientation, steering, bulk context
+2. **Staged snippets** — `getStagedBlock()` (pre-cached code context)
+3. **Working memory** — `buildWorkingMemoryBlock()` (active engrams, metadata)
+
+Components that could steer behavior are filtered through **`canSteerExecution`** from [`universalFreshness.ts`](../atls-studio/src/services/universalFreshness.ts) so superseded, stale, or suspect artifacts do not present as the default next action. See [freshness.md](./freshness.md) (universal freshness).
 
 | Component | Source | Volatility |
 |-----------|--------|------------|
@@ -122,6 +146,7 @@ Built fresh every round by `buildDynamicContextBlock()`. Components that could s
 | Edit-awareness steering | Recent edit BB keys | Per-round |
 | Context pressure hint | Stale vs active ratio | Per-round |
 | Pending action block | Agent state | Per-round |
+| Tool-loop steering signals | `toolLoopSteering` on `appStore` | Per-round (conditional) |
 | Project structure tree | `projectTree` | First turn only |
 | Workspace context (TOON) | Editor state, profile | Per-round |
 | Selected text | IDE selection | Per-round |
@@ -187,4 +212,4 @@ Each mode uses a different combination of system prompt, tool reference, and con
 
 ---
 
-**Source**: [`aiService.ts`](../atls-studio/src/services/aiService.ts) (prompt assembly, round loop, main agent guards), [`logicalCacheMetrics.ts`](../atls-studio/src/services/logicalCacheMetrics.ts) (logical BP3/static hit model), [`contextFormatter.ts`](../atls-studio/src/services/contextFormatter.ts) (working memory formatting), [`promptMemory.ts`](../atls-studio/src/services/promptMemory.ts) (stage budgets, research/phase budgets), [`chatMiddleware.ts`](../atls-studio/src/services/chatMiddleware.ts) (middleware pipeline), [`modePrompts.ts`](../atls-studio/src/prompts/modePrompts.ts) (mode-specific prompts)
+**Source**: [`aiService.ts`](../atls-studio/src/services/aiService.ts) (`buildStateBlock`, `buildDynamicContextBlock`, `assembleProviderMessages`, round loop, steering), [`appStore.ts`](../atls-studio/src/stores/appStore.ts) (`ToolLoopSteering`), [`logicalCacheMetrics.ts`](../atls-studio/src/services/logicalCacheMetrics.ts) (logical BP3/static hit model), [`contextFormatter.ts`](../atls-studio/src/services/contextFormatter.ts) (working memory formatting), [`promptMemory.ts`](../atls-studio/src/services/promptMemory.ts) (stage budgets, research/phase budgets), [`chatMiddleware.ts`](../atls-studio/src/services/chatMiddleware.ts) (middleware pipeline), [`modePrompts.ts`](../atls-studio/src/prompts/modePrompts.ts) (mode-specific prompts)

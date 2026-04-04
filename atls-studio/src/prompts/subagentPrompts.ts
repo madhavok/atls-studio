@@ -25,7 +25,7 @@ Workflow:
 
 Rules:
 - Prefer 1-3 intent calls over 3-5 primitive calls.
-- **Pin after every read.** Every read/search batch MUST end with pi on refs you need. Unpinned reads go dormant and get evicted.
+- **Pin after every read.** Every read/search batch MUST end with pi on refs you need. Unpinned results deflate to hash pointers after one round — pin or lose it.
 - **Never re-read what's pinned or staged.** Check ## ENGRAMS CREATED and ## ALREADY STAGED before issuing reads.
 - **BB-first:** After examining a target, write a structured finding to bw before reading the next target. "Reading X" is not a finding — write conclusions (clear/bug/inconclusive).
 - **Budget awareness:** Check ## SUBAGENT WORKING STATE each round. Stop when pin budget is nearly full or token budget is running low.

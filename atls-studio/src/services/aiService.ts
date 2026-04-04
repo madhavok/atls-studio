@@ -399,18 +399,6 @@ function mergePendingAction(
   return current;
 }
 
-const VERIFY_STALE_RE = /\bverify\b.*\bstale\b|\bstale\b.*\bre-verify\b/i;
-
-function buildCompletionGateNudge(blocker: string | null): string {
-  if (blocker && VERIFY_STALE_RE.test(blocker)) {
-    return (
-      'Verification artifacts are stale. You MUST re-run verification before finishing. ' +
-      'Call batch with a verify.build step (and verify.test if applicable) on the affected files, then provide your summary.'
-    );
-  }
-  return 'You paused before finishing. Continue any remaining implementation first. When the work is actually complete, run final verification and then provide a brief summary.';
-}
-
 function buildPendingActionBlock(): string {
   const pendingAction = useAppStore.getState().agentProgress.pendingAction;
   if (!pendingAction || pendingAction.kind === 'none') return '';
@@ -1054,9 +1042,13 @@ function normalizeConversationHistory(messages: ChatMessage[]): ApiMessage[] {
   return normalized;
 }
 
+/**
+ * Prepare user content for the current round.
+ * State/context injection has been removed — this only handles recency suffix
+ * and tool_result block ordering.
+ */
 function injectCurrentRoundUserContent(
   content: unknown,
-  fullPrefix: string,
   recencySuffix: string,
 ): unknown {
   const userContentBlocks: Array<{ type: string; text?: string; name?: string; content?: string; tool_use_id?: string }> = [];
@@ -1068,34 +1060,59 @@ function injectCurrentRoundUserContent(
         userContentBlocks.push({ type: 'text', text: (block as { text?: string }).text ?? '' });
       }
     }
-    if (userContentBlocks.length === 0 && fullPrefix) {
-      userContentBlocks.push({ type: 'text', text: fullPrefix + recencySuffix });
-    } else {
-      if (fullPrefix) userContentBlocks.push({ type: 'text', text: `\n\n${fullPrefix}` });
-      if (recencySuffix) {
-        const lastTextIdx = userContentBlocks.map((block, index) => (block.type === 'text' ? index : -1)).filter(index => index >= 0).pop();
-        if (lastTextIdx != null && lastTextIdx >= 0) {
-          const target = userContentBlocks[lastTextIdx] as { text?: string };
-          target.text = (target.text || '') + recencySuffix;
-        } else {
-          userContentBlocks.push({ type: 'text', text: recencySuffix });
-        }
+    if (recencySuffix) {
+      const lastTextIdx = userContentBlocks.map((block, index) => (block.type === 'text' ? index : -1)).filter(index => index >= 0).pop();
+      if (lastTextIdx != null && lastTextIdx >= 0) {
+        const target = userContentBlocks[lastTextIdx] as { text?: string };
+        target.text = (target.text || '') + recencySuffix;
+      } else if (userContentBlocks.length > 0) {
+        userContentBlocks.push({ type: 'text', text: recencySuffix });
       }
     }
     return partitionUserContentBlocksToolResultsFirst(userContentBlocks);
   }
 
   if (typeof content === 'string') {
-    return `${fullPrefix ? `${content}\n\n${fullPrefix}` : content}${recencySuffix}`;
+    return `${content}${recencySuffix}`;
   }
 
-  if (content == null) {
-    return `${fullPrefix}${recencySuffix}`;
+  if (content == null && recencySuffix) {
+    return recencySuffix;
   }
 
   return content;
 }
 
+/**
+ * Build the full state block: dynamic context + staged snippets + working memory.
+ * This is assembled fresh each round and NEVER persisted into conversationHistory.
+ */
+function buildStateBlock(
+  dynamicContextBlock: string,
+  mode: ChatMode,
+): string {
+  useContextStore.getState().markStagedSnippetsUsed();
+  const stagedBlock = useContextStore.getState().getStagedBlock();
+  let stateContent = dynamicContextBlock;
+  if (mode !== 'ask' && stagedBlock) {
+    stateContent = stateContent
+      ? `${stagedBlock}\n\n${stateContent}`
+      : stagedBlock;
+  }
+  const workingMemory = buildWorkingMemoryBlock();
+  const parts: string[] = [];
+  if (stateContent) parts.push(stateContent);
+  if (workingMemory) parts.push(workingMemory);
+  return parts.join('\n\n');
+}
+
+/**
+ * Assemble the final message array for the provider.
+ * State is kept separate from durable history — never merged into transcript turns.
+ * State is injected into the LAST user message of the assembled payload (after BP3),
+ * so it lives in the uncached tail and does not break prefix caching.
+ * For Gemini: state goes via the dynamicContext parameter to the Rust backend.
+ */
 function assembleProviderMessages(
   durableHistory: ApiMessage[],
   provider: AIProvider,
@@ -1105,6 +1122,9 @@ function assembleProviderMessages(
   const layeredMessages: ApiMessage[] = [];
   const isGemini = provider === 'google' || provider === 'vertex';
   let geminiDynamicContext = '';
+
+  const stateBlock = buildStateBlock(dynamicContextBlock, mode);
+
   const lastUserIndex = durableHistory.reduceRight((acc, msg, index) => acc === -1 && msg.role === 'user' ? index : acc, -1);
 
   for (let i = 0; i < durableHistory.length; i++) {
@@ -1127,26 +1147,23 @@ function assembleProviderMessages(
         }
       }
 
-      useContextStore.getState().markStagedSnippetsUsed();
-      const stagedBlock = useContextStore.getState().getStagedBlock();
-      if (mode !== 'ask' && stagedBlock) {
-        dynamicContextBlock = dynamicContextBlock
-          ? `${stagedBlock}\n\n${dynamicContextBlock}`
-          : stagedBlock;
+      const recencySuffix = isGemini ? `\n${GEMINI_RECENCY_BOOST}` : '';
+
+      if (isGemini) {
+        geminiDynamicContext = stateBlock;
       }
 
-      const workingMemory = buildWorkingMemoryBlock();
-      const dynamicCtx = dynamicContextBlock ? `${dynamicContextBlock}\n\n` : '';
-      const wmPrefix = workingMemory ? `${workingMemory}\n\n` : '';
-      const recencySuffix = isGemini ? `\n${GEMINI_RECENCY_BOOST}` : '';
-      const fullPrefix = isGemini ? '' : `${dynamicCtx}${wmPrefix}`;
-      if (isGemini) {
-        geminiDynamicContext = `${dynamicCtx}${wmPrefix}`.trimEnd();
-      }
+      // Non-Gemini: inject state into the last user message of the ASSEMBLED
+      // payload (not conversationHistory). State lives AFTER BP3 in the
+      // uncached tail so it never breaks prefix caching.
+      const cleanContent = injectCurrentRoundUserContent(msg.content, recencySuffix);
+      const contentWithState = (!isGemini && stateBlock)
+        ? prependStateToContent(stateBlock, cleanContent)
+        : cleanContent;
 
       layeredMessages.push({
         role: 'user',
-        content: injectCurrentRoundUserContent(msg.content, fullPrefix, recencySuffix),
+        content: contentWithState,
       });
       continue;
     }
@@ -1167,6 +1184,28 @@ function assembleProviderMessages(
       cacheStrategy: isGemini ? 'rolling_cache' : 'prefix_stable',
     },
   };
+}
+
+/**
+ * Prepend state block to user content for the assembled payload.
+ * For array content: inserts state as a text block after tool_result blocks
+ * (which must come first for Anthropic) but before other text.
+ * For string content: prepends state before user text.
+ */
+function prependStateToContent(stateBlock: string, content: unknown): unknown {
+  if (Array.isArray(content)) {
+    const blocks = content as Array<{ type: string; text?: string; tool_use_id?: string; content?: string }>;
+    const toolResults = blocks.filter(b => b.type === 'tool_result');
+    const rest = blocks.filter(b => b.type !== 'tool_result');
+    return [...toolResults, { type: 'text', text: stateBlock }, ...rest];
+  }
+  if (typeof content === 'string') {
+    return `${stateBlock}\n\n${content}`;
+  }
+  if (content == null) {
+    return stateBlock;
+  }
+  return content;
 }
 
 /** Mirrors the Rust ResolvedHashContent struct for invoke('resolve_hash_ref') results. */
@@ -1555,11 +1594,14 @@ async function streamChatViaTauri(
   }
 
   // =========================================================================
-  // Message Architecture (2 cache breakpoints)
+  // Message Architecture (state vs chat separation)
   // =========================================================================
   // BP-static: system prompt + tool definitions (5m TTL, single breakpoint)
   // BP3: append-only conversation history (ephemeral, grows each round)
-  //  → Dynamic user message: BB + dormant + staged + WM + ctx + query (uncached)
+  //   → cached prefix: everything before BP3 marker is byte-stable
+  // State block: non-durable, assembled fresh each round (AFTER BP3, uncached)
+  //   Contains: task/plan, BB, staged, WM, steering, workspace context
+  //   Injected into last user message of assembled payload, not into history
   // =========================================================================
 
   const conversationHistory = normalizeConversationHistory(messages);
@@ -1648,6 +1690,27 @@ async function streamChatViaTauri(
         isSessionValid,
       });
       const reliefAction = roundContext.reliefAction;
+
+      // Publish tool-loop counters so buildDynamicContextBlock can emit
+      // conditional steering sections in the non-durable state preamble.
+      useAppStore.getState().setToolLoopSteering({
+        round,
+        mode,
+        consecutiveReadOnlyRounds,
+        roundsInCurrentPhase,
+        totalResearchRounds,
+        anyRoundHadMutations,
+        hadVerification: _hadVerification,
+        forceStopInjected,
+        taskCompleteCalled,
+        hadProgressSinceLastAdvance,
+        activeSubtaskId: lastActiveSubtaskId,
+        advanceAbuseCount: 0,
+        advanceAbuseSubtaskId: null,
+        completionBlocked: runtimeCompletionBlocker != null,
+        completionBlocker: runtimeCompletionBlocker,
+        incompleteSubtaskIds: getIncompleteSubtaskIds(),
+      });
 
       const dynamicContextBlock = buildDynamicContextBlock(
         dynamicContextInput?.workspaceContext,
@@ -1910,7 +1973,8 @@ async function streamChatViaTauri(
             const cacheRead = chunk.cache_read_input_tokens ?? 0;
             if (cacheWrite > 0) roundCacheWriteTokens = cacheWrite;
             if (cacheRead > 0) roundCacheReadTokens = cacheRead;
-            if (cacheWrite > 0 || cacheRead > 0) {
+            // Always record metrics — even fully uncached rounds count toward session totals.
+            if (inTokens > 0 || cacheWrite > 0 || cacheRead > 0) {
               useAppStore.getState().addCacheMetrics({ cacheWrite, cacheRead, uncached: inTokens });
             }
 
@@ -2223,10 +2287,8 @@ async function streamChatViaTauri(
                   conversationHistory.push({ role: 'assistant', content: merged });
                 }
               }
-              conversationHistory.push({
-                role: 'user',
-                content: buildCompletionGateNudge(runtimeCompletionBlocker),
-              });
+              // Steering now emitted via state block; just push a minimal continue prompt
+              conversationHistory.push({ role: 'user', content: 'Continue.' });
               continue;
             }
             useAppStore.getState().setAgentProgress({
@@ -2316,10 +2378,7 @@ async function streamChatViaTauri(
                   conversationHistory.push({ role: 'assistant', content: merged });
                 }
               }
-              conversationHistory.push({
-                role: 'user',
-                content: buildCompletionGateNudge(runtimeCompletionBlocker),
-              });
+              conversationHistory.push({ role: 'user', content: 'Continue.' });
               continue;
             }
             useAppStore.getState().setAgentProgress({
@@ -2342,8 +2401,7 @@ async function streamChatViaTauri(
           if (hasIncompleteSubtasks && !taskCompleteCalled) {
             if (autoContinueCount < maxAutoContinues) {
               autoContinueCount++;
-              const pending = getIncompleteSubtaskIds().join(', ');
-              console.log(`[aiService] Task-plan guard: incomplete subtasks (${pending}) — auto-continuing at round ${round + 1}`);
+              console.log(`[aiService] Task-plan guard: incomplete subtasks — auto-continuing at round ${round + 1} (steering via state block)`);
               useAppStore.getState().setAgentProgress({
                 status: 'auto_continuing',
                 autoContinueCount,
@@ -2354,12 +2412,7 @@ async function streamChatViaTauri(
                   conversationHistory.push({ role: 'assistant', content: merged });
                 }
               }
-              conversationHistory.push({
-                role: 'user',
-                content: `<<SYSTEM: You have an active task plan with incomplete subtasks (${pending}). ` +
-                  'Continue working on the current phase. When a phase is complete, call session.advance(summary:"...") (min 50 chars) to commit findings and move to the next subtask. ' +
-                  'Only call task_complete after all subtasks are advanced.>>',
-              });
+              conversationHistory.push({ role: 'user', content: 'Continue.' });
               continue;
             }
           }
@@ -2707,27 +2760,17 @@ async function streamChatViaTauri(
       }
 
       // task_complete was called — stop the loop after recording tool results
-      // Layer 3B: Verify gate — if mutations happened, require at least one verify.* before completing
+      // Gates (verify, plan) now emit via state block; here we only reset taskCompleteCalled
+      // so the model gets another round with the steering signal visible.
       if (taskCompleteCalled) {
         const forceStopActive = totalResearchRounds >= TOTAL_RESEARCH_ROUND_BUDGET + RESEARCH_FORCE_STOP_MARGIN;
         if (anyRoundHadMutations && !_hadVerification && !forceStopActive
             && (mode === 'agent' || mode === 'refactor')) {
-          console.log('[aiService] Verify gate: mutations detected but no verify.* ran — injecting warning');
+          console.log('[aiService] Verify gate: mutations detected but no verify.* ran — steering via state block');
           taskCompleteCalled = false;
-          conversationHistory.push({
-            role: 'user',
-            content: '<<SYSTEM: You made code changes but did not verify them. Run verify.build before calling task_complete.>>',
-          });
         } else if (hasActivePlanWithIncompleteSubtasks() && !forceStopActive) {
-          const pending = getIncompleteSubtaskIds();
-          console.log(`[aiService] Task-plan gate: task_complete called with incomplete subtasks (${pending.join(', ')}) — injecting advance hint`);
+          console.log(`[aiService] Task-plan gate: task_complete called with incomplete subtasks — steering via state block`);
           taskCompleteCalled = false;
-          conversationHistory.push({
-            role: 'user',
-            content: `<<SYSTEM: You called task_complete but your task plan has incomplete subtasks (${pending.join(', ')}). ` +
-              'You must advance each phase with session.advance(summary:"...") (min 50 chars describing accomplishments) before calling task_complete. ' +
-              'If remaining subtasks are no longer needed, advance them with a summary explaining why they were skipped, then call task_complete.>>',
-          });
         } else {
           console.log('[aiService] task_complete called — stopping tool loop');
           useAppStore.getState().clearAgentPendingAction();
@@ -2755,29 +2798,18 @@ async function streamChatViaTauri(
         consecutiveReadOnlyRounds = 0;
       }
       if (consecutiveReadOnlyRounds >= 4 && mode !== 'ask' && mode !== 'retriever') {
-        conversationHistory.push({
-          role: 'user',
-          content: `<<SYSTEM: ${consecutiveReadOnlyRounds} consecutive read-only rounds without edits. You must now: ` +
-            '(1) make an edit/create, (2) write structured findings to session.bb.write, or (3) declare a specific blocker. ' +
-            'Further reads of already-seen files will be blocked.>>',
-        });
+        // Steering emitted via state block; reset counter so it doesn't re-fire immediately
+        console.log(`[aiService] Spin guard: read-only round warning at round ${round + 1} (via state block)`);
         consecutiveReadOnlyRounds = 0;
-        console.log(`[aiService] Spin guard: injected read-only round warning at round ${round + 1}`);
       }
 
-      // Layer 2A: Coverage-based convergence detection
-      const ctxConvergence = useContextStore.getState();
-      if (ctxConvergence.coveragePlateauStreak >= 2 && !hadMutationsThisRound
+      // Layer 2A: Coverage-based convergence detection (steering emitted via state block)
+      if (useContextStore.getState().coveragePlateauStreak >= 2 && !hadMutationsThisRound
           && mode !== 'ask' && mode !== 'retriever') {
-        conversationHistory.push({
-          role: 'user',
-          content: '<<SYSTEM: No new files or symbols examined in the last 2 rounds. You are re-examining ' +
-            'known content. Write findings on what you have and either act or call task_complete.>>',
-        });
-        console.log(`[aiService] Coverage plateau detected at round ${round + 1} (streak: ${ctxConvergence.coveragePlateauStreak})`);
+        console.log(`[aiService] Coverage plateau detected at round ${round + 1} (via state block)`);
       }
 
-      // Layer 2C: session.advance abuse detection
+      // Layer 2C: session.advance abuse detection + phase budget (steering via state block)
       const taskPlanAdv = useContextStore.getState().taskPlan;
       if (taskPlanAdv?.activeSubtaskId) {
         if (taskPlanAdv.activeSubtaskId !== lastActiveSubtaskId) {
@@ -2786,12 +2818,7 @@ async function streamChatViaTauri(
             const count = (advanceCountBySubtask.get(prevId) ?? 0) + 1;
             advanceCountBySubtask.set(prevId, count);
             if (count > 1 && !hadProgressSinceLastAdvance) {
-              conversationHistory.push({
-                role: 'user',
-                content: `<<SYSTEM: session.advance called ${count}x for "${prevId}" without intervening edits or structured findings. ` +
-                  'Advancing phases does not create progress. You must act or complete.>>',
-              });
-              console.log(`[aiService] Advance abuse: "${prevId}" advanced ${count}x without progress`);
+              console.log(`[aiService] Advance abuse: "${prevId}" advanced ${count}x without progress (via state block)`);
             }
           }
           roundsInCurrentPhase = 0;
@@ -2800,66 +2827,33 @@ async function streamChatViaTauri(
         }
         roundsInCurrentPhase++;
         if (roundsInCurrentPhase >= PHASE_ROUND_BUDGET) {
-          conversationHistory.push({
-            role: 'user',
-            content: `<<SYSTEM: You have spent ${roundsInCurrentPhase} rounds in the "${taskPlanAdv.activeSubtaskId}" phase. ` +
-              'Commit your findings with session.advance(summary:"...") and move to the next phase. ' +
-              'If blocked, declare the blocker in BB and advance anyway.>>',
-          });
-          console.log(`[aiService] Phase budget exceeded: ${roundsInCurrentPhase} rounds in "${taskPlanAdv.activeSubtaskId}"`);
+          console.log(`[aiService] Phase budget exceeded: ${roundsInCurrentPhase} rounds in "${taskPlanAdv.activeSubtaskId}" (via state block)`);
         }
       }
 
-      // Nudge toward task plan if the model has done a read-only round without planning
+      // Plan nudge (steering emitted via state block)
       if (round === 1 && !useContextStore.getState().taskPlan && !hadMutationsThisRound
           && mode !== 'ask' && mode !== 'retriever' && mode !== 'designer') {
-        conversationHistory.push({
-          role: 'user',
-          content: 'You completed a research round without a task plan. For multi-step work, create one now (pass q: one step per line):\n' +
-            'p1 session.plan goal:"..." subtasks:analyze,implement,verify\n' +
-            'session.advance commits findings (dehydrates context) and moves to the next phase.',
-        });
-        console.log('[aiService] Task plan nudge injected after read-only round 1');
+        console.log('[aiService] Task plan nudge active (via state block)');
       }
 
-      // Layer 2D: Total-round convergence guard (applies regardless of mutation status)
+      // Layer 2D: Total-round convergence guard (steering emitted via state block)
       if (mode !== 'ask' && mode !== 'retriever' && mode !== 'designer') {
         if (round + 1 >= TOTAL_ROUND_ESCALATION) {
-          conversationHistory.push({
-            role: 'user',
-            content: `<<SYSTEM: Round ${round + 1} — session is extended. Write final BB summary, run verify if you have mutations, and call task_complete. Remaining work should be declared as a follow-up, not attempted this session.>>`,
-          });
-          console.log(`[aiService] Convergence escalation at round ${round + 1}`);
+          console.log(`[aiService] Convergence escalation at round ${round + 1} (via state block)`);
         } else if (round + 1 >= TOTAL_ROUND_SOFT_BUDGET) {
-          conversationHistory.push({
-            role: 'user',
-            content: `<<SYSTEM: Round ${round + 1}. You are past the target batch count. Verify your work, consolidate BB findings, and move toward task_complete. Do not advance to a new phase unless the current phase has findings.>>`,
-          });
-          console.log(`[aiService] Convergence nudge at round ${round + 1}`);
+          console.log(`[aiService] Convergence nudge at round ${round + 1} (via state block)`);
         }
       }
 
-      // Layer 3A: Total research round budget — absolute ceiling
+      // Layer 3A: Total research round budget — absolute ceiling (steering via state block)
       if (totalResearchRounds >= TOTAL_RESEARCH_ROUND_BUDGET + RESEARCH_FORCE_STOP_MARGIN
           && mode !== 'ask' && mode !== 'retriever') {
-        console.log(`[aiService] FORCE STOP: ${totalResearchRounds} research rounds without mutations — forcing task_complete`);
+        console.log(`[aiService] FORCE STOP: ${totalResearchRounds} research rounds without mutations (via state block)`);
         forceStopInjected = true;
-        conversationHistory.push({
-          role: 'user',
-          content: `<<SYSTEM: FORCE STOP — ${totalResearchRounds} rounds without any code changes. ` +
-            'Call task_complete NOW with an honest summary of what you examined and found. ' +
-            'This session will not continue.>>',
-        });
       } else if (totalResearchRounds >= TOTAL_RESEARCH_ROUND_BUDGET
           && mode !== 'ask' && mode !== 'retriever') {
-        conversationHistory.push({
-          role: 'user',
-          content: `<<SYSTEM: You have spent ${totalResearchRounds} rounds reading without making any changes. ` +
-            'This is excessive. You MUST now: (1) make an edit based on what you know, (2) call ' +
-            'task_complete with an honest summary of findings, or (3) declare a specific blocker. ' +
-            'The next round without a mutation or task_complete will force-stop the session.>>',
-        });
-        console.log(`[aiService] Research budget warning: ${totalResearchRounds} total research rounds`);
+        console.log(`[aiService] Research budget warning: ${totalResearchRounds} total research rounds (via state block)`);
       }
 
       // Signal UI to save current-round text before next round streams new tokens
@@ -2917,6 +2911,7 @@ async function streamChatViaTauri(
     session.activeStreamIds.clear();
     if (_activeSession === session || _activeSession === null) {
       _toolLoopState = null;
+      useAppStore.getState().setToolLoopSteering(null);
     }
   }
 }
@@ -3577,6 +3572,57 @@ function buildDynamicContextBlock(
       parts.push(
         '<<FINDINGS: batch read files with no structured BB finding — write conclusions (clear/bug/inconclusive) to session.bb.write before they go dormant.>>',
       );
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // TOOL-LOOP STEERING — conditional signals from tool loop counters
+  // -------------------------------------------------------------------------
+  const tls = useAppStore.getState().toolLoopSteering;
+  if (tls && tls.mode !== 'ask' && tls.mode !== 'retriever') {
+    if (tls.completionBlocked && tls.completionBlocker) {
+      const isVerifyStale = /verify\b.*stale|stale.*verif/i.test(tls.completionBlocker);
+      if (isVerifyStale) {
+        parts.push('<<SYSTEM: Verification artifacts are stale. Re-run verification before finishing.>>');
+      } else {
+        parts.push('<<SYSTEM: Continue any remaining implementation. When complete, run final verification and provide a summary.>>');
+      }
+    }
+    if (tls.incompleteSubtaskIds.length > 0 && !tls.taskCompleteCalled) {
+      parts.push(`<<SYSTEM: Active task plan has incomplete subtasks (${tls.incompleteSubtaskIds.join(', ')}). Continue working on current phase. Call session.advance(summary:"...") (min 50 chars) when a phase is complete. Only call task_complete after all subtasks are advanced.>>`);
+    }
+    if (tls.taskCompleteCalled && tls.anyRoundHadMutations && !tls.hadVerification) {
+      parts.push('<<SYSTEM: You made code changes but did not verify them. Run verify.build before calling task_complete.>>');
+    }
+    if (tls.taskCompleteCalled && tls.incompleteSubtaskIds.length > 0) {
+      parts.push(`<<SYSTEM: task_complete called but task plan has incomplete subtasks (${tls.incompleteSubtaskIds.join(', ')}). Advance each phase with session.advance(summary:"...") (min 50 chars) before calling task_complete. If subtasks are unneeded, advance with a skip explanation.>>`);
+    }
+    if (tls.consecutiveReadOnlyRounds >= 4) {
+      parts.push(`<<SYSTEM: ${tls.consecutiveReadOnlyRounds} consecutive read-only rounds without edits. You must now: (1) make an edit/create, (2) write structured findings to session.bb.write, or (3) declare a specific blocker.>>`);
+    }
+    if (useContextStore.getState().coveragePlateauStreak >= 2) {
+      parts.push('<<SYSTEM: No new files or symbols examined in the last 2 rounds. You are re-examining known content. Write findings on what you have and either act or call task_complete.>>');
+    }
+    if (tls.advanceAbuseCount > 1 && !tls.hadProgressSinceLastAdvance && tls.advanceAbuseSubtaskId) {
+      parts.push(`<<SYSTEM: session.advance called ${tls.advanceAbuseCount}x for "${tls.advanceAbuseSubtaskId}" without intervening edits or structured findings. Advancing phases does not create progress. You must act or complete.>>`);
+    }
+    if (tls.roundsInCurrentPhase >= PHASE_ROUND_BUDGET && tls.activeSubtaskId) {
+      parts.push(`<<SYSTEM: You have spent ${tls.roundsInCurrentPhase} rounds in the "${tls.activeSubtaskId}" phase. Commit findings with session.advance(summary:"...") and move to the next phase. If blocked, declare the blocker in BB and advance anyway.>>`);
+    }
+    if (tls.round === 1 && !useContextStore.getState().taskPlan && !tls.anyRoundHadMutations && tls.mode !== 'designer') {
+      parts.push('<<SYSTEM: You completed a research round without a task plan. For multi-step work, create one now:\np1 session.plan goal:"..." subtasks:analyze,implement,verify\nsession.advance commits findings and moves to the next phase.>>');
+    }
+    if (tls.mode !== 'designer') {
+      if (tls.round + 1 >= TOTAL_ROUND_ESCALATION) {
+        parts.push(`<<SYSTEM: Round ${tls.round + 1} — session is extended. Write final BB summary, run verify if you have mutations, and call task_complete. Remaining work should be declared as a follow-up.>>`);
+      } else if (tls.round + 1 >= TOTAL_ROUND_SOFT_BUDGET) {
+        parts.push(`<<SYSTEM: Round ${tls.round + 1}. Past target batch count. Verify your work, consolidate BB findings, and move toward task_complete.>>`);
+      }
+    }
+    if (tls.forceStopInjected) {
+      parts.push(`<<SYSTEM: FORCE STOP — ${tls.totalResearchRounds} rounds without any code changes. Call task_complete NOW with an honest summary of what you examined and found. This session will not continue.>>`);
+    } else if (tls.totalResearchRounds >= TOTAL_RESEARCH_ROUND_BUDGET) {
+      parts.push(`<<SYSTEM: ${tls.totalResearchRounds} rounds reading without making any changes. You MUST now: (1) make an edit, (2) call task_complete with findings, or (3) declare a specific blocker. Next round without a mutation or task_complete will force-stop.>>`);
     }
   }
 

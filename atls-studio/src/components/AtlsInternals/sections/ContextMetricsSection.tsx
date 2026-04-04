@@ -146,7 +146,6 @@ export function ContextMetricsSection() {
           <OverheadRow label="Shell Guide" tokens={promptMetrics.shellGuideTokens} total={overheadTokens} />
           <OverheadRow label="Native Tools" tokens={promptMetrics.nativeToolTokens} total={overheadTokens} />
           <OverheadRow label="Context Control" tokens={promptMetrics.contextControlTokens} total={overheadTokens} />
-          <OverheadRow label="Workspace Context" tokens={promptMetrics.workspaceContextTokens} total={overheadTokens} />
           {emDepth !== 'off' && <OverheadRow label="Entry Manifest" tokens={promptMetrics.entryManifestTokens ?? 0} total={overheadTokens} />}
         </div>
       </div>

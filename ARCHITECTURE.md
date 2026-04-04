@@ -372,9 +372,9 @@ A **rolling verbatim window** (see `ROLLING_WINDOW_ROUNDS` in `promptMemory.ts`)
 
 ---
 
-## 8. Prompt Assembly and Cache Strategy
+## 8. Prompt Assembly: State vs Chat
 
-The final prompt sent to the API is assembled in layers with cache awareness:
+The final prompt separates **chat** (the event log) from **state** (current session truth). Chat is a log — append-only, compactable. State is assembled fresh each round and never persisted into the transcript.
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -383,25 +383,32 @@ The final prompt sent to the API is assembled in layers with cache awareness:
 │   manifest · Cognitive Core · HPP spec                      │
 │                                           cache_control ──┤ │
 ├─────────────────────────────────────────────────────────────┤
-│ CACHED: Prior conversation history (append-only)            │
-│   All prior user/assistant/tool turns                       │
+│ STATE PREAMBLE (non-durable, rebuilt every round)           │
+│   Task/plan line · Context stats · Blackboard ·             │
+│   Staged snippets · Working memory · Dormant engrams ·      │
+│   Steering signals · Workspace context                      │
+├─────────────────────────────────────────────────────────────┤
+│ CACHED: Conversation history (append-only, clean)      BP3  │
+│   Rolling summary · All user/assistant/tool turns           │
+│   (no state embedded — just what happened)                  │
 │                              PRIOR_TURN_BOUNDARY ──┤        │
 ├─────────────────────────────────────────────────────────────┤
-│ UNCACHED: Dynamic block (rebuilt every round)               │
-│   Staged snippets · Task line · Context stats ·             │
-│   Blackboard entries · Dormant engram manifest ·            │
-│   Workspace context · Working memory (active engrams) ·     │
-│   User message / tool results                               │
+│ UNCACHED: Last user message (clean)                         │
+│   User text and/or tool results — no state injected         │
 └─────────────────────────────────────────────────────────────┘
 ```
+
+**State preamble**: Built by `buildStateBlock()` each round from `buildDynamicContextBlock()` + staged snippets + working memory + conditional tool-loop steering signals. For non-Gemini providers, merged into the first user message of the assembled payload (alongside rolling summary). For Gemini, passed via the `dynamicContext` parameter to the Rust backend. The state preamble is **never stored** in `conversationHistory` — it exists only in the API payload for the current round.
+
+**Clean history**: `conversationHistory` contains only real turns — user text, assistant text/reasoning, tool_use, tool_result. No `<<TASK>>`, `<<PLAN>>`, blackboard blocks, or steering signals fossilized in old messages. This means the model sees exactly one current state snapshot per round, not N stale copies plus one current.
+
+**Tool-loop steering signals** (phase budget, verify gate, convergence, force stop, etc.) are conditional sections within the state preamble. When a condition is true, the signal appears; when false, it's absent. They are not appended to chat history as fake user messages.
 
 The system places two Anthropic cache breakpoints:
 - **BP1+BP2**: On the last tool definition (caches system prompt + all tool schemas as one block)
 - **BP3**: On the last prior conversation turn (caches append-only history)
 
-Mutable content (blackboard, dormant manifest, staged snippets, working memory, workspace context) is deliberately placed after the last breakpoint. This ensures that changes to living memory never invalidate the cached prefix.
-
-History compression is deferred to round 0 (between user turns), so within a multi-round tool loop the history prefix is byte-identical and Anthropic serves cache reads at 0.1x cost.
+BP3 hit rates benefit from clean history — since state is never merged into transcript turns, the history prefix is more byte-stable between rounds.
 
 ### 8.1 The Middleware Pipeline
 

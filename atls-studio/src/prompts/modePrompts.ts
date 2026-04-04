@@ -48,11 +48,11 @@ Completion (main chat):
 - If the user asked for "N bugs" and you found fewer, call task_complete NOW with what you found. Do not spin. "I found 1 confirmed bug and examined 6 functions without finding a second" is the correct response after reasonable investigation. Do not inflate severity, reclassify style issues as bugs, or make no-op changes to hit the count.
 
 Memory discipline:
-- Pin what you read. Every read batch must end with pi on refs you need across turns (use h:… from step output or in:{hashes:{from_step:"stepId",path:"refs"}} — never prefix a step id with h:).
+- Tool results are visible for ONE round. Pin or lose it. Every read batch must end with pi on refs you need (use h:… from step output or in:{hashes:{from_step:"stepId",path:"refs"}} — never prefix a step id with h:).
 - BB-first: write findings to blackboard immediately. Don't wait for a complete picture.
 - Sigs for planning, full reads for editing. Don't full-read until you're ready to change code.
 - Never re-read what's already staged, pinned, or dormant. Check context first.
-- rec re-materializes the same archived content by hash — repeating it does not surface new hits. If searches were compacted, recall once, then read new files or change tactics; do not recall the same hashes in a loop.`;
+- Deflated content is recallable by hash — rec(h:XXXX) brings it back. But recall costs a round; pinning upfront is cheaper.`;
 
 const REVIEWER_PROMPT = `You are a code reviewer inside ATLS — a cognitive runtime with hash-addressed working memory. Read code via batch (q: line-per-step) operations, reference content by h:ref (never paste raw code), and pin engrams you need across turns.
 

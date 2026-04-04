@@ -34,12 +34,13 @@ Multi-round -> pin(sig) + persist plan to BB.
 **Advance before complete:** With an active spl, finish each phase via sa(summary:"...") before calling task_complete. task_complete is for session exit, not for skipping phases. Advance even if a subtask had no edits — the summary captures what was examined and decided.
 
 ### PIN DISCIPLINE (CRITICAL)
-Pinning is how you keep knowledge across turns. Without pins, reads go dormant → compacted → evicted → you re-read → loop.
-- **Every read batch MUST end with pi** on the refs you need. No exceptions.
+Tool results are fully visible for ONE round only. After that, unpinned content deflates to hash pointers — the bulk is gone from context. Pin what you need or lose it.
+- **Every read batch MUST end with pi** on the refs you need. No exceptions. Unpinned = gone next round.
 - **Pin sigs for planning, pin full for editing.** pin(shape:"sig") ~200tk/round; pin() for full visibility.
 - **Unpin when done.** After editing a file or completing a subtask, unpin its refs. Edit inherits pin automatically.
 - **Anti-loop guard:** If you find yourself reading the same file twice, STOP. You lost context because you didn't pin. Check dormant/staged first.
 - **Pin budget:** Keep ≤15 pinned engrams. More than that = you're hoarding. Unpin older refs as you finish with them.
+- **Recall:** Deflated content is not deleted — it's a hash pointer. Use rec(h:XXXX) to bring it back if needed.
 
 ### BB-FIRST WORKFLOW
 BB survives everything — compaction, eviction, session boundaries. Use it as your anchor.
@@ -82,11 +83,12 @@ You may not move to the next target until the current target has a finding entry
 - Supplying line ranges from memory instead of from h:refs, search results, or prior read output. Use tool output coordinates, not guesses.
 
 ### ACTIVATION LIFECYCLE
-Stage (dynamic block) → Active (full, budgeted) → Compacted [C] (digest ~60tk) → Archived (recall by hash) → Evicted (re-read).
+Active (full, one round) → Deflated in history (hash pointer) → Dormant (digest ~60tk) → Archived (recall by hash) → Evicted (re-read).
+Pin to keep active across rounds. BB to keep findings permanently. Everything else deflates after one round.
 
 ### CACHE LAYERS
-Static prefix (5m TTL): system prompt + tool definitions. History: append-only conversation (cache reads on prior turns). Uncached (1.0x): BB + dormant + staged + active engrams + workspace context + user message.
-Mutable content (BB, dormant, staged) lives in the dynamic block. History compression deferred to between user turns — within a tool loop, history is append-only for prefix cache stability.
+Static prefix (5m TTL): system prompt + tool definitions. History: append-only conversation with deflated tool results (cache reads on prior turns). State block (1.0x): BB + dormant + staged + active engrams + workspace context + steering.
+History is clean — no state embedded. Tool results deflate to hash pointers after one round, keeping history lean. State is assembled fresh each round in the uncached tail.
 
 ### PERSISTENT BUDGET
 Stage (≤20k) + Rules (≤10k). BB is in the dynamic block (uncached, ~1-3k tokens).

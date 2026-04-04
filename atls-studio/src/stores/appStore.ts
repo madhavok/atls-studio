@@ -517,6 +517,30 @@ export interface PromptSnapshot {
   timestamp: number;
 }
 
+/**
+ * Tool-loop counters/conditions exposed to the state block builder.
+ * Updated by the tool loop imperatively; read by buildDynamicContextBlock
+ * to emit conditional steering sections in the non-durable state preamble.
+ */
+export interface ToolLoopSteering {
+  round: number;
+  mode: string;
+  consecutiveReadOnlyRounds: number;
+  roundsInCurrentPhase: number;
+  totalResearchRounds: number;
+  anyRoundHadMutations: boolean;
+  hadVerification: boolean;
+  forceStopInjected: boolean;
+  taskCompleteCalled: boolean;
+  hadProgressSinceLastAdvance: boolean;
+  activeSubtaskId: string | null;
+  advanceAbuseCount: number;
+  advanceAbuseSubtaskId: string | null;
+  completionBlocked: boolean;
+  completionBlocker: string | null;
+  incompleteSubtaskIds: string[];
+}
+
 interface AppState {
   // Project
   projectPath: string | null;
@@ -591,6 +615,8 @@ interface AppState {
   setAgentPendingAction: (pendingAction: AgentPendingActionState) => void;
   clearAgentPendingAction: () => void;
   resetAgentProgress: () => void;
+  toolLoopSteering: ToolLoopSteering | null;
+  setToolLoopSteering: (steering: ToolLoopSteering | null) => void;
 
   // Chat restore (edit-and-resend)
   restoreUndoStack: RestoreUndoEntry | null;
@@ -1005,6 +1031,8 @@ export const useAppStore = create<AppState>((set) => ({
     },
   })),
   resetAgentProgress: () => set({ agentProgress: { ...DEFAULT_AGENT_PROGRESS } }),
+  toolLoopSteering: null,
+  setToolLoopSteering: (steering) => set({ toolLoopSteering: steering }),
 
   // Chat restore (edit-and-resend)
   restoreUndoStack: null,
@@ -1144,11 +1172,13 @@ export const useAppStore = create<AppState>((set) => ({
   },
   setPromptMetrics: (metrics) => set((state) => {
     const updated = { ...state.promptMetrics, ...metrics };
+    // totalOverheadTokens = static system components only.
+    // workspaceContextTokens is dynamic per-round state (task plan, BB, steering, WM)
+    // and is tracked separately — not overhead.
     updated.totalOverheadTokens = updated.modePromptTokens + updated.toolRefTokens
       + updated.shellGuideTokens
       + (updated.nativeToolTokens ?? 0) + (updated.primerTokens ?? 0)
       + updated.contextControlTokens
-      + updated.workspaceContextTokens
       + (updated.entryManifestTokens ?? 0);
     return { promptMetrics: updated };
   }),

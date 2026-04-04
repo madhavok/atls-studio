@@ -39,15 +39,16 @@ import {
 // Constants
 // ---------------------------------------------------------------------------
 
-/** Results smaller than this are kept inline (tokens) */
-export const COMPRESSION_THRESHOLD_TOKENS = 1200;
+/** Results smaller than this are kept inline (tokens).
+ *  Low threshold: the model gets one round to see full results, then they deflate. */
+export const COMPRESSION_THRESHOLD_TOKENS = 100;
 
 /** Per-op overrides — ops whose output is needed immediately get higher limits.
  *  Derived from families: all system.* and verify.* ops get a higher threshold. */
 import { OPERATION_FAMILIES } from './batch/families';
 
 const HIGHER_THRESHOLD_FAMILIES = ['system', 'verify'] as const;
-const HIGHER_THRESHOLD = 800;
+const HIGHER_THRESHOLD = 200;
 
 export const TOOL_COMPRESSION_OVERRIDES: Record<string, number> = Object.fromEntries(
   HIGHER_THRESHOLD_FAMILIES.flatMap(f =>
@@ -55,7 +56,7 @@ export const TOOL_COMPRESSION_OVERRIDES: Record<string, number> = Object.fromEnt
   ),
 );
 
-export const HISTORY_TEXT_REPLACEMENT_THRESHOLD_TOKENS = 1000;
+export const HISTORY_TEXT_REPLACEMENT_THRESHOLD_TOKENS = 100;
 
 // ---------------------------------------------------------------------------
 // Assistant round map (tool-loop rounds; rolling summary excluded)
@@ -609,9 +610,8 @@ export function deflateToolResults(
   history: Array<{ role: string; content: unknown }>,
 ): number {
   let deflated = 0;
-  // Minimum size to create a new engram — tiny results ("ok", short errors)
-  // are cheaper inline than as engram overhead.
-  const MIN_DEFLATE_TOKENS = 60;
+  // Minimum size to create a new engram — only trivially short results stay inline.
+  const MIN_DEFLATE_TOKENS = 30;
 
   for (const tr of toolResults) {
     if (!tr.content || typeof tr.content !== 'string') continue;

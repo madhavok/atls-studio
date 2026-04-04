@@ -1,6 +1,8 @@
 import type { PromptMetrics } from '../stores/appStore';
 
-export const PROTECTED_RECENT_ROUNDS = 6;
+/** Only the current round's tool results stay fully materialized in history.
+ *  All prior rounds deflate to hash pointers — the model pins what it needs. */
+export const PROTECTED_RECENT_ROUNDS = 1;
 
 /** Verbatim tool-loop rounds kept before older rounds roll into summary */
 export const ROLLING_WINDOW_ROUNDS = 20;

@@ -119,9 +119,12 @@ export async function countTokens(content: string, precomputedHash?: string): Pr
   try {
     const count = await invoke<number>('count_tokens', { provider, model, content });
     cache.set(cacheKey, count);
+    const priorHeuristic = heuristicCache.get(cacheKey);
+    if (priorHeuristic !== undefined) {
+      recordDrift(priorHeuristic, count);
+    }
     return count;
   } catch {
-    // Do not cache estimates: a later call should retry IPC and store the real count.
     return estimateTokens(content);
   }
 }
@@ -164,8 +167,12 @@ export async function countTokensBatch(contents: string[], precomputedHashes?: s
       for (let j = 0; j < uncachedIndices.length; j++) {
         const idx = uncachedIndices[j];
         results[idx] = counts[j];
-        const cacheKey = `${provider}:${model}:${uncachedHashes[j]}`;
-        cache.set(cacheKey, counts[j]);
+        const batchCacheKey = `${provider}:${model}:${uncachedHashes[j]}`;
+        cache.set(batchCacheKey, counts[j]);
+        const priorHeuristic = heuristicCache.get(batchCacheKey);
+        if (priorHeuristic !== undefined) {
+          recordDrift(priorHeuristic, counts[j]);
+        }
       }
     } catch {
       for (const idx of uncachedIndices) {
@@ -189,10 +196,39 @@ export async function countToolDefTokens(): Promise<number> {
   }
 }
 
+// Keys where the cached value came from the heuristic (not real BPE).
+// These are NOT promoted into the main cache so that a later async
+// countTokens call can still do a real IPC and cache the accurate result.
+const heuristicCache = new LRUCache(512);
+
+// Drift telemetry: track when heuristic diverges from real BPE counts
+let _driftSamples = 0;
+let _driftSumAbsPct = 0;
+let _driftMaxAbsPct = 0;
+let _driftOverThreshold = 0;
+const DRIFT_THRESHOLD_PCT = 10;
+const DRIFT_LOG_INTERVAL = 50;
+
+function recordDrift(heuristic: number, real: number): void {
+  if (heuristic === 0 || real === 0) return;
+  const pct = Math.abs(((heuristic - real) / real) * 100);
+  _driftSamples++;
+  _driftSumAbsPct += pct;
+  if (pct > _driftMaxAbsPct) _driftMaxAbsPct = pct;
+  if (pct > DRIFT_THRESHOLD_PCT) _driftOverThreshold++;
+  if (_driftSamples % DRIFT_LOG_INTERVAL === 0) {
+    const avg = (_driftSumAbsPct / _driftSamples).toFixed(1);
+    console.log(
+      `[tokenizer] heuristic drift: ${_driftSamples} samples, avg=${avg}%, max=${_driftMaxAbsPct.toFixed(1)}%, >${DRIFT_THRESHOLD_PCT}%=${_driftOverThreshold}`,
+    );
+  }
+}
+
 /**
- * Synchronous token count — falls back to heuristic estimateTokens.
- * Use this only when async is impossible (initial renders, synchronous loops).
- * Checks the LRU cache first for previously counted content.
+ * Synchronous token count — returns real BPE count from cache when available,
+ * otherwise falls back to heuristic estimateTokens. The heuristic result is
+ * stored in a separate cache so it does not prevent later async countTokens
+ * calls from computing and caching the real count.
  */
 export function countTokensSync(content: string, precomputedHash?: string): number {
   const { provider, model } = getActiveProviderModel();
@@ -200,8 +236,10 @@ export function countTokensSync(content: string, precomputedHash?: string): numb
   const cacheKey = `${provider}:${model}:${hash}`;
   const cached = cache.get(cacheKey);
   if (cached !== undefined) return cached;
+  const hCached = heuristicCache.get(cacheKey);
+  if (hCached !== undefined) return hCached;
   const estimate = estimateTokens(content);
-  cache.set(cacheKey, estimate);
+  heuristicCache.set(cacheKey, estimate);
   return estimate;
 }
 
@@ -210,4 +248,5 @@ export function countTokensSync(content: string, precomputedHash?: string): numb
  */
 export function clearTokenCache(): void {
   cache.clear();
+  heuristicCache.clear();
 }

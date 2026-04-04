@@ -22,7 +22,7 @@ Related:
 |-----|--------|
 | [atls-engine.md](./atls-engine.md) | ATLS engine integration |
 | [history-compression.md](./history-compression.md) | Hash deflation, rolling verbatim window, `[Rolling Summary]` API-only message, distiller, ties to **snapshot format v5** (`rollingSummary`) |
-| [prompt-assembly.md](./prompt-assembly.md) | Cache layers, entry manifest depth (`paths` / `sigs` / `paths_sigs`), main agent tool-loop guards (research budget, verify gate, convergence nudges) |
+| [prompt-assembly.md](./prompt-assembly.md) | **State vs chat separation**, cache layers, state preamble, entry manifest depth (`paths` / `sigs` / `paths_sigs`), tool-loop steering signals (research budget, verify gate, convergence) |
 | [session-persistence.md](./session-persistence.md) | Session save/restore, auto-resume, memory snapshot versions (incl. v5 `rollingSummary`), freshness-after-restore timing, Tauri close flush |
 | [api-economics.md](./api-economics.md) | Token / API considerations |
 | [studio-app-shell.md](./studio-app-shell.md) | UI shell, copy last API payload (debug) |

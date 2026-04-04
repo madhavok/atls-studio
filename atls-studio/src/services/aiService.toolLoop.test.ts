@@ -97,37 +97,35 @@ function hasToolResultBlocksForTest(content: unknown): boolean {
     );
 }
 
-function injectCurrentRoundUserContentForTest(content: unknown, fullPrefix: string): unknown {
-  const userContentBlocks: Array<{ type: string; text?: string; content?: string; tool_use_id?: string }> = [];
-  if (Array.isArray(content)) {
-    for (const block of content) {
-      if (typeof block === 'object' && block && 'text' in block) {
-        userContentBlocks.push({ type: 'text', text: (block as { text?: string }).text ?? '' });
-      } else {
-        userContentBlocks.push(block as { type: string; text?: string; content?: string; tool_use_id?: string });
-      }
-    }
-    if (fullPrefix) {
-      userContentBlocks.push({ type: 'text', text: `\n\n${fullPrefix}` });
-    }
-    return userContentBlocks;
-  }
-  return typeof content === 'string' && fullPrefix ? `${content}\n\n${fullPrefix}` : content;
-}
-
+/**
+ * State-vs-chat: state is injected into the LAST user message of the assembled
+ * payload (after BP3 boundary, in the uncached tail). This mirrors production
+ * assembleProviderMessages + prependStateToContent.
+ */
 function assembleProviderMessagesForTest(durableHistory: Array<{ role: string; content: unknown }>): Array<{ role: string; content: unknown }> {
   const layeredMessages: Array<{ role: string; content: unknown }> = [];
-  const lastUserIndex = durableHistory.reduceRight((acc, msg, index) => acc === -1 && msg.role === 'user' ? index : acc, -1);
-  // Staged content always goes into the dynamic block (no staged synthetic pair).
-  let dynamicContextBlock = 'STAGED\n\nDYNAMIC';
+  const stateBlock = 'STAGED\n\nDYNAMIC';
+  const lastUserIndex = durableHistory.reduceRight(
+    (acc, msg, index) => acc === -1 && msg.role === 'user' ? index : acc, -1,
+  );
 
   for (let i = 0; i < durableHistory.length; i++) {
     const msg = durableHistory[i];
     if (i === lastUserIndex) {
-      layeredMessages.push({
-        role: 'user',
-        content: injectCurrentRoundUserContentForTest(msg.content, dynamicContextBlock),
-      });
+      // Inject state into the last user message (assembled copy only)
+      if (Array.isArray(msg.content)) {
+        const blocks = msg.content as Array<{ type: string; tool_use_id?: string }>;
+        const toolResults = blocks.filter(b => b.type === 'tool_result');
+        const rest = blocks.filter(b => b.type !== 'tool_result');
+        layeredMessages.push({
+          role: 'user',
+          content: [...toolResults, { type: 'text', text: stateBlock }, ...rest],
+        });
+      } else if (typeof msg.content === 'string') {
+        layeredMessages.push({ role: 'user', content: `${stateBlock}\n\n${msg.content}` });
+      } else {
+        layeredMessages.push(msg);
+      }
       continue;
     }
     layeredMessages.push(msg);
@@ -191,13 +189,17 @@ describe('tool loop history normalization', () => {
     const assembled = assembleProviderMessagesForTest(durableHistory);
 
     expect(assembled).toHaveLength(3);
+    // First user message is clean (no state — state goes on last user msg)
+    expect(assembled[0]?.role).toBe('user');
     expect(assembled[1]?.role).toBe('assistant');
+    // State is injected into the last user message (after BP3, in uncached tail)
     expect(assembled[2]?.role).toBe('user');
     expect(Array.isArray(assembled[2]?.content)).toBe(true);
     const userBlocks = assembled[2]?.content as Array<{ type: string; tool_use_id?: string; text?: string }>;
+    // tool_result blocks come first, then state block, then rest
     expect(userBlocks[0]?.type).toBe('tool_result');
     expect(userBlocks[0]?.tool_use_id).toBe('toolu_456');
-    expect(userBlocks.some((block) => block.type === 'text' && block.text?.includes('STAGED'))).toBe(true);
+    expect(userBlocks.some(b => b.type === 'text' && b.text?.includes('STAGED'))).toBe(true);
   });
 });
 
