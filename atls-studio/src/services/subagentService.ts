@@ -715,11 +715,14 @@ function checkStopConditions(
     return { shouldStop: true, reason: 'read spin detected — subagent reading same files repeatedly without acting' };
   }
 
-  // Consecutive read-only rounds — subagent is not making progress
+  // Consecutive idle rounds — subagent is not making progress.
+  // Only pure read/search rounds with no pins, stages, BB writes, verify,
+  // or exec count as idle. The limit is generous because legitimate research
+  // involves many search-then-read cycles before the first actionable step.
   if (consecutiveReadOnlyRounds != null) {
-    const limit = (role === 'retriever' || role === 'design') ? 3 : 5;
+    const limit = (role === 'retriever' || role === 'design') ? 8 : 10;
     if (consecutiveReadOnlyRounds >= limit) {
-      return { shouldStop: true, reason: `${consecutiveReadOnlyRounds} consecutive read-only rounds without mutations` };
+      return { shouldStop: true, reason: `${consecutiveReadOnlyRounds} consecutive idle rounds without progress` };
     }
   }
 
@@ -1060,11 +1063,20 @@ export async function executeSubagent(
         .filter(tr => tr.content.startsWith('Error:'))
         .map(tr => tr.content.slice(0, 200));
 
-      // Track consecutive read-only rounds for spin detection
-      const hadMutation = toolResults.some(tr =>
-        tr.content.includes('change.') && !tr.content.includes('ERROR') && !tr.content.includes('BLOCKED'),
-      );
-      if (hadMutation) {
+      // Track consecutive idle rounds for spin detection.
+      // Any substantive work (edits, pins, stages, BB writes, verify, exec)
+      // resets the counter — not just change.* mutations.
+      const batchText = lastBatchOutcome ?? '';
+      const hadProgress = toolResults.some(tr => {
+        const c = tr.content;
+        if (c.includes('ERROR') || c.includes('BLOCKED')) return false;
+        return c.includes('change.') || c.includes('session.pin') || c.includes('session.stage')
+          || c.includes('session.bb.write') || c.includes('verify.') || c.includes('system.exec');
+      }) || (batchText.includes('[OK]') && (
+        batchText.includes('session.pin') || batchText.includes('session.bb.write')
+        || batchText.includes('verify.') || batchText.includes('system.exec')
+      ));
+      if (hadProgress) {
         consecutiveReadOnlyRounds = 0;
       } else {
         consecutiveReadOnlyRounds++;
