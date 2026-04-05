@@ -568,7 +568,7 @@ export function useChatPersistence() {
       }
 
       const dbCostCents = result.session.context_usage?.cost_cents ?? 0;
-      if (memorySnapshot?.version === 4 || memorySnapshot?.version === 5) {
+      if (memorySnapshot && memorySnapshot.version >= 4) {
         applyV4SessionExtras(memorySnapshot);
         if (!memorySnapshot.costChat) {
           useCostStore.getState().restorePersistedChatTotals({ chatCostCents: dbCostCents });
