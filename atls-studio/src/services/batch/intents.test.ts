@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import type { IntentContext, StepOutput } from './types';
-import { registerIntent, resolveIntents, makeStepId, isFileStaged, isFilePinned, getFileAwareness, estimateFileLines } from './intents';
+import type { ChunkEntry, ContextStoreApi, IntentContext, StepOutput } from './types';
+import { buildIntentContext, registerIntent, resolveIntents, makeStepId, isFileStaged, isFilePinned, getFileAwareness, estimateFileLines } from './intents';
 import { resolveUnderstand } from './intents/understand';
 import { resolveEdit } from './intents/edit';
 import { resolveEditMulti } from './intents/editMulti';
@@ -89,6 +89,129 @@ function fullContext(files: string[]): IntentContext {
 
   return emptyContext({ staged, pinnedSources, pinned: new Set(['hash1']), bbKeys, awareness });
 }
+
+function mkChunkEntry(partial: Partial<ChunkEntry> & Pick<ChunkEntry, 'type' | 'content' | 'tokens'>): ChunkEntry {
+  return {
+    hash: 'abcd1234ef567890abcd1234ef567890',
+    shortHash: 'abcd12',
+    lastAccessed: Date.now(),
+    ...partial,
+  };
+}
+
+function mockContextStore(chunks: Map<string, ChunkEntry>): () => ContextStoreApi {
+  return () =>
+    ({
+      getStagedEntries: () => new Map(),
+      chunks,
+      listBlackboardEntries: () => [],
+      getBlackboardEntryWithMeta: () => null,
+      getAwarenessCache: () => new Map(),
+    }) as ContextStoreApi;
+}
+
+function mockContextStoreWithBb(
+  chunks: Map<string, ChunkEntry>,
+  bbList: Array<{ key: string; preview: string; tokens: number; state: string }>,
+): () => ContextStoreApi {
+  return () =>
+    ({
+      getStagedEntries: () => new Map(),
+      chunks,
+      listBlackboardEntries: () => bbList,
+      getBlackboardEntryWithMeta: (key: string) =>
+        bbList.some(e => e.key === key)
+          ? { content: 'x', kind: 'general', state: 'active', derivedFrom: ['src/z.ts'] }
+          : null,
+      getAwarenessCache: () => new Map(),
+    }) as ContextStoreApi;
+}
+
+// ---------------------------------------------------------------------------
+// buildIntentContext — chunk-derived bbKeys (mirrors analyze.* addChunk storage)
+// ---------------------------------------------------------------------------
+
+describe('buildIntentContext chunk-derived bbKeys', () => {
+  it('maps deps chunk source to deps: keys per file (comma-separated)', () => {
+    const chunks = new Map<string, ChunkEntry>();
+    chunks.set('h1', mkChunkEntry({
+      type: 'deps',
+      source: 'src/a.ts, src/b.ts',
+      content: '{}',
+      tokens: 40,
+    }));
+    const ctx = buildIntentContext(mockContextStore(chunks), new Map());
+    expect(ctx.bbKeys.has('deps:src/a.ts')).toBe(true);
+    expect(ctx.bbKeys.has('deps:src/b.ts')).toBe(true);
+  });
+
+  it('does not overwrite existing BB keys with chunk-derived entries', () => {
+    const chunks = new Map<string, ChunkEntry>();
+    chunks.set('h1', mkChunkEntry({
+      type: 'deps',
+      source: 'src/a.ts',
+      content: '{}',
+      tokens: 10,
+    }));
+    const ctx = buildIntentContext(mockContextStoreWithBb(chunks, [
+      { key: 'deps:src/a.ts', preview: 'x', tokens: 999, state: 'active' },
+    ]), new Map());
+    expect(ctx.bbKeys.get('deps:src/a.ts')?.tokens).toBe(999);
+    expect(ctx.bbKeys.get('deps:src/a.ts')?.derivedFrom).toEqual(['src/z.ts']);
+  });
+
+  it('maps analysis chunk with file path source to extract_plan: key', () => {
+    const chunks = new Map<string, ChunkEntry>();
+    chunks.set('h1', mkChunkEntry({
+      type: 'analysis',
+      source: 'packages/foo/src/bar.ts',
+      content: '{}',
+      tokens: 25,
+    }));
+    const ctx = buildIntentContext(mockContextStore(chunks), new Map());
+    expect(ctx.bbKeys.has('extract_plan:packages/foo/src/bar.ts')).toBe(true);
+  });
+
+  it('does not treat literal analysis sources as file paths', () => {
+    const chunks = new Map<string, ChunkEntry>();
+    chunks.set('h1', mkChunkEntry({
+      type: 'analysis',
+      source: 'call_hierarchy',
+      content: '{}',
+      tokens: 15,
+    }));
+    const ctx = buildIntentContext(mockContextStore(chunks), new Map());
+    expect([...ctx.bbKeys.keys()].some(k => k.startsWith('extract_plan:'))).toBe(false);
+  });
+});
+
+describe('intent resolvers with chunk-only context (no manual bbKeys)', () => {
+  it('intent.understand skips analyze.deps when deps chunk exists for that path', () => {
+    const chunks = new Map<string, ChunkEntry>();
+    chunks.set('h1', mkChunkEntry({
+      type: 'deps',
+      source: 'src/auth.ts',
+      content: '{}',
+      tokens: 12,
+    }));
+    const intentCtx = buildIntentContext(mockContextStore(chunks), new Map());
+    const result = resolveUnderstand({ file_paths: ['src/auth.ts'], _intentId: 'u1' }, intentCtx);
+    expect(result.steps.map(s => s.use)).not.toContain('analyze.deps');
+  });
+
+  it('intent.refactor skips analyze.extract_plan when analysis chunk source matches file_path', () => {
+    const chunks = new Map<string, ChunkEntry>();
+    chunks.set('h1', mkChunkEntry({
+      type: 'analysis',
+      source: 'src/lib.ts',
+      content: '{}',
+      tokens: 30,
+    }));
+    const intentCtx = buildIntentContext(mockContextStore(chunks), new Map());
+    const result = resolveRefactor({ file_path: 'src/lib.ts', _intentId: 'r1' }, intentCtx);
+    expect(result.steps.map(s => s.use)).not.toContain('analyze.extract_plan');
+  });
+});
 
 // ---------------------------------------------------------------------------
 // intent.understand — state-awareness tests

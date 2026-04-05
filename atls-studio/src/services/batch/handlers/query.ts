@@ -409,9 +409,12 @@ export const handleAnalyzeExtractPlan: OpHandler = async (params, ctx) => {
   try {
     const result = await ctx.atlsBatchQuery('extract_plan', params);
     const resultStr = formatResult(result);
+    const p = params as Partial<{ file_path?: string }>;
+    const filePath = typeof p.file_path === 'string' ? p.file_path : '';
     const retained = checkRetention('analyze.extract_plan', params, resultStr, true, 'analysis', 'extract_plan');
     if (retained.reused) return retained.output;
-    const hash = ctx.store().addChunk(resultStr, 'analysis', 'extract_plan');
+    const chunkSource = filePath || 'extract_plan';
+    const hash = ctx.store().addChunk(resultStr, 'analysis', chunkSource);
     const tk = countTokensSync(resultStr);
     return {
       kind: 'analysis', ok: true,

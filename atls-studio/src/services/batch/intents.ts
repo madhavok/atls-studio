@@ -34,6 +34,50 @@ function normalizePathKey(p: string): string {
   return p.replace(/\\/g, '/').toLowerCase();
 }
 
+/** `analyze.*` handlers pass these literal strings as chunk `source` (not file paths). */
+const ANALYSIS_CHUNK_NON_PATH_SOURCES = new Set([
+  'call_hierarchy',
+  'symbol_dep_graph',
+  'change_impact',
+  'impact_analysis',
+  'extract_plan', // legacy before per-file source
+]);
+
+function looksLikeAnalysisFilePathSource(source: string): boolean {
+  if (ANALYSIS_CHUNK_NON_PATH_SOURCES.has(source)) return false;
+  return source.includes('/') || source.includes('\\') || /\.[a-zA-Z0-9]{1,12}$/.test(source);
+}
+
+/**
+ * Merge keys implied by working-memory chunks so intent elision matches handler storage.
+ * `analyze.deps` / `analyze.extract_plan` use addChunk, not setBlackboardEntry; BB-only bbKeys missed them.
+ */
+function mergeChunkDerivedBbKeys(
+  bbKeys: Map<string, { tokens: number; derivedFrom?: string[] }>,
+  chunks: ContextStoreApi['chunks'],
+): void {
+  for (const [, chunk] of chunks) {
+    if (chunk.type === 'deps' && chunk.source?.trim()) {
+      for (const raw of chunk.source.split(',')) {
+        const fp = raw.trim();
+        if (!fp) continue;
+        const key = `deps:${fp}`;
+        if (!bbKeys.has(key)) {
+          bbKeys.set(key, { tokens: chunk.tokens });
+        }
+      }
+      continue;
+    }
+
+    if (chunk.type === 'analysis' && chunk.source && looksLikeAnalysisFilePathSource(chunk.source)) {
+      const key = `extract_plan:${chunk.source}`;
+      if (!bbKeys.has(key)) {
+        bbKeys.set(key, { tokens: chunk.tokens });
+      }
+    }
+  }
+}
+
 export function buildIntentContext(
   store: () => ContextStoreApi,
   stepOutputs: ReadonlyMap<string, StepOutput>,
@@ -64,6 +108,8 @@ export function buildIntentContext(
       derivedFrom: meta?.derivedFrom,
     });
   }
+
+  mergeChunkDerivedBbKeys(bbKeys, s.chunks);
 
   const awareness: Map<string, { snapshotHash: string; level: number; readRegions: Array<{ start: number; end: number }> }> = new Map();
   for (const [, entry] of s.getAwarenessCache()) {
