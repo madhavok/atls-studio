@@ -61,7 +61,7 @@ function App() {
   } = useAppStore();
   const { isActive: swarmActive } = useSwarmStore();
   const { newProject, openProjectWithPicker, loadFileTree, scanProject, refreshIssues, addFolderToWorkspace, saveWorkspace, openWorkspace, closeWorkspace } = useAtls();
-  const { loadSession, createNewSession } = useChatPersistence();
+  const { loadSession, createNewSession, deleteSession } = useChatPersistence();
   const { isMac, isWindows, isLinux } = useOS();
   const [leftWidth, setLeftWidth] = useState(240);
   const [rightWidth, setRightWidth] = useState(380);
@@ -401,6 +401,7 @@ function App() {
           setSessionPickerOpen(false);
           await loadSession(sessionId);
         }}
+        onDeleteSession={deleteSession}
         onClose={() => setSessionPickerOpen(false)}
       />
 

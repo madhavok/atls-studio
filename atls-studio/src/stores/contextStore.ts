@@ -4540,7 +4540,12 @@ export const useContextStore = create<ContextStoreState>()(
       taskCompleteRecord: null,
       awarenessCache: new Map(),
       rollingSummary: emptyRollingSummary(),
+      batchMetrics: { toolCalls: 0, manageOps: 0, hadReads: false, hadBbWrite: false, hadSubstantiveBbWrite: false },
       batchReadNoBbStreak: 0,
+      cumulativeCoveragePaths: new Set<string>(),
+      _roundCoveragePaths: new Set<string>(),
+      roundNewCoverage: 0,
+      coveragePlateauStreak: 0,
       fileReadSpinByPath: {},
       fileReadSpinRanges: {},
       freshnessMirror: {

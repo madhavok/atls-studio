@@ -58,9 +58,14 @@ Serialized memory state uses a `version` field on [`PersistedMemorySnapshot`](..
 |--------|------|
 | **2–3** | Earlier snapshot layouts; still loadable. Core fields: chunks, archive, staged, blackboard, task plan, hash stacks, etc. |
 | **4** | Adds session-scoped UI/runtime extras: optional `promptMetrics`, `cacheMetrics`, `roundHistorySnapshots`, `costChat` (see `applyV4SessionExtras` in [`useChatPersistence.ts`](../atls-studio/src/hooks/useChatPersistence.ts)). |
-| **5** | Current write format. Everything in v4 plus optional **`rollingSummary`** — the distilled **rolling history** facts used for the API-only `[Rolling Summary]` message ([history-compression.md](./history-compression.md)). New saves use **snapshot format v5** with `rollingSummary` populated from the context store when present. |
+| **5** | Everything in v4 plus optional **`rollingSummary`** — the distilled **rolling history** facts used for the API-only `[Rolling Summary]` message ([history-compression.md](./history-compression.md)). |
+| **6** | Current write format. Everything in v5 plus `verifyArtifacts`, `awarenessCache`, `cumulativeCoveragePaths`, `fileReadSpinByPath`, and `fileReadSpinRanges`. All optional — older snapshots load cleanly with empty defaults. |
 
-If a snapshot has no `rollingSummary` (older save) or is below v5, restore clears rolling summary to empty; v4+ extras still apply when `version` is 4 or 5.
+If a snapshot has no `rollingSummary` (older save) or is below v5, restore clears rolling summary to empty; v4+ extras still apply when `version` is 4, 5, or 6.
+
+### Freshness of persisted verify artifacts
+
+`VerifyArtifact.createdAtRev` records the workspace revision at verification time, but `workspaceRev` is intentionally excluded from snapshots (it is filesystem-bound and stale after restore). After restore, `workspaceRev` resets to 0, so any persisted artifact with `createdAtRev > 0` is correctly flagged as stale by the freshness system. This preserves the verification *history* (the agent knows what was checked) while still forcing re-verification of changed code.
 
 ## Restore Flow
 

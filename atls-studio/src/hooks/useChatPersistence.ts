@@ -105,7 +105,7 @@ function rehydrateSubAgentRows(rows: PersistedSubAgentUsageRow[] | undefined): S
 
 /** Apply v4+ fields (prompt/cache metrics, round history, chat cost, v5 rolling summary) after context snapshot. */
 export function applyV4SessionExtras(snapshot: PersistedMemorySnapshot): void {
-  if (snapshot.version !== 4 && snapshot.version !== 5) return;
+  if (snapshot.version !== 4 && snapshot.version !== 5 && snapshot.version !== 6) return;
   if (snapshot.promptMetrics) {
     const pm = snapshot.promptMetrics;
     useAppStore.setState({
@@ -129,7 +129,7 @@ export function applyV4SessionExtras(snapshot: PersistedMemorySnapshot): void {
       subAgentUsages: rehydrateSubAgentRows(snapshot.costChat.subAgentUsages),
     });
   }
-  if (snapshot.version === 5 && snapshot.rollingSummary) {
+  if ((snapshot.version === 5 || snapshot.version === 6) && snapshot.rollingSummary) {
     const rs = snapshot.rollingSummary;
     useContextStore.getState().setRollingSummary({
       ...rs,
@@ -151,7 +151,7 @@ export function serializeMemorySnapshot(
   const cost = useCostStore.getState();
   const rounds = useRoundHistoryStore.getState();
   return {
-    version: 5,
+    version: 6,
     savedAt: new Date().toISOString(),
     chunks: Array.from(ctxState.chunks.values()),
     archivedChunks: Array.from(ctxState.archivedChunks.values()),
@@ -191,6 +191,13 @@ export function serializeMemorySnapshot(
       nextSteps: [...(ctxState.rollingSummary.nextSteps ?? [])],
       blockers: [...(ctxState.rollingSummary.blockers ?? [])],
     },
+    verifyArtifacts: Array.from(ctxState.verifyArtifacts.entries()),
+    awarenessCache: Array.from(ctxState.awarenessCache.entries()),
+    cumulativeCoveragePaths: Array.from(ctxState.cumulativeCoveragePaths),
+    fileReadSpinByPath: { ...ctxState.fileReadSpinByPath },
+    fileReadSpinRanges: Object.fromEntries(
+      Object.entries(ctxState.fileReadSpinRanges).map(([k, v]) => [k, [...v]]),
+    ),
   };
 }
 
@@ -1097,6 +1104,11 @@ export function useChatPersistence() {
       stageHashStack: snapshot.stageHashStack,
       memoryEvents: snapshot.memoryEvents ?? [],
       reconcileStats: snapshot.reconcileStats ?? null,
+      verifyArtifacts: new Map(snapshot.verifyArtifacts ?? []),
+      awarenessCache: new Map(snapshot.awarenessCache ?? []),
+      cumulativeCoveragePaths: new Set(snapshot.cumulativeCoveragePaths ?? []),
+      fileReadSpinByPath: snapshot.fileReadSpinByPath ?? {},
+      fileReadSpinRanges: snapshot.fileReadSpinRanges ?? {},
     });
     if (snapshot.geminiCache) restoreGeminiCacheSnapshot(snapshot.geminiCache);
     applyV4SessionExtras(snapshot);

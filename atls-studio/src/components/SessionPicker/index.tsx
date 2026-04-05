@@ -14,6 +14,7 @@ interface SessionPickerProps {
   projectPath: string;
   onNewSession: () => void;
   onLoadSession: (sessionId: string) => void;
+  onDeleteSession: (sessionId: string) => Promise<void>;
   onClose: () => void;
 }
 
@@ -22,6 +23,7 @@ export function SessionPicker({
   projectPath, 
   onNewSession, 
   onLoadSession, 
+  onDeleteSession,
   onClose 
 }: SessionPickerProps) {
   const [sessions, setSessions] = useState<DbSession[]>([]);
@@ -97,7 +99,7 @@ export function SessionPicker({
     e.stopPropagation();
     if (confirm('Delete this conversation? This cannot be undone.')) {
       try {
-        await chatDb.deleteSession(sessionId);
+        await onDeleteSession(sessionId);
         setSessions(prev => prev.filter(s => s.id !== sessionId));
         if (selectedId === sessionId) {
           setSelectedId(null);

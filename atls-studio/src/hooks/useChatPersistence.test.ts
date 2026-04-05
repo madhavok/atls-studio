@@ -2,6 +2,14 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { useContextStore } from '../stores/contextStore';
 import { rehydrateChunkDates, serializeMemorySnapshot } from './useChatPersistence';
 
+const DUMMY_GEMINI_CACHE = {
+  version: '1',
+  googleCacheName: null,
+  vertexCacheName: null,
+  googleCachedMessageCount: 0,
+  vertexCachedMessageCount: 0,
+} as const;
+
 describe('memory snapshot helpers', () => {
   beforeEach(() => {
     useContextStore.getState().resetSession();
@@ -39,15 +47,9 @@ describe('memory snapshot helpers', () => {
       factors: ['symbol_identity'],
     });
 
-    const snapshot = serializeMemorySnapshot(useContextStore.getState(), {
-      version: '1',
-      googleCacheName: null,
-      vertexCacheName: null,
-      googleCachedMessageCount: 0,
-      vertexCachedMessageCount: 0,
-    });
+    const snapshot = serializeMemorySnapshot(useContextStore.getState(), DUMMY_GEMINI_CACHE);
 
-    expect(snapshot.version).toBe(5);
+    expect(snapshot.version).toBe(6);
     expect(snapshot.rollingSummary).toBeDefined();
     expect(snapshot.promptMetrics).toBeDefined();
     expect(snapshot.cacheMetrics).toBeDefined();
@@ -101,5 +103,113 @@ describe('memory snapshot helpers', () => {
     expect(hydrated[0]?.lastAccessed).toBeDefined();
     expect(typeof hydrated[0]?.lastAccessed).toBe('number');
     expect(hydrated[0]?.lastAccessed).toBe(new Date('2025-06-15T12:00:00.000Z').getTime());
+  });
+
+  it('v6 round-trips verifyArtifacts, awarenessCache, coverage, and spin state', () => {
+    const store = useContextStore.getState();
+
+    store.addChunk('const x = 1;', 'smart', 'src/a.ts');
+
+    useContextStore.setState({
+      verifyArtifacts: new Map([
+        ['va-1', {
+          id: 'va-1', createdAtRev: 3, filesObserved: ['src/a.ts'],
+          ok: true, warnings: 0, errors: 0, stepId: 'step-1',
+          confidence: 'fresh' as const, source: 'command' as const, stale: false,
+        }],
+      ]),
+      awarenessCache: new Map([
+        ['src/b.ts|abc', {
+          filePath: 'src/b.ts', snapshotHash: 'abc', level: 2,
+          readRegions: [{ start: 1, end: 50 }], recordedAt: Date.now(),
+        }],
+      ]),
+      cumulativeCoveragePaths: new Set(['src/a.ts', 'src/b.ts']),
+      fileReadSpinByPath: { 'src/a.ts|*': 2 },
+      fileReadSpinRanges: { 'src/a.ts': ['*', '1-10'] },
+    });
+
+    const snapshot = serializeMemorySnapshot(useContextStore.getState(), DUMMY_GEMINI_CACHE);
+
+    expect(snapshot.version).toBe(6);
+    expect(snapshot.verifyArtifacts).toHaveLength(1);
+    expect(snapshot.verifyArtifacts![0]![0]).toBe('va-1');
+    expect(snapshot.awarenessCache).toHaveLength(1);
+    expect(snapshot.cumulativeCoveragePaths).toEqual(expect.arrayContaining(['src/a.ts', 'src/b.ts']));
+    expect(snapshot.fileReadSpinByPath).toEqual({ 'src/a.ts|*': 2 });
+    expect(snapshot.fileReadSpinRanges).toEqual({ 'src/a.ts': ['*', '1-10'] });
+
+    // Simulate restore: reset then apply
+    useContextStore.getState().resetSession();
+
+    const restoredState = useContextStore.getState();
+    expect(restoredState.verifyArtifacts.size).toBe(0);
+    expect(restoredState.awarenessCache.size).toBe(0);
+    expect(restoredState.cumulativeCoveragePaths.size).toBe(0);
+
+    useContextStore.setState({
+      verifyArtifacts: new Map(snapshot.verifyArtifacts ?? []),
+      awarenessCache: new Map(snapshot.awarenessCache ?? []),
+      cumulativeCoveragePaths: new Set(snapshot.cumulativeCoveragePaths ?? []),
+      fileReadSpinByPath: snapshot.fileReadSpinByPath ?? {},
+      fileReadSpinRanges: snapshot.fileReadSpinRanges ?? {},
+    });
+
+    const after = useContextStore.getState();
+    expect(after.verifyArtifacts.get('va-1')?.ok).toBe(true);
+    expect(after.awarenessCache.get('src/b.ts|abc')?.level).toBe(2);
+    expect(after.cumulativeCoveragePaths.has('src/a.ts')).toBe(true);
+    expect(after.cumulativeCoveragePaths.has('src/b.ts')).toBe(true);
+    expect(after.fileReadSpinByPath['src/a.ts|*']).toBe(2);
+    expect(after.fileReadSpinRanges['src/a.ts']).toEqual(['*', '1-10']);
+  });
+
+  it('v5 snapshots restore gracefully with empty v6 fields', () => {
+    const store = useContextStore.getState();
+    store.addChunk('const y = 2;', 'smart', 'src/c.ts');
+    const snapshot = serializeMemorySnapshot(useContextStore.getState(), DUMMY_GEMINI_CACHE);
+
+    // Simulate a v5 snapshot by stripping v6 fields
+    const v5Snapshot = { ...snapshot, version: 5 as const };
+    delete (v5Snapshot as Record<string, unknown>).verifyArtifacts;
+    delete (v5Snapshot as Record<string, unknown>).awarenessCache;
+    delete (v5Snapshot as Record<string, unknown>).cumulativeCoveragePaths;
+    delete (v5Snapshot as Record<string, unknown>).fileReadSpinByPath;
+    delete (v5Snapshot as Record<string, unknown>).fileReadSpinRanges;
+
+    useContextStore.getState().resetSession();
+    useContextStore.setState({
+      verifyArtifacts: new Map(v5Snapshot.verifyArtifacts ?? []),
+      awarenessCache: new Map(v5Snapshot.awarenessCache ?? []),
+      cumulativeCoveragePaths: new Set(v5Snapshot.cumulativeCoveragePaths ?? []),
+      fileReadSpinByPath: v5Snapshot.fileReadSpinByPath ?? {},
+      fileReadSpinRanges: v5Snapshot.fileReadSpinRanges ?? {},
+    });
+
+    const after = useContextStore.getState();
+    expect(after.verifyArtifacts.size).toBe(0);
+    expect(after.awarenessCache.size).toBe(0);
+    expect(after.cumulativeCoveragePaths.size).toBe(0);
+    expect(after.fileReadSpinByPath).toEqual({});
+    expect(after.fileReadSpinRanges).toEqual({});
+  });
+
+  it('resetSession zeroes batchMetrics, coverage, and plateau fields', () => {
+    useContextStore.setState({
+      batchMetrics: { toolCalls: 5, manageOps: 3, hadReads: true, hadBbWrite: true, hadSubstantiveBbWrite: true },
+      cumulativeCoveragePaths: new Set(['src/a.ts', 'src/b.ts']),
+      _roundCoveragePaths: new Set(['src/a.ts']),
+      roundNewCoverage: 2,
+      coveragePlateauStreak: 3,
+    });
+
+    useContextStore.getState().resetSession();
+
+    const after = useContextStore.getState();
+    expect(after.batchMetrics).toEqual({ toolCalls: 0, manageOps: 0, hadReads: false, hadBbWrite: false, hadSubstantiveBbWrite: false });
+    expect(after.cumulativeCoveragePaths.size).toBe(0);
+    expect(after._roundCoveragePaths.size).toBe(0);
+    expect(after.roundNewCoverage).toBe(0);
+    expect(after.coveragePlateauStreak).toBe(0);
   });
 });

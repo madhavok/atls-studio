@@ -14,10 +14,11 @@ import { invoke } from '@tauri-apps/api/core';
 import type { Message, MessagePart, MessageSegment, ChatSession } from '../stores/appStore';
 import type { ChatAttachment } from '../stores/attachmentStore';
 import { extractFirstTextFromMessage, getMessageParts } from '../stores/appStore';
-import type { ContextChunk, ChunkType, BlackboardEntry, CognitiveRule, ManifestEntry, ReconcileStats, StagedSnippet, TaskPlan, TransitionBridge, MemoryEvent } from '../stores/contextStore';
+import type { ContextChunk, ChunkType, BlackboardEntry, CognitiveRule, ManifestEntry, ReconcileStats, StagedSnippet, TaskPlan, TransitionBridge, MemoryEvent, AwarenessCacheEntry } from '../stores/contextStore';
 import type { GeminiCacheSnapshot } from './aiService';
 import type { RoundSnapshot } from '../stores/roundHistoryStore';
 import type { RollingSummary } from './historyDistiller';
+import type { VerifyArtifact } from './batch/types';
 
 // ============================================================================
 // Database Types
@@ -1121,7 +1122,7 @@ export interface PersistedCostChat {
 }
 
 export interface PersistedMemorySnapshot {
-  version: 2 | 3 | 4 | 5;
+  version: 2 | 3 | 4 | 5 | 6;
   savedAt: string;
   chunks: ContextChunk[];
   archivedChunks: ContextChunk[];
@@ -1148,6 +1149,12 @@ export interface PersistedMemorySnapshot {
   costChat?: PersistedCostChat;
   /** v5+: distilled rolling history (API-only; not in chat messages) */
   rollingSummary?: RollingSummary;
+  /** v6+: verification history, awareness cache, coverage, and spin state */
+  verifyArtifacts?: Array<[string, VerifyArtifact]>;
+  awarenessCache?: Array<[string, AwarenessCacheEntry]>;
+  cumulativeCoveragePaths?: string[];
+  fileReadSpinByPath?: Record<string, number>;
+  fileReadSpinRanges?: Record<string, string[]>;
 }
 
 export interface DbHashRegistryEntry {
