@@ -2270,19 +2270,31 @@ export const useContextStore = create<ContextStoreState>()(
   
   /**
    * Unpin chunks to allow bulk unload.
+   * Supports "*" / "all" to unpin every pinned chunk in working memory.
    */
   unpinChunks: (hashes: string[]) => {
     let count = 0;
+    const hasWildcard = hashes.includes('*') || hashes.includes('all');
     
     set(state => {
       const newChunks = new Map(state.chunks);
       
-      for (const h of hashes) {
-        const found = findChunkByRef(newChunks, h);
-        if (found && found[1].pinned) {
-          newChunks.set(found[0], { ...found[1], pinned: false });
-          hppSetPinned(found[0], false);
-          count++;
+      if (hasWildcard) {
+        for (const [key, chunk] of newChunks) {
+          if (chunk.pinned) {
+            newChunks.set(key, { ...chunk, pinned: false });
+            hppSetPinned(key, false);
+            count++;
+          }
+        }
+      } else {
+        for (const h of hashes) {
+          const found = findChunkByRef(newChunks, h);
+          if (found && found[1].pinned) {
+            newChunks.set(found[0], { ...found[1], pinned: false });
+            hppSetPinned(found[0], false);
+            count++;
+          }
         }
       }
       
