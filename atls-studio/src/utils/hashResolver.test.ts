@@ -263,4 +263,30 @@ describe('resolveHashRefsWithMeta', () => {
     );
     expect(params).toEqual({ from_ref: 'BODY' });
   });
+
+  it('resolves f field to source path, not content (B6 — f is a file_path alias)', async () => {
+    const { resolveHashRefsWithMeta } = await import('./hashResolver');
+    const lookup: HashLookup = async (hash) =>
+      hash === 'fddcaa12'
+        ? { content: 'line1\nline2\nline3', source: 'src/__tests__/bracket-torture.ts' }
+        : null;
+    const { params } = await resolveHashRefsWithMeta(
+      { f: 'h:fddcaa12' },
+      lookup,
+    );
+    expect(params).toEqual({ f: 'src/__tests__/bracket-torture.ts' });
+  });
+
+  it('resolves f with line modifier to source path, not line content (B6)', async () => {
+    const { resolveHashRefsWithMeta } = await import('./hashResolver');
+    const lookup: HashLookup = async (hash) =>
+      hash === 'fddcaa12'
+        ? { content: 'line1\nline2\nline3\nline4', source: 'src/demo.ts' }
+        : null;
+    const { params } = await resolveHashRefsWithMeta(
+      { f: 'h:fddcaa12:2-3' },
+      lookup,
+    );
+    expect(params).toEqual({ f: 'src/demo.ts' });
+  });
 });

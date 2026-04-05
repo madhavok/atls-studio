@@ -113,8 +113,10 @@ const FILE_FIELDS = [
   'path', 'from_path', 'target', 'target_path', 'deletes', 'delete',
 ];
 
-/** Exact-only file path fields — avoids `from_ref` matching substring `from`. */
-const EXACT_FILE_FIELDS = ['source', 'from'];
+/** Exact-only file path fields — avoids `from_ref` matching substring `from`.
+ *  `f` is the ATLS shorthand alias for `file_path` (resolved by paramNorm),
+ *  but hash resolution runs before paramNorm on batch tool args. */
+const EXACT_FILE_FIELDS = ['source', 'from', 'f'];
 
 function isFilePathField(lowerField: string): boolean {
   if (EXACT_FILE_FIELDS.includes(lowerField)) return true;
