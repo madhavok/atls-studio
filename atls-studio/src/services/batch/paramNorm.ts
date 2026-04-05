@@ -293,6 +293,11 @@ export function normalizeStepParams(
     out.file_paths = [out.file_paths];
   }
 
+  // system.git: coerce files to string[] (batch JSON often sends a single path string)
+  if (op === 'system.git' && out.files !== undefined) {
+    out.files = coerceFilePathsArray(out.files);
+  }
+
   // query → queries promotion for search.code
   if (QUERY_TO_QUERIES_OPS.has(op)) {
     if (typeof out.queries === 'string') {

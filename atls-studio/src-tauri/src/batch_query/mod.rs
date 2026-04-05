@@ -13,6 +13,25 @@ use crate::path_utils::{
     read_file_with_format, resolve_project_path, resolve_tree_directory_path, serialize_with_format,
     to_relative_path, FileFormat, ManifestKind,
 };
+/// Parse `files` for git stage/unstage/restore: JSON array of strings, or a single non-empty string.
+fn git_files_param(value: Option<&serde_json::Value>) -> Vec<String> {
+    match value {
+        Some(serde_json::Value::Array(arr)) => arr
+            .iter()
+            .filter_map(|v| v.as_str().map(|s| s.to_string()))
+            .collect(),
+        Some(serde_json::Value::String(s)) => {
+            let t = s.trim();
+            if t.is_empty() {
+                vec![]
+            } else {
+                vec![t.to_string()]
+            }
+        }
+        _ => vec![],
+    }
+}
+
 /// batch_query - THE primary ATLS interface (33+ operations)
 /// This is the main entry point for all code analysis and editing
 #[tauri::command]
@@ -2174,11 +2193,7 @@ pub async fn atls_batch_query(
                         }))
                     }
                     "stage" => {
-                        let file_paths: Vec<String> = params
-                            .get("files")
-                            .and_then(|v| v.as_array())
-                            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
-                            .unwrap_or_default();
+                        let file_paths: Vec<String> = git_files_param(params.get("files"));
                         
                         let all = params
                             .get("all")
@@ -2211,11 +2226,7 @@ pub async fn atls_batch_query(
                         }))
                     }
                     "unstage" => {
-                        let file_paths: Vec<String> = params
-                            .get("files")
-                            .and_then(|v| v.as_array())
-                            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
-                            .unwrap_or_default();
+                        let file_paths: Vec<String> = git_files_param(params.get("files"));
                         
                         let mut args: Vec<String> = vec!["reset".into(), "HEAD".into(), "--".into()];
                         for file in &file_paths {
@@ -2356,11 +2367,7 @@ pub async fn atls_batch_query(
                         }))
                     }
                     "reset" | "restore" => {
-                        let files: Vec<String> = params
-                            .get("files")
-                            .and_then(|v| v.as_array())
-                            .map(|arr| arr.iter().filter_map(|s| s.as_str().map(|s| s.to_string())).collect())
-                            .unwrap_or_default();
+                        let files: Vec<String> = git_files_param(params.get("files"));
 
                         let restore_all = params
                             .get("all")
@@ -2448,7 +2455,7 @@ pub async fn atls_batch_query(
                                 "files_restored": normalized_files
                             }))
                         } else {
-                            return Err("reset/restore requires either 'files' (array), 'all':true, or 'hard':true. Optional 'ref' (default HEAD).".to_string());
+                            return Err("reset/restore requires either 'files' (array or single path string), 'all':true, or 'hard':true. Optional 'ref' (default HEAD).".to_string());
                         }
                     }
                     _ => {

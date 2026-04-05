@@ -316,6 +316,23 @@ describe('normalizeStepParams', () => {
       expect(out.cmd).toBe('npm test');
     });
 
+    it('coerces system.git files scalar to array', () => {
+      const out = normalizeStepParams('system.git', {
+        action: 'stage',
+        files: 'atls-studio/src/hooks/useChatPersistence.ts',
+      });
+      expect(out.action).toBe('stage');
+      expect(out.files).toEqual(['atls-studio/src/hooks/useChatPersistence.ts']);
+    });
+
+    it('coerces system.git file_paths alias string to files array', () => {
+      const out = normalizeStepParams('system.git', {
+        action: 'stage',
+        file_paths: 'src/a.ts',
+      });
+      expect(out.files).toEqual(['src/a.ts']);
+    });
+
     it('passes through unknown params unchanged', () => {
       const out = normalizeStepParams('search.code', { queries: ['x'], custom_flag: true });
       expect(out.custom_flag).toBe(true);
