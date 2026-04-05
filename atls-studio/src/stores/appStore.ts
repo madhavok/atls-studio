@@ -638,6 +638,15 @@ interface AppState {
   addOrphanRemovals: (count: number) => void;
   recordRound: () => void;
   cacheMetrics: CacheMetrics;
+  /**
+   * Record provider cache metrics for a single API round. Must be called
+   * exactly once per usage event with inTokens > 0.
+   * - cacheWrite: tokens written to cache (Anthropic `cache_creation_input_tokens`)
+   * - cacheRead: tokens served from cache (Anthropic `cache_read_input_tokens`,
+   *   OpenAI `openai_cached_tokens`, Gemini `cached_content_tokens`)
+   * - uncached: tokens that were neither reads nor writes. For Anthropic this
+   *   equals `input_tokens`; for OpenAI/Gemini it equals `input_tokens - cached`.
+   */
   addCacheMetrics: (metrics: { cacheWrite: number; cacheRead: number; uncached: number; lastRequestCachedTokens?: number }) => void;
   resetCacheMetrics: () => void;
   lastPromptSnapshot: PromptSnapshot | null;

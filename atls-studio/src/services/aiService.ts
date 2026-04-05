@@ -1168,7 +1168,12 @@ function assembleProviderMessages(
       continue;
     }
 
-    layeredMessages.push({ role: msg.role, content: msg.content });
+    layeredMessages.push({
+      role: msg.role,
+      content: Array.isArray(msg.content)
+        ? (msg.content as unknown[]).map(b => ({ ...(b as Record<string, unknown>) }))
+        : msg.content,
+    });
   }
 
   return {
@@ -1963,27 +1968,29 @@ async function streamChatViaTauri(
             if (inTokens > 0) roundInputTokens = inTokens;
             if (outTokens > 0) roundOutputTokens = outTokens;
 
+            // Provider cache accounting — each path calls addCacheMetrics exactly once.
             // Anthropic: inTokens = uncached only; cache tokens are separate line items.
             // OpenAI/Google: inTokens = total prompt tokens including cached subset.
             const cacheWrite = chunk.cache_creation_input_tokens ?? 0;
             const cacheRead = chunk.cache_read_input_tokens ?? 0;
             if (cacheWrite > 0) roundCacheWriteTokens = cacheWrite;
             if (cacheRead > 0) roundCacheReadTokens = cacheRead;
-            // Always record metrics — even fully uncached rounds count toward session totals.
-            if (inTokens > 0 || cacheWrite > 0 || cacheRead > 0) {
-              useAppStore.getState().addCacheMetrics({ cacheWrite, cacheRead, uncached: inTokens });
-            }
 
             const openaiCached = chunk.openai_cached_tokens ?? 0;
+            const geminiCached = chunk.cached_content_tokens ?? 0;
+
             if (openaiCached > 0) {
               roundCacheReadTokens = openaiCached;
-              useAppStore.getState().addCacheMetrics({ cacheWrite: 0, cacheRead: openaiCached, uncached: inTokens - openaiCached, lastRequestCachedTokens: openaiCached });
-            }
-
-            const geminiCached = chunk.cached_content_tokens ?? 0;
-            if (geminiCached > 0) {
+              if (inTokens > 0) {
+                useAppStore.getState().addCacheMetrics({ cacheWrite: 0, cacheRead: openaiCached, uncached: inTokens - openaiCached, lastRequestCachedTokens: openaiCached });
+              }
+            } else if (geminiCached > 0) {
               roundCacheReadTokens = geminiCached;
-              useAppStore.getState().addCacheMetrics({ cacheWrite: 0, cacheRead: geminiCached, uncached: inTokens - geminiCached, lastRequestCachedTokens: geminiCached });
+              if (inTokens > 0) {
+                useAppStore.getState().addCacheMetrics({ cacheWrite: 0, cacheRead: geminiCached, uncached: inTokens - geminiCached, lastRequestCachedTokens: geminiCached });
+              }
+            } else if (inTokens > 0 || cacheWrite > 0 || cacheRead > 0) {
+              useAppStore.getState().addCacheMetrics({ cacheWrite, cacheRead, uncached: inTokens });
             }
 
             const displayIn = totalInputTokens + roundInputTokens;
