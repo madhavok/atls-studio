@@ -1400,6 +1400,24 @@ pub(crate) fn find_body_bounds(symbol_lines: &[&str]) -> Option<(usize, usize)> 
         }
     }
 
+    if pairs.is_empty() {
+        return None;
+    }
+
+    // The body is the first pair that starts after all preceding pairs have closed.
+    // For a simple function with no signature braces, that's the first pair.
+    // For functions with destructuring/type-annotation braces, those pairs cluster
+    // early; the body pair is the first one that opens after they're all done.
+    let mut max_close = pairs[0].1;
+    for &(open, close) in &pairs[1..] {
+        if open > max_close {
+            return Some((open + 1, close));
+        }
+        if close > max_close {
+            max_close = close;
+        }
+    }
+    // Fallback: all pairs overlap or nest — use the last pair (outermost closing)
     let (open, close) = pairs.last()?;
     Some((open + 1, *close))
 }
@@ -4115,6 +4133,45 @@ class BracketHell {\n\
         assert!(result.contains("return { result: { ...a, extra: d } }"), "t7: new body should be present: {}", result);
         assert!(!result.contains("as typeof a"), "t7: old body should be gone: {}", result);
         assert!(result.contains("}"), "t7: closing brace should survive: {}", result);
+    }
+
+    #[test]
+    fn torture_t4_replace_body_class_method_full_section7() {
+        // Exact Section 7 from torture-brackets.ts
+        let content = "\
+class BracketHell {\n\
+  private data: Map<string, { handlers: Array<(ev: { type: string }) => { handled: boolean }> }> = new Map();\n\
+\n\
+  // Method with destructuring defaults containing braces\n\
+  process(\n\
+    { input = { default: true }, config = { retries: 3, timeout: { ms: 1000 } } }: {\n\
+      input?: { default: boolean };\n\
+      config?: { retries: number; timeout: { ms: number } };\n\
+    } = {}\n\
+  ): { success: boolean; data: typeof input } {\n\
+    return { success: true, data: input };\n\
+  }\n\
+\n\
+  // Computed property with bracket expressions\n\
+  get [`${'dynamic' + '_'}key`](): { value: number } {\n\
+    return { value: 42 };\n\
+  }\n\
+\n\
+  // Method returning function returning object\n\
+  createHandler(): (event: { type: string; data: unknown }) => { handled: boolean; timestamp: number } {\n\
+    return (event) => ({\n\
+      handled: event.type !== 'ignore',\n\
+      timestamp: Date.now(),\n\
+    });\n\
+  }\n\
+}\n";
+        // replace_body targeting the process method (line 5 in 1-based)
+        let edits = vec![le(5, "replace_body", Some("    return { success: false, data: input };"), None)];
+        let (result, _warnings, _) = apply_line_edits(content, &edits).unwrap();
+        assert!(result.contains("return { success: false, data: input }"), "new body should be present: {}", result);
+        assert!(!result.contains("return { success: true, data: input }"), "old body should be gone: {}", result);
+        assert!(result.contains("createHandler"), "other methods should survive: {}", result);
+        assert!(result.contains("class BracketHell"), "class should survive: {}", result);
     }
 
     #[test]

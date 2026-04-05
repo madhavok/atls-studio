@@ -403,13 +403,43 @@ pub fn syntax_check_ts(path: &str, content: &str) -> Vec<LintResult> {
     };
 
     let root = tree.root_node();
-    if !root.has_error() {
-        return Vec::new();
+    let mut results = Vec::new();
+
+    if root.has_error() {
+        collect_tree_sitter_errors(&root, content, path, &mut results, 10, code_prefix);
     }
 
-    let mut results = Vec::new();
-    collect_tree_sitter_errors(&root, content, path, &mut results, 10, code_prefix);
+    collect_structural_errors(&root, content, path, &mut results);
     results
+}
+
+/// Detect structural issues that tree-sitter parses without ERROR nodes
+/// but that are invalid JS/TS (e.g. `try` without `catch` or `finally`).
+fn collect_structural_errors(node: &tree_sitter::Node, content: &str, path: &str, results: &mut Vec<LintResult>) {
+    if node.kind() == "try_statement" {
+        let has_handler = node.child_by_field_name("handler").is_some()
+            || node.child_by_field_name("finalizer").is_some()
+            || (0..node.child_count()).any(|i| {
+                let child = node.child(i).unwrap();
+                child.kind() == "catch_clause" || child.kind() == "finally_clause"
+            });
+        if !has_handler {
+            let start = node.start_position();
+            results.push(LintResult::new(
+                path.to_string(),
+                (start.row + 1) as u32,
+                (start.column + 1) as u32,
+                "error".to_string(),
+                "TS_STRUCTURAL".to_string(),
+                "'catch' or 'finally' expected after try block".to_string(),
+            ));
+        }
+    }
+    for i in 0..node.child_count() {
+        if let Some(child) = node.child(i) {
+            collect_structural_errors(&child, content, path, results);
+        }
+    }
 }
 
 /// Tree-sitter check with tsc second opinion: if tree-sitter reports errors,
