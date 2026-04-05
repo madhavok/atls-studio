@@ -10634,16 +10634,23 @@ pub async fn atls_batch_query(
                         if !new_errors.is_empty() {
                             let msgs: Vec<String> = new_errors.iter()
                                 .take(5)
-                                .map(|e| format!("L{}:{}: {}", e.line, e.column, e.message))
+                                .map(|e| e.message.to_string())
                                 .collect();
                             let syntax_errors: Vec<&linter::LintResult> = new_errors.iter().take(5).copied().collect();
-                            return Ok(serde_json::json!({
+                            let mut err_json = serde_json::json!({
                                 "error": format!("Syntax errors after edit in {}: {}", file_path, msgs.join("; ")),
                                 "error_class": "syntax_error_after_edit",
                                 "file": file_path,
                                 "syntax_errors": syntax_errors,
                                 "_next": "The edit produced invalid syntax. Fix the edit content and retry.",
-                            }));
+                            });
+                            if let Some(ref resolutions) = line_edit_resolutions {
+                                let pre_bal = crate::syntax_error_bracket_hint(&content, &written_content, resolutions);
+                                if let Some(hint) = pre_bal {
+                                    err_json["_hint"] = serde_json::json!(hint);
+                                }
+                            }
+                            return Ok(err_json);
                         }
                     }
                 }
@@ -11539,7 +11546,7 @@ pub async fn atls_batch_query(
                                 let new_errors: Vec<String> = post_errors.iter()
                                     .filter(|e| e.severity == "error" && !baseline_normalized.contains(&linter::normalize_syntax_message_for_dedup(&e.message)))
                                     .take(5)
-                                    .map(|e| format!("L{}:{}: {}", e.line, e.column, e.message))
+                                    .map(|e| e.message.to_string())
                                     .collect();
                                 if !new_errors.is_empty() {
                                     return Ok(serde_json::json!({
@@ -11818,7 +11825,7 @@ pub async fn atls_batch_query(
                             let new_errors: Vec<String> = post_errors.iter()
                                 .filter(|e| e.severity == "error" && !baseline_normalized.contains(&linter::normalize_syntax_message_for_dedup(&e.message)))
                                 .take(5)
-                                .map(|e| format!("L{}:{}: {}", e.line, e.column, e.message))
+                                .map(|e| e.message.to_string())
                                 .collect();
                             if !new_errors.is_empty() {
                                 return Ok(serde_json::json!({

@@ -604,6 +604,44 @@ pub(crate) struct EditResolution {
     pub lines_affected: usize,
 }
 
+/// Compare bracket balance between the pre-edit span and post-edit span
+/// for each resolved edit. Returns a hint string if any edit introduced
+/// a bracket imbalance, helping the model diagnose duplicate closers
+/// or missing openers.
+pub(crate) fn syntax_error_bracket_hint(
+    pre_content: &str,
+    post_content: &str,
+    resolutions: &[EditResolution],
+) -> Option<String> {
+    let pre_lines: Vec<&str> = pre_content.lines().collect();
+    let post_lines: Vec<&str> = post_content.lines().collect();
+    let mut hints: Vec<String> = Vec::new();
+    for res in resolutions {
+        let start = res.resolved_line.saturating_sub(1);
+        let pre_end = (start + res.lines_affected).min(pre_lines.len());
+        let pre_span: Vec<&str> = if start < pre_lines.len() {
+            pre_lines[start..pre_end].to_vec()
+        } else {
+            Vec::new()
+        };
+        let post_end = post_lines.len().min(start + res.lines_affected + 10);
+        let post_span: Vec<&str> = if start < post_lines.len() {
+            post_lines[start..post_end.min(post_lines.len())].to_vec()
+        } else {
+            Vec::new()
+        };
+        let pre_bal = brace_balance_delta(&pre_span);
+        let post_bal = brace_balance_delta(&post_span);
+        if pre_bal != post_bal {
+            hints.push(format!(
+                "L{} {}: bracket imbalance — original span net={}, replacement net={}. Check for duplicate closers or missing openers.",
+                res.resolved_line, res.action, pre_bal, post_bal
+            ));
+        }
+    }
+    if hints.is_empty() { None } else { Some(hints.join(" | ")) }
+}
+
 /// Returns (new_content, anchor_miss_warnings, per_edit_resolutions).
 /// Warnings are non-fatal: the edit still applies using the hint line,
 /// but callers can surface misses to the model.
@@ -740,9 +778,18 @@ pub(crate) fn apply_line_edits(content: &str, edits: &[LineEdit]) -> Result<(Str
                         resolved_line
                     ));
                 }
-                let slice = &lines[idx..];
+                let slice_end = edit.end_line
+                    .map(|el| std::cmp::min(el as usize, lines.len()))
+                    .unwrap_or(lines.len());
+                let slice = &lines[idx..slice_end];
                 let refs: Vec<&str> = slice.iter().map(|s| s.as_str()).collect();
                 let (body_start_rel, close_brace_rel) = find_body_bounds(&refs)
+                    .or_else(|| {
+                        edit.end_line.and_then(|el| {
+                            let end_rel = (el as usize).saturating_sub(idx);
+                            if end_rel > 1 { Some((1, end_rel)) } else { None }
+                        })
+                    })
                     .ok_or_else(|| format!(
                         "replace_body at L{}: could not find body bounds (no matching {{ }} block)",
                         resolved_line
@@ -3748,7 +3795,7 @@ function alsoStay() {
 
 #[cfg(test)]
 mod hard_line_edit_tests {
-    use super::{apply_line_edits, LineCoordinate, LineEdit, content_hash, brace_balance_delta, find_body_bounds};
+    use super::{apply_line_edits, LineCoordinate, LineEdit, EditResolution, content_hash, brace_balance_delta, find_body_bounds};
     use crate::path_utils::normalize_line_endings;
 
     fn le(line: u32, action: &str, content: Option<&str>, end_line: Option<u32>) -> LineEdit {
@@ -4186,6 +4233,77 @@ class BracketHell {\n\
         ];
         let refs: Vec<&str> = lines.iter().copied().collect();
         assert_eq!(brace_balance_delta(&refs), 0, "nested template in template should be brace-balanced");
+    }
+
+    // ── t3/t4/t7 fix tests ──
+
+    #[test]
+    fn syntax_error_bracket_hint_detects_imbalance() {
+        let pre = "function f() {\n  return 1;\n}\n";
+        let post = "function f() {\n  return 1;\n}\n)\n";
+        let resolutions = vec![EditResolution {
+            resolved_line: 1,
+            action: "replace".to_string(),
+            lines_affected: 3,
+        }];
+        let hint = crate::syntax_error_bracket_hint(pre, post, &resolutions);
+        assert!(hint.is_some(), "should detect bracket imbalance");
+        let h = hint.unwrap();
+        assert!(h.contains("bracket imbalance"), "hint should mention imbalance: {}", h);
+    }
+
+    #[test]
+    fn syntax_error_bracket_hint_none_when_balanced() {
+        let pre = "function f() {\n  return 1;\n}\n";
+        let post = "function f() {\n  return 2;\n}\n";
+        let resolutions = vec![EditResolution {
+            resolved_line: 1,
+            action: "replace".to_string(),
+            lines_affected: 3,
+        }];
+        let hint = crate::syntax_error_bracket_hint(pre, post, &resolutions);
+        assert!(hint.is_none(), "should not hint when balanced");
+    }
+
+    #[test]
+    fn replace_body_with_end_line_caps_slice() {
+        // Class with pathological content (regex braces, string braces) in later methods.
+        // When end_line is set (from symbol resolution), the slice is capped and the
+        // text scanner only sees the target method, not the pathological content.
+        let content = "\
+class C {\n\
+  target() {\n\
+    old();\n\
+  }\n\
+  nightmare() {\n\
+    const r = /[{(\\[]/g;\n\
+    const s = 'open{';\n\
+  }\n\
+}\n";
+        let mut ed = le(2, "replace_body", Some("    replaced();"), None);
+        ed.end_line = Some(4); // cap to target method
+        let (result, _warnings, _) = apply_line_edits(content, &[ed]).unwrap();
+        assert!(result.contains("replaced()"), "new body present: {}", result);
+        assert!(!result.contains("old()"), "old body gone: {}", result);
+        assert!(result.contains("nightmare"), "later method survives: {}", result);
+    }
+
+    #[test]
+    fn replace_body_symbol_fallback_on_pathological_content() {
+        // Content where find_body_bounds text scanner fails (regex with braces)
+        // but end_line fallback succeeds.
+        let content = "\
+class BracketHell {\n\
+  [Symbol.iterator]() {\n\
+    const r = /[{(\\[]/g;\n\
+    return { done: true, value: 'open{' };\n\
+  }\n\
+}\n";
+        let mut ed = le(2, "replace_body", Some("    return { done: false, value: null };"), None);
+        ed.end_line = Some(5); // symbol range from index
+        let (result, _warnings, _) = apply_line_edits(content, &[ed]).unwrap();
+        assert!(result.contains("done: false"), "fallback body should be present: {}", result);
+        assert!(!result.contains("done: true"), "old body should be gone: {}", result);
     }
 
     #[test]
