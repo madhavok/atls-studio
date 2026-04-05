@@ -14,6 +14,8 @@ import {
   handleEdit,
   handleRollback,
   normalizeEditParams,
+  registerEditHashes,
+  invalidateStaleHashes,
 } from './change';
 
 vi.mock('@tauri-apps/api/core', () => ({
@@ -1691,5 +1693,143 @@ describe('line_edits hallucination / nightmare scenarios', () => {
     );
 
     expect(out.ok).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// No-op batch entry guard (isNoOpBatchEntry)
+// ---------------------------------------------------------------------------
+
+describe('no-op batch entry guard', () => {
+  beforeEach(() => {
+    resetContextStore();
+  });
+
+  it('registerEditHashes skips skip-row entries', () => {
+    const store = useContextStore.getState();
+    const spy = vi.spyOn(store, 'registerEditHash');
+
+    const result = {
+      batch: [
+        { f: 'a.ts', h: 'h:aaa11111', old_h: 'h:bbb22222', ok: 0, skip: 'no edits' },
+        { f: 'b.ts', h: 'h:ccc33333', old_h: 'h:ddd44444', ok: 1 },
+      ],
+    };
+
+    registerEditHashes(result, {});
+
+    const calls = spy.mock.calls.map(c => c[0]);
+    expect(calls).not.toContainEqual(expect.stringContaining('aaa11111'));
+    expect(calls).toContainEqual(expect.stringContaining('ccc33333'));
+
+    spy.mockRestore();
+  });
+
+  it('invalidateStaleHashes skips skip-row entries', () => {
+    const store = useContextStore.getState();
+    const spy = vi.spyOn(store, 'invalidateStaleHashes');
+
+    const result = {
+      batch: [
+        { f: 'a.ts', h: 'h:aaa11111', old_h: 'h:aaa11111', ok: 0, skip: 'no edits' },
+        { f: 'b.ts', h: 'h:new22222', old_h: 'h:old22222', ok: 1 },
+      ],
+    };
+
+    invalidateStaleHashes(result);
+
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(spy.mock.calls[0][0]).toEqual(['h:old22222']);
+
+    spy.mockRestore();
+  });
+
+  it('invalidateStaleHashes does nothing when all entries are no-ops', () => {
+    const store = useContextStore.getState();
+    const spy = vi.spyOn(store, 'invalidateStaleHashes');
+
+    const result = {
+      batch: [
+        { f: 'a.ts', h: 'h:same1111', old_h: 'h:same1111', ok: 0, skip: 'no edits' },
+      ],
+    };
+
+    invalidateStaleHashes(result);
+
+    expect(spy).not.toHaveBeenCalled();
+
+    spy.mockRestore();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// syntax_error_after_edit formatting
+// ---------------------------------------------------------------------------
+
+describe('syntax_error_after_edit formatting', () => {
+  beforeEach(() => {
+    resetContextStore();
+    invokeMock.mockReset();
+  });
+
+  it('handleEdit surfaces ROLLED BACK for syntax_error_after_edit', async () => {
+    invokeMock.mockResolvedValue({
+      error: 'Syntax errors after edit in a.ts: L10:1: unexpected token',
+      error_class: 'syntax_error_after_edit',
+      file: 'a.ts',
+      _next: 'The edit produced invalid syntax. Fix the edit content and retry.',
+    });
+
+    const ctx = {
+      atlsBatchQuery: invokeMock as unknown as (...args: unknown[]) => Promise<unknown>,
+      store: () => useContextStore.getState(),
+      getStepOutput: () => undefined,
+      forEachStepOutput: () => {},
+    };
+
+    const out = await handleEdit(
+      {
+        file: 'a.ts',
+        content_hash: 'abc',
+        line_edits: [{ line: 10, action: 'replace', content: 'bad syntax {{{' }],
+      },
+      ctx as never,
+    );
+
+    expect(out.ok).toBe(false);
+    expect(out.summary).toContain('ROLLED BACK');
+    expect(out.summary).toContain('file is unchanged');
+    expect(out.summary).toContain('Count braces');
+    expect(out.summary).not.toMatch(/^edit: ERROR/);
+  });
+
+  it('handleEdit preserves normal ERROR format for non-syntax errors', async () => {
+    invokeMock.mockResolvedValue({
+      error: 'stale_hash for a.ts: expected abc, actual def',
+      error_class: 'stale_hash',
+      file: 'a.ts',
+      _next: 'Re-read the file.',
+    });
+
+    const ctx = {
+      atlsBatchQuery: invokeMock as unknown as (...args: unknown[]) => Promise<unknown>,
+      store: () => useContextStore.getState(),
+      getStepOutput: () => undefined,
+      forEachStepOutput: () => {},
+    };
+
+    const out = await handleEdit(
+      {
+        file: 'a.ts',
+        content_hash: 'abc',
+        line_edits: [{ line: 1, action: 'replace', content: 'fixed' }],
+      },
+      ctx as never,
+    );
+
+    expect(out.ok).toBe(false);
+    expect(out.summary).toMatch(/^edit: ERROR/);
+    expect(out.summary).toContain('[stale_hash]');
+    expect(out.summary).not.toContain('ROLLED BACK');
   });
 });

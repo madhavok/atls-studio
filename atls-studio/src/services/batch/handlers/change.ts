@@ -49,6 +49,13 @@ function throwEditValidationError(
 // Edit post-processing helpers
 // ---------------------------------------------------------------------------
 
+/** Detect Rust batch_edits skip rows (empty line_edits → ok:0, skip:"no edits"). */
+function isNoOpBatchEntry(entry: Record<string, unknown>): boolean {
+  if (entry.skip != null) return true;
+  if (typeof entry.ok === 'number' && entry.ok === 0) return true;
+  return false;
+}
+
 export function registerEditHashes(result: unknown, params: Record<string, unknown>): void {
   try {
     const store = useContextStore.getState();
@@ -76,6 +83,7 @@ export function registerEditHashes(result: unknown, params: Record<string, unkno
       : null;
 
     for (const entry of entries) {
+      if (isNoOpBatchEntry(entry)) continue;
       const newHash = (entry.h || entry.hash) as string | undefined;
       const oldHash = (entry.old_h || entry.old_hash) as string | undefined;
       const source = (entry.f || entry.file || entry.path || entry.file_path || paramSource) as string | undefined;
@@ -207,6 +215,7 @@ export function invalidateStaleHashes(result: unknown): void {
 
     const staleHashes: string[] = [];
     for (const entry of arr) {
+      if (isNoOpBatchEntry(entry)) continue;
       const oldHash = (entry.old_h ?? entry.old_hash) as string | undefined;
       const newHash = (entry.h ?? entry.hash) as string | undefined;
       if (oldHash && newHash && oldHash !== newHash) {
@@ -378,6 +387,7 @@ async function recordEditSummary(result: unknown, params: Record<string, unknown
     if (!Array.isArray(items)) return;
 
     for (const entry of items) {
+      if (isNoOpBatchEntry(entry)) continue;
       const file = (entry.f ?? entry.file ?? entry.path ?? entry.file_path ?? params.file ?? params.file_path) as string | undefined;
       if (!file) continue;
       const basename = file.split('/').pop() ?? file;
@@ -448,6 +458,7 @@ function extractRefs(result: unknown): string[] {
   const arr = (r.results ?? r.batch ?? r.drafts) as Array<Record<string, unknown>> | undefined;
   if (Array.isArray(arr)) {
     for (const entry of arr) {
+      if (isNoOpBatchEntry(entry)) continue;
       const h = (entry.h ?? entry.hash) as string | undefined;
       if (h) refs.push(h.startsWith('h:') ? h : `h:${h}`);
     }
@@ -890,7 +901,9 @@ function resultHasAppliedEdits(result: unknown): boolean {
   const batch = r.batch ?? r.results ?? r.drafts;
   if (Array.isArray(batch) && batch.length > 0) {
     return batch.some(
-      (e) => !!e && typeof e === 'object' && ((e as Record<string, unknown>).h != null || (e as Record<string, unknown>).hash != null),
+      (e) => !!e && typeof e === 'object'
+        && !isNoOpBatchEntry(e as Record<string, unknown>)
+        && ((e as Record<string, unknown>).h != null || (e as Record<string, unknown>).hash != null),
     );
   }
   return false;
@@ -942,6 +955,9 @@ function formatEditErrorSummary(payload: Record<string, unknown>): string {
   const errorClass = typeof payload.error_class === 'string' ? payload.error_class : undefined;
   const message = typeof payload.error === 'string' ? payload.error : 'edit failed';
   const next = typeof payload._next === 'string' ? payload._next : undefined;
+  if (errorClass === 'syntax_error_after_edit') {
+    return `edit: ROLLED BACK [syntax_error] ${message} — file is unchanged. Count braces in replacement content and retry.`;
+  }
   return `edit: ERROR${errorClass ? ` [${errorClass}]` : ''} ${message}${next ? ` — ${next}` : ''}`;
 }
 
