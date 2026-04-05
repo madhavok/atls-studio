@@ -329,10 +329,14 @@ impl EditSession {
         // Baseline-aware: only reject errors that are NEW (not pre-existing in the original).
         // This prevents tree-sitter false positives (e.g. complex TS generics, Rust macros)
         // from blocking unrelated edits in files that already had those parse artifacts.
+        let root_path = self.resolved_path.parent()
+            .unwrap_or(std::path::Path::new("."))
+            .to_string_lossy()
+            .to_string();
         let (baseline_results, post_results) = if use_ts_check {
             (
-                linter::syntax_check_ts(&self.source_path, &self.original_content),
-                linter::syntax_check_ts(&self.source_path, &self.working_content),
+                linter::syntax_check_ts_with_tsc_fallback(&self.source_path, &self.original_content, Some(&root_path)),
+                linter::syntax_check_ts_with_tsc_fallback(&self.source_path, &self.working_content, Some(&root_path)),
             )
         } else {
             let opts = linter::LintOptions {

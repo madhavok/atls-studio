@@ -10580,11 +10580,25 @@ pub async fn atls_batch_query(
                     None
                 };
 
-                let (new_content, _warnings, line_edit_resolutions) = crate::apply_line_edits_with_shadow(
+                let (new_content, edit_warnings, line_edit_resolutions) = crate::apply_line_edits_with_shadow(
                     &edits,
                     &content,
                     shadow_for_mutation.as_deref(),
                 )?;
+
+                let strict_mode = params.get("refactor_validation_mode").and_then(|v| v.as_str()) == Some("strict");
+                let structural_warnings: Vec<&String> = edit_warnings.iter()
+                    .filter(|w| w.starts_with("move_structural_warning"))
+                    .collect();
+                if strict_mode && !structural_warnings.is_empty() {
+                    return Ok(serde_json::json!({
+                        "error": format!("Structural move warning (strict mode): {}", structural_warnings[0]),
+                        "error_class": "move_structural_error",
+                        "file": file_path,
+                        "_next": "The move crosses a brace depth boundary and may silently break structure. Use explicit replace or refactor instead.",
+                    }));
+                }
+
                 let mut written_content = new_content.clone();
                 if is_js_ts_path(&file_path) && written_content.contains("export ") {
                     written_content = dedupe_barrel_exports(&written_content);
@@ -10594,7 +10608,7 @@ pub async fn atls_batch_query(
                 let mut hash = written_snap.snapshot_hash;
 
                 // Fix #9: Run behavior check before lint so warning is surfaced even when lint fails.
-                let behavior_warning = if params.get("refactor_validation_mode").and_then(|v| v.as_str()) == Some("strict") {
+                let behavior_warning = if strict_mode {
                     check_behavior_change_heuristic(&content, &written_content)
                 } else {
                     None
@@ -10606,9 +10620,10 @@ pub async fn atls_batch_query(
                 // Uses normalized message dedup (strips context suffix) so line-shifted
                 // pre-existing errors are not falsely counted as new.
                 if is_js_ts_path(&file_path) {
-                    let post_errors = linter::syntax_check_ts(&file_path, &written_content);
+                    let root_str = project_root.to_string_lossy().to_string();
+                    let post_errors = linter::syntax_check_ts_with_tsc_fallback(&file_path, &written_content, Some(&root_str));
                     if post_errors.iter().any(|e| e.severity == "error") {
-                        let baseline_normalized: std::collections::HashSet<String> = linter::syntax_check_ts(&file_path, &content)
+                        let baseline_normalized: std::collections::HashSet<String> = linter::syntax_check_ts_with_tsc_fallback(&file_path, &content, Some(&root_str))
                             .iter()
                             .filter(|e| e.severity == "error")
                             .map(|e| linter::normalize_syntax_message_for_dedup(&e.message))
@@ -10730,6 +10745,11 @@ pub async fn atls_batch_query(
                 });
                 if let Some(ref warn) = behavior_warning {
                     result["_behavior_warning"] = serde_json::json!(warn);
+                }
+                if !structural_warnings.is_empty() {
+                    result["_structural_warnings"] = serde_json::json!(
+                        structural_warnings.iter().map(|w| w.as_str()).collect::<Vec<_>>()
+                    );
                 }
                 if edit_stale {
                     result["stale"] = serde_json::json!(true);
@@ -11498,24 +11518,37 @@ pub async fn atls_batch_query(
                     None
                 };
 
-                // Auto-flush: write to disk with pre-write syntax gate
+                // Auto-flush: write to disk with pre-write syntax gate (baseline-aware + tsc fallback)
                 if auto_flush {
+                    let root_str = project_root.to_string_lossy().to_string();
                     for (fp_check, content_check) in &files {
                         if is_js_ts_path(fp_check) {
-                            let syntax_errors = linter::syntax_check_ts(fp_check, content_check);
-                            if syntax_errors.iter().any(|e| e.severity == "error") {
-                                let msgs: Vec<String> = syntax_errors.iter()
-                                    .filter(|e| e.severity == "error")
+                            let post_errors = linter::syntax_check_ts_with_tsc_fallback(fp_check, content_check, Some(&root_str));
+                            if post_errors.iter().any(|e| e.severity == "error") {
+                                let resolved = resolve_project_path(project_root, fp_check);
+                                let baseline_normalized: std::collections::HashSet<String> = std::fs::read_to_string(&resolved)
+                                    .ok()
+                                    .map(|orig| {
+                                        linter::syntax_check_ts_with_tsc_fallback(fp_check, &orig, Some(&root_str))
+                                            .iter()
+                                            .filter(|e| e.severity == "error")
+                                            .map(|e| linter::normalize_syntax_message_for_dedup(&e.message))
+                                            .collect()
+                                    })
+                                    .unwrap_or_default();
+                                let new_errors: Vec<String> = post_errors.iter()
+                                    .filter(|e| e.severity == "error" && !baseline_normalized.contains(&linter::normalize_syntax_message_for_dedup(&e.message)))
                                     .take(5)
                                     .map(|e| format!("L{}:{}: {}", e.line, e.column, e.message))
                                     .collect();
-                                return Ok(serde_json::json!({
-                                    "error": format!("Syntax errors after edit in {}: {}", fp_check, msgs.join("; ")),
-                                    "error_class": "syntax_error_after_edit",
-                                    "file": fp_check,
-                                    "syntax_errors": syntax_errors,
-                                    "_next": "The edit produced invalid syntax. Fix the edit content and retry.",
-                                }));
+                                if !new_errors.is_empty() {
+                                    return Ok(serde_json::json!({
+                                        "error": format!("Syntax errors after edit in {}: {}", fp_check, new_errors.join("; ")),
+                                        "error_class": "syntax_error_after_edit",
+                                        "file": fp_check,
+                                        "_next": "The edit produced invalid syntax. Fix the edit content and retry.",
+                                    }));
+                                }
                             }
                         }
                     }
@@ -11774,9 +11807,10 @@ pub async fn atls_batch_query(
                 // with the line_edits syntax gate.
                 if auto_flush {
                     if is_js_ts_path(&file_path) {
-                        let post_errors = linter::syntax_check_ts(&file_path, &written_content);
+                        let root_str = project_root.to_string_lossy().to_string();
+                        let post_errors = linter::syntax_check_ts_with_tsc_fallback(&file_path, &written_content, Some(&root_str));
                         if post_errors.iter().any(|e| e.severity == "error") {
-                            let baseline_normalized: std::collections::HashSet<String> = linter::syntax_check_ts(&file_path, &old_content)
+                            let baseline_normalized: std::collections::HashSet<String> = linter::syntax_check_ts_with_tsc_fallback(&file_path, &old_content, Some(&root_str))
                                 .iter()
                                 .filter(|e| e.severity == "error")
                                 .map(|e| linter::normalize_syntax_message_for_dedup(&e.message))

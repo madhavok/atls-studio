@@ -412,6 +412,45 @@ pub fn syntax_check_ts(path: &str, content: &str) -> Vec<LintResult> {
     results
 }
 
+/// Tree-sitter check with tsc second opinion: if tree-sitter reports errors,
+/// invoke tsc syntax-only to confirm. Returns errors only if tsc also flags them.
+/// Falls back to tree-sitter-only results when no root_path is provided or tsc
+/// is unavailable.
+pub fn syntax_check_ts_with_tsc_fallback(path: &str, content: &str, root_path: Option<&str>) -> Vec<LintResult> {
+    let ts_errors = syntax_check_ts(path, content);
+    if ts_errors.is_empty() {
+        return ts_errors;
+    }
+    let root = match root_path {
+        Some(r) if !r.is_empty() => r.to_string(),
+        _ => {
+            if let Some(parent) = std::path::Path::new(path).parent() {
+                parent.to_string_lossy().to_string()
+            } else {
+                return ts_errors;
+            }
+        }
+    };
+    let ext = Path::new(path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+    let opts = LintOptions {
+        root_path: root,
+        syntax_only: Some(true),
+        max_errors_per_file: Some(10),
+        ..Default::default()
+    };
+    let tsc_errors = lint_typescript_tsc(path, content, &opts, 10, &ext);
+    let tsc_has_syntax_errors = tsc_errors.iter().any(|e| e.severity == "error");
+    if tsc_has_syntax_errors {
+        tsc_errors
+    } else {
+        Vec::new()
+    }
+}
+
 /// Run tsc --noEmit on a temp file to catch TypeScript/JavaScript errors.
 /// Uses standalone flags (--strict, --esModuleInterop) when no tsconfig is present.
 /// For JS/JSX, adds --allowJs so tsc can parse JavaScript natively.

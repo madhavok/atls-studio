@@ -742,13 +742,14 @@ pub(crate) fn apply_line_edits(content: &str, edits: &[LineEdit]) -> Result<(Str
                 }
                 let slice = &lines[idx..];
                 let refs: Vec<&str> = slice.iter().map(|s| s.as_str()).collect();
-                let (body_offset, body_count) = find_body_bounds(&refs)
+                let (body_start_rel, close_brace_rel) = find_body_bounds(&refs)
                     .ok_or_else(|| format!(
                         "replace_body at L{}: could not find body bounds (no matching {{ }} block)",
                         resolved_line
                     ))?;
-                let body_start = idx + body_offset;
-                let body_end = std::cmp::min(body_start + body_count, lines.len());
+                let body_start = idx + body_start_rel;
+                let body_end = idx + close_brace_rel; // exclusive: up to but not including closing }
+                let body_span = body_end.saturating_sub(body_start);
                 let raw = edit.content.as_deref().unwrap_or("");
                 let replacement_text = if edit.reindent && body_start < lines.len() {
                     reindent_block(raw, detect_indent(&lines[body_start]))
@@ -756,8 +757,9 @@ pub(crate) fn apply_line_edits(content: &str, edits: &[LineEdit]) -> Result<(Str
                     raw.to_string()
                 };
                 let replacement: Vec<String> = replacement_text.lines().map(String::from).collect();
-                lines.splice(body_start..body_end, replacement);
-                body_count // body span is the key data for rebase
+                let splice_end = std::cmp::min(body_end, lines.len());
+                lines.splice(body_start..splice_end, replacement);
+                body_span
             }
             "delete" => {
                 let count = if let Some(end) = edit.end_line {
@@ -780,6 +782,20 @@ pub(crate) fn apply_line_edits(content: &str, edits: &[LineEdit]) -> Result<(Str
                 if dest == 0 {
                     return Err(format!("move action requires destination (1-based line number)"));
                 }
+
+                let src_depth = brace_depth_at_line(&lines, idx);
+                let dest_idx = std::cmp::min(dest.saturating_sub(1), lines.len().saturating_sub(1));
+                let dest_depth = brace_depth_at_line(&lines, dest_idx);
+                if src_depth != dest_depth {
+                    anchor_warnings.push(format!(
+                        "move_structural_warning: move L{}-L{} to L{} crosses brace depth boundary \
+                         (source depth={}, dest depth={}). \
+                         This may silently break enclosing structure — \
+                         prefer explicit replace or refactor for property/member moves.",
+                        idx + 1, src_end, dest, src_depth, dest_depth
+                    ));
+                }
+
                 let block: Vec<String> = lines.drain(idx..src_end).collect();
                 let insert_at = if dest > idx + 1 { dest.saturating_sub(count) } else { dest };
                 let clamped = std::cmp::min(insert_at.saturating_sub(1), lines.len());
@@ -949,9 +965,9 @@ pub(crate) fn line_edits_to_edit_ops(
                 }
                 let slice = &shadow_lines[start_idx..];
                 match find_body_bounds(slice) {
-                    Some((body_offset, body_count)) => {
-                        let body_start = start_idx + body_offset;
-                        let body_end = std::cmp::min(body_start + body_count, shadow_lines.len());
+                    Some((body_start_rel, close_brace_rel)) => {
+                        let body_start = start_idx + body_start_rel;
+                        let body_end = std::cmp::min(start_idx + close_brace_rel, shadow_lines.len());
                         let preimage = shadow_lines[body_start..body_end].join("\n");
                         let replacement = edit.content.as_deref().unwrap_or("").to_string();
                         let body_hint = Some(byte_offset_of_line(&working, (body_start + 1) as u32));
@@ -1141,54 +1157,197 @@ pub(crate) fn apply_line_edits_with_shadow(
     Ok((content, warnings, Some(resolutions)))
 }
 
+/// Cross-line scanner state for JS/TS bracket tracking.
+/// Handles block comments, template literals (including nested `${...}`),
+/// and string literals that span across line boundaries.
+#[derive(Clone, Default)]
+struct ScanState {
+    in_block_comment: bool,
+    /// Stack of template literal nesting. Each entry is the brace depth
+    /// inside a `${...}` expression at that template nesting level.
+    /// Empty = not inside any template literal.
+    /// Entry == 0 means we're in the string segment of that template level.
+    /// Entry > 0 means we're inside a `${...}` expression.
+    template_stack: Vec<i32>,
+}
+
+impl ScanState {
+    fn in_template_segment(&self) -> bool {
+        matches!(self.template_stack.last(), Some(&0))
+    }
+
+    fn in_template_expr(&self) -> bool {
+        matches!(self.template_stack.last(), Some(&d) if d > 0)
+    }
+}
+
+/// Advance the scanner by one character, updating state.
+/// Returns the bracket delta for this character (only non-zero for real
+/// code-level brackets outside strings/comments/template segments).
+/// `count_all_brackets`: true = count `{}()[]`, false = count `{}` only.
+fn scan_char(
+    chars: &[char],
+    i: &mut usize,
+    len: usize,
+    state: &mut ScanState,
+    count_all_brackets: bool,
+) -> i32 {
+    if state.in_block_comment {
+        if *i + 1 < len && chars[*i] == '*' && chars[*i + 1] == '/' {
+            state.in_block_comment = false;
+            *i += 2;
+        } else {
+            *i += 1;
+        }
+        return 0;
+    }
+
+    if state.in_template_segment() {
+        if chars[*i] == '\\' {
+            *i += 2;
+            return 0;
+        }
+        if chars[*i] == '`' {
+            state.template_stack.pop();
+            *i += 1;
+            return 0;
+        }
+        if *i + 1 < len && chars[*i] == '$' && chars[*i + 1] == '{' {
+            if let Some(last) = state.template_stack.last_mut() {
+                *last = 1;
+            }
+            *i += 2;
+            return 0;
+        }
+        *i += 1;
+        return 0;
+    }
+
+    if state.in_template_expr() {
+        if *i + 1 < len && chars[*i] == '/' && chars[*i + 1] == '/' {
+            *i = len; // skip rest of line
+            return 0;
+        }
+        if *i + 1 < len && chars[*i] == '/' && chars[*i + 1] == '*' {
+            state.in_block_comment = true;
+            *i += 2;
+            return 0;
+        }
+        if chars[*i] == '"' || chars[*i] == '\'' {
+            let q = chars[*i];
+            *i += 1;
+            while *i < len && chars[*i] != q {
+                if chars[*i] == '\\' { *i += 1; }
+                *i += 1;
+            }
+            if *i < len { *i += 1; }
+            return 0;
+        }
+        if chars[*i] == '`' {
+            state.template_stack.push(0);
+            *i += 1;
+            return 0;
+        }
+        if chars[*i] == '{' {
+            if let Some(last) = state.template_stack.last_mut() {
+                *last += 1;
+            }
+            *i += 1;
+            return 0;
+        }
+        if chars[*i] == '}' {
+            if let Some(last) = state.template_stack.last_mut() {
+                *last -= 1;
+                if *last <= 0 {
+                    *last = 0; // back in template segment
+                }
+            }
+            *i += 1;
+            return 0;
+        }
+        *i += 1;
+        return 0;
+    }
+
+    // Normal code context
+    if *i + 1 < len && chars[*i] == '/' && chars[*i + 1] == '/' {
+        *i = len; // skip rest of line
+        return 0;
+    }
+    if *i + 1 < len && chars[*i] == '/' && chars[*i + 1] == '*' {
+        state.in_block_comment = true;
+        *i += 2;
+        return 0;
+    }
+    if chars[*i] == '"' || chars[*i] == '\'' {
+        let q = chars[*i];
+        *i += 1;
+        while *i < len && chars[*i] != q {
+            if chars[*i] == '\\' { *i += 1; }
+            *i += 1;
+        }
+        if *i < len { *i += 1; }
+        return 0;
+    }
+    if chars[*i] == '`' {
+        state.template_stack.push(0);
+        *i += 1;
+        return 0;
+    }
+
+    let delta = if count_all_brackets {
+        match chars[*i] {
+            '{' | '(' | '[' => 1,
+            '}' | ')' | ']' => -1,
+            _ => 0,
+        }
+    } else {
+        match chars[*i] {
+            '{' => 1,
+            '}' => -1,
+            _ => 0,
+        }
+    };
+    *i += 1;
+    delta
+}
+
 /// Net bracket balance delta for a slice of lines: +1 per opener, -1 per closer.
-/// Skips brackets inside string literals (`"`, `'`, `` ` ``), line comments (`//`),
-/// and block comments (`/* */`). Non-zero means removing these lines would
-/// unbalance surrounding structure.
+/// Skips brackets inside string literals, line comments, block comments, and
+/// template literal string segments. Handles multi-line template literals with
+/// nested `${...}` expressions correctly.
 fn brace_balance_delta(lines: &[&str]) -> i32 {
     let mut delta = 0i32;
-    let mut in_block_comment = false;
+    let mut state = ScanState::default();
     for line in lines {
         let chars: Vec<char> = line.chars().collect();
         let len = chars.len();
         let mut i = 0;
         while i < len {
-            if in_block_comment {
-                if i + 1 < len && chars[i] == '*' && chars[i + 1] == '/' {
-                    in_block_comment = false;
-                    i += 2;
-                    continue;
-                }
-                i += 1;
-                continue;
-            }
-            if i + 1 < len && chars[i] == '/' && chars[i + 1] == '/' {
-                break;
-            }
-            if i + 1 < len && chars[i] == '/' && chars[i + 1] == '*' {
-                in_block_comment = true;
-                i += 2;
-                continue;
-            }
-            if chars[i] == '"' || chars[i] == '\'' || chars[i] == '`' {
-                let quote = chars[i];
-                i += 1;
-                while i < len && chars[i] != quote {
-                    if chars[i] == '\\' { i += 1; }
-                    i += 1;
-                }
-                if i < len { i += 1; }
-                continue;
-            }
-            match chars[i] {
-                '{' | '(' | '[' => { delta += 1; }
-                '}' | ')' | ']' => { delta -= 1; }
-                _ => {}
-            }
-            i += 1;
+            delta += scan_char(&chars, &mut i, len, &mut state, true);
         }
     }
     delta
+}
+
+/// Compute brace-only nesting depth at a given line index by scanning all
+/// preceding lines. Only counts `{`/`}` (not parens/brackets) since those
+/// define structural scope in JS/TS. Handles multi-line template literals.
+fn brace_depth_at_line(lines: &[String], target: usize) -> i32 {
+    let mut depth: i32 = 0;
+    let mut state = ScanState::default();
+    let limit = target.min(lines.len());
+    for line in &lines[..limit] {
+        let chars: Vec<char> = line.chars().collect();
+        let len = chars.len();
+        let mut i = 0;
+        while i < len {
+            let d = scan_char(&chars, &mut i, len, &mut state, false);
+            depth += d;
+            if depth < 0 { depth = 0; }
+        }
+    }
+    depth
 }
 
 /// Given the lines of a symbol (function/method/class), returns (body_start, body_end)
@@ -1201,63 +1360,48 @@ pub(crate) fn find_body_bounds(symbol_lines: &[&str]) -> Option<(usize, usize)> 
         return None;
     }
 
-    let mut open_line: Option<usize> = None;
-    let mut close_line: Option<usize> = None;
+    // Collect ALL balanced {…} pairs at the top level (depth 0→1→…→0).
+    // The function body is the LAST such pair — earlier pairs are
+    // destructuring defaults, type annotations, etc.
+    let mut pairs: Vec<(usize, usize)> = Vec::new();
+    let mut current_open: Option<usize> = None;
     let mut depth: i32 = 0;
-    let mut in_block_comment = false;
+    let mut state = ScanState::default();
 
     for (line_idx, line) in symbol_lines.iter().enumerate() {
         let chars: Vec<char> = line.chars().collect();
         let len = chars.len();
         let mut i = 0;
         while i < len {
-            if in_block_comment {
-                if i + 1 < len && chars[i] == '*' && chars[i + 1] == '/' {
-                    in_block_comment = false;
-                    i += 2;
-                    continue;
-                }
-                i += 1;
-                continue;
-            }
-            if i + 1 < len && chars[i] == '/' && chars[i + 1] == '/' { break; }
-            if i + 1 < len && chars[i] == '/' && chars[i + 1] == '*' {
-                in_block_comment = true;
-                i += 2;
-                continue;
-            }
-            if chars[i] == '"' || chars[i] == '\'' || chars[i] == '`' {
-                let q = chars[i];
-                i += 1;
-                while i < len && chars[i] != q {
-                    if chars[i] == '\\' { i += 1; }
-                    i += 1;
-                }
-                if i < len { i += 1; }
-                continue;
-            }
-            if chars[i] == '{' {
-                if depth == 0 && open_line.is_none() {
-                    open_line = Some(line_idx);
-                }
-                depth += 1;
-            } else if chars[i] == '}' {
-                depth -= 1;
+            let delta = scan_char(&chars, &mut i, len, &mut state, false);
+            if delta > 0 {
                 if depth == 0 {
-                    close_line = Some(line_idx);
+                    current_open = Some(line_idx);
+                }
+                depth += delta;
+            } else if delta < 0 {
+                depth += delta;
+                if depth == 0 {
+                    if let Some(ol) = current_open {
+                        if line_idx > ol {
+                            pairs.push((ol, line_idx));
+                        }
+                    }
+                    current_open = None;
                 }
             }
-            i += 1;
-        }
-        if open_line.is_some() && depth == 0 && close_line.is_some() {
-            break;
         }
     }
 
-    let open = open_line?;
-    let close = close_line?;
-    if close <= open { return None; }
-    Some((open + 1, close))
+    // If depth never returned to 0 but we have an open, the body extends to end
+    if let Some(ol) = current_open {
+        if depth > 0 && symbol_lines.len() > ol + 1 {
+            pairs.push((ol, symbol_lines.len() - 1));
+        }
+    }
+
+    let (open, close) = pairs.last()?;
+    Some((open + 1, *close))
 }
 
 /// Resolve `symbol` + `position` on each edit to concrete `line` / `end_line` using the symbol index.
@@ -3196,16 +3340,16 @@ mod shadow_preimage_tests {
 
     #[test]
     fn replace_body_extracts_body_from_shadow() {
-        // find_body_bounds returns (body_offset=1, body_count=2) for this input,
-        // meaning the preimage spans from the line after `{` through the `}` line
+        // find_body_bounds returns (1, 2): body_start_rel=1, close_brace_rel=2.
+        // Preimage is the body content (excluding the closing brace line).
         let shadow = "function foo() {\n  old_stmt;\n}\n";
         let current = "function foo() {\n  old_stmt;\n}\n";
-        let edits = vec![le(1, "replace_body", Some("  new_stmt;\n}"), None)];
+        let edits = vec![le(1, "replace_body", Some("  new_stmt;"), None)];
         let (ops, warnings) = line_edits_to_edit_ops(&edits, shadow, current).unwrap();
         assert!(warnings.is_empty(), "warnings: {:?}", warnings);
         assert_eq!(ops.len(), 1);
-        assert_eq!(ops[0].preimage, "  old_stmt;\n}");
-        assert_eq!(ops[0].replacement, "  new_stmt;\n}");
+        assert_eq!(ops[0].preimage, "  old_stmt;");
+        assert_eq!(ops[0].replacement, "  new_stmt;");
     }
 
     #[test]
@@ -3819,6 +3963,174 @@ mod hard_line_edit_tests {
         assert_eq!(end, 2, "body ends at closing }} line");
     }
 
+    // ── torture-brackets.ts regression suite ──
+
+    #[test]
+    fn torture_t1_template_literal_with_embedded_arrow_fn() {
+        let lines = vec![
+            "const edgeCases = {",
+            "  c: `template with ${(() => {",
+            "    const inner = { nested: true };",
+            "    return inner;",
+            "  })()}`,",
+            "  e: 42,",
+            "};",
+        ];
+        let refs: Vec<&str> = lines.iter().copied().collect();
+        let bounds = find_body_bounds(&refs);
+        assert!(bounds.is_some(), "t1: should find body of edgeCases despite template literal with arrow fn");
+        let (start, end) = bounds.unwrap();
+        assert_eq!(start, 1, "t1: body starts at first property");
+        assert_eq!(end, 6, "t1: body ends at closing }}");
+    }
+
+    #[test]
+    fn torture_t1_brace_balance_template_with_arrow() {
+        let lines = vec![
+            "  c: `template with ${(() => {",
+            "    const inner = { nested: true };",
+            "    return inner;",
+            "  })()}`,",
+        ];
+        let refs: Vec<&str> = lines.iter().copied().collect();
+        assert_eq!(brace_balance_delta(&refs), 0, "t1: template with arrow fn should be brace-balanced");
+    }
+
+    #[test]
+    fn torture_t5_computed_symbol_property() {
+        let lines = vec![
+            "class BracketHell {",
+            "  [COMPUTED]: string = '}';",
+            "  process() {",
+            "    return 1;",
+            "  }",
+            "}",
+        ];
+        let refs: Vec<&str> = lines.iter().copied().collect();
+        let bounds = find_body_bounds(&refs);
+        assert!(bounds.is_some(), "t5: should find class body despite computed [COMPUTED] and string '}}' ");
+        let (start, end) = bounds.unwrap();
+        assert_eq!(start, 1, "t5: body starts after class opening");
+        assert_eq!(end, 5, "t5: body ends at class closing }}");
+    }
+
+    #[test]
+    fn torture_t6_iife_chain_with_satisfies() {
+        let lines = vec![
+            "const result = ((() => {",
+            "  const a = { x: 1 } as const;",
+            "  return ((() => {",
+            "    return { y: 2 } as const;",
+            "  })());",
+            "})()) satisfies { readonly x: 1; readonly y: 2 };",
+        ];
+        let refs: Vec<&str> = lines.iter().copied().collect();
+        assert_eq!(brace_balance_delta(&refs), 0, "t6: IIFE chain with satisfies should be brace-balanced");
+    }
+
+    #[test]
+    fn torture_t8_comment_to_code_boundary() {
+        let lines = vec![
+            "/* Block comment with fake code:",
+            "  if (x > 0) {",
+            "    return { result: y }; // } tricky",
+            "  }",
+            "  End of fake code */",
+            "const edgeCases = {",
+            "  a: '{ not a block }',",
+            "};",
+        ];
+        let refs: Vec<&str> = lines.iter().copied().collect();
+        let bounds = find_body_bounds(&refs);
+        assert!(bounds.is_some(), "t8: should find body across comment/code boundary");
+        let (start, end) = bounds.unwrap();
+        assert_eq!(start, 6, "t8: body starts after 'const edgeCases = {{' line");
+        assert_eq!(end, 7, "t8: body ends at closing '}}' line");
+    }
+
+    #[test]
+    fn torture_t10_deeply_nested_callback_types() {
+        let lines = vec![
+            "function nightmareCallbacks(",
+            "  cb1: (err: Error | null, result: {",
+            "    data: Array<{",
+            "      id: number;",
+            "      children: Array<{",
+            "        name: string;",
+            "        meta: { [key: string]: unknown };",
+            "      }>;",
+            "    }>;",
+            "  }) => void,",
+            "  cb2: (input: string) => Promise<{ status: 'ok' | 'fail' }>",
+            "): void {",
+            "  const x = { a: 1 };",
+            "  cb1(null, { data: [] });",
+            "}",
+        ];
+        let refs: Vec<&str> = lines.iter().copied().collect();
+        let bounds = find_body_bounds(&refs);
+        assert!(bounds.is_some(), "t10: should find body despite 10+ nesting levels in callback types");
+        let (start, end) = bounds.unwrap();
+        assert_eq!(start, 12, "t10: body starts after ') : void {{' line");
+        assert_eq!(end, 14, "t10: body ends at closing '}}' line");
+    }
+
+    #[test]
+    fn torture_t3_nested_generics_with_conditional_types() {
+        let lines = vec![
+            "type DeepNest<T extends Record<string, Array<Map<string, Set<T>>>>> = {",
+            "  fn: <U extends keyof T>(key: U) => T[U] extends infer V",
+            "    ? V extends Map<infer K, infer S>",
+            "      ? { mapped: [K, S] }",
+            "      : never",
+            "    : never;",
+            "};",
+        ];
+        let refs: Vec<&str> = lines.iter().copied().collect();
+        let bounds = find_body_bounds(&refs);
+        assert!(bounds.is_some(), "t3: should find type body despite deep nested generics");
+        let (start, end) = bounds.unwrap();
+        assert_eq!(start, 1, "t3: body starts after type opening {{");
+        assert_eq!(end, 6, "t3: body ends at '}}' line");
+    }
+
+    #[test]
+    fn torture_t7_replace_body_class_method_destructuring() {
+        let content = "\
+class BracketHell {\n\
+  [COMPUTED]: string = '}';\n\
+  process(\n\
+    { a = { b: { c: 1 } }, d = [{ e: 2 }] }: {\n\
+      a?: { b: { c: number } };\n\
+      d?: Array<{ e: number }>;\n\
+    } = {}\n\
+  ): { result: typeof a & { extra: typeof d } } {\n\
+    return {\n\
+      result: { ...a, extra: d } as typeof a & { extra: typeof d },\n\
+    };\n\
+  }\n\
+}\n";
+        let edits = vec![le(3, "replace_body", Some("    return { result: { ...a, extra: d } };"), None)];
+        let (result, _warnings, _) = apply_line_edits(content, &edits).unwrap();
+        assert!(result.contains("return { result: { ...a, extra: d } }"), "t7: new body should be present: {}", result);
+        assert!(!result.contains("as typeof a"), "t7: old body should be gone: {}", result);
+        assert!(result.contains("}"), "t7: closing brace should survive: {}", result);
+    }
+
+    #[test]
+    fn torture_nested_template_in_template() {
+        let lines = vec![
+            "const d = `multi line template ${",
+            "  [1, 2, 3].map((x) => ({",
+            "    value: x,",
+            "    label: `item-${x}`",
+            "  }))",
+            "} end`;",
+        ];
+        let refs: Vec<&str> = lines.iter().copied().collect();
+        assert_eq!(brace_balance_delta(&refs), 0, "nested template in template should be brace-balanced");
+    }
+
     #[test]
     fn find_body_bounds_skips_braces_in_comments() {
         let lines = vec![
@@ -3833,6 +4145,59 @@ mod hard_line_edit_tests {
         let (start, end) = bounds.unwrap();
         assert_eq!(start, 2, "body starts after class {{ line");
         assert_eq!(end, 3, "body ends at class closing }}");
+    }
+
+    #[test]
+    fn find_body_bounds_multiline_destructuring_signature() {
+        let lines = vec![
+            "function foo(",
+            "  { a = { b: { c: 1 } } }: Opts",
+            ") {",
+            "  return a;",
+            "}",
+        ];
+        let refs: Vec<&str> = lines.iter().copied().collect();
+        let bounds = find_body_bounds(&refs);
+        assert!(bounds.is_some(), "should find body despite multi-line destructuring defaults");
+        let (start, end) = bounds.unwrap();
+        assert_eq!(start, 3, "body starts after ') {{' line");
+        assert_eq!(end, 4, "body ends at closing '}}' line");
+    }
+
+    #[test]
+    fn find_body_bounds_deeply_nested_destructuring_default() {
+        let lines = vec![
+            "function process({ config = { retries: { max: 3, delay: { ms: 100 } } } }: Options) {",
+            "  doWork();",
+            "}",
+        ];
+        let refs: Vec<&str> = lines.iter().copied().collect();
+        let bounds = find_body_bounds(&refs);
+        assert!(bounds.is_some(), "should find body past deeply nested destructuring defaults");
+        let (start, end) = bounds.unwrap();
+        assert_eq!(start, 1, "body starts after opening line");
+        assert_eq!(end, 2, "body ends at closing '}}' line");
+    }
+
+    #[test]
+    fn replace_body_at_nonzero_idx() {
+        let content = "// preamble line\n// another preamble\nfunction foo() {\n  old();\n}\n";
+        let edits = vec![le(3, "replace_body", Some("  new();"), None)];
+        let (result, warnings, _) = apply_line_edits(content, &edits).unwrap();
+        assert!(result.contains("new()"), "new body should be present: {}", result);
+        assert!(!result.contains("old()"), "old body should be gone: {}", result);
+        assert!(result.contains("}"), "closing brace should survive: {}", result);
+        assert!(warnings.is_empty(), "no warnings expected: {:?}", warnings);
+    }
+
+    #[test]
+    fn replace_body_with_destructuring_params() {
+        let content = "import x;\nfunction foo(\n  { a = { b: 1 } }: Opts\n) {\n  old();\n}\nexport default foo;\n";
+        let edits = vec![le(2, "replace_body", Some("  replaced();"), None)];
+        let (result, _warnings, _) = apply_line_edits(content, &edits).unwrap();
+        assert!(result.contains("replaced()"), "new body should be present: {}", result);
+        assert!(!result.contains("old()"), "old body should be gone: {}", result);
+        assert!(result.contains("export default foo"), "trailing code should survive: {}", result);
     }
 
     #[test]
@@ -4057,6 +4422,44 @@ mod hard_line_edit_tests {
             "{}",
             result
         );
+    }
+
+    #[test]
+    fn move_across_brace_depth_emits_structural_warning() {
+        let content = "const obj = {\n  a: 1,\n  b: 2,\n};\nconst other = 0;\n";
+        let edits = vec![LineEdit {
+            line: LineCoordinate::Abs(3),
+            action: "move".to_string(),
+            content: None,
+            end_line: Some(3),
+            symbol: None,
+            position: None,
+            destination: Some(5),
+            reindent: false,
+        }];
+        let (result, warnings, _) = apply_line_edits(content, &edits).unwrap();
+        assert!(warnings.iter().any(|w| w.contains("move_structural_warning")),
+            "should warn about depth-crossing move: {:?}", warnings);
+        assert!(result.contains("b: 2"), "move should still apply: {}", result);
+    }
+
+    #[test]
+    fn move_same_depth_no_structural_warning() {
+        // Move a top-level statement to another top-level position (both depth 0)
+        let content = "const a = 1;\nconst b = 2;\nconst c = 3;\n";
+        let edits = vec![LineEdit {
+            line: LineCoordinate::Abs(1),
+            action: "move".to_string(),
+            content: None,
+            end_line: Some(1),
+            symbol: None,
+            position: None,
+            destination: Some(3),
+            reindent: false,
+        }];
+        let (_result, warnings, _) = apply_line_edits(content, &edits).unwrap();
+        assert!(!warnings.iter().any(|w| w.contains("move_structural_warning")),
+            "same-depth move should not warn: {:?}", warnings);
     }
 
     // ── unicode & stress ──
