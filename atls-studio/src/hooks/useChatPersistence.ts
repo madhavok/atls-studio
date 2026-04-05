@@ -251,6 +251,8 @@ export function useChatPersistence() {
   const lastSaveErrorToastAtRef = useRef<number>(0);
   // Track the session ID across debounced saves to avoid re-creating on each invocation
   const pendingSessionIdRef = useRef<string | null>(null);
+  /** Serializes DB saves so overlapping saveFullSession calls cannot race on the same message ids. */
+  const saveChainRef = useRef<Promise<void>>(Promise.resolve());
   /** Always points at latest saveSession (avoids stale closures in timeouts / effect cleanups). */
   const saveSessionRef = useRef<() => Promise<void>>(async () => {});
 
@@ -331,98 +333,109 @@ export function useChatPersistence() {
     const messages = app.messages;
     if (messages.length === 0) return;
 
-    const contextUsage = app.contextUsage;
-    try {
-      let sessionId = app.currentSessionId || pendingSessionIdRef.current;
+    const performSaveSession = async () => {
+      const appInner = useAppStore.getState();
+      const messagesInner = appInner.messages;
+      if (messagesInner.length === 0) return;
 
-      // Create session if new (or verify it exists)
-      if (!sessionId) {
-        sessionId = crypto.randomUUID();
-        pendingSessionIdRef.current = sessionId;
-        const title = messages.find(m => m.role === 'user')?.content.slice(0, 50) || 'New Chat';
-        await chatDb.createSession('agent', title, sessionId);
-      } else {
-        const existingSession = await chatDb.getSession(sessionId);
-        if (!existingSession) {
-          const title = messages.find(m => m.role === 'user')?.content.slice(0, 50) || 'New Chat';
-          await chatDb.createSession('agent', title, sessionId);
-        }
-      }
-
-      const blackboard = Array.from(useContextStore.getState().chunks.values());
-
-      const chatCostCents = useCostStore.getState().chatCostCents;
-      await chatDb.saveFullSession(
-        sessionId,
-        messages,
-        blackboard,
-        {
-          inputTokens: contextUsage.inputTokens,
-          outputTokens: contextUsage.outputTokens,
-          costCents: chatCostCents,
-        }
-      );
-
-      const ctxState = useContextStore.getState();
-      const geminiSnapshot = getGeminiCacheSnapshot();
-      const snapshot = serializeMemorySnapshot(ctxState, geminiSnapshot);
-      await chatDb.saveMemorySnapshot(sessionId, snapshot);
-
-      const title = messages.find(m => m.role === 'user')?.content.slice(0, 50) || 'New Chat';
-      const currentSessions = useAppStore.getState().chatSessions;
-      const existingIndex = currentSessions.findIndex(s => s.id === sessionId);
-
-      const updatedSession = {
-        id: sessionId,
-        title,
-        messages: [],
-        createdAt: existingIndex >= 0 ? currentSessions[existingIndex].createdAt : new Date(),
-        updatedAt: new Date(),
-        contextUsage: {
-          inputTokens: contextUsage.inputTokens,
-          outputTokens: contextUsage.outputTokens,
-          totalTokens: contextUsage.inputTokens + contextUsage.outputTokens,
-          costCents: useCostStore.getState().chatCostCents,
-        },
-      };
-
-      let newSessions;
-      if (existingIndex >= 0) {
-        newSessions = [...currentSessions];
-        newSessions[existingIndex] = updatedSession;
-      } else {
-        newSessions = [updatedSession, ...currentSessions];
-      }
-
-      useAppStore.setState({
-        chatSessions: newSessions,
-        currentSessionId: sessionId,
-      });
-      pendingSessionIdRef.current = null;
-      const pp = useAppStore.getState().projectPath;
-      if (pp) {
-        writeLastActiveSessionId(pp, sessionId);
-        syncCurrentSessionIdToLocalStorage(sessionId);
-      }
-      console.log('[ChatPersistence] Session saved:', sessionId);
-      lastSaveErrorToastAtRef.current = 0;
-    } catch (error) {
-      console.error('[ChatPersistence] Failed to save session:', error);
-      const detail = describeUnknownError(error);
-      const now = Date.now();
-      const cooldownMs = 90_000;
-      if (now - lastSaveErrorToastAtRef.current < cooldownMs) {
-        return;
-      }
-      lastSaveErrorToastAtRef.current = now;
+      const contextUsageInner = appInner.contextUsage;
       try {
-        useAppStore.getState().addToast({
-          type: 'error',
-          message: `Chat save failed: ${detail}. Your latest messages may not persist across restart.`,
-          duration: 8000,
+        let sessionId = appInner.currentSessionId || pendingSessionIdRef.current;
+
+        // Create session if new (or verify it exists)
+        if (!sessionId) {
+          sessionId = crypto.randomUUID();
+          pendingSessionIdRef.current = sessionId;
+          const title = messagesInner.find(m => m.role === 'user')?.content.slice(0, 50) || 'New Chat';
+          await chatDb.createSession('agent', title, sessionId);
+        } else {
+          const existingSession = await chatDb.getSession(sessionId);
+          if (!existingSession) {
+            const title = messagesInner.find(m => m.role === 'user')?.content.slice(0, 50) || 'New Chat';
+            await chatDb.createSession('agent', title, sessionId);
+          }
+        }
+
+        const blackboard = Array.from(useContextStore.getState().chunks.values());
+
+        const chatCostCents = useCostStore.getState().chatCostCents;
+        await chatDb.saveFullSession(
+          sessionId,
+          messagesInner,
+          blackboard,
+          {
+            inputTokens: contextUsageInner.inputTokens,
+            outputTokens: contextUsageInner.outputTokens,
+            costCents: chatCostCents,
+          }
+        );
+
+        const ctxState = useContextStore.getState();
+        const geminiSnapshot = getGeminiCacheSnapshot();
+        const snapshot = serializeMemorySnapshot(ctxState, geminiSnapshot);
+        await chatDb.saveMemorySnapshot(sessionId, snapshot);
+
+        const title = messagesInner.find(m => m.role === 'user')?.content.slice(0, 50) || 'New Chat';
+        const currentSessions = useAppStore.getState().chatSessions;
+        const existingIndex = currentSessions.findIndex(s => s.id === sessionId);
+
+        const updatedSession = {
+          id: sessionId,
+          title,
+          messages: [],
+          createdAt: existingIndex >= 0 ? currentSessions[existingIndex].createdAt : new Date(),
+          updatedAt: new Date(),
+          contextUsage: {
+            inputTokens: contextUsageInner.inputTokens,
+            outputTokens: contextUsageInner.outputTokens,
+            totalTokens: contextUsageInner.inputTokens + contextUsageInner.outputTokens,
+            costCents: useCostStore.getState().chatCostCents,
+          },
+        };
+
+        let newSessions;
+        if (existingIndex >= 0) {
+          newSessions = [...currentSessions];
+          newSessions[existingIndex] = updatedSession;
+        } else {
+          newSessions = [updatedSession, ...currentSessions];
+        }
+
+        useAppStore.setState({
+          chatSessions: newSessions,
+          currentSessionId: sessionId,
         });
-      } catch { /* toast system may not be available */ }
-    }
+        pendingSessionIdRef.current = null;
+        const pp = useAppStore.getState().projectPath;
+        if (pp) {
+          writeLastActiveSessionId(pp, sessionId);
+          syncCurrentSessionIdToLocalStorage(sessionId);
+        }
+        console.log('[ChatPersistence] Session saved:', sessionId);
+        lastSaveErrorToastAtRef.current = 0;
+      } catch (error) {
+        console.error('[ChatPersistence] Failed to save session:', error);
+        const detail = describeUnknownError(error);
+        const nowToast = Date.now();
+        const cooldownMs = 90_000;
+        if (nowToast - lastSaveErrorToastAtRef.current < cooldownMs) {
+          return;
+        }
+        lastSaveErrorToastAtRef.current = nowToast;
+        try {
+          useAppStore.getState().addToast({
+            type: 'error',
+            message: `Chat save failed: ${detail}. Your latest messages may not persist across restart.`,
+            duration: 8000,
+          });
+        } catch { /* toast system may not be available */ }
+      }
+    };
+
+    saveChainRef.current = saveChainRef.current
+      .catch(() => undefined)
+      .then(() => performSaveSession());
+    await saveChainRef.current;
   }, []);
 
   saveSessionRef.current = saveSession;

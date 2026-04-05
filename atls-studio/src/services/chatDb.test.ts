@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type { Message } from '../stores/appStore';
 
 const invoke = vi.fn();
 
@@ -40,6 +41,27 @@ describe('chatDb', () => {
       'chat_db_create_session',
       expect.objectContaining({ id: 'fixed-id', title: 'Title', mode: 'agent', isSwarm: false }),
     );
+    await chatDb.close();
+  });
+
+  it('saveFullSession calls chat_db_add_message once per id when duplicate ids are present', async () => {
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'chat_db_get_messages') return [];
+      if (cmd === 'chat_db_get_blackboard_entries') return [];
+      return undefined;
+    });
+    await chatDb.init('/proj');
+    const dupId = 'duplicate-message-id';
+    const messages: Message[] = [
+      { id: dupId, role: 'user', content: 'first', timestamp: new Date() },
+      { id: dupId, role: 'user', content: 'last', timestamp: new Date() },
+    ];
+    await chatDb.saveFullSession('session-1', messages, [], undefined);
+
+    const addCalls = invoke.mock.calls.filter((c) => c[0] === 'chat_db_add_message');
+    expect(addCalls).toHaveLength(1);
+    expect(addCalls[0][1]).toMatchObject({ id: dupId, sessionId: 'session-1', content: 'last' });
+
     await chatDb.close();
   });
 });

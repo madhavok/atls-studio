@@ -758,16 +758,30 @@ class ChatDbService {
     blackboard: ContextChunk[],
     contextUsage?: { inputTokens: number; outputTokens: number; costCents?: number }
   ): Promise<void> {
+    // Last occurrence wins per id (stable order: first-seen index, content from last duplicate).
+    const uniqueById = new Map<string, Message>();
+    for (const m of messages) uniqueById.set(m.id, m);
+    const dedupedMessages = Array.from(uniqueById.values());
+
     const existingMessages = await this.getMessages(sessionId);
     const existingById = new Map(existingMessages.map(m => [m.id, m]));
 
-    for (const msg of messages) {
+    for (const msg of dedupedMessages) {
       const segmentsToSave = this.partsToSegments(msg);
       const existing = existingById.get(msg.id);
 
       if (!existing) {
         const meta = msg.attachments?.length ? JSON.stringify({ attachments: msg.attachments }) : undefined;
         await this.addMessage(sessionId, msg.role, msg.content, undefined, msg.id, meta);
+        existingById.set(msg.id, {
+          id: msg.id,
+          session_id: sessionId,
+          role: msg.role,
+          content: msg.content,
+          agent_id: undefined,
+          timestamp: new Date().toISOString(),
+          metadata: meta,
+        });
         if (segmentsToSave.length > 0) {
           await this.addSegments(msg.id, segmentsToSave);
         }
@@ -804,8 +818,8 @@ class ChatDbService {
     }
 
     // Update session title from first user message (handles multimodal/segmented)
-    if (messages.length > 0) {
-      const firstUser = messages.find(m => m.role === 'user');
+    if (dedupedMessages.length > 0) {
+      const firstUser = dedupedMessages.find(m => m.role === 'user');
       if (firstUser) {
         const text = extractFirstTextFromMessage(firstUser);
         const title = text ? text.slice(0, 50) + (text.length > 50 ? '...' : '') : 'New Chat';
