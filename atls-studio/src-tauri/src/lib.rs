@@ -778,22 +778,31 @@ pub(crate) fn apply_line_edits(content: &str, edits: &[LineEdit]) -> Result<(Str
                         resolved_line
                     ));
                 }
-                let slice_end = edit.end_line
-                    .map(|el| std::cmp::min(el as usize, lines.len()))
-                    .unwrap_or(lines.len());
-                let slice = &lines[idx..slice_end];
-                let refs: Vec<&str> = slice.iter().map(|s| s.as_str()).collect();
-                let (body_start_rel, close_brace_rel) = find_body_bounds(&refs)
-                    .or_else(|| {
-                        edit.end_line.and_then(|el| {
-                            let end_rel = (el as usize).saturating_sub(idx);
-                            if end_rel > 1 { Some((1, end_rel)) } else { None }
-                        })
-                    })
-                    .ok_or_else(|| format!(
-                        "replace_body at L{}: could not find body bounds (no matching {{ }} block)",
-                        resolved_line
-                    ))?;
+                // When end_line is set (from symbol resolution), use the symbol range
+                // directly — it's authoritative and immune to regex/string brace confusion.
+                // Only fall back to the text scanner when no symbol range is available.
+                let (body_start_rel, close_brace_rel) = if let Some(el) = edit.end_line {
+                    let end_rel = (el as usize).saturating_sub(idx);
+                    if end_rel > 1 {
+                        (1, end_rel)
+                    } else {
+                        let slice = &lines[idx..std::cmp::min(el as usize, lines.len())];
+                        let refs: Vec<&str> = slice.iter().map(|s| s.as_str()).collect();
+                        find_body_bounds(&refs)
+                            .ok_or_else(|| format!(
+                                "replace_body at L{}: could not find body bounds (no matching {{ }} block)",
+                                resolved_line
+                            ))?
+                    }
+                } else {
+                    let slice = &lines[idx..];
+                    let refs: Vec<&str> = slice.iter().map(|s| s.as_str()).collect();
+                    find_body_bounds(&refs)
+                        .ok_or_else(|| format!(
+                            "replace_body at L{}: could not find body bounds (no matching {{ }} block)",
+                            resolved_line
+                        ))?
+                };
                 let body_start = idx + body_start_rel;
                 let body_end = idx + close_brace_rel; // exclusive: up to but not including closing }
                 let body_span = body_end.saturating_sub(body_start);
