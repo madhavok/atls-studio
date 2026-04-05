@@ -277,7 +277,7 @@ describe('resolveHashRefsWithMeta', () => {
     expect(params).toEqual({ f: 'src/__tests__/bracket-torture.ts' });
   });
 
-  it('resolves f with line modifier to source path, not line content (B6)', async () => {
+  it('resolves f with line modifier to path:L-M so change.edit can derive edit_target_range', async () => {
     const { resolveHashRefsWithMeta } = await import('./hashResolver');
     const lookup: HashLookup = async (hash) =>
       hash === 'fddcaa12'
@@ -287,6 +287,32 @@ describe('resolveHashRefsWithMeta', () => {
       { f: 'h:fddcaa12:2-3' },
       lookup,
     );
-    expect(params).toEqual({ f: 'src/demo.ts' });
+    expect(params).toEqual({ f: 'src/demo.ts:2-3' });
+  });
+
+  it('resolves file_path with single-line span to path:N-N', async () => {
+    const { resolveHashRefsWithMeta } = await import('./hashResolver');
+    const lookup: HashLookup = async (hash) =>
+      hash === '450e52'
+        ? { content: 'x', source: 'atls-studio/src/__tests__/bracket_stress.ts' }
+        : null;
+    const { params } = await resolveHashRefsWithMeta(
+      { file_path: 'h:450e52:38-38' },
+      lookup,
+    );
+    expect(params).toEqual({ file_path: 'atls-studio/src/__tests__/bracket_stress.ts:38-38' });
+  });
+
+  it('resolves open-ended line span to path:N-', async () => {
+    const { resolveHashRefsWithMeta } = await import('./hashResolver');
+    const lookup: HashLookup = async (hash) =>
+      hash === 'abc12345'
+        ? { content: 'a\nb\nc', source: 'src/x.ts' }
+        : null;
+    const { params } = await resolveHashRefsWithMeta(
+      { f: 'h:abc12345:5-' },
+      lookup,
+    );
+    expect(params).toEqual({ f: 'src/x.ts:5-' });
   });
 });

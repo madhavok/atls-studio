@@ -5,6 +5,8 @@
 import { beforeEach, describe, it, expect, vi } from 'vitest';
 import { invoke } from '@tauri-apps/api/core';
 import { useContextStore } from '../../../stores/contextStore';
+import { normalizeStepParams } from '../paramNorm';
+import { resolveHashRefsWithMeta } from '../../../utils/hashResolver';
 import {
   estimateLineDeltaForSource,
   handleCreate,
@@ -550,6 +552,23 @@ describe('line_edits validation', () => {
     const le = payload.line_edits as Array<Record<string, unknown>>;
     expect(le[0].line).toBe(20);
     expect(le[0].end_line).toBe(25);
+  });
+});
+
+describe('hash resolve + normalizeEditParams (batch-shaped)', () => {
+  it('f:h:…:L-M → path + edit_target_range after paramNorm + resolveHashRefs', async () => {
+    const step = normalizeStepParams('change.edit', {
+      f: 'h:abc12345:10-20',
+      line_edits: [{ content: 'replacement' }],
+    });
+    const lookup = async (hash: string) =>
+      hash === 'abc12345'
+        ? { content: 'x\n'.repeat(25), source: 'src/pkg/foo.ts' }
+        : null;
+    const { params } = await resolveHashRefsWithMeta(step, lookup);
+    const out = normalizeEditParams(params as Record<string, unknown>);
+    expect(out.file_path).toBe('src/pkg/foo.ts');
+    expect(out.edit_target_range).toEqual([[10, 20]]);
   });
 });
 

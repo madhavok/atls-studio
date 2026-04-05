@@ -25,6 +25,21 @@ import type {
   SetSelector,
   ShapeOp,
 } from './uhppTypes';
+
+/** Lines-only span (no :shape) — same rule as deriveEditTargetMeta exact_span in change.edit. */
+function isExactLineSpanOnlyModifier(modifier: HashModifierV2): modifier is { lines: [number, number | null][] } {
+  return typeof modifier === 'object' && modifier !== null && 'lines' in modifier && !('shape' in modifier);
+}
+
+/** Append first line range so splitPathTrailingLineSpan / normalizeEditParams can recover edit_target_range. */
+function sourcePathWithFirstLineSpan(source: string, lines: [number, number | null][]): string | null {
+  const first = lines[0];
+  if (!first) return null;
+  const [start, end] = first;
+  if (typeof start !== 'number' || !Number.isFinite(start) || start <= 0) return null;
+  if (end == null) return `${source}:${start}-`;
+  return `${source}:${start}-${end}`;
+}
 export { parseHashRef, parseDiffRef, parseSetExpression, parseSetRef } from './hashRefParsers';
 export type {
   CompositeSetRef,
@@ -340,6 +355,10 @@ async function resolveSingle(
   if (!entry) throw new Error(`Hash h:${hash} not found — content may have been evicted or never loaded`);
   if (lowerField && isFilePathField(lowerField) && modifier !== 'auto') {
     if (!entry.source) throw new Error(`Hash h:${hash} has no source path (may be from search/tool output)`);
+    if (isExactLineSpanOnlyModifier(modifier)) {
+      const withSpan = sourcePathWithFirstLineSpan(entry.source, modifier.lines);
+      if (withSpan != null) return withSpan;
+    }
     return entry.source;
   }
   if (!entry.content && modifier !== 'source') {
