@@ -7,7 +7,7 @@
  */
 
 import type { IntentResolver, IntentResult, IntentContext, Step } from '../types';
-import { makeStepId, isFileStaged, computeNextTargets } from '../intents';
+import { makeStepId, isFileStaged, computeNextTargets, normalizeIntentFilePaths } from '../intents';
 import { INTENT_INVESTIGATE_MAX_FILES } from '../../promptMemory';
 
 export const resolveInvestigate: IntentResolver = (
@@ -15,7 +15,7 @@ export const resolveInvestigate: IntentResolver = (
   context: IntentContext,
 ): IntentResult => {
   const query = (params.query as string) ?? '';
-  const filePaths = normalizeFilePaths(params);
+  const filePaths = normalizeIntentFilePaths(params);
   const force = params.force === true;
   const intentId = (params._intentId as string) ?? 'investigate';
 
@@ -97,9 +97,3 @@ export const resolveInvestigate: IntentResolver = (
 
   return { steps, prepareNext };
 };
-
-function normalizeFilePaths(params: Record<string, unknown>): string[] {
-  if (Array.isArray(params.file_paths)) return params.file_paths as string[];
-  if (typeof params.file_path === 'string') return [params.file_path];
-  return [];
-}

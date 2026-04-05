@@ -18,7 +18,7 @@
 
 import type { IntentResolver, IntentResult, IntentContext, Step } from '../types';
 import { AwarenessLevel } from '../snapshotTracker';
-import { makeStepId, isFileStaged, isFilePinned, getFileAwareness, estimateFileLines, computeNextTargets } from '../intents';
+import { makeStepId, isFileStaged, isFilePinned, getFileAwareness, estimateFileLines, computeNextTargets, normalizeIntentFilePaths } from '../intents';
 
 const LARGE_FILE_THRESHOLD = 500;
 
@@ -26,7 +26,7 @@ export const resolveUnderstand: IntentResolver = (
   params: Record<string, unknown>,
   context: IntentContext,
 ): IntentResult => {
-  const filePaths = normalizeFilePaths(params);
+  const filePaths = normalizeIntentFilePaths(params);
   const force = params.force === true;
   const intentId = (params._intentId as string) ?? 'understand';
 
@@ -100,11 +100,3 @@ export const resolveUnderstand: IntentResolver = (
 
   return { steps, prepareNext };
 };
-
-function normalizeFilePaths(params: Record<string, unknown>): string[] {
-  if (Array.isArray(params.file_paths)) return params.file_paths as string[];
-  if (typeof params.file_path === 'string') return [params.file_path];
-  if (Array.isArray(params.files)) return params.files as string[];
-  if (typeof params.file === 'string') return [params.file];
-  return [];
-}

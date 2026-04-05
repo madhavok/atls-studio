@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ChunkEntry, ContextStoreApi, IntentContext, StepOutput } from './types';
-import { buildIntentContext, registerIntent, resolveIntents, makeStepId, isFileStaged, isFilePinned, getFileAwareness, estimateFileLines } from './intents';
+import { buildIntentContext, registerIntent, resolveIntents, makeStepId, isFileStaged, isFilePinned, getFileAwareness, estimateFileLines, normalizeIntentFilePaths } from './intents';
 import { resolveUnderstand } from './intents/understand';
 import { resolveEdit } from './intents/edit';
 import { resolveEditMulti } from './intents/editMulti';
@@ -220,6 +220,13 @@ describe('intent resolvers with chunk-only context (no manual bbKeys)', () => {
 describe('intent.understand resolver', () => {
   const params = { file_paths: ['src/auth.ts'], _intentId: 'u1' };
 
+  it('ps string → same expansion as file_paths', () => {
+    const withPs = resolveUnderstand({ ps: 'src/auth.ts', _intentId: 'u1' }, emptyContext());
+    const withFp = resolveUnderstand({ file_paths: ['src/auth.ts'], _intentId: 'u1' }, emptyContext());
+    expect(withPs.steps.map(s => s.use)).toEqual(withFp.steps.map(s => s.use));
+    expect(withPs.steps.length).toBe(4);
+  });
+
   it('empty context → full expansion (4 steps)', () => {
     const result = resolveUnderstand(params, emptyContext());
     expect(result.steps.length).toBe(4);
@@ -386,6 +393,25 @@ describe('resolveIntents', () => {
 // ---------------------------------------------------------------------------
 // Helper function tests
 // ---------------------------------------------------------------------------
+
+describe('normalizeIntentFilePaths', () => {
+  it('accepts ps string (file_paths shorthand)', () => {
+    expect(normalizeIntentFilePaths({ ps: 'src/a.ts' })).toEqual(['src/a.ts']);
+  });
+
+  it('accepts ps array', () => {
+    expect(normalizeIntentFilePaths({ ps: ['src/a.ts', 'src/b.ts'] })).toEqual(['src/a.ts', 'src/b.ts']);
+  });
+
+  it('prefers ps over file_paths when both present', () => {
+    expect(normalizeIntentFilePaths({ ps: 'first.ts', file_paths: ['second.ts'] })).toEqual(['first.ts']);
+  });
+
+  it('falls back to file_paths and file', () => {
+    expect(normalizeIntentFilePaths({ file_paths: ['x.ts'] })).toEqual(['x.ts']);
+    expect(normalizeIntentFilePaths({ file: 'y.ts' })).toEqual(['y.ts']);
+  });
+});
 
 describe('intent helpers', () => {
   it('makeStepId formats correctly', () => {

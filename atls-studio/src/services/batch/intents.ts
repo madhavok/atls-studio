@@ -234,6 +234,21 @@ export function makeStepId(intentId: string, primitive: string, index?: number):
   return `${intentId}__${primitive}${suffix}`;
 }
 
+/**
+ * File paths from intent.* `with` params. Recognizes `ps` (token-efficient shorthand for
+ * `file_paths` per paramNorm) because intent resolvers run on raw params before per-step
+ * alias normalization in some call paths.
+ */
+export function normalizeIntentFilePaths(params: Record<string, unknown>): string[] {
+  if (Array.isArray(params.ps)) return params.ps as string[];
+  if (typeof params.ps === 'string') return [params.ps];
+  if (Array.isArray(params.file_paths)) return params.file_paths as string[];
+  if (typeof params.file_path === 'string') return [params.file_path];
+  if (Array.isArray(params.files)) return params.files as string[];
+  if (typeof params.file === 'string') return [params.file];
+  return [];
+}
+
 /** Check if a file source path appears in the staged map (by normalized source match). */
 export function isFileStaged(staged: IntentContext['staged'], filePath: string): boolean {
   const norm = normalizePathKey(filePath);

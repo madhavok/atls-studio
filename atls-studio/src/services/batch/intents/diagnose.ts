@@ -8,13 +8,13 @@
  */
 
 import type { IntentResolver, IntentResult, IntentContext, Step } from '../types';
-import { makeStepId, isFileStaged, computeNextTargets } from '../intents';
+import { makeStepId, isFileStaged, computeNextTargets, normalizeIntentFilePaths } from '../intents';
 
 export const resolveDiagnose: IntentResolver = (
   params: Record<string, unknown>,
   context: IntentContext,
 ): IntentResult => {
-  const filePaths = normalizeFilePaths(params);
+  const filePaths = normalizeIntentFilePaths(params);
   const severity = (params.severity as string) ?? undefined;
   const query = (params.query as string) ?? '';
   const force = params.force === true;
@@ -96,12 +96,6 @@ export const resolveDiagnose: IntentResolver = (
 
   return { steps, prepareNext };
 };
-
-function normalizeFilePaths(params: Record<string, unknown>): string[] {
-  if (Array.isArray(params.file_paths)) return params.file_paths as string[];
-  if (typeof params.file_path === 'string') return [params.file_path];
-  return [];
-}
 
 function buildBBKey(filePaths: string[], query: string): string {
   const slug = query
