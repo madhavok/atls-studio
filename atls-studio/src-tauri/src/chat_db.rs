@@ -615,7 +615,13 @@ pub fn delete_session(state: &ChatDbState, session_id: &str) -> Result<(), Strin
 pub fn add_message(state: &ChatDbState, id: &str, session_id: &str, role: &str, content: &str, agent_id: Option<&str>, metadata: Option<&str>) -> Result<(), String> {
     state.with_conn(|conn| {
         conn.execute(
-            "INSERT INTO messages (id, session_id, role, content, agent_id, metadata) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            "INSERT INTO messages (id, session_id, role, content, agent_id, metadata) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+             ON CONFLICT(id) DO UPDATE SET
+               session_id = excluded.session_id,
+               role = excluded.role,
+               content = excluded.content,
+               agent_id = excluded.agent_id,
+               metadata = excluded.metadata",
             params![id, session_id, role, content, agent_id, metadata],
         )?;
         conn.execute(
@@ -1756,6 +1762,18 @@ mod tests {
     fn operations_fail_when_not_initialized() {
         let state = ChatDbState::default();
         assert!(create_session(&state, "s1", "t", "agent", false).is_err());
+    }
+
+    #[test]
+    fn add_message_same_id_is_idempotent_upsert() {
+        let (_dir, state) = test_state();
+        create_session(&state, "s1", "T", "agent", false).unwrap();
+        add_message(&state, "m1", "s1", "user", "first", None, None).unwrap();
+        add_message(&state, "m1", "s1", "user", "second", None, None).unwrap();
+        let msgs = get_messages(&state, "s1").unwrap();
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0].content, "second");
+        state.close().unwrap();
     }
 
     #[test]

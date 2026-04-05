@@ -239,6 +239,12 @@ function normalizePersistedStagedEntries(
   return normalized;
 }
 
+/**
+ * Single save queue for the whole app. `useChatPersistence()` is mounted from
+ * both App and AiChat, so per-hook refs would still allow overlapping saves.
+ */
+let saveSessionChain = Promise.resolve();
+
 export function useChatPersistence() {
   const projectPath = useAppStore(state => state.projectPath);
   const messages = useAppStore(state => state.messages);
@@ -251,8 +257,6 @@ export function useChatPersistence() {
   const lastSaveErrorToastAtRef = useRef<number>(0);
   // Track the session ID across debounced saves to avoid re-creating on each invocation
   const pendingSessionIdRef = useRef<string | null>(null);
-  /** Serializes DB saves so overlapping saveFullSession calls cannot race on the same message ids. */
-  const saveChainRef = useRef<Promise<void>>(Promise.resolve());
   /** Always points at latest saveSession (avoids stale closures in timeouts / effect cleanups). */
   const saveSessionRef = useRef<() => Promise<void>>(async () => {});
 
@@ -432,10 +436,10 @@ export function useChatPersistence() {
       }
     };
 
-    saveChainRef.current = saveChainRef.current
+    saveSessionChain = saveSessionChain
       .catch(() => undefined)
       .then(() => performSaveSession());
-    await saveChainRef.current;
+    await saveSessionChain;
   }, []);
 
   saveSessionRef.current = saveSession;
