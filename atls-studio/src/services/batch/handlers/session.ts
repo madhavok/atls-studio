@@ -654,23 +654,25 @@ export const handleSessionDebug: OpHandler = async (_params, ctx) => {
 export const handleCompactHistory: OpHandler = async (_params, ctx) => {
   if (ctx.toolLoopState) {
     const { compressToolLoopHistory, analyzeHistoryBreakdown, formatHistoryBreakdown } = await import('../../historyCompressor');
+    // Pass the same currentRound to both compress and analyze so the
+    // protected-window calculation is identical (avoids misleading hints).
+    const currentRound = ctx.toolLoopState.round;
     const count = compressToolLoopHistory(
       ctx.toolLoopState.conversationHistory,
-      undefined,
+      currentRound,
       ctx.toolLoopState.priorTurnBoundary,
     );
-    // When nothing was compressed, show breakdown so model knows WHY
     if (count === 0) {
       const breakdown = analyzeHistoryBreakdown(
         ctx.toolLoopState.conversationHistory,
         ctx.toolLoopState.priorTurnBoundary ?? 0,
-        ctx.toolLoopState.round,
+        currentRound,
       );
       const detail = formatHistoryBreakdown(breakdown);
       const hint = breakdown.compressibleCount === 0
         ? ' — nothing above threshold; all content is small or already compressed'
         : ` — ${breakdown.compressibleCount} items (${(breakdown.compressibleTokens / 1000).toFixed(1)}k) above threshold but in protected window (last ${PROTECTED_RECENT_ROUNDS} rounds)`;
-      return ok(`compact_history: compressed 0 tool results | history:${(breakdown.total / 1000).toFixed(0)}k (${detail})${hint}`);
+      return ok(`compact_history: compressed ${count} tool results | history:${(breakdown.total / 1000).toFixed(0)}k (${detail})${hint}`);
     }
     return ok(`compact_history: compressed ${count} tool results`);
   }

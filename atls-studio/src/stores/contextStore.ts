@@ -712,13 +712,22 @@ function getEstimatedPromptPressureTokens(
   state: ContextStoreState,
   nextChunkTokens = 0,
 ): number {
+  // Prefer the latest round snapshot's full estimate when available — it uses
+  // the real async tokenizer on the complete conversation history, matching
+  // what the Internals panel shows.  Fall back to the component sum only
+  // before the first round snapshot exists.
+  if (nextChunkTokens === 0) {
+    const latestSnap = useRoundHistoryStore.getState().snapshots.slice(-1)[0];
+    if (latestSnap?.estimatedTotalPromptTokens > 0) {
+      return latestSnap.estimatedTotalPromptTokens;
+    }
+  }
   const promptMetrics = _getPromptMetrics();
   const staticSystemTokens = promptMetrics.modePromptTokens
     + promptMetrics.toolRefTokens
     + promptMetrics.shellGuideTokens
     + (promptMetrics.nativeToolTokens ?? 0)
     + promptMetrics.contextControlTokens;
-  // BB is in the dynamic block (uncached). History is the only BP3 content.
   const bp3Tokens = (promptMetrics.bp3PriorTurnsTokens ?? 0);
   const stagedTokens = state.getStagedTokenCount();
   return staticSystemTokens

@@ -445,13 +445,12 @@ export function formatTaggedContext(chunks: Map<string, ContextChunk>): string {
 // Stats & Task Lines
 // ---------------------------------------------------------------------------
 
-/** ~60s per turn heuristic for active/stale classification */
-const TURNS_TO_MS = 60_000;
-const ACTIVE_TURNS = 3;
-const STALE_TURNS = 5;
-
-/** Mirror contextStore CHAT_TYPES — excluded from stale/active heuristics (BP3 is canonical). */
+/** Mirror contextStore CHAT_TYPES — excluded from engram classification (BP3 is canonical). */
 const CHAT_CHUNK_TYPES = new Set(['msg:user', 'msg:asst']);
+
+/** Dormant engram stub budget (must match getPromptTokens in contextStore). */
+const DORMANT_BASE_TOKENS = 15;
+const DORMANT_FINDING_TOKENS = 20;
 
 export function formatStatsLine(
   usedTokens: number,
@@ -490,28 +489,24 @@ export function formatStatsLine(
     line += ` | batch:${ratio.toFixed(1)}ops/call`;
   }
   if (chunks && chunks.size > 0) {
-    const now = Date.now();
-    const activeCutoff = now - ACTIVE_TURNS * TURNS_TO_MS;
-    const staleCutoff = now - STALE_TURNS * TURNS_TO_MS;
-    let activeCount = 0, activeTk = 0, staleCount = 0, staleTk = 0, dormantCount = 0, dormantTk = 0;
+    let activeCount = 0, activeTk = 0, dormantCount = 0, dormantTk = 0;
     for (const c of chunks.values()) {
-      if (c.compacted) {
+      if (CHAT_CHUNK_TYPES.has(c.type)) continue;
+      // HPP-aware: dormant = compacted OR dematerialized in HPP
+      const isDormant = c.compacted || (() => {
+        const ref = getRef(c.hash);
+        return ref != null && !shouldMaterialize(ref);
+      })();
+      if (isDormant) {
         dormantCount++;
-        dormantTk += c.tokens;
-      } else if (CHAT_CHUNK_TYPES.has(c.type)) {
-        // Skip: transcript chunks rarely refresh lastAccessed; not a WM hygiene signal.
-      } else if (c.lastAccessed >= activeCutoff) {
+        const hasFinding = (c.annotations?.length ?? 0) > 0 || !!c.summary;
+        dormantTk += DORMANT_BASE_TOKENS + (hasFinding ? DORMANT_FINDING_TOKENS : 0);
+      } else {
         activeCount++;
         activeTk += c.tokens;
-      } else if (c.lastAccessed >= staleCutoff) {
-        staleCount++;
-        staleTk += c.tokens;
-      } else {
-        staleCount++;
-        staleTk += c.tokens;
       }
     }
-    line += ` | active:${activeCount}(${(activeTk / 1000).toFixed(1)}k) stale:${staleCount}(${(staleTk / 1000).toFixed(1)}k) dormant:${dormantCount}(${(dormantTk / 1000).toFixed(1)}k)`;
+    line += ` | engrams:${activeCount}(${(activeTk / 1000).toFixed(1)}k) dormant:${dormantCount}(${(dormantTk / 1000).toFixed(1)}k)`;
   }
   line += '>>';
 
@@ -536,18 +531,20 @@ export function formatStatsLine(
     line += ' — HYGIENE: budget check due — review BB, drop unused, unstage completed';
   }
 
-  // Stale > active imbalance nudge
+  // Dormant token imbalance nudge (HPP-aware)
   if (chunks && chunks.size > 0) {
-    const now = Date.now();
-    const activeCutoff = now - ACTIVE_TURNS * TURNS_TO_MS;
-    let activeTkSum = 0, staleTkSum = 0;
+    let activeTkSum = 0, dormantRawTkSum = 0;
     for (const c of chunks.values()) {
       if (CHAT_CHUNK_TYPES.has(c.type)) continue;
-      if (!c.compacted && c.lastAccessed >= activeCutoff) activeTkSum += c.tokens;
-      else if (!c.compacted) staleTkSum += c.tokens;
+      const isDormant = c.compacted || (() => {
+        const ref = getRef(c.hash);
+        return ref != null && !shouldMaterialize(ref);
+      })();
+      if (isDormant) dormantRawTkSum += c.tokens;
+      else activeTkSum += c.tokens;
     }
-    if (staleTkSum > activeTkSum && staleTkSum > 2000) {
-      line += ' — stale > active: drop or distill to BB';
+    if (dormantRawTkSum > activeTkSum && dormantRawTkSum > 2000) {
+      line += ' — dormant engrams heavy: drop or distill to BB';
     }
   }
 

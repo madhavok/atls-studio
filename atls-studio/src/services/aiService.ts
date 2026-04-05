@@ -3537,18 +3537,16 @@ function buildDynamicContextBlock(
   try {
     const ctxChunks = useContextStore.getState().chunks;
     if (ctxChunks?.size > 0) {
-      const now = Date.now();
-      const activeCutoff = now - 3 * 60_000;
-      let activeTkSum = 0, staleTkSum = 0;
+      let activeTkSum = 0, dormantRawTkSum = 0;
       for (const c of ctxChunks.values()) {
         if (c.type === 'msg:user' || c.type === 'msg:asst') continue;
-        const fresh = !c.compacted && (c.lastAccessed ?? 0) >= activeCutoff
-          && canSteerExecution({ freshness: c.freshness });
-        if (fresh) activeTkSum += c.tokens ?? 0;
-        else if (!c.compacted) staleTkSum += c.tokens ?? 0;
+        const ref = getRef(c.hash);
+        const isDormant = c.compacted || (ref != null && !shouldMaterialize(ref));
+        if (isDormant) dormantRawTkSum += c.tokens ?? 0;
+        else activeTkSum += c.tokens ?? 0;
       }
-      if (staleTkSum > activeTkSum && staleTkSum > 2000) {
-        parts.push('<<CONTEXT PRESSURE: stale engrams exceed active — distill findings to BB, then drop stale engrams.>>');
+      if (dormantRawTkSum > activeTkSum && dormantRawTkSum > 2000) {
+        parts.push('<<CONTEXT PRESSURE: dormant engrams exceed active — distill findings to BB, then drop dormant engrams.>>');
       }
     }
   } catch {
@@ -3906,20 +3904,23 @@ export function buildDormantBlock(): string {
   const ctxState = useContextStore.getState();
   const dormantLines: string[] = [];
   ctxState.chunks.forEach(c => {
-    if (c.compacted && c.type !== 'msg:user' && c.type !== 'msg:asst') {
-      const ref = getRef(c.hash);
-      if (!ref || shouldMaterialize(ref)) return;
-      const src = c.source ? c.source.split(/[/\\]/).pop() || c.source : c.shortHash;
-      let line = `h:${c.shortHash} ${src} ${c.tokens}tk`;
-      const finding = c.annotations?.[0]?.content || c.summary || '';
-      if (finding) {
-        line += ` — ${finding.length > 80 ? finding.slice(0, 77) + '...' : finding}`;
-      }
-      if (c.suspectSince != null || (c.freshness && c.freshness !== 'fresh')) {
-        line += ' [suspect]';
-      }
-      dormantLines.push(line);
+    if (c.type === 'msg:user' || c.type === 'msg:asst') return;
+    // Dormant = compacted OR HPP-dematerialized (non-compacted but already seen)
+    const ref = getRef(c.hash);
+    const isDormant = c.compacted
+      ? (ref ? !shouldMaterialize(ref) : true)
+      : (ref != null && !shouldMaterialize(ref));
+    if (!isDormant) return;
+    const src = c.source ? c.source.split(/[/\\]/).pop() || c.source : c.shortHash;
+    let line = `h:${c.shortHash} ${src} ${c.tokens}tk`;
+    const finding = c.annotations?.[0]?.content || c.summary || '';
+    if (finding) {
+      line += ` — ${finding.length > 80 ? finding.slice(0, 77) + '...' : finding}`;
     }
+    if (c.suspectSince != null || (c.freshness && c.freshness !== 'fresh')) {
+      line += ' [suspect]';
+    }
+    dormantLines.push(line);
   });
   if (dormantLines.length === 0) return '';
   if (dormantLines.length > MAX_DORMANT_LINES) {
