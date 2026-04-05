@@ -220,6 +220,27 @@ describe('jsObjectToJson', () => {
   it('handles arrays', () => {
     expect(JSON.parse(jsObjectToJson('[{id:r1},{id:r2}]'))).toEqual([{ id: 'r1' }, { id: 'r2' }]);
   });
+
+  it('converts single-quoted strings to double-quoted JSON (B5 fix)', () => {
+    const parsed = JSON.parse(jsObjectToJson("{content:'hello world'}"));
+    expect(parsed).toEqual({ content: 'hello world' });
+  });
+
+  it('escapes inner double quotes when converting single-quoted strings (B5 fix)', () => {
+    const parsed = JSON.parse(jsObjectToJson('{content:\'say "hi"\'}'));
+    expect(parsed).toEqual({ content: 'say "hi"' });
+  });
+
+  it('converts backtick strings to double-quoted JSON (B5 fix)', () => {
+    const parsed = JSON.parse(jsObjectToJson('{content:`template ${expr}`}'));
+    expect(parsed).toEqual({ content: 'template ${expr}' });
+  });
+
+  it('handles bracket-heavy content in single-quoted strings (B5 fix)', () => {
+    const input = "{content:'arr.reduce<Record<string,number>>((a,b) => a, {})'}";
+    const parsed = JSON.parse(jsObjectToJson(input));
+    expect(parsed).toEqual({ content: 'arr.reduce<Record<string,number>>((a,b) => a, {})' });
+  });
 });
 
 describe('parseBatchLines', () => {
@@ -346,6 +367,26 @@ describe('parseBatchLines', () => {
     expect(result.steps[1].use).toBe('session.pin');
     expect(result.steps[2].use).toBe('change.edit');
     expect(result.steps[3].use).toBe('verify.typecheck');
+  });
+
+  it('parses single-quoted content with brackets in le array (B5 fix)', () => {
+    const q = "e1 ce f:test.ts le:[{line:1,content:'const x = arr.reduce<Record<string,number>>((a,b) => a, {})'}]";
+    const result = parseBatchLines(q);
+    expect(result.steps).toHaveLength(1);
+    const le = result.steps[0].with.le as unknown[];
+    expect(le).toHaveLength(1);
+    expect((le[0] as Record<string, unknown>).content).toBe(
+      'const x = arr.reduce<Record<string,number>>((a,b) => a, {})',
+    );
+  });
+
+  it('parses backtick-quoted content with ${} in le array (B5 fix)', () => {
+    const q = 'e1 ce f:test.ts le:[{line:5,content:`const msg = ${name}`}]';
+    const result = parseBatchLines(q);
+    expect(result.steps).toHaveLength(1);
+    const le = result.steps[0].with.le as unknown[];
+    expect(le).toHaveLength(1);
+    expect((le[0] as Record<string, unknown>).content).toBe('const msg = ${name}');
   });
 });
 

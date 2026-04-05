@@ -883,6 +883,19 @@ function extractTopLevelError(result: unknown): Record<string, unknown> | null {
   return typeof payload.error === 'string' ? payload : null;
 }
 
+function resultHasAppliedEdits(result: unknown): boolean {
+  if (!result || typeof result !== 'object' || Array.isArray(result)) return false;
+  const r = result as Record<string, unknown>;
+  if (typeof r.files === 'number' && r.files > 0) return true;
+  const batch = r.batch ?? r.results ?? r.drafts;
+  if (Array.isArray(batch) && batch.length > 0) {
+    return batch.some(
+      (e) => !!e && typeof e === 'object' && ((e as Record<string, unknown>).h != null || (e as Record<string, unknown>).hash != null),
+    );
+  }
+  return false;
+}
+
 function hasExactSpanTarget(params: Record<string, unknown>): boolean {
   if (params.edit_target_kind === 'exact_span') return true;
   if (!Array.isArray(params.edits)) return false;
@@ -1140,6 +1153,11 @@ export function normalizeEditParams(params: Record<string, unknown>): Record<str
     const split = splitPathTrailingLineSpan(raw);
     if (split) {
       normalizedParams = { ...normalizedParams, [pathKey]: split.path, edit_target_range: split.range };
+    } else if (raw.startsWith('h:')) {
+      const meta = deriveEditTargetMeta(raw);
+      if (meta.edit_target_range) {
+        normalizedParams = { ...normalizedParams, ...meta };
+      }
     }
   }
   const edits = normalizedParams.edits as Array<Record<string, unknown>> | undefined;
@@ -1465,6 +1483,20 @@ function resolveEditOperation(params: Record<string, unknown>): { operation: str
       ) {
         o.end_line = o.line + spanFromStep - 1;
       }
+      if (
+        (action === 'replace')
+        && o.end_line == null
+        && typeof o.line === 'number'
+        && o.line > 0
+        && typeof o.content === 'string'
+      ) {
+        const contentLineCount = o.content.split('\n').length;
+        if (contentLineCount > 1) {
+          console.warn(
+            `[change] replace at L${o.line}: ${contentLineCount}-line content but end_line not set — potential span mismatch`,
+          );
+        }
+      }
       return o;
     });
     le = coalesceExplicitLineEdits(le);
@@ -1731,6 +1763,19 @@ export const handleEdit: OpHandler = async (params, ctx) => {
     }
     const errorPayload = extractTopLevelError(result);
     if (errorPayload) {
+      if (isMutating && resultHasAppliedEdits(result)) {
+        registerEditHashes(result, resolved);
+        invalidateStaleHashes(result);
+        injectDiffRefs(result);
+        const refs = extractRefs(result);
+        const warnSummary = `[WARN] ${formatEditErrorSummary(errorPayload)}\n${formatResult(result)}`;
+        const affectedNow = extractAffectedPaths(result);
+        if (affectedNow.length > 0) {
+          useContextStore.getState().bumpWorkspaceRev(affectedNow);
+          useContextStore.getState().invalidateArtifactsForPaths(affectedNow);
+        }
+        return ok(warnSummary, refs, result);
+      }
       const enrichedErrorPayload = {
         ...errorPayload,
         repro_pack: buildEditReproPack({
@@ -1747,7 +1792,6 @@ export const handleEdit: OpHandler = async (params, ctx) => {
         reason: String(errorPayload.error_class ?? 'edit_error'),
         refs: targetFiles,
       });
-      // Repair escalation: track failure count per file
       for (const tf of targetFiles) {
         const basename = tf.split('/').pop() ?? tf;
         const repairKey = `repair:${basename}`;

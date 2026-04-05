@@ -269,6 +269,37 @@ describe('normalizeEditParams', () => {
     expect(out.line_edits).toBeUndefined();
     expect(out.edits).toBeDefined();
   });
+
+  it('derives edit_target_range from direct hash-ref file value (B1 fix)', () => {
+    const out = normalizeEditParams({
+      file: 'h:aabb1122:15-50',
+      line_edits: [{ content: 'replacement text' }],
+    });
+
+    expect(out.edit_target_range).toEqual([[15, 50]]);
+    expect(out.edit_target_kind).toBe('exact_span');
+    expect(out.edit_target_ref).toBe('h:aabb1122:15-50');
+  });
+
+  it('derives edit_target_range from direct hash-ref file_path value (B1 fix)', () => {
+    const out = normalizeEditParams({
+      file_path: 'h:ccdd3344:1-10',
+      line_edits: [{ content: 'x' }],
+    });
+
+    expect(out.edit_target_range).toEqual([[1, 10]]);
+    expect(out.edit_target_kind).toBe('exact_span');
+  });
+
+  it('does not derive edit_target_range for hash refs without line range', () => {
+    const out = normalizeEditParams({
+      file: 'h:aabb1122',
+      line_edits: [{ line: 5, action: 'delete' }],
+    });
+
+    expect(out.edit_target_range).toBeUndefined();
+    expect(out.edit_target_kind).toBe('file');
+  });
 });
 
 describe('line_edits validation', () => {
@@ -1594,5 +1625,52 @@ describe('line_edits hallucination / nightmare scenarios', () => {
     const le = payload.line_edits as Array<Record<string, unknown>>;
     expect(le[0].line).toBe(20);
     expect(le[0].end_line).toBe(5);
+  });
+
+  it('reports ok:true when backend returns error with applied edits (B2 fix)', async () => {
+    const atlsBatchQuery = vi.fn().mockResolvedValue({
+      error: 'stale_hash_followed_latest',
+      error_class: 'stale_hash',
+      files: 1,
+      batch: [{ f: 'src/a.ts', h: 'h:newHash1234' }],
+    });
+    const ctx = {
+      atlsBatchQuery,
+      store: () => ({ getStats: () => ({}), getPinnedCount: () => 0, recordMemoryEvent: () => {}, recordRebindOutcomes: () => {} }),
+    } as unknown as Parameters<typeof handleEdit>[1];
+
+    const out = await handleEdit(
+      {
+        file: 'src/a.ts',
+        content_hash: 'abc',
+        line_edits: [{ line: 1, action: 'replace', content: 'fixed' }],
+      },
+      ctx,
+    );
+
+    expect(out.ok).toBe(true);
+    expect(out.summary).toContain('[WARN]');
+  });
+
+  it('reports ok:false when backend returns error without applied edits', async () => {
+    const atlsBatchQuery = vi.fn().mockResolvedValue({
+      error: 'all_edits_failed',
+      error_class: 'edit_error',
+    });
+    const ctx = {
+      atlsBatchQuery,
+      store: () => ({ getStats: () => ({}), getPinnedCount: () => 0, recordMemoryEvent: () => {}, recordRebindOutcomes: () => {} }),
+    } as unknown as Parameters<typeof handleEdit>[1];
+
+    const out = await handleEdit(
+      {
+        file: 'src/a.ts',
+        content_hash: 'abc',
+        line_edits: [{ line: 1, action: 'replace', content: 'fixed' }],
+      },
+      ctx,
+    );
+
+    expect(out.ok).toBe(false);
   });
 });

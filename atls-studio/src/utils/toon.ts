@@ -217,18 +217,25 @@ export function jsObjectToJson(input: string): string {
 
   while (i < len) {
     const ch = input[i];
-    if (ch === '"') {
+    if (ch === '"' || ch === "'" || ch === '`') {
+      const quote = ch;
       out.push('"');
       i++;
-      while (i < len && input[i] !== '"') {
+      while (i < len && input[i] !== quote) {
         if (input[i] === '\\' && i + 1 < len) {
-          out.push(input[i], input[i + 1]);
-          i += 2;
+          if (quote !== '"' && input[i + 1] === quote) {
+            out.push(quote);
+            i += 2;
+          } else {
+            out.push(input[i], input[i + 1]);
+            i += 2;
+          }
         } else {
           const c = input[i];
           if (c === '\n') out.push('\\n');
           else if (c === '\r') out.push('\\r');
           else if (c === '\t') out.push('\\t');
+          else if (c === '"' && quote !== '"') out.push('\\"');
           else out.push(c);
           i++;
         }
@@ -273,6 +280,17 @@ export function jsObjectToJson(input: string): string {
  * Tokenize a batch line into space-separated tokens, respecting quoted strings
  * and balanced braces/brackets (for inline JSON objects).
  */
+function skipQuotedString(line: string, pos: number): number {
+  const quote = line[pos];
+  let i = pos + 1;
+  const len = line.length;
+  while (i < len && line[i] !== quote) {
+    if (line[i] === '\\' && i + 1 < len) i += 2; else i++;
+  }
+  if (i < len) i++;
+  return i;
+}
+
 function tokenizeBatchLine(line: string): string[] {
   const tokens: string[] = [];
   let i = 0;
@@ -286,34 +304,28 @@ function tokenizeBatchLine(line: string): string[] {
     if (line[i] === '{' || line[i] === '[') {
       let depth = 0;
       let inQuote = false;
+      let quoteChar = '"';
       while (i < len) {
         const c = line[i];
         if (inQuote) {
           if (c === '\\' && i + 1 < len) { i += 2; continue; }
-          if (c === '"') inQuote = false;
+          if (c === quoteChar) inQuote = false;
         } else {
-          if (c === '"') inQuote = true;
+          if (c === '"' || c === "'" || c === '`') { inQuote = true; quoteChar = c; }
           else if (c === '{' || c === '[') depth++;
           else if (c === '}' || c === ']') { depth--; if (depth === 0) { i++; break; } }
         }
         i++;
       }
       tokens.push(line.slice(start, i));
-    } else if (line[i] === '"') {
-      i++;
-      while (i < len && line[i] !== '"') {
-        if (line[i] === '\\' && i + 1 < len) i += 2; else i++;
-      }
-      if (i < len) i++;
+    } else if (line[i] === '"' || line[i] === "'" || line[i] === '`') {
+      i = skipQuotedString(line, i);
       tokens.push(line.slice(start, i));
     } else {
       while (i < len && line[i] !== ' ') {
-        if (line[i] === '"') {
-          i++;
-          while (i < len && line[i] !== '"') {
-            if (line[i] === '\\' && i + 1 < len) i += 2; else i++;
-          }
-          if (i < len) i++;
+        const c = line[i];
+        if (c === '"' || c === "'" || c === '`') {
+          i = skipQuotedString(line, i);
         } else {
           i++;
         }

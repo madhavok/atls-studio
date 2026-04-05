@@ -667,6 +667,13 @@ pub(crate) fn apply_line_edits(content: &str, edits: &[LineEdit]) -> Result<(Str
                 };
                 let replacement: Vec<String> = edit.content.as_deref().unwrap_or("").lines().map(String::from).collect();
 
+                if edit.end_line.is_none() && replacement.len() > 1 {
+                    anchor_warnings.push(format!(
+                        "replace_span_mismatch: replace at L{} has {}-line content but end_line not set (defaulting to single-line span)",
+                        idx + 1, replacement.len()
+                    ));
+                }
+
                 if replacement.len() >= 1 {
                     let span_end = idx + count;
                     let mut confirmed = 0usize;
@@ -682,6 +689,19 @@ pub(crate) fn apply_line_edits(content: &str, edits: &[LineEdit]) -> Result<(Str
                             confirmed += 1;
                         } else {
                             break;
+                        }
+                    }
+                    if confirmed > 0 {
+                        let removed: Vec<&str> = (0..confirmed)
+                            .filter_map(|k| lines.get(span_end + k).map(|l| l.as_str()))
+                            .collect();
+                        let net_balance = brace_balance_delta(&removed);
+                        if net_balance != 0 {
+                            anchor_warnings.push(format!(
+                                "count_overlap_extended: skipped extension at L{} — removing {} trailing lines would unbalance brackets (delta {})",
+                                idx + 1, confirmed, net_balance
+                            ));
+                            confirmed = 0;
                         }
                     }
                     if confirmed > 0 {
@@ -1064,6 +1084,30 @@ pub(crate) fn apply_line_edits_with_shadow(
     let (content, anchor_warnings, resolutions) = apply_line_edits(base, edits)?;
     warnings.extend(anchor_warnings);
     Ok((content, warnings, Some(resolutions)))
+}
+
+/// Net bracket balance delta for a slice of lines: +1 per opener, -1 per closer.
+/// Non-zero means removing these lines would unbalance surrounding structure.
+fn brace_balance_delta(lines: &[&str]) -> i32 {
+    let mut delta = 0i32;
+    for line in lines {
+        let mut in_str = false;
+        let mut prev = '\0';
+        for ch in line.chars() {
+            if in_str {
+                if ch == '"' && prev != '\\' { in_str = false; }
+            } else {
+                match ch {
+                    '"' => { in_str = true; }
+                    '{' | '(' | '[' => { delta += 1; }
+                    '}' | ')' | ']' => { delta -= 1; }
+                    _ => {}
+                }
+            }
+            prev = ch;
+        }
+    }
+    delta
 }
 
 /// Given the lines of a symbol (function/method/class), returns (body_start, body_end)
@@ -3499,6 +3543,44 @@ mod hard_line_edit_tests {
         assert!(!warnings.iter().any(|w| w.contains("count_overlap")),
             "empty line overlap should not trigger: {:?}", warnings);
         assert!(result.contains("X\n"), "replacement should be applied");
+    }
+
+    #[test]
+    fn count_overlap_skips_extension_when_bracket_balance_broken() {
+        // Replacement's last line matches file line after span, but removing
+        // that file line would unbalance brackets (it opens a block).
+        let content = "a\nold_line\n  if (cond) {\n    inner();\n  }\n";
+        let replacement = "new_line\n  if (cond) {";
+        let edits = vec![le(2, "replace", Some(replacement), None)];
+        let (result, warnings, _) = apply_line_edits(content, &edits).unwrap();
+        // The file line "  if (cond) {" has +1 bracket balance — extension must be skipped
+        assert!(result.contains("inner()"), "original inner code must survive: {}", result);
+        assert!(warnings.iter().any(|w| w.contains("skipped extension")),
+            "should warn about skipped extension due to bracket balance: {:?}", warnings);
+    }
+
+    #[test]
+    fn count_overlap_extends_when_bracket_balance_neutral() {
+        // Duplicate trailing line has balanced brackets — extension is safe
+        let content = "a\nold_line\ndoWork({x: 1});\nmore\n";
+        let replacement = "new_line\ndoWork({x: 1});";
+        let edits = vec![le(2, "replace", Some(replacement), None)];
+        let (result, warnings, _) = apply_line_edits(content, &edits).unwrap();
+        let dw_count = result.lines().filter(|l| l.contains("doWork")).count();
+        assert_eq!(dw_count, 1, "duplicate doWork line should be consumed: {}", result);
+        assert!(warnings.iter().any(|w| w.contains("count_overlap_extended: replace")),
+            "should extend for balanced-bracket duplicate: {:?}", warnings);
+    }
+
+    #[test]
+    fn replace_without_end_line_emits_span_mismatch_warning() {
+        let content = "type Foo = {\n  a: string;\n  b: number;\n};\nexport default Foo;\n";
+        let replacement = "type Bar = {\n  x: string;\n  y: number;\n  z: boolean;\n};";
+        let edits = vec![le(1, "replace", Some(replacement), None)];
+        let (result, warnings, _) = apply_line_edits(content, &edits).unwrap();
+        assert!(warnings.iter().any(|w| w.contains("replace_span_mismatch")),
+            "should warn about multi-line content with no end_line: {:?}", warnings);
+        assert!(result.contains("type Bar"), "replacement content should still be applied");
     }
 
     #[test]
