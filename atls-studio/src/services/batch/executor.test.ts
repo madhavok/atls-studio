@@ -56,6 +56,10 @@ function makeCtx() {
       maxTokens: 100000,
       getStagedSnippetsForRefresh: () => [],
       markEngramsSuspect: () => {},
+      recordRevisionAdvance: () => {},
+      registerEditHash: () => ({ registered: true }),
+      bumpWorkspaceRev: () => {},
+      invalidateArtifactsForPaths: () => {},
     }),
     getProjectPath: () => null,
     resolveSearchRefs: async () => ({}),
@@ -2105,5 +2109,81 @@ describe('executeUnifiedBatch inter-step rebase for batch_edits mode', () => {
     const leA = e2Edits[0].line_edits as Array<Record<string, unknown>>;
     expect(leA[0].line).toBe(30);
     expect(leA[0].end_line).toBe(35);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// recordRevisionAdvance for change step outputs
+// ---------------------------------------------------------------------------
+
+describe('recordRevisionAdvance on change step outputs', () => {
+  beforeEach(() => {
+    handlers.clear();
+  });
+
+  it('calls recordRevisionAdvance for each file in drafts/results/batch arrays', async () => {
+    const revAdvanceSpy = vi.fn();
+    const ctx = makeCtx();
+    const origStore = ctx.store;
+    ctx.store = () => ({ ...origStore(), recordRevisionAdvance: revAdvanceSpy });
+    ctx.sessionId = 'sess-1';
+
+    handlers.set('change.edit', async () =>
+      raw('edit ok', {
+        drafts: [{ file: 'src/a.ts', content_hash: 'hash-a' }],
+        results: [{ file: 'src/b.ts', hash: 'hash-b' }],
+      }),
+    );
+
+    await executeUnifiedBatch(
+      { version: '1.0', steps: [{ id: 'e1', use: 'change.edit' }] },
+      ctx,
+    );
+
+    const calls = revAdvanceSpy.mock.calls.map(
+      ([path, rev, cause, sid]: [string, string, string, string | undefined]) =>
+        ({ path, rev, cause, sid }),
+    );
+    expect(calls).toContainEqual({ path: 'src/a.ts', rev: 'hash-a', cause: 'same_file_prior_edit', sid: 'sess-1' });
+    expect(calls).toContainEqual({ path: 'src/b.ts', rev: 'hash-b', cause: 'same_file_prior_edit', sid: 'sess-1' });
+  });
+
+  it('calls recordRevisionAdvance for top-level file+hash', async () => {
+    const revAdvanceSpy = vi.fn();
+    const ctx = makeCtx();
+    const origStore = ctx.store;
+    ctx.store = () => ({ ...origStore(), recordRevisionAdvance: revAdvanceSpy });
+    ctx.sessionId = null;
+
+    handlers.set('change.create', async () =>
+      raw('created', { file: 'src/new.ts', content_hash: 'hash-new' }),
+    );
+
+    await executeUnifiedBatch(
+      { version: '1.0', steps: [{ id: 'c1', use: 'change.create' }] },
+      ctx,
+    );
+
+    const calls = revAdvanceSpy.mock.calls;
+    expect(calls.length).toBeGreaterThanOrEqual(1);
+    expect(calls).toContainEqual(['src/new.ts', 'hash-new', 'same_file_prior_edit', undefined]);
+  });
+
+  it('does not call recordRevisionAdvance for non-change steps', async () => {
+    const revAdvanceSpy = vi.fn();
+    const ctx = makeCtx();
+    const origStore = ctx.store;
+    ctx.store = () => ({ ...origStore(), recordRevisionAdvance: revAdvanceSpy });
+
+    handlers.set('read.context', async () =>
+      raw('read ok', { results: [{ file: 'src/r.ts', content_hash: 'hash-r' }] }),
+    );
+
+    await executeUnifiedBatch(
+      { version: '1.0', steps: [{ id: 'r1', use: 'read.context' }] },
+      ctx,
+    );
+
+    expect(revAdvanceSpy).not.toHaveBeenCalled();
   });
 });

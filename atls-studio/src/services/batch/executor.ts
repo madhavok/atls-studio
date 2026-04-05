@@ -574,7 +574,12 @@ function recordSnapshotFromOutput(
   const artifact = output.content as Record<string, unknown>;
 
   if (isChangeStep && autoReread) {
-    // After a mutation, invalidate old hashes and record new ones
+    // After a mutation, invalidate old hashes and record new ones.
+    // Also pre-register the revision advance cause so the file watcher's
+    // reconcileSourceRevision picks up 'same_file_prior_edit' instead of
+    // defaulting to 'external_file_change'.
+    const store = ctx.store();
+    const sid = ctx.sessionId ?? undefined;
     const sources = [artifact.results, artifact.drafts, artifact.batch];
     for (const arr of sources) {
       if (!Array.isArray(arr)) continue;
@@ -583,13 +588,19 @@ function recordSnapshotFromOutput(
         const rec = entry as Record<string, unknown>;
         const fp = SnapshotTracker.extractFilePath(rec);
         const sh = SnapshotTracker.extractHash(rec);
-        if (fp && sh) snapshotTracker.invalidateAndRerecord(fp, sh);
+        if (fp && sh) {
+          snapshotTracker.invalidateAndRerecord(fp, sh);
+          store.recordRevisionAdvance(fp, sh, 'same_file_prior_edit', sid);
+        }
       }
     }
     // Also check top-level file+hash
     const topFp = SnapshotTracker.extractFilePath(artifact);
     const topSh = SnapshotTracker.extractHash(artifact);
-    if (topFp && topSh) snapshotTracker.invalidateAndRerecord(topFp, topSh);
+    if (topFp && topSh) {
+      snapshotTracker.invalidateAndRerecord(topFp, topSh);
+      store.recordRevisionAdvance(topFp, topSh, 'same_file_prior_edit', sid);
+    }
   } else {
     // Extended recording: extract readRegions from read.lines, shapeHash from read.shaped
     if (step.use === 'read.lines') {
@@ -1472,21 +1483,28 @@ export async function executeUnifiedBatch(
         backfillResolvedBodySpans(mergedParams, output);
         rebaseSubsequentSteps(mergedParams, stepsToRun, i + 1);
       }
-      // Track edited file paths for auto-workspace inference on verify steps
+      // Track edited file paths for auto-workspace inference and own-write registration.
+      // Must cover all array shapes the backend may return (results, drafts, batch, written)
+      // plus the top-level file field, matching SnapshotTracker.extractFilePath coverage.
       if (output.content && typeof output.content === 'object') {
-        const drafts = (output.content as Record<string, unknown>).drafts;
-        if (Array.isArray(drafts)) {
-          for (const d of drafts) {
-            const f = (d as Record<string, unknown>)?.file ?? (d as Record<string, unknown>)?.f;
-            if (typeof f === 'string') batchEditedPaths.add(f);
+        const art = output.content as Record<string, unknown>;
+        for (const key of ['drafts', 'results', 'batch'] as const) {
+          const arr = art[key];
+          if (!Array.isArray(arr)) continue;
+          for (const d of arr) {
+            if (!d || typeof d !== 'object') continue;
+            const f = SnapshotTracker.extractFilePath(d as Record<string, unknown>);
+            if (f) batchEditedPaths.add(f);
           }
         }
-        const written = (output.content as Record<string, unknown>).written;
+        const written = art.written;
         if (Array.isArray(written)) {
           for (const w of written) {
             if (typeof w === 'string') batchEditedPaths.add(w);
           }
         }
+        const topFile = SnapshotTracker.extractFilePath(art);
+        if (topFile) batchEditedPaths.add(topFile);
       }
       // Register paths as own writes to suppress spurious intel:file_change from watcher
       registerOwnWrite([...batchEditedPaths]);
