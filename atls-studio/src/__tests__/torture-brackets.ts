@@ -37,7 +37,7 @@ function processItems<
   const results = new Map<string, { processed: boolean; output: ReturnType<T['transform']> }>();
   for (const item of items) {
     try {
-      const output = item.transform({ data: [{ nested: { deeply: [1, [2, [3]]] } }] });
+      const output = item.transform({ data: [{ nested: { deeply: [1, [2, [3]]] } }] }) as ReturnType<T['transform']>;
       results.set(item.id, { processed: true, output });
     } catch (e) {
       // Error path: note the brace nesting depth here is 4
