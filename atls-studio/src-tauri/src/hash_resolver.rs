@@ -1920,11 +1920,11 @@ pub fn batch_edits(
 
         // Use EditSession for validation and atomic commit
         let mut session = crate::edit_session::EditSession::begin_from_snapshot(&snap, resolved_path.clone());
-        session.apply(crate::edit_session::EditOp {
-            kind: crate::edit_session::EditOpKind::WholeFile,
-            preimage: content.clone(),
-            replacement: new_content.clone(),
-        }).map_err(|e| format!("EditSession apply failed for {}: {}", file_path, e))?;
+        session.apply(crate::edit_session::EditOp::new(
+            crate::edit_session::EditOpKind::WholeFile,
+            content.clone(),
+            new_content.clone(),
+        )).map_err(|e| format!("EditSession apply failed for {}: {}", file_path, e))?;
 
         session.validate().map_err(|e| format!("EditSession validation failed for {}: {}", file_path, e))?;
 

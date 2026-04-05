@@ -432,12 +432,12 @@ describe('resolveHashRefsInParams', () => {
     expect(await resolveHashRefsInParams(true, lookup)).toBe(true);
   });
 
-  it('resolves file-like line refs to source paths', async () => {
+  it('resolves file_path line span to source path with :L-M suffix', async () => {
     const result = await resolveHashRefsInParams(
       { file_path: 'h:abc12345:10-12' },
       lookup,
     );
-    expect((result as Record<string, unknown>).file_path).toBe('src/resolved.ts');
+    expect((result as Record<string, unknown>).file_path).toBe('src/resolved.ts:10-12');
   });
 
   it('keeps hash-like metadata fields canonical even with span modifiers', async () => {

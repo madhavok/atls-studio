@@ -47,6 +47,17 @@ impl LintResult {
     }
 }
 
+/// Normalize a tree-sitter syntax error message for baseline dedup.
+/// Strips the variable context suffix ("near: ...") so pre-existing errors
+/// whose context shifts after an edit still match the baseline.
+pub fn normalize_syntax_message_for_dedup(message: &str) -> String {
+    if let Some(idx) = message.find(" near: ") {
+        message[..idx + 7].to_string()
+    } else {
+        message.to_string()
+    }
+}
+
 pub fn enrich_lint_with_context(results: &mut [LintResult], file_path: &str, content: &str) {
     let lines: Vec<&str> = content.lines().collect();
     for result in results.iter_mut() {

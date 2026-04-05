@@ -714,6 +714,22 @@ pub(crate) fn apply_line_edits(content: &str, edits: &[LineEdit]) -> Result<(Str
                 }
 
                 let end = std::cmp::min(idx + count, lines.len());
+
+                let all_structural = idx < end && (idx..end).all(|k| {
+                    let t = lines.get(k).map(|l| l.trim()).unwrap_or("");
+                    matches!(t, "}" | "};" | "]" | "];" | ")" | ");" | "{" | "(" | "[")
+                });
+                let replacement_is_structural = !replacement.is_empty() && replacement.iter().all(|l| {
+                    let t = l.trim();
+                    matches!(t, "}" | "};" | "]" | "];" | ")" | ");" | "{" | "(" | "[" | "")
+                });
+                if all_structural && !replacement_is_structural {
+                    anchor_warnings.push(format!(
+                        "structural_guard: replace at L{}-L{} targets only structural tokens (closing braces/brackets) — content replacement may break enclosing scope",
+                        idx + 1, end
+                    ));
+                }
+
                 lines.splice(idx..end, replacement);
                 count
             }
@@ -851,6 +867,7 @@ pub(crate) fn line_edits_to_edit_ops(
         };
 
         let action = edit.action.as_str();
+        let hint = Some(byte_offset_of_line(&working, abs_line));
         match action {
             "replace" => {
                 let preimage = match extract_shadow_preimage(shadow_content, abs_line, edit.end_line) {
@@ -864,8 +881,8 @@ pub(crate) fn line_edits_to_edit_ops(
                     }
                 };
                 let replacement = edit.content.as_deref().unwrap_or("").to_string();
-                let op = EditOp { kind: EditOpKind::ExactReplace, preimage: preimage.clone(), replacement: replacement.clone() };
-                apply_edit_op_to_working(&mut working, &preimage, &replacement);
+                let op = EditOp { kind: EditOpKind::ExactReplace, preimage: preimage.clone(), replacement: replacement.clone(), hint_byte_offset: hint };
+                apply_edit_op_to_working_hinted(&mut working, &preimage, &replacement, hint);
                 ops.push(op);
             }
             "delete" => {
@@ -880,8 +897,8 @@ pub(crate) fn line_edits_to_edit_ops(
                     }
                 };
                 let replacement = String::new();
-                let op = EditOp { kind: EditOpKind::ExactReplace, preimage: preimage.clone(), replacement: replacement.clone() };
-                apply_edit_op_to_working(&mut working, &preimage, &replacement);
+                let op = EditOp { kind: EditOpKind::ExactReplace, preimage: preimage.clone(), replacement: replacement.clone(), hint_byte_offset: hint };
+                apply_edit_op_to_working_hinted(&mut working, &preimage, &replacement, hint);
                 ops.push(op);
             }
             "insert_before" | "prepend" => {
@@ -898,8 +915,8 @@ pub(crate) fn line_edits_to_edit_ops(
                 let inserted = edit.content.as_deref().unwrap_or("");
                 let preimage = context_line.clone();
                 let replacement = format!("{}\n{}", inserted, context_line);
-                let op = EditOp { kind: EditOpKind::ExactReplace, preimage: preimage.clone(), replacement: replacement.clone() };
-                apply_edit_op_to_working(&mut working, &preimage, &replacement);
+                let op = EditOp { kind: EditOpKind::ExactReplace, preimage: preimage.clone(), replacement: replacement.clone(), hint_byte_offset: hint };
+                apply_edit_op_to_working_hinted(&mut working, &preimage, &replacement, hint);
                 ops.push(op);
             }
             "insert_after" | "append" => {
@@ -916,8 +933,8 @@ pub(crate) fn line_edits_to_edit_ops(
                 let inserted = edit.content.as_deref().unwrap_or("");
                 let preimage = context_line.clone();
                 let replacement = format!("{}\n{}", context_line, inserted);
-                let op = EditOp { kind: EditOpKind::ExactReplace, preimage: preimage.clone(), replacement: replacement.clone() };
-                apply_edit_op_to_working(&mut working, &preimage, &replacement);
+                let op = EditOp { kind: EditOpKind::ExactReplace, preimage: preimage.clone(), replacement: replacement.clone(), hint_byte_offset: hint };
+                apply_edit_op_to_working_hinted(&mut working, &preimage, &replacement, hint);
                 ops.push(op);
             }
             "replace_body" => {
@@ -937,8 +954,9 @@ pub(crate) fn line_edits_to_edit_ops(
                         let body_end = std::cmp::min(body_start + body_count, shadow_lines.len());
                         let preimage = shadow_lines[body_start..body_end].join("\n");
                         let replacement = edit.content.as_deref().unwrap_or("").to_string();
-                        let op = EditOp { kind: EditOpKind::ExactReplace, preimage: preimage.clone(), replacement: replacement.clone() };
-                        apply_edit_op_to_working(&mut working, &preimage, &replacement);
+                        let body_hint = Some(byte_offset_of_line(&working, (body_start + 1) as u32));
+                        let op = EditOp { kind: EditOpKind::ExactReplace, preimage: preimage.clone(), replacement: replacement.clone(), hint_byte_offset: body_hint };
+                        apply_edit_op_to_working_hinted(&mut working, &preimage, &replacement, body_hint);
                         ops.push(op);
                     }
                     None => {
@@ -975,16 +993,16 @@ pub(crate) fn line_edits_to_edit_ops(
                         continue;
                     }
                 };
-                // Delete at source
                 let delete_op = EditOp {
                     kind: EditOpKind::ExactReplace,
                     preimage: preimage.clone(),
                     replacement: String::new(),
+                    hint_byte_offset: hint,
                 };
-                apply_edit_op_to_working(&mut working, &preimage, "");
+                apply_edit_op_to_working_hinted(&mut working, &preimage, "", hint);
                 ops.push(delete_op);
 
-                // Insert at destination (anchor on the destination context line)
+                let dest_hint = Some(byte_offset_of_line(&working, dest));
                 let insert_preimage = dest_context.clone();
                 let insert_replacement = if dest > abs_line {
                     format!("{}\n{}", dest_context, preimage)
@@ -995,8 +1013,9 @@ pub(crate) fn line_edits_to_edit_ops(
                     kind: EditOpKind::ExactReplace,
                     preimage: insert_preimage.clone(),
                     replacement: insert_replacement.clone(),
+                    hint_byte_offset: dest_hint,
                 };
-                apply_edit_op_to_working(&mut working, &insert_preimage, &insert_replacement);
+                apply_edit_op_to_working_hinted(&mut working, &insert_preimage, &insert_replacement, dest_hint);
                 ops.push(insert_op);
             }
             other => {
@@ -1011,16 +1030,61 @@ pub(crate) fn line_edits_to_edit_ops(
     Ok((ops, warnings))
 }
 
-/// Apply an ExactReplace-style edit to a working string (first occurrence only).
-fn apply_edit_op_to_working(working: &mut String, preimage: &str, replacement: &str) {
-    if let Some(pos) = working.find(preimage) {
-        let mut result = String::with_capacity(working.len() + replacement.len() - preimage.len());
-        result.push_str(&working[..pos]);
-        result.push_str(replacement);
-        result.push_str(&working[pos + preimage.len()..]);
-        *working = result;
+/// Compute byte offset of a 1-based line number in content.
+fn byte_offset_of_line(content: &str, line_1based: u32) -> usize {
+    if line_1based <= 1 {
+        return 0;
     }
+    let target = (line_1based as usize).saturating_sub(1);
+    let mut count = 0usize;
+    for (i, ch) in content.char_indices() {
+        if ch == '\n' {
+            count += 1;
+            if count >= target {
+                return i + 1;
+            }
+        }
+    }
+    content.len()
 }
+
+/// Apply an ExactReplace-style edit to a working string.
+/// When `hint_offset` is provided and the preimage appears multiple times,
+/// selects the occurrence closest to the hint byte position.
+fn apply_edit_op_to_working_hinted(working: &mut String, preimage: &str, replacement: &str, hint_offset: Option<usize>) {
+    if preimage.is_empty() {
+        return;
+    }
+    let first = match working.find(preimage) {
+        Some(pos) => pos,
+        None => return,
+    };
+
+    let chosen = if let Some(hint) = hint_offset {
+        let mut best_pos = first;
+        let mut best_dist = (first as isize - hint as isize).unsigned_abs();
+        let mut search_from = first + 1;
+        while let Some(next) = working[search_from..].find(preimage) {
+            let abs_pos = search_from + next;
+            let dist = (abs_pos as isize - hint as isize).unsigned_abs();
+            if dist < best_dist {
+                best_dist = dist;
+                best_pos = abs_pos;
+            }
+            search_from = abs_pos + 1;
+        }
+        best_pos
+    } else {
+        first
+    };
+
+    let mut result = String::with_capacity(working.len() + replacement.len() - preimage.len());
+    result.push_str(&working[..chosen]);
+    result.push_str(replacement);
+    result.push_str(&working[chosen + preimage.len()..]);
+    *working = result;
+}
+
 
 /// Unified entry point for applying line edits with optional shadow-based content anchoring.
 ///
@@ -1047,22 +1111,13 @@ pub(crate) fn apply_line_edits_with_shadow(
                         if op.preimage.is_empty() {
                             continue;
                         }
-                        match working.find(&op.preimage) {
-                            Some(pos) => {
-                                let mut result = String::with_capacity(
-                                    working.len() + op.replacement.len() - op.preimage.len()
-                                );
-                                result.push_str(&working[..pos]);
-                                result.push_str(&op.replacement);
-                                result.push_str(&working[pos + op.preimage.len()..]);
-                                working = result;
-                            }
-                            None => {
-                                warnings.push(format!(
-                                    "shadow_preimage_not_found: edit[{}] preimage not found in current content, skipping",
-                                    idx
-                                ));
-                            }
+                        if working.find(&op.preimage).is_some() {
+                            apply_edit_op_to_working_hinted(&mut working, &op.preimage, &op.replacement, op.hint_byte_offset);
+                        } else {
+                            warnings.push(format!(
+                                "shadow_preimage_not_found: edit[{}] preimage not found in current content, skipping",
+                                idx
+                            ));
                         }
                     }
                     return Ok((working, warnings, None));
@@ -3316,6 +3371,100 @@ mod apply_with_shadow_tests {
 }
 
 #[cfg(test)]
+mod edit_system_fix_tests {
+    use super::*;
+
+    #[test]
+    fn shadow_hinted_match_picks_closest_occurrence() {
+        let content = "line_a\ndup_line\nline_c\ndup_line\nline_e\n";
+        let mut working = content.to_string();
+        let hint = byte_offset_of_line(content, 4);
+        apply_edit_op_to_working_hinted(&mut working, "dup_line", "REPLACED", Some(hint));
+        let lines: Vec<&str> = working.lines().collect();
+        assert_eq!(lines[1], "dup_line", "first occurrence should be untouched");
+        assert_eq!(lines[3], "REPLACED", "second occurrence (closer to hint) should be replaced");
+    }
+
+    #[test]
+    fn shadow_hinted_match_no_hint_picks_first() {
+        let content = "dup\naaa\ndup\n";
+        let mut working = content.to_string();
+        apply_edit_op_to_working_hinted(&mut working, "dup", "NEW", None);
+        assert!(working.starts_with("NEW\n"), "without hint, first occurrence is replaced");
+    }
+
+    #[test]
+    fn structural_guard_warns_on_brace_replacement() {
+        let content = "function foo() {\n  return 1;\n}\n";
+        let edits = vec![LineEdit {
+            line: LineCoordinate::Abs(3),
+            action: "replace".to_string(),
+            content: Some("// oops replaced closing brace".to_string()),
+            end_line: Some(3),
+            symbol: None,
+            position: None,
+            destination: None,
+            reindent: false,
+        }];
+        let (result, warnings, _) = apply_line_edits(content, &edits).unwrap();
+        assert!(result.contains("// oops replaced closing brace"));
+        assert!(
+            warnings.iter().any(|w| w.contains("structural_guard")),
+            "should emit structural_guard warning when replacing lone closing brace"
+        );
+    }
+
+    #[test]
+    fn structural_guard_no_warn_on_normal_replacement() {
+        let content = "const a = 1;\nconst b = 2;\nconst c = 3;\n";
+        let edits = vec![LineEdit {
+            line: LineCoordinate::Abs(2),
+            action: "replace".to_string(),
+            content: Some("const b = 42;".to_string()),
+            end_line: Some(2),
+            symbol: None,
+            position: None,
+            destination: None,
+            reindent: false,
+        }];
+        let (result, warnings, _) = apply_line_edits(content, &edits).unwrap();
+        assert!(result.contains("const b = 42;"));
+        assert!(
+            !warnings.iter().any(|w| w.contains("structural_guard")),
+            "should not warn when replacing normal code"
+        );
+    }
+
+    #[test]
+    fn normalize_syntax_message_strips_context() {
+        let msg = "Syntax error: unexpected token near: function processConfig({";
+        let normalized = crate::linter::normalize_syntax_message_for_dedup(msg);
+        assert_eq!(normalized, "Syntax error: unexpected token near: ");
+
+        let msg_shifted = "Syntax error: unexpected token near: type EventMap = {";
+        let norm_shifted = crate::linter::normalize_syntax_message_for_dedup(msg_shifted);
+        assert_eq!(norm_shifted, "Syntax error: unexpected token near: ");
+        assert_eq!(normalized, norm_shifted, "shifted context should produce same normalized key");
+    }
+
+    #[test]
+    fn normalize_syntax_message_preserves_non_syntax() {
+        let msg = "Missing semicolon";
+        let normalized = crate::linter::normalize_syntax_message_for_dedup(msg);
+        assert_eq!(normalized, msg, "messages without 'near:' should be unchanged");
+    }
+
+    #[test]
+    fn byte_offset_of_line_correctness() {
+        let content = "aaa\nbbb\nccc\n";
+        assert_eq!(byte_offset_of_line(content, 1), 0);
+        assert_eq!(byte_offset_of_line(content, 2), 4);
+        assert_eq!(byte_offset_of_line(content, 3), 8);
+        assert_eq!(byte_offset_of_line(content, 99), content.len());
+    }
+}
+
+#[cfg(test)]
 mod hpp_file_ops_tests {
     /// HPP refactoring pipeline & file writing integration tests.
     /// Uses temp dir to exercise create + remove_lines flow without Tauri.
@@ -4618,9 +4767,12 @@ export function extractMe() {
 
         // Step 3: update consumer imports
         let import_edits = vec![
-            le(1, "replace",
+            le(
+                1,
+                "replace",
                 Some("import { keepMe } from './source';\nimport { extractMe } from './extracted';"),
-                None),
+                Some(2),
+            ),
         ];
         let (new_consumer, warnings, _) = apply_line_edits(consumer_content, &import_edits).unwrap();
         std::fs::write(root.join("src/consumer.ts"), &new_consumer).unwrap();

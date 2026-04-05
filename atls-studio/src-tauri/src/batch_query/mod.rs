@@ -10603,16 +10603,18 @@ pub async fn atls_batch_query(
                 // Pre-write syntax gate: reject only NEW syntax errors introduced by the edit.
                 // Baseline-aware: complex patterns (IIFE, destructuring defaults) that tree-sitter
                 // already flagged in the original file are not counted against the edit.
+                // Uses normalized message dedup (strips context suffix) so line-shifted
+                // pre-existing errors are not falsely counted as new.
                 if is_js_ts_path(&file_path) {
                     let post_errors = linter::syntax_check_ts(&file_path, &written_content);
                     if post_errors.iter().any(|e| e.severity == "error") {
-                        let baseline_errors: std::collections::HashSet<String> = linter::syntax_check_ts(&file_path, &content)
+                        let baseline_normalized: std::collections::HashSet<String> = linter::syntax_check_ts(&file_path, &content)
                             .iter()
                             .filter(|e| e.severity == "error")
-                            .map(|e| e.message.clone())
+                            .map(|e| linter::normalize_syntax_message_for_dedup(&e.message))
                             .collect();
                         let new_errors: Vec<&linter::LintResult> = post_errors.iter()
-                            .filter(|e| e.severity == "error" && !baseline_errors.contains(&e.message))
+                            .filter(|e| e.severity == "error" && !baseline_normalized.contains(&linter::normalize_syntax_message_for_dedup(&e.message)))
                             .collect();
                         if !new_errors.is_empty() {
                             let msgs: Vec<String> = new_errors.iter()
@@ -11768,17 +11770,19 @@ pub async fn atls_batch_query(
                 let mut line_count = written_content.lines().count();
 
                 // Auto-flush: write to disk with baseline-aware pre-write syntax gate
+                // Uses normalized message dedup (strips context suffix) for consistency
+                // with the line_edits syntax gate.
                 if auto_flush {
                     if is_js_ts_path(&file_path) {
                         let post_errors = linter::syntax_check_ts(&file_path, &written_content);
                         if post_errors.iter().any(|e| e.severity == "error") {
-                            let baseline_errors: std::collections::HashSet<String> = linter::syntax_check_ts(&file_path, &old_content)
+                            let baseline_normalized: std::collections::HashSet<String> = linter::syntax_check_ts(&file_path, &old_content)
                                 .iter()
                                 .filter(|e| e.severity == "error")
-                                .map(|e| e.message.clone())
+                                .map(|e| linter::normalize_syntax_message_for_dedup(&e.message))
                                 .collect();
                             let new_errors: Vec<String> = post_errors.iter()
-                                .filter(|e| e.severity == "error" && !baseline_errors.contains(&e.message))
+                                .filter(|e| e.severity == "error" && !baseline_normalized.contains(&linter::normalize_syntax_message_for_dedup(&e.message)))
                                 .take(5)
                                 .map(|e| format!("L{}:{}: {}", e.line, e.column, e.message))
                                 .collect();

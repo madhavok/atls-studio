@@ -31,6 +31,17 @@ pub struct EditOp {
     pub kind: EditOpKind,
     pub preimage: String,
     pub replacement: String,
+    /// Byte offset hint from the shadow snapshot. When the preimage appears
+    /// multiple times in the working content, prefer the occurrence closest
+    /// to this offset.
+    pub hint_byte_offset: Option<usize>,
+}
+
+impl EditOp {
+    /// Construct an EditOp without a position hint (most callers).
+    pub fn new(kind: EditOpKind, preimage: String, replacement: String) -> Self {
+        Self { kind, preimage, replacement, hint_byte_offset: None }
+    }
 }
 
 /// Record of an applied edit (for diagnostics and consolidation).
@@ -339,15 +350,14 @@ impl EditSession {
             )
         };
 
-        let baseline_errors: std::collections::HashSet<String> = baseline_results
+        let baseline_normalized: std::collections::HashSet<String> = baseline_results
             .iter()
             .filter(|e| e.severity == "error")
-            .map(|e| format!("L{}:{}: {}", e.line, e.column, e.message))
+            .map(|e| linter::normalize_syntax_message_for_dedup(&e.message))
             .collect();
         let new_errors: Vec<String> = post_results.iter()
-            .filter(|e| e.severity == "error")
+            .filter(|e| e.severity == "error" && !baseline_normalized.contains(&linter::normalize_syntax_message_for_dedup(&e.message)))
             .map(|e| format!("L{}:{}: {}", e.line, e.column, e.message))
-            .filter(|msg| !baseline_errors.contains(msg))
             .take(10)
             .collect();
         if !new_errors.is_empty() {
@@ -484,11 +494,11 @@ mod tests {
         let mut svc = SnapshotService::new();
         let mut session = EditSession::begin(&mut svc, dir.path(), "test.ts").unwrap();
 
-        session.apply(EditOp {
-            kind: EditOpKind::ExactReplace,
-            preimage: "const a = 1;".to_string(),
-            replacement: "const a = 42;".to_string(),
-        }).unwrap();
+        session.apply(EditOp::new(
+            EditOpKind::ExactReplace,
+            "const a = 1;".to_string(),
+            "const a = 42;".to_string(),
+        )).unwrap();
 
         assert!(session.working_content().contains("const a = 42;"));
         assert!(session.working_content().contains("const b = 2;"));
@@ -502,11 +512,11 @@ mod tests {
         let mut svc = SnapshotService::new();
         let mut session = EditSession::begin(&mut svc, dir.path(), "test.ts").unwrap();
 
-        let result = session.apply(EditOp {
-            kind: EditOpKind::ExactReplace,
-            preimage: "const b = 2;".to_string(),
-            replacement: "const b = 42;".to_string(),
-        });
+        let result = session.apply(EditOp::new(
+            EditOpKind::ExactReplace,
+            "const b = 2;".to_string(),
+            "const b = 42;".to_string(),
+        ));
         assert!(matches!(result, Err(EditSessionError::PreimageNotFound { .. })));
     }
 
@@ -518,11 +528,11 @@ mod tests {
         let mut svc = SnapshotService::new();
         let mut session = EditSession::begin(&mut svc, dir.path(), "test.ts").unwrap();
 
-        let result = session.apply(EditOp {
-            kind: EditOpKind::ExactReplace,
-            preimage: "const a = 1;".to_string(),
-            replacement: "const a = 42;".to_string(),
-        });
+        let result = session.apply(EditOp::new(
+            EditOpKind::ExactReplace,
+            "const a = 1;".to_string(),
+            "const a = 42;".to_string(),
+        ));
         assert!(matches!(result, Err(EditSessionError::AmbiguousPreimage { count: 2, .. })));
     }
 
@@ -534,11 +544,11 @@ mod tests {
         let mut svc = SnapshotService::new();
         let mut session = EditSession::begin(&mut svc, dir.path(), "test.ts").unwrap();
 
-        session.apply(EditOp {
-            kind: EditOpKind::ExactReplace,
-            preimage: "const a = 1;".to_string(),
-            replacement: "const a = 42;".to_string(),
-        }).unwrap();
+        session.apply(EditOp::new(
+            EditOpKind::ExactReplace,
+            "const a = 1;".to_string(),
+            "const a = 42;".to_string(),
+        )).unwrap();
 
         // Modify file behind the session's back
         fs::write(&file, "const a = 999;\n").unwrap();
@@ -556,11 +566,11 @@ mod tests {
         let mut svc = SnapshotService::new();
         let mut session = EditSession::begin(&mut svc, dir.path(), "test.ts").unwrap();
 
-        session.apply(EditOp {
-            kind: EditOpKind::ExactReplace,
-            preimage: "const a = 1;".to_string(),
-            replacement: "const a = 42;".to_string(),
-        }).unwrap();
+        session.apply(EditOp::new(
+            EditOpKind::ExactReplace,
+            "const a = 1;".to_string(),
+            "const a = 42;".to_string(),
+        )).unwrap();
 
         let result = session.commit(&mut svc).unwrap();
         assert_ne!(result.old_hash, result.new_hash);
@@ -579,11 +589,11 @@ mod tests {
         let mut svc = SnapshotService::new();
         let mut session = EditSession::begin(&mut svc, dir.path(), "test.ts").unwrap();
 
-        session.apply(EditOp {
-            kind: EditOpKind::WholeFile,
-            preimage: "old content\n".to_string(),
-            replacement: "new content\n".to_string(),
-        }).unwrap();
+        session.apply(EditOp::new(
+            EditOpKind::WholeFile,
+            "old content\n".to_string(),
+            "new content\n".to_string(),
+        )).unwrap();
 
         assert_eq!(session.working_content(), "new content\n");
     }
@@ -596,11 +606,11 @@ mod tests {
         let mut svc = SnapshotService::new();
         let mut session = EditSession::begin(&mut svc, dir.path(), "test.ts").unwrap();
 
-        session.apply(EditOp {
-            kind: EditOpKind::ByteRange { start: 2, end: 5 },
-            preimage: "CDE".to_string(),
-            replacement: "XYZ123".to_string(),
-        }).unwrap();
+        session.apply(EditOp::new(
+            EditOpKind::ByteRange { start: 2, end: 5 },
+            "CDE".to_string(),
+            "XYZ123".to_string(),
+        )).unwrap();
 
         assert_eq!(session.working_content(), "ABXYZ123FGH");
     }
@@ -613,11 +623,11 @@ mod tests {
         let mut svc = SnapshotService::new();
         let mut session = EditSession::begin(&mut svc, dir.path(), "test.ts").unwrap();
 
-        session.apply(EditOp {
-            kind: EditOpKind::WholeFile,
-            preimage: "clean\n".to_string(),
-            replacement: "<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> branch\n".to_string(),
-        }).unwrap();
+        session.apply(EditOp::new(
+            EditOpKind::WholeFile,
+            "clean\n".to_string(),
+            "<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> branch\n".to_string(),
+        )).unwrap();
 
         let result = session.validate();
         assert!(matches!(result, Err(EditSessionError::SyntaxErrors { .. })));
