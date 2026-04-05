@@ -10600,23 +10600,34 @@ pub async fn atls_batch_query(
                     None
                 };
 
-                // Pre-write syntax gate: reject if tree-sitter finds syntax errors
+                // Pre-write syntax gate: reject only NEW syntax errors introduced by the edit.
+                // Baseline-aware: complex patterns (IIFE, destructuring defaults) that tree-sitter
+                // already flagged in the original file are not counted against the edit.
                 if is_js_ts_path(&file_path) {
-                    let syntax_errors = linter::syntax_check_ts(&file_path, &written_content);
-                    let has_errors = syntax_errors.iter().any(|e| e.severity == "error");
-                    if has_errors {
-                        let msgs: Vec<String> = syntax_errors.iter()
+                    let post_errors = linter::syntax_check_ts(&file_path, &written_content);
+                    if post_errors.iter().any(|e| e.severity == "error") {
+                        let baseline_errors: std::collections::HashSet<String> = linter::syntax_check_ts(&file_path, &content)
+                            .iter()
                             .filter(|e| e.severity == "error")
-                            .take(5)
-                            .map(|e| format!("L{}:{}: {}", e.line, e.column, e.message))
+                            .map(|e| e.message.clone())
                             .collect();
-                        return Ok(serde_json::json!({
-                            "error": format!("Syntax errors after edit in {}: {}", file_path, msgs.join("; ")),
-                            "error_class": "syntax_error_after_edit",
-                            "file": file_path,
-                            "syntax_errors": syntax_errors,
-                            "_next": "The edit produced invalid syntax. Fix the edit content and retry.",
-                        }));
+                        let new_errors: Vec<&linter::LintResult> = post_errors.iter()
+                            .filter(|e| e.severity == "error" && !baseline_errors.contains(&e.message))
+                            .collect();
+                        if !new_errors.is_empty() {
+                            let msgs: Vec<String> = new_errors.iter()
+                                .take(5)
+                                .map(|e| format!("L{}:{}: {}", e.line, e.column, e.message))
+                                .collect();
+                            let syntax_errors: Vec<&linter::LintResult> = new_errors.iter().take(5).copied().collect();
+                            return Ok(serde_json::json!({
+                                "error": format!("Syntax errors after edit in {}: {}", file_path, msgs.join("; ")),
+                                "error_class": "syntax_error_after_edit",
+                                "file": file_path,
+                                "syntax_errors": syntax_errors,
+                                "_next": "The edit produced invalid syntax. Fix the edit content and retry.",
+                            }));
+                        }
                     }
                 }
 
@@ -11756,23 +11767,29 @@ pub async fn atls_batch_query(
                 };
                 let mut line_count = written_content.lines().count();
 
-                // Auto-flush: write to disk with pre-write syntax gate
+                // Auto-flush: write to disk with baseline-aware pre-write syntax gate
                 if auto_flush {
                     if is_js_ts_path(&file_path) {
-                        let syntax_errors = linter::syntax_check_ts(&file_path, &written_content);
-                        if syntax_errors.iter().any(|e| e.severity == "error") {
-                            let msgs: Vec<String> = syntax_errors.iter()
+                        let post_errors = linter::syntax_check_ts(&file_path, &written_content);
+                        if post_errors.iter().any(|e| e.severity == "error") {
+                            let baseline_errors: std::collections::HashSet<String> = linter::syntax_check_ts(&file_path, &old_content)
+                                .iter()
                                 .filter(|e| e.severity == "error")
+                                .map(|e| e.message.clone())
+                                .collect();
+                            let new_errors: Vec<String> = post_errors.iter()
+                                .filter(|e| e.severity == "error" && !baseline_errors.contains(&e.message))
                                 .take(5)
                                 .map(|e| format!("L{}:{}: {}", e.line, e.column, e.message))
                                 .collect();
-                            return Ok(serde_json::json!({
-                                "error": format!("Syntax errors after edit in {}: {}", file_path, msgs.join("; ")),
-                                "error_class": "syntax_error_after_edit",
-                                "file": file_path,
-                                "syntax_errors": syntax_errors,
-                                "_next": "The edit produced invalid syntax. Fix the edit content and retry.",
-                            }));
+                            if !new_errors.is_empty() {
+                                return Ok(serde_json::json!({
+                                    "error": format!("Syntax errors after edit in {}: {}", file_path, new_errors.join("; ")),
+                                    "error_class": "syntax_error_after_edit",
+                                    "file": file_path,
+                                    "_next": "The edit produced invalid syntax. Fix the edit content and retry.",
+                                }));
+                            }
                         }
                     }
                     let resolved_path = resolve_project_path(project_root, &file_path);

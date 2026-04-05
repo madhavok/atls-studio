@@ -1087,24 +1087,50 @@ pub(crate) fn apply_line_edits_with_shadow(
 }
 
 /// Net bracket balance delta for a slice of lines: +1 per opener, -1 per closer.
-/// Non-zero means removing these lines would unbalance surrounding structure.
+/// Skips brackets inside string literals (`"`, `'`, `` ` ``), line comments (`//`),
+/// and block comments (`/* */`). Non-zero means removing these lines would
+/// unbalance surrounding structure.
 fn brace_balance_delta(lines: &[&str]) -> i32 {
     let mut delta = 0i32;
+    let mut in_block_comment = false;
     for line in lines {
-        let mut in_str = false;
-        let mut prev = '\0';
-        for ch in line.chars() {
-            if in_str {
-                if ch == '"' && prev != '\\' { in_str = false; }
-            } else {
-                match ch {
-                    '"' => { in_str = true; }
-                    '{' | '(' | '[' => { delta += 1; }
-                    '}' | ')' | ']' => { delta -= 1; }
-                    _ => {}
+        let chars: Vec<char> = line.chars().collect();
+        let len = chars.len();
+        let mut i = 0;
+        while i < len {
+            if in_block_comment {
+                if i + 1 < len && chars[i] == '*' && chars[i + 1] == '/' {
+                    in_block_comment = false;
+                    i += 2;
+                    continue;
                 }
+                i += 1;
+                continue;
             }
-            prev = ch;
+            if i + 1 < len && chars[i] == '/' && chars[i + 1] == '/' {
+                break;
+            }
+            if i + 1 < len && chars[i] == '/' && chars[i + 1] == '*' {
+                in_block_comment = true;
+                i += 2;
+                continue;
+            }
+            if chars[i] == '"' || chars[i] == '\'' || chars[i] == '`' {
+                let quote = chars[i];
+                i += 1;
+                while i < len && chars[i] != quote {
+                    if chars[i] == '\\' { i += 1; }
+                    i += 1;
+                }
+                if i < len { i += 1; }
+                continue;
+            }
+            match chars[i] {
+                '{' | '(' | '[' => { delta += 1; }
+                '}' | ')' | ']' => { delta -= 1; }
+                _ => {}
+            }
+            i += 1;
         }
     }
     delta
@@ -1113,66 +1139,70 @@ fn brace_balance_delta(lines: &[&str]) -> i32 {
 /// Given the lines of a symbol (function/method/class), returns (body_start, body_end)
 /// where body_start is the offset (within symbol_lines) of the line AFTER the opening `{`,
 /// and body_end is the offset of the closing `}` line.
+/// Skips braces inside string literals, line comments, and block comments.
 /// Returns None for symbols without braces (type aliases, interfaces without body, etc.).
 pub(crate) fn find_body_bounds(symbol_lines: &[&str]) -> Option<(usize, usize)> {
     if symbol_lines.is_empty() {
         return None;
     }
 
-    // Walk forward to find the opening `{` (first unquoted brace at depth 0)
-    let mut brace_line = None;
+    let mut open_line: Option<usize> = None;
+    let mut close_line: Option<usize> = None;
     let mut depth: i32 = 0;
-    for (i, line) in symbol_lines.iter().enumerate() {
-        for ch in line.chars() {
-            match ch {
-                '{' => {
-                    if depth == 0 {
-                        brace_line = Some(i);
-                    }
-                    depth += 1;
+    let mut in_block_comment = false;
+
+    for (line_idx, line) in symbol_lines.iter().enumerate() {
+        let chars: Vec<char> = line.chars().collect();
+        let len = chars.len();
+        let mut i = 0;
+        while i < len {
+            if in_block_comment {
+                if i + 1 < len && chars[i] == '*' && chars[i + 1] == '/' {
+                    in_block_comment = false;
+                    i += 2;
+                    continue;
                 }
-                '}' => {
-                    depth -= 1;
-                }
-                _ => {}
+                i += 1;
+                continue;
             }
+            if i + 1 < len && chars[i] == '/' && chars[i + 1] == '/' { break; }
+            if i + 1 < len && chars[i] == '/' && chars[i + 1] == '*' {
+                in_block_comment = true;
+                i += 2;
+                continue;
+            }
+            if chars[i] == '"' || chars[i] == '\'' || chars[i] == '`' {
+                let q = chars[i];
+                i += 1;
+                while i < len && chars[i] != q {
+                    if chars[i] == '\\' { i += 1; }
+                    i += 1;
+                }
+                if i < len { i += 1; }
+                continue;
+            }
+            if chars[i] == '{' {
+                if depth == 0 && open_line.is_none() {
+                    open_line = Some(line_idx);
+                }
+                depth += 1;
+            } else if chars[i] == '}' {
+                depth -= 1;
+                if depth == 0 {
+                    close_line = Some(line_idx);
+                }
+            }
+            i += 1;
         }
-        if brace_line.is_some() {
+        if open_line.is_some() && depth == 0 && close_line.is_some() {
             break;
         }
     }
 
-    let open_line = brace_line?;
-
-    // Walk backward from the end to find the closing `}` at depth 0
-    let mut close_line = None;
-    depth = 0;
-    for i in (0..symbol_lines.len()).rev() {
-        for ch in symbol_lines[i].chars().rev() {
-            match ch {
-                '}' => {
-                    if depth == 0 {
-                        close_line = Some(i);
-                    }
-                    depth += 1;
-                }
-                '{' => {
-                    depth -= 1;
-                }
-                _ => {}
-            }
-        }
-        if close_line.is_some() {
-            break;
-        }
-    }
-
-    let close_line = close_line?;
-    if close_line <= open_line {
-        return None;
-    }
-    // body_start = line after the opening `{`, body_end = the closing `}` line
-    Some((open_line + 1, close_line))
+    let open = open_line?;
+    let close = close_line?;
+    if close <= open { return None; }
+    Some((open + 1, close))
 }
 
 /// Resolve `symbol` + `position` on each edit to concrete `line` / `end_line` using the symbol index.
@@ -3407,7 +3437,7 @@ function alsoStay() {
 
 #[cfg(test)]
 mod hard_line_edit_tests {
-    use super::{apply_line_edits, LineCoordinate, LineEdit, content_hash};
+    use super::{apply_line_edits, LineCoordinate, LineEdit, content_hash, brace_balance_delta, find_body_bounds};
     use crate::path_utils::normalize_line_endings;
 
     fn le(line: u32, action: &str, content: Option<&str>, end_line: Option<u32>) -> LineEdit {
@@ -3581,6 +3611,79 @@ mod hard_line_edit_tests {
         assert!(warnings.iter().any(|w| w.contains("replace_span_mismatch")),
             "should warn about multi-line content with no end_line: {:?}", warnings);
         assert!(result.contains("type Bar"), "replacement content should still be applied");
+    }
+
+    // ── brace_balance_delta string/comment awareness ──
+
+    #[test]
+    fn brace_balance_delta_skips_single_quoted_brackets() {
+        let lines = vec!["console.log('matched {brackets}(here)[ok]');"];
+        assert_eq!(brace_balance_delta(&lines), 0, "brackets in single-quoted strings must be ignored");
+    }
+
+    #[test]
+    fn brace_balance_delta_skips_template_literal_brackets() {
+        let lines = vec!["const s = `template ${'{'}`;"];
+        assert_eq!(brace_balance_delta(&lines), 0, "brackets in backtick templates must be ignored");
+    }
+
+    #[test]
+    fn brace_balance_delta_skips_line_comments() {
+        let lines = vec!["x(); // if (a) { b(); }"];
+        assert_eq!(brace_balance_delta(&lines), 0, "brackets in line comments must be ignored");
+    }
+
+    #[test]
+    fn brace_balance_delta_skips_block_comments() {
+        let lines = vec!["/* { open */", "real();", "/* close } */"];
+        assert_eq!(brace_balance_delta(&lines), 0, "brackets in block comments must be ignored");
+    }
+
+    #[test]
+    fn brace_balance_delta_counts_real_brackets() {
+        let lines = vec!["if (x) {", "  y();"];
+        // (x) cancels, { is +1; y() cancels → net +1
+        assert_eq!(brace_balance_delta(&lines), 1);
+    }
+
+    #[test]
+    fn brace_balance_delta_iife_closing_pattern() {
+        // }) = -1 -1; () = +1 -1; net = -2
+        let lines = vec!["})();"];
+        assert_eq!(brace_balance_delta(&lines), -2);
+    }
+
+    // ── find_body_bounds string/comment awareness ──
+
+    #[test]
+    fn find_body_bounds_skips_braces_in_strings() {
+        let lines = vec![
+            "function foo({ g = {} }: { g?: Record<string, unknown> }) {",
+            "  return g;",
+            "}",
+        ];
+        let refs: Vec<&str> = lines.iter().copied().collect();
+        let bounds = find_body_bounds(&refs);
+        assert!(bounds.is_some(), "should find body despite braces in destructuring default");
+        let (start, end) = bounds.unwrap();
+        assert_eq!(start, 1, "body starts after opening {{ line");
+        assert_eq!(end, 2, "body ends at closing }} line");
+    }
+
+    #[test]
+    fn find_body_bounds_skips_braces_in_comments() {
+        let lines = vec![
+            "// { this is a comment with braces }",
+            "class Foo {",
+            "  bar() {}",
+            "}",
+        ];
+        let refs: Vec<&str> = lines.iter().copied().collect();
+        let bounds = find_body_bounds(&refs);
+        assert!(bounds.is_some());
+        let (start, end) = bounds.unwrap();
+        assert_eq!(start, 2, "body starts after class {{ line");
+        assert_eq!(end, 3, "body ends at class closing }}");
     }
 
     #[test]
