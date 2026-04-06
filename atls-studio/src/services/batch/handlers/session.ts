@@ -420,8 +420,28 @@ function collectChunkDetails(
 }
 
 export const handleDrop: OpHandler = async (params, ctx) => {
-  const rawHashes = normalizeHashRefsToStrings(params.hashes);
-  if (!rawHashes.length) return err('drop: ERROR missing hashes param');
+  const scope = typeof params.scope === 'string' ? params.scope.trim().toLowerCase() : undefined;
+  let rawHashes: string[];
+
+  if (scope === 'dormant') {
+    const maxRaw = params.max;
+    const max = typeof maxRaw === 'number' && Number.isFinite(maxRaw)
+      ? Math.max(1, Math.min(10_000, Math.trunc(maxRaw)))
+      : undefined;
+    const collected: string[] = [];
+    for (const [, c] of ctx.store().chunks) {
+      if (!c.compacted || c.pinned) continue;
+      collected.push(`h:${c.shortHash}`);
+      if (max != null && collected.length >= max) break;
+    }
+    if (!collected.length) {
+      return ok('drop: 0 dormant compacted unpinned chunks (nothing to drop)');
+    }
+    rawHashes = collected;
+  } else {
+    rawHashes = normalizeHashRefsToStrings(params.hashes);
+    if (!rawHashes.length) return err('drop: ERROR missing hashes param');
+  }
 
   const { expanded, notes } = ctx.expandSetRefsInHashes(rawHashes);
   const droppedDetail = collectChunkDetails(expanded, ctx.store);
@@ -429,6 +449,7 @@ export const handleDrop: OpHandler = async (params, ctx) => {
   let line = `drop: ${dropped} chunks permanently dropped (${(freedTokens / 1000).toFixed(1)}k freed, manifest entries kept)`;
   if (notes.length > 0) line += ` | ${notes.join('; ')}`;
   if (droppedDetail) line += ` | dropped: [${droppedDetail}]`;
+  if (scope === 'dormant') line += ' | scope:dormant';
   return ok(line, [], -freedTokens);
 };
 

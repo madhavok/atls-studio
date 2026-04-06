@@ -832,6 +832,8 @@ interface ContextStoreState {
    */
   evictChunksForDeletedPaths: (paths: string[]) => { chunks: number; staged: number };
   reconcileSourceRevision: (path: string, currentRevision: string, cause?: FreshnessCause) => ReconcileStats;
+  /** Post-session-restore: reconcile all file-backed engrams against disk, evict deleted paths. Non-blocking. */
+  reconcileRestoredSession: () => Promise<{ updated: number; invalidated: number; evicted: number }>;
   /** Sweep active/staged/archived chunks, reconcile to current revisions, return stats. Shared by file-watch, preflight, round-end. */
   refreshRoundEnd: (options?: { paths?: string[]; getRevisionForPath?: (path: string) => Promise<string | null>; bulkGetRevisions?: (paths: string[]) => Promise<Map<string, string | null>> }) => Promise<RefreshRoundStats>;
   markEngramsSuspect: (sourcePaths?: string[], cause?: FreshnessCause, suspectKind?: 'content' | 'structural' | 'unknown') => number;
@@ -1012,6 +1014,23 @@ function normalizeSourcePath(source: string): string {
 
 function sourcesMatch(a: string, b: string): boolean {
   return normalizeSourcePath(a) === normalizeSourcePath(b);
+}
+
+/** Single path or comma-joined paths (legacy composite reads) — used for freshness and delete eviction. */
+function sourceTouchesPath(source: string | undefined, path: string): boolean {
+  if (!source) return false;
+  const pathNorm = normalizeSourcePath(path);
+  if (normalizeSourcePath(source) === pathNorm) return true;
+  for (const seg of source.split(',')) {
+    const t = seg.trim();
+    if (!t) continue;
+    if (normalizeSourcePath(t) === pathNorm) return true;
+  }
+  return false;
+}
+
+function isExactSourcePathMatch(source: string | undefined, path: string): boolean {
+  return !!source && normalizeSourcePath(source) === normalizeSourcePath(path);
 }
 
 function isFileBackedType(type: string): boolean {
@@ -2451,7 +2470,7 @@ export const useContextStore = create<ContextStoreState>()(
     if (paths.length === 0) return { chunks: 0, staged: 0 };
     const pathSet = new Set(paths.map(p => normalizeSourcePath(p)));
     const matchesPath = (source?: string): boolean =>
-      !!source && pathSet.has(normalizeSourcePath(source));
+      !!source && [...pathSet].some(p => sourceTouchesPath(source, p));
 
     const evictedHashes: string[] = [];
     let chunkCount = 0;
@@ -2520,6 +2539,80 @@ export const useContextStore = create<ContextStoreState>()(
     return { chunks: chunkCount, staged: stagedCount };
   },
 
+  reconcileRestoredSession: async () => {
+    const state = get();
+    const pathSet = new Set<string>();
+    const addSource = (source?: string) => {
+      if (source && typeof source === 'string') pathSet.add(normalizeSourcePath(source));
+    };
+    for (const [, c] of state.chunks) {
+      if (c.viewKind === 'snapshot') continue;
+      if (isFileBackedType(c.type)) addSource(c.source);
+    }
+    for (const [, c] of state.archivedChunks) {
+      if (c.viewKind === 'snapshot') continue;
+      if (isFileBackedType(c.type)) addSource(c.source);
+    }
+    for (const [, s] of state.stagedSnippets) {
+      if (s.viewKind === 'snapshot') continue;
+      addSource(s.source);
+    }
+
+    const paths = [...pathSet];
+    if (paths.length === 0) return { updated: 0, invalidated: 0, evicted: 0 };
+
+    if (!_bulkRevisionResolver) return { updated: 0, invalidated: 0, evicted: 0 };
+
+    let revisionMap: Map<string, string | null>;
+    try {
+      revisionMap = await _bulkRevisionResolver(paths);
+    } catch (e) {
+      console.warn('[contextStore] reconcileRestoredSession: bulk revision lookup failed:', e);
+      return { updated: 0, invalidated: 0, evicted: 0 };
+    }
+
+    let updated = 0;
+    let invalidated = 0;
+    let evicted = 0;
+    const deletedPaths: string[] = [];
+
+    for (const path of paths) {
+      let rev = revisionMap.get(path) ?? null;
+      if (rev == null) {
+        for (const [k, v] of revisionMap) {
+          if (v != null && normalizeSourcePath(k) === path) { rev = v; break; }
+        }
+      }
+      if (rev == null) {
+        deletedPaths.push(path);
+        continue;
+      }
+      const stats = get().reconcileSourceRevision(path, rev, 'session_restore');
+      updated += stats.updated;
+      invalidated += stats.invalidated;
+    }
+
+    if (deletedPaths.length > 0) {
+      const { chunks: evictedChunks } = get().evictChunksForDeletedPaths(deletedPaths);
+      evicted += evictedChunks;
+    }
+
+    if (updated + invalidated + evicted > 0) {
+      get().recordMemoryEvent({
+        action: 'reconcile',
+        reason: 'session_restore_reconciliation',
+        refs: [
+          `updated:${updated}`,
+          `invalidated:${invalidated}`,
+          `evicted:${evicted}`,
+          `paths:${paths.length}`,
+        ],
+      });
+    }
+
+    return { updated, invalidated, evicted };
+  },
+
   reconcileSourceRevision: (path: string, currentRevision: string, cause?: FreshnessCause) => {
     const pathNorm = normalizeSourcePath(path);
     const effectiveCause = cause ?? consumeRevisionAdvanceCause(path) ?? 'external_file_change';
@@ -2540,11 +2633,19 @@ export const useContextStore = create<ContextStoreState>()(
       const newArchived = new Map(state.archivedChunks);
       const newStaged = new Map(state.stagedSnippets);
 
-      const matchesSource = (source?: string) => !!source && normalizeSourcePath(source) === pathNorm;
-
       for (const [key, chunk] of state.chunks) {
-        if (!matchesSource(chunk.source)) continue;
+        if (!sourceTouchesPath(chunk.source, path)) continue;
         stats.total++;
+        if (!isExactSourcePathMatch(chunk.source, path)) {
+          if (chunk.viewKind === 'snapshot') {
+            stats.preserved++;
+            continue;
+          }
+          newChunks.delete(key);
+          stats.invalidated++;
+          evictedHashes.push(chunk.hash);
+          continue;
+        }
         if (chunk.viewKind === 'snapshot') {
           stats.preserved++;
           continue;
@@ -2585,8 +2686,18 @@ export const useContextStore = create<ContextStoreState>()(
       }
 
       for (const [key, chunk] of state.archivedChunks) {
-        if (!matchesSource(chunk.source)) continue;
+        if (!sourceTouchesPath(chunk.source, path)) continue;
         stats.total++;
+        if (!isExactSourcePathMatch(chunk.source, path)) {
+          if (chunk.viewKind === 'snapshot') {
+            stats.preserved++;
+            continue;
+          }
+          newArchived.delete(key);
+          stats.invalidated++;
+          evictedHashes.push(chunk.hash);
+          continue;
+        }
         if (chunk.viewKind === 'snapshot') {
           stats.preserved++;
           continue;
@@ -2624,8 +2735,17 @@ export const useContextStore = create<ContextStoreState>()(
       }
 
       for (const [key, snippet] of state.stagedSnippets) {
-        if (!matchesSource(snippet.source)) continue;
+        if (!sourceTouchesPath(snippet.source, path)) continue;
         stats.total++;
+        if (!isExactSourcePathMatch(snippet.source, path)) {
+          if (snippet.viewKind === 'snapshot') {
+            stats.preserved++;
+            continue;
+          }
+          newStaged.delete(key);
+          stats.invalidated++;
+          continue;
+        }
         if (snippet.viewKind === 'snapshot') {
           stats.preserved++;
           continue;
@@ -4277,10 +4397,8 @@ export const useContextStore = create<ContextStoreState>()(
     // Optimized: filter by normalized path early instead of calling
     // sourceMatchesTargets (which re-normalizes) on every chunk.
     const state = get();
-    const matchesPath = (source: string | undefined): boolean => {
-      if (!source) return false;
-      return source.replace(/\\/g, '/').toLowerCase() === key;
-    };
+    const matchesPath = (source: string | undefined): boolean =>
+      sourceTouchesPath(source, filePath);
     for (const [, chunk] of state.chunks) {
       if (!chunk.sourceRevision || !matchesPath(chunk.source)) continue;
       if (chunk.sourceRevision !== entry.snapshotHash) return undefined;

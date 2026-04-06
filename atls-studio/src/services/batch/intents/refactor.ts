@@ -84,28 +84,32 @@ export const resolveRefactor: IntentResolver = (
     });
   }
 
-  const refactorWith: Record<string, unknown> = {
-    action: 'execute',
-    file_paths: [filePath],
-  };
-  if (symbolNames.length > 0) refactorWith.symbol_names = symbolNames;
-  if (targetFile) refactorWith.to = targetFile;
-  if (rawStrategy) refactorWith.strategy = rawStrategy;
+  const hasRefactorPayload = symbolNames.length > 0 || !!targetFile || !!rawStrategy;
 
-  steps.push({
-    id: refactorId,
-    use: 'change.refactor',
-    with: refactorWith,
-    ...(needsExtract
-      ? { if: { step_ok: extractId } }
-      : {}),
-  });
+  if (hasRefactorPayload) {
+    const refactorWith: Record<string, unknown> = {
+      action: 'execute',
+      file_paths: [filePath],
+    };
+    if (symbolNames.length > 0) refactorWith.symbol_names = symbolNames;
+    if (targetFile) refactorWith.to = targetFile;
+    if (rawStrategy) refactorWith.strategy = rawStrategy;
 
-  steps.push({
-    id: verifyId,
-    use: 'verify.build',
-    if: { step_ok: refactorId },
-  });
+    steps.push({
+      id: refactorId,
+      use: 'change.refactor',
+      with: refactorWith,
+      ...(needsExtract
+        ? { if: { step_ok: extractId } }
+        : {}),
+    });
+
+    steps.push({
+      id: verifyId,
+      use: 'verify.build',
+      if: { step_ok: refactorId },
+    });
+  }
 
   const lookahead = computeNextTargets(intentId, 'intent.refactor', [filePath], context);
   prepareNext.push(...lookahead);

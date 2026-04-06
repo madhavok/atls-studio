@@ -524,7 +524,7 @@ export function useChatPersistence() {
       let memorySnapshot: PersistedMemorySnapshot | null = null;
       try {
         memorySnapshot = await chatDb.getMemorySnapshot(sessionId);
-        if (memorySnapshot && (memorySnapshot.version === 2 || memorySnapshot.version === 3 || memorySnapshot.version === 4 || memorySnapshot.version === 5)) {
+        if (memorySnapshot && memorySnapshot.version >= 2 && memorySnapshot.version <= 6) {
           const normalizedStagedSnippets = normalizePersistedStagedEntries(memorySnapshot.stagedSnippets);
           useContextStore.setState({
             chunks: new Map(rehydrateChunkDates(memorySnapshot.chunks).map(chunk => [chunk.hash, chunk])),
@@ -545,6 +545,13 @@ export function useChatPersistence() {
             stageHashStack: memorySnapshot.stageHashStack,
             memoryEvents: memorySnapshot.memoryEvents ?? [],
             reconcileStats: memorySnapshot.reconcileStats ?? null,
+            ...(memorySnapshot.version >= 6 ? {
+              verifyArtifacts: new Map(memorySnapshot.verifyArtifacts ?? []),
+              awarenessCache: new Map(memorySnapshot.awarenessCache ?? []),
+              cumulativeCoveragePaths: new Set(memorySnapshot.cumulativeCoveragePaths ?? []),
+              fileReadSpinByPath: memorySnapshot.fileReadSpinByPath ?? {},
+              fileReadSpinRanges: memorySnapshot.fileReadSpinRanges ?? {},
+            } : {}),
           });
           useContextStore.setState(state => {
             const now = Date.now();
@@ -717,6 +724,14 @@ export function useChatPersistence() {
       const pp = useAppStore.getState().projectPath;
       if (pp) writeLastActiveSessionId(pp, sessionId);
       syncCurrentSessionIdToLocalStorage(sessionId);
+
+      if (restoredFromSnapshot) {
+        useContextStore.getState().reconcileRestoredSession().then(stats => {
+          if (stats.updated + stats.invalidated + stats.evicted > 0) {
+            console.log('[ChatPersistence] Post-restore reconciliation:', stats);
+          }
+        }).catch(e => console.warn('[ChatPersistence] Post-restore reconciliation failed:', e));
+      }
 
       console.log('[ChatPersistence] Session loaded:', sessionId, 
         `${result.messages.length} messages, ${result.blackboard.length} context chunks`);
@@ -1110,8 +1125,23 @@ export function useChatPersistence() {
       fileReadSpinByPath: snapshot.fileReadSpinByPath ?? {},
       fileReadSpinRanges: snapshot.fileReadSpinRanges ?? {},
     });
+    useContextStore.setState(state => {
+      const now = Date.now();
+      const chunks = new Map(state.chunks);
+      for (const [hash, chunk] of chunks) {
+        chunks.set(hash, { ...chunk, freshness: 'suspect', freshnessCause: 'session_restore', suspectSince: now });
+      }
+      const stagedSnippets = new Map(state.stagedSnippets);
+      for (const [key, snippet] of stagedSnippets) {
+        stagedSnippets.set(key, { ...snippet, stageState: 'stale', suspectSince: now });
+      }
+      return { chunks, stagedSnippets };
+    });
     if (snapshot.geminiCache) restoreGeminiCacheSnapshot(snapshot.geminiCache);
     applyV4SessionExtras(snapshot);
+    useContextStore.getState().reconcileRestoredSession().catch(e =>
+      console.warn('[ChatPersistence] applyMemorySnapshot reconciliation failed:', e),
+    );
   }, []);
 
   /**

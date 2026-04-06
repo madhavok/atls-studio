@@ -15,6 +15,24 @@ import { getTurn } from './hashProtocol';
 const TOOL_TIMEOUT_MS = 120000;
 /** Refactor/extract can exceed default when indexing large workspaces. */
 const REFACTOR_BATCH_TIMEOUT_MS = 300_000;
+/** Rollback (restore from registry hash) should be fast; cap separately so a stuck backend fails before 5 minutes. */
+const REFACTOR_ROLLBACK_TIMEOUT_MS = 90_000;
+
+/** Effective timeout for `atls_batch_query` (preflight + main invoke). Exported for unit tests. */
+export function getAtlsBatchQueryTimeoutMs(
+  operation: string,
+  params: Record<string, unknown>,
+  timeoutMs: number,
+): number {
+  if (operation !== 'change.refactor' && operation !== 'refactor') {
+    return timeoutMs;
+  }
+  if (params.action === 'rollback') {
+    // Do not use the 300s refactor bucket — restore-from-hash should be seconds; fail faster if Rust stalls.
+    return REFACTOR_ROLLBACK_TIMEOUT_MS;
+  }
+  return Math.max(timeoutMs, REFACTOR_BATCH_TIMEOUT_MS);
+}
 
 /** Client-only keys for atlsBatchQuery; never forwarded to Rust atls_batch_query. */
 function stripClientOnlyToolParams(p: Record<string, unknown>): Record<string, unknown> {
@@ -260,6 +278,8 @@ export async function invokeWithTimeout<T>(
     return await Promise.race([invokePromise, timeoutPromise]);
   } finally {
     if (timeoutId) clearTimeout(timeoutId);
+    // If the timeout won the race, `invoke` may still be pending; swallow late rejections.
+    void invokePromise.catch(() => {});
   }
 }
 
@@ -313,12 +333,6 @@ export async function atlsBatchQuery(
   const syncLookup = createHashLookup(sessionId);
   const setLookup = useContextStore.getState().createSetRefLookup();
 
-  /** Batch handlers call `refactor` / `verify` / etc.; op names differ from OperationKind (`change.refactor`). */
-  const batchTimeout = (op: string) =>
-    op === 'change.refactor' || op === 'refactor'
-      ? Math.max(timeoutMs, REFACTOR_BATCH_TIMEOUT_MS)
-      : timeoutMs;
-
   const hppLookup: HppHashLookup = async (hash: string) => {
     const r = syncLookup(hash.startsWith('h:') ? hash.slice(2) : hash);
     if (!r?.content) return null;
@@ -335,7 +349,7 @@ export async function atlsBatchQuery(
     invokeWithTimeout(
       'atls_batch_query',
       { operation: op, params: p, sessionId, hashLookup: syncLookup, setLookup },
-      batchTimeout(op),
+      getAtlsBatchQueryTimeoutMs(op, p, timeoutMs),
     );
 
   let preflight = await runFreshnessPreflight(operation, resolved, {
@@ -382,7 +396,7 @@ export async function atlsBatchQuery(
       hashLookup: syncLookup,
       setLookup,
     },
-    batchTimeout(operation),
+    getAtlsBatchQueryTimeoutMs(operation, resolved, timeoutMs),
   );
 }
 

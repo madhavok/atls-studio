@@ -71,7 +71,7 @@ const OP_ALIASES: Readonly<Partial<Record<OperationKind, Readonly<Record<string,
   'intent.refactor': { file: 'file_path', symbol: 'symbol_names', symbols: 'symbol_names' },
   'change.refactor': { source_file: 'source_file', target_file: 'target_file', from: 'source_file', to: 'target_file' },
   'intent.create': { path: 'target_path', file: 'target_path', references: 'ref_files' },
-  'intent.test': { file: 'source_file', test: 'test_file' },
+  'intent.test': { file: 'source_file', source_file: 'source_file', test: 'test_file' },
   'intent.search_replace': { query: 'search_query', old: 'old_text', new: 'new_text', glob: 'file_glob' },
   'intent.extract': {
     file: 'source_file',
@@ -295,9 +295,12 @@ export function normalizeStepParams(
     }
   }
 
-  // Wrap scalar file_paths (from op-specific aliases like from → file_paths)
+  // Wrap scalar file_paths (from op-specific aliases like from → file_paths).
+  // Split on commas when present so ps:"a.py,b.ts" becomes ["a.py","b.ts"].
   if (typeof out.file_paths === 'string') {
-    out.file_paths = [out.file_paths];
+    out.file_paths = out.file_paths.includes(',')
+      ? out.file_paths.split(',').map((s: string) => s.trim()).filter(Boolean)
+      : [out.file_paths];
   }
 
   // system.git: coerce files to string[] (batch JSON often sends a single path string)
@@ -324,6 +327,13 @@ export function normalizeStepParams(
     if (typeof out.keys === 'string') {
       out.keys = [out.keys];
     }
+  }
+
+  // Rescue stray `h` param from line-parser mis-split (h:XXXX → { h: "XXXX" }).
+  // This can happen from structured JSON input or older line-parser edge cases.
+  if (out.hashes === undefined && typeof out.h === 'string' && /^[0-9a-f]/i.test(out.h)) {
+    out.hashes = [`h:${out.h}`];
+    delete out.h;
   }
 
   // Coerce hashes from scalar string / nested objects to string[]
@@ -357,6 +367,22 @@ export function normalizeStepParams(
     const first = out.file_paths[0];
     if (typeof first === 'string' && first.trim()) {
       out.file_path = first.trim();
+    }
+  }
+
+  // change.refactor extract: promote sn + target_file into extractions array.
+  // The Rust extract_methods handler only accepts extractions:[{target_file, methods:[]}].
+  if (
+    op === 'change.refactor'
+    && out.action === 'extract'
+    && out.extractions === undefined
+  ) {
+    const targetFile = typeof out.target_file === 'string' ? out.target_file.trim() : '';
+    const methods = Array.isArray(out.symbol_names)
+      ? (out.symbol_names as unknown[]).filter((s): s is string => typeof s === 'string' && !!s.trim())
+      : [];
+    if (targetFile && methods.length > 0) {
+      out.extractions = [{ target_file: targetFile, methods }];
     }
   }
 

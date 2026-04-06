@@ -283,6 +283,25 @@ describe('same-source reconciliation', () => {
     expect(latestEvent?.action).toBe('reconcile');
   });
 
+  it('invalidates legacy composite comma-joined source on reconcile for a touched path', () => {
+    const store = useContextStore.getState();
+    const compositeShort = store.addChunk(
+      'a+b',
+      'smart',
+      'src/a.ts, src/b.ts',
+      undefined,
+      undefined,
+      'rev-old',
+      { sourceRevision: 'rev-old', viewKind: 'latest' },
+    );
+
+    const stats = store.reconcileSourceRevision('src/a.ts', 'rev-new');
+    expect(stats.invalidated).toBeGreaterThanOrEqual(1);
+
+    const stillThere = Array.from(useContextStore.getState().chunks.values()).some(c => c.shortHash === compositeShort);
+    expect(stillThere).toBe(false);
+  });
+
   it('same_file_prior_edit does not apply shifted to edit-refresh engrams already at currentRevision', () => {
     const store = useContextStore.getState();
     const hash = store.addChunk(
@@ -1174,5 +1193,109 @@ describe('evictChunksForDeletedPaths', () => {
     expect(
       Array.from(useContextStore.getState().chunks.values()).some(c => c.source === 'src/keep.ts'),
     ).toBe(true);
+  });
+
+  it('evicts legacy composite comma-joined source when any listed path is deleted', () => {
+    const store = useContextStore.getState();
+    addTestChunk('fused blob', 'smart', 'src/a.ts, src/b.ts', { sourceRevision: 'rev-x', viewKind: 'latest' });
+
+    const { chunks } = store.evictChunksForDeletedPaths(['src/a.ts']);
+    expect(chunks).toBe(1);
+    expect(
+      Array.from(useContextStore.getState().chunks.values()).some(c => c.source?.includes('src/a.ts')),
+    ).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// reconcileRestoredSession (session reload freshness reconciliation)
+// ---------------------------------------------------------------------------
+
+describe('reconcileRestoredSession', () => {
+  beforeEach(() => resetStore());
+
+  it('clears suspect on chunks whose sourceRevision matches disk', async () => {
+    const store = useContextStore.getState();
+    addTestChunk('fn foo() {}', 'file', 'src/foo.ts', { sourceRevision: 'rev-a' });
+
+    useContextStore.setState(state => {
+      const chunks = new Map(state.chunks);
+      for (const [hash, chunk] of chunks) {
+        chunks.set(hash, { ...chunk, freshness: 'suspect', freshnessCause: 'session_restore', suspectSince: Date.now() });
+      }
+      return { chunks };
+    });
+
+    setBulkRevisionResolver(async (paths) =>
+      new Map(paths.map(p => [p, 'rev-a'])),
+    );
+
+    const stats = await store.reconcileRestoredSession();
+    expect(stats.updated).toBe(1);
+    expect(stats.invalidated).toBe(0);
+    expect(stats.evicted).toBe(0);
+
+    const chunk = Array.from(useContextStore.getState().chunks.values()).find(c => c.source === 'src/foo.ts');
+    expect(chunk?.suspectSince).toBeUndefined();
+  });
+
+  it('marks chunks shifted when sourceRevision differs from disk (updated, not invalidated)', async () => {
+    addTestChunk('old content', 'file', 'src/changed.ts', { sourceRevision: 'rev-old' });
+
+    useContextStore.setState(state => {
+      const chunks = new Map(state.chunks);
+      for (const [hash, chunk] of chunks) {
+        chunks.set(hash, { ...chunk, freshness: 'suspect', freshnessCause: 'session_restore', suspectSince: Date.now() });
+      }
+      return { chunks };
+    });
+
+    setBulkRevisionResolver(async (paths) =>
+      new Map(paths.map(p => [p, 'rev-new'])),
+    );
+
+    const stats = await useContextStore.getState().reconcileRestoredSession();
+    expect(stats.updated).toBe(1);
+
+    const chunk = Array.from(useContextStore.getState().chunks.values()).find(c => c.source === 'src/changed.ts');
+    expect(chunk?.sourceRevision).toBe('rev-new');
+    expect(chunk?.suspectSince).toBeUndefined();
+  });
+
+  it('evicts chunks for deleted files (null revision)', async () => {
+    addTestChunk('gone content', 'file', 'src/gone.ts', { sourceRevision: 'rev-x' });
+
+    setBulkRevisionResolver(async (paths) =>
+      new Map(paths.map(p => [p, null])),
+    );
+
+    const stats = await useContextStore.getState().reconcileRestoredSession();
+    expect(stats.evicted).toBe(1);
+
+    expect(
+      Array.from(useContextStore.getState().chunks.values()).some(c => c.source === 'src/gone.ts'),
+    ).toBe(false);
+  });
+
+  it('gracefully no-ops when bulk resolver is not wired', async () => {
+    addTestChunk('fn foo() {}', 'file', 'src/foo.ts', { sourceRevision: 'rev-a' });
+    setBulkRevisionResolver(null);
+
+    const stats = await useContextStore.getState().reconcileRestoredSession();
+    expect(stats.updated).toBe(0);
+    expect(stats.invalidated).toBe(0);
+    expect(stats.evicted).toBe(0);
+  });
+
+  it('skips non-file-backed and snapshot chunks', async () => {
+    addTestChunk('tool output', 'result');
+    addTestChunk('snapshot', 'file', 'src/snap.ts', { sourceRevision: 'snap-1', viewKind: 'snapshot' });
+
+    setBulkRevisionResolver(async () => new Map());
+
+    const stats = await useContextStore.getState().reconcileRestoredSession();
+    expect(stats.updated).toBe(0);
+    expect(stats.invalidated).toBe(0);
+    expect(stats.evicted).toBe(0);
   });
 });

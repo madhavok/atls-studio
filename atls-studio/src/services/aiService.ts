@@ -2695,6 +2695,19 @@ async function streamChatViaTauri(
       
       const toolResults = await executeWithConcurrency(toolTasks, MAX_CONCURRENT_TOOLS, abortSignal);
 
+      // If aborted during tool execution, exit immediately
+      if (abortSignal.aborted) {
+        console.log('[aiService] Aborted during tool execution');
+        useAppStore.getState().setAgentProgress({ status: 'stopped', stoppedReason: 'aborted' });
+        break;
+      }
+
+      // Tools for this round are finished — switch off "Executing tools" immediately.
+      // Otherwise status stays `executing` until the next model round starts (line ~1785), which
+      // can be a long gap while we snapshot internals, token-count history via IPC, append
+      // deflated tool results, and run compression heuristics — looks like a hung tool loop.
+      useAppStore.getState().setAgentProgress({ status: 'thinking' });
+
       // Deterministic blocker merge: any non-null blocker wins over task_complete's implicit clear
       if (roundCompletionBlockers.length > 0) {
         const prev: string | null = runtimeCompletionBlocker;
@@ -2703,13 +2716,6 @@ async function streamChatViaTauri(
         if (runtimeCompletionBlocker !== prev) {
           console.log(`[aiService][telemetry] completionBlocker merged: ${prev ?? '(none)'} → ${runtimeCompletionBlocker ?? '(none)'} (round=${round}, sources=${roundCompletionBlockers.map(b => b.toolName).join(',')})`);
         }
-      }
-
-      // If aborted during tool execution, exit immediately
-      if (abortSignal.aborted) {
-        console.log('[aiService] Aborted during tool execution');
-        useAppStore.getState().setAgentProgress({ status: 'stopped', stoppedReason: 'aborted' });
-        break;
       }
 
       if (roundObservedNonCompletionTool && startedWithStateChanged && roundPendingAction.kind === 'state_changed') {

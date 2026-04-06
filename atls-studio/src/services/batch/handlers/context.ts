@@ -2,7 +2,7 @@
  * Context read/load/shape handlers — read, read_lines, read_shaped, load, shape, emit.
  */
 
-import type { OpHandler, StepOutput, ExpandedFilePath } from '../types';
+import type { OpHandler, StepOutput, ExpandedFilePath, HandlerContext } from '../types';
 import { getFreshnessHintForRefs } from '../../freshnessPreflight';
 import { hashContentSync, SHORT_HASH_LEN, type DigestSymbol } from '../../../utils/contextHash';
 import { countTokensSync } from '../../../utils/tokenCounter';
@@ -97,6 +97,105 @@ function extractFilePath(payload: Record<string, unknown>): string | undefined {
   return typeof filePath === 'string' ? filePath : undefined;
 }
 
+/** Standard (non-shaped) context query results → one WM chunk per file; shared by read.context and multi-path read.file. */
+function ingestStandardContextItems(
+  ctx: HandlerContext,
+  items: Array<Record<string, unknown>>,
+  opts: {
+    loadType: string;
+    readShape?: string;
+    readBind?: string[];
+    isTreeRead: boolean;
+    filePaths: string[];
+    opLabel: 'read' | 'load';
+  },
+  io: {
+    lines: string[];
+    allRefs: string[];
+    readResults: Array<Record<string, unknown>>;
+    totalTokensDelta: number;
+    treePathsAccum: string[];
+    treeTextsAccum: string[];
+    treePathsTruncated: boolean;
+  },
+): void {
+  const { loadType, readShape, readBind, isTreeRead, filePaths, opLabel } = opts;
+  const isFull = loadType === 'raw' || loadType === 'full';
+  const chunkType = isFull ? 'raw' : 'smart';
+  const bindIds = readBind?.length ? readBind : undefined;
+  const p = `${opLabel}:`;
+
+  for (const item of items) {
+    const r = item as Record<string, unknown>;
+    if (r.error) {
+      const errFile = String(r.file || '?');
+      const errMsg = String(r.error);
+      if (isTreeRead && (errMsg.includes('not found') || errMsg.includes('not a directory'))) {
+        io.lines.push(`${p} ${errFile} → ERROR ${errMsg} — tree reads expect a directory path (e.g. "src/"), not an individual file. Use type:"smart" to read files.`);
+      } else {
+        io.lines.push(`${p} ${errFile} → ERROR ${errMsg}`);
+      }
+      continue;
+    }
+    let raw: unknown = r.content ?? r.context ?? r.text;
+    if (isTreeRead && typeof r.tree === 'string') {
+      raw = r.tree;
+    }
+    const content = (typeof raw === 'string') ? raw : formatResult(raw ?? item);
+    const src = isTreeRead
+      ? String(r.root ?? r.file ?? r.path ?? filePaths[0] ?? '')
+      : String(r.file ?? r.path ?? filePaths[0] ?? '');
+    const backendHash = extractContentHash(r);
+    if (backendHash && src) {
+      const reusedRead = ctx.store().findReusableRead({ filePath: src, sourceRevision: backendHash, shape: readShape, contextType: loadType });
+      if (reusedRead) {
+        useRetentionStore.getState().incrementReadsReused();
+        io.allRefs.push(`h:${reusedRead}`);
+        io.readResults.push({ file: src, h: `h:${reusedRead}`, ...(backendHash ? { content_hash: backendHash } : {}) });
+        io.lines.push(`${p} ERROR redundant — ${src} already at h:${reusedRead} (same rev). Content is live. Use read.lines(ref:"h:${reusedRead}:LL-LL") for a different span, or change.edit file_path:"h:${reusedRead}:source". Do NOT re-read.`);
+        continue;
+      }
+    }
+
+    const hash = ctx.store().addChunk(
+      content,
+      chunkType,
+      src,
+      (item as Record<string, unknown>).symbols as DigestSymbol[] | undefined,
+      undefined,
+      backendHash,
+      {
+        ...(bindIds ? { subtaskIds: bindIds } : {}),
+        ...(backendHash ? { sourceRevision: backendHash } : {}),
+        viewKind: 'latest',
+        ...(backendHash && src ? { readSpan: { filePath: src, sourceRevision: backendHash, shape: readShape, contextType: loadType } } : {}),
+      },
+    );
+    const tk = countTokensSync(content);
+    io.totalTokensDelta += tk;
+    io.allRefs.push(`h:${hash}`);
+    io.readResults.push({
+      file: src,
+      h: `h:${hash}`,
+      ...(backendHash ? { content_hash: backendHash } : {}),
+      ...(isTreeRead && r.root != null ? { root: r.root } : {}),
+    });
+    if (isTreeRead) {
+      if (typeof r.tree === 'string') io.treeTextsAccum.push(r.tree);
+      if (Array.isArray(r.file_paths)) {
+        for (const fp of r.file_paths as string[]) io.treePathsAccum.push(fp);
+      }
+      if (r.file_paths_truncated === true) io.treePathsTruncated = true;
+    }
+    ctx.store().clearSuspect(src);
+    if (backendHash) ctx.store().reconcileSourceRevision(src, backendHash);
+    ctx.store().recordMemoryEvent({ action: 'read', reason: 'context', source: src, newRevision: backendHash, refs: [`h:${hash}`] });
+    const prevInfo = r.previous as Record<string, unknown> | undefined;
+    const prevSuffix = prevInfo ? ` previous:${prevInfo.hash} edits:${prevInfo.edits}` : '';
+    io.lines.push(`${p} ${src} → h:${hash} (${tk}tk)${prevSuffix}`);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // load
 // ---------------------------------------------------------------------------
@@ -133,6 +232,36 @@ export const handleLoad: OpHandler = async (params, ctx) => {
         lines.push(`load: ERROR redundant — ${filePaths[0]} already at h:${reused} (same rev). Content is live at that hash. Do NOT re-read. Use h:${reused} in file_path params directly, or change.edit file_path:"h:${reused}:source".`);
         return { kind: 'file_refs', ok: false, refs: [`h:${reused}`], summary: lines.join('\n'), tokens: 0 };
       }
+    }
+
+    if (filePaths.length > 1) {
+      const io = {
+        lines,
+        allRefs: [] as string[],
+        readResults: [] as Array<Record<string, unknown>>,
+        totalTokensDelta: 0,
+        treePathsAccum: [] as string[],
+        treeTextsAccum: [] as string[],
+        treePathsTruncated: false,
+      };
+      ingestStandardContextItems(ctx, items, {
+        loadType,
+        isTreeRead: false,
+        filePaths,
+        opLabel: 'load',
+      }, io);
+      const store = ctx.store();
+      const freshnessHint = getFreshnessHintForRefs(store, io.allRefs);
+      const summary = lines.join('\n');
+      return {
+        kind: 'file_refs',
+        ok: true,
+        refs: io.allRefs,
+        summary: freshnessHint ? `${summary}\n${freshnessHint}` : summary,
+        tokens: io.totalTokensDelta,
+        content: { results: io.readResults },
+        ...(freshnessHint ? { _hash_warnings: [freshnessHint] } : {}),
+      };
     }
 
     const hash = ctx.store().addChunk(resultStr, isFull ? 'raw' : 'smart', filePaths.join(', '), symbols, undefined, backendHash, {
@@ -250,77 +379,25 @@ export const handleRead: OpHandler = async (params, ctx) => {
         const result = await ctx.atlsBatchQuery('context', contextParams) as Record<string, unknown>;
         const items = (result as Record<string, unknown>)?.results;
         if (Array.isArray(items)) {
-          for (const item of items) {
-            const r = item as Record<string, unknown>;
-            if (r.error) {
-              const errFile = String(r.file || '?');
-              const errMsg = String(r.error);
-              if (isTreeRead && (errMsg.includes('not found') || errMsg.includes('not a directory'))) {
-                lines.push(`read: ${errFile} → ERROR ${errMsg} — tree reads expect a directory path (e.g. "src/"), not an individual file. Use type:"smart" to read files.`);
-              } else {
-                lines.push(`read: ${errFile} → ERROR ${errMsg}`);
-              }
-              continue;
-            }
-            let raw: unknown = r.content ?? r.context ?? r.text;
-            if (isTreeRead && typeof r.tree === 'string') {
-              raw = r.tree;
-            }
-            const content = (typeof raw === 'string') ? raw : formatResult(raw ?? item);
-            const src = isTreeRead
-              ? String(r.root ?? r.file ?? r.path ?? filePaths[0] ?? '')
-              : String(r.file ?? r.path ?? filePaths[0] ?? '');
-            const backendHash = extractContentHash(r);
-            const chunkType = isFull ? 'raw' : 'smart';
-            const bindIds = readBind?.length ? readBind : undefined;
-            if (backendHash && src) {
-              const reusedRead = ctx.store().findReusableRead({ filePath: src, sourceRevision: backendHash, shape: readShape, contextType: loadType });
-              if (reusedRead) {
-                useRetentionStore.getState().incrementReadsReused();
-                allRefs.push(`h:${reusedRead}`);
-                readResults.push({ file: src, h: `h:${reusedRead}`, ...(backendHash ? { content_hash: backendHash } : {}) });
-                lines.push(`read: ERROR redundant — ${src} already at h:${reusedRead} (same rev). Content is live. Use read.lines(ref:"h:${reusedRead}:LL-LL") for a different span, or change.edit file_path:"h:${reusedRead}:source". Do NOT re-read.`);
-                continue;
-              }
-            }
-
-            const hash = ctx.store().addChunk(
-              content,
-              chunkType,
-              src,
-              (item as Record<string, unknown>).symbols as DigestSymbol[] | undefined,
-              undefined,
-              backendHash,
-              {
-                ...(bindIds ? { subtaskIds: bindIds } : {}),
-                ...(backendHash ? { sourceRevision: backendHash } : {}),
-                viewKind: 'latest',
-                ...(backendHash && src ? { readSpan: { filePath: src, sourceRevision: backendHash, shape: readShape, contextType: loadType } } : {}),
-              },
-            );
-            const tk = countTokensSync(content);
-            totalTokensDelta += tk;
-            allRefs.push(`h:${hash}`);
-            readResults.push({
-              file: src,
-              h: `h:${hash}`,
-              ...(backendHash ? { content_hash: backendHash } : {}),
-              ...(isTreeRead && r.root != null ? { root: r.root } : {}),
-            });
-            if (isTreeRead) {
-              if (typeof r.tree === 'string') treeTextsAccum.push(r.tree);
-              if (Array.isArray(r.file_paths)) {
-                for (const p of r.file_paths as string[]) treePathsAccum.push(p);
-              }
-              if (r.file_paths_truncated === true) treePathsTruncated = true;
-            }
-            ctx.store().clearSuspect(src);
-            if (backendHash) ctx.store().reconcileSourceRevision(src, backendHash);
-            ctx.store().recordMemoryEvent({ action: 'read', reason: 'context', source: src, newRevision: backendHash, refs: [`h:${hash}`] });
-            const prevInfo = r.previous as Record<string, unknown> | undefined;
-            const prevSuffix = prevInfo ? ` previous:${prevInfo.hash} edits:${prevInfo.edits}` : '';
-            lines.push(`read: ${src} → h:${hash} (${tk}tk)${prevSuffix}`);
-          }
+          const io = {
+            lines,
+            allRefs,
+            readResults,
+            totalTokensDelta, // carry temporal-item token sum into per-file ingest
+            treePathsAccum,
+            treeTextsAccum,
+            treePathsTruncated,
+          };
+          ingestStandardContextItems(ctx, items as Array<Record<string, unknown>>, {
+            loadType,
+            readShape,
+            readBind,
+            isTreeRead,
+            filePaths,
+            opLabel: 'read',
+          }, io);
+          totalTokensDelta = io.totalTokensDelta;
+          treePathsTruncated = io.treePathsTruncated;
         } else {
           lines.push('read: no results');
         }

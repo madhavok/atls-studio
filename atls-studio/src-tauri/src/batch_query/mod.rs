@@ -6162,12 +6162,15 @@ pub async fn atls_batch_query(
                     .map_err(|e| format!("Failed to read source file: {}", e))?;
 
                 let source_lang = atls_core::Language::from_extension(
-                    std::path::Path::new(source_file)
-                        .extension()
+                    resolved_source.extension()
                         .and_then(|s| s.to_str())
                         .unwrap_or("")
                 );
                 let is_rust = matches!(source_lang, atls_core::Language::Rust);
+                let is_python = matches!(source_lang, atls_core::Language::Python);
+                let child_ext = if is_python { "py" } else if is_rust { "rs" } else {
+                    resolved_source.extension().and_then(|s| s.to_str()).unwrap_or("rs")
+                };
 
                 // Validate all symbols exist and collect their content + ranges
                 struct ResolvedSymbol {
@@ -6252,13 +6255,8 @@ pub async fn atls_batch_query(
                 for (module_name, symbols) in &all_resolved {
                     if symbols.is_empty() { continue; }
 
-                    let module_file = if mod_style == "mod_rs" {
-                        format!("{}/{}.rs", target_dir, module_name)
-                    } else {
-                        format!("{}/{}.rs", target_dir, module_name)
-                    };
+                    let module_file = format!("{}/{}.{}", target_dir, module_name, child_ext);
 
-                    // Build module content: use super imports + symbol bodies
                     let mut module_content = String::new();
                     if is_rust {
                         module_content.push_str("use super::*;\n\n");
@@ -6269,10 +6267,15 @@ pub async fn atls_batch_query(
                     }
                     module_content.push('\n');
 
-                    // Collect pub mod and pub use declarations
-                    mod_declarations.push(format!("pub mod {};", module_name));
+                    if is_python {
+                        mod_declarations.push(format!("from .{} import *", module_name));
+                    } else {
+                        mod_declarations.push(format!("pub mod {};", module_name));
+                    }
                     for sym in symbols {
-                        pub_use_lines.push(format!("pub use {}::{};", module_name, sym.name));
+                        if !is_python {
+                            pub_use_lines.push(format!("pub use {}::{};", module_name, sym.name));
+                        }
                     }
 
                     let module_file_path = resolve_project_path(project_root, &module_file);
@@ -6289,8 +6292,9 @@ pub async fn atls_batch_query(
                     }
                 }
 
-                // Build mod.rs content
-                let mod_rs_path = if mod_style == "mod_rs" {
+                let mod_rs_path = if is_python {
+                    format!("{}/__init__.py", target_dir)
+                } else if mod_style == "mod_rs" {
                     format!("{}/mod.rs", target_dir)
                 } else {
                     format!("{}.rs", target_dir.trim_end_matches('/'))
@@ -9760,8 +9764,28 @@ pub async fn atls_batch_query(
                     .and_then(|v| v.as_u64())
                     .unwrap_or(50) as usize;
                 
-                // Find all usages of the symbol
-                let usage = match project.query().get_symbol_usage(old_name) {
+                // Determine source language from file_path/source_file param to scope
+                // the index query — avoids fetching cross-language rows entirely.
+                let source_lang_hint: Option<String> = params
+                    .get("file_path")
+                    .or_else(|| params.get("source_file"))
+                    .and_then(|v| v.as_str())
+                    .and_then(|fp| {
+                        let ext = std::path::Path::new(fp)
+                            .extension()
+                            .and_then(|s| s.to_str())
+                            .unwrap_or("");
+                        let lang = atls_core::Language::from_extension(ext);
+                        if lang == atls_core::Language::Unknown { None }
+                        else { Some(lang.as_str().to_string()) }
+                    });
+
+                // Find all usages of the symbol — language-filtered when possible.
+                let usage = match &source_lang_hint {
+                    Some(lang) => project.query().get_symbol_usage_for_language(old_name, lang),
+                    None => project.query().get_symbol_usage(old_name),
+                };
+                let usage = match usage {
                     Ok(u) => u,
                     Err(e) => {
                         return Ok(serde_json::json!({
@@ -9773,10 +9797,10 @@ pub async fn atls_batch_query(
                 };
                 
                 // --- Language scoping: determine the definition language ---
-                // Use the first definition's language as the authoritative source.
-                // Only rename within files of the same language to prevent cross-language contamination.
-                let def_language: Option<String> = usage.definitions.first()
-                    .and_then(|d| d.language.clone());
+                // When source_lang_hint is set the query was already filtered; fall back
+                // to the first definition's language for post-query filtering.
+                let def_language: Option<String> = source_lang_hint.clone()
+                    .or_else(|| usage.definitions.first().and_then(|d| d.language.clone()));
                 
                 let mut warnings: Vec<String> = Vec::new();
                 
@@ -13901,10 +13925,29 @@ pub async fn atls_batch_query(
                 }));
             }
             "refactor_rollback" => {
+                // Try to acquire the refactor mutex with a bounded wait so rollback
+                // fails fast when a long-running execute holds the lock.
                 let refactor_state = app.state::<RefactorMutexState>();
-                let _refactor_guard = refactor_state.guard.lock().await;
-                // Restore files to pre-refactor state using hash registry.
-                // Accepts an array of {file, hash} pairs representing the state to restore.
+                let _refactor_guard = {
+                    const MAX_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
+                    const POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(100);
+                    let deadline = tokio::time::Instant::now() + MAX_WAIT;
+                    loop {
+                        match refactor_state.guard.try_lock() {
+                            Ok(guard) => break guard,
+                            Err(_) => {
+                                if tokio::time::Instant::now() >= deadline {
+                                    return Err(
+                                        "refactor_rollback: a refactor operation is in progress. \
+                                         Retry after it completes, or use system.git(action:'restore') as a fallback."
+                                            .to_string(),
+                                    );
+                                }
+                                tokio::time::sleep(POLL_INTERVAL).await;
+                            }
+                        }
+                    }
+                };
                 let restore_entries: Vec<serde_json::Value> = params.get("restore")
                     .and_then(|v| v.as_array())
                     .cloned()
@@ -13915,7 +13958,6 @@ pub async fn atls_batch_query(
                 }
                 
                 let hr_state = app.state::<hash_resolver::HashRegistryState>();
-                let registry = hr_state.registry.lock().await;
                 
                 let mut restored: Vec<serde_json::Value> = Vec::new();
                 let mut errors: Vec<serde_json::Value> = Vec::new();
@@ -13934,11 +13976,14 @@ pub async fn atls_batch_query(
                         continue;
                     }
                     
-                    // Resolve content from hash registry (bypass forwarding for rollback)
-                    match registry.resolve_content_original(hash) {
+                    // Resolve content from per-entry registry lock (avoids holding lock across all I/O).
+                    let content_from_registry = {
+                        let registry = hr_state.registry.lock().await;
+                        registry.resolve_content_original(hash).map(|c| c.to_string())
+                    };
+                    match content_from_registry {
                         Some(content) => {
                             let resolved = resolve_project_path(project_root, file_path);
-                            // Registry stores LF-normalized text; preserve on-disk CRLF/LF like other writes.
                             let fmt = if resolved.exists() {
                                 std::fs::read(&resolved)
                                     .map(|raw| detect_format(&raw))
@@ -13967,7 +14012,7 @@ pub async fn atls_batch_query(
                             }
                         }
                         None => {
-                            // Try undo store as fallback
+                            // Try undo store as fallback (registry lock already released).
                             let undo_state = app.state::<UndoStoreState>();
                             let undo_store = undo_state.entries.lock().await;
                             let undo_content: Option<String> = undo_store.values().flatten()
@@ -14014,8 +14059,6 @@ pub async fn atls_batch_query(
                         }
                     }
                 }
-                
-                drop(registry);
 
                 // Delete files created during the refactor
                 let delete_paths: Vec<String> = params.get("delete")

@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useContextStore } from '../../../stores/contextStore';
-import { handleRead, handleReadLines, handleReadShaped } from './context';
+import { handleLoad, handleRead, handleReadLines, handleReadShaped } from './context';
 
 const invokeMock = vi.fn();
 const invokeWithTimeoutMock = vi.fn();
@@ -36,6 +36,26 @@ describe('context handlers snapshot authority', () => {
     resetContextStore();
     invokeMock.mockReset();
     invokeWithTimeoutMock.mockReset();
+  });
+
+  it('multi-path read.file (load) ingests one chunk per file and returns multiple refs', async () => {
+    const ctx = makeCtx({
+      atlsBatchQuery: vi.fn().mockResolvedValue({
+        results: [
+          { file: 'src/a.ts', content: 'export const a = 1;\n', content_hash: 'ha111111' },
+          { file: 'src/b.ts', content: 'export const b = 2;\n', content_hash: 'hb222222' },
+        ],
+      }),
+    });
+
+    const result = await handleLoad({ file_paths: ['src/a.ts', 'src/b.ts'] }, ctx);
+
+    expect(result.ok).toBe(true);
+    expect(result.refs).toHaveLength(2);
+    expect(result.refs?.every(r => typeof r === 'string' && r.startsWith('h:'))).toBe(true);
+    const content = result.content as { results: Array<{ file: string; h: string }> };
+    expect(content?.results).toHaveLength(2);
+    expect(useContextStore.getState().chunks.size).toBe(2);
   });
 
   it('returns canonical snapshot results for read.context', async () => {

@@ -105,6 +105,14 @@ When pinning, the model can request structural views:
 
 The `sig` shape extracts function/class declarations, preserving structural awareness at a fraction of the token cost.
 
+### Multi-path `read.file`
+
+When `read.file` is given multiple paths, working memory stores **one engram per file** and returns **one `h:` ref per file** (aligned with `read.context`). Prompts that assumed a single composite ref for multi-file loads should be updated.
+
+### `session.drop` and dormant stubs
+
+`session.drop` with `scope:"dormant"` permanently drops **compacted, unpinned** chunks still in working memory (the same “dormant” region as memory search). Explicit `hashes` are optional when `scope` is set; otherwise `hashes` is required.
+
 ## Memory Regions
 
 The context store maintains four concurrent regions:

@@ -1342,6 +1342,25 @@ describe('handleDelete routing and confirm', () => {
     const passedParams = atlsBatchQuery.mock.calls[0][1];
     expect(passedParams).not.toHaveProperty('mode');
   });
+
+  it('evicts legacy composite chunks when Rust returns deleted-only array', async () => {
+    const store = useContextStore.getState();
+    store.addChunk('fused', 'smart', 'src/a.ts, src/b.ts', undefined, undefined, 'rev1', {
+      sourceRevision: 'rev1',
+      viewKind: 'latest',
+    });
+    expect(useContextStore.getState().chunks.size).toBe(1);
+
+    const atlsBatchQuery = vi.fn().mockResolvedValue({ deleted: ['src/a.ts'], status: 'ok' });
+    const ctx = {
+      atlsBatchQuery,
+      store: () => useContextStore.getState(),
+    } as unknown as Parameters<typeof handleDelete>[1];
+
+    const out = await handleDelete({ file_paths: ['src/a.ts'] }, ctx);
+    expect(out.ok).toBe(true);
+    expect(useContextStore.getState().chunks.size).toBe(0);
+  });
 });
 
 describe('resolveEditOperation with deletes', () => {

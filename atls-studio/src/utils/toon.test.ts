@@ -388,6 +388,24 @@ describe('parseBatchLines', () => {
     expect(le).toHaveLength(1);
     expect((le[0] as Record<string, unknown>).content).toBe('const msg = ${name}');
   });
+
+  it('routes bare h:XXXX token to hashes array', () => {
+    const result = parseBatchLines('r1 rec h:deadbeef');
+    expect(result.steps).toHaveLength(1);
+    expect(result.steps[0].with).toEqual({ hashes: ['h:deadbeef'] });
+  });
+
+  it('accumulates multiple h: tokens into single hashes array', () => {
+    const result = parseBatchLines('r1 rec h:aaa111 h:bbb222');
+    expect(result.steps).toHaveLength(1);
+    expect(result.steps[0].with).toEqual({ hashes: ['h:aaa111', 'h:bbb222'] });
+  });
+
+  it('preserves h: tokens with line-spec modifiers', () => {
+    const result = parseBatchLines('r1 rec h:deadbeef:10-20');
+    expect(result.steps).toHaveLength(1);
+    expect(result.steps[0].with).toEqual({ hashes: ['h:deadbeef:10-20'] });
+  });
 });
 
 describe('expandBatchQ', () => {

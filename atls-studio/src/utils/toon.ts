@@ -426,6 +426,20 @@ export function parseBatchLines(q: string): { version: '1.0'; steps: Record<stri
       const key = token.slice(0, colonIdx);
       const rawVal = token.slice(colonIdx + 1);
 
+      // Detect bare hash refs (h:XXXX, possibly with :line-spec or :modifier).
+      // These should accumulate into `hashes`, not become `{ h: "XXXX" }`.
+      if (key === 'h' && /^[0-9a-f]/i.test(rawVal)) {
+        const existing = withParams.hashes;
+        const hashRef = token; // preserve full token including h: prefix
+        if (Array.isArray(existing)) {
+          existing.push(hashRef);
+        } else {
+          withParams.hashes = [hashRef];
+        }
+        hasWithParams = true;
+        continue;
+      }
+
       if (key === 'in') {
         step.in = expandDataflow(rawVal);
       } else if (key === 'if') {

@@ -50,6 +50,13 @@ describe('normalizeStepParams', () => {
       expect(out.file_paths).toBeUndefined();
     });
 
+    it('preserves "source_file" for intent.test (not promoted to file_paths)', () => {
+      const out = normalizeStepParams('intent.test', { source_file: 'src/foo.ts' });
+      expect(out.source_file).toBe('src/foo.ts');
+      expect(out.file_path).toBeUndefined();
+      expect(out.file_paths).toBeUndefined();
+    });
+
     it('maps file_paths[0] to file_path for change.refactor when file_path missing (extract_methods)', () => {
       const out = normalizeStepParams('change.refactor', {
         action: 'extract',
@@ -58,6 +65,28 @@ describe('normalizeStepParams', () => {
       });
       expect(out.file_paths).toEqual(['src/lib.rs']);
       expect(out.file_path).toBe('src/lib.rs');
+    });
+
+    it('promotes sn + target_file into extractions for change.refactor extract', () => {
+      const out = normalizeStepParams('change.refactor', {
+        action: 'extract',
+        ps: 'src/big.py',
+        sn: 'Calculator',
+        target_file: 'src/calc.py',
+      });
+      expect(out.extractions).toEqual([{ target_file: 'src/calc.py', methods: ['Calculator'] }]);
+    });
+
+    it('does not promote extractions when already present', () => {
+      const existing = [{ target_file: 'src/x.py', methods: ['foo'] }];
+      const out = normalizeStepParams('change.refactor', {
+        action: 'extract',
+        ps: 'src/big.py',
+        sn: 'bar',
+        target_file: 'src/y.py',
+        extractions: existing,
+      });
+      expect(out.extractions).toBe(existing);
     });
 
     it('fills old_name from symbol_names for change.refactor rename', () => {
@@ -351,6 +380,32 @@ describe('normalizeStepParams', () => {
         file_paths: 'src/a.ts',
       });
       expect(out.files).toEqual(['src/a.ts']);
+    });
+
+    it('splits comma-separated file_paths string into array', () => {
+      const out = normalizeStepParams('change.delete', { file_paths: 'src/a.py,src/b.ts,src/c.rs' });
+      expect(out.file_paths).toEqual(['src/a.py', 'src/b.ts', 'src/c.rs']);
+    });
+
+    it('trims whitespace around comma-separated file_paths entries', () => {
+      const out = normalizeStepParams('change.delete', { file_paths: ' src/a.py , src/b.ts ' });
+      expect(out.file_paths).toEqual(['src/a.py', 'src/b.ts']);
+    });
+
+    it('wraps single file_paths string without commas as single-element array', () => {
+      const out = normalizeStepParams('change.delete', { file_paths: 'src/only.ts' });
+      expect(out.file_paths).toEqual(['src/only.ts']);
+    });
+
+    it('rescues stray h param into hashes array', () => {
+      const out = normalizeStepParams('session.recall', { h: 'deadbeef' });
+      expect(out.hashes).toEqual(['h:deadbeef']);
+      expect(out.h).toBeUndefined();
+    });
+
+    it('does not rescue h param when hashes already present', () => {
+      const out = normalizeStepParams('session.recall', { hashes: ['h:aaa111'], h: 'bbb222' });
+      expect(out.hashes).toEqual(['h:aaa111']);
     });
 
     it('passes through unknown params unchanged', () => {

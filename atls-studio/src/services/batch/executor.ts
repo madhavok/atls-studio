@@ -1663,6 +1663,16 @@ export async function executeUnifiedBatch(
       && step.use.startsWith('change.')
       && shouldStopBatchAfterDryRunPreview(stepArtifact)
     ) {
+      // Record skipped trailing steps so the agent knows they were dropped.
+      const remaining = stepsToRun.slice(i + 1).filter(s => !s.id.includes('__auto'));
+      for (const skipped of remaining) {
+        recordStepResult(skipped.id, skipped.use, {
+          kind: 'raw',
+          ok: true,
+          refs: [],
+          summary: `${skipped.id}: SKIPPED (dry_run/preview stop after ${step.id})`,
+        }, 0);
+      }
       break;
     }
     // Error handling

@@ -109,7 +109,9 @@ describe('executeUnifiedBatch interruption handling', () => {
 
     expect(result.ok).toBe(true);
     expect(result.interruption).toBeUndefined();
-    expect(result.step_results).toHaveLength(1);
+    expect(result.step_results).toHaveLength(2);
+    expect(result.step_results[1].summary).toContain('SKIPPED');
+    expect(result.step_results[1].summary).toContain('dry_run/preview');
     expect(applySpy).not.toHaveBeenCalled();
   });
 

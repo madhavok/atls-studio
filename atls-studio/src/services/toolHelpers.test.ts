@@ -1,13 +1,28 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { invoke } from '@tauri-apps/api/core';
 import { useContextStore } from '../stores/contextStore';
-import { resolveSearchRefs } from './toolHelpers';
+import { getAtlsBatchQueryTimeoutMs, resolveSearchRefs } from './toolHelpers';
 
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: vi.fn(),
 }));
 
 const invokeMock = vi.mocked(invoke);
+
+describe('getAtlsBatchQueryTimeoutMs', () => {
+  it('uses 300s floor for refactor (non-rollback)', () => {
+    expect(getAtlsBatchQueryTimeoutMs('refactor', { action: 'execute' }, 120_000)).toBe(300_000);
+    expect(getAtlsBatchQueryTimeoutMs('change.refactor', {}, 50_000)).toBe(300_000);
+  });
+
+  it('uses 90s for refactor rollback (not the 300s refactor bucket)', () => {
+    expect(getAtlsBatchQueryTimeoutMs('refactor', { action: 'rollback' }, 120_000)).toBe(90_000);
+  });
+
+  it('passes through default timeout for other operations', () => {
+    expect(getAtlsBatchQueryTimeoutMs('context', { type: 'full' }, 120_000)).toBe(120_000);
+  });
+});
 
 describe('resolveSearchRefs', () => {
   beforeEach(() => {

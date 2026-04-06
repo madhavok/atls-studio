@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { handlePin, handleStage, handleStats, handleTaskAdvance, handleTaskPlan } from './session';
+import { handleDrop, handlePin, handleStage, handleStats, handleTaskAdvance, handleTaskPlan } from './session';
 import { useContextStore } from '../../../stores/contextStore';
 
 function createMockCtx(overrides?: Partial<{
@@ -185,6 +185,45 @@ describe('handlePin', () => {
     expect(result.summary).toContain('pin: no matching chunks');
     expect(result.summary).toContain('from_step');
     expect(result.summary).toContain('h:r1');
+  });
+});
+
+describe('handleDrop', () => {
+  beforeEach(() => {
+    useContextStore.getState().resetSession();
+  });
+
+  it('scope:dormant drops compacted unpinned chunks without explicit hashes', async () => {
+    const store = useContextStore.getState();
+    const short = store.addChunk('content to compact', 'smart', 'src/dormant.ts', undefined, undefined, 'rev1', {
+      sourceRevision: 'rev1',
+      viewKind: 'latest',
+    });
+    const { compacted } = store.compactChunks([`h:${short}`]);
+    expect(compacted).toBe(1);
+
+    const ctx = createMockCtx() as unknown as Parameters<typeof handleDrop>[1];
+    const result = await handleDrop({ scope: 'dormant' }, ctx);
+
+    expect(result.ok).toBe(true);
+    expect(result.summary).toContain('scope:dormant');
+    expect(
+      Array.from(useContextStore.getState().chunks.values()).some(c => c.shortHash === short),
+    ).toBe(false);
+  });
+
+  it('scope:dormant returns ok when no dormant compacted chunks exist', async () => {
+    const ctx = createMockCtx() as unknown as Parameters<typeof handleDrop>[1];
+    const result = await handleDrop({ scope: 'dormant' }, ctx);
+    expect(result.ok).toBe(true);
+    expect(result.summary).toMatch(/0 dormant/);
+  });
+
+  it('requires hashes when scope is not dormant', async () => {
+    const ctx = createMockCtx() as unknown as Parameters<typeof handleDrop>[1];
+    const result = await handleDrop({}, ctx);
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatch(/missing hashes/);
   });
 });
 
