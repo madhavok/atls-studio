@@ -1,150 +1,164 @@
 /**
  * TORTURE TEST: Bracket & Comment Nightmare
- * Purpose: stress-test edit tooling against pathological syntax
- *
- * Contains: nested generics, string-embedded braces, template literals,
- * regex with delimiters, comment-in-string, string-in-comment,
- * arrow functions inside object literals inside arrays inside generics.
+ * Purpose: stress-test edit tools with pathological nesting,
+ * mixed delimiters, and ambiguous parse contexts.
+ * {{ not a real template }} (nested slash-star markers omitted — cannot nest block comments in JS)
  */
 
-// --- Section 1: Nested generics with trailing commas ---
-type DeepNested<A extends Record<string, Map<string, Set<Array<[A, B]>>>>, B = { x: { y: { z: number } } }> = {
-  inner: A extends infer U ? (U extends Record<infer K, infer V> ? { [P in K]: V } : never) : never;
+// Region 1: Nested generics that look like HTML/comparison operators
+type DeepNested<A extends Record<string, Map<string, Set<Array<Promise<A>>>>>> = {
+  field: A extends infer U ? (U extends object ? { [K in keyof U]: U[K] } : never) : never;
 };
 
-// --- Section 2: String literals containing braces and comment-like sequences ---
+// Region 2: String literals containing every delimiter
 const nightmareStrings = {
-  fake_comment: '// this is NOT a comment { still a string }',
-  block_fake: '/* also not a comment */ { } {{ }}',
-  nested_quotes: "she said \"hello { world }\" and left",
-  template_trap: `literal backtick with ${(() => {
-    const x = { a: 1, b: [2, 3, { c: 4 }] };
-    return x.b[2]; // comment inside template expression
-  })()}`,
-  regex_like: '/^\\{[a-z]+\\}$/g is not a regex here',
-  json_blob: '{"key": "value", "arr": [1,2,{"nested": true}]}',
+  curlyInString: "function() { return { a: 1 }; }",
+  bracketsInString: "arr[0][1][2] = obj['key']",
+  parenInString: "((()))()(())",
+  commentInString: "// not a comment /* also not */ <!-- nor this -->",
+  templateTrap: `hello ${ `nested ${ `deep ${1 + 2}` }` } world`,
+  regexTrap: /\{\}\[\]\(\)/g,
+  backtickInRegex: /`[^`]*`/g,
+  escapeHell: "\"\{\}\[\]\'\\",
+  // Real comment between string props
+  jsonLike: '{"key": [1, {"nested": [2, 3]}]}',
 };
 
-// --- Section 3: Actual regex with bracket chaos ---
-const regexNightmare = /\{(?:[^{}]|\{[^{}]*\})*\}/g;
-const regexCommentTrap = /\/\*.*?\*\//gs; // matches /* ... */ but IS a regex
+/* Region 3: Block comment with misleading content
+   function shouldNotParse() {
+     const x = { a: [ 1, 2, { b: 3 } ] };
+     if (x) { return [x]; }
+   }
+   // nested line comment inside block comment
+   const trap = `template ${inside} comment`;
+*/
 
-// --- Section 4: Arrow functions in object literals in arrays in generics ---
-function processItems<
-  T extends { id: string; transform: (input: { data: unknown[] }) => { result: unknown } },
-  U extends Array<{ handler: (ev: { type: string; payload: Record<string, unknown> }) => void }>
->(items: T[], handlers: U): Map<string, { processed: boolean; output: ReturnType<T['transform']> }> {
-  const results = new Map<string, { processed: boolean; output: ReturnType<T['transform']> }>();
-  for (const item of items) {
-    try {
-      const output = item.transform({ data: [{ nested: { deeply: [1, [2, [3]]] } }] }) as ReturnType<T['transform']>;
-      results.set(item.id, { processed: true, output });
-    } catch (e) {
-      // Error path: note the brace nesting depth here is 4
-      results.set(item.id, { processed: false, output: { result: null } as ReturnType<T['transform']> });
+// Region 4: Immediately-invoked with complex destructuring
+const result = (function IIFE() {
+  const {
+    a: {
+      b: {
+        c: [
+          first,
+          { d: { e: [second, ...rest] } },
+          ...remaining
+        ]
+      }
     }
+  } = JSON.parse('{"a":{"b":{"c":[1,{"d":{"e":[2,3,4]}},5,6]}}}');
+  return { first, second, rest, remaining };
+})();
+
+// Region 5: Generic arrow functions that confuse JSX parsers
+const arrowGeneric = <T extends { id: number }>(items: T[]): T[] => {
+  return items.filter(<U extends T>(item: U): item is U => {
+    return item.id > 0; // }) <-- fake closer in comment
+  });
+};
+
+// Region 6: Switch with fallthrough and nested blocks
+function bracketMaze(input: unknown): string {
+  switch (typeof input) {
+    case 'string': {
+      const trimmed = (input as string).trim();
+      if (trimmed.startsWith('{')) {
+        try {
+          JSON.parse(trimmed);
+          return 'json';
+        } catch (e) {
+          // fall through intentionally (to end of case)
+        }
+      }
+      break;
+    } // <-- closes case block, NOT the switch
+    case 'number': {
+      if ((input as number) > 0) {
+        return ((input as number) % 2 === 0) ? 'even' : 'odd';
+      }
+      return 'non-positive';
+    }
+    case 'object': {
+      if (input === null) return 'null';
+      if (Array.isArray(input)) {
+        return `array[${(input as unknown[]).length}]`;
+      }
+      return `object{${Object.keys(input as object).join(',')}}`;
+    }
+    default:
+      return `unknown(${typeof input})`;
   }
-  return results;
+  // Reachable when case 'string' breaks without returning (e.g. non-JSON string)
+  return `unknown(${typeof input})`;
 }
 
-// --- Section 5: Conditional types with infer and distributive madness ---
-type ExtractDeep<T> = T extends { a: { b: { c: infer U } } }
-  ? U extends Array<infer V>
-    ? V extends Record<string, infer W>
-      ? W extends (...args: infer A) => infer R
-        ? { args: A; return: R; depth: 'four' }
-        : { value: W; depth: 'three' }
-      : { element: V; depth: 'two' }
-    : { inner: U; depth: 'one' }
-  : never;
-
-// --- Section 6: Immediately-invoked with comment traps ---
-const result = /* opening comment { */ (() => {
-  const arr = [
-    { /* comment with } brace */ key: 'value' },
-    { key: /* another { trap */ 'value2' /* } closing trap */ },
-    // { this entire line is a comment with braces { } }
-  ];
-  return arr.reduce((acc, { key }) => ({ ...acc, [key]: true /* } not closing */ }), {} as Record<string, boolean>);
-})() /* closing comment } */;
-
-// --- Section 7: Class with decorators-like patterns and method overloads ---
-class BracketHell {
-  private data: Map<string, { handlers: Array<(ev: { type: string }) => { handled: boolean }> }> = new Map();
-
-  // Method with destructuring defaults containing braces
-  process(
-    { input = { default: true }, config = { retries: 3, timeout: { ms: 1000 } } }: {
-      input?: { default: boolean };
-      config?: { retries: number; timeout: { ms: number } };
-    } = {}
-  ): { success: boolean; data: typeof input } {
-    return { success: true, data: input };
+// Region 7: Class with computed properties and bracket-heavy decorators
+class TortureClass<
+  T extends Record<string, unknown>,
+  U extends keyof T = keyof T
+> {
+  [Symbol.iterator](): Iterator<T[U]> {
+    let idx = 0;
+    const keys = Object.keys(this.data) as U[];
+    return {
+      next: (): IteratorResult<T[U]> => {
+        if (idx < keys.length) {
+          return { value: this.data[keys[idx++]], done: false };
+        }
+        return { value: undefined as unknown as T[U], done: true };
+      }
+    };
   }
 
-  // Computed property with bracket expressions
-  get [`${'dynamic' + '_'}key`](): { value: number } {
-    return { value: 42 };
+  constructor(public data: T) {}
+
+  get [Symbol.toStringTag](): string {
+    return `TortureClass<${Object.keys(this.data).join(', ')}>`;
   }
 
-  // Method returning function returning object
-  createHandler(): (event: { type: string; data: unknown }) => { handled: boolean; timestamp: number } {
-    return (event) => ({
-      handled: event.type !== 'ignore',
-      timestamp: Date.now(), // trailing comma in returned object expression
-    });
+  method(cb: (arg: { [K in U]: T[K] }) => void): void {
+    cb(this.data as { [K in U]: T[K] });
   }
 }
 
-// --- Section 8: Tagged template with embedded expressions containing all the traps ---
+// Region 8: Conditional types with infer in mapped types
+type Unwrap<T> =
+  T extends Promise<infer U>
+    ? U extends Array<infer V>
+      ? V extends Map<infer K, infer V2>
+        ? { key: K; value: V2 }[]
+        : V[]
+      : U
+    : T extends (...args: infer A) => infer R
+      ? { args: A; return: R }
+      : T extends { [K in keyof T]: infer V }
+        ? V[]
+        : never;
+
+// Region 9: Tagged template literal with bracket injection
 function sql(strings: TemplateStringsArray, ...values: unknown[]): string {
-  return strings.reduce((acc, str, i) => acc + str + (values[i] ?? ''), '');
+  return strings.reduce((acc, str, i) => {
+    const val = i < values.length ? `'${String(values[i]).replace(/'/g, "''")}'` : '';
+    return acc + str + val;
+  }, '');
 }
 
 const query = sql`
   SELECT * FROM users
-  WHERE metadata @> '{"roles": ["admin"]}' -- JSON containment { not code }
-  AND name IN (${['alice', 'bob'].map(n => `'${n}'`).join(', ')})
-  AND config = ${JSON.stringify({ theme: 'dark', mode: 'auto' })}
+  WHERE name = ${"O'Brien"}
+  AND data::jsonb -> 'address' ->> 'city' = ${'New York'}
+  AND tags @> '{"admin", "active"}'::text[]
+  AND (age > ${21} OR role IN (${['admin', 'mod'].join("', '")}))
 `;
 
-// --- Section 9: Pathological ternary chain with object literals ---
-const nightmare = (x: number): { type: string; value: unknown } =>
-  x > 100 ? { type: 'huge', value: { nested: { deep: { deeper: x } } } }
-  : x > 50 ? { type: 'big', value: [{ a: 1 }, { b: 2 }, { c: [3, { d: 4 }] }] }
-  : x > 0 ? { type: 'small', value: x }
-  : { type: 'zero', value: null };
+// Region 10: Nested ternaries with bracket expressions
+const horror = (x: number) =>
+  x > 0
+    ? (x > 10
+      ? { level: 'high', data: [x, x * 2, { nested: [x * 3] }] }
+      : { level: 'mid', data: [x] })
+    : (x < -10
+      ? { level: 'low', data: [x, { deep: { deeper: [x] } }] }
+      : { level: 'zero', data: [] });
 
-// --- Section 10: Type-level string template literal with conditional ---
-type PathSegment<T extends string> =
-  T extends `${infer Head}/${infer Tail}`
-    ? { head: Head; tail: PathSegment<Tail>; depth: [Head, ...PathSegment<Tail> extends { all: infer A } ? A & unknown[] : []] }
-    : { head: T; tail: never; depth: [T] };
-
-// --- Section 11: Switch inside reduce inside try-catch ---
-function chaosReduce(items: Array<{ tag: string; payload: Record<string, unknown> }>): Record<string, unknown> {
-  return items.reduce((acc, { tag, payload }) => {
-    try {
-      switch (tag) {
-        case 'merge': return { ...acc, ...payload };
-        case 'nest': return { ...acc, [tag]: { ...payload, parent: { ...acc } } };
-        case 'wrap': return { wrapper: { inner: acc, extra: payload } };
-        case 'deep': return { ...acc, [tag]: { level: { depth: { payload } } } };
-        default: {
-          // Default branch with its own block scope
-          const fallback = { unknown_tag: tag, data: payload };
-          return { ...acc, ...fallback };
-        }
-      }
-    } catch (e) {
-      return { ...acc, error: { tag, message: (e as Error).message } };
-    }
-  }, {} as Record<string, unknown>);
-}
-
-// --- Section 12: Export barrel with re-export gymnastics ---
-export { nightmareStrings, regexNightmare, processItems, BracketHell, chaosReduce };
-export type { DeepNested, ExtractDeep, PathSegment };
-export default result;
-
-// EOF - if your parser survived this, congratulations. Count: ~30 distinct brace-nesting contexts.
+// Region 11: Comment that ends file without newline — parser edge case
+// EOF: }])};"'` -- every closer in one line

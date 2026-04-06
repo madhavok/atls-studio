@@ -299,14 +299,29 @@ function intraStepShiftFromEdit(e: Record<string, unknown>, snapLine: number, ta
 
 function rebaseIntraStepSnapshotLineEdits(lineEdits: unknown[]): void {
   if (lineEdits.length < 2) return;
-  const snapshotLines: number[] = lineEdits.map((edit) => {
-    if (!edit || typeof edit !== 'object') return 0;
+
+  // Sort entries by snapshot line (ascending) so lower-line edits precede
+  // higher-line edits. This matches Rust's top-down sequential application
+  // and prevents cross-range rebase mis-ordering when a delete at a high line
+  // and an insert at a low line coexist in the same step.
+  const indices = lineEdits.map((edit, idx) => {
+    if (!edit || typeof edit !== 'object') return { idx, snap: 0 };
     const o = edit as Record<string, unknown>;
     const line = snapshotLineForRebase(o);
     const hasSymbol = o.symbol != null && typeof o.symbol === 'string';
-    if (line > 0 && !hasSymbol) return line;
-    return 0;
+    return { idx, snap: line > 0 && !hasSymbol ? line : 0 };
   });
+  indices.sort((a, b) => {
+    if (a.snap === 0 && b.snap === 0) return a.idx - b.idx;
+    if (a.snap === 0) return 1;
+    if (b.snap === 0) return 1;
+    return a.snap !== b.snap ? a.snap - b.snap : a.idx - b.idx;
+  });
+  const sorted: unknown[] = indices.map(e => lineEdits[e.idx]);
+  for (let k = 0; k < lineEdits.length; k++) lineEdits[k] = sorted[k];
+
+  const snapshotLines: number[] = indices.map(e => e.snap);
+
   for (let i = 1; i < lineEdits.length; i++) {
     const targetSnap = snapshotLines[i];
     if (targetSnap <= 0) continue;
