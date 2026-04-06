@@ -638,6 +638,14 @@ pub(crate) fn syntax_error_bracket_hint(
                 res.resolved_line, res.action, pre_bal, post_bal
             ));
         }
+        let pre_in_comment = ends_in_block_comment(&pre_span);
+        let post_in_comment = ends_in_block_comment(&post_span);
+        if post_in_comment && !pre_in_comment {
+            hints.push(format!(
+                "L{} {}: unclosed block comment — the edit may have removed a closing '*/' or inserted an opening '/*' without a matching closer.",
+                res.resolved_line, res.action
+            ));
+        }
     }
     if hints.is_empty() { None } else { Some(hints.join(" | ")) }
 }
@@ -1055,6 +1063,24 @@ pub(crate) fn line_edits_to_edit_ops(
                 if dest == 0 {
                     return Err(format!("edit[{}]: move action requires destination", i));
                 }
+
+                // Structural depth check (mirrors positional path in apply_line_edits)
+                let shadow_lines_owned: Vec<String> = shadow_content.lines().map(String::from).collect();
+                let src_idx = (abs_line as usize).saturating_sub(1);
+                let src_end = edit.end_line.map(|e| e as usize).unwrap_or(abs_line as usize);
+                let dest_idx = (dest as usize).saturating_sub(1).min(shadow_lines_owned.len().saturating_sub(1));
+                let src_depth = brace_depth_at_line(&shadow_lines_owned, src_idx);
+                let dest_depth = brace_depth_at_line(&shadow_lines_owned, dest_idx);
+                if src_depth != dest_depth {
+                    warnings.push(format!(
+                        "move_structural_warning: move L{}-L{} to L{} crosses brace depth boundary \
+                         (source depth={}, dest depth={}). \
+                         This may silently break enclosing structure — \
+                         prefer explicit replace or refactor for property/member moves.",
+                        abs_line, src_end, dest, src_depth, dest_depth
+                    ));
+                }
+
                 let dest_context = match extract_shadow_preimage(shadow_content, dest, Some(dest)) {
                     Some(p) => p,
                     None => {
@@ -1213,9 +1239,27 @@ pub(crate) fn apply_line_edits_with_shadow(
     Ok((content, warnings, Some(resolutions)))
 }
 
+/// Classifies the token most recently consumed by `scan_char`, used to
+/// disambiguate `/` as division vs regex-literal opener.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PrevToken {
+    /// Start of input, or after an operator / punctuation that allows regex.
+    Operator,
+    /// After an identifier, keyword like `this`, or numeric literal.
+    Ident,
+    /// After `)` — division context (e.g. `foo() / 2`).
+    CloseParen,
+    /// After `]` — division context (e.g. `arr[0] / 2`).
+    CloseBracket,
+}
+
+impl Default for PrevToken {
+    fn default() -> Self { PrevToken::Operator }
+}
+
 /// Cross-line scanner state for JS/TS bracket tracking.
 /// Handles block comments, template literals (including nested `${...}`),
-/// and string literals that span across line boundaries.
+/// regex literals, and string literals that span across line boundaries.
 #[derive(Clone, Default)]
 struct ScanState {
     in_block_comment: bool,
@@ -1225,6 +1269,9 @@ struct ScanState {
     /// Entry == 0 means we're in the string segment of that template level.
     /// Entry > 0 means we're inside a `${...}` expression.
     template_stack: Vec<i32>,
+    /// Tracks the kind of the last consumed token so `/` can be correctly
+    /// classified as a regex opener vs division operator.
+    prev_token: PrevToken,
 }
 
 impl ScanState {
@@ -1235,6 +1282,44 @@ impl ScanState {
     fn in_template_expr(&self) -> bool {
         matches!(self.template_stack.last(), Some(&d) if d > 0)
     }
+}
+
+/// Skip over a regex literal starting at the opening `/`.
+/// Handles `\` escapes and `[...]` character classes.
+/// Advances `i` past the closing `/` and optional flags.
+fn skip_regex_literal(chars: &[char], i: &mut usize, len: usize) {
+    *i += 1; // skip opening /
+    let mut in_char_class = false;
+    while *i < len {
+        let c = chars[*i];
+        if c == '\\' {
+            *i += 2; // skip escape sequence
+            continue;
+        }
+        if in_char_class {
+            if c == ']' { in_char_class = false; }
+            *i += 1;
+            continue;
+        }
+        if c == '[' {
+            in_char_class = true;
+            *i += 1;
+            continue;
+        }
+        if c == '/' {
+            *i += 1;
+            // skip flags (g, i, m, s, u, y, d, v)
+            while *i < len && chars[*i].is_ascii_alphabetic() { *i += 1; }
+            return;
+        }
+        *i += 1;
+    }
+}
+
+/// Returns true when `prev_token` indicates `/` should start a regex literal
+/// rather than a division operator.
+fn slash_starts_regex(prev: PrevToken) -> bool {
+    matches!(prev, PrevToken::Operator)
 }
 
 /// Advance the scanner by one character, updating state.
@@ -1281,12 +1366,17 @@ fn scan_char(
 
     if state.in_template_expr() {
         if *i + 1 < len && chars[*i] == '/' && chars[*i + 1] == '/' {
-            *i = len; // skip rest of line
+            *i = len;
             return 0;
         }
         if *i + 1 < len && chars[*i] == '/' && chars[*i + 1] == '*' {
             state.in_block_comment = true;
             *i += 2;
+            return 0;
+        }
+        if chars[*i] == '/' && slash_starts_regex(state.prev_token) {
+            skip_regex_literal(chars, i, len);
+            state.prev_token = PrevToken::Ident; // regex value acts like an expression
             return 0;
         }
         if chars[*i] == '"' || chars[*i] == '\'' {
@@ -1297,6 +1387,7 @@ fn scan_char(
                 *i += 1;
             }
             if *i < len { *i += 1; }
+            state.prev_token = PrevToken::Ident;
             return 0;
         }
         if chars[*i] == '`' {
@@ -1308,6 +1399,7 @@ fn scan_char(
             if let Some(last) = state.template_stack.last_mut() {
                 *last += 1;
             }
+            state.prev_token = PrevToken::Operator;
             *i += 1;
             return 0;
         }
@@ -1321,18 +1413,33 @@ fn scan_char(
             *i += 1;
             return 0;
         }
+        let c = chars[*i];
+        state.prev_token = if c.is_alphanumeric() || c == '_' || c == '$' {
+            PrevToken::Ident
+        } else if c == ')' {
+            PrevToken::CloseParen
+        } else if c == ']' {
+            PrevToken::CloseBracket
+        } else {
+            PrevToken::Operator
+        };
         *i += 1;
         return 0;
     }
 
     // Normal code context
     if *i + 1 < len && chars[*i] == '/' && chars[*i + 1] == '/' {
-        *i = len; // skip rest of line
+        *i = len;
         return 0;
     }
     if *i + 1 < len && chars[*i] == '/' && chars[*i + 1] == '*' {
         state.in_block_comment = true;
         *i += 2;
+        return 0;
+    }
+    if chars[*i] == '/' && slash_starts_regex(state.prev_token) {
+        skip_regex_literal(chars, i, len);
+        state.prev_token = PrevToken::Ident;
         return 0;
     }
     if chars[*i] == '"' || chars[*i] == '\'' {
@@ -1343,6 +1450,7 @@ fn scan_char(
             *i += 1;
         }
         if *i < len { *i += 1; }
+        state.prev_token = PrevToken::Ident;
         return 0;
     }
     if chars[*i] == '`' {
@@ -1351,19 +1459,30 @@ fn scan_char(
         return 0;
     }
 
+    let c = chars[*i];
     let delta = if count_all_brackets {
-        match chars[*i] {
+        match c {
             '{' | '(' | '[' => 1,
             '}' | ')' | ']' => -1,
             _ => 0,
         }
     } else {
-        match chars[*i] {
+        match c {
             '{' => 1,
             '}' => -1,
             _ => 0,
         }
     };
+
+    state.prev_token = match c {
+        ')' => PrevToken::CloseParen,
+        ']' => PrevToken::CloseBracket,
+        '{' | '(' | '[' | ',' | ';' | '=' | '!' | '&' | '|' | '^' | '~'
+        | '+' | '-' | '*' | '%' | '<' | '>' | '?' | ':' => PrevToken::Operator,
+        c if c.is_alphanumeric() || c == '_' || c == '$' => PrevToken::Ident,
+        _ => PrevToken::Operator,
+    };
+
     *i += 1;
     delta
 }
@@ -1384,6 +1503,21 @@ fn brace_balance_delta(lines: &[&str]) -> i32 {
         }
     }
     delta
+}
+
+/// Returns true if scanning the given lines leaves the scanner inside an
+/// unclosed block comment (`/* ... ` without matching `*/`).
+fn ends_in_block_comment(lines: &[&str]) -> bool {
+    let mut state = ScanState::default();
+    for line in lines {
+        let chars: Vec<char> = line.chars().collect();
+        let len = chars.len();
+        let mut i = 0;
+        while i < len {
+            scan_char(&chars, &mut i, len, &mut state, false);
+        }
+    }
+    state.in_block_comment
 }
 
 /// Compute brace-only nesting depth at a given line index by scanning all
@@ -1457,6 +1591,38 @@ pub(crate) fn find_body_bounds(symbol_lines: &[&str]) -> Option<(usize, usize)> 
     }
 
     if pairs.is_empty() {
+        // Fallback: no balanced top-level pair found (e.g. scanner was confused
+        // or the slice doesn't start at depth 0). Re-scan to find the first
+        // depth 0→1 transition and its matching 1→0 close.
+        let mut fb_depth: i32 = 0;
+        let mut fb_state = ScanState::default();
+        let mut fb_open: Option<usize> = None;
+        for (line_idx, line) in symbol_lines.iter().enumerate() {
+            let chars: Vec<char> = line.chars().collect();
+            let clen = chars.len();
+            let mut ci = 0;
+            while ci < clen {
+                let d = scan_char(&chars, &mut ci, clen, &mut fb_state, false);
+                let old = fb_depth;
+                fb_depth += d;
+                if fb_depth < 0 { fb_depth = 0; }
+                if old == 0 && fb_depth == 1 && fb_open.is_none() {
+                    fb_open = Some(line_idx);
+                }
+                if old == 1 && fb_depth == 0 {
+                    if let Some(ol) = fb_open {
+                        if line_idx > ol {
+                            return Some((ol + 1, line_idx));
+                        }
+                    }
+                }
+            }
+        }
+        if let Some(ol) = fb_open {
+            if symbol_lines.len() > ol + 1 {
+                return Some((ol + 1, symbol_lines.len() - 1));
+            }
+        }
         return None;
     }
 
@@ -6069,5 +6235,686 @@ pub(crate) fn standalone() -> i32 {\n\
         let content = "first\nsecond\nthird\n";
         let ctx = extract_error_context(content, 1, 2);
         assert!(ctx.iter().any(|l| l.contains(">>") && l.contains("first")));
+    }
+}
+
+#[cfg(test)]
+mod torture_bracket_fix_tests {
+    use super::{
+        brace_balance_delta, find_body_bounds, ends_in_block_comment,
+        syntax_error_bracket_hint, EditResolution,
+        line_edits_to_edit_ops, LineEdit, LineCoordinate,
+    };
+
+    // ── BUG 1a: scan_char regex literal awareness ──
+
+    #[test]
+    fn scan_char_skips_regex_character_class_brackets() {
+        let lines: Vec<&str> = vec![r#"const re = /[{}\[\]]/g;"#];
+        let delta = brace_balance_delta(&lines);
+        assert_eq!(delta, 0, "Regex character class brackets should not affect balance");
+    }
+
+    #[test]
+    fn scan_char_skips_regex_after_operator() {
+        let lines: Vec<&str> = vec![r#"const x = str.replace(/[{}()]/g, '');"#];
+        let delta = brace_balance_delta(&lines);
+        assert_eq!(delta, 0, "Regex after ( should be skipped");
+    }
+
+    #[test]
+    fn scan_char_division_not_confused_with_regex() {
+        let lines: Vec<&str> = vec!["const x = a / b + c / d;"];
+        let delta = brace_balance_delta(&lines);
+        assert_eq!(delta, 0, "Division operators should not start regex scanning");
+    }
+
+    #[test]
+    fn scan_char_regex_with_escapes() {
+        let lines: Vec<&str> = vec![r#"const re = /\{[^}]*\}/g;"#];
+        let delta = brace_balance_delta(&lines);
+        assert_eq!(delta, 0, "Escaped brackets in regex should not affect balance");
+    }
+
+    // ── BUG 1b: find_body_bounds with bracket-heavy functions ──
+
+    #[test]
+    fn find_body_bounds_with_regex_in_body() {
+        let lines = vec![
+            "function sql(strings: TemplateStringsArray, ...values: unknown[]): string {",
+            "  return strings.reduce((acc, str, i) => {",
+            "    const val = i < values.length ? `'${String(values[i]).replace(/['\\\\/{}\\/\\[\\]]/g, \"''\")}'` : '';",
+            "    return acc + str + val;",
+            "  }, '');",
+            "}",
+        ];
+        let refs: Vec<&str> = lines.iter().copied().collect();
+        let bounds = find_body_bounds(&refs);
+        assert!(bounds.is_some(), "Should find body bounds despite regex with brackets in body");
+        let (start, end) = bounds.unwrap();
+        assert_eq!(start, 1, "Body starts after opening brace line");
+        assert_eq!(end, 5, "Body ends at closing brace");
+    }
+
+    #[test]
+    fn find_body_bounds_switch_case_try_catch() {
+        let lines = vec![
+            "function bracketMaze(input: unknown): string {",
+            "  switch (typeof input) {",
+            "    case 'string': {",
+            "      const trimmed = (input as string).trim();",
+            "      if (trimmed.startsWith('{')) {",
+            "        try {",
+            "          JSON.parse(trimmed);",
+            "          return 'json';",
+            "        } catch (e) {",
+            "          // fall through",
+            "        }",
+            "      }",
+            "    }",
+            "    case 'number': {",
+            "      return 'number';",
+            "    }",
+            "    default:",
+            "      return 'unknown';",
+            "  }",
+            "}",
+        ];
+        let refs: Vec<&str> = lines.iter().copied().collect();
+        let bounds = find_body_bounds(&refs);
+        assert!(bounds.is_some(), "Should find body bounds for switch/case/try/catch function");
+        let (start, end) = bounds.unwrap();
+        assert_eq!(start, 1, "Body starts after function opening brace");
+        assert_eq!(end, 19, "Body ends at function closing brace");
+    }
+
+    // ── BUG 2: move structural warning on shadow path ──
+
+    #[test]
+    fn move_shadow_path_emits_structural_warning() {
+        let shadow = "function outer() {\n  const x = 1;\n}\nconst y = 2;\n";
+        let current = shadow;
+        let edits = vec![LineEdit {
+            line: LineCoordinate::Abs(2),
+            action: "move".to_string(),
+            content: None,
+            end_line: None,
+            symbol: None,
+            position: None,
+            destination: Some(4),
+            reindent: false,
+        }];
+        let result = line_edits_to_edit_ops(&edits, shadow, current);
+        assert!(result.is_ok());
+        let (_, warnings) = result.unwrap();
+        let has_structural = warnings.iter().any(|w| w.starts_with("move_structural_warning"));
+        assert!(has_structural, "Shadow-path move across brace depth should emit warning. Got: {:?}", warnings);
+    }
+
+    #[test]
+    fn move_shadow_path_same_depth_no_warning() {
+        let shadow = "const a = 1;\nconst b = 2;\nconst c = 3;\n";
+        let current = shadow;
+        let edits = vec![LineEdit {
+            line: LineCoordinate::Abs(1),
+            action: "move".to_string(),
+            content: None,
+            end_line: None,
+            symbol: None,
+            position: None,
+            destination: Some(3),
+            reindent: false,
+        }];
+        let result = line_edits_to_edit_ops(&edits, shadow, current);
+        assert!(result.is_ok());
+        let (_, warnings) = result.unwrap();
+        let has_structural = warnings.iter().any(|w| w.starts_with("move_structural_warning"));
+        assert!(!has_structural, "Same-depth move should not emit structural warning. Got: {:?}", warnings);
+    }
+
+    // ── BUG 3: unclosed block comment hint ──
+
+    #[test]
+    fn syntax_hint_detects_unclosed_block_comment() {
+        let pre = "/* comment */\nconst x = 1;\n";
+        let post = "/* comment\nconst x = 1;\n";
+        let res = vec![EditResolution {
+            resolved_line: 1,
+            action: "replace".to_string(),
+            lines_affected: 1,
+        }];
+        let hint = syntax_error_bracket_hint(pre, post, &res);
+        assert!(hint.is_some(), "Should detect unclosed block comment");
+        let hint_str = hint.unwrap();
+        assert!(hint_str.contains("unclosed block comment"),
+            "Hint should mention unclosed block comment: {}", hint_str);
+    }
+
+    #[test]
+    fn syntax_hint_no_false_positive_for_closed_comment() {
+        let pre = "/* old */\nconst x = 1;\n";
+        let post = "/* new */\nconst x = 1;\n";
+        let res = vec![EditResolution {
+            resolved_line: 1,
+            action: "replace".to_string(),
+            lines_affected: 1,
+        }];
+        let hint = syntax_error_bracket_hint(pre, post, &res);
+        let has_comment_hint = hint.as_ref().map_or(false, |h| h.contains("unclosed block comment"));
+        assert!(!has_comment_hint, "Closed comment replacement should not trigger hint");
+    }
+
+    #[test]
+    fn ends_in_block_comment_detects_unclosed() {
+        let lines: Vec<&str> = vec!["/* this comment", "has no closer"];
+        assert!(ends_in_block_comment(&lines), "Should detect unclosed block comment");
+    }
+
+    #[test]
+    fn ends_in_block_comment_ok_when_closed() {
+        let lines: Vec<&str> = vec!["/* this comment */", "const x = 1;"];
+        assert!(!ends_in_block_comment(&lines), "Closed comment should not be flagged");
+    }
+}
+
+// ============================================================================
+// Deterministic edit stress tests against bracket_stress.ts fixture
+// ============================================================================
+#[cfg(test)]
+mod edit_stress_tests {
+    use super::{apply_line_edits, find_body_bounds, brace_balance_delta, LineCoordinate, LineEdit};
+
+    /// Full content of bracket_stress.ts (175 lines). Exercises: nested generics,
+    /// template literals, regex with brackets, destructuring with defaults,
+    /// conditional types, string escapes, and a class with block comments.
+    const FIXTURE: &str = r##"/**
+ * Bracket Stress Test — exercises parser edge cases.
+ * Contains: nested generics, template literals, regex, comments with brackets,
+ * string escapes, arrow functions, destructuring, and conditional types.
+ *
+ * Note: lines like `if (a > b) { doStuff(); }` are common { traps }.
+ * Also tricky: `const re = /[a-z]{3,}/g;`  // regex with {braces}
+ */
+
+// ============ Section 1: Nested Generics & Conditional Types ============
+
+type DeepPartial<T> = T extends object
+  ? { [P in keyof T]?: DeepPartial<T[P]> }
+  : T;
+
+type UnwrapPromise<T> = T extends Promise<infer U>
+  ? U extends Promise<infer V>
+    ? V
+    : U
+  : T;
+
+interface Registry<K extends string, V extends Record<string, unknown>> {
+  get(key: K): V | undefined;
+  set(key: K, value: V): void;
+  entries(): Array<[K, V]>;
+  // TODO: add batch({ keys: K[] }): Map<K, V>;
+}
+
+// ============ Section 2: Template Literals with Expressions ============
+
+function formatMessage<T extends { name: string; count: number }>(
+  data: T,
+  template: `Hello ${string}, you have ${number} items`
+): string {
+  const { name, count } = data;
+  // Tricky: template literal with nested expressions and brackets
+  return `Dear ${name}, your ${count > 0 ? `${count} item${count === 1 ? '' : 's'}` : 'no items'} ${'{are}'} ready.`;
+}
+
+// ============ Section 3: Regex with Brackets ============
+
+const PATTERNS = {
+  // Each regex contains bracket characters that must NOT be counted as code blocks
+  brackets: /[\[\]{}()]/g,
+  jsonPath: /\$\{[^}]+\}/g,
+  balanced: /\{(?:[^{}]|\{[^{}]*\})*\}/g,
+  quantifier: /[a-zA-Z]{2,4}/,
+  escape: /\\[\\{}\[\]]/g,
+} as const;
+
+// ============ Section 4: Destructuring & Default Values ============
+
+function processConfig({
+  timeout = 3000,
+  retries = 3,
+  headers = { 'Content-Type': 'application/json' },
+  callbacks: {
+    onSuccess = () => { console.log('ok'); },
+    onError = (err: Error) => { throw err; },
+    onRetry = ({ attempt, max }: { attempt: number; max: number }) => {
+      console.log(`Retry ${attempt}/${max}`);
+    },
+  } = {},
+}: {
+  timeout?: number;
+  retries?: number;
+  headers?: Record<string, string>;
+  callbacks?: {
+    onSuccess?: () => void;
+    onError?: (err: Error) => void;
+    onRetry?: (info: { attempt: number; max: number }) => void;
+  };
+}): void {
+  // Body intentionally minimal — structure is the test
+  if (retries > 0) {
+    for (let i = 0; i < retries; i++) {
+      try {
+        fetch('https://api.example.com', { method: 'POST', headers })
+          .then((r) => { if (!r.ok) { throw new Error(`HTTP ${r.status}`); } return r.json(); })
+          .then((data: Record<string, unknown>) => { onSuccess(); })
+          .catch((e: Error) => {
+            onRetry({ attempt: i + 1, max: retries });
+            if (i === retries - 1) { onError(e); }
+          });
+      } catch (e) {
+        // Fallback: { this comment has braces } and [brackets] too
+        onError(e as Error);
+      }
+    }
+  }
+}
+
+// ============ Section 5: Mapped & Conditional Utility Types ============
+
+type EventMap = {
+  click: { x: number; y: number; button: 'left' | 'right' };
+  keydown: { key: string; code: number; modifiers: { ctrl: boolean; shift: boolean } };
+  resize: { width: number; height: number };
+};
+
+type EventHandler<E extends keyof EventMap> = (
+  event: EventMap[E] & { timestamp: number; target: { id: string } }
+) => void | Promise<void>;
+
+type StrictPick<T, K extends keyof T> = {
+  [P in K]: T[P] extends (...args: infer A) => infer R
+    ? (...args: A) => R
+    : T[P] extends Array<infer U>
+      ? ReadonlyArray<U>
+      : T[P];
+};
+
+// ============ Section 6: String Escapes & Edge Cases ============
+
+const EDGE_CASES = [
+  'simple string',
+  'string with {braces} and [brackets]',
+  "double-quoted {curly} and (parens)",
+  `template with ${1 + 2} and ${{ toString: () => '{nested}' }}`,
+  'escaped \' quote with { brace',
+  "escaped \" quote with } brace",
+  `multi-line template
+    with ${(() => {
+      const x = { a: 1, b: [2, 3] };
+      return JSON.stringify(x);
+    })()}
+    and more text`,
+  String.raw`raw template \${not_interpolated} {literal}`,
+];
+
+// ============ Section 7: Class with Complex Methods ============
+
+class BracketParser<T extends Record<string, unknown>> {
+  private stack: Array<{ char: string; pos: number; depth: number }> = [];
+  private readonly pairs: Map<string, string> = new Map([
+    ['{', '}'], ['[', ']'], ['(', ')'],
+  ]);
+
+  constructor(
+    private readonly input: string,
+    private readonly options: { strict: boolean; maxDepth: number } = { strict: true, maxDepth: 100 },
+  ) {}
+
+  parse(): { valid: boolean; errors: Array<{ msg: string; pos: number }> } {
+    const errors: Array<{ msg: string; pos: number }> = [];
+    for (let i = 0; i < this.input.length; i++) {
+      const ch = this.input[i];
+      if (this.pairs.has(ch)) {
+        this.stack.push({ char: ch, pos: i, depth: this.stack.length });
+        if (this.stack.length > this.options.maxDepth) {
+          errors.push({ msg: `Max depth ${this.options.maxDepth} exceeded`, pos: i });
+          if (this.options.strict) { break; }
+        }
+      } else if (['}', ']', ')'].includes(ch)) {
+        const top = this.stack.pop();
+        if (!top || this.pairs.get(top.char) !== ch) {
+          errors.push({ msg: `Unmatched '${ch}' at position ${i}`, pos: i });
+        }
+      }
+      /* Block comment with { braces } and
+         [brackets] spanning multiple lines
+         and even a // nested line comment fake-out */
+    }
+    // Remaining unclosed brackets
+    while (this.stack.length > 0) {
+      const unclosed = this.stack.pop()!;
+      errors.push({ msg: `Unclosed '${unclosed.char}' from pos ${unclosed.pos}`, pos: unclosed.pos });
+    }
+    return { valid: errors.length === 0, errors };
+  }
+}
+
+export { BracketParser, processConfig, formatMessage, PATTERNS, EDGE_CASES };
+export type { DeepPartial, UnwrapPromise, Registry, EventMap, EventHandler, StrictPick };
+"##;
+
+    fn le(line: u32, action: &str, content: Option<&str>, end_line: Option<u32>) -> LineEdit {
+        LineEdit {
+            line: LineCoordinate::Abs(line),
+            action: action.to_string(),
+            content: content.map(String::from),
+            end_line,
+            symbol: None,
+            position: None,
+            destination: None,
+            reindent: false,
+        }
+    }
+
+    fn le_move(line: u32, dest: u32) -> LineEdit {
+        LineEdit {
+            line: LineCoordinate::Abs(line),
+            action: "move".to_string(),
+            content: None,
+            end_line: None,
+            symbol: None,
+            position: None,
+            destination: Some(dest),
+            reindent: false,
+        }
+    }
+
+    fn fixture_line(n: usize) -> &'static str {
+        FIXTURE.lines().nth(n - 1).unwrap()
+    }
+
+    fn fixture_line_count() -> usize {
+        FIXTURE.lines().count()
+    }
+
+    // ── Fixture sanity ──
+
+    #[test]
+    fn fixture_has_expected_line_count() {
+        // The raw string ends with a trailing newline, so .lines() yields 174 items
+        // (the last empty line after the newline is not counted by .lines()).
+        // The actual file is 175 lines; our edits use 1-based line numbers that
+        // map correctly because apply_line_edits splits on '\n' and preserves
+        // the trailing empty entry.
+        assert_eq!(fixture_line_count(), 174, "bracket_stress.ts fixture should yield 174 items from .lines()");
+    }
+
+    #[test]
+    fn fixture_brace_balance_is_zero() {
+        let lines: Vec<&str> = FIXTURE.lines().collect();
+        let delta = brace_balance_delta(&lines);
+        assert_eq!(delta, 0, "Full fixture should have balanced braces, got delta={}", delta);
+    }
+
+    // ── replace: single-line in regex section (L44) ──
+
+    #[test]
+    fn replace_single_line_regex_section() {
+        assert!(fixture_line(44).contains("brackets: /["));
+        let edits = vec![le(44, "replace", Some("  brackets: /[{}]/g,"), None)];
+        let (result, warnings, resolutions) = apply_line_edits(FIXTURE, &edits).unwrap();
+        assert!(result.contains("brackets: /[{}]/g,"), "replacement should appear");
+        assert!(!result.contains(r"/[\[\]{}()]/g"), "old regex should be gone");
+        assert_eq!(resolutions.len(), 1);
+        assert_eq!(resolutions[0].resolved_line, 44);
+        assert_eq!(resolutions[0].action, "replace");
+        let _ = warnings;
+    }
+
+    // ── replace: multi-line in class method (L144-169) ──
+
+    #[test]
+    fn replace_multiline_class_method() {
+        assert!(fixture_line(144).contains("parse():"));
+        let new_body = "  parse(): { valid: boolean } {\n    return { valid: true };\n  }";
+        let edits = vec![le(144, "replace", Some(new_body), Some(170))];
+        let (result, _, resolutions) = apply_line_edits(FIXTURE, &edits).unwrap();
+        assert!(result.contains("return { valid: true }"), "new body should appear");
+        assert!(!result.contains("this.stack.push"), "old method body should be gone");
+        let result_lines: Vec<&str> = result.lines().collect();
+        assert!(result_lines.len() < fixture_line_count(), "file should be shorter after compressing method");
+        assert_eq!(resolutions[0].action, "replace");
+    }
+
+    // ── replace: at destructuring boundary (L53-63) ──
+
+    #[test]
+    fn replace_at_destructuring_boundary() {
+        assert!(fixture_line(53).contains("function processConfig"));
+        let simplified_params = "function processConfig(config: {\n  timeout?: number;\n  retries?: number;\n}): void {";
+        let edits = vec![le(53, "replace", Some(simplified_params), Some(73))];
+        let (result, _, _) = apply_line_edits(FIXTURE, &edits).unwrap();
+        assert!(result.contains("function processConfig(config:"), "simplified signature should appear");
+        assert!(!result.contains("onSuccess = () =>"), "old destructuring defaults should be gone");
+        assert!(result.contains("if (retries > 0)"), "function body should survive");
+    }
+
+    // ── replace_body: formatMessage (L31-38, template literals) ──
+
+    #[test]
+    fn replace_body_format_message() {
+        assert!(fixture_line(31).contains("function formatMessage"));
+        let lines: Vec<&str> = FIXTURE.lines().collect();
+        let slice = &lines[30..38];
+        let bounds = find_body_bounds(slice);
+        assert!(bounds.is_some(), "Should find body bounds for formatMessage despite template literals");
+        let (start, end) = bounds.unwrap();
+        assert!(start >= 1, "body should start after the opening brace");
+        assert!(end <= 7, "body should end at or before the closing brace");
+
+        let edits = vec![le(31, "replace_body", Some("  return 'simplified';"), Some(38))];
+        let (result, _, _) = apply_line_edits(FIXTURE, &edits).unwrap();
+        assert!(result.contains("return 'simplified'"), "new body should appear");
+        assert!(!result.contains("'{are}'"), "old template literal body should be gone");
+    }
+
+    // ── replace_body: processConfig (L53-91, deeply nested) ──
+
+    #[test]
+    fn replace_body_process_config_deeply_nested() {
+        assert!(fixture_line(53).contains("function processConfig"));
+        let lines: Vec<&str> = FIXTURE.lines().collect();
+        let slice = &lines[52..91];
+        let bounds = find_body_bounds(slice);
+        assert!(bounds.is_some(),
+            "Should find body bounds for processConfig despite nested destructuring/try/catch");
+        let (start, end) = bounds.unwrap();
+        assert!(start >= 1, "body start should be after the opening brace");
+        assert_eq!(end, 38, "body end should be at the closing brace of processConfig (line 91 = index 38 relative)");
+
+        let edits = vec![le(53, "replace_body", Some("  console.log('replaced');"), Some(91))];
+        let (result, _, _) = apply_line_edits(FIXTURE, &edits).unwrap();
+        assert!(result.contains("console.log('replaced')"), "new body should appear");
+        assert!(!result.contains("fetch('https://api.example.com'"), "old body should be gone");
+    }
+
+    // ── replace_body: BracketParser.parse (L144-170, block comments in body) ──
+
+    #[test]
+    fn replace_body_bracket_parser_parse() {
+        assert!(fixture_line(144).contains("parse():"));
+        let lines: Vec<&str> = FIXTURE.lines().collect();
+        let slice = &lines[143..170];
+        let bounds = find_body_bounds(slice);
+        assert!(bounds.is_some(),
+            "Should find body bounds for parse() despite block comments with brackets in body");
+        let (start, end) = bounds.unwrap();
+        assert!(start >= 1);
+        assert!(end > start, "body end should be after body start");
+
+        let edits = vec![le(144, "replace_body", Some("    return { valid: false, errors: [] };"), Some(170))];
+        let (result, _, _) = apply_line_edits(FIXTURE, &edits).unwrap();
+        assert!(result.contains("return { valid: false, errors: [] }"), "new body should appear");
+        assert!(!result.contains("Block comment with { braces }"), "old block comment should be gone");
+    }
+
+    // ── insert_after: after class constructor (L142) ──
+
+    #[test]
+    fn insert_after_class_constructor() {
+        assert!(fixture_line(142).contains(") {}"));
+        let edits = vec![le(142, "insert_after", Some("\n  get inputLength(): number {\n    return this.input.length;\n  }"), None)];
+        let (result, _, resolutions) = apply_line_edits(FIXTURE, &edits).unwrap();
+        assert!(result.contains("get inputLength(): number"), "inserted getter should appear");
+        let result_lines: Vec<&str> = result.lines().collect();
+        assert!(result_lines.len() > fixture_line_count(), "file should be longer after insertion");
+        assert_eq!(resolutions[0].action, "insert_after");
+    }
+
+    // ── insert_after: after type definition (L14) ──
+
+    #[test]
+    fn insert_after_type_definition() {
+        assert!(fixture_line(14).contains(": T;"));
+        let edits = vec![le(14, "insert_after", Some("\ntype Nullable<T> = T | null;"), None)];
+        let (result, _, _) = apply_line_edits(FIXTURE, &edits).unwrap();
+        assert!(result.contains("type Nullable<T> = T | null;"), "inserted type should appear");
+        let idx_deep = result.find("DeepPartial").unwrap();
+        let idx_nullable = result.find("Nullable").unwrap();
+        assert!(idx_nullable > idx_deep, "Nullable should appear after DeepPartial");
+    }
+
+    // ── insert_before: before block comment (L160) ──
+
+    #[test]
+    fn insert_before_block_comment() {
+        assert!(fixture_line(160).contains("/* Block comment"));
+        let edits = vec![le(160, "insert_before", Some("      // INSERTED: pre-comment marker"), None)];
+        let (result, _, resolutions) = apply_line_edits(FIXTURE, &edits).unwrap();
+        assert!(result.contains("// INSERTED: pre-comment marker"), "inserted comment should appear");
+        let idx_marker = result.find("INSERTED: pre-comment marker").unwrap();
+        let idx_block = result.find("/* Block comment with { braces }").unwrap();
+        assert!(idx_marker < idx_block, "marker should appear before block comment");
+        assert_eq!(resolutions[0].action, "insert_before");
+    }
+
+    // ── insert_before: before closing brace (L91) ──
+
+    #[test]
+    fn insert_before_closing_brace() {
+        assert_eq!(fixture_line(91).trim(), "}");
+        let edits = vec![le(91, "insert_before", Some("  console.log('done');"), None)];
+        let (result, _, _) = apply_line_edits(FIXTURE, &edits).unwrap();
+        assert!(result.contains("console.log('done')"), "inserted statement should appear");
+        let idx_log = result.find("console.log('done')").unwrap();
+        let idx_section5 = result.find("Section 5").unwrap();
+        assert!(idx_log < idx_section5, "inserted line should be inside processConfig, before Section 5");
+    }
+
+    // ── delete: single line in string array (L116) ──
+
+    #[test]
+    fn delete_single_line_string_array() {
+        assert!(fixture_line(116).contains("'simple string'"));
+        let edits = vec![le(116, "delete", None, None)];
+        let (result, _, resolutions) = apply_line_edits(FIXTURE, &edits).unwrap();
+        assert!(!result.contains("'simple string'"), "deleted line should be gone");
+        assert!(result.contains("'string with {braces}"), "next line should survive");
+        let result_lines: Vec<&str> = result.lines().collect();
+        assert_eq!(result_lines.len(), fixture_line_count() - 1);
+        assert_eq!(resolutions[0].action, "delete");
+    }
+
+    // ── delete: multi-line type definition (L95-99) ──
+
+    #[test]
+    fn delete_multiline_type_definition() {
+        assert!(fixture_line(95).contains("type EventMap"));
+        assert!(fixture_line(99).contains("};"));
+        let edits = vec![le(95, "delete", None, Some(99))];
+        let (result, _, _) = apply_line_edits(FIXTURE, &edits).unwrap();
+        assert!(!result.contains("type EventMap"), "deleted type should be gone");
+        assert!(!result.contains("button: 'left' | 'right'"), "inner content should be gone");
+        let result_lines: Vec<&str> = result.lines().collect();
+        // delete of lines 95..99 removes 4 lines (end_line is exclusive in apply_line_edits)
+        assert!(result_lines.len() < fixture_line_count(), "file should be shorter after deletion");
+    }
+
+    // ── move: cross-depth (inside function → module scope) should warn ──
+
+    #[test]
+    fn move_cross_depth_emits_structural_warning() {
+        assert!(fixture_line(75).contains("if (retries > 0)"));
+        let edits = vec![le_move(75, 175)];
+        let (result, warnings, _) = apply_line_edits(FIXTURE, &edits).unwrap();
+        let has_warning = warnings.iter().any(|w| w.starts_with("move_structural_warning"));
+        assert!(has_warning,
+            "Moving a line from inside a function body to module scope should emit move_structural_warning. Got: {:?}", warnings);
+        assert!(result.contains("if (retries > 0)"), "moved line should still exist in file");
+    }
+
+    // ── move: same depth (module scope → module scope) should NOT warn ──
+
+    #[test]
+    fn move_same_depth_no_structural_warning() {
+        assert!(fixture_line(10).contains("Section 1"));
+        let edits = vec![le_move(10, 93)];
+        let (_, warnings, _) = apply_line_edits(FIXTURE, &edits).unwrap();
+        let has_warning = warnings.iter().any(|w| w.starts_with("move_structural_warning"));
+        assert!(!has_warning,
+            "Moving a comment at module scope to another module-scope position should NOT warn. Got: {:?}", warnings);
+    }
+
+    // ── find_body_bounds: standalone tests against fixture slices ──
+
+    #[test]
+    fn body_bounds_class_declaration() {
+        let lines: Vec<&str> = FIXTURE.lines().collect();
+        let slice = &lines[132..171];
+        let bounds = find_body_bounds(slice);
+        assert!(bounds.is_some(), "Should find body bounds for BracketParser class");
+        let (start, end) = bounds.unwrap();
+        assert!(start >= 1, "class body should start after opening brace");
+        assert_eq!(end, 38, "class body should end at line 171 (index 38 relative)");
+    }
+
+    #[test]
+    fn body_bounds_interface_with_generics() {
+        let lines: Vec<&str> = FIXTURE.lines().collect();
+        let slice = &lines[21..27];
+        let bounds = find_body_bounds(slice);
+        assert!(bounds.is_some(), "Should find body bounds for Registry interface");
+        let (start, end) = bounds.unwrap();
+        assert_eq!(start, 1, "interface body starts after opening brace on same line");
+        assert_eq!(end, 5, "interface body ends at closing brace");
+    }
+
+    // ── Sequential edits: multiple operations in order ──
+
+    #[test]
+    fn sequential_delete_then_insert_preserves_integrity() {
+        let edits = vec![
+            le(116, "delete", None, None),
+            le(116, "insert_before", Some("  'replacement string',"), None),
+        ];
+        let (result, _, _) = apply_line_edits(FIXTURE, &edits).unwrap();
+        assert!(!result.contains("'simple string'"), "original line should be gone");
+        assert!(result.contains("'replacement string'"), "replacement should be present");
+        let result_lines: Vec<&str> = result.lines().collect();
+        assert_eq!(result_lines.len(), fixture_line_count(), "delete+insert should keep same line count");
+    }
+
+    #[test]
+    fn sequential_replace_then_insert_after() {
+        let edits = vec![
+            le(44, "replace", Some("  brackets: /[{}]/g,"), None),
+            le(44, "insert_after", Some("  extended: /[<>]/g,"), None),
+        ];
+        let (result, _, _) = apply_line_edits(FIXTURE, &edits).unwrap();
+        assert!(result.contains("brackets: /[{}]/g"), "replacement should appear");
+        assert!(result.contains("extended: /[<>]/g"), "inserted line should appear");
+        let idx_brackets = result.find("brackets: /[{}]/g").unwrap();
+        let idx_extended = result.find("extended: /[<>]/g").unwrap();
+        assert!(idx_extended > idx_brackets, "inserted line should be after replaced line");
     }
 }
