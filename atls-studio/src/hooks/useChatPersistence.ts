@@ -13,7 +13,7 @@
 
 import { useEffect, useCallback, useRef } from 'react';
 import { useAppStore, type Message, type ChatSession } from '../stores/appStore';
-import { useContextStore, type ContextChunk, type TaskPlan, type ManifestEntry, type TransitionBridge, type StagedSnippet, type BlackboardEntry, parseBbKey } from '../stores/contextStore';
+import { useContextStore, getBulkRevisionResolver, type ContextChunk, type TaskPlan, type ManifestEntry, type TransitionBridge, type StagedSnippet, type BlackboardEntry, parseBbKey } from '../stores/contextStore';
 import { useCostStore, type SubAgentUsage, type AIProvider } from '../stores/costStore';
 import { chatDb, type PersistedMemorySnapshot, type PersistedSubAgentUsageRow } from '../services/chatDb';
 import { useRoundHistoryStore } from '../stores/roundHistoryStore';
@@ -244,6 +244,163 @@ function normalizePersistedStagedEntries(
     if (next) normalized.push([key, next]);
   }
   return normalized;
+}
+
+const FILE_BACKED_TYPES = new Set(['file', 'smart', 'raw', 'result']);
+
+/**
+ * Hash-first freshness labeling for session restore.
+ *
+ * Bulk-resolves current disk revisions for all file-backed paths in the
+ * restored chunks and staged snippets. Only marks suspect/stale when the
+ * on-disk hash differs from the persisted sourceRevision (or the path is
+ * missing/unresolvable). Chunks whose sourceRevision matches disk are
+ * preserved with their persisted freshness — no amnesia window.
+ */
+export async function applyHashFirstFreshness(): Promise<{ preserved: number; suspect: number; staleSnippets: number; evictedPaths: number; changedPaths: string[] }> {
+  const resolver = getBulkRevisionResolver();
+  if (!resolver) {
+    console.warn('[ChatPersistence] No bulk resolver — falling back to blanket suspect');
+    applyBlanketSuspect();
+    return { preserved: 0, suspect: 0, staleSnippets: 0, evictedPaths: 0, changedPaths: [] };
+  }
+
+  const state = useContextStore.getState();
+  const pathSet = new Set<string>();
+  const normalizePath = (s: string) => s.replace(/\\/g, '/').toLowerCase();
+
+  const addSource = (source?: string) => {
+    if (source && typeof source === 'string') pathSet.add(normalizePath(source));
+  };
+
+  for (const [, c] of state.chunks) {
+    if (c.viewKind === 'snapshot') continue;
+    if (FILE_BACKED_TYPES.has(c.type)) addSource(c.source);
+  }
+  for (const [, c] of state.archivedChunks) {
+    if (c.viewKind === 'snapshot') continue;
+    if (FILE_BACKED_TYPES.has(c.type)) addSource(c.source);
+  }
+  for (const [, s] of state.stagedSnippets) {
+    if (s.viewKind === 'snapshot') continue;
+    addSource(s.source);
+  }
+
+  const paths = [...pathSet];
+  if (paths.length === 0) return { preserved: 0, suspect: 0, staleSnippets: 0, evictedPaths: 0, changedPaths: [] };
+
+  let revisionMap: Map<string, string | null>;
+  try {
+    revisionMap = await resolver(paths);
+  } catch (e) {
+    console.warn('[ChatPersistence] Bulk revision lookup failed — falling back to blanket suspect:', e);
+    applyBlanketSuspect();
+    return { preserved: 0, suspect: 0, staleSnippets: 0, evictedPaths: 0, changedPaths: [] };
+  }
+
+  const resolveRevision = (source: string | undefined): string | null | 'missing' => {
+    if (!source) return null;
+    const norm = normalizePath(source);
+    let rev = revisionMap.get(norm) ?? null;
+    if (rev != null) return rev;
+    for (const [k, v] of revisionMap) {
+      if (v != null && normalizePath(k) === norm) return v;
+    }
+    if (revisionMap.has(norm)) return 'missing';
+    for (const [k] of revisionMap) {
+      if (normalizePath(k) === norm) return 'missing';
+    }
+    return null;
+  };
+
+  let preserved = 0;
+  let suspect = 0;
+  let staleSnippets = 0;
+  let evictedPaths = 0;
+  const changedSourcePaths = new Set<string>();
+
+  useContextStore.setState(currentState => {
+    const now = Date.now();
+    const chunks = new Map(currentState.chunks);
+    const stagedSnippets = new Map(currentState.stagedSnippets);
+
+    for (const [hash, chunk] of chunks) {
+      if (chunk.viewKind === 'snapshot') continue;
+      if (!FILE_BACKED_TYPES.has(chunk.type)) continue;
+
+      const diskRev = resolveRevision(chunk.source);
+
+      if (diskRev === 'missing' || diskRev === null) {
+        if (diskRev === 'missing') evictedPaths++;
+        chunks.set(hash, { ...chunk, freshness: 'suspect', freshnessCause: 'session_restore', suspectSince: now });
+        suspect++;
+        if (chunk.source) changedSourcePaths.add(chunk.source);
+        continue;
+      }
+
+      if (!chunk.sourceRevision) {
+        chunks.set(hash, { ...chunk, freshness: 'suspect', freshnessCause: 'session_restore', suspectSince: now });
+        suspect++;
+        if (chunk.source) changedSourcePaths.add(chunk.source);
+        continue;
+      }
+
+      if (chunk.sourceRevision === diskRev) {
+        preserved++;
+      } else {
+        chunks.set(hash, { ...chunk, freshness: 'suspect', freshnessCause: 'session_restore', suspectSince: now });
+        suspect++;
+        if (chunk.source) changedSourcePaths.add(chunk.source);
+      }
+    }
+
+    for (const [key, snippet] of stagedSnippets) {
+      if (snippet.viewKind === 'snapshot') continue;
+
+      const diskRev = resolveRevision(snippet.source);
+
+      if (diskRev === 'missing' || diskRev === null) {
+        stagedSnippets.set(key, { ...snippet, stageState: 'stale', suspectSince: now });
+        staleSnippets++;
+        if (snippet.source) changedSourcePaths.add(snippet.source);
+        continue;
+      }
+
+      if (!snippet.sourceRevision) {
+        stagedSnippets.set(key, { ...snippet, stageState: 'stale', suspectSince: now });
+        staleSnippets++;
+        if (snippet.source) changedSourcePaths.add(snippet.source);
+        continue;
+      }
+
+      if (snippet.sourceRevision === diskRev) {
+        preserved++;
+      } else {
+        stagedSnippets.set(key, { ...snippet, stageState: 'stale', suspectSince: now });
+        staleSnippets++;
+        if (snippet.source) changedSourcePaths.add(snippet.source);
+      }
+    }
+
+    return { chunks, stagedSnippets };
+  });
+
+  return { preserved, suspect, staleSnippets, evictedPaths, changedPaths: [...changedSourcePaths] };
+}
+
+function applyBlanketSuspect(): void {
+  useContextStore.setState(state => {
+    const now = Date.now();
+    const chunks = new Map(state.chunks);
+    for (const [hash, chunk] of chunks) {
+      chunks.set(hash, { ...chunk, freshness: 'suspect', freshnessCause: 'session_restore', suspectSince: now });
+    }
+    const stagedSnippets = new Map(state.stagedSnippets);
+    for (const [key, snippet] of stagedSnippets) {
+      stagedSnippets.set(key, { ...snippet, stageState: 'stale', suspectSince: now });
+    }
+    return { chunks, stagedSnippets };
+  });
 }
 
 /**
@@ -553,21 +710,18 @@ export function useChatPersistence() {
               fileReadSpinRanges: memorySnapshot.fileReadSpinRanges ?? {},
             } : {}),
           });
-          useContextStore.setState(state => {
-            const now = Date.now();
-            const chunks = new Map(state.chunks);
-            for (const [hash, chunk] of chunks) {
-              chunks.set(hash, { ...chunk, freshness: 'suspect', freshnessCause: 'session_restore', suspectSince: now });
-            }
-            const stagedSnippets = new Map(state.stagedSnippets);
-            for (const [key, snippet] of stagedSnippets) {
-              stagedSnippets.set(key, { ...snippet, stageState: 'stale', suspectSince: now });
-            }
-            return { chunks, stagedSnippets };
-          });
+          const freshnessResult = await applyHashFirstFreshness();
+          if (freshnessResult.changedPaths.length > 0) {
+            const ctxStore = useContextStore.getState();
+            ctxStore.invalidateArtifactsForPaths(freshnessResult.changedPaths);
+            ctxStore.invalidateAwarenessForPaths(freshnessResult.changedPaths);
+          }
           if (memorySnapshot.geminiCache) restoreGeminiCacheSnapshot(memorySnapshot.geminiCache);
           restoredFromSnapshot = true;
-          console.log('[ChatPersistence] Restored memory snapshot v' + memorySnapshot.version + ' (chunks/staged marked suspect)');
+          console.log(
+            '[ChatPersistence] Restored memory snapshot v' + memorySnapshot.version +
+            ` (hash-first: ${freshnessResult.preserved} preserved, ${freshnessResult.suspect} suspect, ${freshnessResult.staleSnippets} stale snippets, ${freshnessResult.evictedPaths} missing paths)`,
+          );
         }
       } catch (e) {
         console.warn('[ChatPersistence] Failed to restore memory snapshot:', e);
@@ -726,11 +880,14 @@ export function useChatPersistence() {
       syncCurrentSessionIdToLocalStorage(sessionId);
 
       if (restoredFromSnapshot) {
-        useContextStore.getState().reconcileRestoredSession().then(stats => {
+        try {
+          const stats = await useContextStore.getState().reconcileRestoredSession();
           if (stats.updated + stats.invalidated + stats.evicted > 0) {
             console.log('[ChatPersistence] Post-restore reconciliation:', stats);
           }
-        }).catch(e => console.warn('[ChatPersistence] Post-restore reconciliation failed:', e));
+        } catch (e) {
+          console.warn('[ChatPersistence] Post-restore reconciliation failed:', e);
+        }
       }
 
       console.log('[ChatPersistence] Session loaded:', sessionId, 
@@ -1098,7 +1255,7 @@ export function useChatPersistence() {
     }
   }, []);
 
-  const applyMemorySnapshot = useCallback((snapshot: PersistedMemorySnapshot) => {
+  const applyMemorySnapshot = useCallback(async (snapshot: PersistedMemorySnapshot) => {
     const normalizedStagedSnippets = normalizePersistedStagedEntries(snapshot.stagedSnippets);
     useContextStore.setState({
       chunks: new Map(rehydrateChunkDates(snapshot.chunks).map(chunk => [chunk.hash, chunk])),
@@ -1125,23 +1282,25 @@ export function useChatPersistence() {
       fileReadSpinByPath: snapshot.fileReadSpinByPath ?? {},
       fileReadSpinRanges: snapshot.fileReadSpinRanges ?? {},
     });
-    useContextStore.setState(state => {
-      const now = Date.now();
-      const chunks = new Map(state.chunks);
-      for (const [hash, chunk] of chunks) {
-        chunks.set(hash, { ...chunk, freshness: 'suspect', freshnessCause: 'session_restore', suspectSince: now });
-      }
-      const stagedSnippets = new Map(state.stagedSnippets);
-      for (const [key, snippet] of stagedSnippets) {
-        stagedSnippets.set(key, { ...snippet, stageState: 'stale', suspectSince: now });
-      }
-      return { chunks, stagedSnippets };
-    });
+    const freshnessResult = await applyHashFirstFreshness();
+    if (freshnessResult.changedPaths.length > 0) {
+      const ctxStore = useContextStore.getState();
+      ctxStore.invalidateArtifactsForPaths(freshnessResult.changedPaths);
+      ctxStore.invalidateAwarenessForPaths(freshnessResult.changedPaths);
+    }
+    console.log(
+      `[ChatPersistence] applyMemorySnapshot hash-first: ${freshnessResult.preserved} preserved, ${freshnessResult.suspect} suspect, ${freshnessResult.staleSnippets} stale snippets`,
+    );
     if (snapshot.geminiCache) restoreGeminiCacheSnapshot(snapshot.geminiCache);
     applyV4SessionExtras(snapshot);
-    useContextStore.getState().reconcileRestoredSession().catch(e =>
-      console.warn('[ChatPersistence] applyMemorySnapshot reconciliation failed:', e),
-    );
+    try {
+      const stats = await useContextStore.getState().reconcileRestoredSession();
+      if (stats.updated + stats.invalidated + stats.evicted > 0) {
+        console.log('[ChatPersistence] applyMemorySnapshot reconciliation:', stats);
+      }
+    } catch (e) {
+      console.warn('[ChatPersistence] applyMemorySnapshot reconciliation failed:', e);
+    }
   }, []);
 
   /**
@@ -1174,7 +1333,7 @@ export function useChatPersistence() {
 
       // 4. Restore memory state if we have a snapshot
       if (restoreSnapshot) {
-        applyMemorySnapshot(restoreSnapshot);
+        await applyMemorySnapshot(restoreSnapshot);
         console.log('[ChatPersistence] Restored memory snapshot for message:', messageId);
       }
 
@@ -1213,7 +1372,7 @@ export function useChatPersistence() {
     useAppStore.getState().undoRestore();
 
     // Restore memory snapshot
-    applyMemorySnapshot(undoEntry.memorySnapshot);
+    await applyMemorySnapshot(undoEntry.memorySnapshot);
 
     // Re-save to DB
     if (sessionId && chatDb.isInitialized()) {

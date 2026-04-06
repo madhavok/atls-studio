@@ -110,6 +110,9 @@ let _bulkRevisionResolver: ((paths: string[]) => Promise<Map<string, string | nu
 export function setBulkRevisionResolver(fn: ((paths: string[]) => Promise<Map<string, string | null>>) | null): void {
   _bulkRevisionResolver = fn;
 }
+export function getBulkRevisionResolver(): ((paths: string[]) => Promise<Map<string, string | null>>) | null {
+  return _bulkRevisionResolver;
+}
 
 
 /**

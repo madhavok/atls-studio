@@ -1,6 +1,6 @@
-import { describe, it, expect, beforeEach } from 'vitest';
-import { useContextStore } from '../stores/contextStore';
-import { rehydrateChunkDates, serializeMemorySnapshot } from './useChatPersistence';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { useContextStore, setBulkRevisionResolver } from '../stores/contextStore';
+import { rehydrateChunkDates, serializeMemorySnapshot, applyHashFirstFreshness } from './useChatPersistence';
 
 const DUMMY_GEMINI_CACHE = {
   version: '1',
@@ -211,5 +211,199 @@ describe('memory snapshot helpers', () => {
     expect(after._roundCoveragePaths.size).toBe(0);
     expect(after.roundNewCoverage).toBe(0);
     expect(after.coveragePlateauStreak).toBe(0);
+  });
+});
+
+describe('applyHashFirstFreshness', () => {
+  beforeEach(() => {
+    useContextStore.getState().resetSession();
+    setBulkRevisionResolver(null);
+  });
+
+  it('preserves freshness for unchanged files (no suspect, no reread pressure)', async () => {
+    const store = useContextStore.getState();
+    store.addChunk('export const x = 1;', 'file', 'src/unchanged.ts', undefined, undefined, 'rev-abc', {
+      sourceRevision: 'rev-abc',
+      viewKind: 'latest',
+    });
+    store.stageSnippet('stage:unchanged', 'function foo() {}', 'src/unchanged.ts', undefined, 'rev-abc', undefined, 'latest');
+
+    setBulkRevisionResolver(async (paths) =>
+      new Map(paths.map(p => [p, 'rev-abc'])),
+    );
+
+    const result = await applyHashFirstFreshness();
+
+    expect(result.preserved).toBeGreaterThanOrEqual(2);
+    expect(result.suspect).toBe(0);
+    expect(result.staleSnippets).toBe(0);
+    expect(result.changedPaths).toHaveLength(0);
+
+    const state = useContextStore.getState();
+    for (const chunk of state.chunks.values()) {
+      if (chunk.type === 'file') {
+        expect(chunk.freshness).not.toBe('suspect');
+        expect(chunk.suspectSince).toBeUndefined();
+      }
+    }
+    for (const snippet of state.stagedSnippets.values()) {
+      expect(snippet.stageState).not.toBe('stale');
+      expect(snippet.suspectSince).toBeUndefined();
+    }
+  });
+
+  it('marks chunks suspect when disk revision differs', async () => {
+    const store = useContextStore.getState();
+    store.addChunk('export const x = 1;', 'file', 'src/changed.ts', undefined, undefined, 'rev-old', {
+      sourceRevision: 'rev-old',
+      viewKind: 'latest',
+    });
+
+    setBulkRevisionResolver(async (paths) =>
+      new Map(paths.map(p => [p, 'rev-new'])),
+    );
+
+    const result = await applyHashFirstFreshness();
+
+    expect(result.suspect).toBe(1);
+    expect(result.preserved).toBe(0);
+    expect(result.changedPaths).toHaveLength(1);
+
+    for (const chunk of useContextStore.getState().chunks.values()) {
+      if (chunk.type === 'file') {
+        expect(chunk.freshness).toBe('suspect');
+        expect(chunk.freshnessCause).toBe('session_restore');
+      }
+    }
+  });
+
+  it('marks chunks suspect when sourceRevision is missing on chunk', async () => {
+    const store = useContextStore.getState();
+    store.addChunk('export const x = 1;', 'file', 'src/no-rev.ts');
+
+    setBulkRevisionResolver(async (paths) =>
+      new Map(paths.map(p => [p, 'rev-disk'])),
+    );
+
+    const result = await applyHashFirstFreshness();
+
+    expect(result.suspect).toBe(1);
+    expect(result.preserved).toBe(0);
+  });
+
+  it('falls back to blanket suspect when resolver is not available', async () => {
+    const store = useContextStore.getState();
+    store.addChunk('export const x = 1;', 'file', 'src/test.ts', undefined, undefined, 'rev-abc', {
+      sourceRevision: 'rev-abc',
+      viewKind: 'latest',
+    });
+
+    const result = await applyHashFirstFreshness();
+
+    expect(result.preserved).toBe(0);
+    expect(result.suspect).toBe(0);
+
+    for (const chunk of useContextStore.getState().chunks.values()) {
+      if (chunk.type === 'file') {
+        expect(chunk.freshness).toBe('suspect');
+      }
+    }
+  });
+
+  it('preserves snapshot view kind chunks as-is regardless of disk', async () => {
+    useContextStore.setState(state => {
+      const chunks = new Map(state.chunks);
+      chunks.set('snap-hash', {
+        hash: 'snap-hash',
+        shortHash: 'snap-ha',
+        type: 'file',
+        source: 'src/frozen.ts',
+        content: 'frozen content',
+        tokens: 5,
+        createdAt: new Date(),
+        viewKind: 'snapshot',
+        sourceRevision: 'rev-frozen',
+      } as import('../stores/contextStore').ContextChunk);
+      return { chunks };
+    });
+
+    setBulkRevisionResolver(async (paths) =>
+      new Map(paths.map(p => [p, 'rev-different'])),
+    );
+
+    const result = await applyHashFirstFreshness();
+
+    const chunk = useContextStore.getState().chunks.get('snap-hash');
+    expect(chunk?.freshness).not.toBe('suspect');
+    expect(chunk?.viewKind).toBe('snapshot');
+  });
+
+  it('preserves non-file-backed chunks (msg:user, etc.) as-is', async () => {
+    useContextStore.setState(state => {
+      const chunks = new Map(state.chunks);
+      chunks.set('msg-hash', {
+        hash: 'msg-hash',
+        shortHash: 'msg-ha',
+        type: 'msg:user',
+        source: undefined,
+        content: 'user message',
+        tokens: 3,
+        createdAt: new Date(),
+      } as import('../stores/contextStore').ContextChunk);
+      return { chunks };
+    });
+
+    setBulkRevisionResolver(async () => new Map());
+
+    const result = await applyHashFirstFreshness();
+
+    const chunk = useContextStore.getState().chunks.get('msg-hash');
+    expect(chunk?.freshness).not.toBe('suspect');
+  });
+
+  it('falls back to blanket suspect when resolver throws', async () => {
+    const store = useContextStore.getState();
+    store.addChunk('export const x = 1;', 'file', 'src/error.ts', undefined, undefined, 'rev-abc', {
+      sourceRevision: 'rev-abc',
+      viewKind: 'latest',
+    });
+
+    setBulkRevisionResolver(async () => { throw new Error('IPC fail'); });
+
+    const result = await applyHashFirstFreshness();
+
+    expect(result.preserved).toBe(0);
+
+    for (const chunk of useContextStore.getState().chunks.values()) {
+      if (chunk.type === 'file') {
+        expect(chunk.freshness).toBe('suspect');
+      }
+    }
+  });
+
+  it('marks staged snippets stale only when disk revision differs', async () => {
+    const store = useContextStore.getState();
+    store.stageSnippet('stage:fresh', 'fn foo() {}', 'src/ok.ts', undefined, 'rev-ok', undefined, 'latest');
+    store.stageSnippet('stage:stale', 'fn bar() {}', 'src/changed.ts', undefined, 'rev-old', undefined, 'latest');
+
+    setBulkRevisionResolver(async (paths) => {
+      const map = new Map<string, string | null>();
+      for (const p of paths) {
+        if (p.includes('ok')) map.set(p, 'rev-ok');
+        else map.set(p, 'rev-new');
+      }
+      return map;
+    });
+
+    const result = await applyHashFirstFreshness();
+
+    expect(result.staleSnippets).toBe(1);
+    expect(result.preserved).toBeGreaterThanOrEqual(1);
+
+    const snippets = useContextStore.getState().stagedSnippets;
+    const fresh = snippets.get('stage:fresh');
+    const stale = snippets.get('stage:stale');
+    expect(fresh?.stageState).not.toBe('stale');
+    expect(stale?.stageState).toBe('stale');
   });
 });
