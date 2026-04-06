@@ -42,7 +42,7 @@ ce f:h:XXXX:L-M le:[{content:"new code"}]
   line + end_line: 1-based inclusive span. Auto-injected from hash ref range when omitted. end | -1 | symbol:fn(name) resolve to concrete bounds.
   action: defaults to replace when omitted. Other actions: insert_before, insert_after, delete, move, replace_body.
   move: requires destination:N (1-based). Produces positional shifts at both source and destination — auto-rebased in multi-step batches.
-  replace_body: replaces brace-delimited body content. Body span resolved by Rust; reported in edits_resolved.
+  replace_body: replaces function/class body (Rust: brace-delimited; Python: def/class/async def blocks by indent). Reported in edits_resolved.
   Intra-step coords: snapshot-style (relative to file before any edit in step); executor rebases.
   Response: edits_resolved:[{resolved_line,action,lines_affected}] — use for chaining, not mental math. On failure: suggestion:{line,confidence,tier,preview} when fuzzy match found.
   also: creates:[{path:p,content:c}] | revise:hash | undo:h:$last_edit | deletes:path1,path2
@@ -71,11 +71,11 @@ im edits:[{f:p,le:[...]}] verify?:true
 iv query:text ps?:path1
 id ps?:path1 severity?:high query?:text
 srv directory:dir depth?:N
-ifr f:path strategy?:name sn?:s1 target_file?:path
+ifr f:path strategy?:by_cluster|by_prefix|by_kind sn?:s1 target_file?:path — rename is cf action:rename, not ifr
 ic target_path:path content:"text" ref_files?:path1 verify?:true
 it source_file:path test_file?:path
 is old_text:"text" new_text:"text" file_glob?:pattern max_matches?:N verify?:true
-ix source_file:path sn?:s1 target_file:path
+ix source_file:path sn?:s1 target_file:path — aliases: f, path, file_path, or ps:single_path
 
 ### Examples
 r1 rc type:smart ps:src/api.ts,src/db.ts

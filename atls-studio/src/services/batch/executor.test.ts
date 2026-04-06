@@ -1258,6 +1258,80 @@ describe('executeUnifiedBatch ref contamination prevention', () => {
     expect(receivedParams[0]._binding_warning_ref).toMatch(/resolved to nothing/);
   });
 
+  it('skips change.edit when in.file_path from_step resolves to nothing (search slot beyond hits)', async () => {
+    const editSpy = vi.fn();
+
+    handlers.set('search.code', async () => ({
+      kind: 'search_results' as const,
+      ok: true,
+      refs: ['h:search1'],
+      summary: 'search',
+      content: { file_paths: ['a.ts'], lines: [1] },
+    }));
+    handlers.set('change.edit', editSpy as unknown as OpHandler);
+
+    const result = await executeUnifiedBatch({
+      version: '1.0',
+      steps: [
+        { id: 's1', use: 'search.code', with: { queries: ['x'] } },
+        {
+          id: 'e2',
+          use: 'change.edit',
+          with: { line_edits: [{ line: 1, action: 'replace', content: 'y' }] },
+          in: {
+            file_path: { from_step: 's1', path: 'content.file_paths.1' },
+            line: { from_step: 's1', path: 'content.lines.1' },
+          },
+        },
+      ],
+    }, makeCtx());
+
+    expect(editSpy).not.toHaveBeenCalled();
+    const e2 = result.step_results.find(r => r.id === 'e2');
+    expect(e2?.ok).toBe(true);
+    expect(e2?.summary).toContain('SKIPPED');
+    expect(e2?.summary).toContain('file_path');
+  });
+
+  it('change.edit binds content.lines.0 and content.lines.1 from same search step', async () => {
+    const editSpy = vi.fn();
+
+    handlers.set('search.code', async () => ({
+      kind: 'search_results' as const,
+      ok: true,
+      refs: ['h:search1'],
+      summary: 'search',
+      content: { file_paths: ['a.ts', 'a.ts'], lines: [1, 5] },
+    }));
+    handlers.set('change.edit', async (params) => {
+      editSpy(params);
+      return raw('ok', { drafts: [{ file: 'a.ts', content_hash: 'h1' }] });
+    });
+
+    await executeUnifiedBatch({
+      version: '1.0',
+      steps: [
+        { id: 's1', use: 'search.code', with: { queries: ['x'] } },
+        {
+          id: 'e0',
+          use: 'change.edit',
+          with: { file_path: 'a.ts', line_edits: [{ action: 'replace', content: 'y' }] },
+          in: { line: { from_step: 's1', path: 'content.lines.0' } },
+        },
+        {
+          id: 'e1',
+          use: 'change.edit',
+          with: { file_path: 'a.ts', line_edits: [{ action: 'replace', content: 'z' }] },
+          in: { line: { from_step: 's1', path: 'content.lines.1' } },
+        },
+      ],
+    }, makeCtx());
+
+    expect(editSpy).toHaveBeenCalledTimes(2);
+    expect((editSpy.mock.calls[0][0] as Record<string, unknown>).line).toBe(1);
+    expect((editSpy.mock.calls[1][0] as Record<string, unknown>).line).toBe(5);
+  });
+
   it('evicts mutation-sensitive retention entries after successful change.edit', async () => {
     const { useRetentionStore } = await import('../../stores/retentionStore');
     useRetentionStore.getState().reset();

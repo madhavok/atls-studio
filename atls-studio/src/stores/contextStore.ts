@@ -826,6 +826,11 @@ interface ContextStoreState {
   invalidateStaleHashes: (shortHashes: string[]) => number;
   /** Invalidate derived shapes (staged, chunks, bindings) where source matches path and sourceRevision !== currentRevision. */
   invalidateDerivedForPath: (path: string, currentRevision: string) => number;
+  /**
+   * After tool delete_files: remove chunks, archive, staged snippets, awareness, and supersede BB for those paths
+   * so recreated files do not reuse stale hashes or snapshot metadata.
+   */
+  evictChunksForDeletedPaths: (paths: string[]) => { chunks: number; staged: number };
   reconcileSourceRevision: (path: string, currentRevision: string, cause?: FreshnessCause) => ReconcileStats;
   /** Sweep active/staged/archived chunks, reconcile to current revisions, return stats. Shared by file-watch, preflight, round-end. */
   refreshRoundEnd: (options?: { paths?: string[]; getRevisionForPath?: (path: string) => Promise<string | null>; bulkGetRevisions?: (paths: string[]) => Promise<Map<string, string | null>> }) => Promise<RefreshRoundStats>;
@@ -2440,6 +2445,79 @@ export const useContextStore = create<ContextStoreState>()(
       };
     });
     return evicted;
+  },
+
+  evictChunksForDeletedPaths: (paths: string[]) => {
+    if (paths.length === 0) return { chunks: 0, staged: 0 };
+    const pathSet = new Set(paths.map(p => normalizeSourcePath(p)));
+    const matchesPath = (source?: string): boolean =>
+      !!source && pathSet.has(normalizeSourcePath(source));
+
+    const evictedHashes: string[] = [];
+    let chunkCount = 0;
+    let stagedCount = 0;
+
+    set(state => {
+      const newChunks = new Map(state.chunks);
+      const newArchived = new Map(state.archivedChunks);
+      const newStaged = new Map(state.stagedSnippets);
+
+      const chunkKeysToRemove: string[] = [];
+      for (const [key, chunk] of newChunks) {
+        if (matchesPath(chunk.source)) chunkKeysToRemove.push(key);
+      }
+      for (const key of chunkKeysToRemove) {
+        const chunk = newChunks.get(key);
+        if (!chunk) continue;
+        newChunks.delete(key);
+        evictedHashes.push(chunk.hash);
+        chunkCount++;
+      }
+
+      const archivedKeysToRemove: string[] = [];
+      for (const [key, chunk] of newArchived) {
+        if (matchesPath(chunk.source)) archivedKeysToRemove.push(key);
+      }
+      for (const key of archivedKeysToRemove) {
+        const chunk = newArchived.get(key);
+        if (!chunk) continue;
+        newArchived.delete(key);
+        evictedHashes.push(chunk.hash);
+        chunkCount++;
+      }
+
+      const stagedKeysToRemove: string[] = [];
+      for (const [key, snippet] of newStaged) {
+        if (matchesPath(snippet.source)) stagedKeysToRemove.push(key);
+      }
+      for (const key of stagedKeysToRemove) {
+        newStaged.delete(key);
+        stagedCount++;
+      }
+
+      if (chunkCount === 0 && stagedCount === 0) return {};
+
+      return {
+        chunks: newChunks,
+        archivedChunks: newArchived,
+        stagedSnippets: newStaged,
+        stageVersion: state.stageVersion + 1,
+        memoryEvents: appendMemoryEvent(state.memoryEvents, {
+          action: 'evict',
+          reason: 'deleted_paths',
+          refs: paths.slice(0, 12).map(p => p.replace(/\\/g, '/')),
+        }),
+      };
+    });
+
+    for (const h of evictedHashes) hppEvict(h);
+
+    get().invalidateAwarenessForPaths(paths);
+    for (const p of paths) {
+      get().supersedeBlackboardForPath(p, '');
+    }
+
+    return { chunks: chunkCount, staged: stagedCount };
   },
 
   reconcileSourceRevision: (path: string, currentRevision: string, cause?: FreshnessCause) => {

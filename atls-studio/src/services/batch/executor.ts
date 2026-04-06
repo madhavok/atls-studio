@@ -1344,6 +1344,51 @@ export async function executeUnifiedBatch(
     // Merge with and resolved inputs (resolved inputs override with)
     let mergedParams: Record<string, unknown> = normalizeStepParams(step.use, { ...step.with, ...resolvedInputs });
 
+    // change.edit: optional file_path / line from in.from_step — skip slot when binding produced nothing (e.g. search slot beyond hit count)
+    if (step.use === 'change.edit') {
+      const fp = mergedParams.file_path;
+      const missingFile = typeof fp !== 'string' || !fp.trim();
+      const bindingWarning = typeof mergedParams._binding_warning_file_path === 'string';
+      if (
+        step.in?.file_path
+        && 'from_step' in step.in.file_path
+        && (missingFile || bindingWarning)
+      ) {
+        const output: StepOutput = {
+          kind: 'raw',
+          ok: true,
+          refs: [],
+          summary: `${step.id}: SKIPPED (file_path not bound from prior step)`,
+        };
+        stepOutputs.set(step.id, output);
+        recordStepResult(step.id, step.use, output, Date.now() - stepStart);
+        continue;
+      }
+
+      const lineRaw = mergedParams.line ?? mergedParams.start_line;
+      const lineMissing =
+        lineRaw === undefined
+        || lineRaw === null
+        || (typeof lineRaw === 'number' && !Number.isFinite(lineRaw))
+        || (typeof lineRaw === 'string' && !lineRaw.trim());
+      const lineBindingWarning = typeof mergedParams._binding_warning_line === 'string';
+      if (
+        step.in?.line
+        && 'from_step' in step.in.line
+        && (lineMissing || lineBindingWarning)
+      ) {
+        const output: StepOutput = {
+          kind: 'raw',
+          ok: true,
+          refs: [],
+          summary: `${step.id}: SKIPPED (line not bound from prior step)`,
+        };
+        stepOutputs.set(step.id, output);
+        recordStepResult(step.id, step.use, output, Date.now() - stepStart);
+        continue;
+      }
+    }
+
     if (FILE_PATH_REQUIRED_OPS.has(step.use)) {
       const rawFp = mergedParams.file_paths;
       const coerced = coerceFilePathsArray(rawFp);

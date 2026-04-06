@@ -1115,3 +1115,64 @@ describe('clearReadSpansForPaths', () => {
     expect(ptyChunk?.readSpan?.sourceRevision).toBe('def456');
   });
 });
+
+// ---------------------------------------------------------------------------
+// evictChunksForDeletedPaths (change.delete — stale hash / awareness cleanup)
+// ---------------------------------------------------------------------------
+
+describe('evictChunksForDeletedPaths', () => {
+  beforeEach(() => resetStore());
+
+  it('removes active chunks, clears awareness cache, and drops archived rows for the same path', () => {
+    const store = useContextStore.getState();
+    addTestChunk('active', 'file', 'src/deleted.ts', { sourceRevision: 'rev-a' });
+
+    store.setAwareness({
+      filePath: 'src/deleted.ts',
+      snapshotHash: 'rev-a',
+      readRegions: [],
+      shapeHash: '',
+      recordedAt: Date.now(),
+    });
+    expect(store.getAwareness('src/deleted.ts')).toBeDefined();
+
+    const short = addTestChunk('only archived', 'file', 'src/archived-only.ts', { sourceRevision: 'rev-b' });
+    useContextStore.setState((state) => {
+      const archivedEntry = Array.from(state.chunks.entries()).find(([, chunk]) => chunk.shortHash === short);
+      if (!archivedEntry) return {};
+      const [archivedKey, archivedChunk] = archivedEntry;
+      const chunks = new Map(state.chunks);
+      const archivedChunks = new Map(state.archivedChunks);
+      chunks.delete(archivedKey);
+      archivedChunks.set(archivedKey, archivedChunk);
+      return { chunks, archivedChunks };
+    });
+
+    const { chunks, staged } = useContextStore.getState().evictChunksForDeletedPaths(['src/deleted.ts', 'src/archived-only.ts']);
+    expect(chunks).toBe(2);
+    expect(staged).toBe(0);
+
+    expect(
+      Array.from(useContextStore.getState().chunks.values()).some(c => c.source === 'src/deleted.ts' || c.source === 'src/archived-only.ts'),
+    ).toBe(false);
+    expect(
+      Array.from(useContextStore.getState().archivedChunks.values()).some(c => c.source === 'src/archived-only.ts'),
+    ).toBe(false);
+    expect(useContextStore.getState().awarenessCache.get('src/deleted.ts')).toBeUndefined();
+  });
+
+  it('removes staged snippets for deleted paths and leaves other files alone', () => {
+    const store = useContextStore.getState();
+    addTestChunk('keep', 'file', 'src/keep.ts');
+    store.stageSnippet('st1', 'staged body', 'src/gone.ts', '1-5', 'rev-x');
+
+    const { chunks, staged } = store.evictChunksForDeletedPaths(['src/gone.ts']);
+    expect(chunks).toBe(0);
+    expect(staged).toBe(1);
+
+    expect(useContextStore.getState().stagedSnippets.has('st1')).toBe(false);
+    expect(
+      Array.from(useContextStore.getState().chunks.values()).some(c => c.source === 'src/keep.ts'),
+    ).toBe(true);
+  });
+});

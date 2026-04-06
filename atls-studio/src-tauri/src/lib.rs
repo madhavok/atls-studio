@@ -786,21 +786,35 @@ pub(crate) fn apply_line_edits(content: &str, edits: &[LineEdit]) -> Result<(Str
                         resolved_line
                     ));
                 }
-                // When end_line is set AND spans more than one line (from symbol
-                // resolution), use the symbol range directly — it's authoritative and
-                // immune to regex/string brace confusion. When end_line == line (single-
-                // line hash ref like h:xxxx:16), it's not a symbol scope — fall through
-                // to the text scanner with a full EOF slice.
+                // When end_line is set AND spans more than one line (hash range or symbol
+                // span), cap the scan to lines[idx..end_line) instead of EOF. Never use
+                // (1, el - idx): that mis-sized the closing brace for 3-line functions
+                // (e.g. h:hash:7-9) and spliced away the `}` — JS `'}' expected'`.
+                // When end_line == line (single-line hash ref), fall through to EOF slice.
                 let effective_end_line = edit.end_line.filter(|&el| (el as usize) > idx + 1);
                 let (body_start_rel, close_brace_rel) = if let Some(el) = effective_end_line {
-                    let end_rel = (el as usize).saturating_sub(idx);
-                    (1, end_rel)
+                    let end_idx = (el as usize).min(lines.len());
+                    if end_idx <= idx {
+                        return Err(format!(
+                            "replace_body at L{}: end_line {} is not after start line",
+                            resolved_line, el
+                        ));
+                    }
+                    let slice = &lines[idx..end_idx];
+                    let refs: Vec<&str> = slice.iter().map(|s| s.as_str()).collect();
+                    find_body_bounds(&refs)
+                        .or_else(|| find_python_indent_body_bounds(&refs))
+                        .ok_or_else(|| format!(
+                            "replace_body at L{}: could not find body bounds (no matching {{ }} block or Python def/class block)",
+                            resolved_line
+                        ))?
                 } else {
                     let slice = &lines[idx..];
                     let refs: Vec<&str> = slice.iter().map(|s| s.as_str()).collect();
                     find_body_bounds(&refs)
+                        .or_else(|| find_python_indent_body_bounds(&refs))
                         .ok_or_else(|| format!(
-                            "replace_body at L{}: could not find body bounds (no matching {{ }} block)",
+                            "replace_body at L{}: could not find body bounds (no matching {{ }} block or Python def/class block)",
                             resolved_line
                         ))?
                 };
@@ -1021,7 +1035,7 @@ pub(crate) fn line_edits_to_edit_ops(
                     continue;
                 }
                 let slice = &shadow_lines[start_idx..];
-                match find_body_bounds(slice) {
+                match find_body_bounds(slice).or_else(|| find_python_indent_body_bounds(slice)) {
                     Some((body_start_rel, close_brace_rel)) => {
                         let body_start = start_idx + body_start_rel;
                         let body_end = std::cmp::min(start_idx + close_brace_rel, shadow_lines.len());
@@ -1656,6 +1670,56 @@ pub(crate) fn find_body_bounds(symbol_lines: &[&str]) -> Option<(usize, usize)> 
         let (open, close) = pairs.last()?;
         Some((open + 1, *close))
     }
+}
+
+/// Python `def` / `class` / `async def` — indentation-based body when `{`/`}` matching finds nothing.
+/// Returns `(body_start_rel, end_exclusive_rel)` in the same convention as [`find_body_bounds`].
+pub(crate) fn find_python_indent_body_bounds(symbol_lines: &[&str]) -> Option<(usize, usize)> {
+    if symbol_lines.is_empty() {
+        return None;
+    }
+    let mut sig_line: Option<usize> = None;
+    let mut sig_indent: usize = 0;
+    for (i, line) in symbol_lines.iter().enumerate() {
+        let t = line.trim();
+        if t.is_empty() || t.starts_with('#') {
+            continue;
+        }
+        let looks_py_sig = (t.starts_with("def ")
+            || t.starts_with("class ")
+            || t.starts_with("async def "))
+            && line.contains(':');
+        if !looks_py_sig {
+            continue;
+        }
+        if t.ends_with(':') {
+            sig_line = Some(i);
+            sig_indent = line.len() - line.trim_start().len();
+            break;
+        }
+    }
+    let sig_i = sig_line?;
+    let body_start = sig_i + 1;
+    if body_start > symbol_lines.len() {
+        return None;
+    }
+    if body_start == symbol_lines.len() {
+        return Some((body_start, body_start));
+    }
+    let mut end = symbol_lines.len();
+    for i in (body_start + 1)..symbol_lines.len() {
+        let line = symbol_lines[i];
+        let t = line.trim();
+        if t.is_empty() || t.starts_with('#') {
+            continue;
+        }
+        let ind = line.len() - line.trim_start().len();
+        if ind <= sig_indent {
+            end = i;
+            break;
+        }
+    }
+    Some((body_start, end))
 }
 
 /// Resolve `symbol` + `position` on each edit to concrete `line` / `end_line` using the symbol index.
@@ -3984,7 +4048,7 @@ function alsoStay() {
 
 #[cfg(test)]
 mod hard_line_edit_tests {
-    use super::{apply_line_edits, LineCoordinate, LineEdit, EditResolution, content_hash, brace_balance_delta, find_body_bounds};
+    use super::{apply_line_edits, LineCoordinate, LineEdit, EditResolution, content_hash, brace_balance_delta, find_body_bounds, find_python_indent_body_bounds};
     use crate::path_utils::normalize_line_endings;
 
     fn le(line: u32, action: &str, content: Option<&str>, end_line: Option<u32>) -> LineEdit {
@@ -4215,6 +4279,27 @@ mod hard_line_edit_tests {
         let (start, end) = bounds.unwrap();
         assert_eq!(start, 1, "body starts after opening {{ line");
         assert_eq!(end, 2, "body ends at closing }} line");
+    }
+
+    #[test]
+    fn find_python_indent_body_bounds_finds_def_block() {
+        let lines = vec!["def foo():", "    x = 1", "    return x"];
+        let refs: Vec<&str> = lines.iter().copied().collect();
+        let b = find_python_indent_body_bounds(&refs).expect("python bounds");
+        assert_eq!(b, (1, 3));
+    }
+
+    #[test]
+    fn replace_body_python_def_succeeds() {
+        let content = "def foo():\n    x = 1\n    return x\n";
+        let edits = vec![le(1, "replace_body", Some("    y = 2\n    return y"), None)];
+        let (result, warnings, _) = apply_line_edits(content, &edits).unwrap();
+        assert!(
+            !warnings.iter().any(|w| w.contains("could not find body bounds")),
+            "unexpected warnings: {:?}",
+            warnings
+        );
+        assert!(result.contains("y = 2"), "{}", result);
     }
 
     // ── torture-brackets.ts regression suite ──
@@ -4452,6 +4537,25 @@ class BracketHell {\n\
         }];
         let hint = crate::syntax_error_bracket_hint(pre, post, &resolutions);
         assert!(hint.is_none(), "should not hint when balanced");
+    }
+
+    #[test]
+    fn replace_body_three_line_js_function_with_end_line_cap() {
+        // Hash ref h:*:L-L+2 on a minimal function: must replace only the body, not `}`.
+        let content = "function add(a, b) {\n    return a + b;\n}\n";
+        let ed = le(1, "replace_body", Some("    return Number(a) + Number(b);"), Some(3));
+        let (result, _warnings, _) = apply_line_edits(content, &[ed]).unwrap();
+        assert!(
+            result.contains("return Number(a) + Number(b)"),
+            "new body: {}",
+            result
+        );
+        assert!(result.contains("function add"), "signature intact: {}", result);
+        assert!(
+            result.matches('}').count() >= 1,
+            "closing brace preserved: {}",
+            result
+        );
     }
 
     #[test]

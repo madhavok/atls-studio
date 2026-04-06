@@ -50,6 +50,26 @@ describe('normalizeStepParams', () => {
       expect(out.file_paths).toBeUndefined();
     });
 
+    it('maps file_paths[0] to file_path for change.refactor when file_path missing (extract_methods)', () => {
+      const out = normalizeStepParams('change.refactor', {
+        action: 'extract',
+        ps: 'src/lib.rs',
+        symbol_names: ['foo'],
+      });
+      expect(out.file_paths).toEqual(['src/lib.rs']);
+      expect(out.file_path).toBe('src/lib.rs');
+    });
+
+    it('fills old_name from symbol_names for change.refactor rename', () => {
+      const out = normalizeStepParams('change.refactor', {
+        action: 'rename',
+        sn: 'greet',
+        new_name: 'say_hello',
+      });
+      expect(out.old_name).toBe('greet');
+      expect(out.new_name).toBe('say_hello');
+    });
+
     it('does not overwrite existing canonical "file_path"', () => {
       const out = normalizeStepParams('change.edit', { file_path: 'canonical.ts', file: 'alias.ts' });
       expect(out.file_path).toBe('canonical.ts');

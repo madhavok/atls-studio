@@ -73,7 +73,13 @@ const OP_ALIASES: Readonly<Partial<Record<OperationKind, Readonly<Record<string,
   'intent.create': { path: 'target_path', file: 'target_path', references: 'ref_files' },
   'intent.test': { file: 'source_file', test: 'test_file' },
   'intent.search_replace': { query: 'search_query', old: 'old_text', new: 'new_text', glob: 'file_glob' },
-  'intent.extract': { file: 'source_file', symbols: 'symbol_names', target: 'target_file' },
+  'intent.extract': {
+    file: 'source_file',
+    file_path: 'source_file',
+    path: 'source_file',
+    symbols: 'symbol_names',
+    target: 'target_file',
+  },
   'system.git': { paths: 'files', file_paths: 'files' },
 };
 
@@ -99,6 +105,7 @@ const SINGULAR_FILE_PATH_OPS = new Set<OperationKind>([
   'change.edit',
   'change.create',
   'change.split_module',
+  'change.refactor',
   'read.lines',
   'analyze.extract_plan',
   'intent.edit',
@@ -331,6 +338,26 @@ export function normalizeStepParams(
     out.symbol_names = normalizeSymbolNames(out.symbol_names);
   } else if (typeof out.symbol_names === 'string') {
     out.symbol_names = [stripSymbolPrefix(out.symbol_names)];
+  }
+
+  // change.refactor: rename_symbol accepts `old_name`; batch JSON often uses `sn` → symbol_names
+  if (op === 'change.refactor' && out.action === 'rename' && typeof out.old_name !== 'string') {
+    if (Array.isArray(out.symbol_names) && out.symbol_names.length > 0) {
+      const first = out.symbol_names[0];
+      if (typeof first === 'string' && first.trim()) {
+        out.old_name = first.trim();
+      }
+    } else if (typeof out.symbol_names === 'string' && out.symbol_names.trim()) {
+      out.old_name = out.symbol_names.trim();
+    }
+  }
+
+  // change.refactor: single-file extract — `file_paths` from global `ps` alias → first element as file_path
+  if (op === 'change.refactor' && typeof out.file_path !== 'string' && Array.isArray(out.file_paths) && out.file_paths.length > 0) {
+    const first = out.file_paths[0];
+    if (typeof first === 'string' && first.trim()) {
+      out.file_path = first.trim();
+    }
   }
 
   // Pass 4: validate derived_from for bb.write — hash refs (h:…), { ref }, or real file paths

@@ -19,7 +19,9 @@ export const resolveRefactor: IntentResolver = (
   context: IntentContext,
 ): IntentResult => {
   const filePath = (params.file_path as string) ?? '';
-  const strategy = (params.strategy as string) ?? 'by_cluster';
+  const rawStrategy = (params.strategy as string) ?? 'by_cluster';
+  // analyze.extract_plan only supports by_cluster | by_prefix | by_kind. "rename" is change.refactor (cf), not ifr.
+  const extractPlanStrategy = rawStrategy === 'rename' ? 'by_cluster' : rawStrategy;
   const symbolNames = normalizeSymbols(params);
   const targetFile = params.target_file as string | undefined;
   const force = params.force === true;
@@ -78,7 +80,7 @@ export const resolveRefactor: IntentResolver = (
     steps.push({
       id: extractId,
       use: 'analyze.extract_plan',
-      with: { file_path: filePath, strategy },
+      with: { file_path: filePath, strategy: extractPlanStrategy },
     });
   }
 
@@ -88,7 +90,7 @@ export const resolveRefactor: IntentResolver = (
   };
   if (symbolNames.length > 0) refactorWith.symbol_names = symbolNames;
   if (targetFile) refactorWith.to = targetFile;
-  if (strategy) refactorWith.strategy = strategy;
+  if (rawStrategy) refactorWith.strategy = rawStrategy;
 
   steps.push({
     id: refactorId,

@@ -446,7 +446,9 @@ function extractAffectedPaths(result: unknown): string[] {
   }
   const created = (r.created ?? r.created_files ?? r.written_target_files) as string[] | undefined;
   if (Array.isArray(created)) paths.push(...created.filter((p): p is string => typeof p === 'string'));
-  const deleted = r.deleted_files as string[] | undefined;
+  const deletedFiles = r.deleted_files as string[] | undefined;
+  if (Array.isArray(deletedFiles)) paths.push(...deletedFiles.filter((p): p is string => typeof p === 'string'));
+  const deleted = r.deleted as string[] | undefined;
   if (Array.isArray(deleted)) paths.push(...deleted.filter((p): p is string => typeof p === 'string'));
   return [...new Set(paths)];
 }
@@ -1925,6 +1927,7 @@ export const handleDelete: OpHandler = async (params, ctx) => {
     const result = await ctx.atlsBatchQuery('delete_files', merged);
     const affectedPaths = extractAffectedPaths(result);
     if (affectedPaths.length > 0) {
+      useContextStore.getState().evictChunksForDeletedPaths(affectedPaths);
       useContextStore.getState().bumpWorkspaceRev(affectedPaths);
       useContextStore.getState().invalidateArtifactsForPaths(affectedPaths);
     }

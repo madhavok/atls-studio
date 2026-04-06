@@ -37,7 +37,8 @@ interface BackendContextEntry {
   symbols?: DigestSymbol[];
 }
 
-const READ_TIMEOUT_MS = 5000;
+/** File/hash reads — aligned with session pin staging; large repos need headroom. */
+const READ_TIMEOUT_MS = 15_000;
 
 /** Max paths per backend `context` full query to avoid timeouts on large trees (e.g. intent.survey). */
 const READ_SHAPED_CONTEXT_CHUNK = 400;

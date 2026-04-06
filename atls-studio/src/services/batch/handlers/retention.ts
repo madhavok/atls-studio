@@ -62,6 +62,7 @@ export function checkRetention(
           summary: entry.distillSummary,
           tokens: 0,
           classification: classification as StepOutput['classification'],
+          ...(structuredContent !== undefined ? { content: structuredContent } : {}),
         },
       };
     }

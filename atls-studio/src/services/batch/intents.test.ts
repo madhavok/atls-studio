@@ -646,6 +646,14 @@ describe('intent.refactor resolver', () => {
     const verifyStep = result.steps.find(s => s.use === 'verify.build');
     expect(verifyStep?.if).toEqual({ step_ok: 'rf1__refactor' });
   });
+
+  it('strategy rename maps extract_plan to by_cluster (rename passes through to change.refactor)', () => {
+    const result = resolveRefactor({ ...params, strategy: 'rename' }, emptyContext());
+    const extractStep = result.steps.find(s => s.use === 'analyze.extract_plan');
+    expect(extractStep?.with?.strategy).toBe('by_cluster');
+    const refactorStep = result.steps.find(s => s.use === 'change.refactor');
+    expect(refactorStep?.with?.strategy).toBe('rename');
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -1035,6 +1043,26 @@ describe('intent.search_replace resolver', () => {
     expect(searchStep!.with!.file_paths).toEqual(['src/**/*.ts']);
   });
 
+  it('search forwards limit and max_file_paths from max_matches', () => {
+    const result = resolveSearchReplace({ ...params, max_matches: 5 }, emptyContext());
+    const searchStep = result.steps.find(s => s.use === 'search.code');
+    expect(searchStep!.with!.limit).toBe(5);
+    expect(searchStep!.with!.max_file_paths).toBe(5);
+  });
+
+  it('concrete file_glob sets file_path on with and binds only line from search', () => {
+    const result = resolveSearchReplace(
+      { ...params, file_glob: '_test/edit_test.py' },
+      emptyContext(),
+    );
+    const editStep = result.steps.find(s => s.use === 'change.edit');
+    expect(editStep!.with!.file_path).toBe('_test/edit_test.py');
+    expect(editStep!.in).toEqual({
+      line: { from_step: 'sr1__search', path: 'content.lines.0' },
+    });
+    expect((editStep!.in as Record<string, unknown> | undefined)?.file_path).toBeUndefined();
+  });
+
   it('verify:false → no verify step', () => {
     const result = resolveSearchReplace({ ...params, verify: false }, emptyContext());
     const ops = result.steps.map(s => s.use);
@@ -1085,6 +1113,20 @@ describe('intent.extract resolver', () => {
     ]);
   });
 
+  it('resolves file_path and file_paths[0] as source (marshaling)', () => {
+    const viaPath = resolveExtract(
+      { file_path: 'src/a.rs', symbol_names: ['x'], target_file: 'src/b.rs', _intentId: 'ex2' },
+      emptyContext(),
+    );
+    const readPath = viaPath.steps.find(s => s.use === 'read.shaped');
+    expect(readPath?.with?.file_paths).toEqual(['src/a.rs']);
+    const viaPs = resolveExtract(
+      { file_paths: ['src/a.rs'], symbol_names: ['x'], target_file: 'src/b.rs', _intentId: 'ex3' },
+      emptyContext(),
+    );
+    expect(viaPs.steps.find(s => s.use === 'read.shaped')?.with?.file_paths).toEqual(['src/a.rs']);
+  });
+
   it('verify conditioned on refactor success', () => {
     const result = resolveExtract(params, emptyContext());
     const verifyStep = result.steps.find(s => s.use === 'verify.build');
@@ -1106,6 +1148,20 @@ describe('intent.extract resolver', () => {
 // ---------------------------------------------------------------------------
 
 describe('resolveIntents — new intents', () => {
+  it('normalizes intent.edit aliases (f, le) before expanding', () => {
+    const steps = [{
+      id: 'ie_alias',
+      use: 'intent.edit' as const,
+      with: {
+        f: 'src/auth.ts',
+        le: [{ line: 10, action: 'replace' as const, content: 'x' }],
+      },
+    }];
+    const result = resolveIntents(steps, emptyContext());
+    const editStep = result.expanded.find(s => s.use === 'change.edit' && !s.if);
+    expect(editStep?.with?.file_path).toBe('src/auth.ts');
+  });
+
   it('expands intent.edit_multi into primitives', () => {
     const steps = [{
       id: 'em1',
@@ -1116,6 +1172,19 @@ describe('resolveIntents — new intents', () => {
     expect(result.expanded.length).toBeGreaterThan(0);
     expect(result.expanded.every(s => !s.use.startsWith('intent.'))).toBe(true);
     expect(result.metrics[0].intentName).toBe('intent.edit_multi');
+  });
+
+  it('intent.edit_multi nested edits accept f alias per file', () => {
+    const steps = [{
+      id: 'em_f',
+      use: 'intent.edit_multi' as const,
+      with: {
+        edits: [{ f: 'src/b.ts', line_edits: [{ line: 1, action: 'replace' as const, content: 'z' }] }],
+      },
+    }];
+    const result = resolveIntents(steps, emptyContext());
+    const editStep = result.expanded.find(s => s.use === 'change.edit' && !s.if);
+    expect(editStep?.with?.file_path).toBe('src/b.ts');
   });
 
   it('expands intent.diagnose into primitives', () => {

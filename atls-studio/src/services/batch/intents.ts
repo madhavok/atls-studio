@@ -11,6 +11,7 @@ import type {
   Step, StepOutput, ContextStoreApi,
 } from './types';
 import { canSteerExecution } from '../universalFreshness';
+import { normalizeStepParams } from './paramNorm';
 
 // ---------------------------------------------------------------------------
 // Registry
@@ -165,7 +166,8 @@ export function resolveIntents(
     }
 
     const raw = step.with ?? {};
-    const params = { ...raw, _intentId: raw._intentId ?? step.id };
+    const normalized = normalizeStepParams(step.use, { ...raw });
+    const params = { ...normalized, _intentId: (raw._intentId as string | undefined) ?? step.id };
     const result: IntentResult = resolver(params, context);
 
     const intentId = step.id;
@@ -329,10 +331,9 @@ function collectCandidates(
     case 'intent.edit':
     case 'intent.edit_multi':
     case 'intent.search_replace':
-      return [
-        ...collectTestFiles(targetFiles),
-        ...collectFromDepsGraph(targetFiles, context, 'importers'),
-      ];
+      // Deps/importers only — speculative *.test.* / *.spec.* paths often do not exist and
+      // each read.shaped hit READ_TIMEOUT_MS (monorepo pain).
+      return collectFromDepsGraph(targetFiles, context, 'importers');
     case 'intent.investigate':
     case 'intent.diagnose':
       return collectFromDepsGraph(targetFiles, context, 'neighbors');
@@ -364,18 +365,6 @@ function collectFromDepsGraph(
     }
   }
   return results;
-}
-
-/** Heuristic: test file for a source file. */
-function collectTestFiles(targetFiles: string[]): string[] {
-  const tests: string[] = [];
-  for (const f of targetFiles) {
-    const ext = f.match(/\.[^.]+$/)?.[0] ?? '.ts';
-    const base = f.replace(/\.[^.]+$/, '');
-    tests.push(`${base}.test${ext}`);
-    tests.push(`${base}.spec${ext}`);
-  }
-  return tests;
 }
 
 /** Extract hub files from BB — files with highest import count. */

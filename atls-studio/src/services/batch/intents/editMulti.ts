@@ -10,6 +10,7 @@
 import type { IntentResolver, IntentResult, IntentContext, Step } from '../types';
 import { AwarenessLevel } from '../snapshotTracker';
 import { makeStepId, isFileStaged, getFileAwareness, computeNextTargets } from '../intents';
+import { normalizeStepParams } from '../paramNorm';
 
 interface FileEdit {
   file_path: string;
@@ -136,10 +137,13 @@ export const resolveEditMulti: IntentResolver = (
 
 function normalizeEdits(params: Record<string, unknown>): FileEdit[] {
   if (Array.isArray(params.edits)) {
-    return (params.edits as Record<string, unknown>[]).map(e => ({
-      file_path: (e.file_path as string) ?? '',
-      line_edits: (e.line_edits as unknown[]) ?? [],
-    }));
+    return (params.edits as Record<string, unknown>[]).map((e) => {
+      const n = normalizeStepParams('change.edit', e && typeof e === 'object' ? { ...e } : {});
+      return {
+        file_path: (n.file_path as string) ?? '',
+        line_edits: (n.line_edits as unknown[]) ?? [],
+      };
+    });
   }
   return [];
 }

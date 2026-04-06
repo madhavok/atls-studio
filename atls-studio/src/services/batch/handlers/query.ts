@@ -2,8 +2,26 @@
  * Query operation handlers — search, symbol, deps (proxy to atlsBatchQuery).
  */
 
-import type { OpHandler, StepOutput, SearchCodeParams, SearchSymbolParams, SearchUsageParams, AnalyzeDepsParams, AnalyzeImpactParams, AnalyzeBlastRadiusParams, AnalyzeStructureParams, SearchMemoryParams } from '../types';
-import { extractSearchSummary, extractSymbolSummary, extractDepsSummary, flattenCodeSearchHits } from '../../../utils/contextHash';
+import type {
+  HandlerContext,
+  OpHandler,
+  StepOutput,
+  SearchCodeParams,
+  SearchSymbolParams,
+  SearchUsageParams,
+  AnalyzeDepsParams,
+  AnalyzeImpactParams,
+  AnalyzeBlastRadiusParams,
+  AnalyzeStructureParams,
+  SearchMemoryParams,
+} from '../types';
+import {
+  extractSearchSummary,
+  extractSymbolSummary,
+  extractDepsSummary,
+  flattenCodeSearchHits,
+  type CodeSearchHitRow,
+} from '../../../utils/contextHash';
 import { countTokensSync } from '../../../utils/tokenCounter';
 import { formatResult, FORMAT_RESULT_MAX_SEARCH } from '../../../utils/toon';
 import { checkRetention } from './retention';
@@ -65,6 +83,93 @@ function extractEndLinesFromSearchResult(result: unknown): number[] {
   return endLines;
 }
 
+/**
+ * One entry per search hit (not deduped by file) — aligns `content.file_paths.${i}` with
+ * intent.search_replace edit slots and `content.lines.${i}`.
+ */
+function extractPerHitStructured(result: unknown, maxHits: number): {
+  file_paths: string[];
+  lines: number[];
+  end_lines: number[];
+  capped: boolean;
+} {
+  const rows = flattenCodeSearchHits(result);
+  const slice = typeof maxHits === 'number' && maxHits > 0 && rows.length > maxHits
+    ? rows.slice(0, maxHits)
+    : rows;
+  const file_paths = slice.map(r => r.file);
+  const lines = slice.map(r => r.line);
+  const end_lines = slice.map((r) => {
+    const start = r.line;
+    const el = r.end_line;
+    return el != null && el >= start ? el : start;
+  });
+  return {
+    file_paths,
+    lines,
+    end_lines,
+    capped: slice.length < rows.length,
+  };
+}
+
+const LITERAL_FALLBACK_MAX = 50;
+
+/** When FTS yields no structured hits, find 1-based line numbers by substring scan (scoped search / intent.search_replace). */
+function literalHitsFromContent(filePath: string, content: string, query: string): CodeSearchHitRow[] {
+  const rows: CodeSearchHitRow[] = [];
+  const q = query.trim();
+  if (!q || !filePath) return rows;
+  const lines = content.split(/\r?\n/);
+  const qLines = q.split('\n');
+  if (qLines.length === 1) {
+    for (let i = 0; i < lines.length; i++) {
+      if (lines[i].includes(q)) {
+        rows.push({ file: filePath, line: i + 1, end_line: i + 1 });
+        if (rows.length >= LITERAL_FALLBACK_MAX) break;
+      }
+    }
+  } else {
+    const idx = content.indexOf(q);
+    if (idx >= 0) {
+      const startLine = content.slice(0, idx).split('\n').length;
+      const endLine = startLine + qLines.length - 1;
+      rows.push({ file: filePath, line: startLine, end_line: endLine });
+    }
+  }
+  return rows;
+}
+
+function extractFirstContextFileContent(result: unknown): { file: string; content: string } | null {
+  if (!result || typeof result !== 'object') return null;
+  const items = (result as Record<string, unknown>).results;
+  if (!Array.isArray(items) || items.length === 0) return null;
+  const r = items[0] as Record<string, unknown>;
+  const raw = r.content ?? r.context ?? r.text;
+  const content = typeof raw === 'string' ? raw : '';
+  if (!content) return null;
+  const file =
+    (typeof r.file === 'string' && r.file) ||
+    (typeof r.path === 'string' && r.path) ||
+    '';
+  if (!file) return null;
+  return { file, content };
+}
+
+async function literalFallbackHitsForScopedSearch(
+  ctx: HandlerContext,
+  filePath: string,
+  query: string,
+): Promise<CodeSearchHitRow[]> {
+  try {
+    const ctxRes = await ctx.atlsBatchQuery('context', { type: 'full', file_paths: [filePath] });
+    const ext = extractFirstContextFileContent(ctxRes);
+    if (!ext) return [];
+    return literalHitsFromContent(ext.file, ext.content, query);
+  } catch {
+    return [];
+  }
+}
+
 // ---------------------------------------------------------------------------
 // search.code
 // ---------------------------------------------------------------------------
@@ -81,24 +186,47 @@ export const handleSearchCode: OpHandler = async (params, ctx) => {
     const summary = extractSearchSummary(result, queries);
     const resultStr = formatResult(result, FORMAT_RESULT_MAX_SEARCH);
 
-    let resultFilePaths = extractFilePathsFromSearchResult(result);
-    let resultLines = extractLinesFromSearchResult(result);
-    let resultEndLines = extractEndLinesFromSearchResult(result);
     const maxPaths = params.max_file_paths;
-    let cappedNote = '';
-    if (typeof maxPaths === 'number' && maxPaths > 0 && resultFilePaths.length > maxPaths) {
-      cappedNote = ` — paths capped to ${maxPaths}`;
-      resultFilePaths = resultFilePaths.slice(0, maxPaths);
-      resultLines = resultLines.slice(0, maxPaths);
-      resultEndLines = resultEndLines.slice(0, maxPaths);
+    const rowCap = typeof maxPaths === 'number' && maxPaths > 0 ? maxPaths : 0;
+    let perHit = extractPerHitStructured(result, rowCap);
+
+    if (
+      perHit.file_paths.length === 0 &&
+      Array.isArray(filePaths) &&
+      filePaths.length === 1 &&
+      typeof filePaths[0] === 'string' &&
+      queries.length >= 1
+    ) {
+      const fb = await literalFallbackHitsForScopedSearch(ctx, filePaths[0], queries[0]);
+      if (fb.length > 0) {
+        const cappedByMax = rowCap > 0 ? fb.slice(0, rowCap) : fb;
+        perHit = {
+          file_paths: cappedByMax.map((r) => r.file),
+          lines: cappedByMax.map((r) => r.line),
+          end_lines: cappedByMax.map((r) => {
+            const start = r.line;
+            const el = r.end_line;
+            return el != null && el >= start ? el : start;
+          }),
+          capped: rowCap > 0 && fb.length > rowCap,
+        };
+      }
     }
-    const structuredContent = { file_paths: resultFilePaths, lines: resultLines, end_lines: resultEndLines };
+
+    const structuredContent = {
+      file_paths: perHit.file_paths,
+      lines: perHit.lines,
+      end_lines: perHit.end_lines,
+    };
+    const cappedNote = perHit.capped && typeof maxPaths === 'number' && maxPaths > 0
+      ? ` — hits capped to ${maxPaths}`
+      : '';
 
     const retained = checkRetention('search.code', params, resultStr, true, 'search_results', `search: ${queries.join(', ')}`, undefined, structuredContent);
     if (retained.reused) return retained.output;
     const hash = ctx.store().addChunk(resultStr, 'search', queries.join(', '), undefined, summary);
     const tk = countTokensSync(resultStr);
-    const manifestNote = getManifestHitNote(resultFilePaths);
+    const manifestNote = getManifestHitNote([...new Set(structuredContent.file_paths)]);
     return {
       kind: 'search_results', ok: true,
       refs: [`h:${hash}`],

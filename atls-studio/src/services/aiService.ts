@@ -151,12 +151,31 @@ import { hashBp3Prefix, computeLogicalBp3Hit, computeLogicalStaticHit, type Bp3S
 import type { ExpandedFilePath } from './batch/types';
 import { formatBatchResult } from './batch/resultFormatter';
 import { coerceBatchSteps } from './batch/coerceBatchSteps';
+import './batch/intents/index';
+import { resolveIntents, buildIntentContext, isPressured } from './batch/intents';
+import type { Step } from './batch/types';
 
 /** Model may send `file_paths` / `queries` as a string or array; never use `[0]` on a string (first char). */
 function firstStringOrArrayHead(v: unknown): string | undefined {
   if (typeof v === 'string') return v;
   if (Array.isArray(v) && v.length > 0) return String(v[0]);
   return undefined;
+}
+
+/**
+ * Align batch progress UI with the executor: `resolveIntents` expands intent.* into
+ * primitives (e.g. intent.search_replace → search + N edits + verify). `onBatchStepProgress`
+ * fires once per primitive; if we only showed one row per intent, the first row would
+ * flip to "completed" after the first sub-step while verify.build still ran — looks like
+ * a frozen chat.
+ */
+function expandBatchStepsForUiDisplay(steps: Record<string, unknown>[]): Step[] {
+  const store = useContextStore.getState as unknown as HandlerContext['store'];
+  const intentCtx = buildIntentContext(store, new Map());
+  const { expanded, lookahead } = resolveIntents(steps as unknown as Step[], intentCtx);
+  const withLookahead =
+    lookahead.length > 0 && !isPressured(store) ? [...expanded, ...lookahead] : expanded;
+  return withLookahead.length > 0 ? withLookahead : (steps as unknown as Step[]);
 }
 import {
   BLACKBOARD_BUDGET_TOKENS,
@@ -2550,7 +2569,8 @@ async function streamChatViaTauri(
         const partialResultLines: string[] = [];
 
         if (tc.name === 'batch') {
-          const steps = coerceBatchSteps((tc.args as Record<string, unknown>).steps);
+          const rawSteps = coerceBatchSteps((tc.args as Record<string, unknown>).steps);
+          const steps = expandBatchStepsForUiDisplay(rawSteps);
           batchStepSummaries = steps.map((step, index) => {
             const withParams = (step.with as Record<string, unknown> | undefined) || {};
             const stepName = String(step.use || `step_${index + 1}`);

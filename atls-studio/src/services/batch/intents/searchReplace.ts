@@ -38,7 +38,12 @@ export const resolveSearchReplace: IntentResolver = (
   }
 
   const searchId = makeStepId(intentId, 'search');
-  const searchWith: Record<string, unknown> = { queries: [searchQuery] };
+  const searchWith: Record<string, unknown> = {
+    queries: [searchQuery],
+    /** Align backend hit cap + structured `content.lines` length with edit slot count (default 10). */
+    limit: maxMatches,
+    max_file_paths: maxMatches,
+  };
   if (fileGlob) searchWith.file_paths = [fileGlob];
 
   steps.push({
@@ -47,13 +52,12 @@ export const resolveSearchReplace: IntentResolver = (
     with: searchWith,
   });
 
-  const editStepIds: string[] = [];
-
   const replaceSpanLines = Math.max(1, oldText.split('\n').length);
+  /** Concrete path (no wildcards): bind file_path in `with`; search may still omit per-hit paths. */
+  const isConcreteGlob = Boolean(fileGlob && !fileGlob.includes('*') && !fileGlob.includes('?'));
 
   for (let i = 0; i < maxMatches; i++) {
     const editId = makeStepId(intentId, `edit_${i}`);
-    editStepIds.push(editId);
 
     const editWith: Record<string, unknown> = {
       line_edits: [{
@@ -65,16 +69,29 @@ export const resolveSearchReplace: IntentResolver = (
       editWith.replace_span_lines = replaceSpanLines;
     }
 
-    steps.push({
+    if (isConcreteGlob) {
+      editWith.file_path = fileGlob;
+    }
+
+    const editStep: Step = {
       id: editId,
       use: 'change.edit',
       with: editWith,
-      in: {
+      if: { step_has_refs: searchId },
+    };
+
+    if (isConcreteGlob) {
+      editStep.in = {
+        line: { from_step: searchId, path: `content.lines.${i}` },
+      };
+    } else {
+      editStep.in = {
         file_path: { from_step: searchId, path: `content.file_paths.${i}` },
         line: { from_step: searchId, path: `content.lines.${i}` },
-      },
-      if: { step_has_refs: searchId },
-    });
+      };
+    }
+
+    steps.push(editStep);
   }
 
   steps.push({
