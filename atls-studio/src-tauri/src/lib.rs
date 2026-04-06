@@ -786,22 +786,15 @@ pub(crate) fn apply_line_edits(content: &str, edits: &[LineEdit]) -> Result<(Str
                         resolved_line
                     ));
                 }
-                // When end_line is set (from symbol resolution), use the symbol range
-                // directly — it's authoritative and immune to regex/string brace confusion.
-                // Only fall back to the text scanner when no symbol range is available.
-                let (body_start_rel, close_brace_rel) = if let Some(el) = edit.end_line {
+                // When end_line is set AND spans more than one line (from symbol
+                // resolution), use the symbol range directly — it's authoritative and
+                // immune to regex/string brace confusion. When end_line == line (single-
+                // line hash ref like h:xxxx:16), it's not a symbol scope — fall through
+                // to the text scanner with a full EOF slice.
+                let effective_end_line = edit.end_line.filter(|&el| (el as usize) > idx + 1);
+                let (body_start_rel, close_brace_rel) = if let Some(el) = effective_end_line {
                     let end_rel = (el as usize).saturating_sub(idx);
-                    if end_rel > 1 {
-                        (1, end_rel)
-                    } else {
-                        let slice = &lines[idx..std::cmp::min(el as usize, lines.len())];
-                        let refs: Vec<&str> = slice.iter().map(|s| s.as_str()).collect();
-                        find_body_bounds(&refs)
-                            .ok_or_else(|| format!(
-                                "replace_body at L{}: could not find body bounds (no matching {{ }} block)",
-                                resolved_line
-                            ))?
-                    }
+                    (1, end_rel)
                 } else {
                     let slice = &lines[idx..];
                     let refs: Vec<&str> = slice.iter().map(|s| s.as_str()).collect();
@@ -6945,7 +6938,7 @@ export type { DeepPartial, UnwrapPromise, Registry, EventMap, EventHandler, Stri
 // ============================================================================
 #[cfg(test)]
 mod torture_brackets_agent_repro_tests {
-    use super::{apply_line_edits, find_body_bounds, brace_balance_delta, LineCoordinate, LineEdit};
+    use super::{apply_line_edits, apply_line_edits_with_shadow, line_edits_to_edit_ops, find_body_bounds, brace_balance_delta, LineCoordinate, LineEdit};
 
     /// Full content of torture-brackets.ts (164 lines). This is the
     /// pathological file the ATLS agent used in the torture session.
@@ -7354,5 +7347,469 @@ const horror = (x: number) =>
         let lines: Vec<&str> = result.lines().collect();
         let balance = brace_balance_delta(&lines);
         assert_eq!(balance, 0, "file should remain balanced after 3 edits");
+    }
+
+    // ── REAL APP PATH: shadow-based replace_body ──
+    // The agent torture tests above exercise apply_line_edits (positional path).
+    // But the real app routes through line_edits_to_edit_ops (shadow path) first.
+    // That path had a bug: it ALWAYS sliced to EOF, ignoring end_line.
+
+    #[test]
+    fn shadow_replace_body_bracket_maze_no_end_line() {
+        let edits = vec![le(60, "replace_body", Some("  return 'simplified';"), None)];
+        let (ops, warnings) = line_edits_to_edit_ops(&edits, TORTURE, TORTURE).unwrap();
+        let body_warnings: Vec<&String> = warnings.iter()
+            .filter(|w| w.contains("could not find body bounds"))
+            .collect();
+        assert!(body_warnings.is_empty(),
+            "shadow replace_body on bracketMaze must NOT fail with 'could not find body bounds'. \
+             Got warnings: {:?}", warnings);
+        assert_eq!(ops.len(), 1, "should produce exactly 1 edit op, got {}", ops.len());
+        assert!(ops[0].replacement.contains("return 'simplified'"),
+            "replacement content should appear in op");
+    }
+
+    #[test]
+    fn shadow_replace_body_sql_function_no_end_line() {
+        let edits = vec![le(138, "replace_body", Some("  return strings.join('');"), None)];
+        let (ops, warnings) = line_edits_to_edit_ops(&edits, TORTURE, TORTURE).unwrap();
+        let body_warnings: Vec<&String> = warnings.iter()
+            .filter(|w| w.contains("could not find body bounds"))
+            .collect();
+        assert!(body_warnings.is_empty(),
+            "shadow replace_body on sql() must NOT fail. Got warnings: {:?}", warnings);
+        assert_eq!(ops.len(), 1, "should produce exactly 1 edit op");
+    }
+
+    #[test]
+    fn shadow_replace_body_with_end_line() {
+        let edits = vec![le(60, "replace_body", Some("  return typeof input;"), Some(92))];
+        let (ops, warnings) = line_edits_to_edit_ops(&edits, TORTURE, TORTURE).unwrap();
+        let body_warnings: Vec<&String> = warnings.iter()
+            .filter(|w| w.contains("could not find body bounds"))
+            .collect();
+        assert!(body_warnings.is_empty(),
+            "shadow replace_body with end_line must succeed. Got warnings: {:?}", warnings);
+        assert_eq!(ops.len(), 1);
+    }
+
+    #[test]
+    fn shadow_replace_body_via_unified_entry_point() {
+        let edits = vec![le(60, "replace_body", Some("  return 'simplified';"), None)];
+        let (result, warnings, resolutions) =
+            apply_line_edits_with_shadow(&edits, TORTURE, Some(TORTURE)).unwrap();
+        assert!(result.contains("return 'simplified'"),
+            "unified path must succeed for bracketMaze replace_body");
+        assert!(!result.contains("switch (typeof input)"),
+            "old bracketMaze body should be replaced");
+        assert!(resolutions.is_none(),
+            "shadow path should succeed, not fall back to positional. Warnings: {:?}", warnings);
+    }
+
+    // ── EXACT AGENT REPRO: apply Round 1 edits first, THEN replace_body ──
+    // The agent's torture session applied 4 edits in Round 1, which mutated
+    // the file content. Round 2's replace_body ran against the MUTATED file.
+    // The shadow content WAS the mutated file. This tests that exact sequence.
+
+    fn apply_round1_edits() -> String {
+        let round1 = vec![
+            le(19, "replace",
+               Some("  templateTrap: `hello ${ `nested ${ `deep ${1 + 2} extra ${ {a:1}['a'] }` }` } world`,"),
+               None),
+            le(43, "replace",
+               Some("          { d: { e: [second, ...rest] }, f: { g: [third, { h: [fourth] }] } },"),
+               None),
+            le(64, "replace",
+               Some("      if (trimmed.startsWith('{') || trimmed.startsWith('[')) {\n        try {\n          const parsed = JSON.parse(trimmed); void parsed;"),
+               Some(66)),
+            le(99, "replace",
+               Some("  [Symbol.iterator](): Iterator<T[U]> {\n    let idx = 0;\n    const keys = Object.keys(this.data) as U[]; const vals = Object.values(this.data);"),
+               Some(101)),
+        ];
+        let (mutated, warnings, _) = apply_line_edits(TORTURE, &round1).unwrap();
+        assert!(warnings.is_empty(), "Round 1 should apply cleanly: {:?}", warnings);
+        mutated
+    }
+
+    #[test]
+    fn agent_exact_repro_replace_body_bracket_maze_after_round1() {
+        let mutated = apply_round1_edits();
+        let mutated_lines: Vec<&str> = mutated.lines().collect();
+        eprintln!("Post-Round1 file: {} lines", mutated_lines.len());
+
+        // This is what the shadow path does: slice from target line to EOF
+        let start_idx = 59; // line 60, 0-indexed
+        let slice = &mutated_lines[start_idx..];
+        eprintln!("Slice from L60 to EOF: {} lines", slice.len());
+        eprintln!("First 3 lines of slice:");
+        for (i, l) in slice.iter().take(3).enumerate() {
+            eprintln!("  [{}]: {}", i, l);
+        }
+
+        let bounds = find_body_bounds(slice);
+        assert!(bounds.is_some(),
+            "find_body_bounds must resolve bracketMaze body from post-Round1 \
+             mutated content sliced to EOF. This is the EXACT condition the agent hits.");
+        let (start, end) = bounds.unwrap();
+        eprintln!("Body bounds: start={}, end={} (relative to slice)", start, end);
+        assert_eq!(start, 1, "body should start right after opening brace");
+        assert!(end > 20, "body should span switch block, got end={}", end);
+    }
+
+    #[test]
+    fn agent_exact_repro_shadow_replace_body_bracket_maze_after_round1() {
+        let mutated = apply_round1_edits();
+
+        // Round 2 e7: replace_body on bracketMaze via shadow path
+        let edits = vec![le(60, "replace_body",
+            Some("  switch (typeof input) {\n    case 'string': return 'string';\n    case 'number': return 'number';\n    default: return 'other';\n  }"),
+            None)];
+        let (ops, warnings) = line_edits_to_edit_ops(&edits, &mutated, &mutated).unwrap();
+        let body_warnings: Vec<&String> = warnings.iter()
+            .filter(|w| w.contains("could not find body bounds"))
+            .collect();
+        assert!(body_warnings.is_empty(),
+            "Shadow replace_body on bracketMaze after Round 1 edits must NOT fail. \
+             This is the exact agent failure. Got warnings: {:?}", warnings);
+        assert_eq!(ops.len(), 1, "should produce 1 op, got {}", ops.len());
+    }
+
+    #[test]
+    fn agent_exact_repro_shadow_replace_body_sql_after_round1() {
+        let mutated = apply_round1_edits();
+
+        // Round 3 e12 equivalent: replace_body on sql function
+        let edits = vec![le(138, "replace_body",
+            Some("  return strings.reduce((acc, str, i) => {\n    const escaped = i < values.length ? String(values[i]) : '';\n    return acc + str + escaped;\n  }, '');"),
+            None)];
+        let (ops, warnings) = line_edits_to_edit_ops(&edits, &mutated, &mutated).unwrap();
+        let body_warnings: Vec<&String> = warnings.iter()
+            .filter(|w| w.contains("could not find body bounds"))
+            .collect();
+        assert!(body_warnings.is_empty(),
+            "Shadow replace_body on sql() after Round 1 edits must NOT fail. \
+             Got warnings: {:?}", warnings);
+        assert_eq!(ops.len(), 1, "should produce 1 op, got {}", ops.len());
+    }
+
+    #[test]
+    fn agent_exact_repro_full_unified_path_after_round1() {
+        let mutated = apply_round1_edits();
+
+        // Full unified path: apply_line_edits_with_shadow (what the app calls)
+        let edits = vec![le(60, "replace_body",
+            Some("  return typeof input;"),
+            None)];
+        let (result, warnings, resolutions) =
+            apply_line_edits_with_shadow(&edits, &mutated, Some(&mutated)).unwrap();
+        assert!(result.contains("return typeof input"),
+            "replace_body via unified path after Round 1 must succeed");
+        assert!(!result.contains("switch (typeof input)"),
+            "old bracketMaze body should be gone");
+        assert!(resolutions.is_none(),
+            "Shadow path should handle it, not fall through to positional. \
+             Warnings: {:?}", warnings);
+    }
+
+    // ── LIVE APP REPRO: replace_body_repro.ts — the EXACT file the agent tested ──
+
+    const REPRO: &str = r##"/**
+ * replace_body live repro — tests the exact failure patterns from
+ * the bracket torture session. Each function below triggered
+ * "could not find body bounds" in the app.
+ *
+ * Test plan:
+ *   1. Read this file
+ *   2. replace_body on bracketMaze (switch/case/try/catch)
+ *   3. replace_body on sql (regex with bracket chars)
+ *   4. replace_body on TortureClass (computed Symbol properties)
+ *   5. replace_body on processData (destructuring defaults)
+ *   6. Verify each succeeds and file remains syntactically valid
+ */
+
+// ── Target 1: switch/case/try/catch (the main agent failure) ──
+function bracketMaze(input: unknown): string {
+  switch (typeof input) {
+    case 'string': {
+      const trimmed = (input as string).trim();
+      if (trimmed.startsWith('{')) {
+        try {
+          JSON.parse(trimmed);
+          return 'json';
+        } catch (e) {
+          // fall through
+        }
+      }
+      break;
+    }
+    case 'number': {
+      if ((input as number) > 0) {
+        return ((input as number) % 2 === 0) ? 'even' : 'odd';
+      }
+      return 'non-positive';
+    }
+    case 'object': {
+      if (input === null) return 'null';
+      if (Array.isArray(input)) {
+        return `array[${(input as unknown[]).length}]`;
+      }
+      return `object{${Object.keys(input as object).join(',')}}`;
+    }
+    default:
+      return `unknown(${typeof input})`;
+  }
+  return `string(${input})`;
+}
+
+// ── Target 2: regex/template brackets in body ──
+function sql(strings: TemplateStringsArray, ...values: unknown[]): string {
+  return strings.reduce((acc, str, i) => {
+    const val = i < values.length ? `'${String(values[i]).replace(/'/g, "''")}'` : '';
+    return acc + str + val;
+  }, '');
+}
+
+// ── Target 3: class with computed properties ──
+class TortureClass<T extends Record<string, unknown>> {
+  [Symbol.iterator](): Iterator<T[keyof T]> {
+    let idx = 0;
+    const keys = Object.keys(this.data) as (keyof T)[];
+    return {
+      next: (): IteratorResult<T[keyof T]> => {
+        if (idx < keys.length) {
+          return { value: this.data[keys[idx++]], done: false };
+        }
+        return { value: undefined as unknown as T[keyof T], done: true };
+      }
+    };
+  }
+
+  constructor(public data: T) {}
+
+  get [Symbol.toStringTag](): string {
+    return `TortureClass<${Object.keys(this.data).join(', ')}>`;
+  }
+
+  method(cb: (arg: { [K in keyof T]: T[K] }) => void): void {
+    cb(this.data as { [K in keyof T]: T[K] });
+  }
+}
+
+// ── Target 4: destructuring defaults with nested braces ──
+function processData({
+  timeout = 3000,
+  headers = { 'Content-Type': 'application/json' },
+  callbacks: {
+    onSuccess = () => { console.log('ok'); },
+    onError = (err: Error) => { throw err; },
+  } = {},
+}: {
+  timeout?: number;
+  headers?: Record<string, string>;
+  callbacks?: {
+    onSuccess?: () => void;
+    onError?: (err: Error) => void;
+  };
+}): { success: boolean; elapsed: number } {
+  const start = Date.now();
+  try {
+    void fetch('https://api.example.com', { method: 'POST', headers });
+    onSuccess();
+    return { success: true, elapsed: Date.now() - start };
+  } catch (e) {
+    onError(e as Error);
+    return { success: false, elapsed: Date.now() - start };
+  }
+}
+
+// ── Padding: extra declarations after targets (forces EOF-slice issue) ──
+const QUERY = sql`SELECT * FROM users WHERE name = ${"O'Brien"} AND age > ${21}`;
+
+type DeepNested<A extends Record<string, unknown>> = {
+  field: A extends infer U ? (U extends object ? { [K in keyof U]: U[K] } : never) : never;
+};
+
+const horror = (x: number) =>
+  x > 0
+    ? { level: 'high', data: [x, x * 2, { nested: [x * 3] }] }
+    : { level: 'low', data: [x, { deep: { deeper: [x] } }] };
+
+// EOF
+"##;
+
+    #[test]
+    fn repro_file_brace_balance() {
+        let lines: Vec<&str> = REPRO.lines().collect();
+        let delta = brace_balance_delta(&lines);
+        assert_eq!(delta, 0, "replace_body_repro.ts must be balanced, got delta={}", delta);
+    }
+
+    // Exact agent inputs: h:6fac57:17 → line=17, h:6fac57:50 → line=50, etc.
+    // These are the EXACT lines the agent sent in the live app test.
+
+    #[test]
+    fn repro_positional_bracketmaze_line17() {
+        // Agent sent h:6fac57:17 → L17 = "  switch (typeof input) {"
+        let edits = vec![le(17, "replace_body", Some("  return typeof input;"), None)];
+        let result = apply_line_edits(REPRO, &edits);
+        eprintln!("bracketMaze L17 positional: {:?}", result.as_ref().map(|(_, w, _)| w));
+        assert!(result.is_ok(), "positional L17: {:?}", result.err());
+    }
+
+    #[test]
+    fn repro_positional_bracketmaze_line16() {
+        // Correct line: L16 = "function bracketMaze(input: unknown): string {"
+        let edits = vec![le(16, "replace_body", Some("  return typeof input;"), None)];
+        let result = apply_line_edits(REPRO, &edits);
+        eprintln!("bracketMaze L16 positional: {:?}", result.as_ref().map(|(_, w, _)| w));
+        assert!(result.is_ok(), "positional L16: {:?}", result.err());
+    }
+
+    #[test]
+    fn repro_positional_sql_line50() {
+        let edits = vec![le(50, "replace_body", Some("  return strings.join('');"), None)];
+        let result = apply_line_edits(REPRO, &edits);
+        eprintln!("sql L50 positional: {:?}", result.as_ref().map(|(_, w, _)| w));
+        assert!(result.is_ok(), "positional L50: {:?}", result.err());
+    }
+
+    #[test]
+    fn repro_positional_tortureclass_line58() {
+        let edits = vec![le(58, "replace_body", Some("  data: T;\n  constructor(data: T) { this.data = data; }"), None)];
+        let result = apply_line_edits(REPRO, &edits);
+        eprintln!("TortureClass L58 positional: {:?}", result.as_ref().map(|(_, w, _)| w));
+        assert!(result.is_ok(), "positional L58: {:?}", result.err());
+    }
+
+    #[test]
+    fn repro_positional_processdata_line84() {
+        let edits = vec![le(84, "replace_body", Some("  return { success: true, elapsed: 0 };"), None)];
+        let result = apply_line_edits(REPRO, &edits);
+        eprintln!("processData L84 positional: {:?}", result.as_ref().map(|(_, w, _)| w));
+        assert!(result.is_ok(), "positional L84: {:?}", result.err());
+    }
+
+    // Shadow path — what the app actually uses
+    #[test]
+    fn repro_shadow_bracketmaze_line17() {
+        let edits = vec![le(17, "replace_body", Some("  return typeof input;"), None)];
+        let (ops, warnings) = line_edits_to_edit_ops(&edits, REPRO, REPRO).unwrap();
+        let fails: Vec<&String> = warnings.iter().filter(|w| w.contains("could not find body bounds")).collect();
+        eprintln!("bracketMaze L17 shadow: ops={}, warns={:?}", ops.len(), warnings);
+        assert!(fails.is_empty(), "shadow L17 should not fail: {:?}", warnings);
+    }
+
+    #[test]
+    fn repro_shadow_sql_line50() {
+        let edits = vec![le(50, "replace_body", Some("  return strings.join('');"), None)];
+        let (ops, warnings) = line_edits_to_edit_ops(&edits, REPRO, REPRO).unwrap();
+        let fails: Vec<&String> = warnings.iter().filter(|w| w.contains("could not find body bounds")).collect();
+        eprintln!("sql L50 shadow: ops={}, warns={:?}", ops.len(), warnings);
+        assert!(fails.is_empty(), "shadow L50 should not fail: {:?}", warnings);
+    }
+
+    #[test]
+    fn repro_shadow_tortureclass_line58() {
+        let edits = vec![le(58, "replace_body", Some("  data: T;\n  constructor(data: T) { this.data = data; }"), None)];
+        let (ops, warnings) = line_edits_to_edit_ops(&edits, REPRO, REPRO).unwrap();
+        let fails: Vec<&String> = warnings.iter().filter(|w| w.contains("could not find body bounds")).collect();
+        eprintln!("TortureClass L58 shadow: ops={}, warns={:?}", ops.len(), warnings);
+        assert!(fails.is_empty(), "shadow L58 should not fail: {:?}", warnings);
+    }
+
+    #[test]
+    fn repro_shadow_processdata_line84() {
+        let edits = vec![le(84, "replace_body", Some("  return { success: true, elapsed: 0 };"), None)];
+        let (ops, warnings) = line_edits_to_edit_ops(&edits, REPRO, REPRO).unwrap();
+        let fails: Vec<&String> = warnings.iter().filter(|w| w.contains("could not find body bounds")).collect();
+        eprintln!("processData L84 shadow: ops={}, warns={:?}", ops.len(), warnings);
+        assert!(fails.is_empty(), "shadow L84 should not fail: {:?}", warnings);
+    }
+
+    // ── ROOT CAUSE: single-line hash ref sets end_line == line ──
+    // When the agent sends "f": "h:xxxx:16", the TS layer parses ":16" as
+    // [16, 16] (start == end), which sets BOTH line=16 and end_line=16.
+    // The replace_body handler then computes end_rel = end_line - idx = 1,
+    // which is NOT > 1, so it passes a 1-line slice to find_body_bounds.
+    // A 1-line slice can never contain a body. This is the exact bug.
+
+    #[test]
+    fn root_cause_single_line_end_line_bracketmaze() {
+        // Simulates h:xxxx:16 → line=16, end_line=16
+        let edits = vec![le(16, "replace_body", Some("  return typeof input;"), Some(16))];
+        let result = apply_line_edits(REPRO, &edits);
+        assert!(result.is_ok(),
+            "replace_body with end_line==line must NOT fail. \
+             Single-line hash ref should be treated as 'no scope'. Got: {:?}", result.err());
+        let (content, _, _) = result.unwrap();
+        assert!(content.contains("return typeof input"), "new body should appear");
+        assert!(!content.contains("switch (typeof input)"), "old body should be gone");
+    }
+
+    #[test]
+    fn root_cause_single_line_end_line_sql() {
+        let edits = vec![le(50, "replace_body", Some("  return strings.join('');"), Some(50))];
+        let result = apply_line_edits(REPRO, &edits);
+        assert!(result.is_ok(),
+            "replace_body with end_line==line on sql must NOT fail. Got: {:?}", result.err());
+    }
+
+    #[test]
+    fn root_cause_single_line_end_line_tortureclass() {
+        let edits = vec![le(58, "replace_body", Some("  data: T;\n  constructor(data: T) { this.data = data; }"), Some(58))];
+        let result = apply_line_edits(REPRO, &edits);
+        assert!(result.is_ok(),
+            "replace_body with end_line==line on TortureClass must NOT fail. Got: {:?}", result.err());
+        let (content, _, _) = result.unwrap();
+        assert!(content.contains("constructor(data: T) { this.data = data; }"),
+            "new class body should appear");
+        assert!(!content.contains("[Symbol.iterator]"),
+            "old class members (Symbol.iterator) should be gone, but found in:\n{}",
+            content.lines().skip(56).take(10).collect::<Vec<_>>().join("\n"));
+    }
+
+    #[test]
+    fn root_cause_single_line_end_line_processdata() {
+        let edits = vec![le(84, "replace_body", Some("  return { success: true, elapsed: 0 };"), Some(84))];
+        let result = apply_line_edits(REPRO, &edits);
+        assert!(result.is_ok(),
+            "replace_body with end_line==line on processData must NOT fail. Got: {:?}", result.err());
+        let (content, _, _) = result.unwrap();
+        assert!(content.contains("return { success: true, elapsed: 0 }"),
+            "new body should appear");
+        assert!(!content.contains("Date.now()"),
+            "old processData body (Date.now) should be gone, but found in:\n{}",
+            content.lines().skip(82).take(20).collect::<Vec<_>>().join("\n"));
+    }
+
+    #[test]
+    fn diagnostic_find_body_bounds_tortureclass_eof_slice() {
+        let lines: Vec<&str> = REPRO.lines().collect();
+        let slice = &lines[57..]; // L58 0-indexed
+        let bounds = find_body_bounds(slice);
+        assert!(bounds.is_some(), "should find bounds");
+        let (start, end) = bounds.unwrap();
+        eprintln!("TortureClass EOF slice: start={}, end={}, first_body_line={:?}, last_body_line={:?}",
+            start, end,
+            slice.get(start).map(|s| &s[..std::cmp::min(s.len(), 60)]),
+            slice.get(end.saturating_sub(1)).map(|s| &s[..std::cmp::min(s.len(), 60)]));
+        // The class body should span from L59 to L81 (0-indexed 1 to 23 relative to slice)
+        assert!(end > 10, "class body should span all members, got end={}", end);
+    }
+
+    #[test]
+    fn diagnostic_find_body_bounds_processdata_eof_slice() {
+        let lines: Vec<&str> = REPRO.lines().collect();
+        let slice = &lines[83..]; // L84 0-indexed
+        let bounds = find_body_bounds(slice);
+        assert!(bounds.is_some(), "should find bounds");
+        let (start, end) = bounds.unwrap();
+        eprintln!("processData EOF slice: start={}, end={}, first_body_line={:?}, last_body_line={:?}",
+            start, end,
+            slice.get(start).map(|s| &s[..std::cmp::min(s.len(), 60)]),
+            slice.get(end.saturating_sub(1)).map(|s| &s[..std::cmp::min(s.len(), 60)]));
+        // Body opens at L98 "}): { success... } {" and closes at L108 "}"
+        // Relative to slice start (L84=idx0): body_start should be around 15, end around 24
+        assert!(start > 10, "body should start AFTER the destructuring signature, got start={}", start);
     }
 }
