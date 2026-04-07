@@ -103,15 +103,23 @@ export function compactByFile(data: unknown): unknown {
   if (data === null || data === undefined || typeof data !== 'object') return data;
 
   if (Array.isArray(data)) {
-    const recursed = data.map(compactByFile);
-    if (recursed.length < 2) return recursed;
+    let changed = false;
+    const recursed: unknown[] = new Array(data.length);
+    for (let i = 0; i < data.length; i++) {
+      const r = compactByFile(data[i]);
+      recursed[i] = r;
+      if (r !== data[i]) changed = true;
+    }
+    const arr = changed ? recursed : data;
 
-    const fileKey = detectFileKey(recursed);
-    if (!fileKey) return recursed;
+    if (arr.length < 2) return arr;
+
+    const fileKey = detectFileKey(arr);
+    if (!fileKey) return arr;
 
     const fileValues = new Set<string>();
     let withKey = 0;
-    for (const item of recursed) {
+    for (const item of arr) {
       if (item && typeof item === 'object' && !Array.isArray(item)) {
         const val = (item as Record<string, unknown>)[fileKey];
         if (typeof val === 'string') {
@@ -121,12 +129,12 @@ export function compactByFile(data: unknown): unknown {
       }
     }
 
-    if (fileValues.size >= withKey || withKey < recursed.length * 0.5) return recursed;
+    if (fileValues.size >= withKey || withKey < arr.length * 0.5) return arr;
 
     const grouped: Record<string, unknown[]> = {};
     const ungrouped: unknown[] = [];
 
-    for (const item of recursed) {
+    for (const item of arr) {
       if (item && typeof item === 'object' && !Array.isArray(item)) {
         const obj = item as Record<string, unknown>;
         const val = obj[fileKey];
@@ -149,11 +157,14 @@ export function compactByFile(data: unknown): unknown {
   }
 
   const obj = data as Record<string, unknown>;
+  let changed = false;
   const result: Record<string, unknown> = {};
   for (const [key, val] of Object.entries(obj)) {
-    result[key] = compactByFile(val);
+    const r = compactByFile(val);
+    result[key] = r;
+    if (r !== val) changed = true;
   }
-  return result;
+  return changed ? result : obj;
 }
 
 // ============================================================================

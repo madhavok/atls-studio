@@ -1,31 +1,30 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-const mockGetAllRefs = vi.fn();
+const mockRefs: unknown[] = [];
 
 vi.mock('./hashProtocol', () => ({
-  getAllRefs: () => mockGetAllRefs(),
+  collectRefsWhere: (pred: (r: unknown) => boolean) => mockRefs.filter(pred),
 }));
 
 import { getActiveRefs } from './hashProtocolQuery';
 
 describe('getActiveRefs', () => {
   beforeEach(() => {
-    mockGetAllRefs.mockReset();
+    mockRefs.length = 0;
   });
 
   it('filters out evicted refs', () => {
-    mockGetAllRefs.mockReturnValue([
+    mockRefs.push(
       { visibility: 'active' },
       { visibility: 'evicted' },
       { visibility: undefined },
-    ]);
+    );
     const out = getActiveRefs();
     expect(out).toHaveLength(2);
     expect(out.every(r => r.visibility !== 'evicted')).toBe(true);
   });
 
   it('returns empty when no refs', () => {
-    mockGetAllRefs.mockReturnValue([]);
     expect(getActiveRefs()).toEqual([]);
   });
 });

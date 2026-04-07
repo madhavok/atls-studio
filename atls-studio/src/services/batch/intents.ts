@@ -327,20 +327,18 @@ function collectCandidates(
     case 'intent.understand':
     case 'intent.refactor':
     case 'intent.create':
-      return collectFromDepsGraph(targetFiles, context, 'importers');
+      return collectFromDepsGraph(targetFiles, context);
     case 'intent.edit':
     case 'intent.edit_multi':
     case 'intent.search_replace':
-      // Deps/importers only — speculative *.test.* / *.spec.* paths often do not exist and
-      // each read.shaped hit READ_TIMEOUT_MS (monorepo pain).
-      return collectFromDepsGraph(targetFiles, context, 'importers');
+      return collectFromDepsGraph(targetFiles, context);
     case 'intent.investigate':
     case 'intent.diagnose':
-      return collectFromDepsGraph(targetFiles, context, 'neighbors');
+      return collectFromDepsGraph(targetFiles, context);
     case 'intent.survey':
       return collectHubFiles(context);
     case 'intent.extract':
-      return collectFromDepsGraph(targetFiles, context, 'importers');
+      return collectFromDepsGraph(targetFiles, context);
     case 'intent.test':
       return [];
     default:
@@ -349,13 +347,11 @@ function collectCandidates(
 }
 
 /**
- * Extract related files from deps BB entries.
- * BB entries keyed as deps:${filePath} may contain JSON with importers/callers.
+ * Extract related files from deps BB entries (derivedFrom field).
  */
 function collectFromDepsGraph(
   targetFiles: string[],
   context: IntentContext,
-  relation: 'importers' | 'neighbors',
 ): string[] {
   const results: string[] = [];
   for (const f of targetFiles) {

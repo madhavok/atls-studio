@@ -89,15 +89,36 @@ function quickHash(content: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// Provider/model resolution
+// Provider/model resolution (cached; invalidated on settings change)
 // ---------------------------------------------------------------------------
 
+let _cachedProvider: string | undefined;
+let _cachedModel: string | undefined;
+let _subscribed = false;
+
+function ensureProviderSubscription(): void {
+  if (_subscribed) return;
+  _subscribed = true;
+  useAppStore.subscribe((state, prev) => {
+    if (
+      state.settings.selectedProvider !== prev.settings.selectedProvider ||
+      state.settings.selectedModel !== prev.settings.selectedModel
+    ) {
+      _cachedProvider = undefined;
+      _cachedModel = undefined;
+    }
+  });
+}
+
 function getActiveProviderModel(): { provider: string; model: string } {
+  ensureProviderSubscription();
+  if (_cachedProvider !== undefined && _cachedModel !== undefined) {
+    return { provider: _cachedProvider, model: _cachedModel };
+  }
   const { settings } = useAppStore.getState();
-  return {
-    provider: settings.selectedProvider,
-    model: settings.selectedModel,
-  };
+  _cachedProvider = settings.selectedProvider;
+  _cachedModel = settings.selectedModel;
+  return { provider: _cachedProvider, model: _cachedModel };
 }
 
 // ---------------------------------------------------------------------------
@@ -249,4 +270,6 @@ export function countTokensSync(content: string, precomputedHash?: string): numb
 export function clearTokenCache(): void {
   cache.clear();
   heuristicCache.clear();
+  _cachedProvider = undefined;
+  _cachedModel = undefined;
 }

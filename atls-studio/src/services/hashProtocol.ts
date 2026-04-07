@@ -208,16 +208,25 @@ export function getAllRefs(): ChunkRef[] {
   return Array.from(refs.values());
 }
 
+/** Single-pass collect from refs Map with predicate — avoids Array.from + filter. */
+export function collectRefsWhere(pred: (r: ChunkRef) => boolean): ChunkRef[] {
+  const out: ChunkRef[] = [];
+  for (const r of refs.values()) {
+    if (pred(r)) out.push(r);
+  }
+  return out;
+}
+
 /** Refs currently in working memory: materialized + referenced only. */
 export function getWorkingRefs(): ChunkRef[] {
-  return Array.from(refs.values()).filter(r =>
+  return collectRefsWhere(r =>
     r.visibility === 'materialized' || r.visibility === 'referenced'
   );
 }
 
 /** Refs that have been archived (out of WM but recallable). */
 export function getArchivedRefs(): ChunkRef[] {
-  return Array.from(refs.values()).filter(r => r.visibility === 'archived');
+  return collectRefsWhere(r => r.visibility === 'archived');
 }
 
 // ---------------------------------------------------------------------------
@@ -238,16 +247,33 @@ export function getRefsBySource(pattern: string): ChunkRef[] {
 
 /** Get all active refs of a specific ChunkType. */
 export function getRefsByType(chunkType: string): ChunkRef[] {
-  return getActiveRefs().filter(r => r.type === chunkType);
+  return collectRefsWhere(r => r.visibility !== 'evicted' && r.type === chunkType);
 }
 
 /** Get the N most recently seen refs, sorted by seenAtTurn desc. */
 export function getLatestRefs(count: number = 1): ChunkRef[] {
   if (!Number.isFinite(count) || count < 1) return [];
-  const normalizedCount = Math.floor(count);
-  return [...getActiveRefs()]
-    .sort((a, b) => b.seenAtTurn - a.seenAtTurn)
-    .slice(0, normalizedCount);
+  const k = Math.floor(count);
+  const top: ChunkRef[] = [];
+  for (const r of refs.values()) {
+    if (r.visibility === 'evicted') continue;
+    if (top.length < k) {
+      top.push(r);
+      let i = top.length - 1;
+      while (i > 0 && top[i].seenAtTurn > top[i - 1].seenAtTurn) {
+        const tmp = top[i]; top[i] = top[i - 1]; top[i - 1] = tmp;
+        i--;
+      }
+    } else if (r.seenAtTurn > top[k - 1].seenAtTurn) {
+      top[k - 1] = r;
+      let i = k - 2;
+      while (i >= 0 && top[i + 1].seenAtTurn > top[i].seenAtTurn) {
+        const tmp = top[i]; top[i] = top[i + 1]; top[i + 1] = tmp;
+        i--;
+      }
+    }
+  }
+  return top;
 }
 
 /** Stale/dormant classification constants (mirrors contextFormatter.ts) */
@@ -260,7 +286,7 @@ const STALE_TURNS = 5;
  */
 function getStaleRefs(): ChunkRef[] {
   const staleCutoff = currentTurn - STALE_TURNS;
-  return getActiveRefs().filter(r => !r.pinned && r.seenAtTurn <= staleCutoff);
+  return collectRefsWhere(r => r.visibility !== 'evicted' && !r.pinned && r.seenAtTurn <= staleCutoff);
 }
 
 /**
@@ -268,7 +294,7 @@ function getStaleRefs(): ChunkRef[] {
  * In HPP terms these are referenced or archived visibility.
  */
 function getDormantRefs(): ChunkRef[] {
-  return getAllRefs().filter(r => r.visibility === 'referenced' || r.visibility === 'archived');
+  return collectRefsWhere(r => r.visibility === 'referenced' || r.visibility === 'archived');
 }
 
 /**
@@ -290,9 +316,9 @@ export function queryRefs(selector: SetSelector): ChunkRef[] {
     case 'all':
       return getActiveRefs();
     case 'edited':
-      return getActiveRefs().filter(r => r.type === 'result');
+      return collectRefsWhere(r => r.visibility !== 'evicted' && r.type === 'result');
     case 'pinned':
-      return getActiveRefs().filter(r => !!r.pinned);
+      return collectRefsWhere(r => r.visibility !== 'evicted' && !!r.pinned);
     case 'stale':
       return getStaleRefs();
     case 'dormant':

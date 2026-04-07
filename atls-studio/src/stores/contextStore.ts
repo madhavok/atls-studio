@@ -634,20 +634,16 @@ function getStageRecency(snippet: StagedSnippet): number {
   return snippet.lastUsedAt ?? 0;
 }
 
-function getPersistentAnchorTokens(staged: Map<string, StagedSnippet>): number {
-  let total = 0;
-  for (const snippet of staged.values()) {
-    if (snippet.admissionClass === 'persistentAnchor') total += snippet.tokens;
-  }
-  return total;
-}
-
-function getPersistentAnchorCount(staged: Map<string, StagedSnippet>): number {
+function getPersistentAnchorMetrics(staged: Map<string, StagedSnippet>): { tokens: number; count: number } {
+  let tokens = 0;
   let count = 0;
   for (const snippet of staged.values()) {
-    if (snippet.admissionClass === 'persistentAnchor') count++;
+    if (snippet.admissionClass === 'persistentAnchor') {
+      tokens += snippet.tokens;
+      count++;
+    }
   }
-  return count;
+  return { tokens, count };
 }
 
 function pruneStagedSnippetsToBudget(
@@ -696,11 +692,12 @@ function pruneStagedSnippetsToBudget(
   while (runningTotal > STAGED_TOTAL_HARD_CAP_TOKENS && takeLowestValue()) {
     // Evict until total tokens are within budget.
   }
-  while (getPersistentAnchorTokens(next) > STAGED_ANCHOR_BUDGET_TOKENS && takeLowestValue()) {
-    // Evict until durable anchor budget is within limits.
+  let anchorMetrics = getPersistentAnchorMetrics(next);
+  while (anchorMetrics.tokens > STAGED_ANCHOR_BUDGET_TOKENS && takeLowestValue()) {
+    anchorMetrics = getPersistentAnchorMetrics(next);
   }
-  while (getPersistentAnchorCount(next) > MAX_PERSISTENT_STAGE_ENTRIES && takeLowestValue()) {
-    // Keep durable staged anchor count bounded.
+  while (anchorMetrics.count > MAX_PERSISTENT_STAGE_ENTRIES && takeLowestValue()) {
+    anchorMetrics = getPersistentAnchorMetrics(next);
   }
 
   return {
@@ -1452,29 +1449,83 @@ function evictArchiveIfNeeded(archive: Map<string, ContextChunk>): Map<string, C
 
 const CHAT_TYPES = new Set(['msg:user', 'msg:asst']);
 
-/**
- * Identify the most recent N chat chunk hashes that are protected from compact/drop.
- * N is adaptive: scales from FLOOR (high pressure) to CEILING (low pressure).
- * Returns { hashes, protectedCount } so callers can surface the current protection level.
- */
-function getProtectedChatHashes(
-  chunks: Map<string, ContextChunk>,
+/** Collect + sort chat chunks once (expensive part). Reuse across multiple adaptive-count slices. */
+function getSortedChatEntries(chunks: Map<string, ContextChunk>): Array<[string, ContextChunk]> {
+  const out: Array<[string, ContextChunk]> = [];
+  for (const entry of chunks.entries()) {
+    if (CHAT_TYPES.has(entry[1].type)) out.push(entry);
+  }
+  out.sort(([, a], [, b]) => b.createdAt.getTime() - a.createdAt.getTime());
+  return out;
+}
+
+/** Build protected hash set from a pre-sorted chat list (cheap — just a slice). */
+function buildProtectedChatHashes(
+  sortedChat: Array<[string, ContextChunk]>,
   usedTokens: number,
   maxTokens: number,
 ): { hashes: Set<string>; protectedCount: number } {
   const count = getAdaptiveChatProtectionCount(usedTokens, maxTokens);
-  const chatChunks = Array.from(chunks.entries())
-    .filter(([, c]) => CHAT_TYPES.has(c.type))
-    .sort(([, a], [, b]) => b.createdAt.getTime() - a.createdAt.getTime());
   const hashes = new Set<string>();
-  const protectedCount = Math.min(count, chatChunks.length);
+  const protectedCount = Math.min(count, sortedChat.length);
   for (let i = 0; i < protectedCount; i++) {
-    const [key, chunk] = chatChunks[i];
+    const [key, chunk] = sortedChat[i];
     hashes.add(key);
     hashes.add(chunk.hash);
     hashes.add(chunk.shortHash);
   }
   return { hashes, protectedCount };
+}
+
+/** Convenience wrapper preserving the original API for callers outside addChunk. */
+function getProtectedChatHashes(
+  chunks: Map<string, ContextChunk>,
+  usedTokens: number,
+  maxTokens: number,
+): { hashes: Set<string>; protectedCount: number } {
+  return buildProtectedChatHashes(getSortedChatEntries(chunks), usedTokens, maxTokens);
+}
+
+/**
+ * Build tiered eviction candidate list: tier1 (completed-subtask non-chat) →
+ * tier2 (other non-chat) → tier3 (unprotected chat), each sorted by lastAccessed asc.
+ */
+function buildTieredEvictionCandidates(
+  entries: Iterable<[string, ContextChunk]>,
+  protectedChat: Set<string>,
+  completedSubtaskIds: Set<string>,
+  undoProtectedHashes: Set<string>,
+): Array<[string, ContextChunk]> {
+  const isProtected = (h: string, c: ContextChunk) =>
+    c.pinned
+    || undoProtectedHashes.has(h) || undoProtectedHashes.has(c.shortHash)
+    || protectedChat.has(h) || protectedChat.has(c.hash) || protectedChat.has(c.shortHash);
+
+  const isCompletedSubtask = (c: ContextChunk) => {
+    const ids = c.subtaskIds?.length ? c.subtaskIds : c.subtaskId ? [c.subtaskId] : [];
+    return ids.length > 0 && ids.every(id => completedSubtaskIds.has(id));
+  };
+
+  const isChatChunk = (c: ContextChunk) => CHAT_TYPES.has(c.type);
+  const byAccess = ([, a]: [string, ContextChunk], [, b]: [string, ContextChunk]) => a.lastAccessed - b.lastAccessed;
+
+  const tier1: Array<[string, ContextChunk]> = [];
+  const tier2: Array<[string, ContextChunk]> = [];
+  const tier3: Array<[string, ContextChunk]> = [];
+
+  for (const entry of entries) {
+    const [h, c] = entry;
+    if (isProtected(h, c)) continue;
+    if (isCompletedSubtask(c) && !isChatChunk(c)) tier1.push(entry);
+    else if (!isChatChunk(c)) tier2.push(entry);
+    else tier3.push(entry);
+  }
+
+  tier1.sort(byAccess);
+  tier2.sort(byAccess);
+  tier3.sort(byAccess);
+
+  return [...tier1, ...tier2, ...tier3];
 }
 
 export const useContextStore = create<ContextStoreState>()(
@@ -1688,43 +1739,18 @@ export const useContextStore = create<ContextStoreState>()(
           estimatedPromptPressure -= stagedRelief.freed;
         }
 
-          const { hashes: protectedChat } = getProtectedChatHashes(newChunks, currentUsed, state.maxTokens);
+          const sortedChat = getSortedChatEntries(newChunks);
+          const { hashes: protectedChat } = buildProtectedChatHashes(sortedChat, currentUsed, state.maxTokens);
           const completedSubtaskIds = new Set(
             (state.taskPlan?.subtasks || [])
               .filter(s => s.status === 'done')
               .map(s => s.id)
           );
-
-          const isCompletedSubtaskChunk = (c: ContextChunk) => {
-            const ids = c.subtaskIds?.length ? c.subtaskIds : c.subtaskId ? [c.subtaskId] : [];
-            return ids.length > 0 && ids.every(id => completedSubtaskIds.has(id));
-          };
-
           const undoProtectedHashes = new Set(state.editHashStack);
-          const isProtected = (h: string, c: ContextChunk) =>
-            c.pinned
-            || undoProtectedHashes.has(h) || undoProtectedHashes.has(c.shortHash)
-            || protectedChat.has(h) || protectedChat.has(c.hash) || protectedChat.has(c.shortHash);
 
-          const isChatChunk = (c: ContextChunk) => CHAT_TYPES.has(c.type);
-
-          // Tier 1: completed-subtask non-chat (cheapest to lose)
-          const tier1 = Array.from(newChunks.entries())
-            .filter(([h, c]) => !isProtected(h, c) && isCompletedSubtaskChunk(c) && !isChatChunk(c))
-            .sort(([, a], [, b]) => a.lastAccessed - b.lastAccessed);
-
-          // Tier 2: other non-chat, non-pinned chunks
-          const tier2 = Array.from(newChunks.entries())
-            .filter(([h, c]) => !isProtected(h, c) && !isCompletedSubtaskChunk(c) && !isChatChunk(c))
-            .sort(([, a], [, b]) => a.lastAccessed - b.lastAccessed);
-
-          // Tier 3: unprotected chat (last resort)
-          // Normal pressure: model manages chat via compact_history/drop per prompt
-          const tier3 = Array.from(newChunks.entries())
-            .filter(([h, c]) => !isProtected(h, c) && isChatChunk(c))
-            .sort(([, a], [, b]) => a.lastAccessed - b.lastAccessed);
-
-          const candidates = [...tier1, ...tier2, ...tier3];
+          const candidates = buildTieredEvictionCandidates(
+            newChunks.entries(), protectedChat, completedSubtaskIds, undoProtectedHashes,
+          );
 
           // Phase 1: Compact uncompacted chunks (preserves in archive, ~95% savings)
           for (const [key, c] of candidates) {
@@ -1780,30 +1806,14 @@ export const useContextStore = create<ContextStoreState>()(
             if (currentUsed + tokens > state.maxTokens * 0.90) {
               _autoManageInProgress = true;
               try {
-              const { hashes: protectedChat2 } = getProtectedChatHashes(newChunks, currentUsed, state.maxTokens);
+              const { hashes: protectedChat2 } = buildProtectedChatHashes(sortedChat, currentUsed, state.maxTokens);
               const completedSubtaskIds2 = new Set(
                 (state.taskPlan?.subtasks || []).filter(s => s.status === 'done').map(s => s.id)
               );
-              const isCompletedSubtaskChunk2 = (c: ContextChunk) => {
-                const ids = c.subtaskIds?.length ? c.subtaskIds : c.subtaskId ? [c.subtaskId] : [];
-                return ids.length > 0 && ids.every(id => completedSubtaskIds2.has(id));
-              };
               const undoProtectedHashes2 = new Set(state.editHashStack);
-              const isProtected2 = (h: string, c: ContextChunk) =>
-                c.pinned ||
-                undoProtectedHashes2.has(h) || undoProtectedHashes2.has(c.shortHash) ||
-                protectedChat2.has(h) || protectedChat2.has(c.hash) || protectedChat2.has(c.shortHash);
-              const isChatChunk2 = (c: ContextChunk) => CHAT_TYPES.has(c.type);
-              const tier1b = Array.from(newChunks.entries())
-                .filter(([h, c]) => !isProtected2(h, c) && isCompletedSubtaskChunk2(c) && !isChatChunk2(c))
-                .sort(([, a], [, b]) => a.lastAccessed - b.lastAccessed);
-              const tier2b = Array.from(newChunks.entries())
-                .filter(([h, c]) => !isProtected2(h, c) && !isCompletedSubtaskChunk2(c) && !isChatChunk2(c))
-                .sort(([, a], [, b]) => a.lastAccessed - b.lastAccessed);
-              const tier3b = Array.from(newChunks.entries())
-                .filter(([h, c]) => !isProtected2(h, c) && isChatChunk2(c))
-                .sort(([, a], [, b]) => a.lastAccessed - b.lastAccessed);
-              const candidates2 = [...tier1b, ...tier2b, ...tier3b];
+              const candidates2 = buildTieredEvictionCandidates(
+                newChunks.entries(), protectedChat2, completedSubtaskIds2, undoProtectedHashes2,
+              );
               for (const [key] of candidates2) {
                 if (currentUsed + tokens - totalFreed <= state.maxTokens * 0.50) break;
                 // BUG10 FIX: Re-read from newChunks to get latest state after Phase 1 compaction.
