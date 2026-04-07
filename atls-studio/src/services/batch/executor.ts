@@ -1143,6 +1143,13 @@ function isBlockingSystemExec(
 
 /** End batch after this step; no `interruption` — chat keeps going (rollback covers real edits). */
 function shouldStopBatchAfterDryRunPreview(artifact: Record<string, unknown>): boolean {
+  // rename_symbol with dry_run:true is read-only (no files written) — don't cascade-stop
+  // the batch since subsequent steps are unaffected.
+  const summary = artifact.summary as Record<string, unknown> | undefined;
+  if (summary && typeof summary.files_modified === 'number' && summary.files_modified === 0
+      && artifact.dry_run === true && artifact.old_name !== undefined) {
+    return false;
+  }
   if (artifact.dry_run === true) return true;
   const st = typeof artifact.status === 'string' ? artifact.status.toLowerCase() : '';
   return st === 'preview' || st === 'dry_run_preview';
@@ -1160,11 +1167,14 @@ function detectBatchInterruption(stepId: string, stepIndex: number, stepUse: str
   const reason = typeof artifact.reason === 'string' ? artifact.reason : undefined;
   const isSuspectExternal = reason === 'suspect_external_change';
 
+  // _rollback is informational on successful execute responses — only treat it
+  // as a pause when the status actually indicates a problem.
+  const isSuccessStatus = status === 'success' || status === 'no_changes' || status === 'no_effect';
   const isPaused =
     status === 'paused'
     || status === 'failed_lint'
     || status === 'error'
-    || hasRollback
+    || (hasRollback && !isSuccessStatus)
     || hasResumeAfter;
   if (isPaused) {
     return {

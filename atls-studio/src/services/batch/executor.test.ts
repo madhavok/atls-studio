@@ -115,6 +115,101 @@ describe('executeUnifiedBatch interruption handling', () => {
     expect(applySpy).not.toHaveBeenCalled();
   });
 
+  it('does not cascade-stop batch for rename dry_run preview (read-only, files_modified:0)', async () => {
+    const afterSpy = vi.fn().mockReturnValue(raw('done', { ok: true }));
+
+    handlers.set('change.refactor', async () =>
+      raw('rename preview', {
+        old_name: 'foo',
+        new_name: 'bar',
+        dry_run: true,
+        summary: { files_affected: 2, files_modified: 0, total_replacements: 2 },
+        _next: 'Preview complete. Set dry_run:false to apply rename',
+      }),
+    );
+    handlers.set('change.edit', afterSpy as unknown as OpHandler);
+
+    const result = await executeUnifiedBatch(
+      {
+        version: '1.0',
+        steps: [
+          { id: 'rename-preview', use: 'change.refactor' },
+          { id: 'followup-edit', use: 'change.edit' },
+        ],
+      },
+      makeCtx(),
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.interruption).toBeUndefined();
+    expect(result.step_results).toHaveLength(2);
+    expect(result.step_results[1].summary).not.toContain('SKIPPED');
+    expect(afterSpy).toHaveBeenCalled();
+  });
+
+  it('does not pause batch when execute succeeds with _rollback data (ix / refactor execute)', async () => {
+    const afterSpy = vi.fn().mockReturnValue(raw('done', { ok: true }));
+
+    handlers.set('change.refactor', async () =>
+      raw('extract done', {
+        status: 'success',
+        results: [{ op: 0, status: 'applied' }],
+        files: 2,
+        _rollback: { restore: [{ file: 'src/a.py', hash: 'h:abc123' }], delete: ['src/b.py'] },
+        _action: 'execute',
+      }),
+    );
+    handlers.set('verify.build', afterSpy as unknown as OpHandler);
+
+    const result = await executeUnifiedBatch(
+      {
+        version: '1.0',
+        steps: [
+          { id: 'extract', use: 'change.refactor' },
+          { id: 'verify', use: 'verify.build' },
+        ],
+      },
+      makeCtx(),
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.interruption).toBeUndefined();
+    expect(result.step_results).toHaveLength(2);
+    expect(result.step_results[1].summary).not.toContain('SKIPPED');
+    expect(afterSpy).toHaveBeenCalled();
+  });
+
+  it('still pauses batch when execute fails with _rollback + paused status', async () => {
+    const afterSpy = vi.fn();
+
+    handlers.set('change.refactor', async () =>
+      raw('lint failed', {
+        status: 'paused',
+        failed_operation_index: 1,
+        resume_after: 0,
+        _rollback: { restore: [{ file: 'src/a.py', hash: 'h:abc123' }] },
+        _next: 'Fix and resume_after:0',
+      }),
+    );
+    handlers.set('verify.build', afterSpy as unknown as OpHandler);
+
+    const result = await executeUnifiedBatch(
+      {
+        version: '1.0',
+        steps: [
+          { id: 'extract', use: 'change.refactor' },
+          { id: 'verify', use: 'verify.build' },
+        ],
+      },
+      makeCtx(),
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.interruption).toBeDefined();
+    expect(result.interruption!.kind).toBe('paused_on_error');
+    expect(afterSpy).not.toHaveBeenCalled();
+  });
+
   it('interrupts the batch when a step pauses for lint/rollback follow-up', async () => {
     const mutateSpy = vi.fn();
 

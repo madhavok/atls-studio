@@ -1251,6 +1251,15 @@ pub(crate) fn generate_consumer_import_updates_with_snapshots(
     // Process each consumer once: remove moved symbols from old import if present,
     // then add a new import for the target module.
     for (normalized_consumer, syms) in &consumer_symbols {
+        // Skip cross-language consumers: a Python extract should not inject
+        // Python imports into TypeScript files (or vice versa).
+        let consumer_lang = hash_resolver::detect_lang(Some(normalized_consumer.as_str()))
+            .map(|l| atls_core::Language::from_str(&l))
+            .unwrap_or(atls_core::Language::Unknown);
+        if consumer_lang != atls_core::Language::Unknown && consumer_lang != language {
+            continue;
+        }
+
         let consumer_abs = resolve_project_path(project_root, normalized_consumer);
         let content = match std::fs::read_to_string(&consumer_abs) {
             Ok(c) => c,
@@ -1671,6 +1680,7 @@ pub(crate) fn build_source_import_for_moved_symbols_with_root(
 }
 
 /// Compute a Python relative import path from source_file to target_file.
+/// PEP 328: one dot = current package, each additional dot = one parent.
 /// e.g. "src/services/foo.py" → "src/utils/bar.py" becomes "..utils.bar"
 fn compute_relative_import_path(source_file: &str, target_file: &str) -> String {
     let src_dir = std::path::Path::new(source_file).parent().unwrap_or(std::path::Path::new(""));
@@ -1687,14 +1697,12 @@ fn compute_relative_import_path(source_file: &str, target_file: &str) -> String 
 
     let parts: Vec<&str> = rel_str.split('/').collect();
     let up_count = parts.iter().filter(|&&p| p == "..").count();
-    let down_parts: Vec<&&str> = parts.iter().filter(|&&p| p != "..").collect();
+    let down_parts: Vec<&str> = parts.iter().filter(|&&p| p != "..").copied().collect();
 
-    let mut result = ".".repeat(up_count + 1);
-    for part in down_parts {
-        result.push_str(&format!(".{}", part));
-    }
-    result.push_str(&format!(".{}", target_stem));
-    result
+    let prefix = ".".repeat(up_count + 1);
+    let mut segments: Vec<&str> = down_parts;
+    segments.push(target_stem);
+    format!("{}{}", prefix, segments.join("."))
 }
 
 /// Insert an import line into source code after the last existing
@@ -4398,6 +4406,35 @@ mod tests {
         let import = result.unwrap();
         assert!(import.contains("resolve_temporal_ref"), "got: {}", import);
         assert!(!import.starts_with("from .hash_resolver_temporal"), "should not use same-dir path for cross-dir: {}", import);
+    }
+
+    #[test]
+    fn python_relative_import_deep_cross_dir() {
+        // Regression: compute_relative_import_path produced too many leading dots.
+        // src/services/ai_service.py → _test_atls/extracted_cf.py
+        // rel = ../../_test_atls → up_count=2, down=["_test_atls"], stem="extracted_cf"
+        // PEP 328: 3 dots (2 ups + 1 base) then _test_atls.extracted_cf
+        let result = build_source_import_for_moved_symbols(
+            "src/services/ai_service.py",
+            "_test_atls/extracted_cf.py",
+            &["close_old_connections".to_string()],
+            atls_core::Language::Python,
+        );
+        let import = result.unwrap();
+        assert_eq!(import, "from ..._test_atls.extracted_cf import close_old_connections");
+    }
+
+    #[test]
+    fn python_relative_import_sibling_subdir() {
+        // src/a/foo.py → src/b/c/bar.py : up 1 from a → src, down into b/c
+        let result = build_source_import_for_moved_symbols(
+            "src/a/foo.py",
+            "src/b/c/bar.py",
+            &["helper".to_string()],
+            atls_core::Language::Python,
+        );
+        let import = result.unwrap();
+        assert_eq!(import, "from ..b.c.bar import helper");
     }
 
     #[test]

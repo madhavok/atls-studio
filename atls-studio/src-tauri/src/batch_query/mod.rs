@@ -9740,12 +9740,43 @@ pub async fn atls_batch_query(
                     });
 
                 // Language from file_path/source_file — used for index queries (class scope, usage, auto-scope).
+                // If the value is still a hash ref (h:…), resolve it to a source path
+                // so language can be inferred from the extension.
                 let source_lang_hint: Option<String> = params
                     .get("file_path")
                     .or_else(|| params.get("source_file"))
                     .and_then(|v| v.as_str())
                     .and_then(|fp| {
-                        let ext = std::path::Path::new(fp)
+                        let resolved_fp: String = if fp.starts_with("h:") {
+                            let clean = fp.strip_prefix("h:").unwrap_or(fp);
+                            let hr_state = app.state::<hash_resolver::HashRegistryState>();
+                            let resolved = match hr_state.registry.try_lock() {
+                                Ok(registry) => {
+                                    if let Some(path) = registry.get(clean).and_then(|e| e.source.clone()) {
+                                        Ok(path)
+                                    } else if let Some(lang_str) = registry.get(clean).and_then(|e| e.lang.clone()) {
+                                        Err(Some(lang_str))
+                                    } else {
+                                        Err(None)
+                                    }
+                                }
+                                Err(_) => Err(None),
+                            };
+                            match resolved {
+                                Ok(path) => path,
+                                Err(Some(lang_str)) => {
+                                    let l = atls_core::Language::from_str(&lang_str);
+                                    if l != atls_core::Language::Unknown {
+                                        return Some(l.as_str().to_string());
+                                    }
+                                    fp.to_string()
+                                }
+                                Err(None) => fp.to_string(),
+                            }
+                        } else {
+                            fp.to_string()
+                        };
+                        let ext = std::path::Path::new(&resolved_fp)
                             .extension()
                             .and_then(|s| s.to_str())
                             .unwrap_or("");
@@ -14199,7 +14230,17 @@ pub async fn atls_batch_query(
                                 .or_else(|| params.get("source_file"))
                                 .or_else(|| params.get("file"))
                                 .or_else(|| params.get("from"))
+                                .or_else(|| params.get("file_paths").and_then(|v| {
+                                    v.as_array().and_then(|a| a.first())
+                                }))
                                 .and_then(|v| v.as_str());
+                            if source_file.is_none() {
+                                return Err(
+                                    "refactor execute with 'extractions' requires a source file \
+                                     (provide file_path, source_file, file, from, or file_paths)"
+                                    .into()
+                                );
+                            }
                             if let Some(src) = source_file {
                                 let mut converted_ops: Vec<serde_json::Value> = Vec::new();
                                 for extraction in extractions_arr {
