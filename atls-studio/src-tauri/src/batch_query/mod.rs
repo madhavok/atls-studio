@@ -7806,21 +7806,28 @@ pub async fn atls_batch_query(
                             } else {
                                 format!("{}\n\n", filtered_imports.join("\n"))
                             };
-                            // Indent method bodies under a class with 4 spaces
-                            let indented_methods: Vec<String> = extracted_code.iter()
-                                .map(|code| {
-                                    code.lines()
-                                        .map(|line| if line.trim().is_empty() { String::new() } else { format!("    {}", line) })
-                                        .collect::<Vec<_>>()
-                                        .join("\n")
-                                })
-                                .collect();
-                            format!(
-                                "{}\nclass {}:\n{}",
-                                imports_block,
-                                generated_class_name,
-                                indented_methods.join("\n\n")
-                            )
+                            if all_standalone_functions {
+                                format!(
+                                    "{}{}",
+                                    imports_block,
+                                    extracted_code.join("\n\n")
+                                )
+                            } else {
+                                let indented_methods: Vec<String> = extracted_code.iter()
+                                    .map(|code| {
+                                        code.lines()
+                                            .map(|line| if line.trim().is_empty() { String::new() } else { format!("    {}", line) })
+                                            .collect::<Vec<_>>()
+                                            .join("\n")
+                                    })
+                                    .collect();
+                                format!(
+                                    "{}\nclass {}:\n{}",
+                                    imports_block,
+                                    generated_class_name,
+                                    indented_methods.join("\n\n")
+                                )
+                            }
                         }
                         "cpp" | "cc" | "cxx" | "hpp" | "hxx" | "hh" | "h" | "c" => {
                             let includes_block = if filtered_imports.is_empty() {
@@ -9813,13 +9820,50 @@ pub async fn atls_batch_query(
                     }
                 }
 
-                // Auto-scope to same-language files when file_path is provided
-                // but no explicit scope was set. Queries the index for files
-                // matching the source language to prevent full-project scans on
-                // large multi-language monorepos.
+                // When file_path is provided without explicit scope, scope the
+                // rename to that file plus files that reference the symbol.
+                // This prevents renaming `add` in one test file from hitting
+                // 90 unrelated Django files that define their own `add`.
+                let source_file_path: Option<String> = params
+                    .get("file_path")
+                    .or_else(|| params.get("source_file"))
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+
                 if scope_files.is_none() {
-                    if let Some(ref lang_str) = source_lang_hint {
-                        // Stored as lowercase (Language::as_str); equality uses idx_files_language.
+                    if let Some(ref fp) = source_file_path {
+                        let norm = fp.replace('\\', "/");
+                        let mut seed: Vec<String> = vec![norm.clone()];
+                        // Include files that the index says reference this symbol
+                        // AND import from / reference the source file.
+                        if let Some(ref lang_str) = source_lang_hint {
+                            let usage_result = project.query().get_symbol_usage_for_language(old_name, lang_str);
+                            if let Ok(usage) = usage_result {
+                                for d in &usage.definitions {
+                                    let df = d.file.replace('\\', "/");
+                                    if df == norm { continue; }
+                                    seed.push(df);
+                                }
+                                for r in &usage.references {
+                                    let rf = r.file.replace('\\', "/");
+                                    if rf == norm { continue; }
+                                    // Only include reference files that actually import from the source file
+                                    let resolved = resolve_project_path(project_root, &rf);
+                                    if let Ok(content) = std::fs::read_to_string(&resolved) {
+                                        let src_stem = std::path::Path::new(&norm)
+                                            .file_stem().and_then(|s| s.to_str()).unwrap_or("");
+                                        if !src_stem.is_empty() && content.contains(src_stem) {
+                                            seed.push(rf);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        seed.sort();
+                        seed.dedup();
+                        scope_files = Some(seed);
+                    } else if let Some(ref lang_str) = source_lang_hint {
+                        // No file_path: fall back to same-language files
                         let lang_files: Vec<String> = {
                             let conn = project.query().db().conn();
                             conn.prepare("SELECT path FROM files WHERE language = ?1")

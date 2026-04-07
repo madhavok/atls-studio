@@ -1141,18 +1141,11 @@ function isBlockingSystemExec(
   );
 }
 
-/** End batch after this step; no `interruption` — chat keeps going (rollback covers real edits). */
-function shouldStopBatchAfterDryRunPreview(artifact: Record<string, unknown>): boolean {
-  // rename_symbol with dry_run:true is read-only (no files written) — don't cascade-stop
-  // the batch since subsequent steps are unaffected.
-  const summary = artifact.summary as Record<string, unknown> | undefined;
-  if (summary && typeof summary.files_modified === 'number' && summary.files_modified === 0
-      && artifact.dry_run === true && artifact.old_name !== undefined) {
-    return false;
-  }
-  if (artifact.dry_run === true) return true;
-  const st = typeof artifact.status === 'string' ? artifact.status.toLowerCase() : '';
-  return st === 'preview' || st === 'dry_run_preview';
+/** Should the batch halt after this change.* step?
+ *  dry_run / preview responses never halt — they are read-only (no files written,
+ *  no project state changed). Subsequent steps are unaffected. */
+function shouldStopBatchAfterDryRunPreview(_artifact: Record<string, unknown>): boolean {
+  return false;
 }
 
 function detectBatchInterruption(stepId: string, stepIndex: number, stepUse: string, output: StepOutput): BatchInterruption | null {

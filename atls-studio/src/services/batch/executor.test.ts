@@ -84,8 +84,8 @@ describe('executeUnifiedBatch interruption handling', () => {
     handlers.clear();
   });
 
-  it('ends the batch after change.* dry-run/preview without interruption (later steps skipped)', async () => {
-    const applySpy = vi.fn();
+  it('does not cascade-stop batch after change.* dry-run/preview (subsequent steps run)', async () => {
+    const applySpy = vi.fn().mockReturnValue(raw('created', { ok: true }));
 
     handlers.set('change.edit', async () =>
       raw('preview ready', {
@@ -110,9 +110,8 @@ describe('executeUnifiedBatch interruption handling', () => {
     expect(result.ok).toBe(true);
     expect(result.interruption).toBeUndefined();
     expect(result.step_results).toHaveLength(2);
-    expect(result.step_results[1].summary).toContain('SKIPPED');
-    expect(result.step_results[1].summary).toContain('dry_run/preview');
-    expect(applySpy).not.toHaveBeenCalled();
+    expect(result.step_results[1].summary).not.toContain('SKIPPED');
+    expect(applySpy).toHaveBeenCalled();
   });
 
   it('does not cascade-stop batch for rename dry_run preview (read-only, files_modified:0)', async () => {
