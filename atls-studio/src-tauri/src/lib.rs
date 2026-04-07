@@ -7615,7 +7615,7 @@ const horror = (x: number) =>
              Warnings: {:?}", warnings);
     }
 
-    // ── LIVE APP REPRO: replace_body_repro.ts — the EXACT file the agent tested ──
+    // ── LIVE APP REPRO: embedded fixture — same shapes the agent exercised in-app ──
 
     const REPRO: &str = r##"/**
  * replace_body live repro — tests the exact failure patterns from
@@ -7745,7 +7745,7 @@ const horror = (x: number) =>
     fn repro_file_brace_balance() {
         let lines: Vec<&str> = REPRO.lines().collect();
         let delta = brace_balance_delta(&lines);
-        assert_eq!(delta, 0, "replace_body_repro.ts must be balanced, got delta={}", delta);
+        assert_eq!(delta, 0, "repro fixture must be balanced, got delta={}", delta);
     }
 
     // Exact agent inputs: h:6fac57:17 → line=17, h:6fac57:50 → line=50, etc.
