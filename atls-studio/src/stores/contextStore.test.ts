@@ -5,6 +5,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { setRoundRefreshRevisionResolver, setBulkRevisionResolver, setWorkspacesAccessor, useContextStore } from './contextStore';
 import { STAGED_ANCHOR_BUDGET_TOKENS, STAGED_TOTAL_HARD_CAP_TOKENS, MAX_PERSISTENT_STAGE_ENTRIES } from '../services/promptMemory';
+import { hashContentSync } from '../utils/contextHash';
 
 function resetStore() {
   useContextStore.getState().resetSession();
@@ -1239,7 +1240,32 @@ describe('reconcileRestoredSession', () => {
     expect(chunk?.suspectSince).toBeUndefined();
   });
 
-  it('marks chunks shifted when sourceRevision differs from disk (updated, not invalidated)', async () => {
+  it('aligns sourceRevision when disk hash matches chunk body (session restore)', async () => {
+    const body = 'stable body for restore reconcile';
+    const diskRev = hashContentSync(body);
+    addTestChunk(body, 'file', 'src/changed.ts', { sourceRevision: 'rev-old' });
+
+    useContextStore.setState(state => {
+      const chunks = new Map(state.chunks);
+      for (const [hash, chunk] of chunks) {
+        chunks.set(hash, { ...chunk, freshness: 'suspect', freshnessCause: 'session_restore', suspectSince: Date.now() });
+      }
+      return { chunks };
+    });
+
+    setBulkRevisionResolver(async (paths) =>
+      new Map(paths.map(p => [p, diskRev])),
+    );
+
+    const stats = await useContextStore.getState().reconcileRestoredSession();
+    expect(stats.updated).toBe(1);
+
+    const chunk = Array.from(useContextStore.getState().chunks.values()).find(c => c.source === 'src/changed.ts');
+    expect(chunk?.sourceRevision).toBe(diskRev);
+    expect(chunk?.suspectSince).toBeUndefined();
+  });
+
+  it('keeps suspect when disk rev does not match chunk body (session restore)', async () => {
     addTestChunk('old content', 'file', 'src/changed.ts', { sourceRevision: 'rev-old' });
 
     useContextStore.setState(state => {
@@ -1258,8 +1284,10 @@ describe('reconcileRestoredSession', () => {
     expect(stats.updated).toBe(1);
 
     const chunk = Array.from(useContextStore.getState().chunks.values()).find(c => c.source === 'src/changed.ts');
-    expect(chunk?.sourceRevision).toBe('rev-new');
-    expect(chunk?.suspectSince).toBeUndefined();
+    expect(chunk?.sourceRevision).toBe('rev-old');
+    expect(chunk?.freshness).toBe('suspect');
+    expect(chunk?.freshnessCause).toBe('session_restore');
+    expect(chunk?.observedRevision).toBe('rev-new');
   });
 
   it('evicts chunks for deleted files (null revision)', async () => {
@@ -1277,7 +1305,7 @@ describe('reconcileRestoredSession', () => {
     ).toBe(false);
   });
 
-  it('gracefully no-ops when bulk resolver is not wired', async () => {
+  it('applies blanket suspect when bulk resolver is not wired', async () => {
     addTestChunk('fn foo() {}', 'file', 'src/foo.ts', { sourceRevision: 'rev-a' });
     setBulkRevisionResolver(null);
 
@@ -1285,6 +1313,10 @@ describe('reconcileRestoredSession', () => {
     expect(stats.updated).toBe(0);
     expect(stats.invalidated).toBe(0);
     expect(stats.evicted).toBe(0);
+
+    const chunk = Array.from(useContextStore.getState().chunks.values()).find(c => c.source === 'src/foo.ts');
+    expect(chunk?.freshness).toBe('suspect');
+    expect(chunk?.freshnessCause).toBe('session_restore');
   });
 
   it('skips non-file-backed and snapshot chunks', async () => {

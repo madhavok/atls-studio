@@ -389,18 +389,7 @@ export async function applyHashFirstFreshness(): Promise<{ preserved: number; su
 }
 
 function applyBlanketSuspect(): void {
-  useContextStore.setState(state => {
-    const now = Date.now();
-    const chunks = new Map(state.chunks);
-    for (const [hash, chunk] of chunks) {
-      chunks.set(hash, { ...chunk, freshness: 'suspect', freshnessCause: 'session_restore', suspectSince: now });
-    }
-    const stagedSnippets = new Map(state.stagedSnippets);
-    for (const [key, snippet] of stagedSnippets) {
-      stagedSnippets.set(key, { ...snippet, stageState: 'stale', suspectSince: now });
-    }
-    return { chunks, stagedSnippets };
-  });
+  useContextStore.getState().applyRestoredSessionBlanketSuspect();
 }
 
 /**
@@ -710,18 +699,7 @@ export function useChatPersistence() {
               fileReadSpinRanges: memorySnapshot.fileReadSpinRanges ?? {},
             } : {}),
           });
-          const freshnessResult = await applyHashFirstFreshness();
-          if (freshnessResult.changedPaths.length > 0) {
-            const ctxStore = useContextStore.getState();
-            ctxStore.invalidateArtifactsForPaths(freshnessResult.changedPaths);
-            ctxStore.invalidateAwarenessForPaths(freshnessResult.changedPaths);
-          }
-          if (memorySnapshot.geminiCache) restoreGeminiCacheSnapshot(memorySnapshot.geminiCache);
           restoredFromSnapshot = true;
-          console.log(
-            '[ChatPersistence] Restored memory snapshot v' + memorySnapshot.version +
-            ` (hash-first: ${freshnessResult.preserved} preserved, ${freshnessResult.suspect} suspect, ${freshnessResult.staleSnippets} stale snippets, ${freshnessResult.evictedPaths} missing paths)`,
-          );
         }
       } catch (e) {
         console.warn('[ChatPersistence] Failed to restore memory snapshot:', e);
@@ -879,15 +857,32 @@ export function useChatPersistence() {
       if (pp) writeLastActiveSessionId(pp, sessionId);
       syncCurrentSessionIdToLocalStorage(sessionId);
 
-      if (restoredFromSnapshot) {
-        try {
-          const stats = await useContextStore.getState().reconcileRestoredSession();
-          if (stats.updated + stats.invalidated + stats.evicted > 0) {
-            console.log('[ChatPersistence] Post-restore reconciliation:', stats);
-          }
-        } catch (e) {
-          console.warn('[ChatPersistence] Post-restore reconciliation failed:', e);
+      try {
+        const freshnessResult = await applyHashFirstFreshness();
+        if (freshnessResult.changedPaths.length > 0) {
+          const ctxStore = useContextStore.getState();
+          ctxStore.invalidateArtifactsForPaths(freshnessResult.changedPaths);
+          ctxStore.invalidateAwarenessForPaths(freshnessResult.changedPaths);
         }
+        if (restoredFromSnapshot && memorySnapshot?.geminiCache) {
+          restoreGeminiCacheSnapshot(memorySnapshot.geminiCache);
+        }
+        if (restoredFromSnapshot && memorySnapshot) {
+          console.log(
+            '[ChatPersistence] Restored memory snapshot v' + memorySnapshot.version +
+            ` (hash-first: ${freshnessResult.preserved} preserved, ${freshnessResult.suspect} suspect, ${freshnessResult.staleSnippets} stale snippets, ${freshnessResult.evictedPaths} missing paths)`,
+          );
+        } else if (!restoredFromSnapshot && (freshnessResult.preserved + freshnessResult.suspect > 0 || freshnessResult.staleSnippets > 0)) {
+          console.log(
+            `[ChatPersistence] Legacy restore hash-first: ${freshnessResult.preserved} preserved, ${freshnessResult.suspect} suspect, ${freshnessResult.staleSnippets} stale snippets`,
+          );
+        }
+        const stats = await useContextStore.getState().reconcileRestoredSession();
+        if (stats.updated + stats.invalidated + stats.evicted > 0) {
+          console.log('[ChatPersistence] Post-restore reconciliation:', stats);
+        }
+      } catch (e) {
+        console.warn('[ChatPersistence] Post-restore freshness pipeline failed:', e);
       }
 
       console.log('[ChatPersistence] Session loaded:', sessionId, 

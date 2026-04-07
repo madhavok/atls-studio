@@ -27,6 +27,9 @@ export function isExecutionAuthoritative(meta: FreshnessMetadata): boolean {
  * Unified gate: returns true only when the artifact is eligible to steer execution.
  * Accepts a loose shape so callers can pass BB entries, staged snippets, retention entries,
  * or task directives without adapting the object first.
+ *
+ * Note: `editSessionId` on engrams is for HPP lineage / pool matching, not this gate —
+ * steering stays revision- and state-based so hash continuity works across chat sessions.
  */
 export function canSteerExecution(artifact: {
   state?: UniversalState | string;

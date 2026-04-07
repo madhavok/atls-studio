@@ -46,7 +46,7 @@ import { formatAge } from '../utils/formatHelpers';
 import { commonPrefixLen } from './contextHelpers';
 import { canonicalizeSnapshotHash } from '../services/batch/snapshotTracker';
 import { emptyRollingSummary, type RollingSummary } from '../services/historyDistiller';
-import { freshnessTelemetry } from '../services/freshnessTelemetry';
+import { freshnessTelemetry, incSessionRestoreReconcileCount } from '../services/freshnessTelemetry';
 
 // Minimum chars required for prefix-based hash resolution (reduces collision risk)
 /** Match SHORT_HASH_LEN (6) so h:abcdef-style refs resolve (annotate.link, synapses). */
@@ -834,6 +834,11 @@ interface ContextStoreState {
   reconcileSourceRevision: (path: string, currentRevision: string, cause?: FreshnessCause) => ReconcileStats;
   /** Post-session-restore: reconcile all file-backed engrams against disk, evict deleted paths. Non-blocking. */
   reconcileRestoredSession: () => Promise<{ updated: number; invalidated: number; evicted: number }>;
+  /**
+   * When bulk revision IPC is unavailable: mark WM/archive/staged suspect and clear awareness
+   * so SnapshotTracker and execution gates do not trust stale hashes.
+   */
+  applyRestoredSessionBlanketSuspect: () => void;
   /** Sweep active/staged/archived chunks, reconcile to current revisions, return stats. Shared by file-watch, preflight, round-end. */
   refreshRoundEnd: (options?: { paths?: string[]; getRevisionForPath?: (path: string) => Promise<string | null>; bulkGetRevisions?: (paths: string[]) => Promise<Map<string, string | null>> }) => Promise<RefreshRoundStats>;
   markEngramsSuspect: (sourcePaths?: string[], cause?: FreshnessCause, suspectKind?: 'content' | 'structural' | 'unknown') => number;
@@ -1035,6 +1040,22 @@ function isExactSourcePathMatch(source: string | undefined, path: string): boole
 
 function isFileBackedType(type: string): boolean {
   return type === 'file' || type === 'smart' || type === 'raw' || type === 'result';
+}
+
+/** When restoring a session, only sync sourceRevision to disk if body still hashes to that revision. */
+function sessionRestoreBodyMatchesDisk(chunk: ContextChunk, currentRevision: string): boolean {
+  if (chunk.compacted) return false;
+  if (chunk.type === 'result') return false;
+  if (!isFileBackedType(chunk.type)) return false;
+  if (!chunk.content) return false;
+  const h = hashContentSync(chunk.content);
+  return canonicalizeSnapshotHash(h) === canonicalizeSnapshotHash(currentRevision);
+}
+
+function stagedRestoreBodyMatchesDisk(snippet: StagedSnippet, currentRevision: string): boolean {
+  if (!snippet.content) return false;
+  const h = hashContentSync(snippet.content);
+  return canonicalizeSnapshotHash(h) === canonicalizeSnapshotHash(currentRevision);
 }
 
 function defaultViewKindForChunk(type: string, opts?: { viewKind?: EngramViewKind }): EngramViewKind | undefined {
@@ -2552,6 +2573,28 @@ export const useContextStore = create<ContextStoreState>()(
     return { chunks: chunkCount, staged: stagedCount };
   },
 
+  applyRestoredSessionBlanketSuspect: () => {
+    const now = Date.now();
+    set(state => {
+      const chunks = new Map(state.chunks);
+      for (const [h, c] of chunks) {
+        chunks.set(h, { ...c, freshness: 'suspect', freshnessCause: 'session_restore', suspectSince: now });
+      }
+      const archivedChunks = new Map(state.archivedChunks);
+      for (const [h, c] of archivedChunks) {
+        if (c.viewKind === 'snapshot') continue;
+        if (!isFileBackedType(c.type)) continue;
+        archivedChunks.set(h, { ...c, freshness: 'suspect', freshnessCause: 'session_restore', suspectSince: now });
+      }
+      const stagedSnippets = new Map(state.stagedSnippets);
+      for (const [k, s] of stagedSnippets) {
+        stagedSnippets.set(k, { ...s, stageState: 'stale', suspectSince: now });
+      }
+      return { chunks, archivedChunks, stagedSnippets };
+    });
+    get().invalidateAllAwarenessCache();
+  },
+
   reconcileRestoredSession: async () => {
     const state = get();
     const pathSet = new Set<string>();
@@ -2574,13 +2617,20 @@ export const useContextStore = create<ContextStoreState>()(
     const paths = [...pathSet];
     if (paths.length === 0) return { updated: 0, invalidated: 0, evicted: 0 };
 
-    if (!_bulkRevisionResolver) return { updated: 0, invalidated: 0, evicted: 0 };
+    if (!_bulkRevisionResolver) {
+      get().applyRestoredSessionBlanketSuspect();
+      incSessionRestoreReconcileCount(1);
+      console.warn('[contextStore] reconcileRestoredSession: no bulk revision resolver — blanket suspect + awareness cleared');
+      return { updated: 0, invalidated: 0, evicted: 0 };
+    }
 
     let revisionMap: Map<string, string | null>;
     try {
       revisionMap = await _bulkRevisionResolver(paths);
     } catch (e) {
       console.warn('[contextStore] reconcileRestoredSession: bulk revision lookup failed:', e);
+      get().applyRestoredSessionBlanketSuspect();
+      incSessionRestoreReconcileCount(1);
       return { updated: 0, invalidated: 0, evicted: 0 };
     }
 
@@ -2629,6 +2679,7 @@ export const useContextStore = create<ContextStoreState>()(
   reconcileSourceRevision: (path: string, currentRevision: string, cause?: FreshnessCause) => {
     const pathNorm = normalizeSourcePath(path);
     const effectiveCause = cause ?? consumeRevisionAdvanceCause(path) ?? 'external_file_change';
+    const isSessionRestore = effectiveCause === 'session_restore';
     const isSameFilePriorEdit = effectiveCause === 'same_file_prior_edit';
     let dormantEvicted = 0;
     let stats: ReconcileStats = {
@@ -2681,6 +2732,23 @@ export const useContextStore = create<ContextStoreState>()(
           evictedHashes.push(chunk.hash);
           continue;
         }
+        if (
+          isSessionRestore &&
+          chunk.sourceRevision &&
+          chunk.sourceRevision !== currentRevision &&
+          !sessionRestoreBodyMatchesDisk(chunk, currentRevision)
+        ) {
+          const stuck: ContextChunk = {
+            ...chunk,
+            observedRevision: currentRevision,
+            freshness: 'suspect',
+            freshnessCause: 'session_restore',
+            suspectSince: chunk.suspectSince ?? Date.now(),
+          };
+          newChunks.set(key, stuck);
+          stats.updated++;
+          continue;
+        }
         const nextChunk = { ...chunk, sourceRevision: currentRevision, observedRevision: currentRevision };
         delete nextChunk.suspectSince;
         const alreadyFreshFromEdit = isSameFilePriorEdit
@@ -2730,6 +2798,23 @@ export const useContextStore = create<ContextStoreState>()(
           evictedHashes.push(chunk.hash);
           continue;
         }
+        if (
+          isSessionRestore &&
+          chunk.sourceRevision &&
+          chunk.sourceRevision !== currentRevision &&
+          !sessionRestoreBodyMatchesDisk(chunk, currentRevision)
+        ) {
+          const stuck: ContextChunk = {
+            ...chunk,
+            observedRevision: currentRevision,
+            freshness: 'suspect',
+            freshnessCause: 'session_restore',
+            suspectSince: chunk.suspectSince ?? Date.now(),
+          };
+          newArchived.set(key, stuck);
+          stats.updated++;
+          continue;
+        }
         const nextChunk = { ...chunk, sourceRevision: currentRevision, observedRevision: currentRevision };
         delete nextChunk.suspectSince;
         const alreadyFreshFromEdit = isSameFilePriorEdit
@@ -2766,6 +2851,24 @@ export const useContextStore = create<ContextStoreState>()(
         if (snippet.viewKind === 'derived' && snippet.sourceRevision && snippet.sourceRevision !== currentRevision) {
           newStaged.delete(key);
           stats.invalidated++;
+          continue;
+        }
+        if (
+          isSessionRestore &&
+          snippet.sourceRevision &&
+          snippet.sourceRevision !== currentRevision &&
+          !stagedRestoreBodyMatchesDisk(snippet, currentRevision)
+        ) {
+          const stuck: StagedSnippet = {
+            ...snippet,
+            observedRevision: currentRevision,
+            freshness: 'suspect',
+            freshnessCause: 'session_restore',
+            suspectSince: snippet.suspectSince ?? Date.now(),
+            stageState: 'stale',
+          };
+          newStaged.set(key, stuck);
+          stats.updated++;
           continue;
         }
         const nextSnippet = { ...snippet, sourceRevision: currentRevision, observedRevision: currentRevision };
@@ -3923,6 +4026,13 @@ export const useContextStore = create<ContextStoreState>()(
       const found = findOrPromoteEngram(ref, newChunks, state.archivedChunks, state.stagedSnippets);
       if (!found) return { ok: false, error: `engram not found: ${ref}` };
       resolved.push(found);
+    }
+
+    const distinctSources = new Set(
+      resolved.map(([, c]) => (c.source && c.source.trim() ? normalizeSourcePath(c.source) : '')).filter(Boolean),
+    );
+    if (distinctSources.size > 1) {
+      return { ok: false, error: 'mergeEngrams: all refs must share the same file source' };
     }
 
     const mergedContent = resolved.map(([, c]) => c.content).join('\n\n');

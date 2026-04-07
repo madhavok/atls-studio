@@ -83,9 +83,15 @@ This fallback path matters because it lets the system recover gracefully from ol
 
 ### Freshness after restore
 
-`loadSession` does **not** run a `read.context` full pass or `refreshRoundEnd` at the end of restore. On **successful memory snapshot restore**, working-memory chunks are marked **`freshness: suspect`** with cause **`session_restore`**, and staged snippets get **`stageState: stale`** (so `canSteerExecution` excludes them until reconciliation). That aligns persisted state with the universal freshness model: nothing from disk is treated as execution-authoritative until the runtime reconciles.
+After **any** session load (memory snapshot v2–6 **or** legacy partial restore), `loadSession` runs a single pipeline:
 
-Rehydrated revisions then catch up through **freshness preflight** before a mutation, **`refreshRoundEnd`** after the first `advanceTurn` in a tool loop (`round > 0`), or an **intelligence / scan** refresh. See [freshness.md](./freshness.md) (universal freshness, round-end sweep, preflight).
+1. **`applyHashFirstFreshness`** ([`useChatPersistence.ts`](../atls-studio/src/hooks/useChatPersistence.ts)) — bulk-compares persisted `sourceRevision` to on-disk hashes for working memory, archive, and staged paths. Matching pairs are **preserved** (no unnecessary “amnesia”); mismatches are labeled **`freshness: suspect`** / **`session_restore`** or staged **`stageState: stale`**. If the bulk revision resolver is not yet available, the store falls back to **blanket suspect** (working + file-backed archived + staged) and **clears the awareness cache** so the batch snapshot tracker does not trust stale hashes.
+
+2. **`reconcileRestoredSession`** ([`contextStore.ts`](../atls-studio/src/stores/contextStore.ts)) — walks file-backed engrams and calls `reconcileSourceRevision` per path with cause `session_restore`. When body content still hashes to the on-disk revision, metadata is aligned; when the file changed on disk but the engram body does not match, **suspect** is retained (metadata is not upgraded to the new hash without a matching body).
+
+`loadSession` does **not** run `refreshRoundEnd` itself; that runs after the first **`advanceTurn`** in the agent tool loop (`round > 0`). A deferred reconcile also runs when the Tauri **`get_current_revisions`** resolver mounts ([`useAtls.ts`](../atls-studio/src/hooks/useAtls.ts)) so cold-start ordering (session loaded before IPC) can still catch up.
+
+Further catch-up: **freshness preflight** before mutations, **`refreshRoundEnd`** after `advanceTurn`, or an **intelligence / scan** refresh. See [freshness.md](./freshness.md) (universal freshness, round-end sweep, preflight).
 
 ### Shutdown and save reliability
 

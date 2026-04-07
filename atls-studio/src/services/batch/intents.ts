@@ -103,6 +103,7 @@ export function buildIntentContext(
 
   const bbKeys: Map<string, { tokens: number; derivedFrom?: string[] }> = new Map();
   for (const entry of s.listBlackboardEntries()) {
+    if (!canSteerExecution({ state: entry.state })) continue;
     const meta = s.getBlackboardEntryWithMeta(entry.key);
     bbKeys.set(entry.key, {
       tokens: entry.tokens,

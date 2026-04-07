@@ -364,6 +364,11 @@ export function useAtls() {
       const result = await invoke<Record<string, string | null>>('get_current_revisions', { paths });
       return new Map(Object.entries(result));
     });
+    void useContextStore.getState().reconcileRestoredSession().then((stats) => {
+      if (stats.updated + stats.invalidated + stats.evicted > 0) {
+        console.log('[useAtls] Deferred restore reconcile after resolver mount:', stats);
+      }
+    }).catch((e) => console.warn('[useAtls] reconcileRestoredSession after resolver mount failed:', e));
     return () => { setBulkRevisionResolver(null); };
   }, []);
 
