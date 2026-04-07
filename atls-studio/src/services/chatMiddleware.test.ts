@@ -22,6 +22,7 @@ vi.mock('../stores/appStore', () => ({
         selectedModel: 'claude-3-5-sonnet-20241022',
       },
     }),
+    subscribe: vi.fn(() => () => {}),
   },
 }));
 
