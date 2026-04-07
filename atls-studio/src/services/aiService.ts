@@ -1144,7 +1144,10 @@ function assembleProviderMessages(
 
   const stateBlock = buildStateBlock(dynamicContextBlock, mode);
 
-  const lastUserIndex = durableHistory.reduceRight((acc, msg, index) => acc === -1 && msg.role === 'user' ? index : acc, -1);
+  let lastUserIndex = -1;
+  for (let i = durableHistory.length - 1; i >= 0; i--) {
+    if (durableHistory[i].role === 'user') { lastUserIndex = i; break; }
+  }
 
   for (let i = 0; i < durableHistory.length; i++) {
     const msg = durableHistory[i];

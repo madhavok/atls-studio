@@ -692,12 +692,21 @@ function pruneStagedSnippetsToBudget(
   while (runningTotal > STAGED_TOTAL_HARD_CAP_TOKENS && takeLowestValue()) {
     // Evict until total tokens are within budget.
   }
-  let anchorMetrics = getPersistentAnchorMetrics(next);
+  const anchorMetrics = getPersistentAnchorMetrics(next);
   while (anchorMetrics.tokens > STAGED_ANCHOR_BUDGET_TOKENS && takeLowestValue()) {
-    anchorMetrics = getPersistentAnchorMetrics(next);
+    // Incrementally update anchor metrics instead of re-scanning the entire map.
+    const last = removed[removed.length - 1];
+    if (last.snippet.admissionClass === 'persistentAnchor') {
+      anchorMetrics.tokens -= last.snippet.tokens;
+      anchorMetrics.count--;
+    }
   }
   while (anchorMetrics.count > MAX_PERSISTENT_STAGE_ENTRIES && takeLowestValue()) {
-    anchorMetrics = getPersistentAnchorMetrics(next);
+    const last = removed[removed.length - 1];
+    if (last.snippet.admissionClass === 'persistentAnchor') {
+      anchorMetrics.tokens -= last.snippet.tokens;
+      anchorMetrics.count--;
+    }
   }
 
   return {
@@ -2503,8 +2512,19 @@ export const useContextStore = create<ContextStoreState>()(
   evictChunksForDeletedPaths: (paths: string[]) => {
     if (paths.length === 0) return { chunks: 0, staged: 0 };
     const pathSet = new Set(paths.map(p => normalizeSourcePath(p)));
-    const matchesPath = (source?: string): boolean =>
-      !!source && [...pathSet].some(p => sourceTouchesPath(source, p));
+    const matchesPath = (source?: string): boolean => {
+      if (!source) return false;
+      const sourceNorm = normalizeSourcePath(source);
+      if (pathSet.has(sourceNorm)) return true;
+      // Handle comma-joined composite sources
+      if (source.includes(',')) {
+        for (const seg of source.split(',')) {
+          const t = seg.trim();
+          if (t && pathSet.has(normalizeSourcePath(t))) return true;
+        }
+      }
+      return false;
+    };
 
     const evictedHashes: string[] = [];
     let chunkCount = 0;
@@ -4520,8 +4540,17 @@ export const useContextStore = create<ContextStoreState>()(
     // Optimized: filter by normalized path early instead of calling
     // sourceMatchesTargets (which re-normalizes) on every chunk.
     const state = get();
-    const matchesPath = (source: string | undefined): boolean =>
-      sourceTouchesPath(source, filePath);
+    const matchesPath = (source: string | undefined): boolean => {
+      if (!source) return false;
+      if (normalizeSourcePath(source) === key) return true;
+      if (source.includes(',')) {
+        for (const seg of source.split(',')) {
+          const t = seg.trim();
+          if (t && normalizeSourcePath(t) === key) return true;
+        }
+      }
+      return false;
+    };
     for (const [, chunk] of state.chunks) {
       if (!chunk.sourceRevision || !matchesPath(chunk.source)) continue;
       if (chunk.sourceRevision !== entry.snapshotHash) return undefined;

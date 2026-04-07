@@ -325,42 +325,32 @@ function rebaseIntraStepSnapshotLineEdits(lineEdits: unknown[]): void {
   for (let i = 1; i < lineEdits.length; i++) {
     const targetSnap = snapshotLines[i];
     if (targetSnap <= 0) continue;
-    let shift = 0;
-    for (let j = 0; j < i; j++) {
-      const origJ = snapshotLines[j];
-      if (origJ <= 0) continue;
-      shift += intraStepShiftFromEdit(lineEdits[j] as Record<string, unknown>, origJ, targetSnap);
-    }
     const o = lineEdits[i] as Record<string, unknown>;
     const hasSymbol = o.symbol != null && typeof o.symbol === 'string';
     const snap = snapshotLineForRebase(o);
-    if (snap > 0 && !hasSymbol) {
-      o.line = targetSnap + shift;
-    }
     const endLine = typeof o.end_line === 'number' && Number.isFinite(o.end_line as number) && (o.end_line as number) > 0
       ? (o.end_line as number)
       : 0;
-    if (endLine > 0) {
-      let endShift = 0;
-      for (let j2 = 0; j2 < i; j2++) {
-        const origJ2 = snapshotLines[j2];
-        if (origJ2 <= 0) continue;
-        endShift += intraStepShiftFromEdit(lineEdits[j2] as Record<string, unknown>, origJ2, endLine);
-      }
-      if (endShift !== 0) o.end_line = endLine + endShift;
-    }
     const dest = typeof o.destination === 'number' && Number.isFinite(o.destination as number) && (o.destination as number) > 0
       ? (o.destination as number)
       : 0;
-    if (dest > 0) {
-      let destShift = 0;
-      for (let j3 = 0; j3 < i; j3++) {
-        const origJ3 = snapshotLines[j3];
-        if (origJ3 <= 0) continue;
-        destShift += intraStepShiftFromEdit(lineEdits[j3] as Record<string, unknown>, origJ3, dest);
-      }
-      if (destShift !== 0) o.destination = dest + destShift;
+
+    // Single pass: compute line, end_line, and destination shifts together
+    // instead of 3 separate inner loops over 0..i
+    let shift = 0, endShift = 0, destShift = 0;
+    for (let j = 0; j < i; j++) {
+      const origJ = snapshotLines[j];
+      if (origJ <= 0) continue;
+      const editJ = lineEdits[j] as Record<string, unknown>;
+      shift += intraStepShiftFromEdit(editJ, origJ, targetSnap);
+      if (endLine > 0) endShift += intraStepShiftFromEdit(editJ, origJ, endLine);
+      if (dest > 0) destShift += intraStepShiftFromEdit(editJ, origJ, dest);
     }
+    if (snap > 0 && !hasSymbol) {
+      o.line = targetSnap + shift;
+    }
+    if (endLine > 0 && endShift !== 0) o.end_line = endLine + endShift;
+    if (dest > 0 && destShift !== 0) o.destination = dest + destShift;
   }
 }
 

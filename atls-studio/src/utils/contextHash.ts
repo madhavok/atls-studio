@@ -72,9 +72,15 @@ function fnv1a32(content: string, offsetBasis: number): number {
  * Collision probability ~50% at ~4 billion entries (vs ~77k with old djb2 8-char).
  */
 export function hashContentSync(content: string): string {
-  const h1 = fnv1a32(content, 0x811c9dc5);  // standard FNV offset basis
-  const h2 = fnv1a32(content, 0x050c5d1f);  // alternate offset basis
-  return h1.toString(16).padStart(8, '0') + h2.toString(16).padStart(8, '0');
+  // Single-pass dual FNV-1a: compute both hashes in one loop instead of two.
+  let h1 = 0x811c9dc5;
+  let h2 = 0x050c5d1f;
+  for (let i = 0; i < content.length; i++) {
+    const c = content.charCodeAt(i);
+    h1 = Math.imul(h1 ^ c, 0x01000193);
+    h2 = Math.imul(h2 ^ c, 0x01000193);
+  }
+  return ((h1 >>> 0).toString(16).padStart(8, '0') + (h2 >>> 0).toString(16).padStart(8, '0'));
 }
 
 /**

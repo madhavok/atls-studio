@@ -156,6 +156,7 @@ export async function countTokens(content: string, precomputedHash?: string): Pr
  */
 export async function countTokensBatch(contents: string[], precomputedHashes?: string[]): Promise<number[]> {
   const { provider, model } = getActiveProviderModel();
+  const keyPrefix = `${provider}:${model}:`;
   const results = new Array<number>(contents.length);
   const uncachedIndices: number[] = [];
   const uncachedContents: string[] = [];
@@ -167,7 +168,7 @@ export async function countTokensBatch(contents: string[], precomputedHashes?: s
       continue;
     }
     const hash = precomputedHashes?.[i] || quickHash(contents[i]);
-    const cacheKey = `${provider}:${model}:${hash}`;
+    const cacheKey = keyPrefix + hash;
     const cached = cache.get(cacheKey);
     if (cached !== undefined) {
       results[i] = cached;
@@ -188,7 +189,7 @@ export async function countTokensBatch(contents: string[], precomputedHashes?: s
       for (let j = 0; j < uncachedIndices.length; j++) {
         const idx = uncachedIndices[j];
         results[idx] = counts[j];
-        const batchCacheKey = `${provider}:${model}:${uncachedHashes[j]}`;
+        const batchCacheKey = keyPrefix + uncachedHashes[j];
         cache.set(batchCacheKey, counts[j]);
         const priorHeuristic = heuristicCache.get(batchCacheKey);
         if (priorHeuristic !== undefined) {

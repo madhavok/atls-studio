@@ -233,13 +233,20 @@ export function getArchivedRefs(): ChunkRef[] {
 // HPP v3 Set-Ref Index Queries
 // ---------------------------------------------------------------------------
 
+/** Glob-to-regex cache for getRefsBySource. */
+const _sourceGlobCache = new Map<string, RegExp>();
+
 /** Get all active (non-evicted) refs matching a source path glob pattern. */
 export function getRefsBySource(pattern: string): ChunkRef[] {
   const active = getActiveRefs();
   if (pattern.includes('*')) {
-    const escaped = pattern.replace(/[|\\{}()[\]^$+?.]/g, '\\$&').replace(/\*/g, '.*');
-    const re = new RegExp(`^${escaped}$`, 'i');
-    return active.filter(r => r.source && re.test(r.source));
+    let re = _sourceGlobCache.get(pattern);
+    if (!re) {
+      const escaped = pattern.replace(/[|\\{}()[\]^$+?.]/g, '\\$&').replace(/\*/g, '.*');
+      re = new RegExp(`^${escaped}$`, 'i');
+      _sourceGlobCache.set(pattern, re);
+    }
+    return active.filter(r => r.source && re!.test(r.source));
   }
   const normalized = pattern.replace(/\\/g, '/').toLowerCase();
   return active.filter(r => r.source && r.source.replace(/\\/g, '/').toLowerCase() === normalized);

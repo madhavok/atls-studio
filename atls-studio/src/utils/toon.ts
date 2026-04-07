@@ -346,6 +346,7 @@ function tokenizeBatchLine(line: string): string[] {
   }
   return tokens;
 }
+const RE_NUMBER = /^-?\d+(\.\d+)?$/;
 
 /**
  * Parse a value string from a key:value token.
@@ -357,7 +358,7 @@ function parseParamValue(raw: string): unknown {
   if (raw === 'false') return false;
   if (raw === 'null') return null;
 
-  if (/^-?\d+(\.\d+)?$/.test(raw)) return Number(raw);
+  if (RE_NUMBER.test(raw)) return Number(raw);
 
   if (raw.startsWith('{') || raw.startsWith('[')) {
     try {
@@ -374,7 +375,7 @@ function parseParamValue(raw: string): unknown {
   if (raw.includes(',') && !raw.includes('"')) {
     return raw.split(',').map(s => {
       const trimmed = s.trim();
-      if (/^-?\d+(\.\d+)?$/.test(trimmed)) return Number(trimmed);
+      if (RE_NUMBER.test(trimmed)) return Number(trimmed);
       return trimmed;
     });
   }
