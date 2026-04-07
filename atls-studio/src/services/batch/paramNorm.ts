@@ -210,6 +210,36 @@ export function coerceFilePathsArray(value: unknown): string[] {
 }
 
 /**
+ * Split comma-joined path strings (e.g. `"a.py,b.py"`) into separate entries.
+ * Used after `coerceFilePathsArray` for `system.git` `files` — same behavior as Rust `git_files_param`.
+ */
+export function expandCommaSeparatedFilePaths(paths: string[]): string[] {
+  const out: string[] = [];
+  for (const p of paths) {
+    const t = p.trim();
+    if (!t) continue;
+    if (t.includes(',')) {
+      for (const part of t.split(',')) {
+        const s = part.trim();
+        if (s) out.push(s);
+      }
+    } else {
+      out.push(t);
+    }
+  }
+  const seen = new Set<string>();
+  const dedup: string[] = [];
+  for (const p of out) {
+    const k = p.replace(/\\/g, '/').toLowerCase();
+    if (!seen.has(k)) {
+      seen.add(k);
+      dedup.push(p);
+    }
+  }
+  return dedup;
+}
+
+/**
  * Coerce `hashes` / `refs` for session.pin (and similar) from batch JSON:
  * strings, nested arrays, `{ ref }`, `{ hash }`, `{ h }`.
  */
@@ -308,9 +338,10 @@ export function normalizeStepParams(
       : [out.file_paths];
   }
 
-  // system.git: coerce files to string[] (batch JSON often sends a single path string)
+  // system.git: coerce files to string[] (batch JSON often sends a single path string).
+  // Also split comma-joined paths so "a.py,b.py" becomes two entries (matches backend git_files_param).
   if (op === 'system.git' && out.files !== undefined) {
-    out.files = coerceFilePathsArray(out.files);
+    out.files = expandCommaSeparatedFilePaths(coerceFilePathsArray(out.files));
   }
 
   // query → queries promotion for search.code

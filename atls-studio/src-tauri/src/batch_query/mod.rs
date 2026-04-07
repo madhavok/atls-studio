@@ -13,22 +13,79 @@ use crate::path_utils::{
     read_file_with_format, resolve_project_path, resolve_tree_directory_path, serialize_with_format,
     to_relative_path, FileFormat, ManifestKind,
 };
+/// Split a comma-separated path list (agents often pass `"a.py,b.py"` as one string).
+/// Paths containing literal commas are not supported.
+fn split_git_path_list_string(s: &str) -> Vec<String> {
+    s.split(',')
+        .map(|p| p.trim().to_string())
+        .filter(|p| !p.is_empty())
+        .collect()
+}
+
 /// Parse `files` for git stage/unstage/restore: JSON array of strings, or a single non-empty string.
+/// Comma-separated strings are split into multiple pathspecs.
 fn git_files_param(value: Option<&serde_json::Value>) -> Vec<String> {
     match value {
-        Some(serde_json::Value::Array(arr)) => arr
-            .iter()
-            .filter_map(|v| v.as_str().map(|s| s.to_string()))
-            .collect(),
+        Some(serde_json::Value::Array(arr)) => {
+            let mut out: Vec<String> = Vec::new();
+            for v in arr {
+                if let Some(s) = v.as_str() {
+                    let t = s.trim();
+                    if t.is_empty() {
+                        continue;
+                    }
+                    if t.contains(',') {
+                        out.extend(split_git_path_list_string(t));
+                    } else {
+                        out.push(t.to_string());
+                    }
+                }
+            }
+            out
+        }
         Some(serde_json::Value::String(s)) => {
             let t = s.trim();
             if t.is_empty() {
                 vec![]
+            } else if t.contains(',') {
+                split_git_path_list_string(t)
             } else {
                 vec![t.to_string()]
             }
         }
         _ => vec![],
+    }
+}
+
+/// Parse `dry_run` from batch JSON: bool, integer 0/1, or string "true"/"false"/"0"/"1".
+/// Returns `None` if the value is present but not interpretable (caller may fall back to default).
+fn parse_dry_run_value(v: &serde_json::Value) -> Option<bool> {
+    if let Some(b) = v.as_bool() {
+        return Some(b);
+    }
+    if let Some(n) = v.as_i64() {
+        return Some(n != 0);
+    }
+    if let Some(n) = v.as_u64() {
+        return Some(n != 0);
+    }
+    if let Some(f) = v.as_f64() {
+        return Some(f != 0.0);
+    }
+    if let Some(s) = v.as_str() {
+        return match s.trim().to_ascii_lowercase().as_str() {
+            "true" | "1" | "yes" => Some(true),
+            "false" | "0" | "no" => Some(false),
+            _ => None,
+        };
+    }
+    None
+}
+
+fn dry_run_param(params: &serde_json::Value, default_when_absent: bool) -> bool {
+    match params.get("dry_run") {
+        None | Some(serde_json::Value::Null) => default_when_absent,
+        Some(v) => parse_dry_run_value(v).unwrap_or(default_when_absent),
     }
 }
 
@@ -6120,10 +6177,7 @@ pub async fn atls_batch_query(
                     .and_then(|v| v.as_array())
                     .ok_or("split_module requires 'plan' array: [{module:string, symbols:[string]}]")?;
 
-                let dry_run = params
-                    .get("dry_run")
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(true);
+                let dry_run = dry_run_param(&params, true);
 
                 let mod_style = params
                     .get("mod_style")
@@ -6372,12 +6426,14 @@ pub async fn atls_batch_query(
                 }
 
                 let total_symbols: usize = all_resolved.iter().map(|(_, syms)| syms.len()).sum();
+                let status = if dry_run { "preview" } else { "ok" };
                 Ok(serde_json::json!({
                     "source_file": source_file,
                     "target_dir": target_dir,
                     "mod_rs": mod_rs_path,
                     "mod_style": mod_style,
                     "dry_run": dry_run,
+                    "status": status,
                     "modules": created_files,
                     "mod_rs_content": mod_rs_content,
                     "stats": {
@@ -6428,16 +6484,13 @@ pub async fn atls_batch_query(
                     return Err("extractions array required. Each extraction needs: target_file, methods[]".to_string());
                 }
                 
-                let dry_run = params
-                    .get("dry_run")
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(true);
-                
+                let dry_run = dry_run_param(&params, true);
+
                 let delegation_style = params
                     .get("delegation_style")
                     .and_then(|v| v.as_str())
                     .unwrap_or("composition");
-                
+
                 // When true, continue processing remaining extractions even if one fails lint.
                 // Default false: first lint failure stops batch (safe mode).
                 let continue_on_lint_error = params
@@ -15774,12 +15827,73 @@ pub async fn atls_batch_query(
 
 #[cfg(test)]
 mod batch_query_mod_tests {
+    use serde_json::json;
+
+    use super::{
+        dry_run_param, git_files_param, parse_dry_run_value,
+    };
+
     /// Guard: `atls_batch_query` uses `resolve_edit_operation` from helpers before dispatch.
     #[test]
     fn resolve_edit_undo_routes_to_undo() {
         use super::helpers::resolve_edit_operation;
-        use serde_json::json;
         let (op, _) = resolve_edit_operation("edit".into(), json!({ "undo": "h:abc" }));
         assert_eq!(op, "undo");
+    }
+
+    #[test]
+    fn git_files_param_splits_comma_separated_string() {
+        let v = json!("_test_atls/a.py,_test_atls/b.py");
+        assert_eq!(
+            git_files_param(Some(&v)),
+            vec!["_test_atls/a.py", "_test_atls/b.py"]
+        );
+    }
+
+    #[test]
+    fn git_files_param_splits_comma_separated_inside_array() {
+        let v = json!(["_test_atls/a.py,_test_atls/b.py"]);
+        assert_eq!(
+            git_files_param(Some(&v)),
+            vec!["_test_atls/a.py", "_test_atls/b.py"]
+        );
+    }
+
+    #[test]
+    fn git_files_param_single_path_unchanged() {
+        let v = json!("_test_atls/tiny.py");
+        assert_eq!(git_files_param(Some(&v)), vec!["_test_atls/tiny.py"]);
+    }
+
+    #[test]
+    fn git_files_param_empty_string() {
+        let v = json!("");
+        assert!(git_files_param(Some(&v)).is_empty());
+    }
+
+    #[test]
+    fn parse_dry_run_numeric_and_strings() {
+        assert_eq!(parse_dry_run_value(&json!(false)), Some(false));
+        assert_eq!(parse_dry_run_value(&json!(true)), Some(true));
+        assert_eq!(parse_dry_run_value(&json!(0)), Some(false));
+        assert_eq!(parse_dry_run_value(&json!(1)), Some(true));
+        assert_eq!(parse_dry_run_value(&json!("0")), Some(false));
+        assert_eq!(parse_dry_run_value(&json!("1")), Some(true));
+        assert_eq!(parse_dry_run_value(&json!("false")), Some(false));
+        assert_eq!(parse_dry_run_value(&json!("YES")), Some(true));
+        assert!(parse_dry_run_value(&json!("maybe")).is_none());
+    }
+
+    #[test]
+    fn dry_run_param_defaults_when_absent() {
+        assert_eq!(dry_run_param(&json!({}), true), true);
+        assert_eq!(dry_run_param(&json!({}), false), false);
+        assert_eq!(dry_run_param(&json!({ "dry_run": json!(null) }), true), true);
+    }
+
+    #[test]
+    fn dry_run_param_numeric_overrides_default() {
+        assert_eq!(dry_run_param(&json!({ "dry_run": 0 }), true), false);
+        assert_eq!(dry_run_param(&json!({ "dry_run": 1 }), false), true);
     }
 }

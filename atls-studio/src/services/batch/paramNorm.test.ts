@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { coerceFilePathsArray, normalizeHashRefsToStrings, normalizeStepParams } from './paramNorm';
+import {
+  coerceFilePathsArray,
+  expandCommaSeparatedFilePaths,
+  normalizeHashRefsToStrings,
+  normalizeStepParams,
+} from './paramNorm';
 
 describe('normalizeStepParams', () => {
   // -----------------------------------------------------------------------
@@ -394,6 +399,14 @@ describe('normalizeStepParams', () => {
       expect(out.files).toEqual(['src/a.ts']);
     });
 
+    it('splits comma-separated system.git files into multiple paths', () => {
+      const out = normalizeStepParams('system.git', {
+        action: 'restore',
+        files: '_test_atls/a.py,_test_atls/b.py',
+      });
+      expect(out.files).toEqual(['_test_atls/a.py', '_test_atls/b.py']);
+    });
+
     it('splits comma-separated file_paths string into array', () => {
       const out = normalizeStepParams('change.delete', { file_paths: 'src/a.py,src/b.ts,src/c.rs' });
       expect(out.file_paths).toEqual(['src/a.py', 'src/b.ts', 'src/c.rs']);
@@ -496,6 +509,12 @@ describe('normalizeStepParams', () => {
   describe('normalizeHashRefsToStrings', () => {
     it('accepts ref objects and nested arrays', () => {
       expect(normalizeHashRefsToStrings([{ ref: 'h:aa' }, ['h:bb', { h: 'cc' }]])).toEqual(['h:aa', 'h:bb', 'cc']);
+    });
+  });
+
+  describe('expandCommaSeparatedFilePaths', () => {
+    it('splits comma-joined entries and dedupes', () => {
+      expect(expandCommaSeparatedFilePaths(['a.py,b.py', 'c.ts'])).toEqual(['a.py', 'b.py', 'c.ts']);
     });
   });
 
