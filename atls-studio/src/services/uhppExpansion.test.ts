@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { expandFilePathRefs, expandSetRefsInHashes, stripGitLabelPrefix } from './uhppExpansion';
+import { expandFilePathRefs, expandSetRefsInHashes, stripGitLabelPrefix, stripTrailingLineSpan } from './uhppExpansion';
 import type { HashLookup, SetRefLookup } from '../utils/hashResolver';
 
 describe('uhppExpansion', () => {
@@ -71,5 +71,55 @@ describe('uhppExpansion', () => {
 
     expect(result.items).toEqual([{ kind: 'path', path: 'session-1:h:abc12345:src/demo.ts' }]);
     expect(result.notes[0]).toMatch(/backend resolved/);
+  });
+
+  it('strips trailing line-range suffix from plain file paths', async () => {
+    const hashLookup: HashLookup = vi.fn().mockResolvedValue(null);
+    const setLookup: SetRefLookup = vi.fn();
+
+    const result = await expandFilePathRefs(
+      ['go/gin/doc.go:1-3', 'src/lib.rs:15-30', 'src/utils.ts:42-'],
+      hashLookup,
+      setLookup,
+    );
+
+    expect(result.items.map(i => i.path)).toEqual([
+      'go/gin/doc.go',
+      'src/lib.rs',
+      'src/utils.ts',
+    ]);
+  });
+
+  it('does not strip Windows drive letters', async () => {
+    const hashLookup: HashLookup = vi.fn().mockResolvedValue(null);
+    const setLookup: SetRefLookup = vi.fn();
+
+    const result = await expandFilePathRefs(
+      ['C:\\foo\\bar.ts'],
+      hashLookup,
+      setLookup,
+    );
+
+    expect(result.items[0].path).toBe('C:\\foo\\bar.ts');
+  });
+});
+
+describe('stripTrailingLineSpan', () => {
+  it('strips line range suffixes', () => {
+    expect(stripTrailingLineSpan('go/gin/doc.go:1-3')).toBe('go/gin/doc.go');
+    expect(stripTrailingLineSpan('src/lib.rs:15-30')).toBe('src/lib.rs');
+    expect(stripTrailingLineSpan('src/utils.ts:42-')).toBe('src/utils.ts');
+  });
+
+  it('strips line range with trailing shape modifier', () => {
+    expect(stripTrailingLineSpan('src/lib.rs:15-30:dedent')).toBe('src/lib.rs');
+  });
+
+  it('preserves Windows drive letters', () => {
+    expect(stripTrailingLineSpan('C:\\foo\\bar.ts')).toBe('C:\\foo\\bar.ts');
+  });
+
+  it('preserves plain paths', () => {
+    expect(stripTrailingLineSpan('src/components/App.tsx')).toBe('src/components/App.tsx');
   });
 });

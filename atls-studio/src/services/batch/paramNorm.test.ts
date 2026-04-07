@@ -57,6 +57,18 @@ describe('normalizeStepParams', () => {
       expect(out.file_paths).toBeUndefined();
     });
 
+    it('preserves both source_file and target_file for intent.extract (global alias collision)', () => {
+      const out = normalizeStepParams('intent.extract', {
+        source_file: 'h:8aecc6',
+        sn: 'close_old_connections',
+        target_file: '_test_atls/extracted.py',
+      });
+      expect(out.source_file).toBe('h:8aecc6');
+      expect(out.target_file).toBe('_test_atls/extracted.py');
+      expect(out.symbol_names).toEqual(['close_old_connections']);
+      expect(out.file_path).toBeUndefined();
+    });
+
     it('maps file_paths[0] to file_path for change.refactor when file_path missing (extract_methods)', () => {
       const out = normalizeStepParams('change.refactor', {
         action: 'extract',

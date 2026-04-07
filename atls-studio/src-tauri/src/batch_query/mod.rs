@@ -9739,10 +9739,34 @@ pub async fn atls_batch_query(
                         }
                     });
 
+                // Language from file_path/source_file — used for index queries (class scope, usage, auto-scope).
+                let source_lang_hint: Option<String> = params
+                    .get("file_path")
+                    .or_else(|| params.get("source_file"))
+                    .and_then(|v| v.as_str())
+                    .and_then(|fp| {
+                        let ext = std::path::Path::new(fp)
+                            .extension()
+                            .and_then(|s| s.to_str())
+                            .unwrap_or("");
+                        let lang = atls_core::Language::from_extension(ext);
+                        if lang == atls_core::Language::Unknown {
+                            None
+                        } else {
+                            Some(lang.as_str().to_string())
+                        }
+                    });
+
                 // If ClassName.MethodName was provided, auto-scope to files containing the class
                 if let Some(class_name) = class_scope_name {
                     if scope_files.is_none() {
-                        if let Ok(class_usage) = project.query().get_symbol_usage(class_name) {
+                        let class_usage_result = match &source_lang_hint {
+                            Some(lang) => {
+                                project.query().get_symbol_usage_for_language(class_name, lang)
+                            }
+                            None => project.query().get_symbol_usage(class_name),
+                        };
+                        if let Ok(class_usage) = class_usage_result {
                             let class_files: Vec<String> = class_usage.definitions.iter()
                                 .map(|d| d.file.clone())
                                 .collect();
@@ -9758,27 +9782,35 @@ pub async fn atls_batch_query(
                     }
                 }
 
+                // Auto-scope to same-language files when file_path is provided
+                // but no explicit scope was set. Queries the index for files
+                // matching the source language to prevent full-project scans on
+                // large multi-language monorepos.
+                if scope_files.is_none() {
+                    if let Some(ref lang_str) = source_lang_hint {
+                        // Stored as lowercase (Language::as_str); equality uses idx_files_language.
+                        let lang_files: Vec<String> = {
+                            let conn = project.query().db().conn();
+                            conn.prepare("SELECT path FROM files WHERE language = ?1")
+                                .and_then(|mut stmt| {
+                                    let rows = stmt.query_map([lang_str.as_str()], |row| {
+                                        row.get::<_, String>(0)
+                                    })?;
+                                    Ok(rows.filter_map(|r| r.ok()).collect::<Vec<_>>())
+                                })
+                                .unwrap_or_default()
+                        };
+                        if !lang_files.is_empty() {
+                            scope_files = Some(lang_files);
+                        }
+                    }
+                }
+
                 // Safety threshold for rename operations
                 let max_replacements = params
                     .get("max_replacements")
                     .and_then(|v| v.as_u64())
                     .unwrap_or(50) as usize;
-                
-                // Determine source language from file_path/source_file param to scope
-                // the index query — avoids fetching cross-language rows entirely.
-                let source_lang_hint: Option<String> = params
-                    .get("file_path")
-                    .or_else(|| params.get("source_file"))
-                    .and_then(|v| v.as_str())
-                    .and_then(|fp| {
-                        let ext = std::path::Path::new(fp)
-                            .extension()
-                            .and_then(|s| s.to_str())
-                            .unwrap_or("");
-                        let lang = atls_core::Language::from_extension(ext);
-                        if lang == atls_core::Language::Unknown { None }
-                        else { Some(lang.as_str().to_string()) }
-                    });
 
                 // Find all usages of the symbol — language-filtered when possible.
                 let usage = match &source_lang_hint {
@@ -9804,14 +9836,31 @@ pub async fn atls_batch_query(
                 
                 let mut warnings: Vec<String> = Vec::new();
                 
+                // O(1) exact path lookup for large language-scoped file lists; substring rules
+                // only run on miss (legacy scope: directory prefixes).
+                let scope_path_set: Option<std::collections::HashSet<String>> = scope_files
+                    .as_ref()
+                    .map(|paths| paths.iter().map(|p| p.replace('\\', "/")).collect());
+                let path_in_scope = |file: &str| -> bool {
+                    let (Some(scope), Some(set)) = (scope_files.as_ref(), scope_path_set.as_ref()) else {
+                        return true;
+                    };
+                    let nf = file.replace('\\', "/");
+                    if set.contains(&nf) {
+                        return true;
+                    }
+                    scope.iter().any(|s| {
+                        let sn = s.replace('\\', "/");
+                        nf.contains(&sn) || sn.contains(&nf)
+                    })
+                };
+                
                 // Collect all files that need changes, filtering by language + scope
                 let mut files_to_update: std::collections::HashMap<String, Vec<u32>> = std::collections::HashMap::new();
                 
                 for def in &usage.definitions {
-                    if let Some(ref scope) = scope_files {
-                        if !scope.iter().any(|s| def.file.contains(s) || s.contains(&def.file)) {
-                            continue;
-                        }
+                    if scope_files.is_some() && !path_in_scope(&def.file) {
+                        continue;
                     }
                     // Language filter: skip definitions in other languages
                     if let (Some(ref target_lang), Some(ref def_lang)) = (&def_language, &def.language) {
@@ -9828,10 +9877,8 @@ pub async fn atls_batch_query(
                 
                 let mut filtered_ref_count: usize = 0;
                 for ref_loc in &usage.references {
-                    if let Some(ref scope) = scope_files {
-                        if !scope.iter().any(|s| ref_loc.file.contains(s) || s.contains(&ref_loc.file)) {
-                            continue;
-                        }
+                    if scope_files.is_some() && !path_in_scope(&ref_loc.file) {
+                        continue;
                     }
                     // Language filter: skip references in other languages
                     if let (Some(ref target_lang), Some(ref ref_lang)) = (&def_language, &ref_loc.language) {
@@ -9942,10 +9989,8 @@ pub async fn atls_batch_query(
                                         .to_string_lossy()
                                         .replace('\\', "/");
                                     if files_to_update.contains_key(&rel) { continue; }
-                                    if let Some(ref scope) = scope_files {
-                                        if !scope.iter().any(|s| rel.contains(s.as_str()) || s.contains(&rel)) {
-                                            continue;
-                                        }
+                                    if scope_files.is_some() && !path_in_scope(&rel) {
+                                        continue;
                                     }
                                     // Buffered line-by-line search with early exit
                                     scanned += 1;
@@ -14182,12 +14227,14 @@ pub async fn atls_batch_query(
                                         "action": "execute",
                                         "operations": converted_ops,
                                     });
-                                    // Forward optional params
                                     for key in &["incremental", "resume_after", "dry_run"] {
                                         if let Some(v) = params.get(*key) {
                                             redirect[*key] = v.clone();
                                         }
                                     }
+                                    // Release the mutex before recursive dispatch to avoid
+                                    // self-deadlock (tokio::sync::Mutex is not reentrant).
+                                    drop(_refactor_guard);
                                     return Box::pin(atls_batch_query(
                                         app.clone(),
                                         "refactor".to_string(),

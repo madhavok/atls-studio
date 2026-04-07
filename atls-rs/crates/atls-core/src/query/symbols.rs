@@ -425,21 +425,13 @@ impl QueryEngine {
     }
 
     /// Get symbol usage filtered to a specific language.
-    /// Prevents cross-language contamination during rename operations.
+    /// Uses SQL-level filtering (same as unscoped query + in-memory retain was O(all calls in DB)).
     pub fn get_symbol_usage_for_language(
         &self,
         symbol_name: &str,
         language: &str,
     ) -> Result<SymbolUsage, QueryError> {
-        let mut usage = self.get_symbol_usage_with_options(symbol_name, "exact")?;
-        let lang_lower = language.to_lowercase();
-        usage.definitions.retain(|d| {
-            d.language.as_ref().map_or(false, |l| l.to_lowercase() == lang_lower)
-        });
-        usage.references.retain(|r| {
-            r.language.as_ref().map_or(false, |l| l.to_lowercase() == lang_lower)
-        });
-        Ok(usage)
+        self.get_symbol_usage_with_options_inner(symbol_name, "exact", Some(language))
     }
 
     /// Get symbol usage with flexible matching options
@@ -448,7 +440,25 @@ impl QueryEngine {
         symbol_name: &str,
         match_type: &str,
     ) -> Result<SymbolUsage, QueryError> {
+        self.get_symbol_usage_with_options_inner(symbol_name, match_type, None)
+    }
+
+    /// `language_filter`: when set, adds `AND f.language = ?` (matches indexer lowercase) so the
+    /// `calls` query does not scan every call site in the repo (rename was timing out on large monorepos).
+    fn get_symbol_usage_with_options_inner(
+        &self, 
+        symbol_name: &str,
+        match_type: &str,
+        language_filter: Option<&str>,
+    ) -> Result<SymbolUsage, QueryError> {
         let conn = self.db.conn();
+        // Indexer stores `files.language` as Language::as_str() (lowercase). Equality allows
+        // SQLite to use idx_files_language on joins; LOWER() would defeat the index.
+        let lang_pred = if language_filter.is_some() {
+            " AND f.language = ?"
+        } else {
+            ""
+        };
         
         // Build WHERE clause based on match type
         let (where_clause, pattern) = match match_type {
@@ -484,26 +494,42 @@ impl QueryEngine {
             "SELECT DISTINCT f.path, s.line, s.end_line, s.kind, s.signature, f.language
              FROM symbols s
              JOIN files f ON s.file_id = f.id
-             WHERE {}
+             WHERE ({}){}
              ORDER BY s.line",
-            where_clause
+            where_clause,
+            lang_pred
         );
         let mut def_stmt = conn.prepare(&def_sql)?;
 
-        let def_rows = def_stmt.query_map([&pattern], |row| {
-            Ok(SymbolDefinition {
-                file: row.get(0)?,
-                line: row.get(1)?,
-                end_line: row.get(2)?,
-                kind: row.get(3)?,
-                signature: row.get(4)?,
-                language: row.get(5)?,
-            })
-        })?;
-
         let mut definitions = Vec::new();
-        for row in def_rows {
-            definitions.push(row?);
+        if let Some(lang) = language_filter {
+            let def_rows = def_stmt.query_map(rusqlite::params![&pattern, lang], |row| {
+                Ok(SymbolDefinition {
+                    file: row.get(0)?,
+                    line: row.get(1)?,
+                    end_line: row.get(2)?,
+                    kind: row.get(3)?,
+                    signature: row.get(4)?,
+                    language: row.get(5)?,
+                })
+            })?;
+            for row in def_rows {
+                definitions.push(row?);
+            }
+        } else {
+            let def_rows = def_stmt.query_map([&pattern], |row| {
+                Ok(SymbolDefinition {
+                    file: row.get(0)?,
+                    line: row.get(1)?,
+                    end_line: row.get(2)?,
+                    kind: row.get(3)?,
+                    signature: row.get(4)?,
+                    language: row.get(5)?,
+                })
+            })?;
+            for row in def_rows {
+                definitions.push(row?);
+            }
         }
 
         // Get references from calls table (direct call-site matches)
@@ -511,26 +537,43 @@ impl QueryEngine {
             "SELECT DISTINCT f.path, c.line, f.language
              FROM calls c
              JOIN files f ON c.file_id = f.id
-             WHERE {}
+             WHERE ({}){}
              ORDER BY f.path, c.line",
-            call_where
+            call_where,
+            lang_pred
         );
         let mut ref_stmt = conn.prepare(&calls_sql)?;
-        let ref_rows = ref_stmt.query_map(
-            rusqlite::params![&call_pattern, &call_pattern2],
-            |row| {
-                Ok(SymbolReference {
-                    file: row.get(0)?,
-                    line: row.get(1)?,
-                    end_line: None,
-                    language: row.get(2)?,
-                })
-            },
-        )?;
-
         let mut references = Vec::new();
-        for row in ref_rows {
-            references.push(row?);
+        if let Some(lang) = language_filter {
+            let ref_rows = ref_stmt.query_map(
+                rusqlite::params![&call_pattern, &call_pattern2, lang],
+                |row| {
+                    Ok(SymbolReference {
+                        file: row.get(0)?,
+                        line: row.get(1)?,
+                        end_line: None,
+                        language: row.get(2)?,
+                    })
+                },
+            )?;
+            for row in ref_rows {
+                references.push(row?);
+            }
+        } else {
+            let ref_rows = ref_stmt.query_map(
+                rusqlite::params![&call_pattern, &call_pattern2],
+                |row| {
+                    Ok(SymbolReference {
+                        file: row.get(0)?,
+                        line: row.get(1)?,
+                        end_line: None,
+                        language: row.get(2)?,
+                    })
+                },
+            )?;
+            for row in ref_rows {
+                references.push(row?);
+            }
         }
 
         // Supplement with symbol_relations (callers that resolved to this symbol)
@@ -542,22 +585,40 @@ impl QueryEngine {
              JOIN symbols s ON sr.from_symbol_id = s.id
              JOIN files f ON s.file_id = f.id
              JOIN calls c ON c.file_id = s.file_id AND c.scope_name = s.name
-             WHERE {} AND sr.type = 'CALLS'
-             ORDER BY f.path, c.line",
-            rel_where
+             WHERE {} AND sr.type = 'CALLS'{}
+             ORDER BY f.path, c.line
+             LIMIT 500",
+            rel_where,
+            lang_pred
         );
         if let Ok(mut rel_stmt) = conn.prepare(&rel_sql) {
-            if let Ok(rel_rows) = rel_stmt.query_map([&rel_pattern], |row| {
+            let map_row = |row: &rusqlite::Row<'_>| {
                 Ok(SymbolReference {
                     file: row.get(0)?,
                     line: row.get(1)?,
                     end_line: None,
                     language: row.get(2)?,
                 })
-            }) {
+            };
+            // O(1) dedup vs O(n) linear scan per row (was ~125k string compares at LIMIT 500).
+            let mut rel_seen: std::collections::HashSet<(String, u32)> = references
+                .iter()
+                .map(|r| (r.file.clone(), r.line))
+                .collect();
+            if let Some(lang) = language_filter {
+                if let Ok(rel_rows) = rel_stmt.query_map(rusqlite::params![&rel_pattern, lang], map_row) {
+                    for row in rel_rows {
+                        if let Ok(r) = row {
+                            if rel_seen.insert((r.file.clone(), r.line)) {
+                                references.push(r);
+                            }
+                        }
+                    }
+                }
+            } else if let Ok(rel_rows) = rel_stmt.query_map([&rel_pattern], map_row) {
                 for row in rel_rows {
                     if let Ok(r) = row {
-                        if !references.iter().any(|existing| existing.file == r.file && existing.line == r.line) {
+                        if rel_seen.insert((r.file.clone(), r.line)) {
                             references.push(r);
                         }
                     }
@@ -570,29 +631,41 @@ impl QueryEngine {
         // (catches indirect usage through store hooks, re-exports, type aliases)
         if references.is_empty() && symbol_name.len() >= 3 {
             let sig_pattern = format!("%{}%", symbol_name);
-            let mut sig_stmt = conn.prepare(
+            let sig_sql = format!(
                 "SELECT DISTINCT f.path, s.line, s.end_line, f.language
                  FROM symbols s
                  JOIN files f ON s.file_id = f.id
-                 WHERE s.signature LIKE ?1 AND s.name != ?2
+                 WHERE s.signature LIKE ?1 AND s.name != ?2{}
                  ORDER BY f.path, s.line
-                 LIMIT 50"
-            )?;
+                 LIMIT 50",
+                lang_pred
+            );
+            let mut sig_stmt = conn.prepare(&sig_sql)?;
 
-            let sig_rows = sig_stmt.query_map(
-                rusqlite::params![&sig_pattern, symbol_name],
-                |row| {
-                    Ok(SymbolReference {
-                        file: row.get(0)?,
-                        line: row.get(1)?,
-                        end_line: row.get(2)?,
-                        language: row.get(3)?,
-                    })
-                },
-            )?;
-
-            for row in sig_rows {
-                references.push(row?);
+            let map_sig_row = |row: &rusqlite::Row<'_>| {
+                Ok(SymbolReference {
+                    file: row.get(0)?,
+                    line: row.get(1)?,
+                    end_line: row.get(2)?,
+                    language: row.get(3)?,
+                })
+            };
+            if let Some(lang) = language_filter {
+                let sig_rows = sig_stmt.query_map(
+                    rusqlite::params![&sig_pattern, symbol_name, lang],
+                    map_sig_row,
+                )?;
+                for row in sig_rows {
+                    references.push(row?);
+                }
+            } else {
+                let sig_rows = sig_stmt.query_map(
+                    rusqlite::params![&sig_pattern, symbol_name],
+                    map_sig_row,
+                )?;
+                for row in sig_rows {
+                    references.push(row?);
+                }
             }
         }
 

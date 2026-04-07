@@ -22,6 +22,17 @@ export function stripGitLabelPrefix(source: string): string {
   return match ? match[1] : source;
 }
 
+const TRAILING_LINE_SPAN_RE = /(?<=.{2,}):\d+-\d*(?::.*)?$/;
+
+/**
+ * Strip trailing line-range suffix (e.g. `:1-3`, `:15-30:dedent`) from a file
+ * path that leaked through hash resolution. Guards against Windows drive letters
+ * like `C:\foo` by requiring at least 2 chars before the colon.
+ */
+export function stripTrailingLineSpan(path: string): string {
+  return path.replace(TRAILING_LINE_SPAN_RE, '');
+}
+
 export async function expandFilePathRefs(
   rawPaths: string[],
   hashLookup: HashLookup,
@@ -125,7 +136,7 @@ export async function expandFilePathRefs(
       continue;
     }
 
-    items.push({ kind: 'path', path: filePath });
+    items.push({ kind: 'path', path: stripTrailingLineSpan(filePath) });
   }
 
   const dedupedItems: ExpandedFilePath[] = [];

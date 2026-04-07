@@ -73,12 +73,17 @@ const OP_ALIASES: Readonly<Partial<Record<OperationKind, Readonly<Record<string,
   'intent.create': { path: 'target_path', file: 'target_path', references: 'ref_files' },
   'intent.test': { file: 'source_file', source_file: 'source_file', test: 'test_file' },
   'intent.search_replace': { query: 'search_query', old: 'old_text', new: 'new_text', glob: 'file_glob' },
+  // Both source_file and target_file map to file_path globally; without explicit
+  // canonical names the second key is dropped (see normalizeStepParams pass 1).
   'intent.extract': {
     file: 'source_file',
     file_path: 'source_file',
     path: 'source_file',
+    f: 'source_file',
     symbols: 'symbol_names',
     target: 'target_file',
+    source_file: 'source_file',
+    target_file: 'target_file',
   },
   'system.git': { paths: 'files', file_paths: 'files' },
 };

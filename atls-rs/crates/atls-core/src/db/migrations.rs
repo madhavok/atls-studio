@@ -35,6 +35,15 @@ impl<'a> DatabaseMigrations<'a> {
         self.drop_history_tables()?;
         self.migrate_enhanced_fts5()?;
         self.migrate_workspaces_table()?;
+        self.migrate_files_language_index()?;
+        Ok(())
+    }
+
+    /// Index `files(language)` for rename auto-scope and language-filtered symbol queries.
+    fn migrate_files_language_index(&self) -> Result<(), MigrationError> {
+        self.conn.execute_batch(
+            "CREATE INDEX IF NOT EXISTS idx_files_language ON files(language);",
+        )?;
         Ok(())
     }
 

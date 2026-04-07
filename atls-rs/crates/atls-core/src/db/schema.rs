@@ -125,6 +125,7 @@ impl<'a> DatabaseSchema<'a> {
             );
 
             CREATE INDEX IF NOT EXISTS idx_files_path ON files(path);
+            CREATE INDEX IF NOT EXISTS idx_files_language ON files(language);
             CREATE INDEX IF NOT EXISTS idx_files_line_count ON files(line_count);
             CREATE INDEX IF NOT EXISTS idx_symbols_name ON symbols(name);
             CREATE INDEX IF NOT EXISTS idx_symbols_file ON symbols(file_id);
