@@ -19,18 +19,20 @@ function err(summary: string): StepOutput {
 /**
  * Resolve focus file paths to structured context lines using chunks/staged data.
  * Returns lines like: `- src/api.ts (h:abc1:1-150, 150 lines) — exports: fn1, fn2`
- * Falls back to bare path if no context is available.
+ * When no cached context exists, performs a live signature read via the batch
+ * executor to pre-seed the subagent with actual code content.
  *
  * @param ctxStore - pre-imported context store (caller already has it from await import)
  */
-function resolveFocusFileContext(
+async function resolveFocusFileContext(
   focusFiles: string[],
   ctxStore: { getState: () => { stagedSnippets: Map<string, { source?: string; content: string; tokens: number; lines?: string; stageState?: string; suspectSince?: number; freshness?: string }>; chunks: Map<string, { source?: string; shortHash: string; tokens: number; editDigest?: string; digest?: string; summary?: string; suspectSince?: number; freshness?: string }> } },
-): string | undefined {
+): Promise<string | undefined> {
   if (focusFiles.length === 0) return undefined;
   try {
     const ctx = ctxStore.getState();
     const lines: string[] = [];
+    const unresolvedPaths: string[] = [];
 
     for (const filePath of focusFiles) {
       const normPath = filePath.replace(/\\/g, '/');
@@ -67,7 +69,28 @@ function resolveFocusFileContext(
       }
       if (resolved) continue;
 
-      lines.push(`- ${filePath}`);
+      unresolvedPaths.push(filePath);
+    }
+
+    if (unresolvedPaths.length > 0) {
+      try {
+        const { executeToolCall } = await import('../../aiService');
+        const result = await executeToolCall('batch', {
+          steps: unresolvedPaths.map((p, i) => ({
+            id: `ff${i}`,
+            use: 'read.shaped',
+            with: { file_paths: [p], shape: 'sig', max_files: 1 },
+          })),
+          version: '1.0',
+        });
+        const resultStr = typeof result === 'string' ? result : String(result);
+        const sigPreview = resultStr.length > FOCUS_CONTEXT_CAP
+          ? resultStr.slice(0, FOCUS_CONTEXT_CAP) + '...'
+          : resultStr;
+        lines.push(sigPreview);
+      } catch {
+        for (const p of unresolvedPaths) lines.push(`- ${p}`);
+      }
     }
 
     const result = lines.join('\n');
@@ -100,7 +123,7 @@ async function runDelegate(
     const queryWithContext = `${String(params.query || '')} [workspace_rev=${wsRev}]`;
 
     const focusFiles = Array.isArray(params.focus_files) ? params.focus_files as string[] : undefined;
-    const focusFileContext = focusFiles ? resolveFocusFileContext(focusFiles, useContextStore) : undefined;
+    const focusFileContext = focusFiles ? await resolveFocusFileContext(focusFiles, useContextStore) : undefined;
 
     const { executeSubagent } = await import('../../subagentService');
     const onProgress = (ctx?.onSubagentProgress && stepId)

@@ -594,6 +594,73 @@ export function compressToolLoopHistory(
 
 type ToolResultBlock = { type: string; tool_use_id: string; content: string; name?: string };
 
+// ---------------------------------------------------------------------------
+// Batch tool_use input stubbing — replaces full step arrays with compact
+// summaries since the results (which get deflated separately) are the
+// canonical record. Runs eagerly alongside deflateToolResults.
+// ---------------------------------------------------------------------------
+
+/** Minimum tokens in a batch input before it's worth stubbing. */
+const BATCH_INPUT_STUB_THRESHOLD = 80;
+
+/**
+ * Summarize batch steps into a compact stub like "7 steps: search×3, read×2, pin×2".
+ */
+function summarizeBatchSteps(steps: Array<Record<string, unknown>>): string {
+  const counts = new Map<string, number>();
+  for (const step of steps) {
+    const op = String(step.use || 'unknown');
+    const family = op.split('.')[0];
+    counts.set(family, (counts.get(family) || 0) + 1);
+  }
+  const parts = [...counts.entries()].map(([f, n]) => `${f}×${n}`);
+  return `${steps.length} steps: ${parts.join(', ')}`;
+}
+
+/**
+ * Stub batch tool_use inputs in the most recent assistant message.
+ * Replaces full `steps` arrays with a compact summary string.
+ * Call immediately after pushing the assistant message to history,
+ * before deflateToolResults processes the paired tool_result blocks.
+ *
+ * @returns number of tool_use inputs stubbed
+ */
+export function stubBatchToolUseInputs(
+  history: Array<{ role: string; content: unknown }>,
+): number {
+  let stubbed = 0;
+  let lastAssistant: { role: string; content: unknown } | undefined;
+  for (let i = history.length - 1; i >= 0; i--) {
+    if (history[i].role === 'assistant') { lastAssistant = history[i]; break; }
+  }
+  if (!lastAssistant || !Array.isArray(lastAssistant.content)) return 0;
+
+  const blocks = lastAssistant.content as Array<{
+    type: string; name?: string; id?: string; input?: Record<string, unknown>;
+  }>;
+
+  for (const block of blocks) {
+    if (block.type !== 'tool_use' || !block.input) continue;
+    if ((block.input as any)._stubbed) continue;
+
+    const steps = block.input.steps;
+    if (!Array.isArray(steps) || steps.length === 0) continue;
+
+    const inputStr = serializeForTokenEstimate(block.input);
+    const inputTokens = countTokensSync(inputStr);
+    if (inputTokens < BATCH_INPUT_STUB_THRESHOLD) continue;
+
+    const stub = summarizeBatchSteps(steps as Array<Record<string, unknown>>);
+    block.input = {
+      _stubbed: stub,
+      version: block.input.version ?? '1.0',
+    } as any;
+    stubbed++;
+  }
+
+  return stubbed;
+}
+
 /**
  * Deflate tool_result entries in-place: if the content (or a chunk matching
  * the tool description) already exists in the context store, replace the

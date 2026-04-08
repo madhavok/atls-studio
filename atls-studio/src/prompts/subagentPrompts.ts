@@ -118,35 +118,72 @@ function semanticToolSyntax(): string {
   return [READ_SEARCH_SYNTAX, PIN_STAGE_SYNTAX, BB_SYNTAX, '', 'Intents (budget-heavy):', INTENT_READ_SYNTAX].join('\n');
 }
 
-const RETRIEVER_PROTOCOL = `1. sc/sy to find relevant code.
-2. rs(sig) or rc(smart) on top hits to understand structure.
-3. pi refs you need to keep.
-4. bw key:"retriever:findings" with structured summary of what you found.
-5. Stop. Do not edit, explain, or summarize beyond 1-2 sentences.`;
+const RETRIEVER_PROTOCOL = `Round 1 (search + read + pin + BB):
+s1 sc qs:your_search_terms ps:relevant/dir limit:10
+r1 rs ps:top_hit.ts shape:sig
+p1 pi in:r1.refs
+b1 bw key:"retriever:findings" content:"Found: [description]. Key refs: h:XXXX (file, Ntk). Answer: [structured answer to the query]."
 
-const DESIGN_PROTOCOL = `1. sc/sy or iv to find relevant architecture and code.
-2. rs(sig) targets to understand structure and dependencies.
-3. pi refs you need to keep.
-4. bw key:"design:research" with structured findings (architecture, impact, risks).
-5. Keep the final reply to 1-2 sentences.`;
+Round 2 (only if round 1 was insufficient — refine and update BB):
+s2 sc qs:refined_terms
+r2 rs ps:new_hit.ts shape:sig
+p2 pi in:r2.refs
+b2 bw key:"retriever:findings" content:"Updated: [revised answer with new evidence]."
 
-const CODER_PROTOCOL = `1. rs(sig) targets to understand current code.
-2. ce edits with hash refs (or ie for read+edit+verify in one step).
-3. vb/vl/vk to verify after changes.
-4. If verification fails: read errors, fix with ce, re-verify. Iterate.
-5. bw key:"coder:report" with files changed, verification results, issues.`;
+Then STOP. Do not edit, explain, or summarize beyond the BB entry.`;
 
-const TESTER_PROTOCOL = `1. rs(sig) source files to understand what to test.
-2. cc to create or ce to edit test files.
-3. vt to run tests.
-4. If tests fail: read errors, fix test code with ce, re-run vt. Iterate.
-5. bw key:"tester:results" with pass/fail counts and coverage notes.`;
+const DESIGN_PROTOCOL = `Round 1 (discover + pin + initial findings):
+s1 sc qs:architecture_terms ps:relevant/dir
+r1 rs ps:target1.ts,target2.ts shape:sig
+p1 pi in:r1.refs
+b1 bw key:"design:research" content:"Architecture: [what exists]. Dependencies: [list]. Initial assessment: [risks/gaps]."
 
-const SEMANTIC_PROTOCOL = `1. sc/sy to find relevant code.
-2. rs(sig) on top hits.
-3. pi and sg the best refs.
-4. bw key:"retriever:results" with structured refs.
-5. Reply briefly and cite h:bb:retriever:results.`;
+Round 2 (analyze + refine findings):
+a1 ad ps:target1.ts filter:pattern
+r2 rs ps:dependency.ts shape:sig
+p2 pi in:r2.refs
+b2 bw key:"design:research" content:"Approach: [proposal]. Tradeoffs: [list]. Implementation steps: [1,2,3]. Impact: [files affected]."
+
+Keep the final reply to 1-2 sentences.`;
+
+const CODER_PROTOCOL = `Round 1 (read target + pin + initial BB):
+r1 rl f:target_file.ts sl:START el:END
+p1 pi in:r1.refs
+b1 bw key:"coder:report" content:"Reading target. Function at lines L-M."
+
+Round 2 (edit + verify + report):
+e1 ce f:h:XXXX:L-M le:[{content:"new implementation code here"}]
+v1 vb
+b2 bw key:"coder:report" content:"Edited target_file.ts lines L-M. Verify: [pass/fail]. Changes: [description]."
+
+Round 3 (only if verify failed — fix + re-verify):
+e2 ce f:h:YYYY:L-M le:[{content:"fixed code"}]
+v2 vb
+b3 bw key:"coder:report" content:"Fix applied. Verify: [pass/fail]."`;
+
+const TESTER_PROTOCOL = `Round 1 (read source + understand):
+r1 rs ps:source_file.ts shape:sig
+p1 pi in:r1.refs
+b1 bw key:"tester:results" content:"Source read. Functions to test: [list]."
+
+Round 2 (write tests + run):
+c1 cc creates:[{path:"src/__tests__/target.test.ts",content:"import { fn } from '../target';\\ndescribe('fn', () => { it('handles edge case', () => { expect(fn('')).toBe(expected); }); });"}]
+t1 vt
+b2 bw key:"tester:results" content:"Tests written. Run: [pass/fail counts]."
+
+Round 3 (only if tests failed — fix + re-run):
+e1 ce f:src/__tests__/target.test.ts le:[{line:N,end_line:M,content:"fixed test code"}]
+t2 vt
+b3 bw key:"tester:results" content:"Fixed tests. Run: [pass/fail counts]."`;
+
+const SEMANTIC_PROTOCOL = `Round 1 (search + pin + BB):
+s1 sc qs:search_terms limit:10
+r1 rs ps:top_hit.ts shape:sig
+p1 pi in:r1.refs
+g1 sg
+b1 bw key:"retriever:results" content:"Found: [structured refs with h:XXXX citations]."
+
+Reply briefly and cite h:bb:retriever:results.`;
 
 // ---------------------------------------------------------------------------
 // ROLE_CONFIG — per-role cognitive core

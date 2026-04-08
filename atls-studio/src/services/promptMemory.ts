@@ -46,12 +46,15 @@ export const RESEARCH_FORCE_STOP_MARGIN = 5;
 
 /** Safety ceiling for subagent rounds — budget-based stopping is the real limiter. */
 export const SUBAGENT_MAX_ROUNDS = 100;
-/** Role-specific round caps — tighter than the safety ceiling to prevent wasteful spinning. */
+/** Role-specific round caps — tight to prevent wasteful spinning.
+ *  Audit showed all 4 roles fail identically regardless of budget —
+ *  the issue is prompt architecture, not round count. Keep caps low
+ *  until subagents demonstrate they can use rounds productively. */
 export const SUBAGENT_MAX_ROUNDS_BY_ROLE: Record<string, number> = {
-  retriever: 12,
-  design: 15,
-  coder: 30,
-  tester: 25,
+  retriever: 5,
+  design: 8,
+  coder: 15,
+  tester: 12,
 };
 /** Total input+output tokens across all subagent rounds before forced stop. */
 export const SUBAGENT_TOKEN_BUDGET_DEFAULT = 200_000;

@@ -722,9 +722,11 @@ function checkStopConditions(
   }
 
   // Consecutive idle rounds — subagent is not making progress.
-  // Prompt-level anti-spin rules handle self-regulation; this is the external safety net.
+  // Tightened after audit: all 4 roles spin in read-only loops without acting.
   if (consecutiveReadOnlyRounds != null) {
-    const limit = (role === 'retriever' || role === 'design') ? 4 : 6;
+    const limit = (role === 'retriever') ? 2
+      : (role === 'design') ? 3
+      : 4;
     if (consecutiveReadOnlyRounds >= limit) {
       return { shouldStop: true, reason: `${consecutiveReadOnlyRounds} consecutive idle rounds without progress` };
     }
@@ -1068,6 +1070,22 @@ export async function executeSubagent(
         });
       }
 
+      // Stub batch tool_use inputs in the assistant content so the next round
+      // doesn't carry full step arrays (the results are the canonical record).
+      for (const block of assistantContent) {
+        const b = block as { type?: string; input?: Record<string, unknown> };
+        if (b.type === 'tool_use' && b.input && Array.isArray(b.input.steps)) {
+          const steps = b.input.steps as Array<Record<string, unknown>>;
+          const counts = new Map<string, number>();
+          for (const step of steps) {
+            const family = String(step.use || 'unknown').split('.')[0];
+            counts.set(family, (counts.get(family) || 0) + 1);
+          }
+          const summary = [...counts.entries()].map(([f, n]) => `${f}×${n}`).join(', ');
+          b.input = { _stubbed: `${steps.length} steps: ${summary}`, version: b.input.version ?? '1.0' } as any;
+        }
+      }
+
       lastAssistantContent = assistantContent;
       if (result.fullResponse.trim()) lastAssistantText = result.fullResponse.trim();
       lastToolResults = toolResults;
@@ -1075,6 +1093,34 @@ export async function executeSubagent(
       lastErrors = toolResults
         .filter(tr => tr.content.startsWith('Error:'))
         .map(tr => tr.content.slice(0, 200));
+
+      // Compress tool results for next round: if total exceeds threshold,
+      // truncate each result to keep the subagent's context lean. The
+      // subagent has already pinned/staged what it needs from this round.
+      const SUBAGENT_TOOL_RESULT_COMPRESS_THRESHOLD = 4000;
+      const SUBAGENT_TOOL_RESULT_TRUNCATE_LEN = 500;
+      const totalResultTokens = lastToolResults.reduce(
+        (sum, tr) => sum + countTokensSync(tr.content), 0,
+      );
+      if (totalResultTokens > SUBAGENT_TOOL_RESULT_COMPRESS_THRESHOLD) {
+        for (const tr of lastToolResults) {
+          if (tr.content.length > SUBAGENT_TOOL_RESULT_TRUNCATE_LEN) {
+            tr.content = tr.content.slice(0, SUBAGENT_TOOL_RESULT_TRUNCATE_LEN) + '... [truncated — pinned content is in engrams]';
+          }
+        }
+      }
+
+      // Enforce BB write discipline: if round > 0 and no BB write occurred,
+      // inject a warning so the subagent knows it's violating the contract.
+      if (round > 0) {
+        const hadBbWrite = toolResults.some(tr =>
+          tr.content.includes('session.bb.write') || tr.content.includes('bb_write:'),
+        );
+        if (!hadBbWrite) {
+          const bbKey = ROLE_BB_KEYS[role];
+          lastErrors.push(`WARNING: No BB write this round. You MUST write findings to bw key:"${bbKey}" every round. Partial findings are better than none.`);
+        }
+      }
 
       // Track consecutive idle rounds for spin detection.
       // Any substantive work (edits, pins, stages, BB writes, verify, exec)

@@ -197,7 +197,7 @@ import {
   type PromptPressureBuckets,
   type PromptReliefAction,
 } from './promptMemory';
-import { compressToolLoopHistory, deflateToolResults, estimateHistoryTokens, estimateHistoryTokensAsync } from './historyCompressor';
+import { compressToolLoopHistory, deflateToolResults, stubBatchToolUseInputs, estimateHistoryTokens, estimateHistoryTokensAsync } from './historyCompressor';
 import { formatSummaryMessage, isRollingSummaryEmpty, trimSummaryToTokenBudget } from './historyDistiller';
 import { createGuardrailCallbacks, runBeforeRoundMiddlewares, setPromptBudgetEstimates } from './chatMiddleware';
 import { createTauriChatStream } from './chatTransport';
@@ -2755,6 +2755,13 @@ async function streamChatViaTauri(
       // can pair tool_use_id with the batch/read.* input (otherwise every result
       // falls back to description "tool_result" and source-match reuses one stale engram).
       conversationHistory.push({ role: 'assistant', content: assistantContent });
+
+      // Stub batch tool_use inputs: replace full step arrays with compact
+      // summaries ("7 steps: search×3, read×2, pin×2") since the results
+      // are the canonical record. Must run AFTER push so the assistant
+      // message is in history, but BEFORE deflate uses buildCompressionDescription
+      // which only needs tool name/first-step, not full args.
+      stubBatchToolUseInputs(conversationHistory);
 
       // Eager deflation: replace tool_result content with hash-pointer refs
       // when the content already lives in the context store as an engram.
