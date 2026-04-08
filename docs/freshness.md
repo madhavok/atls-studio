@@ -97,6 +97,45 @@ This applies uniformly across engram headers (working memory), dormant engram di
 | `watcher_event` | Suspect | Hard stop, re-read required |
 | `unknown` | Suspect | Hard stop, re-read required |
 
+## Testing freshness changes
+
+### Automated
+
+From the `atls-studio/` package directory, run Vitest with a filter that hits the formatter, store, batch handlers, and preflight:
+
+```bash
+npm run test -- contextFormatter contextStore change.test delegate freshnessPreflight subagentService
+```
+
+For full TypeScript coverage before a push, use `npm run test`. Full-stack parity (TS + Rust crates) is `npm run test:all`.
+
+### Manual smoke (desktop)
+
+End-to-end behavior needs the Tauri app, real disk, and the snapshot tracker. Typical loop:
+
+1. Open a workspace and pick a small file `PATH` (for example a test fixture under the repo).
+2. Have the assistant **read** `PATH` and echo a few lines so a working-memory engram exists.
+3. **Change `PATH` on disk outside the assistant** (save in your editor, or append a comment from a terminal) so the file revision moves.
+4. Send the **example prompt** below (replace `PATH`). Confirm the reply mentions **`[STALE: re-read before edit]`** and/or **`[STALE]`** on staged lines where applicable, and that the assistant **re-reads** before a `change.*` edit—not silent use of old line numbers.
+
+Optional: after a successful edit in the same turn, confirm MEMORY TELEMETRY in formatted context does **not** list rebind/block/retry counters (those stay internal).
+
+### Example prompt (paste after external edit)
+
+Use a real file path from your workspace.
+
+```text
+Freshness verification for PATH (replace with the file you read, e.g. atls-studio/src/services/contextFormatter.ts):
+
+You already read this file earlier in the thread. I edited and saved it on disk just now without sending another message before this one.
+
+1) In your current context, do you see "[STALE: re-read before edit]" on any working-memory line for PATH, or "[STALE]" on staged snippet lines for PATH, or neither? Quote the exact label lines if present.
+
+2) If anything is labeled stale, what is the correct next step before calling change.edit or any mutating tool on PATH?
+
+3) After you re-read PATH if needed, state the first non-empty line of the file as proof the read is current.
+```
+
 ## Freshness Preflight
 
 Before any mutation operation, the preflight system classifies every target. For file-backed targets it first runs a **batched** `context` request with `{ type: 'full', file_paths }` so the backend returns current content and hashes for those paths. It then calls **`refreshRoundEnd`** for the same file set (with per-path revisions derived from that result) so the context store’s `sourceRevision` metadata matches disk before relocation and gating run. Classification then proceeds:
