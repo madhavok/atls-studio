@@ -4205,7 +4205,8 @@ export const useContextStore = create<ContextStoreState>()(
 
     state.stagedSnippets.forEach((snippet, key) => {
       const shortHash = key.slice(0, SHORT_HASH_LEN);
-      lines.push(`[${shortHash}] ${snippet.source ?? 'unknown'}${snippet.viewKind ? ':' + snippet.viewKind : ''} (${snippet.tokens}tk)`);
+      const stalePrefix = (snippet.stageState === 'stale' || snippet.suspectSince != null) ? '[STALE] ' : '';
+      lines.push(`${stalePrefix}[${shortHash}] ${snippet.source ?? 'unknown'}${snippet.viewKind ? ':' + snippet.viewKind : ''} (${snippet.tokens}tk)`);
       if (snippet.source && activeEngramSources.has(snippet.source)) {
         lines.push(`  (active engram exists — content omitted from staged block)`);
       } else {

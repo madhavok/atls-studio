@@ -76,6 +76,17 @@ Each engram carries a freshness classification:
 | **changed** | External change detected | Watcher event, manual trigger |
 | **suspect** | Freshness uncertain | Unknown cause, timing gap |
 
+### Model-facing surface (two-state projection)
+
+The engine maintains the full five-state taxonomy for preflight classification and internal diagnostics. The **model** sees a simplified two-state projection:
+
+| Engine states | Model label | Action |
+|---------------|-------------|--------|
+| `fresh`, `forwarded`, `shifted` | *(no label)* | Use freely |
+| `suspect`, `changed` | `[STALE: re-read before edit]` | Re-read before editing |
+
+This applies uniformly across engram headers (working memory), dormant engram digest, staged snippet headers, and tool output. Rebind metadata, strategy, confidence, and relocation summaries are **not** included in model-visible context.
+
 ### Freshness Causes
 
 | Cause | Classification | Recovery |
@@ -128,7 +139,7 @@ interface RebindOutcome {
 
 Evidence factors include: `revision_match`, `journal_line_delta`, `shape_hash_match`, `shape_hash_mismatch`, `symbol_identity`, `fingerprint_unique`, `content_window_match`, `exact_line_match`, `missing_content`, `identity_lost`.
 
-This data is attached to the engram and available for the model to reason about — it can see the confidence level of its own knowledge.
+This data is stored on the engram for internal diagnostics (Internals UI) but is **not** surfaced in the model's prompt context.
 
 ## Reconciliation
 

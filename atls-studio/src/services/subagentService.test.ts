@@ -9,10 +9,13 @@ import { ROLE_ALLOWED_OPS, SUBAGENT_MAX_FILE_PATHS } from './subagentService';
 import type { SubAgentRef, SubAgentResult, SubagentType } from './subagentService';
 import {
   SUBAGENT_MAX_ROUNDS,
+  SUBAGENT_MAX_ROUNDS_BY_ROLE,
   SUBAGENT_TOKEN_BUDGET_DEFAULT,
   SUBAGENT_PIN_BUDGET_CAP,
   SUBAGENT_STAGED_PATHS_CAP,
 } from './promptMemory';
+import { buildSubagentPrompt } from '../prompts/subagentPrompts';
+import type { SubagentRole } from '../prompts/subagentPrompts';
 
 describe('subagentService', () => {
   describe('ROLE_ALLOWED_OPS', () => {
@@ -115,6 +118,21 @@ describe('subagentService', () => {
       expect(SUBAGENT_MAX_ROUNDS).toBeLessThanOrEqual(200);
     });
 
+    it('SUBAGENT_MAX_ROUNDS_BY_ROLE defines caps for all roles', () => {
+      const roles: SubagentType[] = ['retriever', 'design', 'coder', 'tester'];
+      for (const role of roles) {
+        const cap = SUBAGENT_MAX_ROUNDS_BY_ROLE[role];
+        expect(cap).toBeDefined();
+        expect(cap).toBeGreaterThan(0);
+        expect(cap).toBeLessThanOrEqual(SUBAGENT_MAX_ROUNDS);
+      }
+    });
+
+    it('read-only roles have tighter round caps than edit roles', () => {
+      expect(SUBAGENT_MAX_ROUNDS_BY_ROLE.retriever).toBeLessThan(SUBAGENT_MAX_ROUNDS_BY_ROLE.coder!);
+      expect(SUBAGENT_MAX_ROUNDS_BY_ROLE.design).toBeLessThan(SUBAGENT_MAX_ROUNDS_BY_ROLE.coder!);
+    });
+
     it('SUBAGENT_TOKEN_BUDGET_DEFAULT is reasonable', () => {
       expect(SUBAGENT_TOKEN_BUDGET_DEFAULT).toBeGreaterThanOrEqual(100_000);
     });
@@ -127,6 +145,88 @@ describe('subagentService', () => {
     it('SUBAGENT_STAGED_PATHS_CAP limits system prompt growth', () => {
       expect(SUBAGENT_STAGED_PATHS_CAP).toBeGreaterThan(0);
       expect(SUBAGENT_STAGED_PATHS_CAP).toBeLessThanOrEqual(100);
+    });
+  });
+
+  describe('subagent prompt cognitive cores', () => {
+    const roles: SubagentRole[] = ['retriever', 'design', 'coder', 'tester', 'semantic'];
+
+    it('all roles include tool syntax section', () => {
+      for (const role of roles) {
+        const prompt = buildSubagentPrompt(role);
+        expect(prompt).toContain('## TOOL SYNTAX');
+        expect(prompt).toContain('sc qs:');
+        expect(prompt).toContain('pi hashes:');
+      }
+    });
+
+    it('all roles include execution protocol', () => {
+      for (const role of roles) {
+        const prompt = buildSubagentPrompt(role);
+        expect(prompt).toContain('## EXECUTION PROTOCOL');
+      }
+    });
+
+    it('all roles include anti-spin rules', () => {
+      for (const role of roles) {
+        const prompt = buildSubagentPrompt(role);
+        expect(prompt).toContain('2-read rule');
+        expect(prompt).toContain('BLOCKED = done');
+      }
+    });
+
+    it('prompts use primitives-first guidance', () => {
+      for (const role of roles) {
+        const prompt = buildSubagentPrompt(role);
+        expect(prompt).toContain('Primitives first');
+        expect(prompt).not.toContain('Prefer intents over primitives');
+      }
+    });
+
+    it('coder/tester prompts include ce edit syntax', () => {
+      for (const role of ['coder', 'tester'] as SubagentRole[]) {
+        const prompt = buildSubagentPrompt(role);
+        expect(prompt).toContain('ce f:h:XXXX:L-M le:[{content:');
+        expect(prompt).toContain('cc creates:');
+      }
+    });
+
+    it('retriever/design do NOT include edit syntax', () => {
+      for (const role of ['retriever', 'design'] as SubagentRole[]) {
+        const prompt = buildSubagentPrompt(role);
+        expect(prompt).not.toContain('ce f:h:XXXX');
+        expect(prompt).not.toContain('cc creates:');
+      }
+    });
+
+    it('coder/tester include verify and exec syntax', () => {
+      for (const role of ['coder', 'tester'] as SubagentRole[]) {
+        const prompt = buildSubagentPrompt(role);
+        expect(prompt).toContain('vb|vt|vl|vk');
+        expect(prompt).toContain('xe cmd:');
+      }
+    });
+
+    it('focusFileContext is preferred over focusFiles when both provided', () => {
+      const prompt = buildSubagentPrompt('retriever', {
+        focusFiles: 'a.ts, b.ts',
+        focusFileContext: '- a.ts (h:abc1, 500tk) — exports: foo, bar\n- b.ts (h:def2, 300tk) — exports: baz',
+      });
+      expect(prompt).toContain('exports: foo, bar');
+      expect(prompt).not.toContain('a.ts, b.ts');
+    });
+
+    it('falls back to focusFiles when focusFileContext is absent', () => {
+      const prompt = buildSubagentPrompt('retriever', {
+        focusFiles: 'a.ts, b.ts',
+      });
+      expect(prompt).toContain('a.ts, b.ts');
+    });
+
+    it('bbKey section is injected when provided', () => {
+      const prompt = buildSubagentPrompt('retriever', { bbKey: 'retriever:findings' });
+      expect(prompt).toContain('## FINDINGS (REQUIRED)');
+      expect(prompt).toContain('retriever:findings');
     });
   });
 

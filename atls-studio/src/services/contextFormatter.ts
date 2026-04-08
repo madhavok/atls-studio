@@ -82,39 +82,15 @@ function formatEngramMeta(chunk: ContextChunk): string[] {
 export function formatSuspectHint(
   suspectSince?: number,
   freshness?: string,
-  freshnessCause?: string,
-  origin?: string,
+  _freshnessCause?: string,
+  _origin?: string,
 ): string {
-  if (suspectSince == null && !freshness && !freshnessCause) return '';
-  if (freshness === 'suspect' && freshnessCause === 'same_file_prior_edit') {
-    return ' [stale — edit refresh failed; re-read before editing]';
-  }
-  if (freshness === 'shifted') {
-    return ' [revision shifted — verify line refs before editing]';
-  }
-  if ((freshnessCause === 'external_file_change' || freshnessCause === 'watcher_event')
-    && (suspectSince != null || freshness === 'suspect')) {
-    return ' [unsafe external file change; re-read required]';
-  }
-  if (suspectSince != null || freshness === 'suspect') {
-    return ' [suspect: re-read before edit]';
+  if (suspectSince != null || freshness === 'suspect' || freshness === 'changed') {
+    return ' [STALE: re-read before edit]';
   }
   return '';
 }
 
-function formatRebindHint(lastRebind?: {
-  strategy: string;
-  confidence: string;
-  linesAfter?: string;
-  factors?: string[];
-}): string {
-  if (!lastRebind || lastRebind.strategy === 'fresh') return '';
-  const factors = Array.isArray(lastRebind.factors) && lastRebind.factors.length > 0
-    ? ` via ${lastRebind.factors.slice(0, 2).join('+')}`
-    : '';
-  const lineTarget = lastRebind.linesAfter ? ` -> ${lastRebind.linesAfter}` : '';
-  return ` [last rebind: ${lastRebind.strategy}/${lastRebind.confidence}${lineTarget}${factors}]`;
-}
 
 /**
  * Build the working memory block the model sees each turn.
@@ -177,11 +153,6 @@ export function formatWorkingMemory(input: FormatterInput): string {
     if (reconcileStats) telemetryParts.push(`reconcile:${reconcileStats.updated} updated/${reconcileStats.invalidated} invalidated/${reconcileStats.preserved} preserved`);
     if (memoryTelemetry && memoryTelemetry.eventCount > 0) {
       telemetryParts.push(`events:${memoryTelemetry.eventCount}`);
-      if (memoryTelemetry.rebindCount > 0) telemetryParts.push(`rebinds:${memoryTelemetry.rebindCount}`);
-      if (memoryTelemetry.blockCount > 0) telemetryParts.push(`blocks:${memoryTelemetry.blockCount}`);
-      if (memoryTelemetry.retryCount > 0) telemetryParts.push(`retries:${memoryTelemetry.retryCount}`);
-      if (memoryTelemetry.lowConfidenceCount > 0) telemetryParts.push(`low_conf:${memoryTelemetry.lowConfidenceCount}`);
-      else if (memoryTelemetry.mediumConfidenceCount > 0) telemetryParts.push(`medium_conf:${memoryTelemetry.mediumConfidenceCount}`);
     }
     if (memoryTelemetry) {
       const retParts: string[] = [];
@@ -194,8 +165,6 @@ export function formatWorkingMemory(input: FormatterInput): string {
     if (latestEvent) {
       const eventParts = [`last:${latestEvent.action}`, latestEvent.reason];
       if (latestEvent.source) eventParts.push(latestEvent.source);
-      if (latestEvent.strategy) eventParts.push(`strategy:${latestEvent.strategy}`);
-      if (latestEvent.confidence) eventParts.push(`confidence:${latestEvent.confidence}`);
       if (latestEvent.freedTokens != null && latestEvent.freedTokens > 0) eventParts.push(`freed:${(latestEvent.freedTokens / 1000).toFixed(1)}k`);
       lines.push(eventParts.join(' | '));
     }
@@ -359,10 +328,9 @@ export function formatWorkingMemory(input: FormatterInput): string {
           ? (shapedPin ? `[P:${ref.pinnedShape}] ` : '[P] ')
           : '';
         const compactIndicator = chunk.compacted ? '[C] ' : '';
-        const liveIndicator = chunk.origin === 'edit-refresh' ? '[LIVE] ' : '';
         const summaryHint = chunk.summary ? ` — ${chunk.summary}` : '';
         const suspectHint = formatSuspectHint(chunk.suspectSince, chunk.freshness, chunk.freshnessCause, chunk.origin);
-        const tag = `${compactIndicator}${liveIndicator}${pinIndicator}<<h:${chunk.shortHash} tk:${chunk.tokens} ${chunk.type}>> ${chunk.source || ''}${suspectHint}${formatRebindHint(chunk.lastRebind)}${summaryHint}`;
+        const tag = `${compactIndicator}${pinIndicator}<<h:${chunk.shortHash} tk:${chunk.tokens} ${chunk.type}>> ${chunk.source || ''}${suspectHint}${summaryHint}`;
         lines.push(tag.trim());
         const metaLines = formatEngramMeta(chunk);
         if (metaLines.length > 0) lines.push(...metaLines);

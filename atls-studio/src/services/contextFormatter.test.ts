@@ -24,24 +24,25 @@ describe('formatSuspectHint', () => {
     expect(formatSuspectHint(undefined, undefined, undefined)).toBe('');
   });
 
-  it('returns hard failure for suspect + same_file_prior_edit (real refresh failure)', () => {
-    const hint = formatSuspectHint(Date.now(), 'suspect', 'same_file_prior_edit');
-    expect(hint).toContain('edit refresh failed');
+  it('returns empty for fresh/shifted/forwarded (non-blocking states)', () => {
+    expect(formatSuspectHint(undefined, 'fresh')).toBe('');
+    expect(formatSuspectHint(undefined, 'shifted', 'same_file_prior_edit')).toBe('');
+    expect(formatSuspectHint(undefined, 'forwarded', 'hash_forward')).toBe('');
   });
 
-  it('returns neutral wording for shifted (rebaseable post-edit reconcile)', () => {
-    const hint = formatSuspectHint(undefined, 'shifted', 'same_file_prior_edit');
-    expect(hint).toContain('revision shifted');
-    expect(hint).not.toContain('edit refresh failed');
+  it('returns unified STALE label for suspect regardless of cause', () => {
+    const causes = ['same_file_prior_edit', 'external_file_change', 'watcher_event', 'unknown', 'session_restore'];
+    for (const cause of causes) {
+      const hint = formatSuspectHint(Date.now(), 'suspect', cause);
+      expect(hint).toBe(' [STALE: re-read before edit]');
+    }
   });
 
-  it('returns external change warning for watcher_event suspect', () => {
-    const hint = formatSuspectHint(Date.now(), 'suspect', 'watcher_event');
-    expect(hint).toContain('external file change');
+  it('returns STALE for changed freshness', () => {
+    expect(formatSuspectHint(undefined, 'changed')).toBe(' [STALE: re-read before edit]');
   });
 
-  it('returns generic suspect for unknown cause', () => {
-    const hint = formatSuspectHint(Date.now(), 'suspect', 'unknown');
-    expect(hint).toContain('suspect');
+  it('returns STALE when suspectSince is set even without freshness field', () => {
+    expect(formatSuspectHint(Date.now())).toBe(' [STALE: re-read before edit]');
   });
 });

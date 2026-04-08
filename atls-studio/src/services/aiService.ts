@@ -3946,8 +3946,8 @@ export function buildDormantBlock(): string {
     if (finding) {
       line += ` — ${finding.length > 80 ? finding.slice(0, 77) + '...' : finding}`;
     }
-    if (c.suspectSince != null || (c.freshness && c.freshness !== 'fresh')) {
-      line += ' [suspect]';
+    if (c.suspectSince != null || c.freshness === 'suspect' || c.freshness === 'changed') {
+      line += ' [STALE]';
     }
     dormantLines.push(line);
   });

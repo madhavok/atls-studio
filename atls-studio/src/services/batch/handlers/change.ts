@@ -1036,35 +1036,6 @@ function inferEditOperationForValidation(params: Record<string, unknown>): strin
   }
 }
 
-function attachPreflightMetadata(
-  result: unknown,
-  preflight: import('../../../services/freshnessPreflight').PreflightResult,
-  automation: import('../../../services/freshnessPreflight').AutomationDecision,
-  operation: string,
-  targetFiles: string[],
-  params: Record<string, unknown>,
-): unknown {
-  if (!result || typeof result !== 'object' || Array.isArray(result)) return result;
-  const payload = result as Record<string, unknown>;
-  return {
-    ...payload,
-    rebind: {
-      action: automation.action,
-      reason: automation.reason,
-      strategy: preflight.strategy,
-      confidence: preflight.confidence,
-      summary: preflight.relocationSummary,
-      decisions: preflight.decisions,
-      repro_pack: buildEditReproPack({
-        operation,
-        targetFiles,
-        params,
-        preflight,
-        automation,
-      }),
-    },
-  };
-}
 
 async function refreshContentHashes(
   ctx: import('../types').HandlerContext,
@@ -1654,12 +1625,6 @@ export const handleEdit: OpHandler = async (params, ctx) => {
           factors: preflight.decisions.flatMap((decision) => decision.factors),
         });
       }
-      if (preflight.relocationSummary) {
-        (resolved as Record<string, unknown>)._relocation = {
-          anchor_shifted: true,
-          summary: preflight.relocationSummary,
-        };
-      }
     }
     if (targetFiles.length > 0 && ['draft', 'batch_edits'].includes(operation)) {
       const refreshed = preflightResult?.refreshedHashes ?? (await refreshContentHashes(ctx, targetFiles));
@@ -1759,9 +1724,6 @@ export const handleEdit: OpHandler = async (params, ctx) => {
       if (affectedPaths.length > 0) {
         useContextStore.getState().bumpWorkspaceRev(affectedPaths);
         useContextStore.getState().invalidateArtifactsForPaths(affectedPaths);
-      }
-      if (preflightResult && automationDecision && preflightResult.strategy !== 'fresh') {
-        result = attachPreflightMetadata(result, preflightResult, automationDecision, operation, targetFiles, resolved);
       }
     }
     if (operation === 'undo' && !extractTopLevelError(result) && targetFiles.length > 0) {

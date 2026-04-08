@@ -1171,12 +1171,7 @@ describe('freshness safety', () => {
     );
 
     expect(out.ok).toBe(true);
-    expect((out.content as { rebind?: { action?: string; strategy?: string; confidence?: string } })?.rebind).toMatchObject({
-      action: 'proceed_with_note',
-      strategy: 'symbol_identity',
-      confidence: 'medium',
-    });
-    expect((out.content as { rebind?: { repro_pack?: { operation?: string } } })?.rebind?.repro_pack?.operation).toBe('draft');
+    expect((out.content as Record<string, unknown>)?.rebind).toBeUndefined();
   });
 
   it('rejects display-only shaped refs before draft dispatch', async () => {

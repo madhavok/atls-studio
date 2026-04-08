@@ -1169,11 +1169,19 @@ const StreamingBatchToolCalls = memo(function StreamingBatchToolCalls({
               }}
             />
             {progress && !progress.done && (
-              <div className="ml-6 mt-0.5 flex items-center gap-1.5 text-[11px] text-studio-muted animate-pulse">
-                <span className="inline-block h-1.5 w-1.5 rounded-full bg-studio-accent animate-ping" />
-                <span>
-                  Subagent R{progress.round}: {progress.toolName} — {progress.status}
-                </span>
+              <div className="ml-6 mt-1 flex items-center gap-2 text-xs text-teal-300/80">
+                <div className="w-2 h-2 rounded-full bg-teal-400 animate-pulse shrink-0" />
+                <span className="font-mono text-[11px] text-studio-muted shrink-0">R{progress.round}</span>
+                <span className="truncate">{progress.status}</span>
+              </div>
+            )}
+            {progress?.done && (
+              <div className="ml-6 mt-1 flex items-center gap-2 text-xs text-teal-300/60">
+                <svg className="w-3 h-3 shrink-0" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z" />
+                </svg>
+                <span className="font-mono text-[11px] text-studio-muted shrink-0">R{progress.round}</span>
+                <span className="truncate">{progress.status}</span>
               </div>
             )}
           </div>
@@ -3149,7 +3157,6 @@ export function AiChat() {
           streamingSegmentsRef.current = streamingSegmentsRef.current.filter(
             s => s.type === 'tool' && s.toolCall.status !== 'completed' && s.toolCall.status !== 'failed'
           );
-          subagentProgressByStepRef.current.clear();
           segmentsRevisionRef.current++;
         },
         onSubagentProgress: (stepId, progress) => {
@@ -3532,7 +3539,6 @@ export function AiChat() {
           streamingSegmentsRef.current = streamingSegmentsRef.current.filter(
             s => s.type === 'tool' && s.toolCall.status !== 'completed' && s.toolCall.status !== 'failed'
           );
-          subagentProgressByStepRef.current.clear();
           segmentsRevisionRef.current++;
         },
         onSubagentProgress: (stepId, progress) => {

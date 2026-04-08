@@ -3,8 +3,10 @@
  */
 
 import type { HandlerContext, OpHandler, StepOutput, SubAgentProgressEvent } from '../types';
+import type { SubAgentProgress } from '../../subagentService';
 
 const DELEGATE_FINAL_TEXT_CAP = 2000;
+const FOCUS_CONTEXT_CAP = 3000;
 
 function ok(summary: string, refs: string[], content?: unknown): StepOutput {
   return { kind: 'raw', ok: true, refs, summary, content };
@@ -12,6 +14,69 @@ function ok(summary: string, refs: string[], content?: unknown): StepOutput {
 
 function err(summary: string): StepOutput {
   return { kind: 'raw', ok: false, refs: [], summary, error: summary };
+}
+
+/**
+ * Resolve focus file paths to structured context lines using chunks/staged data.
+ * Returns lines like: `- src/api.ts (h:abc1:1-150, 150 lines) — exports: fn1, fn2`
+ * Falls back to bare path if no context is available.
+ *
+ * @param ctxStore - pre-imported context store (caller already has it from await import)
+ */
+function resolveFocusFileContext(
+  focusFiles: string[],
+  ctxStore: { getState: () => { stagedSnippets: Map<string, { source?: string; content: string; tokens: number; lines?: string; stageState?: string; suspectSince?: number; freshness?: string }>; chunks: Map<string, { source?: string; shortHash: string; tokens: number; editDigest?: string; digest?: string; summary?: string; suspectSince?: number; freshness?: string }> } },
+): string | undefined {
+  if (focusFiles.length === 0) return undefined;
+  try {
+    const ctx = ctxStore.getState();
+    const lines: string[] = [];
+
+    for (const filePath of focusFiles) {
+      const normPath = filePath.replace(/\\/g, '/');
+      let resolved = false;
+
+      for (const [, snippet] of ctx.stagedSnippets) {
+        if (!snippet.source) continue;
+        if (snippet.stageState === 'stale' || snippet.suspectSince != null || snippet.freshness === 'suspect' || snippet.freshness === 'changed') continue;
+        const normSrc = snippet.source.replace(/\\/g, '/');
+        if (normSrc === normPath || normSrc.endsWith('/' + normPath)) {
+          const lineInfo = snippet.lines ? `, ${snippet.lines}` : '';
+          const preview = snippet.content.length > 200
+            ? snippet.content.slice(0, 200).replace(/\n/g, ' ') + '...'
+            : snippet.content.replace(/\n/g, ' ');
+          lines.push(`- ${filePath} (${snippet.tokens}tk${lineInfo}) — ${preview}`);
+          resolved = true;
+          break;
+        }
+      }
+      if (resolved) continue;
+
+      for (const [, chunk] of ctx.chunks) {
+        if (!chunk.source) continue;
+        if (chunk.suspectSince != null || chunk.freshness === 'suspect' || chunk.freshness === 'changed') continue;
+        const normSrc = chunk.source.replace(/\\/g, '/');
+        if (normSrc === normPath || normSrc.endsWith('/' + normPath)) {
+          const ref = `h:${chunk.shortHash}`;
+          const summary = chunk.editDigest || chunk.digest || chunk.summary || '';
+          const summaryText = summary ? ` — ${summary.slice(0, 200)}` : '';
+          lines.push(`- ${filePath} (${ref}, ${chunk.tokens}tk)${summaryText}`);
+          resolved = true;
+          break;
+        }
+      }
+      if (resolved) continue;
+
+      lines.push(`- ${filePath}`);
+    }
+
+    const result = lines.join('\n');
+    return result.length > FOCUS_CONTEXT_CAP
+      ? result.slice(0, FOCUS_CONTEXT_CAP) + '\n... (truncated)'
+      : result;
+  } catch {
+    return undefined;
+  }
 }
 
 async function runDelegate(
@@ -30,15 +95,19 @@ async function runDelegate(
       return err(`delegate.${role}: ERROR subagent is disabled`);
     }
 
-    const wsRev = (await import('../../../stores/contextStore')).useContextStore.getState().getCurrentRev();
+    const { useContextStore } = await import('../../../stores/contextStore');
+    const wsRev = useContextStore.getState().getCurrentRev();
     const queryWithContext = `${String(params.query || '')} [workspace_rev=${wsRev}]`;
+
+    const focusFiles = Array.isArray(params.focus_files) ? params.focus_files as string[] : undefined;
+    const focusFileContext = focusFiles ? resolveFocusFileContext(focusFiles, useContextStore) : undefined;
 
     const { executeSubagent } = await import('../../subagentService');
     const onProgress = (ctx?.onSubagentProgress && stepId)
-      ? (p: { toolName?: string; status?: string; round?: number; done?: boolean }) => {
+      ? (p: SubAgentProgress) => {
           ctx.onSubagentProgress!(stepId, {
             toolName: p.toolName ?? 'unknown',
-            status: p.status ?? '',
+            status: p.message || p.status,
             round: p.round ?? 0,
             done: p.done ?? false,
           } satisfies SubAgentProgressEvent);
@@ -47,7 +116,8 @@ async function runDelegate(
     const result = await executeSubagent({
       type: role,
       query: queryWithContext,
-      focus_files: Array.isArray(params.focus_files) ? params.focus_files as string[] : undefined,
+      focus_files: focusFiles,
+      focus_file_context: focusFileContext,
       max_tokens: typeof params.max_tokens === 'number' ? params.max_tokens as number : undefined,
       token_budget: typeof params.token_budget === 'number' ? params.token_budget as number : undefined,
     }, onProgress);

@@ -46,6 +46,13 @@ export const RESEARCH_FORCE_STOP_MARGIN = 5;
 
 /** Safety ceiling for subagent rounds — budget-based stopping is the real limiter. */
 export const SUBAGENT_MAX_ROUNDS = 100;
+/** Role-specific round caps — tighter than the safety ceiling to prevent wasteful spinning. */
+export const SUBAGENT_MAX_ROUNDS_BY_ROLE: Record<string, number> = {
+  retriever: 12,
+  design: 15,
+  coder: 30,
+  tester: 25,
+};
 /** Total input+output tokens across all subagent rounds before forced stop. */
 export const SUBAGENT_TOKEN_BUDGET_DEFAULT = 200_000;
 /** Role-specific token budgets — read-only roles stop sooner to cap API spend. */

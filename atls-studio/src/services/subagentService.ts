@@ -23,6 +23,7 @@ import { expandBatchQ } from '../utils/toon';
 import { dematerialize, getRef } from './hashProtocol';
 import {
   SUBAGENT_MAX_ROUNDS,
+  SUBAGENT_MAX_ROUNDS_BY_ROLE,
   SUBAGENT_TOKEN_BUDGET_DEFAULT,
   SUBAGENT_TOKEN_BUDGET_BY_ROLE,
   SUBAGENT_MAX_OUTPUT_TOKENS_BY_ROLE,
@@ -53,6 +54,8 @@ export interface SubAgentParams {
   type: SubagentType;
   query: string;
   focus_files?: string[];
+  /** Pre-resolved focus file context (signatures/summaries) from the parent's store. */
+  focus_file_context?: string;
   max_tokens?: number;
   token_budget?: number;
 }
@@ -102,6 +105,8 @@ export interface SubAgentProgress {
   message: string;
   toolName?: string;
   filePath?: string;
+  round?: number;
+  done?: boolean;
   pinCount?: number;
   pinTokens?: number;
 }
@@ -694,9 +699,10 @@ function checkStopConditions(
   hasSpinBreaker?: boolean,
   consecutiveReadOnlyRounds?: number,
 ): StopCheck {
-  // Safety ceiling
-  if (round >= SUBAGENT_MAX_ROUNDS) {
-    return { shouldStop: true, reason: 'max rounds reached' };
+  // Role-specific round cap (falls back to safety ceiling)
+  const maxRounds = SUBAGENT_MAX_ROUNDS_BY_ROLE[role] ?? SUBAGENT_MAX_ROUNDS;
+  if (round >= maxRounds) {
+    return { shouldStop: true, reason: `max rounds reached (${maxRounds} for ${role})` };
   }
 
   // Token budget exhaustion
@@ -716,11 +722,9 @@ function checkStopConditions(
   }
 
   // Consecutive idle rounds — subagent is not making progress.
-  // Only pure read/search rounds with no pins, stages, BB writes, verify,
-  // or exec count as idle. The limit is generous because legitimate research
-  // involves many search-then-read cycles before the first actionable step.
+  // Prompt-level anti-spin rules handle self-regulation; this is the external safety net.
   if (consecutiveReadOnlyRounds != null) {
-    const limit = (role === 'retriever' || role === 'design') ? 8 : 10;
+    const limit = (role === 'retriever' || role === 'design') ? 4 : 6;
     if (consecutiveReadOnlyRounds >= limit) {
       return { shouldStop: true, reason: `${consecutiveReadOnlyRounds} consecutive idle rounds without progress` };
     }
@@ -750,6 +754,7 @@ function buildProviderMessages(
   role: SubagentType,
   query: string,
   focusFiles: string[] | undefined,
+  focusFileContext: string | undefined,
   round: number,
   totalInputTokens: number,
   totalOutputTokens: number,
@@ -765,7 +770,13 @@ function buildProviderMessages(
   const messages: Array<{ role: string; content: unknown }> = [];
 
   if (round === 0) {
-    messages.push({ role: 'user', content: query + (focusFiles?.length ? `\nFocus files: ${focusFiles.join(', ')}` : '') });
+    let content = query;
+    if (focusFileContext) {
+      content += `\n\n## FOCUS FILES\n${focusFileContext}`;
+    } else if (focusFiles?.length) {
+      content += `\nFocus files: ${focusFiles.join(', ')}`;
+    }
+    messages.push({ role: 'user', content });
   } else if (lastAssistantContent && lastToolResults) {
     const snapshot = buildSubagentSnapshot(
       role, query, focusFiles, round,
@@ -838,11 +849,12 @@ export async function executeSubagent(
   );
   const preExistingHashes = new Set(ctxSnapshot.chunks.keys());
 
-  // Build system prompt
+  // Build system prompt — use pre-resolved focus context when available
   const bbKey = ROLE_BB_KEYS[role];
   const systemPrompt = buildSubagentPrompt(role as SubagentRole, {
     pinBudget,
     focusFiles: params.focus_files?.join(', ') || 'none',
+    focusFileContext: params.focus_file_context,
     alreadyStaged: 'See ## ALREADY STAGED in working state',
     bbKey,
   });
@@ -888,7 +900,7 @@ export async function executeSubagent(
     coder: 'implementing',
     tester: 'testing',
   };
-  onProgress?.({ status: roleStatusMap[role], message: `${role}: ${params.query}` });
+  onProgress?.({ status: roleStatusMap[role], message: `${role}: ${params.query}`, round: 0 });
 
   // Isolate spin state: save parent's counters, reset for this invocation,
   // and restore on exit so parent/subagent don't poison each other.
@@ -897,12 +909,13 @@ export async function executeSubagent(
   useContextStore.getState().resetFileReadSpin();
 
   try {
-    for (let round = 0; round < SUBAGENT_MAX_ROUNDS; round++) {
+    const loopCap = SUBAGENT_MAX_ROUNDS_BY_ROLE[role] ?? SUBAGENT_MAX_ROUNDS;
+    for (let round = 0; round < loopCap; round++) {
       totalRounds++;
 
       const apiMessages = buildProviderMessages(
-        role, params.query, params.focus_files, round,
-        totalInputTokens, totalOutputTokens, tokenBudget, pinBudget,
+        role, params.query, params.focus_files, params.focus_file_context,
+        round, totalInputTokens, totalOutputTokens, tokenBudget, pinBudget,
         preExistingHashes, preExistingSources,
         lastBatchOutcome, lastErrors,
         lastAssistantContent, lastToolResults,
@@ -1002,27 +1015,27 @@ export async function executeSubagent(
         const toolName = String(firstStep.use || tc.name);
         const toolParams = (firstStep.with as Record<string, unknown>) || {};
 
-        // Role-aware progress
+        // Role-aware progress (round is the loop variable in scope)
         if (toolName.startsWith('search.')) {
           onProgress?.({
             status: 'searching',
             message: `Searching: ${(toolParams.queries as string[])?.join(', ') || toolParams.query || '...'}`,
-            toolName,
+            toolName, round,
           });
         } else if (toolName.startsWith('read.')) {
           const paths = (toolParams.file_paths as string[]) || [];
           onProgress?.({
             status: 'reading',
             message: `Reading: ${paths[0] || '...'}`,
-            toolName,
+            toolName, round,
             filePath: paths[0],
           });
         } else if (toolName === 'session.pin' || toolName === 'session.stage' || toolName === 'session.bb.write') {
-          onProgress?.({ status: 'pinning', message: 'Pinning findings...', toolName });
+          onProgress?.({ status: 'pinning', message: 'Pinning findings...', toolName, round });
         } else if (toolName.startsWith('change.')) {
-          onProgress?.({ status: 'implementing', message: `Editing: ${(toolParams.file as string) || '...'}`, toolName });
+          onProgress?.({ status: 'implementing', message: `Editing: ${(toolParams.file as string) || '...'}`, toolName, round });
         } else if (toolName.startsWith('verify.')) {
-          onProgress?.({ status: 'testing', message: `Verifying: ${toolName}`, toolName });
+          onProgress?.({ status: 'testing', message: `Verifying: ${toolName}`, toolName, round });
         }
 
         try {
@@ -1099,6 +1112,8 @@ export async function executeSubagent(
     onProgress?.({
       status: 'error',
       message: `${role} subagent error: ${error instanceof Error ? error.message : String(error)}`,
+      round: totalRounds,
+      done: true,
     });
     throw error;
   } finally {
@@ -1144,6 +1159,8 @@ export async function executeSubagent(
   onProgress?.({
     status: 'complete',
     message: summary,
+    round: totalRounds,
+    done: true,
     pinCount,
     pinTokens,
   });
