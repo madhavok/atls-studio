@@ -980,13 +980,24 @@ pub(crate) fn get_tool_definitions() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "batch",
-            description: "Unified batch execution. Pass steps as compact lines: one step per line, space-separated id use key:value params.",
+            description: "Unified ATLS batch execution. Provide either (1) line-per-step text in `q`, or (2) structured `version` + `steps` JSON (same shape the app uses for Anthropic).",
             parameters: serde_json::json!({
                 "type": "object",
                 "properties": {
-                    "q": { "type": "string", "description": "Batch steps, one per line: ID USE key:val key:val" }
-                },
-                "required": ["q"]
+                    "version": {
+                        "type": "string",
+                        "description": "Batch protocol version (e.g. 1.0). Use with structured `steps`."
+                    },
+                    "steps": {
+                        "type": "array",
+                        "description": "Structured steps: [{ id, use, with?, ... }]. Preferred for OpenAI/Gemini JSON tool calls.",
+                        "items": { "type": "object" }
+                    },
+                    "q": {
+                        "type": "string",
+                        "description": "Line-per-step batch: one step per line (ID USE key:val ...). Alternative to version+steps."
+                    }
+                }
             }),
         },
     ]
@@ -1058,13 +1069,22 @@ pub(crate) fn build_atls_tools_for_provider(provider: &str) -> serde_json::Value
     }
 }
 
-/// Get tools formatted for specific provider (cached — P0 #5)
+/// Get tools formatted for specific provider (cached — P0 #5).
+/// Supports: `anthropic`, `openai`, `google` (case-insensitive), plus aliases **`vertex` → Gemini format**
+/// and **`lmstudio` → OpenAI format** so BP2 / [`count_tool_def_tokens`](crate::tokenizer::count_tool_def_tokens_inner)
+/// match the shapes used by `stream_chat_vertex` / `stream_chat_lmstudio`.
 pub(crate) fn get_atls_tools(provider: &str) -> serde_json::Value {
-    match provider {
+    let lower = provider.to_lowercase();
+    let key = match lower.as_str() {
+        "vertex" => "google",
+        "lmstudio" => "openai",
+        other => other,
+    };
+    match key {
         "anthropic" => CACHED_TOOLS_ANTHROPIC.get_or_init(|| build_atls_tools_for_provider("anthropic")).clone(),
         "openai" => CACHED_TOOLS_OPENAI.get_or_init(|| build_atls_tools_for_provider("openai")).clone(),
         "google" => CACHED_TOOLS_GOOGLE.get_or_init(|| build_atls_tools_for_provider("google")).clone(),
-        _ => serde_json::json!([])
+        _ => serde_json::json!([]),
     }
 }
 
@@ -2891,5 +2911,37 @@ mod responses_api_conversion_tests {
         let v = reasoning_body_for_responses_api("high");
         assert_eq!(v.get("effort").and_then(|x| x.as_str()), Some("high"));
         assert_eq!(v.get("summary").and_then(|x| x.as_str()), Some("auto"));
+    }
+}
+
+#[cfg(test)]
+mod atls_tools_provider_tests {
+    use super::get_atls_tools;
+
+    #[test]
+    fn vertex_and_google_share_gemini_tool_format() {
+        let g = get_atls_tools("google");
+        let v = get_atls_tools("vertex");
+        let vx = get_atls_tools("VERTEX");
+        assert_eq!(g, v);
+        assert_eq!(g, vx);
+        assert!(g.to_string().contains("functionDeclarations"));
+    }
+
+    #[test]
+    fn lmstudio_and_openai_share_chat_tools_format() {
+        let o = get_atls_tools("openai");
+        let l = get_atls_tools("lmstudio");
+        assert_eq!(o, l);
+        assert!(o.to_string().contains("\"type\":\"function\""));
+    }
+
+    #[test]
+    fn batch_tool_schema_lists_steps_and_q() {
+        let tools = get_atls_tools("openai");
+        let s = tools.to_string();
+        assert!(s.contains("steps"));
+        assert!(s.contains("\"q\""));
+        assert!(s.contains("version"));
     }
 }

@@ -43,16 +43,25 @@ Configured in [`promptMemory.ts`](../atls-studio/src/services/promptMemory.ts):
 
 | Constant | Role |
 |----------|------|
-| `SUBAGENT_MAX_ROUNDS` | Upper bound on tool rounds (default 100) |
-| `SUBAGENT_TOKEN_BUDGET_DEFAULT` | Default token budget for the run (200k) |
+| `SUBAGENT_MAX_ROUNDS` | Safety ceiling on tool rounds (100) |
+| `SUBAGENT_MAX_ROUNDS_BY_ROLE` | Per-role caps (e.g. retriever 5, design 8, coder 15) — real limiter below the ceiling |
+| `SUBAGENT_TOKEN_BUDGET_BY_ROLE` | Total input+output tokens before forced stop (e.g. retriever 80k) |
+| `SUBAGENT_TOKEN_BUDGET_DEFAULT` | Fallback token budget when a role has no override (200k) |
 | `SUBAGENT_PIN_BUDGET_CAP` | Cap for pin-budget derivation (64k) |
 | `SUBAGENT_STAGED_PATHS_CAP` | Cap on staged paths surfaced in the snapshot (60) |
 
-Stopping uses **token budget** and **round** limits together with pin-budget heuristics (`computePinBudget`), not fixed per-role round caps.
+Stopping combines **token budget**, **per-role round caps**, **pin budget**, **consecutive idle rounds** (read-only rounds without pins/BB/etc.), and the **no-tool-call** exit (model returns a natural-language-only turn). Retriever runs treat successful `read.*` / `search.*` / `intent.*` batch steps as progress so exploration rounds are not misclassified as idle.
 
 ## Step output (delegate handlers)
 
-Successful delegate steps return structured content including **`refs`** (with hashes and metadata), **`bbKeys`**, **`pinCount` / `pinTokens`**, round and tool-call counts, and a short **summary** line for the parent batch — not a full duplicate of pinned file bodies in the step payload.
+Successful delegate steps return structured content including **`refs`** (with hashes and metadata), **`bbKeys`**, **`pinCount` / `pinTokens`**, round and tool-call counts, and a **summary** string for the parent batch.
+
+**Blackboard handoff:** The step summary **inlines the text** of each key listed in `bbKeys` (labeled `--- Blackboard (key) ---`), so the parent model sees structured findings without resolving `h:bb:*` alone. If the subagent also emitted a final natural-language turn, it appears under `--- Assistant (final turn) ---` after the blackboard blocks; assistant-only runs still use the legacy `--- Delegate Findings ---` heading. Pinned file bodies are not duplicated in the step payload beyond refs metadata.
+
+### When to use `delegate.retrieve` vs direct search/read
+
+- **Delegate** (`delegate.retrieve` / `dr`): Good for **multi-file** exploration, broad codebase search, or when the orchestrator should not spend its own context on many mechanical `sc`/`rl` steps. Subagents use a snapshot loop and role allowlists.
+- **Direct primitives** (`sc`, `rl`, `rs`, etc.): Often **cheaper and clearer** for **single-file** questions (e.g. “how does this file resolve refs?”) where one or two reads plus main-model synthesis are enough. Prefer direct tools when the scope is already narrow.
 
 ## Chat mode vs batch
 

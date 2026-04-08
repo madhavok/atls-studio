@@ -5,8 +5,59 @@
 import type { HandlerContext, OpHandler, StepOutput, SubAgentProgressEvent } from '../types';
 import type { SubAgentProgress } from '../../subagentService';
 
+/** Max chars for assistant-only block when no blackboard body is inlined. */
 const DELEGATE_FINAL_TEXT_CAP = 2000;
+/** Per-BB-key cap; total findings section also bounded by DELEGATE_FINDINGS_TOTAL_CAP. */
+const DELEGATE_BB_PER_KEY_CAP = 2800;
+/** Combined cap for inlined blackboard text + optional final assistant turn in the step summary. */
+const DELEGATE_FINDINGS_TOTAL_CAP = 5200;
 const FOCUS_CONTEXT_CAP = 3000;
+
+/**
+ * Build the delegate "findings" appendix: blackboard bodies first (canonical), then optional final assistant text.
+ */
+function buildDelegateFindingsAppendix(
+  bbKeys: string[],
+  getBlackboardEntry: (key: string) => string | null,
+  finalText: string | undefined,
+): string {
+  let budget = DELEGATE_FINDINGS_TOTAL_CAP;
+  const chunks: string[] = [];
+
+  for (const key of bbKeys) {
+    const raw = getBlackboardEntry(key);
+    if (!raw?.trim()) continue;
+    const header = `\n\n--- Blackboard (${key}) ---\n`;
+    const overhead = header.length + 24;
+    const maxBody = Math.min(DELEGATE_BB_PER_KEY_CAP, Math.max(0, budget - overhead));
+    if (maxBody < 40) break;
+    const body = raw.length > maxBody
+      ? `${raw.slice(0, maxBody)}\n... [truncated]`
+      : raw;
+    const block = header + body;
+    chunks.push(block);
+    budget -= block.length;
+  }
+
+  const trimmedFinal = finalText?.trim();
+  if (trimmedFinal) {
+    // After blackboard blocks, optional assistant text uses a distinct heading; assistant-only
+    // runs keep the legacy "--- Delegate Findings ---" label.
+    const header = chunks.length > 0
+      ? `\n\n--- Assistant (final turn) ---\n`
+      : `\n\n--- Delegate Findings ---\n`;
+    const room = budget - header.length;
+    if (room > 40) {
+      const cap = Math.min(DELEGATE_FINAL_TEXT_CAP, room);
+      const text = trimmedFinal.length > cap
+        ? `${trimmedFinal.slice(0, cap)}... [truncated]`
+        : trimmedFinal;
+      chunks.push(header + text);
+    }
+  }
+
+  return chunks.join('');
+}
 
 function ok(summary: string, refs: string[], content?: unknown): StepOutput {
   return { kind: 'raw', ok: true, refs, summary, content };
@@ -152,12 +203,12 @@ async function runDelegate(
     let summary = `${role}: ${result.refs.length} refs (${(result.pinTokens / 1000).toFixed(1)}k tk), ${result.rounds} rounds` +
       (result.bbKeys.length > 0 ? ` | BB: ${result.bbKeys.join(', ')}` : '');
 
-    if (result.finalText) {
-      const capped = result.finalText.length > DELEGATE_FINAL_TEXT_CAP
-        ? result.finalText.slice(0, DELEGATE_FINAL_TEXT_CAP) + '... [truncated]'
-        : result.finalText;
-      summary += `\n\n--- Delegate Findings ---\n${capped}`;
-    }
+    const store = useContextStore.getState();
+    summary += buildDelegateFindingsAppendix(
+      result.bbKeys,
+      (key) => store.getBlackboardEntry(key),
+      result.finalText,
+    );
 
     return ok(summary, pinnedHashes, {
       refs: result.refs,

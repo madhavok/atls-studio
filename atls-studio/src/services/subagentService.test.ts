@@ -227,6 +227,8 @@ describe('subagentService', () => {
       const prompt = buildSubagentPrompt('retriever', { bbKey: 'retriever:findings' });
       expect(prompt).toContain('## FINDINGS (REQUIRED)');
       expect(prompt).toContain('retriever:findings');
+      expect(prompt).toContain('delegate step summary inlines');
+      expect(prompt).toContain('**Retriever:**');
     });
   });
 

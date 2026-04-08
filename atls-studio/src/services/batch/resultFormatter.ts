@@ -223,6 +223,7 @@ export function formatBatchResult(result: UnifiedBatchResult): string {
       const bbKeys = art?.bbKeys as string[] | undefined;
       if (bbKeys?.length) {
         lines.push(`  BB: ${bbKeys.map(k => `h:bb:${k}`).join(' ')}`);
+        lines.push('  (Blackboard bodies are inlined in the step summary when present.)');
       }
     }
   }

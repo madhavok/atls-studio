@@ -122,7 +122,7 @@ const RETRIEVER_PROTOCOL = `Round 1 (search + read + pin + BB):
 s1 sc qs:your_search_terms ps:relevant/dir limit:10
 r1 rs ps:top_hit.ts shape:sig
 p1 pi in:r1.refs
-b1 bw key:"retriever:findings" content:"Found: [description]. Key refs: h:XXXX (file, Ntk). Answer: [structured answer to the query]."
+b1 bw key:"retriever:findings" content:"Found: [description]. Key refs: h:XXXX (file, Ntk). Answer: [direct answer — entry points, paths, line ranges or h: refs, resolution chain]."
 
 Round 2 (only if round 1 was insufficient — refine and update BB):
 s2 sc qs:refined_terms
@@ -130,7 +130,9 @@ r2 rs ps:new_hit.ts shape:sig
 p2 pi in:r2.refs
 b2 bw key:"retriever:findings" content:"Updated: [revised answer with new evidence]."
 
-Then STOP. Do not edit, explain, or summarize beyond the BB entry.`;
+Round 3 (only if the BB still lacks a direct answer to the query): b3 bw key:"retriever:findings" content:"[Repair: same structured answer format; no meta, no placeholders.]" — add reads only if essential.
+
+Then STOP. Do not paste a standalone essay: the BB entry is the answer. A tool-less final turn may be at most one sentence echoing the BB answer.`;
 
 const DESIGN_PROTOCOL = `Round 1 (discover + pin + initial findings):
 s1 sc qs:architecture_terms ps:relevant/dir
@@ -266,7 +268,11 @@ export function buildSubagentPrompt(role: SubagentRole, opts?: SubagentOpts): st
   sections.push(body);
 
   if (cfg.hasBbKeySection && opts?.bbKey) {
-    sections.push(`\n## FINDINGS (REQUIRED)\nYou MUST write structured findings to bw key:"${opts.bbKey}" before your final round. The calling model receives only your BB entry and hash refs — if you do not write to BB, your work is lost. Write early and update incrementally; do not defer the BB write to the end.`);
+    let findings = `\n## FINDINGS (REQUIRED)\nYou MUST write structured findings to bw key:"${opts.bbKey}" before your final round. The delegate step summary inlines blackboard text for the parent model alongside hash refs — if you do not write to BB, your work is lost. Write early and update incrementally; do not defer the BB write to the end.`;
+    if (role === 'retriever') {
+      findings += `\n\n**Retriever:** The BB body must directly answer the query: name entry points (functions/classes), file paths, line ranges or h: refs, and the resolution or data-flow chain. Forbidden in BB: meta-only lines ("Let me read…", "I will search…"), placeholders, or empty filler.`;
+    }
+    sections.push(findings);
   }
 
   if (cfg.hasFocusSection) {
