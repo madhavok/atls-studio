@@ -1486,6 +1486,20 @@ export async function executeUnifiedBatch(
       continue;
     }
 
+    if (useStr.toUpperCase() === 'USE') {
+      const output: StepOutput = {
+        kind: 'raw', ok: false, refs: [],
+        summary: `${step.id}: ERROR "${useStr}" is not an operation — line-syntax docs label the operation column "USE"; set use to a real op (e.g. read.shaped, session.plan, rc, spl, vk)`,
+        error:
+          `unknown operation: ${useStr} — "USE" in batch docs labels the q: line operation column; set use to a real operation (e.g. read.shaped, session.plan, verify.typecheck, or short codes like rs, spl, vk)`,
+      };
+      stepOutputs.set(step.id, output);
+      recordStepResult(step.id, step.use, output, Date.now() - stepStart);
+      batchOk = false;
+      if (step.on_error === 'stop') break;
+      continue;
+    }
+
     // Block further reads/searches after the spin breaker fires
     if (spinBlocked && (step.use.startsWith('read.') || step.use.startsWith('search.'))) {
       const output: StepOutput = {

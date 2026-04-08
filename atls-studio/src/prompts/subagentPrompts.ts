@@ -62,7 +62,7 @@ const ANTI_SPIN_RULES = `
 // SUBAGENT_BASE — shared preamble for all roles
 // ---------------------------------------------------------------------------
 
-const SUBAGENT_BASE = `Use native batch() only. Format: ID USE key:val key:val (one step per line).
+const SUBAGENT_BASE = `Use native batch() only. Format: STEP_ID <operation> key:val key:val (one step per line). The JSON field \`use\` must be a real operation (e.g. rc, read.shaped), not the literal "USE" from line-syntax column labels.
 Arrays: comma-separated (ps:a.ts,b.ts). Quoted values: content:"const x = 1;"
 Dataflow: in:stepId.path (e.g. in:r1.refs). Conditional: if:stepId.ok
 

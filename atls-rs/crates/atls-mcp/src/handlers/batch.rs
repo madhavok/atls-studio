@@ -704,11 +704,19 @@ pub async fn handle_unified_batch(
         let default_op = match op_kind_to_batch_op(use_val) {
             Some(op) => op,
             None => {
+                let err = if use_val.eq_ignore_ascii_case("use") {
+                    format!(
+                        r#"unknown operation: {} — "USE" in batch docs labels the q: line operation column; set use to a real operation (e.g. read.shaped, session.plan, verify.typecheck, or short codes like rs, spl, vk)"#,
+                        use_val
+                    )
+                } else {
+                    format!("unknown operation: {}", use_val)
+                };
                 let result = serde_json::json!({
                     "id": step_id,
                     "use": use_val,
                     "ok": false,
-                    "error": format!("unknown operation: {}", use_val),
+                    "error": err,
                     "duration_ms": step_start.elapsed().as_millis()
                 });
                 step_results.push(result.clone());

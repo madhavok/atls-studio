@@ -6,8 +6,8 @@ import { generateFamilyLines } from '../services/batch/families';
 import { generateShorthandLegend } from '../services/batch/opShorthand';
 
 export const BATCH_TOOL_REF = `## Batch Tool — line-per-step (shell = builds/git/packages ONLY; h:XXXX = universal pointer)
-Pass q: one step per line. Format: ID USE key:val key:val
-USE accepts short codes (see Short codes below) or full dotted names.
+Pass q: one step per line. Format: STEP_ID <operation> key:val key:val
+<operation> accepts short codes (see Short codes below) or full dotted names. In structured JSON steps, the property is \`use\`: set it to that operation name (e.g. read.shaped, rc, spl) — never the literal string "USE" (some docs label the operation column that way for readability only).
 Arrays: comma-separated (ps:a.ts,b.ts). Quoted values for spaces/colons: content:"const x = 1;"
 Complex nested objects: inline JSON-like {…} syntax (le, creates).
 Dataflow: in:stepId.path (e.g. in:r1.refs). Conditional: if:stepId.ok. on_error:stop|continue|rollback
@@ -141,7 +141,7 @@ d2 dc query:"add input validation to UserService.create" ff:src/services/user.ts
 export const NATIVE_TOOL_TOKENS_ESTIMATE = 100;
 
 export const DESIGNER_TOOL_REF = `## Designer Tools — READ ONLY
-Use batch with q: only — one step per line: ID USE key:val (short codes accepted)
+Use batch with q: only — one step per line: STEP_ID <operation> key:val (short codes accepted)
 
 Examples
 s1 sc qs:auth,login

@@ -990,12 +990,28 @@ pub(crate) fn get_tool_definitions() -> Vec<ToolDef> {
                     },
                     "steps": {
                         "type": "array",
-                        "description": "Structured steps: [{ id, use, with?, ... }]. Preferred for OpenAI/Gemini JSON tool calls.",
-                        "items": { "type": "object" }
+                        "description": "Structured steps array. Each step must set `use` to a real ATLS operation (dotted name or short code), not the literal word USE from line-syntax docs.",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "id": {
+                                    "type": "string",
+                                    "description": "Step id for dataflow (e.g. in:stepId.refs) and conditionals."
+                                },
+                                "use": {
+                                    "type": "string",
+                                    "description": "Operation to run: e.g. read.shaped, session.plan, verify.typecheck, or short codes rs, spl, vk. Not the literal string USE (that labels the operation column in q: line format only)."
+                                },
+                                "with": {
+                                    "type": "object",
+                                    "description": "Parameters object for the operation."
+                                }
+                            }
+                        }
                     },
                     "q": {
                         "type": "string",
-                        "description": "Line-per-step batch: one step per line (ID USE key:val ...). Alternative to version+steps."
+                        "description": "Line-per-step batch: one step per line (STEP_ID then operation then key:val ...). Alternative to version+steps."
                     }
                 }
             }),

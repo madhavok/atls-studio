@@ -659,7 +659,7 @@ mod tests {
             ("working_memory",
              "## WORKING MEMORY\n\u{0394}: 2 new, 1 dematerialized\nBB: 3 active entries, 1.2k tk\n## ACTIVE ENGRAMS (subtask: migrate-callers)\n\u{00AB}h:a3bf12 450tk smart src/services/aiService.ts\u{00BB}\nfn streamChatViaTauri:15-120 | fn buildDynamicContextBlock:200-300"),
             ("system_prompt_fragment",
-             "## Batch Tool (shell = builds/git/packages ONLY; h:XXXX = universal pointer)\nPass q: one step per line (ID USE key:val).\n\n### Operation Families\nread: context, shaped, lines\nsearch: code, symbol, usage, similar, issues, patterns, memory\nchange: edit, create, delete, refactor, rollback, split_module"),
+             "## Batch Tool (shell = builds/git/packages ONLY; h:XXXX = universal pointer)\nPass q: one step per line (STEP_ID <operation> key:val).\n\n### Operation Families\nread: context, shaped, lines\nsearch: code, symbol, usage, similar, issues, patterns, memory\nchange: edit, create, delete, refactor, rollback, split_module"),
             ("stats_plus_bb",
              "<<CTX 15k/200k (7%) | chunks:12 | pinned:3 | bb:1.2k>>\n## BLACKBOARD\nplan:current: Goal:real tokenizer|Done:rust backend,frontend wrapper|Next:migrate callers,validate\ndesign:decisions: Use tiktoken-rs for OpenAI, ctoc greedy for Claude, heuristic for Gemini"),
         ];

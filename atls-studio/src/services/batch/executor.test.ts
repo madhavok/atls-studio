@@ -296,6 +296,21 @@ describe('executeUnifiedBatch pseudo-op handling', () => {
     expect(first?.error).toContain('OperationKind');
     expect(first?.error).toContain('multi_tool_use');
   });
+
+  it('rejects literal USE as mistaken doc token with an actionable message', async () => {
+    const result = await executeUnifiedBatch(
+      {
+        version: '1.0',
+        steps: [{ id: 'bad', use: 'USE' }],
+      },
+      makeCtx(),
+    );
+    expect(result.ok).toBe(false);
+    const first = result.step_results[0];
+    expect(first?.error).toContain('unknown operation: USE');
+    expect(first?.error).toContain('labels the q: line operation column');
+    expect(first?.error).toContain('read.shaped');
+  });
 });
 
 describe('executeUnifiedBatch snapshot propagation', () => {

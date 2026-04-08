@@ -10,7 +10,7 @@
  *  - Arrays: [val,val]
  *
  * Batch line-per-step format (model -> tool input):
- *  - One step per line: ID USE key:val key:val ...
+ *  - One step per line: STEP_ID <operation> key:val key:val ... (<operation> = short code or dotted name, not the literal string USE)
  *  - Dataflow shorthand: in:stepId.path
  *  - Conditional shorthand: if:stepId.ok
  *  - Complex nested objects: inline JSON-like {...} syntax
