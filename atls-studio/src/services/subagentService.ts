@@ -30,6 +30,10 @@ import {
   SUBAGENT_PIN_BUDGET_CAP,
   SUBAGENT_STAGED_PATHS_CAP,
 } from './promptMemory';
+import {
+  subagentToolResultIndicatesExploration,
+  subagentToolResultIndicatesProgress,
+} from './subagentProgress';
 
 export type { AIProvider };
 
@@ -1126,24 +1130,14 @@ export async function executeSubagent(
       // Any substantive work (edits, pins, stages, BB writes, verify, exec)
       // resets the counter — not just change.* mutations.
       const batchText = lastBatchOutcome ?? '';
-      // Retriever often runs search/read rounds before pin/BB; count successful read/search as progress
-      // so we do not hit consecutiveReadOnlyRounds while still exploring.
-      const hadRetrieverExploration = role === 'retriever' && toolResults.some(tr => {
-        const c = tr.content;
-        if (c.includes('BLOCKED')) return false;
-        if (/^Error:/i.test(c.trim()) || c.startsWith('ERROR')) return false;
-        if (!c.includes('[OK]')) return false;
-        return /\b(read\.|search\.|intent\.)/.test(c);
-      });
-      const hadProgress = hadRetrieverExploration || toolResults.some(tr => {
-        const c = tr.content;
-        if (c.includes('ERROR') || c.includes('BLOCKED')) return false;
-        return c.includes('change.') || c.includes('session.pin') || c.includes('session.stage')
-          || c.includes('session.bb.write') || c.includes('verify.') || c.includes('system.exec');
-      }) || (batchText.includes('[OK]') && (
-        batchText.includes('session.pin') || batchText.includes('session.bb.write')
-        || batchText.includes('verify.') || batchText.includes('system.exec')
-      ));
+      // Read/search/intent/analyze exploration counts as progress so we do not hit
+      // consecutiveReadOnlyRounds while still researching (all roles; see subagentProgress.ts).
+      const hadExplorationRound = toolResults.some(tr =>
+        subagentToolResultIndicatesExploration(tr.content),
+      );
+      const hadProgress = hadExplorationRound || toolResults.some(tr =>
+        subagentToolResultIndicatesProgress(tr.content),
+      ) || (batchText.includes('[OK]') && subagentToolResultIndicatesProgress(batchText));
       if (hadProgress) {
         consecutiveReadOnlyRounds = 0;
       } else {

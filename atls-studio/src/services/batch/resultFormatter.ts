@@ -210,9 +210,9 @@ export function formatBatchResult(result: UnifiedBatchResult): string {
       ? ' [STALE: cached verification result — rerun canonical command]'
       : '';
     if (step.summary) {
-      lines.push(`${label} ${step.id}: ${capStepSummary(step.summary, step.use, step)}${suffix}${staleSuffix}${durationTag}`);
+      lines.push(`${label} ${step.id} (${step.use}): ${capStepSummary(step.summary, step.use, step)}${suffix}${staleSuffix}${durationTag}`);
     } else if (step.error) {
-      lines.push(`${label} ${step.id}: ${capStepSummary(step.error, step.use, step)}${durationTag}`);
+      lines.push(`${label} ${step.id} (${step.use}): ${capStepSummary(step.error, step.use, step)}${durationTag}`);
     }
 
     if (step.use.startsWith('delegate.') && step.ok) {
