@@ -20,6 +20,7 @@ describe('aiService exported helpers', () => {
   it('areToolsEnabledForProvider disables tools in ask mode only', () => {
     expect(areToolsEnabledForProvider('anthropic', 'ask')).toBe(false);
     expect(areToolsEnabledForProvider('anthropic', 'agent')).toBe(true);
+    expect(areToolsEnabledForProvider('anthropic', 'agent_v2')).toBe(true);
   });
 
   it('deriveMutationCompletionBlocker returns undefined when nothing blocks', () => {

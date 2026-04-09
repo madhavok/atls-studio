@@ -378,7 +378,7 @@ export interface Agent {
 
 // Chat mode - matches aiService.ts (swarm is extended mode for multi-agent)
 // 'planner' is internal-only for swarm orchestrator planning phase
-export type ChatMode = 'agent' | 'designer' | 'ask' | 'reviewer' | 'retriever' | 'custom' | 'swarm' | 'refactor' | 'planner';
+export type ChatMode = 'agent' | 'agent_v2' | 'designer' | 'ask' | 'reviewer' | 'retriever' | 'custom' | 'swarm' | 'refactor' | 'planner';
 
 // Agent progress tracking - displayed in status card
 export interface AgentToolSummary {

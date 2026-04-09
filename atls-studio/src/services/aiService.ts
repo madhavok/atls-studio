@@ -130,8 +130,8 @@ import { resolveHashRefsWithMeta, setRecencyResolver, setEditRecencyResolver, se
 import { toTOON, formatResult, expandBatchQ } from '../utils/toon';
 import { countTokensSync, countTokens as countTokensAsync } from '../utils/tokenCounter';
 import { BATCH_TOOL_REF, DESIGNER_TOOL_REF, SUBAGENT_TOOL_REF, NATIVE_TOOL_TOKENS_ESTIMATE } from '../prompts/toolRef';
-import { CONTEXT_CONTROL_V4, CONTEXT_CONTROL_DESIGNER } from '../prompts/cognitiveCore';
-import { EDIT_DISCIPLINE } from '../prompts/editDiscipline';
+import { CONTEXT_CONTROL_V4, CONTEXT_CONTROL_V2, CONTEXT_CONTROL_DESIGNER } from '../prompts/cognitiveCore';
+import { EDIT_DISCIPLINE, EDIT_DISCIPLINE_V2 } from '../prompts/editDiscipline';
 import { HASH_PROTOCOL_CORE } from '../prompts/hashProtocol';
 import { getModePrompt } from '../prompts/modePrompts';
 import { getShellGuide } from '../prompts/shellGuide';
@@ -2782,7 +2782,7 @@ async function streamChatViaTauri(
       if (taskCompleteCalled) {
         const forceStopActive = totalResearchRounds >= TOTAL_RESEARCH_ROUND_BUDGET + RESEARCH_FORCE_STOP_MARGIN;
         if (anyRoundHadMutations && !_hadVerification && !forceStopActive
-            && (mode === 'agent' || mode === 'refactor')) {
+            && (mode === 'agent' || mode === 'agent_v2' || mode === 'refactor')) {
           try {
             console.log('[aiService] Auto-verify: running verify.build after task_complete');
             const verifyResult = await atlsBatchQuery('verify', { type: 'build' });
@@ -3682,7 +3682,7 @@ function buildDynamicContextBlock(
 // Mode-Specific Prompts
 // ============================================================================
 
-export type ChatMode = 'ask' | 'designer' | 'agent' | 'reviewer' | 'retriever' | 'custom' | 'swarm' | 'refactor' | 'planner';
+export type ChatMode = 'ask' | 'designer' | 'agent' | 'agent_v2' | 'reviewer' | 'retriever' | 'custom' | 'swarm' | 'refactor' | 'planner';
 
 export function areToolsEnabledForProvider(_provider: AIProvider, mode: ChatMode): boolean {
   // Ask = simple Q&A without batch/task tools (matches UI); other modes are fully agentic.
@@ -3792,8 +3792,8 @@ function _buildStaticSystemPrompt(
   // Project root — stable within a session (tree is dynamic, injected in messages)
   const projectLine = shellContext?.cwd ? `\nPROJECT: ${shellContext.cwd}` : '';
 
-  // Build shell-specific guidance (for agent mode with terminal access)
-  const shellGuide = (mode === 'agent' && shellContext?.os && shellContext?.shell)
+  // Build shell-specific guidance (for agent modes with terminal access)
+  const shellGuide = ((mode === 'agent' || mode === 'agent_v2') && shellContext?.os && shellContext?.shell)
     ? getShellGuide(shellContext.shell)
     : '';
 
@@ -3819,17 +3819,23 @@ q: exec system.exec cmd:"..." → write cmd to temp .ps1 and run in agent shell`
     ? 'Review mode: Find and report issues. Suggest fixes but do not apply them.'
     : mode === 'refactor'
     ? 'Refactoring mode: Systematic code extraction and restructuring. Follow the 4-phase workflow.'
+    : mode === 'agent_v2'
+    ? 'Full agent mode: Can read, analyze, and modify code. Slim cognitive rules — runtime enforces freshness mechanically.'
     : 'Full agent mode: Can read, analyze, and modify code.';
 
   // Inject refactor config thresholds when in refactor mode (reuse refactorPart from cache key)
   const refactorConfig = mode === 'refactor' ? `\n${refactorPart}\n` : '';
 
   // Shared edit/verify discipline (non-designer, ATLS ready)
-  const editDisciplineSection = (atlsReady && mode !== 'designer') ? `\n${EDIT_DISCIPLINE}` : '';
+  const editDisciplineSection = (atlsReady && mode !== 'designer')
+    ? `\n${mode === 'agent_v2' ? EDIT_DISCIPLINE_V2 : EDIT_DISCIPLINE}`
+    : '';
 
-  // Designer uses slim context control + inline response hint; others use full COGNITIVE_CORE_V1.
+  // Designer uses slim context control; agent_v2 uses V2; others use full COGNITIVE_CORE_V1.
   const contextControl = mode === 'designer'
     ? `\n${CONTEXT_CONTROL_DESIGNER}\n## Output: 1 sentence between tool calls. End with a concise final summary.`
+    : mode === 'agent_v2'
+    ? `\n${CONTEXT_CONTROL_V2}`
     : `\n${CONTEXT_CONTROL_V4}`;
   const hppSection = (atlsReady && mode !== 'designer') ? `\n${HASH_PROTOCOL_CORE}` : '';
   const providerReinforcement = (provider === 'google' || provider === 'vertex')

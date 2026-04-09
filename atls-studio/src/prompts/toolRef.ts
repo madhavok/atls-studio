@@ -63,7 +63,11 @@ bd keys:key1,key2
 ru action?:set|delete|list key:name content?:"text"
 em content:"text" type?:name
 pi hashes:h:HASH1,h:HASH2 — or bare step id (in:r1.refs resolves refs)
-sh|ld|db|sg|ust|pc|ulo|dro|rec|st|ch
+pu hashes:h:HASH1,h:HASH2 — unpin (requires actual h:refs, not step IDs)
+dro hashes:h:HASH1,h:HASH2 — or scope:dormant max?:N (drops without hashes)
+rec hashes:h:HASH1 — recall evicted/archived content back into context
+pc hashes:h:HASH1,h:HASH2 tier?:pointer|sig — compact to digest
+sh|ld|db|sg|ust|ulo|st|ch
 nn|nr|ns|nm — hash-targeted metadata ops (hash:h:XXXX + op-specific params)
 iu ps:path1,path2 force?:true
 ie f:path le:[...] verify?:true force?:true
