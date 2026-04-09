@@ -898,6 +898,7 @@ function formatLabelSegment(segment: string): string {
 }
 
 import { FAMILY_ICONS } from '../../services/batch/families';
+import { normalizeOperationUse } from '../../services/batch/opShorthand';
 
 function getFriendlyToolName(toolName: string): string {
   if (toolName === 'batch') return '⚡ ATLS';
@@ -949,8 +950,11 @@ function getBatchSteps(args?: Record<string, unknown>): Array<{ id: string; use:
   return steps.map((step, index) => {
     const record = asRecord(step) || {};
     const withParams = asRecord(record.with) || {};
-    const use = typeof record.use === 'string' && record.use.trim()
-      ? record.use
+    const useRaw = typeof record.use === 'string' && record.use.trim()
+      ? record.use.trim()
+      : '';
+    const use = useRaw
+      ? String(normalizeOperationUse(useRaw.toLowerCase()))
       : `step.${index + 1}`;
     const id = typeof record.id === 'string' && record.id.trim()
       ? record.id
@@ -1005,7 +1009,7 @@ function expandBatchToolCall(toolCall: ToolCallLike): BatchStepCall[] {
   if (synth && synth.length > 0) {
     return synth.map((child) => ({
       id: child.id,
-      name: child.name,
+      name: String(normalizeOperationUse(String(child.name || '').trim().toLowerCase())),
       args: child.args,
       result: child.result,
       status: mapSyntheticStepStatus(child.status),
@@ -1885,8 +1889,11 @@ const SUBAGENT_STATUS_TEXT: Record<string, string> = {
 const SubAgentCard = memo(function SubAgentCard({ toolCall }: { toolCall: ToolCall }) {
   const [expanded, setExpanded] = useState(false);
   const args = toolCall.args || {};
-  const subType = String(args.type || 'retriever');
-  const query = String(args.query || '');
+  const roleFromDelegateName = toolCall.name?.startsWith('delegate.')
+    ? toolCall.name.slice('delegate.'.length)
+    : '';
+  const subType = String(args.type || roleFromDelegateName || 'retriever');
+  const query = String(args.query ?? (typeof args.q === 'string' ? args.q : '')).trim();
   const focusFiles = (args.focus_files as string[]) || [];
 
   const isRunning = toolCall.status === 'running' || toolCall.status === 'pending';

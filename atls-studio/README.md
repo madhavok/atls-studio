@@ -1,8 +1,109 @@
 # ATLS Studio
 
-AI-First IDE powered by ATLS - where the AI is the developer and you are the director.
+An AI-powered cognitive development environment with managed working memory, built on Tauri.
 
-## Repository layout
+## Features
+
+- **Engram-based Memory** — Hash-addressed knowledge units with lifecycle management (active → dormant → archived → evicted). Pin to retain, recall by hash, auto-evict under pressure.
+- **Universal Hash Pointers (UHPP)** — Reference any content by hash with line ranges, symbol selectors, shapes, diffs, and composition chains. `h:XXXX:fn(name):sig` targets a function signature directly.
+- **Multi-Provider AI** — Supports Anthropic (Claude), OpenAI (GPT), Google (Gemini), Vertex AI, and LM Studio for local models. Streaming responses with tool execution loops.
+- **9 Operation Families, 60+ Operations** — Discover, Understand, Change, Verify, Session, Annotation, Delegate, System, and Intent operations with short codes for efficient batch execution.
+- **Subagent Architecture** — Four specialized agents (Retriever, Designer, Coder, Tester) with isolated memory, compressed state snapshots, and different permission levels.
+- **Batch Execution** — Positional rebasing across sequential edits, snapshot tracking with content hashing, automatic context refresh, and interruption detection.
+- **Smart Editing** — Shadow editing with drift tolerance, body bounds detection (brace-based and indent-based), syntax validation with bracket hints, and per-file undo stacks.
+- **Workspace Management** — Multi-root project support with framework detection, language statistics, and `.atlsignore` filtering.
+- **Built-in Linting** — SWC-powered JavaScript/TypeScript analysis with fix suggestions and barrel export deduplication.
+- **Durable Blackboard** — Persistent key-value store surviving compaction and session boundaries. Stores plans, findings, edit records, and cognitive rules.
+- **History Compression** — Tool result deflation to hash references, batch input stubbing, and rolling summaries to maintain manageable context size.
+- **9 Chat Modes** — Agent, Designer, Ask, Reviewer, Retriever, Custom, Swarm, Refactor, and Planner modes for different workflows.
+
+## Architecture
+
+```
+┌──────────────────────────────────────────┐
+│               UI (React)                  │
+├──────────────────────────────────────────┤
+│            Orchestrator                   │
+│  (task planning, multi-agent coord)       │
+├──────────┬──────────┬────────────────────┤
+│ AI Service│ Subagent │  Batch Executor     │
+│ (5 provs) │ (4 types)│  (rebase+snapshot)  │
+├──────────┴──────────┴────────────────────┤
+│       Context Store + App Store           │
+│  (engrams, staging, BB, awareness)        │
+├──────────────────────────────────────────┤
+│       Rust Backend (Tauri IPC)            │
+│  (edits, hashing, workspace, PTY, lint)   │
+└──────────────────────────────────────────┘
+```
+
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for detailed architecture documentation.
+
+## Getting Started
+
+### Prerequisites
+
+- [Rust](https://rustup.rs/) (latest stable)
+- [Node.js](https://nodejs.org/) v18+
+- [pnpm](https://pnpm.io/) package manager
+
+### Setup
+
+```bash
+# Install dependencies
+pnpm install
+
+# Run in development mode
+pnpm tauri dev
+
+# Build for production
+pnpm tauri build
+```
+
+### Configuration
+
+Provider API keys are configured in the application settings:
+
+| Provider | Setting |
+|----------|----------|
+| Anthropic | API key |
+| OpenAI | API key |
+| Google | API key |
+| Vertex AI | Project ID + Location + OAuth token |
+| LM Studio | Base URL (default: `http://localhost:1234`) |
+
+## Project Structure
+
+```
+atls-studio/
+├── src/                          # TypeScript frontend
+│   ├── services/
+│   │   ├── orchestrator.ts       # Task decomposition & multi-agent coordination
+│   │   ├── aiService.ts          # AI provider integration & prompt assembly
+│   │   ├── subagentService.ts    # Retriever/Designer/Coder/Tester dispatch
+│   │   ├── historyCompressor.ts  # Tool result deflation & rolling summaries
+│   │   ├── hashProtocol.ts       # Chunk visibility lifecycle (HPP)
+│   │   └── batch/
+│   │       ├── executor.ts       # Positional rebase & snapshot tracking
+│   │       ├── types.ts          # Operation types & parameter schemas
+│   │       └── families.ts       # Operation family registry
+│   ├── stores/
+│   │   ├── contextStore.ts       # Working memory, staging, BB, awareness
+│   │   └── appStore.ts           # Settings, sessions, providers, chat modes
+│   └── utils/
+│       ├── uhppCanonical.ts      # UHPP type system
+│       └── hashResolver.ts       # Hash reference resolution
+├── src-tauri/src/                # Rust backend
+│   ├── lib.rs                    # Line edits, hashing, workspace, PTY, undo
+│   ├── batch_query/mod.rs        # Central operation dispatcher
+│   └── linter.rs                 # SWC-based JS/TS linting
+└── docs/
+    └── ARCHITECTURE.md           # Detailed architecture documentation
+```
+
+## License
+
+Proprietary — All rights reserved.
 
 This file lives in the **app package** folder (`<clone>/atls-studio/` — one directory inside the repository root, alongside `docs/` and `atls-rs/`). Paths in docs often write `atls-studio/src/…` meaning **this** folder’s `src/`, not the repository root.
 

@@ -5,7 +5,7 @@
  * safety, and budget constants without requiring Tauri runtime.
  */
 import { describe, it, expect } from 'vitest';
-import { ROLE_ALLOWED_OPS, SUBAGENT_MAX_FILE_PATHS } from './subagentService';
+import { ROLE_ALLOWED_OPS, SUBAGENT_MAX_FILE_PATHS, foldSubagentUsageMetrics } from './subagentService';
 import type { SubAgentRef, SubAgentResult, SubagentType } from './subagentService';
 import {
   SUBAGENT_MAX_ROUNDS,
@@ -340,6 +340,27 @@ describe('subagentService', () => {
       for (let i = 1; i < roles.length; i++) {
         expect(roles[i]).not.toBe(roles[i - 1]);
       }
+    });
+  });
+
+  describe('foldSubagentUsageMetrics', () => {
+    const zero = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 };
+
+    it('preserves prompt tokens when a later chunk sends input_tokens: 0 (Anthropic)', () => {
+      let m = foldSubagentUsageMetrics(zero, {
+        input_tokens: 48_000,
+        output_tokens: 0,
+        cache_read_input_tokens: 40_000,
+        cache_creation_input_tokens: 2_000,
+      });
+      m = foldSubagentUsageMetrics(m, {
+        input_tokens: 0,
+        output_tokens: 1_200,
+      });
+      expect(m.inputTokens).toBe(48_000);
+      expect(m.outputTokens).toBe(1_200);
+      expect(m.cacheReadTokens).toBe(40_000);
+      expect(m.cacheWriteTokens).toBe(2_000);
     });
   });
 });

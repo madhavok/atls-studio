@@ -203,6 +203,34 @@ interface PendingToolCall {
   args: Record<string, unknown>;
 }
 
+export interface SubagentUsageMetrics {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+}
+
+/**
+ * Merge streaming `usage` chunks into per-round totals.
+ * Anthropic sends prompt tokens on message_start and output tokens on message_delta; later chunks
+ * often repeat input_tokens: 0 — overwriting would zero out cost for the round (bug).
+ */
+export function foldSubagentUsageMetrics(
+  prev: SubagentUsageMetrics,
+  chunk: Pick<StreamChunk, 'input_tokens' | 'output_tokens' | 'cache_read_input_tokens' | 'cache_creation_input_tokens' | 'cached_content_tokens'>,
+): SubagentUsageMetrics {
+  const inT = chunk.input_tokens ?? 0;
+  const outT = chunk.output_tokens ?? 0;
+  let { inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens } = prev;
+  if (inT > 0) inputTokens = inT;
+  if (outT > 0) outputTokens = outT;
+  const cr = chunk.cache_read_input_tokens ?? chunk.cached_content_tokens ?? 0;
+  const cw = chunk.cache_creation_input_tokens ?? 0;
+  if (cr > 0) cacheReadTokens = cr;
+  if (cw > 0) cacheWriteTokens = cw;
+  return { inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens };
+}
+
 async function runSubagentRound(
   provider: AIProvider,
   apiKey: string,
@@ -257,12 +285,17 @@ async function runSubagentRound(
             args: chunk.input,
           });
           break;
-        case 'usage':
-          inputTokens = chunk.input_tokens ?? 0;
-          outputTokens = chunk.output_tokens ?? 0;
-          cacheReadTokens = chunk.cache_read_input_tokens ?? chunk.cached_content_tokens ?? 0;
-          cacheWriteTokens = chunk.cache_creation_input_tokens ?? 0;
+        case 'usage': {
+          const next = foldSubagentUsageMetrics(
+            { inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens },
+            chunk,
+          );
+          inputTokens = next.inputTokens;
+          outputTokens = next.outputTokens;
+          cacheReadTokens = next.cacheReadTokens;
+          cacheWriteTokens = next.cacheWriteTokens;
           break;
+        }
         case 'stop_reason':
           stopReason = chunk.reason;
           break;

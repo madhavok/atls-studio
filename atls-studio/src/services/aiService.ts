@@ -3101,19 +3101,32 @@ function normalizeToolParams(args: Record<string, unknown>): void {
   }
 }
 
+function batchStepWithParams(stepRecord: unknown): Record<string, unknown> {
+  if (!stepRecord || typeof stepRecord !== 'object' || Array.isArray(stepRecord)) return {};
+  const rec = stepRecord as Record<string, unknown>;
+  const w = rec.with;
+  return w && typeof w === 'object' && !Array.isArray(w) ? (w as Record<string, unknown>) : {};
+}
+
 function buildBatchSyntheticToolCalls(result: UnifiedBatchResult, batchArgs: Record<string, unknown>): ToolCallEvent[] {
-  return result.step_results.map((step, index) => ({
-    id: `batch:${typeof batchArgs.id === 'string' ? batchArgs.id : 'batch'}:${step.id}:${index}`,
-    name: step.use,
-    args: {
-      batch_id: typeof batchArgs.id === 'string' ? batchArgs.id : undefined,
-      step_id: step.id,
-      step_use: step.use,
-      refs: step.refs,
-    },
-    status: step.ok ? 'completed' : 'failed',
-    result: step.summary ?? step.error ?? '',
-  }));
+  const rawSteps = Array.isArray(batchArgs.steps) ? batchArgs.steps as Array<Record<string, unknown>> : [];
+  return result.step_results.map((step, index) => {
+    const rawStep = rawSteps.find(s => String(s?.id ?? '') === step.id) ?? rawSteps[index];
+    const withParams = batchStepWithParams(rawStep);
+    return {
+      id: `batch:${typeof batchArgs.id === 'string' ? batchArgs.id : 'batch'}:${step.id}:${index}`,
+      name: step.use,
+      args: {
+        ...withParams,
+        batch_id: typeof batchArgs.id === 'string' ? batchArgs.id : undefined,
+        step_id: step.id,
+        step_use: step.use,
+        refs: step.refs,
+      },
+      status: step.ok ? 'completed' : 'failed',
+      result: step.summary ?? step.error ?? '',
+    };
+  });
 }
 
 async function executeToolCallDetailed(
