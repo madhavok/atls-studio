@@ -1549,7 +1549,10 @@ export function stopChat(): void {
     });
     // Ensure UI exits generating state synchronously
     useAppStore.getState().setIsGenerating(false);
-    console.log('[aiService] Chat stopped by user');
+    const prog = useAppStore.getState().agentProgress;
+    if (prog.status !== 'stopped' && prog.status !== 'idle') {
+      useAppStore.getState().setAgentProgress({ status: 'stopped', stoppedReason: 'aborted' });
+    }
     console.log('[aiService] Chat stopped by user');
   }
 }
@@ -2910,11 +2913,25 @@ async function streamChatViaTauri(
         }
       }
     }
+
+    // Loop exhausted all rounds without an inner break — ensure progress is terminal
+    const loopExitProg = useAppStore.getState().agentProgress;
+    if (loopExitProg.status !== 'stopped' && loopExitProg.status !== 'idle') {
+      console.log(`[aiService] Tool loop exhausted ${maxRounds} rounds — forcing stopped state`);
+      useAppStore.getState().setAgentProgress({ status: 'stopped', stoppedReason: 'max_rounds' });
+      useAppStore.getState().setAgentCanContinue(true);
+    }
   } catch (error) {
     console.error('[aiService] Stream error:', error);
     if (!abortSignal.aborted) {
       useAppStore.getState().setAgentProgress({ status: 'stopped', stoppedReason: 'error', canTaskComplete: true });
       safeCallbacks.onError(error instanceof Error ? error : new Error(String(error)));
+    } else {
+      // Abort path: catch block didn't set stopped — fix stale progress
+      const abortProg = useAppStore.getState().agentProgress;
+      if (abortProg.status !== 'stopped' && abortProg.status !== 'idle') {
+        useAppStore.getState().setAgentProgress({ status: 'stopped', stoppedReason: 'aborted' });
+      }
     }
   } finally {
     const shouldNotifyDone = _activeSession === session;

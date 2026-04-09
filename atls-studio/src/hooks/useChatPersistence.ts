@@ -326,7 +326,7 @@ export async function applyHashFirstFreshness(): Promise<{ preserved: number; su
 
     for (const [hash, chunk] of chunks) {
       if (chunk.viewKind === 'snapshot') continue;
-      if (!FILE_BACKED_TYPES.has(chunk.type)) continue;
+      if (chunk.type === 'msg:user' || chunk.type === 'msg:asst') continue;
 
       const diskRev = resolveRevision(chunk.source);
 

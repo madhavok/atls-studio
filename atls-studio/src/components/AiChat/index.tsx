@@ -260,15 +260,21 @@ const AgentStatusCard = memo(function AgentStatusCard() {
     failedTools: progress.recentTools.filter((t) => t.status === 'failed'),
   }), [progress.recentTools]);
 
-  if (progress.status === 'idle' && !isGenerating) return null;
+  // Resolve effective status: if not generating but progress is still mid-flight, treat as stopped
+  const effectiveStatus = (!isGenerating && progress.status !== 'idle' && progress.status !== 'stopped')
+    ? 'stopped' : progress.status;
+  const effectiveReason = effectiveStatus === 'stopped' && !progress.stoppedReason
+    ? 'completed' : progress.stoppedReason;
 
-  const statusLabel = progress.status === 'thinking' ? 'Thinking...'
-    : progress.status === 'executing' ? `Executing tools...`
-    : progress.status === 'auto_continuing' ? `Auto-continuing...`
-    : progress.status === 'stopped' ? (progress.stoppedReason === 'completed' ? 'Completed' : 'Stopped')
+  if (effectiveStatus === 'idle' && !isGenerating) return null;
+
+  const statusLabel = effectiveStatus === 'thinking' ? 'Thinking...'
+    : effectiveStatus === 'executing' ? `Executing tools...`
+    : effectiveStatus === 'auto_continuing' ? `Auto-continuing...`
+    : effectiveStatus === 'stopped' ? (effectiveReason === 'completed' ? 'Completed' : 'Stopped')
     : 'Working...';
-  const statusColor = progress.status === 'stopped'
-    ? (progress.stoppedReason === 'completed' ? 'text-green-400' : 'text-yellow-400')
+  const statusColor = effectiveStatus === 'stopped'
+    ? (effectiveReason === 'completed' ? 'text-green-400' : 'text-yellow-400')
     : 'text-blue-400';
 
   return (
@@ -1047,7 +1053,7 @@ function expandBatchToolCall(toolCall: ToolCallLike): BatchStepCall[] {
 
     return {
       id: `${toolCall.id}::${step.id}`,
-      name: step.use,
+      name: normalizeOperationUse(step.use),
       args: step.with,
       result,
       status,
@@ -3406,6 +3412,10 @@ export function AiChat() {
           subagentProgressByStepRef.current.clear();
           setIsGenerating(false);
           clearToolCalls();
+          const prog = useAppStore.getState().agentProgress;
+          if (prog.status !== 'stopped' && prog.status !== 'idle') {
+            useAppStore.getState().setAgentProgress({ status: 'stopped', stoppedReason: prog.stoppedReason || 'completed' });
+          }
           if (useAppStore.getState().agentProgress.stoppedReason === 'completed') {
             setAgentCanContinue(false);
           }
@@ -3421,6 +3431,7 @@ export function AiChat() {
       streamingSegmentsRef.current = [];
       seenToolCallIds.current.clear();
       subagentProgressByStepRef.current.clear();
+      useAppStore.getState().setAgentProgress({ status: 'stopped', stoppedReason: 'error' });
     }
   };
 
@@ -3746,6 +3757,10 @@ export function AiChat() {
           subagentProgressByStepRef.current.clear();
           setIsGenerating(false);
           clearToolCalls();
+          const prog = useAppStore.getState().agentProgress;
+          if (prog.status !== 'stopped' && prog.status !== 'idle') {
+            useAppStore.getState().setAgentProgress({ status: 'stopped', stoppedReason: prog.stoppedReason || 'completed' });
+          }
           if (useAppStore.getState().agentProgress.stoppedReason === 'completed') {
             setAgentCanContinue(false);
           }
@@ -3761,6 +3776,7 @@ export function AiChat() {
       streamingSegmentsRef.current = [];
       seenToolCallIds.current.clear();
       subagentProgressByStepRef.current.clear();
+      useAppStore.getState().setAgentProgress({ status: 'stopped', stoppedReason: 'error' });
     }
   }, [isGenerating, agentCanContinue, setAgentCanContinue, messages, addMessage, setIsGenerating, projectPath, atlsInitialized, initAtls, getWorkspaceContext, getAIConfig, clearToolCalls, upsertToolCall, setContextUsage, chatMode]);
 
