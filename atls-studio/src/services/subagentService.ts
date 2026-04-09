@@ -210,6 +210,12 @@ export interface SubagentUsageMetrics {
   cacheWriteTokens: number;
 }
 
+/** Usage token fields from the `usage` stream variant (Pick on StreamChunk union is invalid in TS). */
+type StreamUsageChunkFields = Pick<
+  Extract<StreamChunk, { type: 'usage' }>,
+  'input_tokens' | 'output_tokens' | 'cache_read_input_tokens' | 'cache_creation_input_tokens' | 'cached_content_tokens'
+>;
+
 /**
  * Merge streaming `usage` chunks into per-round totals.
  * Anthropic sends prompt tokens on message_start and output tokens on message_delta; later chunks
@@ -217,7 +223,7 @@ export interface SubagentUsageMetrics {
  */
 export function foldSubagentUsageMetrics(
   prev: SubagentUsageMetrics,
-  chunk: Pick<StreamChunk, 'input_tokens' | 'output_tokens' | 'cache_read_input_tokens' | 'cache_creation_input_tokens' | 'cached_content_tokens'>,
+  chunk: StreamUsageChunkFields,
 ): SubagentUsageMetrics {
   const inT = chunk.input_tokens ?? 0;
   const outT = chunk.output_tokens ?? 0;
