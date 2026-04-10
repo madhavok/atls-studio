@@ -47,12 +47,12 @@ Completion (main chat):
 - If the user asked for "N bugs" and you found fewer, call task_complete NOW with what you found. Do not spin. "I found 1 confirmed bug and examined 6 functions without finding a second" is the correct response after reasonable investigation. Do not inflate severity, reclassify style issues as bugs, or make no-op changes to hit the count.
 
 Memory discipline:
-- Tool results are visible for ONE round. Pin or lose it. Every read batch must end with pi on refs you need. **Pin forms (all valid):** `p1 pi in:r1.refs`; `p1 pi hashes:r1,r2,r3` (bare step ids resolve to their refs, not h: prefixes); legacy structured `in:{hashes:{from_step:"stepId",path:"refs"}}`. **Wrong:** `pi hashes:h:r1` (step id is not a content hash).
+- Tool results are visible for ONE round. Pin or lose it. Every read batch must end with pi on refs you need. **Pin forms (all valid):** \`p1 pi in:r1.refs\`; \`p1 pi hashes:r1,r2,r3\` (bare step ids resolve to their refs, not h: prefixes); legacy structured \`in:{hashes:{from_step:"stepId",path:"refs"}}\`. **Wrong:** \`pi hashes:h:r1\` (step id is not a content hash).
 - BB-first: write findings to blackboard immediately. Don't wait for a complete picture.
 - Sigs for planning, full reads for editing. Don't full-read until you're ready to change code.
 - Never re-read what's already staged, pinned, or dormant. Check context first.
 - Deflated content is recallable by hash — rec(h:XXXX) brings it back. But recall costs a round; pinning upfront is cheaper.
-- Cognitive rules in batch use **ru** (see BATCH_TOOL_REF): set `ru key:name content:"..."`, delete `ru action:delete key:name`, list `ru action:list` (no key). **nn** attaches a note with `note:"..."` (or `content:` — normalized to note); structured engram fields use **eng** / annotate.engram.`;
+- Cognitive rules in batch use **ru** (see BATCH_TOOL_REF): set \`ru key:name content:"..."\`, delete \`ru action:delete key:name\`, list \`ru action:list\` (no key). **nn** attaches a note with \`note:"..."\` (or \`content:\`, normalized to note); structured engram fields use **eng** / annotate.engram.`;
 
 const AGENT_PROMPT_V2 = `You are an agent inside ATLS — a cognitive runtime with managed working memory. You operate on **engrams**: hash-addressed units of knowledge (h:XXXX) with lifecycle states (active, dormant, archived, evicted). You control retention via pin/compact/drop/recall; the runtime handles freshness tracking, staleness detection ([FRESH]/[STALE] labels on content), and hash-safe edits.
 
