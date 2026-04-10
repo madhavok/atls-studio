@@ -581,9 +581,9 @@ export function formatShapeRef(shortHash: string, shape: string, lines?: string)
   return `h:${shortHash}${lineSpec}:${shape}`;
 }
 
-/** Format a diff reference: `h:OLD..h:NEW` */
+/** Format a diff reference: `h:OLDshort..NEWshort` (both truncated to SHORT_HASH_LEN) */
 export function formatDiffRef(oldHash: string, newHash: string): string {
-  const oldShort = oldHash.length > SHORT_HASH_LEN ? oldHash.slice(0, SHORT_HASH_LEN) : oldHash;
-  const newShort = newHash.length > SHORT_HASH_LEN ? newHash.slice(0, SHORT_HASH_LEN) : newHash;
-  return `h:${oldShort}..h:${newShort}`;
+  const oldShort = oldHash.slice(0, SHORT_HASH_LEN);
+  const newShort = newHash.slice(0, SHORT_HASH_LEN);
+  return `h:${oldShort}..${newShort}`;
 }
