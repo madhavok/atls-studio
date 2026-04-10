@@ -8,11 +8,11 @@ const COLORS = {
   staticSystem: '#ef4444',
   history: '#0ea5e9',
   staged: '#3b82f6',
-  workspace: '#f59e0b',
+  workspace: '#a855f7',
   blackboard: '#a855f7',
   wm: '#a3a3a3',
   archived: '#ec4899',
-  overhead: '#f97316',
+  overhead: '#ec4899',
   free: 'rgba(34,197,94,0.3)',
 };
 
