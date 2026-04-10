@@ -61,7 +61,7 @@ dd query:"what to design" ff?:path1,path2
 bw key:name content:"text"
 br keys:key1,key2
 bd keys:key1,key2
-ru action?:set|delete|list key?:name content?:"text" — list needs only action:list (no key). set/delete need key.
+ru action?:set|delete|list key?:name content?:"text" — list needs only action:list (no key). set/delete need key (alias: hash → same as key for rule name).
 em content:"text" type?:name
 pi hashes:h:HASH1,h:HASH2 — or bare step id (in:r1.refs resolves refs)
 pu hashes:h:HASH1,h:HASH2 — unpin (requires actual h:refs, not step IDs)

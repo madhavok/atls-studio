@@ -17,6 +17,18 @@ describe('annotation handlers', () => {
     expect(out.summary).toMatch(/no cognitive rules set/);
   });
 
+  it('rule set accepts hash as alias for key', async () => {
+    const setRule = vi.fn().mockReturnValue({ tokens: 5, warning: undefined });
+    const store = {
+      listRules: vi.fn(),
+      removeRule: vi.fn(),
+      setRule,
+    };
+    const out = await handleRule({ hash: 'h:42a831', content: 'note text' }, makeCtx(store));
+    expect(out.ok).toBe(true);
+    expect(setRule).toHaveBeenCalledWith('h:42a831', 'note text');
+  });
+
   it('rule delete returns not found when missing key', async () => {
     const store = {
       listRules: vi.fn(),

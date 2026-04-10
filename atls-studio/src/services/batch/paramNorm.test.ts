@@ -159,6 +159,18 @@ describe('normalizeStepParams', () => {
     });
   });
 
+  describe('session.rule aliases', () => {
+    it('normalizes hash → key for session.rule', () => {
+      const out = normalizeStepParams('session.rule', {
+        hash: 'h:42a831',
+        content: 'rule body',
+      });
+      expect(out.key).toBe('h:42a831');
+      expect(out.hash).toBeUndefined();
+      expect(out.content).toBe('rule body');
+    });
+  });
+
   describe('global edit content aliases (cross-IDE)', () => {
     it('normalizes "old_str" → "old" (Claude)', () => {
       const out = normalizeStepParams('change.edit', { old_str: 'before', new_str: 'after' });

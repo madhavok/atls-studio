@@ -39,7 +39,7 @@ function isChunkSuspect(store: ContextStoreApi): (hash: string) => boolean {
 
 export const handleRule: OpHandler = async (params, ctx) => {
   const action = (params.action as string) || 'set';
-  const key = params.key as string;
+  const key = (params.key ?? params.hash) as string;
 
   if (action === 'list') {
     const rules = ctx.store().listRules();
