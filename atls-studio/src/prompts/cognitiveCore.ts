@@ -19,13 +19,17 @@ Edit inherits pin: editing a pinned engram auto-pins the new hash, auto-unpins t
 compact_history = compress old tool results to h:refs (auto-managed; call only when stats show compressible tokens outside protected window).
 
 ### COGNITIVE RULES
-Write rules to shape your own reasoning: \`rule(key:"rust-safety", content:"Always check lifetime issues before proposing moves")\`.
-Rules persist across turns within the session. Delete with \`rule(key:"...", action:"delete")\`. List with \`rule(key:"_", action:"list")\`.
+Write rules to shape your own reasoning. In **batch** q: lines the op is **ru** (session.rule), not the prose helper name \`rule(...)\`:
+- Set: \`r1 ru key:"rust-safety" content:"Always check lifetime issues before proposing moves"\`
+- Delete: \`r1 ru action:delete key:"rust-safety"\`
+- List: \`r1 ru action:list\` (no \`key\`)
+Prose shorthand \`rule(key:…, content:…)\` / \`rule(key:…, action:"delete")\` describes the same intent. Rules persist for the session.
 
 ### HASH RESOLUTION (UHPP)
 See UHPP spec for full hash syntax, symbol kinds, shapes, selectors, and set ops.
 h:XXXX:LL-LL in text — UI renders expandable code pills. NEVER paste raw code into chat; always use h:refs.
 Every read/edit/search returns h:ref — use it, never repeat content.
+**read.lines (rl):** on a **file / read** engram, lines are into that snapshot. On **search/symbol (sc/sy)** result hashes, lines are into the **formatted result text** (engram body); for real file lines use \`f\`+\`sl\`/\`el\` or a hash from a file read.
 
 ### TASK ROUTING
 Large file (>500L) -> pin(sig) + extract_plan + cf + verify per batch. NEVER use shell for code extraction.
@@ -120,13 +124,17 @@ Edit inherits pin: editing a pinned engram auto-pins the new hash, auto-unpins t
 compact_history = compress old tool results to h:refs (auto-managed; call only when stats show compressible tokens outside protected window).
 
 ### COGNITIVE RULES
-Write rules to shape your own reasoning: \`rule(key:"rust-safety", content:"Always check lifetime issues before proposing moves")\`.
-Rules persist across turns within the session. Delete with \`rule(key:"...", action:"delete")\`. List with \`rule(key:"_", action:"list")\`.
+Write rules to shape your own reasoning. In **batch** q: lines the op is **ru** (session.rule), not the prose helper name \`rule(...)\`:
+- Set: \`r1 ru key:"rust-safety" content:"Always check lifetime issues before proposing moves"\`
+- Delete: \`r1 ru action:delete key:"rust-safety"\`
+- List: \`r1 ru action:list\` (no \`key\`)
+Prose shorthand \`rule(key:…, content:…)\` / \`rule(key:…, action:"delete")\` describes the same intent. Rules persist for the session.
 
 ### HASH RESOLUTION (UHPP)
 See UHPP spec for full hash syntax, symbol kinds, shapes, selectors, and set ops.
 h:XXXX:LL-LL in text — UI renders expandable code pills. NEVER paste raw code into chat; always use h:refs.
 Every read/edit/search returns h:ref — use it, never repeat content.
+**read.lines (rl):** on a **file / read** engram, lines are into that snapshot. On **search/symbol (sc/sy)** result hashes, lines are into the **formatted result text** (engram body); for real file lines use \`f\`+\`sl\`/\`el\` or a hash from a file read.
 
 ### TASK ROUTING
 Large file (>500L) -> pin(sig) + extract_plan + cf + verify per batch. NEVER use shell for code extraction.

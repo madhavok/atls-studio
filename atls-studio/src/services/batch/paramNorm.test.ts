@@ -148,6 +148,17 @@ describe('normalizeStepParams', () => {
     });
   });
 
+  describe('annotate.note aliases', () => {
+    it('normalizes content → note for annotate.note', () => {
+      const out = normalizeStepParams('annotate.note', {
+        hash: 'h:abc123',
+        content: 'my note text',
+      });
+      expect(out.note).toBe('my note text');
+      expect(out.content).toBeUndefined();
+    });
+  });
+
   describe('global edit content aliases (cross-IDE)', () => {
     it('normalizes "old_str" → "old" (Claude)', () => {
       const out = normalizeStepParams('change.edit', { old_str: 'before', new_str: 'after' });

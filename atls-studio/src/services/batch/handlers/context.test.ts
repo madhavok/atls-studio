@@ -182,4 +182,67 @@ describe('context handlers snapshot authority', () => {
       content_hash: 'deadbeefcafe1234567890abcdef',
     });
   });
+
+  it('read.lines on search engram slices in-memory body without calling read_lines', async () => {
+    const atls = vi.fn();
+    const ctx = makeCtx({ atlsBatchQuery: atls });
+    const short = useContextStore.getState().addChunk(
+      'hit one\nhit two\nhit three',
+      'search',
+      'myQuery',
+    );
+
+    const result = await handleReadLines({ hash: `h:${short}`, lines: '1-2' }, ctx);
+
+    expect(atls).not.toHaveBeenCalled();
+    expect(result.ok).toBe(true);
+    expect(result.summary).toContain('engram:h:');
+    expect(result.summary).toContain('hit one');
+    expect(result.summary).toContain('hit two');
+    expect(result.summary).toContain('search');
+    const c = result.content as Record<string, unknown>;
+    expect(String(c.file)).toMatch(/^engram:h:/);
+    expect(typeof c.content_hash).toBe('string');
+    expect(String(c.content_hash).length).toBeGreaterThan(0);
+    expect(result.refs?.[0]).toMatch(/^h:[0-9a-f]+:1-2$/i);
+  });
+
+  it('read.lines on symbol engram uses in-memory path and ignores history flag', async () => {
+    const atls = vi.fn();
+    const ctx = makeCtx({ atlsBatchQuery: atls });
+    const short = useContextStore.getState().addChunk('sym:a\nsym:b', 'symbol', 'foo');
+
+    const result = await handleReadLines({ hash: `h:${short}`, lines: '2', history: true }, ctx);
+
+    expect(atls).not.toHaveBeenCalled();
+    expect(result.ok).toBe(true);
+    expect(result.summary).toContain('sym:b');
+  });
+
+  it('read.lines with explicit file_path still uses backend for file-backed reads', async () => {
+    const atls = vi.fn().mockResolvedValue({
+      file: 'src/demo.ts',
+      h: 'h:abad1dea',
+      content_hash: 'abad1dea00000000000000000000',
+      target_range: [[1, 1]],
+      actual_range: [[1, 1]],
+      context_lines: 3,
+      content: '   1|x',
+    });
+    const ctx = makeCtx({ atlsBatchQuery: atls });
+    useContextStore.getState().addChunk('search blob', 'search', 'q');
+
+    const result = await handleReadLines({
+      hash: 'h:abad1dea00000000000000000000',
+      lines: '1',
+      file_path: 'src/demo.ts',
+    }, ctx);
+
+    expect(atls).toHaveBeenCalledWith('read_lines', expect.objectContaining({
+      hash: 'h:abad1dea00000000000000000000',
+      lines: '1',
+      file_path: 'src/demo.ts',
+    }));
+    expect(result.ok).toBe(true);
+  });
 });

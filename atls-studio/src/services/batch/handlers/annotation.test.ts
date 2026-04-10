@@ -12,7 +12,7 @@ describe('annotation handlers', () => {
       removeRule: vi.fn(),
       setRule: vi.fn(),
     };
-    const out = await handleRule({ action: 'list', key: '_' }, makeCtx(store));
+    const out = await handleRule({ action: 'list' }, makeCtx(store));
     expect(out.ok).toBe(true);
     expect(out.summary).toMatch(/no cognitive rules set/);
   });
@@ -26,6 +26,17 @@ describe('annotation handlers', () => {
     const out = await handleRule({ action: 'delete', key: 'missing' }, makeCtx(store));
     expect(out.ok).toBe(true);
     expect(out.summary).toMatch(/not found/);
+  });
+
+  it('rule list works without key param', async () => {
+    const store = {
+      listRules: vi.fn().mockReturnValue([{ key: 'a', content: 'x', tokens: 1 }]),
+      removeRule: vi.fn(),
+      setRule: vi.fn(),
+    };
+    const out = await handleRule({ action: 'list' }, makeCtx(store));
+    expect(out.ok).toBe(true);
+    expect(out.summary).toContain('a: x');
   });
 
   it('annotate requires hash param', async () => {

@@ -86,6 +86,8 @@ const OP_ALIASES: Readonly<Partial<Record<OperationKind, Readonly<Record<string,
     target_file: 'target_file',
   },
   'system.git': { paths: 'files', file_paths: 'files' },
+  // annotate.note expects `note`; models often send `content` (symmetry with bw, eng fields.note).
+  'annotate.note': { content: 'note' },
 };
 
 // ---------------------------------------------------------------------------

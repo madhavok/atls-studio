@@ -4,11 +4,12 @@
 
 import type { OpHandler, StepOutput, ExpandedFilePath, HandlerContext } from '../types';
 import { getFreshnessHintForRefs } from '../../freshnessPreflight';
-import { hashContentSync, SHORT_HASH_LEN, type DigestSymbol } from '../../../utils/contextHash';
+import { hashContentSync, SHORT_HASH_LEN, sliceContentByLines, type DigestSymbol } from '../../../utils/contextHash';
 import { countTokensSync } from '../../../utils/tokenCounter';
 import { invoke } from '@tauri-apps/api/core';
 import { invokeWithTimeout } from '../../toolHelpers';
 import { parseHashRef } from '../../../utils/hashRefParsers';
+import { parseLineRanges } from '../../../utils/hashModifierParser';
 import { resolveRecencyInString } from '../../../utils/hashResolver';
 import { useRetentionStore } from '../../../stores/retentionStore';
 import { formatResult } from '../../../utils/toon';
@@ -85,6 +86,34 @@ function formatLineRanges(ranges: Array<[number, number | null]> | undefined): s
   return ranges
     .map(([start, end]) => (end == null || end === start ? `${start}` : `${start}-${end}`))
     .join(',');
+}
+
+/** Engram types whose body is not a single on-disk file; `source` is often a query/symbol, not `file_path`. */
+const READ_LINES_ENGRAM_TYPES = new Set([
+  'search',
+  'symbol',
+  'deps',
+  'issues',
+  'analysis',
+  'blackboard',
+]);
+
+function engramLineRanges(
+  linesSpec: string,
+  totalLines: number,
+  contextLines: number,
+): { target: Array<[number, number | null]>; actual: Array<[number, number | null]> } | null {
+  const parsed = parseLineRanges(linesSpec.trim());
+  if (!parsed?.length) return null;
+  const buffered = Math.max(0, Math.min(5, Math.trunc(contextLines)));
+  const actual: Array<[number, number | null]> = [];
+  for (const [start, end] of parsed) {
+    const actualStart = Math.max(1, start - buffered);
+    const endCap = end ?? totalLines;
+    const actualEnd = Math.min(endCap + buffered, totalLines);
+    actual.push([actualStart, actualEnd]);
+  }
+  return { target: parsed, actual };
 }
 
 function extractContentHash(payload: Record<string, unknown>): string | undefined {
@@ -518,14 +547,65 @@ export const handleReadLines: OpHandler = async (params, ctx) => {
 
   const rlHistory = params.history === true;
   try {
+    const explicitFilePath = fp;
+    const chunkInfo = ctx.store().getChunkForHashRef(rlHash);
+    const engramType = chunkInfo?.chunkType;
+    if (
+      !explicitFilePath
+      && chunkInfo
+      && engramType
+      && READ_LINES_ENGRAM_TYPES.has(engramType)
+    ) {
+      const body = chunkInfo.content ?? '';
+      const totalLines = body.length === 0 ? 0 : body.split('\n').length;
+      const rangeInfo = engramLineRanges(rlLines, totalLines, requestedContextLines);
+      if (!rangeInfo) {
+        return err(`read_lines: invalid lines spec for engram — ${rlLines}`);
+      }
+      const rlContent = sliceContentByLines(body, rlLines, false, requestedContextLines);
+      if (!rlContent.trim()) {
+        return err(`read_lines: no lines matched for engram (${rlLines}; engram has ${totalLines} lines)`);
+      }
+      const { target: targetRange, actual: actualRange } = rangeInfo;
+      const tk = countTokensSync(rlContent);
+      const targetLabel = formatLineRanges(targetRange) || rlLines;
+      const actualLabel = formatLineRanges(actualRange);
+      const displayFile = `engram:${normalizeHashRefToken(rlHash)}`;
+      const contentHash = hashContentSync(body);
+      const lineSpecForRef =
+        formatLineRanges(targetRange) || (typeof rlLines === 'string' ? rlLines.trim() : '');
+      const baseRef = normalizeHashRefToken(rlHash);
+      const rlRefs = lineSpecForRef ? [`${baseRef}:${lineSpecForRef}`] : [baseRef];
+      const rlStore = ctx.store();
+      const rlFreshnessHint = getFreshnessHintForRefs(rlStore, rlRefs);
+      const kindLabel = engramType === 'blackboard' ? 'blackboard' : engramType;
+      const rlSummary =
+        `read_lines: ${displayFile}:${targetLabel} → ${baseRef} (${kindLabel}, ${tk}tk, ctx:${requestedContextLines}${actualLabel ? ` actual:${actualLabel}` : ''})\n${rlContent}`;
+      const fullSummary = rlFreshnessHint ? `${rlSummary}\n${rlFreshnessHint}` : rlSummary;
+      return {
+        kind: 'file_refs',
+        ok: true,
+        refs: rlRefs,
+        summary: fullSummary,
+        tokens: tk,
+        ...(rlFreshnessHint ? { _hash_warnings: [rlFreshnessHint] } : {}),
+        content: {
+          file: displayFile,
+          hash: baseRef,
+          content_hash: contentHash,
+          target_range: targetRange,
+          actual_range: actualRange,
+          context_lines: requestedContextLines,
+          content: rlContent,
+        },
+      };
+    }
+
     const rlParams: Record<string, unknown> = { hash: rlHash, lines: rlLines, context_lines: requestedContextLines };
     // Always provide file_path to the backend as a fallback for path resolution.
     // Prefer the explicit param, fall back to looking up the source from context store.
     let effectiveFp = fp || params.file_path as string | undefined;
-    if (!effectiveFp && rlHash) {
-      const chunk = ctx.store().getChunkForHashRef(rlHash);
-      if (chunk?.source) effectiveFp = chunk.source;
-    }
+    if (!effectiveFp && chunkInfo?.source) effectiveFp = chunkInfo.source;
     if (effectiveFp) rlParams.file_path = effectiveFp;
     if (rlHistory) rlParams.history = true;
     const rlResult = await ctx.atlsBatchQuery('read_lines', rlParams) as Record<string, unknown>;

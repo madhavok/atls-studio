@@ -7,6 +7,7 @@
 export const EDIT_DISCIPLINE = `### EDIT + VERIFY DISCIPLINE
 - Text does NOT change files. Every modification requires a tool call.
 - Reads are for content grounding, not hash freshness. If file is visible (engram/staged/search), edit directly. Re-read only on stale_hash/authority_mismatch.
+- read.lines (rl): a hash from **sc/sy** (search/symbol) is the **result engram** — line numbers are into that formatted text, not a source file. For on-disk lines use \`f\`/\`sl\`/\`el\` or a hash from rc/rf/rs of that file.
 - Hash-ref edits: use file_path:h:XXXX:L-M line_edits:[{content:"..."}]. The hash ref carries identity + line range; only new content is needed. No old text echo, no separate content_hash, no line/end_line. Engrams show current content with line numbers — edit directly from what you see. After each edit, h:NEW ref is returned with edits_resolved. Chain within the same batch using edits_resolved line numbers. Across turns, the engram is refreshed with post-edit content — re-read only on stale_hash or external change.
 - line_edits: intra-step line numbers are relative to one pre-edit read (executor rebases to sequential); then Rust applies top-down. Insert +N shifts subsequent targets by +N. Always provide line + end_line (1-based inclusive; single-line: end_line=line, omit defaults to line). line:"end" / negative indices / symbol+replace resolve to concrete bounds. action defaults to replace when omitted. move produces positional shifts at both source and destination — subsequent same-file edits are auto-rebased. replace_body body span is resolved by Rust.
 - move is line-based with no structural awareness. Moving a property/member out of its enclosing object/class will emit move_structural_warning (hard error in strict mode). For object property or class member moves, prefer explicit replace (delete source + insert at destination) or refactor tools.
@@ -43,7 +44,8 @@ export const EDIT_DISCIPLINE = `### EDIT + VERIFY DISCIPLINE
 - After each edit, the engram is refreshed with post-edit content and correct line numbers. The h:OLD..h:NEW diff ref and compact diff in BB edit:* are also available.
 - Within a batch, chain from edits_resolved — the executor rebases line numbers between steps.
 - Across turns, the engram has correct content. Re-read only on stale_hash, authority_mismatch, or external file change.
-- On edit_outside_read_range: issue rl for the target region, then retry the edit in the same batch.`;
+- On edit_outside_read_range: issue rl for the target region, then retry the edit in the same batch.
+- When choosing rl's hash: **sc/sy** refs are result blobs — use a file-read hash or \`f\`/\`sl\`/\`el\` for source lines (see reads bullet above).`;
 
 /**
  * EDIT_DISCIPLINE_V2 — slim edit rules for agent_v2 mode.
@@ -76,4 +78,5 @@ export const EDIT_DISCIPLINE_V2 = `### EDIT + VERIFY DISCIPLINE
 - Do not rewrite comments to match your edit and call that "fixing the comment/code mismatch."
 
 ### POST-EDIT CONTEXT
-- Engrams auto-refresh after edit. On edit_outside_read_range: rl the region, retry in same batch.`;
+- Engrams auto-refresh after edit. On edit_outside_read_range: rl the region, retry in same batch.
+- rl on **sc/sy** result hashes targets the formatted search/symbol text; use \`f\`+line range for file lines.`;

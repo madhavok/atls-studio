@@ -22,6 +22,7 @@ sa subtask?:name summary:required
 rc type:smart|full|module|component|test|tree ps:path1,path2 depth?:N glob?:pattern line_range?:start-end max_lines?:N
 rs ps:path1,path2 shape:sig max_files?:N
 rl hash:h:XXXX lines:15-50 | f:path sl:N el:N context_lines?:0-5
+  For file/smart/raw engrams, lines are into that file snapshot. For sc/sy (search/symbol) result hashes, lines are into the formatted result text (engram body), not a source file — use f:+sl/el when you need real file lines.
 rf ps:path1,path2 type?:smart|full — simpler than rc, no shaped/tree/bind support
 sc qs:term1,term2 ps?:path1,path2 limit?:N compact?:true
 sy sn:name1,name2 limit?:N
@@ -60,7 +61,7 @@ dd query:"what to design" ff?:path1,path2
 bw key:name content:"text"
 br keys:key1,key2
 bd keys:key1,key2
-ru action?:set|delete|list key:name content?:"text"
+ru action?:set|delete|list key?:name content?:"text" — list needs only action:list (no key). set/delete need key.
 em content:"text" type?:name
 pi hashes:h:HASH1,h:HASH2 — or bare step id (in:r1.refs resolves refs)
 pu hashes:h:HASH1,h:HASH2 — unpin (requires actual h:refs, not step IDs)
@@ -68,7 +69,7 @@ dro hashes:h:HASH1,h:HASH2 — or scope:dormant max?:N (drops without hashes)
 rec hashes:h:HASH1 — recall evicted/archived content back into context
 pc hashes:h:HASH1,h:HASH2 tier?:pointer|sig — compact to digest
 sh|ld|db|sg|ust|ulo|st|ch
-nn|nr|ns|nm — hash-targeted metadata ops (hash:h:XXXX + op-specific params)
+nn|eng|nr|ns|nm — hash-targeted metadata: nn needs hash + note:"..." (not content — use eng fields:{note:...} for structured engram edit). eng = annotate.engram (fields object).
 iu ps:path1,path2 force?:true
 ie f:path le:[...] verify?:true force?:true
 im edits:[{f:p,le:[...]}] verify?:true

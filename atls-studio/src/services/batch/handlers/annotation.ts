@@ -38,20 +38,21 @@ function isChunkSuspect(store: ContextStoreApi): (hash: string) => boolean {
 }
 
 export const handleRule: OpHandler = async (params, ctx) => {
-  const action = params.action as string;
+  const action = (params.action as string) || 'set';
   const key = params.key as string;
-  if (!key) return err('rule: ERROR missing key param');
-
-  if (action === 'delete') {
-    const removed = ctx.store().removeRule(key);
-    return ok(removed ? `rule: deleted "${key}"` : `rule: "${key}" not found`);
-  }
 
   if (action === 'list') {
     const rules = ctx.store().listRules();
     if (rules.length === 0) return ok('rule: (no cognitive rules set)');
     const list = rules.map(r => `  ${r.key}: ${r.content} (${r.tokens}tk)`).join('\n');
     return ok(`rule: ${rules.length} active\n${list}`);
+  }
+
+  if (!key) return err('rule: ERROR missing key param');
+
+  if (action === 'delete') {
+    const removed = ctx.store().removeRule(key);
+    return ok(removed ? `rule: deleted "${key}"` : `rule: "${key}" not found`);
   }
 
   const content = params.content as string;
