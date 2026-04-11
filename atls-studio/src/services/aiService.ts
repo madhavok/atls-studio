@@ -1732,6 +1732,8 @@ async function streamChatViaTauri(
         await advanceTurn();
         // Auto-compact dormant engrams so store tokens match prompt tokens
         useContextStore.getState().compactDormantChunks();
+        // Evict stale dormant engrams that exceed count or turn-age limits
+        useContextStore.getState().evictStaleDormantChunks();
         // Round-start freshness: clear stale reconcile stats and prune hash stacks
         useContextStore.getState().clearStaleReconcileStats();
         useContextStore.getState().pruneHashStacks();
@@ -3807,9 +3809,7 @@ q: exec system.exec cmd:"..." → write cmd to temp .ps1 and run in agent shell`
     ? 'Review mode: Find and report issues. Suggest fixes but do not apply them.'
     : mode === 'refactor'
     ? 'Refactoring mode: Systematic code extraction and restructuring. Follow the 4-phase workflow.'
-    : mode === 'agent_v2'
-    ? 'Full agent mode: Can read, analyze, and modify code. Slim cognitive rules — runtime enforces freshness mechanically.'
-    : 'Full agent mode: Can read, analyze, and modify code.';
+    : 'Full agent mode. Pinned context = working memory. Runtime manages lifecycle and freshness.';
 
   // Inject refactor config thresholds when in refactor mode (reuse refactorPart from cache key)
   const refactorConfig = mode === 'refactor' ? `\n${refactorPart}\n` : '';
@@ -3906,42 +3906,42 @@ function _buildBlackboardBlock(): string {
   return bbLines.join('\n');
 }
 
-const MAX_DORMANT_LINES = 40;
+const MAX_WORKLOG_LINE_WIDTH = 120;
 
 /**
- * Build the dormant engram digest block for the dynamic (uncached) user message.
- * Moved out of BP3 — dormant set mutates on compaction/eviction.
+ * Build compact work log for the dynamic (uncached) user message.
+ * Shows filenames of examined-but-unpinned content as a pipe-delimited list.
+ * Replaces the old per-entry dormant engram listing.
  */
 export function buildDormantBlock(): string {
   const ctxState = useContextStore.getState();
-  const dormantLines: string[] = [];
+  const seen = new Set<string>();
   ctxState.chunks.forEach(c => {
     if (c.type === 'msg:user' || c.type === 'msg:asst') return;
-    // Dormant = compacted OR HPP-dematerialized (non-compacted but already seen)
     const ref = getRef(c.hash);
     const isDormant = c.compacted
       ? (ref ? !shouldMaterialize(ref) : true)
       : (ref != null && !shouldMaterialize(ref));
     if (!isDormant) return;
     const src = c.source ? c.source.split(/[/\\]/).pop() || c.source : c.shortHash;
-    let line = `h:${c.shortHash} ${src} ${c.tokens}tk`;
-    const finding = c.annotations?.[0]?.content || c.summary || '';
-    if (finding) {
-      line += ` — ${finding.length > 80 ? finding.slice(0, 77) + '...' : finding}`;
-    }
-    if (c.suspectSince != null || c.freshness === 'suspect' || c.freshness === 'changed') {
-      line += ' [STALE]';
-    }
-    dormantLines.push(line);
+    seen.add(src);
   });
-  if (dormantLines.length === 0) return '';
-  if (dormantLines.length > MAX_DORMANT_LINES) {
-    const overflow = dormantLines.length - MAX_DORMANT_LINES;
-    dormantLines.length = MAX_DORMANT_LINES;
-    dormantLines.push(`... and ${overflow} more dormant engrams (use session.drop to clean)`);
+  if (seen.size === 0) return '';
+  const names = Array.from(seen);
+  const lines: string[] = [];
+  let current = '';
+  for (const name of names) {
+    const sep = current ? ' | ' : '';
+    if (current && (current.length + sep.length + name.length) > MAX_WORKLOG_LINE_WIDTH) {
+      lines.push(current);
+      current = name;
+    } else {
+      current += sep + name;
+    }
   }
-  dormantLines.push('↩ `rec h:XXXX` to restore | `dr h:XXXX` to free budget');
-  return '## DORMANT ENGRAMS\n' + dormantLines.join('\n');
+  if (current) lines.push(current);
+  lines.push('rec h:XXXX to restore any');
+  return `## WORK LOG (${seen.size} examined, not pinned — auto-clearing)\n` + lines.join('\n');
 }
 
 /**

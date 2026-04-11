@@ -40,7 +40,7 @@ import {
   classifyStageSnippet,
 } from '../services/promptMemory';
 import type { HashLookupResult, SetRefLookup, SetSelector } from '../utils/hashResolver';
-import { resetProtocol, evict as hppEvict, setPinned as hppSetPinned, archive as hppArchive, materialize as hppMaterialize, dematerialize as hppDematerialize, getRef as hppGetRef, shouldMaterialize as hppShouldMaterialize } from '../services/hashProtocol';
+import { resetProtocol, evict as hppEvict, setPinned as hppSetPinned, archive as hppArchive, materialize as hppMaterialize, dematerialize as hppDematerialize, getRef as hppGetRef, shouldMaterialize as hppShouldMaterialize, getTurn as hppGetTurn } from '../services/hashProtocol';
 import { useRoundHistoryStore } from './roundHistoryStore';
 import { formatAge } from '../utils/formatHelpers';
 import { commonPrefixLen } from './contextHelpers';
@@ -154,7 +154,7 @@ const DORMANT_ARCHIVE_THRESHOLD = 1000;
 // Maximum dormant (compacted+unpinned) chunks before LRU eviction kicks in.
 // Search results, batch stubs, tree reads etc. don't have file-backed sources
 // so reconcileSourceRevision never evicts them — this count-based limit does.
-const MAX_DORMANT_CHUNKS = 100;
+const MAX_DORMANT_CHUNKS = 30;
 
 // Engram annotation — a note attached without mutating content
 export interface EngramAnnotation {
@@ -5089,9 +5089,10 @@ export const useContextStore = create<ContextStoreState>()(
     let dropped = 0;
     let freedTokens = 0;
     const evictedHashes: string[] = [];
+    const DORMANT_TURN_AGE_LIMIT = 3;
 
     set(state => {
-      // Count all dormant chunks: compacted OR HPP-dematerialized, unpinned, non-chat
+      const currentTurn = hppGetTurn();
       const dormantEntries: Array<[string, ContextChunk]> = [];
       for (const [key, chunk] of state.chunks) {
         if (chunk.pinned || CHAT_TYPES.has(chunk.type)) continue;
@@ -5103,32 +5104,36 @@ export const useContextStore = create<ContextStoreState>()(
         }
       }
 
-      if (dormantEntries.length <= MAX_DORMANT_CHUNKS) return {};
+      if (dormantEntries.length === 0) return {};
 
-      // Sort by lastAccessed ascending (oldest first = evict first)
       dormantEntries.sort(([, a], [, b]) => (a.lastAccessed || 0) - (b.lastAccessed || 0));
 
-      const toEvict = dormantEntries.length - MAX_DORMANT_CHUNKS;
       const newChunks = new Map(state.chunks);
       const newArchive = new Map(state.archivedChunks);
 
-      for (let i = 0; i < toEvict; i++) {
-        const [key, chunk] = dormantEntries[i];
+      for (const [key, chunk] of dormantEntries) {
+        const ref = hppGetRef(chunk.hash);
+        const seenAt = ref?.seenAtTurn ?? 0;
+        const isTurnStale = currentTurn > 0 && (currentTurn - seenAt) >= DORMANT_TURN_AGE_LIMIT;
+        const isOverCount = (dormantEntries.length - evicted) > MAX_DORMANT_CHUNKS;
+
+        if (!isTurnStale && !isOverCount) continue;
+
         newChunks.delete(key);
         freedTokens += chunk.tokens;
         evicted++;
 
         if (chunk.tokens > DORMANT_ARCHIVE_THRESHOLD) {
-          // Preserve in archive for recall by hash
           newArchive.set(key, { ...chunk });
           archived++;
         } else {
-          // Drop stubs entirely (batch call stubs at ~7tk)
           newArchive.delete(key);
           dropped++;
         }
         evictedHashes.push(chunk.hash);
       }
+
+      if (evicted === 0) return {};
 
       evictArchiveIfNeeded(newArchive);
 
@@ -5140,7 +5145,7 @@ export const useContextStore = create<ContextStoreState>()(
         lastFreedAt: Date.now(),
         memoryEvents: appendMemoryEvent(state.memoryEvents, {
           action: 'evict',
-          reason: 'dormant_count_limit',
+          reason: 'dormant_auto_clear',
           refs: evictedHashes.slice(0, 10).map(h => `h:${h.slice(0, SHORT_HASH_LEN)}`),
           freedTokens,
         }),

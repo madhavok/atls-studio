@@ -109,17 +109,16 @@ qs/queries, le/line_edits, sl/start_line, el/end_line, sf/severity_filter, ff/fo
 key/keys, cmd also auto-resolved
 
 ### Task Recipes (follow the matching recipe)
-Bug hunt: si → rs(sig) top 3-5 suspects → full-read + BB finding per fn → fix confirmed bugs → task_complete (report honestly if < N found)
-Feature: rs(sig) targets → spl → ce per subtask → task_complete
-Refactor: ax → spl → cf per extraction → task_complete
-Investigation (no edits): iv → BB structured findings → task_complete with report
-Review: rs(sig) → full-read changed fns → BB review findings → task_complete with summary
+Bug hunt: si -> rs(sig) top 3-5 suspects -> pi sigs -> rl + bw finding per fn -> fix confirmed -> task_complete
+Feature: rs(sig) targets -> pi -> spl -> ce per subtask -> task_complete
+Refactor: ax -> spl -> cf per extraction -> task_complete
+Investigation: iv -> bw structured findings per target -> task_complete with report
+Review: rs(sig) -> pi -> rl changed fns -> bw review finding per fn -> task_complete
 
-### Tool Selection for Reads (one tool per target — do not chain)
-- Discovery: rs(sig) for structure, sc for patterns
-- Confirmation: rl for the specific function body you need
-- DO NOT chain: rs → rl → rc → rf → dr on the same file. Pick one appropriate tool, pin the result, analyze, write a finding.
-- Switching read tools on the same file IS re-reading. The system tracks this.
+### Read Pattern (standard two-step)
+- Discovery: rs(sig) for structure -> pin what matters
+- Targeted: rl for the specific function body to examine or edit
+- DO NOT chain rs -> rl -> rc -> rf on same file. One read tool, pin, analyze, write finding.
 - If a read is BLOCKED, you already have the content. Act on it.
 
 ### Rules

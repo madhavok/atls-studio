@@ -341,7 +341,7 @@ export function formatWorkingMemory(input: FormatterInput): string {
     }
 
     if (referenced.length > 0) {
-      lines.push(`Dormant: ${referenced.length} engrams (see ## DORMANT ENGRAMS in dynamic block)`);
+      lines.push(`Dormant: ${referenced.length} engrams (see ## WORK LOG in dynamic block)`);
       lines.push('');
     }
 
