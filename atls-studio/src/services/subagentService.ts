@@ -79,6 +79,14 @@ export interface SubAgentRef {
   type: string;
 }
 
+export interface SubAgentToolTraceEntry {
+  toolName: string;
+  message: string;
+  round: number;
+  ts: number;
+  done: boolean;
+}
+
 export interface SubAgentResult {
   refs: SubAgentRef[];
   bbKeys: string[];
@@ -90,6 +98,8 @@ export interface SubAgentResult {
   rounds: number;
   toolCalls: number;
   invocationId: string;
+  /** Bounded chronological trace of tool activity for UI display. */
+  toolTrace: SubAgentToolTraceEntry[];
 }
 
 export interface SubAgentUsage {
@@ -987,6 +997,8 @@ export async function executeSubagent(
   let totalToolCalls = 0;
   let totalRounds = 0;
   let totalCostCents = 0;
+  const TOOL_TRACE_CAP = 80;
+  const toolTrace: SubAgentToolTraceEntry[] = [];
 
   let lastAssistantContent: unknown[] | null = null;
   let lastAssistantText: string | null = null;
@@ -1118,26 +1130,27 @@ export async function executeSubagent(
         const toolParams = (firstStep.with as Record<string, unknown>) || {};
 
         // Role-aware progress (round is the loop variable in scope)
+        let progressMsg = toolName;
         if (toolName.startsWith('search.')) {
-          onProgress?.({
-            status: 'searching',
-            message: `Searching: ${(toolParams.queries as string[])?.join(', ') || toolParams.query || '...'}`,
-            toolName, round,
-          });
+          progressMsg = `Searching: ${(toolParams.queries as string[])?.join(', ') || toolParams.query || '...'}`;
+          onProgress?.({ status: 'searching', message: progressMsg, toolName, round });
         } else if (toolName.startsWith('read.')) {
           const paths = (toolParams.file_paths as string[]) || [];
-          onProgress?.({
-            status: 'reading',
-            message: `Reading: ${paths[0] || '...'}`,
-            toolName, round,
-            filePath: paths[0],
-          });
+          progressMsg = `Reading: ${paths[0] || '...'}`;
+          onProgress?.({ status: 'reading', message: progressMsg, toolName, round, filePath: paths[0] });
         } else if (toolName === 'session.pin' || toolName === 'session.stage' || toolName === 'session.bb.write') {
-          onProgress?.({ status: 'pinning', message: 'Pinning findings...', toolName, round });
+          progressMsg = 'Pinning findings...';
+          onProgress?.({ status: 'pinning', message: progressMsg, toolName, round });
         } else if (toolName.startsWith('change.')) {
-          onProgress?.({ status: 'implementing', message: `Editing: ${(toolParams.file as string) || '...'}`, toolName, round });
+          progressMsg = `Editing: ${(toolParams.file as string) || '...'}`;
+          onProgress?.({ status: 'implementing', message: progressMsg, toolName, round });
         } else if (toolName.startsWith('verify.')) {
-          onProgress?.({ status: 'testing', message: `Verifying: ${toolName}`, toolName, round });
+          progressMsg = `Verifying: ${toolName}`;
+          onProgress?.({ status: 'testing', message: progressMsg, toolName, round });
+        }
+
+        if (toolTrace.length < TOOL_TRACE_CAP) {
+          toolTrace.push({ toolName, message: progressMsg, round, ts: Date.now(), done: false });
         }
 
         try {
@@ -1147,11 +1160,17 @@ export async function executeSubagent(
           );
           console.log(`[subagent:${role}] Tool ${toolName} result: ${toolResult.length} chars`);
           toolResults.push({ type: 'tool_result', tool_use_id: tc.id, name: tc.name, content: toolResult });
+          if (toolTrace.length < TOOL_TRACE_CAP) {
+            toolTrace.push({ toolName, message: `Done: ${toolName}`, round, ts: Date.now(), done: true });
+          }
         } catch (error) {
           const msg = error instanceof Error ? error.message : String(error);
           console.error(`[subagent:${role}] Tool ${toolName} error:`, msg);
           toolResults.push({ type: 'tool_result', tool_use_id: tc.id, name: tc.name, content: `Error: ${msg}` });
           lastErrors.push(`${toolName}: ${msg}`);
+          if (toolTrace.length < TOOL_TRACE_CAP) {
+            toolTrace.push({ toolName, message: `Error: ${msg.slice(0, 100)}`, round, ts: Date.now(), done: true });
+          }
         }
       }
 
@@ -1339,6 +1358,7 @@ export async function executeSubagent(
     rounds: totalRounds,
     toolCalls: totalToolCalls,
     invocationId,
+    toolTrace,
   };
 }
 

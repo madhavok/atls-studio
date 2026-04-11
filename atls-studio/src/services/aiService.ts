@@ -3137,11 +3137,14 @@ function batchStepWithParams(stepRecord: unknown): Record<string, unknown> {
   return w && typeof w === 'object' && !Array.isArray(w) ? (w as Record<string, unknown>) : {};
 }
 
-function buildBatchSyntheticToolCalls(result: UnifiedBatchResult, batchArgs: Record<string, unknown>): ToolCallEvent[] {
+/** @internal Exported for testing. */
+export function buildBatchSyntheticToolCalls(result: UnifiedBatchResult, batchArgs: Record<string, unknown>): ToolCallEvent[] {
   const rawSteps = Array.isArray(batchArgs.steps) ? batchArgs.steps as Array<Record<string, unknown>> : [];
   return result.step_results.map((step, index) => {
     const rawStep = rawSteps.find(s => String(s?.id ?? '') === step.id) ?? rawSteps[index];
     const withParams = batchStepWithParams(rawStep);
+    const art = step.artifacts as Record<string, unknown> | undefined;
+    const toolTrace = Array.isArray(art?.toolTrace) ? art.toolTrace as unknown[] : undefined;
     return {
       id: `batch:${typeof batchArgs.id === 'string' ? batchArgs.id : 'batch'}:${step.id}:${index}`,
       name: step.use,
@@ -3151,6 +3154,7 @@ function buildBatchSyntheticToolCalls(result: UnifiedBatchResult, batchArgs: Rec
         step_id: step.id,
         step_use: step.use,
         refs: step.refs,
+        ...(toolTrace?.length ? { toolTrace } : {}),
       },
       status: step.ok ? 'completed' : 'failed',
       result: step.summary ?? step.error ?? '',

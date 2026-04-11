@@ -982,17 +982,7 @@ function truncateToolResult(result: string, maxLen: number = 240): string {
     : head;
 }
 
-function parseBatchStepLines(result?: string): Array<{ text: string; failed: boolean }> {
-  if (!result) return [];
-  return result
-    .split(/\r?\n/g)
-    .map(line => line.trim())
-    .filter(line => line.length > 0 && !/^\[(?:batch|atls)\]/i.test(line))
-    .map(line => ({
-      text: line,
-      failed: /(?:^|:\s)ERROR\b/i.test(line),
-    }));
-}
+import { parseBatchStepLines as parseBatchStepLinesUtil, indexStepLinesById } from '../../utils/batchLineParsing';
 
 function isBatchCall(call: { name: string; args?: Record<string, unknown> }): boolean {
   return call.name === 'batch';
@@ -1028,12 +1018,13 @@ function expandBatchToolCall(toolCall: ToolCallLike): BatchStepCall[] {
     return [];
   }
 
-  const stepLines = parseBatchStepLines(toolCall.result);
-  const completedCount = stepLines.length;
+  const parsedLines = parseBatchStepLinesUtil(toolCall.result);
+  const lineById = indexStepLinesById(parsedLines);
+  const completedCount = parsedLines.length;
   const runningIndex = Math.min(completedCount, Math.max(steps.length - 1, 0));
 
   return steps.map((step, index) => {
-    const line = stepLines[index];
+    const line = lineById.get(step.id);
     let status: ToolCall['status'] = 'pending';
     let result = line?.text;
 
@@ -1150,7 +1141,7 @@ const StreamingBatchToolCalls = memo(function StreamingBatchToolCalls({
   subagentProgressByStepRef,
 }: {
   toolCall: ToolCall;
-  subagentProgressByStepRef: React.RefObject<Map<string, SubAgentProgressEvent>>;
+  subagentProgressByStepRef: React.RefObject<Map<string, SubAgentProgressEvent[]>>;
 }) {
   const childCalls = useMemo(() => expandBatchToolCall(toolCall), [toolCall]);
   if (childCalls.length === 0) {
@@ -1162,9 +1153,36 @@ const StreamingBatchToolCalls = memo(function StreamingBatchToolCalls({
       {childCalls.map((childCall) => {
         const isDelegate = typeof childCall.name === 'string' && childCall.name.startsWith('delegate.');
         const stepKey = batchStepSubagentLookupKey(childCall);
-        const progress = isDelegate ? subagentProgressByStepRef.current?.get(stepKey) : undefined;
+        const progressTrace = isDelegate ? subagentProgressByStepRef.current?.get(stepKey) : undefined;
+        const lastProgress = progressTrace?.length ? progressTrace[progressTrace.length - 1] : undefined;
+
+        if (isDelegate) {
+          return (
+            <div key={childCall.id} className="space-y-0.5">
+              <SubAgentCard
+                toolCall={{
+                  id: childCall.id,
+                  name: childCall.name,
+                  args: childCall.args,
+                  result: childCall.result,
+                  startTime: toolCall.startTime ?? new Date(),
+                  status: childCall.status,
+                }}
+                liveTrace={progressTrace}
+              />
+              {lastProgress && !lastProgress.done && (
+                <div className="ml-6 mt-1 flex items-center gap-2 text-xs text-teal-300/80">
+                  <div className="w-2 h-2 rounded-full bg-teal-400 animate-pulse shrink-0" />
+                  <span className="font-mono text-[11px] text-studio-muted shrink-0">R{lastProgress.round}</span>
+                  <span className="truncate">{lastProgress.status}</span>
+                </div>
+              )}
+            </div>
+          );
+        }
+
         return (
-          <div key={childCall.id} className="space-y-0.5">
+          <div key={childCall.id}>
             <ToolSegmentBubble
               toolCall={{
                 id: childCall.id,
@@ -1177,22 +1195,6 @@ const StreamingBatchToolCalls = memo(function StreamingBatchToolCalls({
                 thoughtSignature: childCall.thoughtSignature,
               }}
             />
-            {progress && !progress.done && (
-              <div className="ml-6 mt-1 flex items-center gap-2 text-xs text-teal-300/80">
-                <div className="w-2 h-2 rounded-full bg-teal-400 animate-pulse shrink-0" />
-                <span className="font-mono text-[11px] text-studio-muted shrink-0">R{progress.round}</span>
-                <span className="truncate">{progress.status}</span>
-              </div>
-            )}
-            {progress?.done && (
-              <div className="ml-6 mt-1 flex items-center gap-2 text-xs text-teal-300/60">
-                <svg className="w-3 h-3 shrink-0" viewBox="0 0 24 24" fill="currentColor">
-                  <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z" />
-                </svg>
-                <span className="font-mono text-[11px] text-studio-muted shrink-0">R{progress.round}</span>
-                <span className="truncate">{progress.status}</span>
-              </div>
-            )}
           </div>
         );
       })}
@@ -1891,7 +1893,7 @@ const SUBAGENT_STATUS_TEXT: Record<string, string> = {
   tester: 'testing...',
 };
 
-const SubAgentCard = memo(function SubAgentCard({ toolCall }: { toolCall: ToolCall }) {
+const SubAgentCard = memo(function SubAgentCard({ toolCall, liveTrace }: { toolCall: ToolCall; liveTrace?: SubAgentProgressEvent[] }) {
   const [expanded, setExpanded] = useState(false);
   const settings = useAppStore(s => s.settings);
   const args = toolCall.args || {};
@@ -1928,6 +1930,16 @@ const SubAgentCard = memo(function SubAgentCard({ toolCall }: { toolCall: ToolCa
     }
     return { refCount: blocks.length, refTokens: Math.ceil(toolCall.result.length / 4), resultBlocks: blocks };
   }, [toolCall.result]);
+
+  // Merge persisted trace (from args.toolTrace) with live streaming trace
+  const toolActivityTrace = useMemo(() => {
+    type TraceItem = { toolName: string; message: string; round: number; done?: boolean };
+    const persisted = Array.isArray(args.toolTrace)
+      ? (args.toolTrace as TraceItem[]).map(e => ({ toolName: String(e.toolName ?? ''), message: String(e.message ?? ''), round: e.round ?? 0, done: e.done ?? true }))
+      : [];
+    const live = (liveTrace ?? []).map(e => ({ toolName: String(e.toolName ?? ''), message: String(e.status ?? ''), round: e.round ?? 0, done: e.done ?? false }));
+    return persisted.length > 0 ? persisted : live;
+  }, [args.toolTrace, liveTrace]);
 
   const roleLabel = SUBAGENT_ROLE_LABELS[subType] || subType.charAt(0).toUpperCase() + subType.slice(1);
   const statusText = SUBAGENT_STATUS_TEXT[subType] || 'working...';
@@ -2090,6 +2102,30 @@ const SubAgentCard = memo(function SubAgentCard({ toolCall }: { toolCall: ToolCa
             </div>
           )}
 
+          {/* Tool activity trace */}
+          {toolActivityTrace.length > 0 && (
+            <div>
+              <div className="text-[10px] text-studio-muted uppercase tracking-wide mb-1">
+                Tool Activity ({toolActivityTrace.filter(e => e.done).length} completed)
+              </div>
+              <div className="space-y-0.5 max-h-40 overflow-y-auto scrollbar-thin">
+                {toolActivityTrace.slice(0, 40).map((entry, i) => (
+                  <div key={i} className="flex items-center gap-1.5 text-[11px]">
+                    {entry.done
+                      ? <svg className="w-2.5 h-2.5 text-teal-400 shrink-0" viewBox="0 0 24 24" fill="currentColor"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z" /></svg>
+                      : <div className="w-2.5 h-2.5 border border-studio-muted/50 rounded-full shrink-0 animate-pulse" />
+                    }
+                    <span className="font-mono text-[10px] text-studio-muted shrink-0">R{entry.round}</span>
+                    <span className="text-studio-text/60 truncate">{entry.message}</span>
+                  </div>
+                ))}
+                {toolActivityTrace.length > 40 && (
+                  <div className="text-[10px] text-studio-muted">... +{toolActivityTrace.length - 40} more</div>
+                )}
+              </div>
+            </div>
+          )}
+
           {/* Pinned code blocks */}
           {resultBlocks.length > 0 && (
             <div>
@@ -2247,7 +2283,7 @@ const StreamingBubble = memo(function StreamingBubble({
   segmentsRef: React.RefObject<StreamSegment[]>;
   accumulatedSegmentsRef: React.RefObject<StreamSegment[]>;
   revisionRef: React.RefObject<number>;
-  subagentProgressByStepRef: React.RefObject<Map<string, SubAgentProgressEvent>>;
+  subagentProgressByStepRef: React.RefObject<Map<string, SubAgentProgressEvent[]>>;
   isGenerating: boolean;
   onScrollToBottom?: () => void;
 }) {
@@ -2548,8 +2584,9 @@ export function AiChat() {
   // RAF-based StreamingBubble always detects changes (even when array length
   // and last-segment content happen to match a previous snapshot).
   const segmentsRevisionRef = useRef<number>(0);
-  /** Live subagent tool progress keyed by batch step id (delegate.* steps) */
-  const subagentProgressByStepRef = useRef<Map<string, SubAgentProgressEvent>>(new Map());
+  const SUBAGENT_PROGRESS_TRACE_CAP = 60;
+  /** Live subagent tool progress keyed by batch step id (delegate.* steps) — append-mode trace */
+  const subagentProgressByStepRef = useRef<Map<string, SubAgentProgressEvent[]>>(new Map());
   // Ordered archive of segments from prior tool-loop rounds (append-only activity log)
   const accumulatedSegmentsRef = useRef<StreamSegment[]>([]);
   const isStreamingRef = useRef(false);
@@ -3279,7 +3316,9 @@ export function AiChat() {
           segmentsRevisionRef.current++;
         },
         onSubagentProgress: (stepId, progress) => {
-          subagentProgressByStepRef.current.set(stepId, progress);
+          const trace = subagentProgressByStepRef.current.get(stepId) ?? [];
+          if (trace.length < SUBAGENT_PROGRESS_TRACE_CAP) trace.push(progress);
+          subagentProgressByStepRef.current.set(stepId, trace);
           segmentsRevisionRef.current++;
         },
         onToolCall: (toolCall) => {
@@ -3664,7 +3703,9 @@ export function AiChat() {
           segmentsRevisionRef.current++;
         },
         onSubagentProgress: (stepId, progress) => {
-          subagentProgressByStepRef.current.set(stepId, progress);
+          const trace = subagentProgressByStepRef.current.get(stepId) ?? [];
+          if (trace.length < SUBAGENT_PROGRESS_TRACE_CAP) trace.push(progress);
+          subagentProgressByStepRef.current.set(stepId, trace);
           segmentsRevisionRef.current++;
         },
         onToolCall: (toolCall) => {

@@ -224,6 +224,7 @@ async function runDelegate(
       invocationId: result.invocationId,
       finalText: result.finalText,
       refHashes,
+      toolTrace: result.toolTrace,
     });
   } catch (delegateErr) {
     return err(`delegate.${role}: ERROR ${delegateErr instanceof Error ? delegateErr.message : String(delegateErr)}`);
