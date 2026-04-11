@@ -4,6 +4,7 @@ node_modules/
 # Build outputs
 dist/
 target/
+atls-rs/lcov.info
 /src-tauri/
 # Accidental agent/workspace writes at monorepo root (real app lives under atls-studio/)
 /src/
