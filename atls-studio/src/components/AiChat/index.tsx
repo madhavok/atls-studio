@@ -2446,6 +2446,10 @@ export function AiChat() {
   const [showSettings, setShowSettings] = useState(false);
   const [showTokenMetrics, setShowTokenMetrics] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const userScrolledUpRef = useRef(false);
+  /** Ignore scroll events caused by our own scroll-to-bottom (avoids false "user scrolled up"). */
+  const programmaticScrollRef = useRef(false);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   
   // Streaming segments stored in ref - NO state updates during streaming!
@@ -2550,18 +2554,33 @@ export function AiChat() {
   const scrollTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   
   // Scroll to bottom callback - used by StreamingBubble during streaming
-  const scrollToBottom = useCallback((behavior: ScrollBehavior = 'instant') => {
-    messagesEndRef.current?.scrollIntoView({ behavior });
+  const scrollToBottom = useCallback(() => {
+    if (userScrolledUpRef.current) return;
+    const el = scrollContainerRef.current;
+    if (!el) return;
+    programmaticScrollRef.current = true;
+    el.scrollTop = Math.max(0, el.scrollHeight - el.clientHeight);
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        programmaticScrollRef.current = false;
+      });
+    });
   }, []);
   
+  const handleScroll = useCallback(() => {
+    if (programmaticScrollRef.current) return;
+    const el = scrollContainerRef.current;
+    if (!el) return;
+    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    userScrolledUpRef.current = distanceFromBottom > 50;
+  }, []);
   useEffect(() => {
     // Scroll on new messages
     if (scrollTimeoutRef.current) {
       clearTimeout(scrollTimeoutRef.current);
     }
     scrollTimeoutRef.current = setTimeout(() => {
-      // Use instant scroll during streaming for smoothness, smooth scroll otherwise
-      scrollToBottom(isStreamingRef.current ? 'instant' : 'smooth');
+      scrollToBottom();
     }, isStreamingRef.current ? 16 : 100);
     
     return () => {
@@ -2572,8 +2591,9 @@ export function AiChat() {
   // Also scroll when isGenerating changes to true (user sent new message)
   useEffect(() => {
     if (isGenerating) {
-      // Immediately scroll when starting to generate
-      scrollToBottom('smooth');
+      // Reset user scroll override when starting to generate (user sent new message)
+      userScrolledUpRef.current = false;
+      scrollToBottom();
     }
   }, [isGenerating, scrollToBottom]);
   
@@ -3979,7 +3999,7 @@ export function AiChat() {
       )}
 
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto scrollbar-thin p-4 space-y-4">
+      <div ref={scrollContainerRef} onScroll={handleScroll} className="flex-1 overflow-y-auto scrollbar-thin p-4 space-y-4">
         {messages.length === 0 && !isGenerating ? (
           <div className="h-full flex flex-col items-center justify-center text-studio-muted">
             <AIIcon />
@@ -4030,7 +4050,7 @@ export function AiChat() {
               revisionRef={segmentsRevisionRef}
               subagentProgressByStepRef={subagentProgressByStepRef}
               isGenerating={isGenerating}
-              onScrollToBottom={() => scrollToBottom('instant')}
+              onScrollToBottom={scrollToBottom}
             />
             
             <div ref={messagesEndRef} />
