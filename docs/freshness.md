@@ -200,7 +200,8 @@ When files change, `reconcileSourceRevision` sweeps all memory regions:
 | File read | `context.ts` handler calls `reconcileSourceRevision` after read |
 | Edit completion | `executor.ts` calls `forwardStagedHash` after successful edit |
 | Round end | `refreshRoundEnd` sweeps file-backed **working** and **archived** chunks and **staged snippets** (latest view) against current revisions — see below |
-| File watcher | External changes trigger `markEngramsSuspect` |
+| File watcher (with paths) | External changes trigger `markEngramsSuspect` for specific paths |
+| File watcher (coarse) | When exact paths are unavailable, awareness is cleared and a deferred `refreshRoundEnd` reconciles per-path hashes; falls back to blanket suspect only if reconcile fails |
 
 ### Round-end revision sweep (`refreshRoundEnd`)
 

@@ -19,6 +19,7 @@ import type { GeminiCacheSnapshot } from './aiService';
 import type { RoundSnapshot } from '../stores/roundHistoryStore';
 import type { RollingSummary } from './historyDistiller';
 import type { VerifyArtifact } from './batch/types';
+import type { FreshnessJournalEntry } from './freshnessJournal';
 
 // ============================================================================
 // Database Types
@@ -1155,6 +1156,8 @@ export interface PersistedMemorySnapshot {
   cumulativeCoveragePaths?: string[];
   fileReadSpinByPath?: Record<string, number>;
   fileReadSpinRanges?: Record<string, string[]>;
+  /** v6+ (optional): freshness journal for higher-fidelity rebase after restart */
+  freshnessJournal?: Array<[string, FreshnessJournalEntry]>;
 }
 
 export interface DbHashRegistryEntry {

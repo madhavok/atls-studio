@@ -406,8 +406,6 @@ export function useAtls() {
           freshnessTelemetry.fileTreeChangedCoarseNoPaths++;
           freshnessTelemetry.coarseAwarenessOnlyInvalidations++;
           ctxState.syncFreshnessMirror();
-          const coarseMarked = ctxState.markEngramsSuspect(undefined, 'watcher_event', 'unknown');
-          freshnessTelemetry.suspectBulkMarkedCoarse += coarseMarked;
           ctxState.invalidateAllAwarenessCache();
           ctxState.bumpWorkspaceRev();
           ctxState.downgradeVerifyToStale();
@@ -415,7 +413,21 @@ export function useAtls() {
           if (verifyPaths.length > 0) ctxState.invalidateArtifactsForPaths(verifyPaths);
           resetProjectTreeCache();
           useRetentionStore.getState().evictMutationSensitive();
-          console.warn('[useAtls] file_tree_changed missing exact paths; all engrams marked suspect, artifacts invalidated');
+          // Deferred reconciliation: instead of blanket-suspecting all engrams,
+          // schedule a full round-end sweep that compares hashes per-path and
+          // only marks suspect what actually changed on disk.
+          void ctxState.refreshRoundEnd().then((stats) => {
+            if (stats.updated + stats.invalidated > 0) {
+              console.log('[useAtls] file_tree_changed coarse reconcile:', stats);
+            }
+          }).catch((e) => {
+            console.warn('[useAtls] file_tree_changed coarse reconcile failed — falling back to blanket suspect:', e);
+            const fallbackState = useContextStore.getState();
+            const coarseMarked = fallbackState.markEngramsSuspect(undefined, 'watcher_event', 'unknown');
+            freshnessTelemetry.suspectBulkMarkedCoarse += coarseMarked;
+            fallbackState.syncFreshnessMirror();
+          });
+          console.log('[useAtls] file_tree_changed missing exact paths; awareness cleared, deferred reconcile scheduled');
         }
         if (refreshTimeoutRef.current) clearTimeout(refreshTimeoutRef.current);
         refreshTimeoutRef.current = setTimeout(async () => {
@@ -450,7 +462,7 @@ export function useAtls() {
               const rootName = ev.payload.root.split(/[/\\]/).pop() || ev.payload.root;
               currentCtxState.setBlackboardEntry(
                 'intel:file_change',
-                `[${ts}] ${ev.payload.count} files changed in ${rootName}. Exact paths were unavailable — workspace revision bumped and awareness cache cleared; engrams were not bulk-marked suspect. Re-read before destructive edits.`,
+                `[${ts}] ${ev.payload.count} files changed in ${rootName}. Exact paths were unavailable — workspace revision bumped, awareness cache cleared, and deferred hash reconciliation ran. Re-read before destructive edits.`,
               );
             }
           } catch (e) {

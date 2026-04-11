@@ -26,6 +26,8 @@ import { getCurrentWindow } from '@tauri-apps/api/window';
 import { getGeminiCacheSnapshot, restoreGeminiCacheSnapshot, type GeminiCacheSnapshot } from '../services/aiService';
 import { classifyStageSnippet, MAX_PERSISTENT_STAGE_ENTRY_TOKENS } from '../services/promptMemory';
 import { emptyRollingSummary } from '../services/historyDistiller';
+import { useSwarmStore } from '../stores/swarmStore';
+import { serializeJournal, restoreJournal } from '../services/freshnessJournal';
 
 // Reserved blackboard note keys for per-session context state
 const RESERVED_NOTE_PREFIX = '__ctx_';
@@ -198,6 +200,7 @@ export function serializeMemorySnapshot(
     fileReadSpinRanges: Object.fromEntries(
       Object.entries(ctxState.fileReadSpinRanges).map(([k, v]) => [k, [...v]]),
     ),
+    freshnessJournal: serializeJournal(),
   };
 }
 
@@ -488,7 +491,24 @@ export function useChatPersistence() {
 
     const app = useAppStore.getState();
     const messages = app.messages;
-    if (messages.length === 0) return;
+    if (messages.length === 0) {
+      // Even with no messages, persist the memory snapshot if there is meaningful
+      // context state (BB writes, cognitive rules, staged pins) so it survives restart.
+      const sessionId = app.currentSessionId;
+      if (sessionId && chatDb.isInitialized()) {
+        const ctx = useContextStore.getState();
+        const hasMeaningfulState = ctx.cognitiveRules.size > 0
+          || ctx.stagedSnippets.size > 0
+          || Array.from(ctx.blackboardEntries.keys()).some(k => !k.startsWith('__'));
+        if (hasMeaningfulState) {
+          try {
+            const snapshot = serializeMemorySnapshot(ctx, getGeminiCacheSnapshot());
+            await chatDb.saveMemorySnapshot(sessionId, snapshot);
+          } catch { /* best effort */ }
+        }
+      }
+      return;
+    }
 
     const performSaveSession = async () => {
       const appInner = useAppStore.getState();
@@ -699,6 +719,9 @@ export function useChatPersistence() {
               fileReadSpinRanges: memorySnapshot.fileReadSpinRanges ?? {},
             } : {}),
           });
+          if (memorySnapshot.freshnessJournal?.length) {
+            restoreJournal(memorySnapshot.freshnessJournal);
+          }
           restoredFromSnapshot = true;
         }
       } catch (e) {
@@ -856,6 +879,12 @@ export function useChatPersistence() {
       const pp = useAppStore.getState().projectPath;
       if (pp) writeLastActiveSessionId(pp, sessionId);
       syncCurrentSessionIdToLocalStorage(sessionId);
+
+      // Rehydrate swarm task state when loading a swarm session
+      if (result.tasks && result.tasks.length > 0) {
+        useSwarmStore.getState().rehydrateTasks(sessionId, result.tasks);
+        console.log('[ChatPersistence] Rehydrated', result.tasks.length, 'swarm tasks');
+      }
 
       try {
         const freshnessResult = await applyHashFirstFreshness();
@@ -1277,6 +1306,9 @@ export function useChatPersistence() {
       fileReadSpinByPath: snapshot.fileReadSpinByPath ?? {},
       fileReadSpinRanges: snapshot.fileReadSpinRanges ?? {},
     });
+    if (snapshot.freshnessJournal?.length) {
+      restoreJournal(snapshot.freshnessJournal);
+    }
     const freshnessResult = await applyHashFirstFreshness();
     if (freshnessResult.changedPaths.length > 0) {
       const ctxStore = useContextStore.getState();

@@ -238,6 +238,9 @@ interface SwarmStoreState {
   cancelSwarm: (mode: 'graceful' | 'immediate') => void;
   resetSwarm: () => void;
   
+  // Task rehydration from persisted DB rows (session restore)
+  rehydrateTasks: (sessionId: string, dbTasks: import('../services/chatDb').DbTask[]) => void;
+
   // Task management
   addTask: (task: Omit<SwarmTask, 'id' | 'status' | 'tokensUsed' | 'costCents' | 'retryCount' | 'maxRetries' | 'conversationLog'>) => string;
   updateTaskStatus: (taskId: string, status: TaskStatus) => void;
@@ -437,6 +440,60 @@ export const useSwarmStore = create<SwarmStoreState>((set, get) => ({
       orchestrationPlanCostCents: 0,
       orchestrationSynthesisTokens: 0,
       orchestrationSynthesisCostCents: 0,
+    });
+  },
+
+  rehydrateTasks: (sessionId, dbTasks) => {
+    if (dbTasks.length === 0) return;
+    const tasks: SwarmTask[] = dbTasks.map(t => ({
+      id: t.id,
+      parentTaskId: t.parent_task_id,
+      title: t.title,
+      description: t.description ?? '',
+      status: t.status,
+      assignedModel: t.assigned_model ?? '',
+      assignedProvider: 'anthropic' as AIProvider,
+      assignedRole: (t.assigned_role ?? 'coder') as AgentRole,
+      contextHashes: t.context_hashes ?? [],
+      fileClaims: t.file_claims ?? [],
+      contextFiles: [],
+      dependencies: [],
+      result: t.result,
+      error: t.error,
+      tokensUsed: t.tokens_used,
+      costCents: t.cost_cents,
+      startedAt: t.started_at ? new Date(t.started_at) : undefined,
+      completedAt: t.completed_at ? new Date(t.completed_at) : undefined,
+      retryCount: 0,
+      maxRetries: 10,
+      conversationLog: [],
+    }));
+    const completed = tasks.filter(t => t.status === 'completed').length;
+    const failed = tasks.filter(t => t.status === 'failed').length;
+    const running = tasks.filter(t => t.status === 'running').length;
+    const pending = tasks.filter(t => t.status === 'pending').length;
+    const totalTokens = tasks.reduce((sum, t) => sum + t.tokensUsed, 0);
+    const totalCost = tasks.reduce((sum, t) => sum + t.costCents, 0);
+    const allDone = running === 0 && pending === 0;
+    set({
+      sessionId,
+      tasks,
+      isActive: !allDone,
+      status: allDone ? (failed > 0 && completed === 0 ? 'failed' : 'completed') : 'paused',
+      stats: {
+        totalTasks: tasks.length,
+        completedTasks: completed,
+        failedTasks: failed,
+        runningTasks: 0,
+        pendingTasks: pending,
+        totalTokensUsed: totalTokens,
+        totalCostCents: totalCost,
+        planPhaseTokens: 0,
+        planPhaseCostCents: 0,
+        synthesisPhaseTokens: 0,
+        synthesisPhaseCostCents: 0,
+        elapsedMs: 0,
+      },
     });
   },
 

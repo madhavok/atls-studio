@@ -66,3 +66,14 @@ export function clearFreshnessJournal(source?: string): void {
   }
   journal.delete(normalizePath(source));
 }
+
+export function serializeJournal(): Array<[string, FreshnessJournalEntry]> {
+  return Array.from(journal.entries());
+}
+
+export function restoreJournal(entries: Array<[string, FreshnessJournalEntry]>): void {
+  journal.clear();
+  for (const [key, entry] of entries) {
+    journal.set(key, entry);
+  }
+}

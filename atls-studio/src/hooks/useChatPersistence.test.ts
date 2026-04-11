@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { useContextStore, setBulkRevisionResolver } from '../stores/contextStore';
 import { rehydrateChunkDates, serializeMemorySnapshot, applyHashFirstFreshness } from './useChatPersistence';
+import { recordFreshnessJournal, getFreshnessJournal, clearFreshnessJournal, serializeJournal, restoreJournal } from '../services/freshnessJournal';
 
 const DUMMY_GEMINI_CACHE = {
   version: '1',
@@ -405,5 +406,157 @@ describe('applyHashFirstFreshness', () => {
     const stale = snippets.get('stage:stale');
     expect(fresh?.stageState).not.toBe('stale');
     expect(stale?.stageState).toBe('stale');
+  });
+});
+
+describe('freshness journal persistence', () => {
+  beforeEach(() => {
+    useContextStore.getState().resetSession();
+    clearFreshnessJournal();
+  });
+
+  it('round-trips the freshness journal through serialize/restore', () => {
+    recordFreshnessJournal({
+      source: 'src/a.ts',
+      previousRevision: 'rev-1',
+      currentRevision: 'rev-2',
+      lineDelta: 3,
+      recordedAt: Date.now(),
+    });
+    recordFreshnessJournal({
+      source: 'src/b.ts',
+      currentRevision: 'rev-5',
+      lineDelta: -2,
+      recordedAt: Date.now(),
+    });
+
+    const snapshot = serializeMemorySnapshot(useContextStore.getState(), DUMMY_GEMINI_CACHE);
+    expect(snapshot.freshnessJournal).toBeDefined();
+    expect(snapshot.freshnessJournal).toHaveLength(2);
+
+    clearFreshnessJournal();
+    expect(getFreshnessJournal('src/a.ts')).toBeUndefined();
+
+    restoreJournal(snapshot.freshnessJournal!);
+
+    const restored = getFreshnessJournal('src/a.ts');
+    expect(restored).toBeDefined();
+    expect(restored?.lineDelta).toBe(3);
+    expect(restored?.currentRevision).toBe('rev-2');
+    expect(restored?.previousRevision).toBe('rev-1');
+
+    const restoredB = getFreshnessJournal('src/b.ts');
+    expect(restoredB).toBeDefined();
+    expect(restoredB?.lineDelta).toBe(-2);
+  });
+
+  it('handles empty journal gracefully', () => {
+    const snapshot = serializeMemorySnapshot(useContextStore.getState(), DUMMY_GEMINI_CACHE);
+    expect(snapshot.freshnessJournal).toEqual([]);
+
+    restoreJournal([]);
+    expect(getFreshnessJournal('src/any.ts')).toBeUndefined();
+  });
+});
+
+describe('full snapshot round-trip', () => {
+  beforeEach(() => {
+    useContextStore.getState().resetSession();
+    clearFreshnessJournal();
+  });
+
+  it('all session state survives serialize → reset → restore', () => {
+    const store = useContextStore.getState();
+
+    const chunkHash = store.addChunk('const x = 1;', 'smart', 'src/roundtrip.ts', undefined, undefined, 'rev-rt', {
+      sourceRevision: 'rev-rt',
+      viewKind: 'latest',
+    });
+    store.setBlackboardEntry('plan', 'implement feature X');
+    store.setRule('style', 'use camelCase');
+    store.stageSnippet('stage:rt', 'fn main() {}', 'src/roundtrip.ts', '1-5', 'rev-rt', undefined, 'latest');
+    store.setTaskPlan({ goal: 'build feature X', subtasks: [{ id: 'sub-1', title: 'step 1', status: 'active' }] } as any);
+
+    recordFreshnessJournal({
+      source: 'src/roundtrip.ts',
+      currentRevision: 'rev-rt',
+      lineDelta: 5,
+      recordedAt: Date.now(),
+    });
+
+    useContextStore.setState({
+      verifyArtifacts: new Map([['va-rt', {
+        id: 'va-rt', createdAtRev: 1, filesObserved: ['src/roundtrip.ts'],
+        ok: true, warnings: 0, errors: 0, stepId: 's1',
+        confidence: 'fresh' as const, source: 'command' as const, stale: false,
+      }]]),
+      cumulativeCoveragePaths: new Set(['src/roundtrip.ts']),
+      fileReadSpinByPath: { 'src/roundtrip.ts|*': 1 },
+    });
+
+    const snapshot = serializeMemorySnapshot(useContextStore.getState(), DUMMY_GEMINI_CACHE);
+
+    // Reset everything
+    store.resetSession();
+    clearFreshnessJournal();
+
+    // Verify clean state
+    const clean = useContextStore.getState();
+    expect(clean.chunks.size).toBe(0);
+    expect(clean.cognitiveRules.size).toBe(0);
+    expect(clean.stagedSnippets.size).toBe(0);
+    expect(clean.verifyArtifacts.size).toBe(0);
+    expect(getFreshnessJournal('src/roundtrip.ts')).toBeUndefined();
+
+    // Restore from snapshot
+    useContextStore.setState({
+      chunks: new Map(rehydrateChunkDates(snapshot.chunks).map(c => [c.hash, c])),
+      archivedChunks: new Map(rehydrateChunkDates(snapshot.archivedChunks).map(c => [c.hash, c])),
+      droppedManifest: new Map(snapshot.droppedManifest),
+      stagedSnippets: new Map(snapshot.stagedSnippets),
+      blackboardEntries: new Map(snapshot.blackboardEntries.map(([k, e]) => [k, e])),
+      cognitiveRules: new Map(snapshot.cognitiveRules.map(([k, r]) => [k, { ...r, createdAt: new Date(r.createdAt) }])),
+      taskPlan: snapshot.taskPlan,
+      freedTokens: snapshot.freedTokens,
+      stageVersion: snapshot.stageVersion,
+      hashStack: snapshot.hashStack,
+      editHashStack: snapshot.editHashStack,
+      readHashStack: snapshot.readHashStack,
+      stageHashStack: snapshot.stageHashStack,
+      memoryEvents: snapshot.memoryEvents ?? [],
+      verifyArtifacts: new Map(snapshot.verifyArtifacts ?? []),
+      awarenessCache: new Map(snapshot.awarenessCache ?? []),
+      cumulativeCoveragePaths: new Set(snapshot.cumulativeCoveragePaths ?? []),
+      fileReadSpinByPath: snapshot.fileReadSpinByPath ?? {},
+      fileReadSpinRanges: snapshot.fileReadSpinRanges ?? {},
+    });
+    if (snapshot.freshnessJournal?.length) {
+      restoreJournal(snapshot.freshnessJournal);
+    }
+
+    // Verify all state round-tripped
+    const restored = useContextStore.getState();
+    expect(restored.chunks.size).toBe(1);
+    expect(restored.chunks.get(chunkHash)?.source).toBe('src/roundtrip.ts');
+    expect(restored.stagedSnippets.size).toBe(1);
+    expect(restored.stagedSnippets.get('stage:rt')?.content).toBe('fn main() {}');
+
+    const bbPlan = restored.blackboardEntries.get('plan');
+    expect(bbPlan?.content).toBe('implement feature X');
+
+    expect(restored.cognitiveRules.size).toBe(1);
+    expect(restored.cognitiveRules.get('style')?.content).toBe('use camelCase');
+
+    expect(restored.taskPlan?.goal).toBe('build feature X');
+    expect(restored.taskPlan?.subtasks).toHaveLength(1);
+
+    expect(restored.verifyArtifacts.get('va-rt')?.ok).toBe(true);
+    expect(restored.cumulativeCoveragePaths.has('src/roundtrip.ts')).toBe(true);
+    expect(restored.fileReadSpinByPath['src/roundtrip.ts|*']).toBe(1);
+
+    const journal = getFreshnessJournal('src/roundtrip.ts');
+    expect(journal).toBeDefined();
+    expect(journal?.lineDelta).toBe(5);
+    expect(journal?.currentRevision).toBe('rev-rt');
   });
 });

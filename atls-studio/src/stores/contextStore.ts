@@ -46,7 +46,7 @@ import { formatAge } from '../utils/formatHelpers';
 import { commonPrefixLen } from './contextHelpers';
 import { canonicalizeSnapshotHash } from '../services/batch/snapshotTracker';
 import { emptyRollingSummary, type RollingSummary } from '../services/historyDistiller';
-import { freshnessTelemetry, incSessionRestoreReconcileCount } from '../services/freshnessTelemetry';
+import { freshnessTelemetry, incSessionRestoreReconcileCount, incCognitiveRulesExpired } from '../services/freshnessTelemetry';
 
 // Minimum chars required for prefix-based hash resolution (reduces collision risk)
 /** Match SHORT_HASH_LEN (6) so h:abcdef-style refs resolve (annotate.link, synapses). */
@@ -3784,6 +3784,7 @@ export const useContextStore = create<ContextStoreState>()(
     const newRules = new Map(state.cognitiveRules);
     newRules.delete(key);
     set({ cognitiveRules: newRules });
+    incCognitiveRulesExpired();
     return true;
   },
 
