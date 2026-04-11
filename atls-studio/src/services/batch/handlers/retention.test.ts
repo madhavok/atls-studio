@@ -25,4 +25,18 @@ describe('checkRetention', () => {
       expect(second.output.refs.length).toBeGreaterThan(0);
     }
   });
+
+  it('after repeated identical outcomes returns distillSummary with empty refs', () => {
+    const params = { queries: ['beta'] };
+    const body = 'same body';
+    expect(checkRetention('search.code', params, body, true, 'search_results', 'lbl').reused).toBe(false);
+    expect(checkRetention('search.code', params, body, true, 'search_results', 'lbl').reused).toBe(true);
+    const third = checkRetention('search.code', params, body, true, 'search_results', 'lbl');
+    expect(third.reused).toBe(true);
+    if (third.reused) {
+      expect(third.output.refs).toEqual([]);
+      expect(third.output.summary).toMatch(/Repeated search\.code/);
+      expect(third.output.summary).toMatch(/3x/);
+    }
+  });
 });

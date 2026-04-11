@@ -525,6 +525,19 @@ describe('query handlers', () => {
     expect(second.summary).toMatch(/reusing h:/);
   });
 
+  it('handleSearchCode returns retention distill summary on third identical repeat', async () => {
+    const res = { results: [{ query: 'q', results: [{ file: 'b.ts', line: 2 }] }] };
+    const batch = vi.fn(async () => res);
+    const ctx = { atlsBatchQuery: batch, store: () => minimalStore() } as any;
+    const params = { queries: ['gamma'] };
+    await handleSearchCode(params, ctx);
+    await handleSearchCode(params, ctx);
+    const third = await handleSearchCode(params, ctx);
+    expect(third.ok).toBe(true);
+    expect(third.summary).toMatch(/Repeated search\.code/);
+    expect(third.refs).toEqual([]);
+  });
+
   it('handleSearchCode caps literal fallback rows with max_file_paths', async () => {
     const ctx = {
       atlsBatchQuery: vi.fn(async (op: string) => {
