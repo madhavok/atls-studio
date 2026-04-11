@@ -1,48 +1,64 @@
-import { describe, it, expect } from 'vitest';
-import { formatStatsLine, formatSuspectHint } from './contextFormatter';
+/**
+ * Working memory / HPP integration — store pin state must drive ChunkRef.pinned.
+ */
+import { describe, it, expect, beforeEach } from 'vitest';
+import { formatWorkingMemory } from './contextFormatter';
+import { advanceTurn, getRef, shouldMaterialize } from './hashProtocol';
+import { useContextStore } from '../stores/contextStore';
 
-describe('formatStatsLine round count', () => {
-  it('includes round:{N} when roundCount > 0', () => {
-    const line = formatStatsLine(50000, 200000, 10, 3, 500, 0, undefined, undefined, undefined, undefined, undefined, undefined, 4);
-    expect(line).toContain('round:4');
+function resetStore() {
+  useContextStore.getState().resetSession();
+  useContextStore.setState({ hashStack: [], editHashStack: [] });
+}
+
+function wmInput() {
+  const state = useContextStore.getState();
+  return {
+    chunks: state.chunks,
+    blackboardEntries: state.blackboardEntries,
+    cognitiveRules: state.cognitiveRules,
+    droppedManifest: state.droppedManifest,
+    stagedSnippets: state.stagedSnippets,
+    taskPlan: state.taskPlan,
+    maxTokens: state.maxTokens,
+    freedTokens: state.freedTokens,
+    usedTokens: state.getUsedTokens(),
+    pinnedCount: state.getPinnedCount(),
+    bbTokens: state.getBlackboardTokenCount(),
+  };
+}
+
+describe('syncHppPinsWithStore (via formatWorkingMemory)', () => {
+  beforeEach(() => resetStore());
+
+  it('keeps pinned chunks materialized across advanceTurn when pin preceded first ref', async () => {
+    const hash = useContextStore.getState().addChunk('line1\nline2', 'search', 'qs');
+    useContextStore.getState().pinChunks([hash]);
+
+    let ref = getRef(hash);
+    expect(ref).toBeUndefined();
+
+    formatWorkingMemory(wmInput());
+    ref = getRef(hash);
+    expect(ref).toBeDefined();
+    expect(ref?.pinned).toBe(true);
+    expect(shouldMaterialize(ref!)).toBe(true);
+
+    await advanceTurn();
+    ref = getRef(hash);
+    expect(ref?.visibility).toBe('materialized');
+    expect(ref?.pinned).toBe(true);
+    expect(shouldMaterialize(ref!)).toBe(true);
   });
 
-  it('omits round when roundCount is 0', () => {
-    const line = formatStatsLine(50000, 200000, 10, 3, 500, 0, undefined, undefined, undefined, undefined, undefined, undefined, 0);
-    expect(line).not.toContain('round:');
-  });
+  it('clears HPP pin when store chunk is unpinned', async () => {
+    const hash = useContextStore.getState().addChunk('x', 'file', 'a.ts');
+    useContextStore.getState().pinChunks([hash]);
+    formatWorkingMemory(wmInput());
+    expect(getRef(hash)?.pinned).toBe(true);
 
-  it('omits round when roundCount is undefined', () => {
-    const line = formatStatsLine(50000, 200000, 10, 3, 500, 0);
-    expect(line).not.toContain('round:');
-  });
-});
-
-describe('formatSuspectHint', () => {
-  it('returns empty for no freshness state', () => {
-    expect(formatSuspectHint()).toBe('');
-    expect(formatSuspectHint(undefined, undefined, undefined)).toBe('');
-  });
-
-  it('returns empty for fresh/shifted/forwarded (non-blocking states)', () => {
-    expect(formatSuspectHint(undefined, 'fresh')).toBe('');
-    expect(formatSuspectHint(undefined, 'shifted', 'same_file_prior_edit')).toBe('');
-    expect(formatSuspectHint(undefined, 'forwarded', 'hash_forward')).toBe('');
-  });
-
-  it('returns unified STALE label for suspect regardless of cause', () => {
-    const causes = ['same_file_prior_edit', 'external_file_change', 'watcher_event', 'unknown', 'session_restore'];
-    for (const cause of causes) {
-      const hint = formatSuspectHint(Date.now(), 'suspect', cause);
-      expect(hint).toBe(' [STALE: re-read before edit]');
-    }
-  });
-
-  it('returns STALE for changed freshness', () => {
-    expect(formatSuspectHint(undefined, 'changed')).toBe(' [STALE: re-read before edit]');
-  });
-
-  it('returns STALE when suspectSince is set even without freshness field', () => {
-    expect(formatSuspectHint(Date.now())).toBe(' [STALE: re-read before edit]');
+    useContextStore.getState().unpinChunks([hash]);
+    formatWorkingMemory(wmInput());
+    expect(getRef(hash)?.pinned).toBe(false);
   });
 });

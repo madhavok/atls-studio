@@ -13,7 +13,6 @@ import { STAGE_SOFT_CEILING } from '../stores/contextStore';
 import { HYGIENE_CHECK_INTERVAL_ROUNDS } from './promptMemory';
 import { formatChunkTag } from '../utils/contextHash';
 import {
-  type ChunkRef,
   getRef,
   shouldMaterialize,
   formatRefLine,
@@ -23,6 +22,7 @@ import {
   getTurn,
   getTurnDelta,
 } from './hashProtocol';
+import { setPinned } from './hashProtocolState';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -63,6 +63,31 @@ export interface FormatterInput {
 const FILE_TYPES: ReadonlySet<string> = new Set([
   'file', 'smart', 'raw', 'tree', 'search', 'symbol', 'deps', 'issues',
 ]);
+
+/**
+ * ContextChunk.pinned is authoritative. HPP ChunkRef.pinned must match so
+ * advanceTurn does not dematerialize chunks the model pinned before a ref
+ * existed (session.pin was a no-op until first materialize).
+ */
+function syncHppPinsWithStore(chunks: ContextChunk[]): void {
+  for (const chunk of chunks) {
+    const digest = chunk.editDigest || chunk.digest || '';
+    const totalLines = Math.max(1, chunk.content.split('\n').length);
+    if (chunk.pinned) {
+      let ref = getRef(chunk.hash);
+      if (!ref || ref.visibility === 'referenced') {
+        materialize(chunk.hash, chunk.type, chunk.source, chunk.tokens, totalLines, digest);
+        ref = getRef(chunk.hash);
+      }
+      setPinned(chunk.hash, true, ref?.pinnedShape);
+    } else {
+      const ref = getRef(chunk.hash);
+      if (ref?.pinned) {
+        setPinned(chunk.hash, false);
+      }
+    }
+  }
+}
 
 function formatEngramMeta(chunk: ContextChunk): string[] {
   const meta: string[] = [];
@@ -299,6 +324,8 @@ export function formatWorkingMemory(input: FormatterInput): string {
     const subtaskLabel = activeSubtaskId
       ? ` (subtask: ${taskPlan?.subtasks.find(s => s.id === activeSubtaskId)?.title || activeSubtaskId})`
       : '';
+
+    syncHppPinsWithStore(sortedChunks);
 
     // Separate materialized (full content) from referenced (digest only)
     const materialized: ContextChunk[] = [];
