@@ -210,6 +210,10 @@ async function runDelegate(
       result.finalText,
     );
 
+    if (refHashes.length > 0) {
+      summary += '\n⚠ VOLATILE — delegate refs expire next round. pin key refs or `bw` to persist findings.';
+    }
+
     return ok(summary, pinnedHashes, {
       refs: result.refs,
       bbKeys: result.bbKeys,

@@ -1792,7 +1792,7 @@ export const handleEdit: OpHandler = async (params, ctx) => {
       summary = `[LINT ERRORS] ${hint} — see lints.top_issues\n${summary}`;
     }
     if (isMutating && refs.length > 0) {
-      summary += `\n[FRESH] Content is live at ${refs.join(', ')}. Do NOT re-read these files — chain next edits from these refs. Re-read only on stale_hash errors.`;
+      summary += `\n[FRESH] Content is live at ${refs.join(', ')} (auto-pinned if source was pinned). Do NOT re-read — chain from these refs.`;
     }
     // Supersede file-bound reasoning artifacts on successful edit
     if (isMutating) {

@@ -235,6 +235,30 @@ export function formatBatchResult(result: UnifiedBatchResult): string {
     lines.push(`[ATLS] BATCH INTERRUPTED at ${result.interruption.step_id}: ${result.interruption.summary}${reason}`);
   }
 
+  // Volatile nudge: aggregate refs from read/search/analysis steps
+  const READ_SEARCH_OPS = new Set([
+    'read.context', 'read.shaped', 'read.lines', 'read.file',
+    'search.code', 'search.symbol', 'search.usage', 'search.similar',
+    'search.issues', 'search.patterns', 'search.memory',
+    'analyze.deps', 'analyze.calls', 'analyze.structure',
+    'analyze.impact', 'analyze.blast_radius', 'analyze.extract_plan',
+  ]);
+  const volatileRefs: string[] = [];
+  for (const step of result.step_results) {
+    if (step.ok && step.refs?.length && READ_SEARCH_OPS.has(step.use)) {
+      for (const ref of step.refs) {
+        if (ref.startsWith('h:') && !volatileRefs.includes(ref)) {
+          volatileRefs.push(ref);
+        }
+      }
+    }
+  }
+  if (volatileRefs.length > 0) {
+    const shortRefs = volatileRefs.slice(0, 8).join(' ');
+    const overflow = volatileRefs.length > 8 ? ` +${volatileRefs.length - 8} more` : '';
+    lines.push(`⚠ VOLATILE — refs expire next round. pin to keep: \`pi ${shortRefs}\`${overflow}`);
+  }
+
   const counts = { pass: 0, warn: 0, fail: 0, toolError: 0, other: 0 };
   for (const step of result.step_results) {
     switch (step.classification) {

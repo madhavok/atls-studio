@@ -473,6 +473,21 @@ export interface ManifestEntry {
   subtaskId?: string;
 }
 
+const DROPPED_MANIFEST_MAX = 50;
+
+/** Enforce LRU cap on dropped manifest. Evict oldest entries by droppedAt. */
+function capDroppedManifest(manifest: Map<string, ManifestEntry>): Map<string, ManifestEntry> {
+  if (manifest.size <= DROPPED_MANIFEST_MAX) return manifest;
+  const sorted = Array.from(manifest.entries())
+    .sort(([, a], [, b]) => (a.droppedAt || 0) - (b.droppedAt || 0));
+  const toRemove = sorted.length - DROPPED_MANIFEST_MAX;
+  const capped = new Map(manifest);
+  for (let i = 0; i < toRemove; i++) {
+    capped.delete(sorted[i][0]);
+  }
+  return capped;
+}
+
 // Summary for context_stats() tool response
 export interface ChunkSummary {
   h: string;           // Short hash
@@ -806,6 +821,7 @@ interface ContextStoreState {
   rollingSummary: RollingSummary;
   setRollingSummary: (summary: RollingSummary) => void;
   memoryEvents: MemoryEvent[];
+  _roundStartEventIndex: number;
 
   // Freshness gates — workspace revision tracking
   workspaceRev: number;
@@ -944,6 +960,10 @@ interface ContextStoreState {
   // Cache affinity tracking
   trackReference: (hash: string) => void;
   trackEdit: (hash: string) => void;
+
+  // Round-start cleanup
+  clearStaleReconcileStats: () => void;
+  pruneHashStacks: () => void;
 
   // Transition bridge (auto-expires after N turns)
   tickTransitionBridge: () => void;
@@ -1587,6 +1607,7 @@ export const useContextStore = create<ContextStoreState>()(
   rollingSummary: emptyRollingSummary(),
   setRollingSummary: (summary) => set({ rollingSummary: summary }),
   memoryEvents: [],
+  _roundStartEventIndex: 0,
   reconcileStats: null,
   hashStack: [] as string[],
   editHashStack: [] as string[],
@@ -1890,7 +1911,7 @@ export const useContextStore = create<ContextStoreState>()(
         newManifest = new Map(state.droppedManifest);
         newManifest.delete(hash);
       }
-      const manifestUpdate = newManifest ? { droppedManifest: newManifest } : {};
+      const manifestUpdate = newManifest ? { droppedManifest: capDroppedManifest(newManifest) } : {};
       if (totalFreed > 0) {
         if (newArchive) evictArchiveIfNeeded(newArchive);
         return {
@@ -2272,7 +2293,7 @@ export const useContextStore = create<ContextStoreState>()(
       return {
         chunks: newChunks,
         archivedChunks: newArchived,
-        droppedManifest: newManifest,
+        droppedManifest: capDroppedManifest(newManifest),
         freedTokens: state.freedTokens + freedTokens,
         lastFreed: freedTokens,
         lastFreedAt: Date.now(),
@@ -3011,7 +3032,7 @@ export const useContextStore = create<ContextStoreState>()(
             newChunks.set(key, { ...chunk, ttl: remaining });
           }
         }
-        return newChunks.size !== s.chunks.size ? { chunks: newChunks, droppedManifest: newDropped } : {};
+        return newChunks.size !== s.chunks.size ? { chunks: newChunks, droppedManifest: capDroppedManifest(newDropped) } : {};
       });
     }
 
@@ -4679,6 +4700,45 @@ export const useContextStore = create<ContextStoreState>()(
     });
   },
 
+  clearStaleReconcileStats: () => {
+    const state = get();
+    const updates: Record<string, unknown> = {};
+    if (state.reconcileStats) updates.reconcileStats = null;
+    updates._roundStartEventIndex = state.memoryEvents.length;
+    set(updates);
+  },
+
+  pruneHashStacks: () => {
+    const state = get();
+    const activeHashes = new Set<string>();
+    for (const chunk of state.chunks.values()) {
+      if (!chunk.compacted) {
+        const ref = hppGetRef(chunk.hash);
+        if (!ref || hppShouldMaterialize(ref)) {
+          activeHashes.add(chunk.hash);
+          activeHashes.add(chunk.shortHash);
+        }
+      }
+    }
+    if (activeHashes.size === 0) return;
+    const prune = (stack: string[]) => stack.filter(h => activeHashes.has(h));
+    const newHash = prune(state.hashStack);
+    const newEdit = prune(state.editHashStack);
+    const newRead = prune(state.readHashStack);
+    const newStage = prune(state.stageHashStack);
+    if (newHash.length !== state.hashStack.length
+      || newEdit.length !== state.editHashStack.length
+      || newRead.length !== state.readHashStack.length
+      || newStage.length !== state.stageHashStack.length) {
+      set({
+        hashStack: newHash,
+        editHashStack: newEdit,
+        readHashStack: newRead,
+        stageHashStack: newStage,
+      });
+    }
+  },
+
   tickTransitionBridge: () => {
     const bridge = get().transitionBridge;
     if (!bridge) return;
@@ -4794,7 +4854,7 @@ export const useContextStore = create<ContextStoreState>()(
       transitionBridge: state.transitionBridge,
       batchMetrics: state.batchMetrics,
       memoryEvents: state.memoryEvents,
-      memoryTelemetry: summarizeMemoryTelemetry(state.memoryEvents),
+      memoryTelemetry: summarizeMemoryTelemetry(state.memoryEvents.slice(state._roundStartEventIndex)),
       reconcileStats: state.reconcileStats,
     });
   },
@@ -4900,6 +4960,7 @@ export const useContextStore = create<ContextStoreState>()(
       blackboardEntries: seededBb,
       cognitiveRules: new Map(),
       memoryEvents: [],
+      _roundStartEventIndex: 0,
       reconcileStats: null,
       hashStack: [],
       editHashStack: [],

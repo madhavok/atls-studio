@@ -606,10 +606,20 @@ export const handleSearchMemory: OpHandler = async (params, ctx) => {
   const hash = ctx.store().addChunk(resultStr, 'search', `memory: ${query}`);
   const tk = countTokensSync(resultStr);
 
+  const archivedCount = regionCounts['archived'] ?? 0;
+  const dormantCount = regionCounts['dormant'] ?? 0;
+  let recallHint = '';
+  if (archivedCount + dormantCount > 0) {
+    const parts: string[] = [];
+    if (archivedCount > 0) parts.push(`${archivedCount} archived`);
+    if (dormantCount > 0) parts.push(`${dormantCount} dormant`);
+    recallHint = `\n💡 ${parts.join(' + ')} — \`rec h:XXXX\` to restore to working memory`;
+  }
+
   return {
     kind: 'search_results', ok: true,
     refs: [`h:${hash}`],
-    summary: `search.memory: "${query}" → h:${hash} (${results.length} hits, ${regionSummary}, ${(tk / 1000).toFixed(1)}k tk)`,
+    summary: `search.memory: "${query}" → h:${hash} (${results.length} hits, ${regionSummary}, ${(tk / 1000).toFixed(1)}k tk)${recallHint}`,
     tokens: tk,
   };
 };

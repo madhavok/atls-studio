@@ -347,7 +347,9 @@ export function formatWorkingMemory(input: FormatterInput): string {
 
     // Materialized section — full content (first read this turn)
     if (materialized.length > 0) {
-      lines.push(`## ACTIVE ENGRAMS${subtaskLabel}`);
+      const unpinnedCount = materialized.filter(c => !c.pinned).length;
+      const expiryHint = unpinnedCount > 0 ? ` — ${unpinnedCount} unpinned expire next round` : '';
+      lines.push(`## ACTIVE ENGRAMS (${materialized.length} materialized${expiryHint})${subtaskLabel}`);
       for (const chunk of materialized) {
         const ref = getRef(chunk.hash);
         const effectivePinShape = ref?.pinnedShape ?? chunk.pinnedShape;

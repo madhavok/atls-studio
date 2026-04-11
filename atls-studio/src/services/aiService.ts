@@ -1701,6 +1701,9 @@ async function streamChatViaTauri(
         await advanceTurn();
         // Auto-compact dormant engrams so store tokens match prompt tokens
         useContextStore.getState().compactDormantChunks();
+        // Round-start freshness: clear stale reconcile stats and prune hash stacks
+        useContextStore.getState().clearStaleReconcileStats();
+        useContextStore.getState().pruneHashStacks();
         // Tick transition bridge after first round — model had a chance to see and act on it
         if (round === 1) useContextStore.getState().tickTransitionBridge();
       } else {
@@ -2824,23 +2827,12 @@ async function streamChatViaTauri(
         hadProgressSinceLastAdvance = true;
       }
 
-      // Track consecutive read-only rounds (no mutations). After 4, inject warning.
+      // Track consecutive read-only rounds for force-stop ceiling.
       if (!hadMutationsThisRound) {
         consecutiveReadOnlyRounds++;
         totalResearchRounds++;
       } else {
         consecutiveReadOnlyRounds = 0;
-      }
-      if (consecutiveReadOnlyRounds >= 4 && mode !== 'ask' && mode !== 'retriever') {
-        // Steering emitted via state block; reset counter so it doesn't re-fire immediately
-        console.log(`[aiService] Spin guard: read-only round warning at round ${round + 1} (via state block)`);
-        consecutiveReadOnlyRounds = 0;
-      }
-
-      // Layer 2A: Coverage-based convergence detection (steering emitted via state block)
-      if (useContextStore.getState().coveragePlateauStreak >= 2 && !hadMutationsThisRound
-          && mode !== 'ask' && mode !== 'retriever') {
-        console.log(`[aiService] Coverage plateau detected at round ${round + 1} (via state block)`);
       }
 
       // Layer 2C: session.advance abuse detection + phase budget (steering via state block)
@@ -3553,9 +3545,6 @@ function buildDynamicContextBlock(
     : `${contextStatsLine}${cacheTag}`;
   parts.push(header);
 
-  const reasoningRecap = _extractRecentReasoning();
-  if (reasoningRecap) parts.push(reasoningRecap);
-
   const bbBlock = _buildBlackboardBlock();
   if (bbBlock) parts.push(bbBlock);
 
@@ -3600,51 +3589,8 @@ function buildDynamicContextBlock(
     parts.push(`<<ESCALATED REPAIR: ${escalatedRepairs.join(', ')}. Multiple failed repairs. Full scope in context. Review holistically before editing.>>`);
   }
 
-  try {
-    const ctxChunks = useContextStore.getState().chunks;
-    if (ctxChunks?.size > 0) {
-      let activeTkSum = 0, dormantRawTkSum = 0;
-      for (const c of ctxChunks.values()) {
-        if (c.type === 'msg:user' || c.type === 'msg:asst') continue;
-        const ref = getRef(c.hash);
-        const isDormant = c.compacted || (ref != null && !shouldMaterialize(ref));
-        if (isDormant) dormantRawTkSum += c.tokens ?? 0;
-        else activeTkSum += c.tokens ?? 0;
-      }
-      if (dormantRawTkSum > activeTkSum && dormantRawTkSum > 2000) {
-        parts.push('<<CONTEXT PRESSURE: dormant engrams exceed active — distill findings to BB, then drop dormant engrams.>>');
-      }
-    }
-  } catch {
-    // Fail-safe: skip pressure hint if store/chunks unavailable
-  }
-
-  const ctxState = useContextStore.getState();
-  const bm = ctxState.batchMetrics;
-  let bbStreak = ctxState.batchReadNoBbStreak;
-  if (bm.hadSubstantiveBbWrite) {
-    bbStreak = 0;
-  } else if (bm.hadReads && !bm.hadSubstantiveBbWrite) {
-    bbStreak = bbStreak + 1;
-  } else {
-    bbStreak = 0;
-  }
-  useContextStore.setState({ batchReadNoBbStreak: bbStreak });
-
-  if (bm.hadReads && !bm.hadSubstantiveBbWrite) {
-    if (bbStreak >= 4) {
-      parts.push(
-        `<<STOP: You have read files for ${bbStreak} consecutive rounds without persisting structured findings. Write conclusions (clear/bug/inconclusive) to session.bb.write or act on what you have. Progress notes do not count.>>`,
-      );
-    } else {
-      parts.push(
-        '<<FINDINGS: batch read files with no structured BB finding — write conclusions (clear/bug/inconclusive) to session.bb.write before they go dormant.>>',
-      );
-    }
-  }
-
   // -------------------------------------------------------------------------
-  // TOOL-LOOP STEERING — conditional signals from tool loop counters
+  // TOOL-LOOP STEERING — only hard safety nets and correctness guards
   // -------------------------------------------------------------------------
   const tls = useAppStore.getState().toolLoopSteering;
   if (tls && tls.mode !== 'ask' && tls.mode !== 'retriever') {
@@ -3654,25 +3600,6 @@ function buildDynamicContextBlock(
         parts.push('<<SYSTEM: Verification artifacts are stale. Re-run verification before finishing.>>');
       } else {
         parts.push('<<SYSTEM: Continue any remaining implementation. When complete, run final verification and provide a summary.>>');
-      }
-    }
-    if (tls.consecutiveReadOnlyRounds >= 4) {
-      parts.push(`<<SYSTEM: ${tls.consecutiveReadOnlyRounds} consecutive read-only rounds without edits. You must now: (1) make an edit/create, (2) write structured findings to session.bb.write, or (3) declare a specific blocker.>>`);
-    }
-    if (useContextStore.getState().coveragePlateauStreak >= 2) {
-      parts.push('<<SYSTEM: No new files or symbols examined in the last 2 rounds. You are re-examining known content. Write findings on what you have and either act or call task_complete.>>');
-    }
-    if (tls.roundsInCurrentPhase >= PHASE_ROUND_BUDGET && tls.activeSubtaskId) {
-      parts.push(`<<SYSTEM: You have spent ${tls.roundsInCurrentPhase} rounds in the "${tls.activeSubtaskId}" phase. Commit findings with session.advance(summary:"...") and move to the next phase. If blocked, declare the blocker in BB and advance anyway.>>`);
-    }
-    if (tls.round === 1 && !useContextStore.getState().taskPlan && !tls.anyRoundHadMutations && tls.mode !== 'designer') {
-      parts.push('<<SYSTEM: You completed a research round without a task plan. For multi-step work, create one now:\np1 session.plan goal:"..." subtasks:analyze,implement,verify\nsession.advance commits findings and moves to the next phase.>>');
-    }
-    if (tls.mode !== 'designer') {
-      if (tls.round + 1 >= TOTAL_ROUND_ESCALATION) {
-        parts.push(`<<SYSTEM: Round ${tls.round + 1} — session is extended. Write final BB summary, run verify if you have mutations, and call task_complete. Remaining work should be declared as a follow-up.>>`);
-      } else if (tls.round + 1 >= TOTAL_ROUND_SOFT_BUDGET) {
-        parts.push(`<<SYSTEM: Round ${tls.round + 1}. Past target batch count. Verify your work, consolidate BB findings, and move toward task_complete.>>`);
       }
     }
     if (tls.forceStopInjected) {
@@ -4000,6 +3927,7 @@ export function buildDormantBlock(): string {
     dormantLines.length = MAX_DORMANT_LINES;
     dormantLines.push(`... and ${overflow} more dormant engrams (use session.drop to clean)`);
   }
+  dormantLines.push('↩ `rec h:XXXX` to restore | `dr h:XXXX` to free budget');
   return '## DORMANT ENGRAMS\n' + dormantLines.join('\n');
 }
 

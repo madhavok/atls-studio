@@ -386,8 +386,9 @@ describe('buildDormantBlock', () => {
 
     const lines = block.split('\n');
     expect(lines[0]).toBe('## DORMANT ENGRAMS');
-    expect(lines.length).toBe(42);
+    expect(lines.length).toBe(43);
     expect(lines[41]).toMatch(/^\.\.\. and 5 more dormant engrams/);
+    expect(lines[42]).toMatch(/↩.*rec.*restore.*dr.*free/);
   });
 });
 
