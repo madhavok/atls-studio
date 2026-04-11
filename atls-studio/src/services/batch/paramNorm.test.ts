@@ -232,6 +232,14 @@ describe('normalizeStepParams', () => {
     });
   });
 
+  describe('search.memory op-specific', () => {
+    it('normalizes "limit" → "max_results"', () => {
+      const out = normalizeStepParams('search.memory', { query: 'cache', limit: 5 });
+      expect(out.max_results).toBe(5);
+      expect(out.limit).toBeUndefined();
+    });
+  });
+
   describe('search.symbol op-specific', () => {
     it('normalizes "name" → "symbol_names"', () => {
       const out = normalizeStepParams('search.symbol', { name: 'MyClass' });

@@ -58,6 +58,7 @@ const GLOBAL_ALIASES: Readonly<Record<string, string>> = {
  */
 const OP_ALIASES: Readonly<Partial<Record<OperationKind, Readonly<Record<string, string>>>>> = {
   'search.code': { query: 'queries' },
+  'search.memory': { limit: 'max_results' },
   'search.issues': { mode: 'issue_mode' },
   'search.symbol': { name: 'symbol_names', query: 'symbol_names' },
   'analyze.calls': { name: 'symbol_names', query: 'symbol_names', symbols: 'symbol_names' },

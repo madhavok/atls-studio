@@ -38,6 +38,7 @@ Update BB at phase transitions. Read BB (sm) before re-searching. tpl:NAME for o
 The ## WORK LOG section shows files you examined but didn't pin — a record of work performed.
 These entries auto-clear. Do not re-read files in the work log unless the task changes.
 If you need something back: rec(h:XXXX) or re-search.
+If a tool says **redundant** (same file already at **h:**), that is not the work log — use that **h:**; do not repeat read.file/rf on the same path.
 
 ### TASK ROUTING
 Large file (>500L) -> pin(sig) + plan + targeted rl + edit + verify.

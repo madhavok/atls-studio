@@ -7,10 +7,10 @@ import { generateShorthandLegend } from '../services/batch/opShorthand';
 
 export const BATCH_TOOL_REF = `## Batch Tool — line-per-step (shell = builds/git/packages ONLY; h:XXXX = universal pointer)
 Pass q: one step per line. Format: STEP_ID <operation> key:val key:val
-<operation> accepts short codes (see Short codes below) or full dotted names. In structured JSON steps, the property is \`use\`: set it to that operation name (e.g. read.shaped, rc, spl) — never the literal string "USE" (some docs label the operation column that way for readability only).
-Arrays: comma-separated (ps:a.ts,b.ts). Quoted values for spaces/colons: content:"const x = 1;"
-Complex nested objects: inline JSON-like {…} syntax (le, creates).
-Dataflow: in:stepId.path (e.g. in:r1.refs). Conditional: if:stepId.ok. on_error:stop|continue|rollback
+<operation> accepts short codes (see Short codes below) or full dotted names — never the literal string "USE" (some docs label the operation column that way for readability only).
+Everything resolves through **workspace paths** and **h:XXXX** (UHPP). Arrays: comma-separated (ps:a.ts,b.ts). Quoted values for spaces/colons: content:"const x = 1;"
+Complex values: inline {…} syntax where noted (le, creates).
+Dataflow: in:stepId.path (e.g. in:r1.refs) binds prior step output into this step. **f**, **ps**, **hashes** must be real paths or **h:**… — never paste \`in:r1.refs\` as if it were a path or hash string. Conditional: if:stepId.ok. on_error:stop|continue|rollback
 
 ### Operation Families
 ${generateFamilyLines()}
@@ -63,7 +63,7 @@ br keys:key1,key2
 bd keys:key1,key2
 ru action?:set|delete|list key?:name content?:"text" — list needs only action:list (no key). set/delete need key (alias: hash → same as key for rule name).
 em content:"text" type?:name
-pi hashes:h:HASH1,h:HASH2 — or bare step id (in:r1.refs resolves refs)
+pi hashes:h:HASH1,h:HASH2 — or \`pi in:r1.refs\` (dataflow). **hashes** = **h:**… only; use \`in:r1.refs\` on the step line, not inside \`hashes\` as text.
 pu hashes:h:HASH1,h:HASH2 — unpin (requires actual h:refs, not step IDs)
 dro hashes:h:HASH1,h:HASH2 — or scope:dormant max?:N (drops without hashes)
 rec hashes:h:HASH1 — recall evicted/archived content back into context
@@ -130,6 +130,16 @@ Review: rs(sig) -> pi -> rl changed fns -> bw review finding per fn -> task_comp
 - Targeted: rl for the specific function body to examine or edit
 - DO NOT chain rs -> rl -> rc -> rf on same file. One read tool, pin, analyze, write finding.
 - If a read is BLOCKED, you already have the content. Act on it.
+
+### Tool messages (read literally — not always "bugs")
+- **redundant** (read.file / load / read.lines): Same revision already in context at the given **h:**. Do **not** repeat the same path read; use that **h:** in \`f\`, \`ce\`, or \`pi\`.
+- **BLOCKED — read spin**: Anti-loop on overlapping reads. Use **h:refs** you already have, **bw**, or an **edit** — not another blind read of the same region.
+- **SKIPPED (condition not met)**: A prior \`if:\` step failed — fix upstream.
+- **SKIPPED (file_path not bound)** / **file_paths must resolve**: Fix **in:** bindings or add **ps** / **file_paths** where required (rc, rs, ab, ad, at, ai, etc.).
+- **pin: no matching chunks**: **hashes** must list real **h:**… from tool output, or use step dataflow \`pi in:r1.refs\`. Never put the text \`in:r1.refs\` inside the **hashes** field.
+- **change.edit** "file not found": **f** / **file_path** must be a real workspace path or **h:…** (optional :line span). Invalid: \`in:c1.refs[0]:2-4\` as **f**. After **cc**, use the **path** you created or **h:** from the create result.
+- **annotate.design** (\`nd\`): **Designer mode only** — in agent/agent_v2 it always errors; skip family tests there.
+- **VOLATILE / expire next round**: Hint to **pi** or **bw** — informational, not a failure.
 
 ### Rules
 - f/ps resolve from active workspace root. Subfolder prefix if monorepo (e.g. \`atls-studio/src/foo.ts\`).
