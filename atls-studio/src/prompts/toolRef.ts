@@ -32,7 +32,7 @@ si ps?:path1 sf?:high|medium|low|all issue_mode?:correctness|all|security limit?
 sp ps?:path1 patterns?:pattern1,pattern2
 sm query:text regions?:active,archived,bb max_results?:N
 ad|at|ai ps:path1 filter?:pattern limit?:N
-ab sn:name1 ps?:path1 action?:move
+ab sn:name1 ps:path1 action?:move
 ac sn:name1,name2 depth?:N filter?:pattern limit?:N
 ax f:path strategy?:by_cluster|by_prefix|by_kind min_lines?:N min_complexity?:N
 ce f:h:XXXX:L-M le:[{content:"new code"}]
@@ -68,8 +68,18 @@ pu hashes:h:HASH1,h:HASH2 — unpin (requires actual h:refs, not step IDs)
 dro hashes:h:HASH1,h:HASH2 — or scope:dormant max?:N (drops without hashes)
 rec hashes:h:HASH1 — recall evicted/archived content back into context
 pc hashes:h:HASH1,h:HASH2 tier?:pointer|sig — compact to digest
-sh|ld|db|sg|ust|ulo|st|ch
-nn|eng|nr|ns|nm — hash-targeted metadata: nn needs hash + note:"..." (not content — use eng fields:{note:...} for structured engram edit). eng = annotate.engram (fields object).
+sh hash:h:XXXX — resolve + reshape a hash ref
+sg hash:h:XXXX lines:start-end | content:"text" label:"name" — stage snippet (hash+lines or content+label)
+ust hash:h:XXXX | label:"name" | hashes:h:H1,h:H2 — unstage (one of hash/label/hashes required)
+ulo hashes:h:HASH1,h:HASH2 — unload engrams from context
+ld ps:path1,path2 — load files into context
+db|st|ch — no required params (debug, stats, compact history)
+nn hash:h:XXXX note:"text" — annotate engram (not content — use eng for structured fields)
+eng hash:h:XXXX fields:{note:"...",type:"..."} — structured engram edit
+nk from:h:XXXX to:h:YYYY — link two engrams
+nr hash:h:XXXX type:name — retype an engram
+ns hash:h:XXXX at:N — split engram at line N
+nm hashes:h:H1,h:H2,h:H3 — merge engrams (min 2)
 iu ps:path1,path2 force?:true
 ie f:path le:[...] verify?:true force?:true
 im edits:[{f:p,le:[...]}] verify?:true
