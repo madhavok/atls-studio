@@ -1131,11 +1131,14 @@ function isBlockingSystemExec(
   );
 }
 
-/** Should the batch halt after this change.* step?
- *  dry_run / preview responses never halt — they are read-only (no files written,
- *  no project state changed). Subsequent steps are unaffected. */
-function shouldStopBatchAfterDryRunPreview(_artifact: Record<string, unknown>): boolean {
-  return false;
+/** Detect whether a change.* step result is a dry-run preview (no files written). */
+function isDryRunPreview(output: StepOutput): boolean {
+  const art = getArtifact(output);
+  if (!art) return false;
+  return art.dry_run === true
+    || art.dry_run === 1
+    || art.status === 'preview'
+    || (typeof art._next === 'string' && art._next.toLowerCase().includes('dry_run:false'));
 }
 
 function detectBatchInterruption(stepId: string, stepIndex: number, stepUse: string, output: StepOutput): BatchInterruption | null {
@@ -1210,6 +1213,7 @@ export async function executeUnifiedBatch(
   let interruption: BatchInterruption | undefined;
   let spinBreaker: string | undefined;
   let spinBlocked = false;
+  let dryRunPreviewCount = 0;
 
   // Expose step outputs to handlers (e.g. session.pin resolves step IDs to hashes)
   ctx.getStepOutput = (stepId: string) => stepOutputs.get(stepId);
@@ -1500,12 +1504,17 @@ export async function executeUnifiedBatch(
       continue;
     }
 
-    // Block further reads/searches after the spin breaker fires
-    if (spinBlocked && (step.use.startsWith('read.') || step.use.startsWith('search.'))) {
+    // Block further reads/searches and repeated dry-run previews after the spin breaker fires
+    const isParamsDryRun = mergedParams.dry_run === true || mergedParams.dry_run === 'true';
+    if (spinBlocked && (
+      step.use.startsWith('read.')
+      || step.use.startsWith('search.')
+      || (step.use.startsWith('change.') && isParamsDryRun)
+    )) {
       const output: StepOutput = {
         kind: 'raw', ok: false, refs: [],
-        summary: `${step.id}: BLOCKED — read spin detected. Use existing h:refs, write to BB, or make an edit.`,
-        error: 'read_spin_blocked',
+        summary: `${step.id}: BLOCKED — ${isParamsDryRun ? 'dry-run preview spin' : 'read spin'} detected. ${isParamsDryRun ? 'Execute with dry_run:false or abandon.' : 'Use existing h:refs, write to BB, or make an edit.'}`,
+        error: isParamsDryRun ? 'dry_run_spin_blocked' : 'read_spin_blocked',
       };
       stepOutputs.set(step.id, output);
       recordStepResult(step.id, step.use, output, 0);
@@ -1647,7 +1656,7 @@ export async function executeUnifiedBatch(
       spinBlocked = false;
       spinBreaker = undefined;
     }
-    if (output.ok && step.use.startsWith('change.')) {
+    if (output.ok && step.use.startsWith('change.') && !isDryRunPreview(output)) {
       ctx.store().resetFileReadSpin();
       spinBlocked = false;
       spinBreaker = undefined;
@@ -1663,24 +1672,15 @@ export async function executeUnifiedBatch(
       batchOk = false;
       break;
     }
-    // Stop after change.* dry-run / preview so later steps are not run, but do not set `interruption` (chat/swarm keep going).
-    if (
-      output.ok
-      && stepArtifact
-      && step.use.startsWith('change.')
-      && shouldStopBatchAfterDryRunPreview(stepArtifact)
-    ) {
-      // Record skipped trailing steps so the agent knows they were dropped.
-      const remaining = stepsToRun.slice(i + 1).filter(s => !s.id.includes('__auto'));
-      for (const skipped of remaining) {
-        recordStepResult(skipped.id, skipped.use, {
-          kind: 'raw',
-          ok: true,
-          refs: [],
-          summary: `${skipped.id}: SKIPPED (dry_run/preview stop after ${step.id})`,
-        }, 0);
+    // Track consecutive dry-run previews — block on repeat
+    if (output.ok && step.use.startsWith('change.') && isDryRunPreview(output)) {
+      dryRunPreviewCount += 1;
+      if (dryRunPreviewCount >= 2) {
+        spinBreaker = `<<STOP: ${step.use} dry-run previewed ${dryRunPreviewCount}x. Execute with dry_run:false or abandon. Do NOT preview again.>>`;
+        spinBlocked = true;
       }
-      break;
+    } else if (output.ok && step.use.startsWith('change.')) {
+      dryRunPreviewCount = 0;
     }
     // Error handling
     if (!output.ok && !shouldTreatBlockedSystemExecAsNonFatal) {

@@ -56,6 +56,7 @@ task_complete auto-closes remaining subtasks and auto-verifies.
 - Claiming a bug without evidence: wrong output, type error, unreachable code with impact, or logical contradiction provable from code. Bug findings MUST cite h:ref lines.
 - Making a change with zero observable effect (unused params, dead imports, unreachable paths).
 - Running vb multiple times after it passed. One pass is sufficient; pin the h:ref if you need to re-check.
+- Repeating a change.* dry_run/preview. One preview, then execute (dry_run:false) or abandon.
 - Supplying line ranges from memory. Use tool output coordinates from h:refs.`;
 
 export const CONTEXT_CONTROL_V4 = `## COGNITIVE CORE` + COGNITIVE_CORE_BODY;
