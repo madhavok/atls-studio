@@ -90,9 +90,16 @@ export function buildRetentionFingerprint(
     default: {
       if (use.startsWith('analyze.')) {
         const fps = Array.isArray(params.file_paths) ? params.file_paths : [];
+        const singular =
+          typeof params.file_path === 'string' && params.file_path.trim().length > 0
+            ? params.file_path.trim()
+            : '';
+        // extract_plan and similar use singular file_path (f); file_paths stays empty — must not collapse all files into one fingerprint.
+        const pathsForKey = fps.length > 0 ? fps : singular ? [singular] : [];
+        const targetFiles = pathsForKey.filter((f): f is string => typeof f === 'string');
         return {
-          fingerprint: `analyze:${use}:${sortedJoin(fps)}`,
-          semanticSignature: { opKind: use, targetFiles: fps.filter((f): f is string => typeof f === 'string') },
+          fingerprint: `analyze:${use}:${sortedJoin(pathsForKey)}`,
+          semanticSignature: { opKind: use, targetFiles },
         };
       }
       return null;

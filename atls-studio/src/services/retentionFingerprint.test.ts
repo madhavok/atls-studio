@@ -32,6 +32,15 @@ describe('buildRetentionFingerprint', () => {
     expect(r?.fingerprint).toBe('analyze:analyze.deps:/a,/b');
   });
 
+  it('fingerprints analyze.extract_plan per file_path (singular f), not one key for all files', () => {
+    const a = buildRetentionFingerprint('analyze.extract_plan', { file_path: 'src/a.ts' });
+    const b = buildRetentionFingerprint('analyze.extract_plan', { file_path: 'src/b.ts' });
+    expect(a?.fingerprint).toBe('analyze:analyze.extract_plan:src/a.ts');
+    expect(b?.fingerprint).toBe('analyze:analyze.extract_plan:src/b.ts');
+    expect(a?.fingerprint).not.toBe(b?.fingerprint);
+    expect(a?.semanticSignature.targetFiles).toEqual(['src/a.ts']);
+  });
+
   it('returns null for verify and system.exec', () => {
     expect(buildRetentionFingerprint('verify.test', {})).toBeNull();
     expect(buildRetentionFingerprint('system.exec', {})).toBeNull();
