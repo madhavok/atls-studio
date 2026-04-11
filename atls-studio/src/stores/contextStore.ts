@@ -276,6 +276,8 @@ export interface ContextChunk {
   createdAt: Date;     // For age tracking
   lastAccessed: number; // Timestamp for recency sorting in working memory
   pinned?: boolean;    // Protected from bulk unload
+  /** Shape from session.pin (e.g. sig); kept on the chunk so HPP can apply it once the ref exists. */
+  pinnedShape?: string;
   subtaskId?: string;  // Which subtask this chunk belongs to (legacy, single)
   subtaskIds?: string[];        // Bound to multiple subtasks (survives until ALL are done)
   boundDuringPlanning?: boolean; // Pre-bound during research/planning phase
@@ -1718,15 +1720,18 @@ export const useContextStore = create<ContextStoreState>()(
               content: compactContent,
               tokens: digestTokens,
               compacted: true,
+              pinned: false,
+              pinnedShape: undefined,
               suspectSince: undefined,
               freshness: undefined,
               freshnessCause: undefined,
               suspectKind: undefined,
             });
             autoCompactedHashes.push(c.hash);
-            // Transfer pin state, annotations, synapses, and readCount to the new chunk
+            // Transfer pin (single owner: latest read), annotations, synapses, and readCount to the new chunk
             if (c.pinned) {
               chunk.pinned = true;
+              if (c.pinnedShape) chunk.pinnedShape = c.pinnedShape;
             }
             if (c.annotations?.length) {
               chunk.annotations = [...(chunk.annotations || []), ...c.annotations];
@@ -2304,16 +2309,29 @@ export const useContextStore = create<ContextStoreState>()(
       for (const h of hashes) {
         const found = findChunkByRef(newChunks, h);
         if (found && !found[1].pinned) {
-          newChunks.set(found[0], { ...found[1], pinned: true });
+          newChunks.set(found[0], {
+            ...found[1],
+            pinned: true,
+            ...(shape !== undefined ? { pinnedShape: shape } : {}),
+          });
           hppSetPinned(found[0], true, shape);
           count++;
         } else if (found && found[1].pinned) {
+          if (shape !== undefined) {
+            newChunks.set(found[0], { ...found[1], pinnedShape: shape });
+            hppSetPinned(found[0], true, shape);
+          }
           alreadyPinned++;
         } else if (!found) {
           const archived = findChunkByRef(newArchived, h);
           if (archived) {
             newArchived.delete(archived[0]);
-            const recalled = { ...archived[1], pinned: true, lastAccessed: Date.now() } as typeof archived[1];
+            const recalled = {
+              ...archived[1],
+              pinned: true,
+              ...(shape !== undefined ? { pinnedShape: shape } : {}),
+              lastAccessed: Date.now(),
+            } as typeof archived[1];
             if (recalled.source && isFileBackedType(recalled.type) && recalled.sourceRevision) {
               const awareness = get().getAwareness(recalled.source);
               if (awareness && awareness.snapshotHash !== recalled.sourceRevision) {
@@ -2330,7 +2348,11 @@ export const useContextStore = create<ContextStoreState>()(
             const staged = findStagedByRef(state.stagedSnippets, h);
             if (staged) {
               const [, promoted] = promoteStagedToChunk(staged[0], staged[1], newChunks);
-              newChunks.set(promoted.hash, { ...promoted, pinned: true });
+              newChunks.set(promoted.hash, {
+                ...promoted,
+                pinned: true,
+                ...(shape !== undefined ? { pinnedShape: shape } : {}),
+              });
               hppSetPinned(promoted.hash, true, shape);
               count++;
             }
@@ -2358,7 +2380,7 @@ export const useContextStore = create<ContextStoreState>()(
       if (hasWildcard) {
         for (const [key, chunk] of newChunks) {
           if (chunk.pinned) {
-            newChunks.set(key, { ...chunk, pinned: false });
+            newChunks.set(key, { ...chunk, pinned: false, pinnedShape: undefined });
             hppSetPinned(key, false);
             count++;
           }
@@ -2367,7 +2389,7 @@ export const useContextStore = create<ContextStoreState>()(
         for (const h of hashes) {
           const found = findChunkByRef(newChunks, h);
           if (found && found[1].pinned) {
-            newChunks.set(found[0], { ...found[1], pinned: false });
+            newChunks.set(found[0], { ...found[1], pinned: false, pinnedShape: undefined });
             hppSetPinned(found[0], false);
             count++;
           }

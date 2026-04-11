@@ -79,7 +79,7 @@ function syncHppPinsWithStore(chunks: ContextChunk[]): void {
         materialize(chunk.hash, chunk.type, chunk.source, chunk.tokens, totalLines, digest);
         ref = getRef(chunk.hash);
       }
-      setPinned(chunk.hash, true, ref?.pinnedShape);
+      setPinned(chunk.hash, true, chunk.pinnedShape ?? ref?.pinnedShape);
     } else {
       const ref = getRef(chunk.hash);
       if (ref?.pinned) {
@@ -350,9 +350,10 @@ export function formatWorkingMemory(input: FormatterInput): string {
       lines.push(`## ACTIVE ENGRAMS${subtaskLabel}`);
       for (const chunk of materialized) {
         const ref = getRef(chunk.hash);
-        const shapedPin = chunk.pinned && ref?.pinnedShape;
+        const effectivePinShape = ref?.pinnedShape ?? chunk.pinnedShape;
+        const shapedPin = chunk.pinned && !!effectivePinShape;
         const pinIndicator = chunk.pinned
-          ? (shapedPin ? `[P:${ref.pinnedShape}] ` : '[P] ')
+          ? (shapedPin ? `[P:${effectivePinShape}] ` : '[P] ')
           : '';
         const compactIndicator = chunk.compacted ? '[C] ' : '';
         const summaryHint = chunk.summary ? ` — ${chunk.summary}` : '';

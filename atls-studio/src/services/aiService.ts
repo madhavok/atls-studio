@@ -136,7 +136,7 @@ import { HASH_PROTOCOL_CORE } from '../prompts/hashProtocol';
 import { getModePrompt } from '../prompts/modePrompts';
 import { getShellGuide } from '../prompts/shellGuide';
 import { GEMINI_REINFORCEMENT, GEMINI_RECENCY_BOOST } from '../prompts/providerOverrides';
-import { advanceTurn, resetProtocol, dematerialize, getAllRefs, getRef, shouldMaterialize, getTurn, setRoundRefreshHook } from './hashProtocol';
+import { advanceTurn, dematerialize, getAllRefs, getRef, shouldMaterialize, getTurn, setRoundRefreshHook } from './hashProtocol';
 import { useRoundHistoryStore, type VerificationConfidence } from '../stores/roundHistoryStore';
 import {
   executeUnifiedBatch,

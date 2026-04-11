@@ -3,8 +3,9 @@
  */
 import { describe, it, expect, beforeEach } from 'vitest';
 import { formatWorkingMemory } from './contextFormatter';
-import { advanceTurn, getRef, shouldMaterialize } from './hashProtocol';
+import { advanceTurn, dematerialize, getRef, materialize, shouldMaterialize } from './hashProtocol';
 import { useContextStore } from '../stores/contextStore';
+import { hashContentSync } from '../utils/contextHash';
 
 function resetStore() {
   useContextStore.getState().resetSession();
@@ -60,5 +61,26 @@ describe('syncHppPinsWithStore (via formatWorkingMemory)', () => {
     useContextStore.getState().unpinChunks([hash]);
     formatWorkingMemory(wmInput());
     expect(getRef(hash)?.pinned).toBe(false);
+  });
+
+  it('applies pinnedShape from store when pin ran before first ref', () => {
+    const short = useContextStore.getState().addChunk('line', 'search', 'q');
+    useContextStore.getState().pinChunks([short], 'sig');
+    expect(getRef(short)).toBeUndefined();
+
+    formatWorkingMemory(wmInput());
+    const ref = getRef(short);
+    expect(ref?.pinned).toBe(true);
+    expect(ref?.pinnedShape).toBe('sig');
+  });
+
+  it('emit-style materialize+dematerialize registers a referenced ref', () => {
+    const body = 'snippet';
+    useContextStore.getState().addChunk(body, 'result', 'lbl');
+    const fullKey = hashContentSync(body);
+    const chunk = useContextStore.getState().chunks.get(fullKey)!;
+    materialize(chunk.hash, 'result', 'lbl', chunk.tokens, 1, '');
+    dematerialize(chunk.hash);
+    expect(getRef(chunk.hash)?.visibility).toBe('referenced');
   });
 });

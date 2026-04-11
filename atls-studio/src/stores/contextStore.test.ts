@@ -73,6 +73,35 @@ describe('queryBySetSelector', () => {
     expect(result.entries[0].source).toBe('src/foo.ts');
   });
 
+  it('hash forwarding moves pin+shape to new read and unpins compacted stub', () => {
+    const store = useContextStore.getState();
+    const s1 = store.addChunk('first read body content here', 'raw', 'src/same.ts');
+    store.pinChunks([s1], 'sig');
+    const s2 = store.addChunk('second read replaces first', 'raw', 'src/same.ts');
+
+    const chunks = useContextStore.getState().chunks;
+    const first = [...chunks.values()].find(c => c.shortHash === s1);
+    const second = [...chunks.values()].find(c => c.shortHash === s2);
+
+    expect(first?.compacted).toBe(true);
+    expect(first?.pinned).toBe(false);
+    expect(first?.pinnedShape).toBeUndefined();
+    expect(second?.compacted).toBeFalsy();
+    expect(second?.pinned).toBe(true);
+    expect(second?.pinnedShape).toBe('sig');
+  });
+
+  it('pinChunks updates pinnedShape when already pinned', () => {
+    const store = useContextStore.getState();
+    const h = addTestChunk('fn x() {}', 'file', 'src/a.ts');
+    store.pinChunks([h], 'sig');
+    const mapKey = [...useContextStore.getState().chunks.entries()].find(([, c]) => c.shortHash === h)?.[0];
+    expect(mapKey).toBeDefined();
+    store.pinChunks([mapKey!], 'fold');
+    const chunk = [...useContextStore.getState().chunks.values()].find(c => c.shortHash === h);
+    expect(chunk?.pinnedShape).toBe('fold');
+  });
+
   it('kind=type filters by chunk type', () => {
     addTestChunk('fn foo() {}', 'file', 'src/foo.ts');
     addTestChunk('tool output', 'result');

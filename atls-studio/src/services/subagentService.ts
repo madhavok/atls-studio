@@ -72,6 +72,7 @@ export interface SubAgentRef {
   tokens: number;
   digest?: string;
   pinned: boolean;
+  pinnedShape?: string;
   type: string;
 }
 
@@ -630,6 +631,7 @@ function extractSubagentRefs(
       tokens: chunk.tokens,
       digest: chunk.digest,
       pinned: true,
+      pinnedShape: chunk.pinnedShape,
       type: chunk.type,
     });
   }

@@ -86,6 +86,11 @@ export async function advanceTurn(): Promise<number> {
   return currentTurn;
 }
 
+/**
+ * Clears HPP turn counter and all ChunkRefs. Must stay aligned with working-memory chunks:
+ * application code should use `useContextStore.getState().resetSession()` (which calls this).
+ * Tests may invoke `resetProtocol()` alone when no Zustand chunks exist.
+ */
 export function resetProtocol(): void {
   currentTurn = 0;
   refs.clear();

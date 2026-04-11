@@ -819,9 +819,11 @@ export const handleEmit: OpHandler = async (params, ctx) => {
   const lang = params.lang as string | undefined;
   if (!content) return err('emit: ERROR missing content param');
 
-  const { dematerialize } = await import('../../hashProtocol');
+  const { materialize, dematerialize } = await import('../../hashProtocol');
   const hash = ctx.store().addChunk(content, 'result', label);
   const tokens = countTokensSync(content);
+  const totalLines = Math.max(1, content.split('\n').length);
+  materialize(hash, 'result', label, tokens, totalLines, '');
   dematerialize(hash);
 
   invoke('register_hash_content', {
