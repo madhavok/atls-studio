@@ -31,6 +31,7 @@ import {
   SUBAGENT_STAGED_PATHS_CAP,
 } from './promptMemory';
 import { resolveModelSettings, type ResolvedModelSettings } from '../utils/modelSettings';
+import { formatEntryManifestSection } from './aiService';
 import { isExtendedContextEnabled, modelSupportsExtendedContext } from '../utils/modelCapabilities';
 import {
   subagentToolResultIndicatesExploration,
@@ -926,13 +927,19 @@ export async function executeSubagent(
 
   // Build system prompt — use pre-resolved focus context when available
   const bbKey = ROLE_BB_KEYS[role];
-  const systemPrompt = buildSubagentPrompt(role as SubagentRole, {
-    pinBudget,
-    focusFiles: params.focus_files?.join(', ') || 'none',
-    focusFileContext: params.focus_file_context,
-    alreadyStaged: 'See ## ALREADY STAGED in working state',
-    bbKey,
-  });
+  const emDepth =
+    settings.subagentEntryManifestDepth
+    ?? settings.entryManifestDepth
+    ?? 'paths';
+  const systemPrompt =
+    buildSubagentPrompt(role as SubagentRole, {
+      pinBudget,
+      focusFiles: params.focus_files?.join(', ') || 'none',
+      focusFileContext: params.focus_file_context,
+      alreadyStaged: 'See ## ALREADY STAGED in working state',
+      bbKey,
+    })
+    + formatEntryManifestSection(appState.projectProfile?.entryManifest, emDepth);
 
   // Terminal for coder/tester
   let terminalId: string | undefined;

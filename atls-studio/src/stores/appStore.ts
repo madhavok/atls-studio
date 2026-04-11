@@ -492,6 +492,8 @@ export interface Settings {
   subagentOutputSpeed?: 'low' | 'medium' | 'high';
   /** Override thinking for subagent tool only; omit to use modelThinking */
   subagentThinking?: 'off' | 'low' | 'medium' | 'high';
+  /** Override entry manifest depth for subagent system prompt; omit to use entryManifestDepth */
+  subagentEntryManifestDepth?: 'off' | 'paths' | 'sigs' | 'paths_sigs';
 }
 
 /** Per-category severity enables. Key = category, value = enabled severities */

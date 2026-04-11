@@ -1320,6 +1320,37 @@ export interface EntryManifestEntry {
   tier: 'full' | 'summary';
 }
 
+export type EntryManifestDepth = 'off' | 'paths' | 'sigs' | 'paths_sigs';
+
+/**
+ * ## Entry Points block for BP1 (main chat) or subagent system prompt.
+ * Returns empty string when depth is off or there is nothing to show.
+ */
+export function formatEntryManifestSection(
+  entryManifest: EntryManifestEntry[] | undefined,
+  entryManifestDepth: EntryManifestDepth | undefined,
+): string {
+  if (!entryManifestDepth || entryManifestDepth === 'off' || !entryManifest?.length) {
+    return '';
+  }
+  const pathList = entryManifest.map(e => `${e.path} (${e.method}, ${e.lines}L)`).join(' | ');
+  const sigLines = entryManifest
+    .filter(e => e.sig && e.tokens > 0)
+    .map(e => e.sig);
+  if (entryManifestDepth === 'paths') {
+    return `\n\n## Entry Points\n${pathList}`;
+  }
+  if (entryManifestDepth === 'sigs') {
+    if (sigLines.length > 0) {
+      return `\n\n## Entry Points\n${sigLines.join('\n')}`;
+    }
+    return '';
+  }
+  const body =
+    sigLines.length > 0 ? `${pathList}\n\n${sigLines.join('\n')}` : pathList;
+  return `\n\n## Entry Points\n${body}`;
+}
+
 export interface ProjectProfile {
   proj: string;
   stats: { files: number; loc: number; langs: Record<string, number> };
@@ -3721,7 +3752,7 @@ function _buildStaticSystemPrompt(
   atlsReady?: boolean,
   provider?: string,
   entryManifest?: EntryManifestEntry[],
-  entryManifestDepth?: 'off' | 'paths' | 'sigs' | 'paths_sigs',
+  entryManifestDepth?: EntryManifestDepth,
 ): string {
   // Inject refactor config early for cache key (refactor mode only)
   const refactorPart = mode === 'refactor' ? useRefactorStore.getState().getConfigForPrompt() : '';
@@ -3800,25 +3831,7 @@ q: exec system.exec cmd:"..." → write cmd to temp .ps1 and run in agent shell`
     : '';
 
   // Entry manifest (frozen at session start, cached in BP1)
-  let entryManifestSection = '';
-  if (entryManifestDepth && entryManifestDepth !== 'off' && entryManifest?.length) {
-    const pathList = entryManifest.map(e => `${e.path} (${e.method}, ${e.lines}L)`).join(' | ');
-    const sigLines = entryManifest
-      .filter(e => e.sig && e.tokens > 0)
-      .map(e => e.sig);
-    if (entryManifestDepth === 'paths') {
-      entryManifestSection = `\n\n## Entry Points\n${pathList}`;
-    } else if (entryManifestDepth === 'sigs') {
-      if (sigLines.length > 0) {
-        entryManifestSection = `\n\n## Entry Points\n${sigLines.join('\n')}`;
-      }
-    } else {
-      // paths_sigs
-      const body =
-        sigLines.length > 0 ? `${pathList}\n\n${sigLines.join('\n')}` : pathList;
-      entryManifestSection = `\n\n## Entry Points\n${body}`;
-    }
-  }
+  const entryManifestSection = formatEntryManifestSection(entryManifest, entryManifestDepth);
 
   const metricsSnapshot = {
     modePromptTokens: countTokensSync(modePrompt + refactorConfig),

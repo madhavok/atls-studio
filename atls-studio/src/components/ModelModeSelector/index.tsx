@@ -231,6 +231,123 @@ function SubAgentModelSelector({ models, inline }: { models: ModelInfo[]; inline
   );
 }
 
+/** Spd / Thk / EM for SubAgent row — same controls as main model; optional overrides in settings. */
+function SubAgentGenerationSettings({ disabled }: { disabled: boolean }) {
+  const settings = useAppStore((s) => s.settings);
+  const setSettings = useAppStore((s) => s.setSettings);
+
+  const speed = settings.subagentOutputSpeed ?? settings.modelOutputSpeed ?? 'medium';
+  const thinking = settings.subagentThinking ?? settings.modelThinking ?? 'medium';
+  const depth = settings.subagentEntryManifestDepth ?? settings.entryManifestDepth ?? 'sigs';
+
+  const speedLevels: { id: OutputSpeedLevel; label: string; title: string }[] = [
+    { id: 'low', label: 'Lo', title: 'Low — terse, fast responses (subagent)' },
+    { id: 'medium', label: 'Med', title: 'Medium — balanced verbosity (subagent)' },
+    { id: 'high', label: 'Hi', title: 'High — detailed, verbose responses (subagent)' },
+  ];
+  const thinkingLevels: { id: ThinkingLevel; label: string; title: string }[] = [
+    { id: 'off', label: 'Off', title: 'No extended thinking (subagent)' },
+    { id: 'low', label: 'Lo', title: 'Low reasoning budget (subagent)' },
+    { id: 'medium', label: 'Med', title: 'Medium reasoning budget (subagent)' },
+    { id: 'high', label: 'Hi', title: 'High reasoning budget (subagent)' },
+  ];
+  const speedColor = (id: OutputSpeedLevel) =>
+    speed === id
+      ? id === 'low' ? 'bg-sky-500/80 text-white'
+        : id === 'medium' ? 'bg-emerald-500/80 text-white'
+        : 'bg-amber-500/80 text-white'
+      : 'bg-studio-surface/30 text-studio-muted hover:bg-studio-surface';
+  const thinkColor = (id: ThinkingLevel) =>
+    thinking === id
+      ? id === 'off' ? 'bg-studio-border text-studio-text'
+        : id === 'low' ? 'bg-sky-500/80 text-white'
+        : id === 'medium' ? 'bg-emerald-500/80 text-white'
+        : 'bg-violet-500/80 text-white'
+      : 'bg-studio-surface/30 text-studio-muted hover:bg-studio-surface';
+
+  const setSpeed = (v: OutputSpeedLevel) => setSettings({ subagentOutputSpeed: v });
+  const setThinking = (v: ThinkingLevel) => setSettings({ subagentThinking: v });
+  const setDepth = (d: 'off' | 'paths' | 'sigs' | 'paths_sigs') => {
+    setSettings({ subagentEntryManifestDepth: d });
+  };
+
+  const emLevels = [
+    { id: 'off' as const, label: 'Off', title: 'Entry manifest OFF for subagent system prompt' },
+    { id: 'paths' as const, label: 'Paths', title: 'Entry manifest: file paths only (subagent)' },
+    { id: 'sigs' as const, label: 'Sigs', title: 'Entry manifest: signatures only (subagent)' },
+    {
+      id: 'paths_sigs' as const,
+      label: 'P+S',
+      title: 'Entry manifest: paths line + full signatures (subagent)',
+    },
+  ];
+
+  const wrap = disabled ? 'opacity-40 pointer-events-none' : '';
+
+  return (
+    <div className={`flex items-center gap-1 flex-wrap ${wrap}`} title={disabled ? 'Enable SubAgent (pick a model) to use these' : undefined}>
+      <span className="text-studio-border">|</span>
+      <div className="flex items-center gap-1" title="Subagent output speed / verbosity">
+        <span className="text-[10px] text-studio-muted">Spd</span>
+        <div className="flex rounded overflow-hidden border border-studio-border/60">
+          {speedLevels.map(l => (
+            <button
+              key={l.id}
+              type="button"
+              onClick={() => setSpeed(l.id)}
+              title={l.title}
+              className={`px-1.5 py-0.5 text-[9px] font-medium transition-colors ${speedColor(l.id)}`}
+            >
+              {l.label}
+            </button>
+          ))}
+        </div>
+      </div>
+      <span className="text-studio-border">|</span>
+      <div className="flex items-center gap-1" title="Subagent reasoning depth">
+        <span className="text-[10px] text-studio-muted">Thk</span>
+        <div className="flex rounded overflow-hidden border border-studio-border/60">
+          {thinkingLevels.map(l => (
+            <button
+              key={l.id}
+              type="button"
+              onClick={() => setThinking(l.id)}
+              title={l.title}
+              className={`px-1.5 py-0.5 text-[9px] font-medium transition-colors ${thinkColor(l.id)}`}
+            >
+              {l.label}
+            </button>
+          ))}
+        </div>
+      </div>
+      <span className="text-studio-border">|</span>
+      <div className="flex items-center gap-1" title="Entry manifest on subagent system prompt">
+        <span className="text-[10px] text-studio-muted">EM</span>
+        <div className="flex rounded overflow-hidden border border-studio-border/60">
+          {emLevels.map(l => (
+            <button
+              key={l.id}
+              type="button"
+              onClick={() => setDepth(l.id)}
+              title={l.title}
+              className={`px-1.5 py-0.5 text-[9px] font-medium transition-colors ${
+                depth === l.id
+                  ? l.id === 'sigs' ? 'bg-emerald-500/80 text-white'
+                    : l.id === 'paths' ? 'bg-amber-500/80 text-white'
+                    : l.id === 'paths_sigs' ? 'bg-sky-500/80 text-white'
+                    : 'bg-studio-border text-studio-text'
+                  : 'bg-studio-surface/30 text-studio-muted hover:bg-studio-surface'
+              }`}
+            >
+              {l.label}
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function ModelModeSelector() {
   const {
     settings,
@@ -1158,8 +1275,9 @@ export function ModelModeSelector() {
 
       {/* Row 2: SubAgent in selection box (agent/designer mode) */}
       {(chatMode === 'agent' || chatMode === 'agent_v2' || chatMode === 'designer') && (
-        <div className="border border-studio-border/60 rounded px-2 py-1 bg-studio-surface/30 flex items-center">
+        <div className="border border-studio-border/60 rounded px-2 py-1 bg-studio-surface/30 flex items-center flex-wrap gap-y-1 gap-x-0">
           <SubAgentModelSelector models={availableModels} inline={false} />
+          <SubAgentGenerationSettings disabled={settings.subagentModel === 'none'} />
         </div>
       )}
     </div>
