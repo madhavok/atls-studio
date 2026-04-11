@@ -30,7 +30,7 @@ import {
   isExtendedContextEnabled,
   modelSupportsExtendedContext,
 } from '../../utils/modelCapabilities';
-import { resolveModelSettings } from '../../utils/modelSettings';
+import { resolveModelSettings, type OutputSpeedLevel, type ThinkingLevel } from '../../utils/modelSettings';
 import { useRoundHistoryStore } from '../../stores/roundHistoryStore';
 import { parseTaskCompleteArgs } from '../../utils/structuredOutput';
 import { selectRecentHistory } from '../../services/historySelector';
@@ -1894,6 +1894,7 @@ const SUBAGENT_STATUS_TEXT: Record<string, string> = {
 
 const SubAgentCard = memo(function SubAgentCard({ toolCall }: { toolCall: ToolCall }) {
   const [expanded, setExpanded] = useState(false);
+  const settings = useAppStore(s => s.settings);
   const args = toolCall.args || {};
   const roleFromDelegateName = toolCall.name?.startsWith('delegate.')
     ? toolCall.name.slice('delegate.'.length)
@@ -1931,6 +1932,41 @@ const SubAgentCard = memo(function SubAgentCard({ toolCall }: { toolCall: ToolCa
 
   const roleLabel = SUBAGENT_ROLE_LABELS[subType] || subType.charAt(0).toUpperCase() + subType.slice(1);
   const statusText = SUBAGENT_STATUS_TEXT[subType] || 'working...';
+
+  const subagentSpeed = settings.subagentOutputSpeed ?? settings.modelOutputSpeed ?? 'medium';
+  const subagentThinking = settings.subagentThinking ?? settings.modelThinking ?? 'medium';
+  const hasSubagentSpdThkOverride =
+    settings.subagentOutputSpeed !== undefined || settings.subagentThinking !== undefined;
+
+  const speedLevels: { id: OutputSpeedLevel; label: string; title: string }[] = [
+    { id: 'low', label: 'Lo', title: 'Low — terse, fast responses (subagent)' },
+    { id: 'medium', label: 'Med', title: 'Medium — balanced verbosity (subagent)' },
+    { id: 'high', label: 'Hi', title: 'High — detailed, verbose responses (subagent)' },
+  ];
+  const thinkingLevels: { id: ThinkingLevel; label: string; title: string }[] = [
+    { id: 'off', label: 'Off', title: 'No extended thinking (subagent)' },
+    { id: 'low', label: 'Lo', title: 'Low reasoning budget (subagent)' },
+    { id: 'medium', label: 'Med', title: 'Medium reasoning budget (subagent)' },
+    { id: 'high', label: 'Hi', title: 'High reasoning budget (subagent)' },
+  ];
+  const speedColor = (id: OutputSpeedLevel) =>
+    subagentSpeed === id
+      ? id === 'low'
+        ? 'bg-sky-500/80 text-white'
+        : id === 'medium'
+          ? 'bg-emerald-500/80 text-white'
+          : 'bg-amber-500/80 text-white'
+      : 'bg-studio-surface/30 text-studio-muted hover:bg-studio-surface';
+  const thinkColor = (id: ThinkingLevel) =>
+    subagentThinking === id
+      ? id === 'off'
+        ? 'bg-studio-border text-studio-text'
+        : id === 'low'
+          ? 'bg-sky-500/80 text-white'
+          : id === 'medium'
+            ? 'bg-emerald-500/80 text-white'
+            : 'bg-violet-500/80 text-white'
+      : 'bg-studio-surface/30 text-studio-muted hover:bg-studio-surface';
 
   const statusColor = isFailed
     ? 'border-studio-error/50 bg-studio-error/8'
@@ -1982,6 +2018,60 @@ const SubAgentCard = memo(function SubAgentCard({ toolCall }: { toolCall: ToolCa
         >
           <path d="M7 10l5 5 5-5z" />
         </svg>
+      </div>
+
+      <div
+        className="flex flex-wrap items-center gap-x-2 gap-y-1 px-3 py-1.5 border-t border-studio-border/20 bg-studio-bg/30"
+        title="Output speed and reasoning for the subagent model (next run)"
+        onClick={e => e.stopPropagation()}
+      >
+        <div className="flex items-center gap-1">
+          <span className="text-[10px] text-studio-muted">Spd</span>
+          <div className="flex rounded overflow-hidden border border-studio-border/60">
+            {speedLevels.map(l => (
+              <button
+                key={l.id}
+                type="button"
+                onClick={() => useAppStore.getState().setSettings({ subagentOutputSpeed: l.id })}
+                title={l.title}
+                className={`px-1.5 py-0.5 text-[9px] font-medium transition-colors ${speedColor(l.id)}`}
+              >
+                {l.label}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="flex items-center gap-1">
+          <span className="text-[10px] text-studio-muted">Thk</span>
+          <div className="flex rounded overflow-hidden border border-studio-border/60">
+            {thinkingLevels.map(l => (
+              <button
+                key={l.id}
+                type="button"
+                onClick={() => useAppStore.getState().setSettings({ subagentThinking: l.id })}
+                title={l.title}
+                className={`px-1.5 py-0.5 text-[9px] font-medium transition-colors ${thinkColor(l.id)}`}
+              >
+                {l.label}
+              </button>
+            ))}
+          </div>
+        </div>
+        {hasSubagentSpdThkOverride && (
+          <button
+            type="button"
+            className="text-[9px] text-studio-muted hover:text-studio-text underline ml-0.5"
+            title="Clear subagent overrides; use main chat Spd/Thk"
+            onClick={() =>
+              useAppStore.getState().setSettings({
+                subagentOutputSpeed: undefined,
+                subagentThinking: undefined,
+              })
+            }
+          >
+            Match main
+          </button>
+        )}
       </div>
 
       {/* Expanded details */}

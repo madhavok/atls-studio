@@ -488,6 +488,10 @@ export interface Settings {
   modelOutputSpeed: 'low' | 'medium' | 'high';
   // Model thinking / reasoning depth: controls extended thinking budget / reasoning effort
   modelThinking: 'off' | 'low' | 'medium' | 'high';
+  /** Override output speed for subagent tool only; omit to use modelOutputSpeed */
+  subagentOutputSpeed?: 'low' | 'medium' | 'high';
+  /** Override thinking for subagent tool only; omit to use modelThinking */
+  subagentThinking?: 'off' | 'low' | 'medium' | 'high';
 }
 
 /** Per-category severity enables. Key = category, value = enabled severities */

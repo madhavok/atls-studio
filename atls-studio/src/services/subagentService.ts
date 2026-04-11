@@ -30,6 +30,8 @@ import {
   SUBAGENT_PIN_BUDGET_CAP,
   SUBAGENT_STAGED_PATHS_CAP,
 } from './promptMemory';
+import { resolveModelSettings, type ResolvedModelSettings } from '../utils/modelSettings';
+import { isExtendedContextEnabled, modelSupportsExtendedContext } from '../utils/modelCapabilities';
 import {
   subagentToolResultIndicatesExploration,
   subagentToolResultIndicatesProgress,
@@ -238,6 +240,10 @@ export function foldSubagentUsageMetrics(
   return { inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens };
 }
 
+type SubagentStreamOptions = ResolvedModelSettings & {
+  anthropicBeta?: string[] | null;
+};
+
 async function runSubagentRound(
   provider: AIProvider,
   apiKey: string,
@@ -246,6 +252,7 @@ async function runSubagentRound(
   systemPrompt: string,
   streamId: string,
   maxOutputTokens: number,
+  streamOpts: SubagentStreamOptions,
   baseUrl?: string,
   projectId?: string,
   region?: string,
@@ -337,9 +344,19 @@ async function runSubagentRound(
   console.log(`[subagent] Invoking ${provider}/${model} (stream=${streamId})`);
 
   if (provider === 'anthropic') {
-    await invoke('stream_chat_anthropic', { ...commonParams, apiKey });
+    await invoke('stream_chat_anthropic', {
+      ...commonParams,
+      apiKey,
+      anthropicBeta: streamOpts.anthropicBeta ?? null,
+      thinkingBudget: streamOpts.thinkingBudget ?? null,
+    });
   } else if (provider === 'openai') {
-    await invoke('stream_chat_openai', { ...commonParams, apiKey });
+    await invoke('stream_chat_openai', {
+      ...commonParams,
+      apiKey,
+      reasoningEffort: streamOpts.reasoningEffort ?? null,
+      verbosity: streamOpts.outputVerbosity ?? null,
+    });
   } else if (provider === 'vertex') {
     await invoke('stream_chat_vertex', {
       ...commonParams,
@@ -348,11 +365,22 @@ async function runSubagentRound(
       region: region || null,
       cachedContent: null,
       dynamicContext: null,
+      thinkingBudget: streamOpts.thinkingBudget ?? null,
     });
   } else if (provider === 'google') {
-    await invoke('stream_chat_google', { ...commonParams, apiKey, cachedContent: null, dynamicContext: null });
+    await invoke('stream_chat_google', {
+      ...commonParams,
+      apiKey,
+      cachedContent: null,
+      dynamicContext: null,
+      thinkingBudget: streamOpts.thinkingBudget ?? null,
+    });
   } else if (provider === 'lmstudio') {
-    await invoke('stream_chat_lmstudio', { ...commonParams, baseUrl: baseUrl || 'http://localhost:1234' });
+    await invoke('stream_chat_lmstudio', {
+      ...commonParams,
+      baseUrl: baseUrl || 'http://localhost:1234',
+      reasoningEffort: streamOpts.reasoningEffort ?? null,
+    });
   } else {
     throw new Error(`Subagent streaming not supported for provider: ${provider}`);
   }
@@ -926,6 +954,25 @@ export async function executeSubagent(
 
   const streamId = `subagent-${invocationId}`;
   const maxOutputTokens = SUBAGENT_MAX_OUTPUT_TOKENS_BY_ROLE[role] ?? 4096;
+
+  const subSpeed = settings.subagentOutputSpeed ?? settings.modelOutputSpeed;
+  const subThinking = settings.subagentThinking ?? settings.modelThinking;
+  const subAnthropicBeta =
+    subagentProvider === 'anthropic'
+    && isExtendedContextEnabled(
+      subagentModel,
+      'anthropic',
+      settings.extendedContextByModelId ?? {},
+      settings.extendedContext,
+    )
+    && modelSupportsExtendedContext(subagentModel, 'anthropic')
+      ? ['context-1m-2025-08-07']
+      : undefined;
+  const streamOpts: SubagentStreamOptions = {
+    ...resolveModelSettings(subSpeed, subThinking, subagentModel, subagentProvider, maxOutputTokens),
+    anthropicBeta: subAnthropicBeta ?? null,
+  };
+
   let totalInputTokens = 0;
   let totalOutputTokens = 0;
   let totalCacheRead = 0;
@@ -976,6 +1023,7 @@ export async function executeSubagent(
         systemPrompt,
         `${streamId}-r${round}`,
         maxOutputTokens,
+        streamOpts,
         baseUrl,
         vertexProjectId,
         vertexRegion,
