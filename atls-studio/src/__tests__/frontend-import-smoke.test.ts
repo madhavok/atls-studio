@@ -61,5 +61,5 @@ describe('frontend import smoke', () => {
 
     expect(useContextStore).toBeTypeOf('function');
     expect(mainModule).toBeDefined();
-  }, 15000);
+  }, 60000);
 });

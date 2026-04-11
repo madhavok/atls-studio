@@ -69,6 +69,20 @@ function makeCtx() {
   } as any;
 }
 
+/** Context store with pre-seeded chunks (e.g. repeat-read auto-stage path). */
+function makeCtxWithChunks(
+  chunks: Map<string, Record<string, unknown>>,
+) {
+  const base = makeCtx();
+  return {
+    ...base,
+    store: () => ({
+      ...base.store(),
+      chunks,
+    }),
+  } as any;
+}
+
 function raw(summary: string, content: Record<string, unknown>, ok = true): StepOutput {
   return {
     kind: 'raw',
@@ -304,6 +318,91 @@ describe('executeUnifiedBatch interruption handling', () => {
     expect(result.interruption).toBeUndefined();
     expect(result.step_results).toHaveLength(2);
     expect(afterSpy).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('executeUnifiedBatch auto-stage repeat read and verify stop', () => {
+  beforeEach(() => {
+    handlers.clear();
+  });
+
+  it('injects session.stage after file_refs when chunk readCount >= 2 and auto_stage_refs is off', async () => {
+    const stageSpy = vi.fn(async () => ({
+      kind: 'session' as const,
+      ok: true,
+      refs: [] as string[],
+      summary: 'staged',
+    }));
+    const afterSpy = vi.fn(async () => raw('done', { ok: true }));
+
+    handlers.set('session.stage', stageSpy as unknown as OpHandler);
+    handlers.set('read.lines', async () => ({
+      kind: 'file_refs' as const,
+      ok: true,
+      refs: ['h:beef42'],
+      summary: 'read',
+    }));
+    handlers.set('session.emit', afterSpy as unknown as OpHandler);
+
+    const chunk = {
+      hash: 'fullbeef42hashxxxxxxxx',
+      shortHash: 'beef42',
+      type: 'result',
+      content: 'x',
+      tokens: 1,
+      createdAt: new Date(),
+      lastAccessed: Date.now(),
+      source: 'src/repeat.ts',
+      readCount: 2,
+    };
+    const ctx = makeCtxWithChunks(new Map([['k1', chunk]]));
+
+    const result = await executeUnifiedBatch(
+      {
+        version: '1.0',
+        policy: { auto_stage_refs: false },
+        steps: [
+          { id: 'r', use: 'read.lines', with: { hash: 'h:beef42', lines: '1-3' } },
+          { id: 'tail', use: 'session.emit', with: {} },
+        ],
+      },
+      ctx,
+    );
+
+    expect(result.ok).toBe(true);
+    expect(stageSpy).toHaveBeenCalledTimes(1);
+    const stageParams = stageSpy.mock.calls[0]![0] as Record<string, unknown>;
+    expect(stageParams.hashes).toEqual(['h:beef42']);
+    expect(afterSpy).toHaveBeenCalled();
+    expect(result.step_results.some(r => r.id === 'r__auto_stage_repeat')).toBe(true);
+  });
+
+  it('stops stepping after failed verify when stop_on_verify_failure is set', async () => {
+    const afterSpy = vi.fn(async () => raw('after', { ok: true }));
+
+    handlers.set('verify.build', async () => ({
+      kind: 'verify_result' as const,
+      ok: false,
+      refs: [] as string[],
+      summary: 'build failed',
+      classification: 'fail' as const,
+    }));
+    handlers.set('session.emit', afterSpy as unknown as OpHandler);
+
+    const result = await executeUnifiedBatch(
+      {
+        version: '1.0',
+        policy: { stop_on_verify_failure: true },
+        steps: [
+          { id: 'v', use: 'verify.build', with: {} },
+          { id: 'after', use: 'session.emit', with: {} },
+        ],
+      },
+      makeCtx(),
+    );
+
+    expect(result.step_results).toHaveLength(1);
+    expect(afterSpy).not.toHaveBeenCalled();
   });
 });
 

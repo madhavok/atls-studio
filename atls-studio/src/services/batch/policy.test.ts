@@ -66,11 +66,27 @@ describe('evaluateCondition', () => {
     expect(evaluateCondition({ not: { step_ok: 'a' } }, outputs)).toBe(true);
     expect(evaluateCondition({ not: { step_ok: 'b' } }, outputs)).toBe(false);
   });
+
+  it('returns true for unrecognized condition objects (permissive default)', () => {
+    const outputs = new Map<string, StepOutput>();
+    expect(evaluateCondition({} as Parameters<typeof evaluateCondition>[0], outputs)).toBe(true);
+  });
+
+  it('ref_exists matches when a ref string is contained in an output ref (substring)', () => {
+    const outputs = new Map<string, StepOutput>([
+      ['a', { ok: true, refs: ['h:prefix_deadbeef_suffix'] }],
+    ]);
+    expect(evaluateCondition({ ref_exists: 'deadbeef' }, outputs)).toBe(true);
+  });
 });
 
 describe('isStepAllowed', () => {
   it('allows all when mutable', () => {
     expect(isStepAllowed({ id: 'x', use: 'change.edit', with: {} }, { mode: 'mutable' })).toEqual({ allowed: true });
+  });
+
+  it('allows mutating ops when policy mode is safe-mutable (not readonly)', () => {
+    expect(isStepAllowed({ id: 'x', use: 'change.edit', with: {} }, { mode: 'safe-mutable' })).toEqual({ allowed: true });
   });
 
   it('blocks mutating ops in readonly', () => {
