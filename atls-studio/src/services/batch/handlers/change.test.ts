@@ -16,6 +16,7 @@ import {
   normalizeEditParams,
   registerEditHashes,
   invalidateStaleHashes,
+  injectDiffRefs,
 } from './change';
 
 vi.mock('@tauri-apps/api/core', () => ({
@@ -1773,6 +1774,15 @@ describe('no-op batch entry guard', () => {
     expect(spy).not.toHaveBeenCalled();
 
     spy.mockRestore();
+  });
+});
+
+describe('injectDiffRefs', () => {
+  it('sets diff on batch entries when old and new hashes differ', () => {
+    const batch = [{ f: 'a.ts', h: 'new111111', old_h: 'old222222', ok: 1 }];
+    const result = { batch };
+    injectDiffRefs(result);
+    expect((batch[0] as { diff?: string }).diff).toBe('h:old222..h:new111');
   });
 });
 

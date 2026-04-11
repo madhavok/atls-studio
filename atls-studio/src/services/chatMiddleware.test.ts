@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   COMPACT_HISTORY_TURN_THRESHOLD,
   COMPACT_HISTORY_TOKEN_THRESHOLD,
+  CONVERSATION_HISTORY_BUDGET_TOKENS,
 } from './promptMemory';
 
 const pruneStagedMock = vi.hoisted(() =>
@@ -49,6 +50,22 @@ const {
   runBeforeRoundMiddlewares,
 } = await import('./chatMiddleware');
 const { useAppStore } = await import('../stores/appStore');
+
+describe('history compression gate constants (golden)', () => {
+  it('stable tuple used by historyCompression + contextHygiene middleware', () => {
+    expect({
+      COMPACT_HISTORY_TURN_THRESHOLD,
+      COMPACT_HISTORY_TOKEN_THRESHOLD,
+      CONVERSATION_HISTORY_BUDGET_TOKENS,
+    }).toMatchInlineSnapshot(`
+      {
+        "COMPACT_HISTORY_TOKEN_THRESHOLD": 18000,
+        "COMPACT_HISTORY_TURN_THRESHOLD": 20,
+        "CONVERSATION_HISTORY_BUDGET_TOKENS": 24000,
+      }
+    `);
+  });
+});
 
 describe('createGuardrailCallbacks', () => {
   it('forwards calls when session is valid', () => {

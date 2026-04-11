@@ -45,6 +45,17 @@ describe('chatDb', () => {
     await chatDb.close();
   });
 
+  it('createSession sets isSwarm when mode is swarm', async () => {
+    invoke.mockResolvedValue(undefined);
+    await chatDb.init('/p');
+    await chatDb.createSession('swarm', 'Swarm run', 'swarm-id');
+    expect(invoke).toHaveBeenCalledWith(
+      'chat_db_create_session',
+      expect.objectContaining({ id: 'swarm-id', title: 'Swarm run', mode: 'swarm', isSwarm: true }),
+    );
+    await chatDb.close();
+  });
+
   it('saveFullSession calls chat_db_add_message once per id when duplicate ids are present', async () => {
     invoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'chat_db_get_messages') return [];

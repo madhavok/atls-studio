@@ -17,7 +17,7 @@ vi.mock('./policy', async (importOriginal) => {
     isStepCountExceeded: (idx: number, pol?: { max_steps?: number }) =>
       Boolean(pol?.max_steps) && idx >= pol.max_steps,
     evaluateCondition: actual.evaluateCondition,
-    isBlockedForSwarm: () => false,
+    isBlockedForSwarm: actual.isBlockedForSwarm,
   };
 });
 
@@ -26,10 +26,13 @@ vi.mock('./handlers/session', () => ({
 }));
 
 import { executeUnifiedBatch } from './executor';
+import { isBlockedForSwarm } from './policy';
 
 function makeCtx() {
   const awarenessCache = new Map();
   return {
+    sessionId: null as string | null,
+    isSwarmAgent: false,
     store: () => ({
       recordManageOps: () => {},
       recordToolCall: () => {},
@@ -60,6 +63,7 @@ function makeCtx() {
       registerEditHash: () => ({ registered: true }),
       bumpWorkspaceRev: () => {},
       invalidateArtifactsForPaths: () => {},
+      compactChunks: vi.fn(() => ({ compacted: 0, freedTokens: 0 })),
     }),
     getProjectPath: () => null,
     resolveSearchRefs: async () => ({}),
@@ -403,6 +407,103 @@ describe('executeUnifiedBatch auto-stage repeat read and verify stop', () => {
 
     expect(result.step_results).toHaveLength(1);
     expect(afterSpy).not.toHaveBeenCalled();
+  });
+
+  it('calls compactChunks after successful verify.build when compact_context_on_verify_success defaults true', async () => {
+    const compactSpy = vi.fn(() => ({ compacted: 2, freedTokens: 1500 }));
+    const ctx = makeCtx();
+    const origStore = ctx.store;
+    ctx.store = () => ({ ...origStore(), compactChunks: compactSpy });
+
+    handlers.set('verify.build', async () => ({
+      kind: 'verify_result' as const,
+      ok: true,
+      refs: [] as string[],
+      summary: 'ok',
+      classification: 'pass' as const,
+    }));
+
+    await executeUnifiedBatch(
+      { version: '1.0', steps: [{ id: 'v', use: 'verify.build', with: {} }] },
+      ctx,
+    );
+
+    expect(compactSpy).toHaveBeenCalledWith(['*'], { confirmWildcard: true });
+  });
+
+  it('does not compact after verify.build when compact_context_on_verify_success is false', async () => {
+    const compactSpy = vi.fn(() => ({ compacted: 0, freedTokens: 0 }));
+    const ctx = makeCtx();
+    const origStore = ctx.store;
+    ctx.store = () => ({ ...origStore(), compactChunks: compactSpy });
+
+    handlers.set('verify.build', async () => ({
+      kind: 'verify_result' as const,
+      ok: true,
+      refs: [] as string[],
+      summary: 'ok',
+      classification: 'pass' as const,
+    }));
+
+    await executeUnifiedBatch(
+      {
+        version: '1.0',
+        policy: { compact_context_on_verify_success: false },
+        steps: [{ id: 'v', use: 'verify.build', with: {} }],
+      },
+      ctx,
+    );
+
+    expect(compactSpy).not.toHaveBeenCalled();
+  });
+
+  it('injects session.stage after file_refs when auto_stage_refs policy is true', async () => {
+    const stageSpy = vi.fn(async () => ({
+      kind: 'session' as const,
+      ok: true,
+      refs: [] as string[],
+      summary: 'staged',
+    }));
+    handlers.set('session.stage', stageSpy as unknown as OpHandler);
+    handlers.set('read.lines', async () => ({
+      kind: 'file_refs' as const,
+      ok: true,
+      refs: ['h:aaa111'],
+      summary: 'read',
+    }));
+    handlers.set('session.emit', async () => raw('tail', { ok: true }));
+
+    await executeUnifiedBatch(
+      {
+        version: '1.0',
+        policy: { auto_stage_refs: true },
+        steps: [
+          { id: 'r', use: 'read.lines', with: { hash: 'h:aaa111', lines: '1-5' } },
+          { id: 't', use: 'session.emit', with: {} },
+        ],
+      },
+      makeCtx(),
+    );
+
+    expect(stageSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ hashes: ['h:aaa111'] }),
+      expect.anything(),
+      expect.anything(),
+    );
+    expect(stageSpy.mock.calls[0]![2]).toBe('r__auto_stage');
+  });
+
+  it('blocks session.plan for swarm agent context', async () => {
+    expect(isBlockedForSwarm('session.plan')).toBe(true);
+    const ctx = { ...makeCtx(), isSwarmAgent: true };
+    const result = await executeUnifiedBatch(
+      {
+        version: '1.0',
+        steps: [{ id: 'p', use: 'session.plan', with: {} }],
+      },
+      ctx,
+    );
+    expect(result.step_results[0]?.error).toBe('blocked for swarm agents');
   });
 });
 

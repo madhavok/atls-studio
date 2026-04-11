@@ -21,6 +21,7 @@ import {
   resetRecallBudget,
 } from './session';
 import { useContextStore } from '../../../stores/contextStore';
+import type { StepOutput } from '../types';
 
 const invokeMock = vi.hoisted(() =>
   vi.fn((cmd: string) => {
@@ -198,6 +199,38 @@ describe('handleStage', () => {
     expect(staged).toBeDefined();
     expect(staged?.sourceRevision).toBe('abc123');
   });
+
+  it('retries read_lines after stale when context refresh returns a new hash', async () => {
+    const store = useContextStore.getState();
+    const short = store.addChunk('line1\nline2\nline3', 'result', 'src/stale-stage.ts', undefined, undefined, 'oldrev');
+
+    let readLinesCalls = 0;
+    const atlsBatchQuery = vi.fn(async (op: string, params: Record<string, unknown>) => {
+      if (op === 'read_lines') {
+        readLinesCalls += 1;
+        if (readLinesCalls === 1) return { error: 'stale' };
+        return { content: '   2|line2\n   3|line3' };
+      }
+      if (op === 'context') {
+        return {
+          results: [{ file: 'src/stale-stage.ts', content_hash: 'newrev', content: 'line1\nline2\nline3' }],
+        };
+      }
+      return {};
+    });
+
+    const result = await handleStage(
+      { hash: `h:${short}`, lines: '2-3', context_lines: 0 },
+      createMockCtx({ atlsBatchQuery }) as unknown as Parameters<typeof handleStage>[1],
+    );
+
+    expect(result.ok).toBe(true);
+    expect(atlsBatchQuery).toHaveBeenCalledWith(
+      'context',
+      expect.objectContaining({ type: 'full', file_paths: ['src/stale-stage.ts'] }),
+    );
+    expect(readLinesCalls).toBe(2);
+  });
 });
 
 describe('handlePin', () => {
@@ -214,6 +247,38 @@ describe('handlePin', () => {
     expect(result.summary).toContain('pin: no matching chunks');
     expect(result.summary).toContain('from_step');
     expect(result.summary).toContain('h:r1');
+  });
+
+  it('materializes file_refs step output into chunks before pinning hashes', async () => {
+    const fileRefsOut: StepOutput = {
+      kind: 'file_refs',
+      ok: true,
+      refs: ['h:deadbeef'],
+      summary: 'read',
+      content: {
+        results: [
+          {
+            file: 'src/pin-mat.ts',
+            content: 'export const x = 1;\n',
+            hash: 'deadbeef',
+            content_hash: 'rev-pin-1',
+          },
+        ],
+      },
+    };
+    const stepOutputs = new Map<string, StepOutput>([['read_step', fileRefsOut]]);
+    const ctx = {
+      ...createMockCtx(),
+      forEachStepOutput: (fn: (id: string, out: StepOutput) => void) => {
+        for (const [id, out] of stepOutputs) fn(id, out);
+      },
+      getStepOutput: (id: string) => stepOutputs.get(id),
+    } as unknown as Parameters<typeof handlePin>[1];
+
+    const result = await handlePin({ hashes: ['h:deadbeef'] }, ctx);
+    expect(result.ok).toBe(true);
+    expect(result.summary).toMatch(/pin: 1 chunk/);
+    expect(useContextStore.getState().getChunkContent('h:deadbeef')).toContain('export const x');
   });
 });
 
@@ -492,6 +557,23 @@ describe('handleUnload / handleCompact', () => {
     const r = await handleCompact({ hashes: [`h:${h}`] }, ctx);
     expect(r.ok).toBe(true);
     expect(r.summary).toMatch(/compact:/);
+  });
+
+  it('handleCompact tier sig resolves signature content via invoke', async () => {
+    invokeMock.mockImplementation(async (cmd: string, args?: { rawRef?: string }) => {
+      if (cmd === 'register_hash_content') return null;
+      if (cmd === 'resolve_hash_ref' && args?.rawRef?.endsWith(':sig')) {
+        return { content: 'SIG_DIGEST_FOR_TESTS' };
+      }
+      return null;
+    });
+    const h = useContextStore.getState().addChunk('body for sig compact', 'smart', 'sig.ts');
+    const ctx = createMockCtx() as any;
+    const r = await handleCompact({ hashes: [`h:${h}`], tier: 'sig' }, ctx);
+    expect(r.ok).toBe(true);
+    expect(r.summary).toContain('sig tier');
+    expect(invokeMock).toHaveBeenCalledWith('register_hash_content', expect.any(Object));
+    expect(invokeMock).toHaveBeenCalledWith('resolve_hash_ref', expect.objectContaining({ rawRef: expect.stringContaining(':sig') }));
   });
 
   it('handleCompact errors when hashes missing', async () => {

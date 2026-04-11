@@ -11,6 +11,10 @@ import {
   extractDepsSummary,
   sliceContentByLines,
   generateEditReadyDigest,
+  formatShapeRef,
+  formatDiffRef,
+  hashContentSync,
+  generateDigest,
 } from './contextHash';
 
 
@@ -183,6 +187,31 @@ describe('sliceContentByLines', () => {
 
   it('open-ended range runs to EOF', () => {
     expect(sliceContentByLines(body, '3-', true)).toBe('cc\ndd');
+  });
+});
+
+describe('formatShapeRef and formatDiffRef', () => {
+  it('formats shaped hash refs for tool output', () => {
+    expect(formatShapeRef('abc123', 'sig', '10-20')).toBe('h:abc123:10-20:sig');
+    expect(formatShapeRef('abc123', 'sig')).toBe('h:abc123:sig');
+  });
+
+  it('formats diff ref with short hashes', () => {
+    expect(formatDiffRef('deadbeef00', 'cafebabe00')).toBe('h:deadbe..cafeba');
+  });
+});
+
+describe('hashContentSync', () => {
+  it('is deterministic for the same string', () => {
+    const s = 'const x = 1;\n';
+    expect(hashContentSync(s)).toBe(hashContentSync(s));
+  });
+});
+
+describe('generateDigest', () => {
+  it('uses key-line extraction for result chunks', () => {
+    const d = generateDigest('hello world', 'result', undefined);
+    expect(d).toContain('hello world');
   });
 });
 

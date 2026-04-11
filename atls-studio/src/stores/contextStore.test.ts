@@ -1378,7 +1378,7 @@ describe('reconcileRestoredSession', () => {
     expect(chunk?.freshnessCause).toBe('session_restore');
   });
 
-  it('skips non-file-backed and snapshot chunks', async () => {
+   it('skips non-file-backed and snapshot chunks', async () => {
     addTestChunk('tool output', 'result');
     addTestChunk('snapshot', 'file', 'src/snap.ts', { sourceRevision: 'snap-1', viewKind: 'snapshot' });
 
@@ -1388,5 +1388,32 @@ describe('reconcileRestoredSession', () => {
     expect(stats.updated).toBe(0);
     expect(stats.invalidated).toBe(0);
     expect(stats.evicted).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// findOrPromoteEngram: addAnnotation can promote staged snippets
+// ---------------------------------------------------------------------------
+
+describe('addAnnotation promotes staged snippets', () => {
+  beforeEach(() => resetStore());
+
+  it('materializes a staged-only ref into chunks and attaches the annotation', () => {
+    const store = useContextStore.getState();
+    const body = 'staged body only';
+    const fullHash = hashContentSync(body);
+    // Hex stage keys get a short-hash index so h:<6 chars> resolves the staged row.
+    const stageKey = fullHash.slice(0, 12);
+    store.stageSnippet(stageKey, body, 'src/staged-ann.ts', '1-3', 'rev-s', undefined, 'latest');
+    expect(useContextStore.getState().stagedSnippets.has(stageKey)).toBe(true);
+    expect(useContextStore.getState().chunks.size).toBe(0);
+
+    const { ok } = store.addAnnotation(`h:${fullHash.slice(0, 6)}`, 'pinned note');
+    expect(ok).toBe(true);
+
+    const chunk = useContextStore.getState().chunks.get(fullHash);
+    expect(chunk).toBeDefined();
+    expect(chunk!.content).toBe(body);
+    expect(chunk!.annotations?.some(a => a.content === 'pinned note')).toBe(true);
   });
 });

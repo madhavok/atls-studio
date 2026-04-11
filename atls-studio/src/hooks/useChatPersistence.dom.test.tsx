@@ -123,6 +123,7 @@ describe('useChatPersistence (hook)', () => {
     const { result } = renderHook(() => useChatPersistence());
     const sessions = await result.current.loadSessions();
 
+    expect(chatDbMock.getSessions).toHaveBeenCalledWith(200);
     expect(sessions).toHaveLength(1);
     expect(sessions[0]?.id).toBe('s1');
     expect(sessions[0]?.title).toBe('Hello');

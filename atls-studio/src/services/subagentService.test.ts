@@ -346,6 +346,17 @@ describe('subagentService', () => {
   describe('foldSubagentUsageMetrics', () => {
     const zero = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 };
 
+    it('maps cached_content_tokens to cache read (OpenAI-style alias)', () => {
+      const m = foldSubagentUsageMetrics(zero, {
+        input_tokens: 100,
+        output_tokens: 50,
+        cached_content_tokens: 80,
+      });
+      expect(m.cacheReadTokens).toBe(80);
+      expect(m.inputTokens).toBe(100);
+      expect(m.outputTokens).toBe(50);
+    });
+
     it('preserves prompt tokens when a later chunk sends input_tokens: 0 (Anthropic)', () => {
       let m = foldSubagentUsageMetrics(zero, {
         input_tokens: 48_000,

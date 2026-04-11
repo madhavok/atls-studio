@@ -473,6 +473,40 @@ describe('getFreshnessHintForRefs', () => {
   });
 });
 
+describe('getPreflightAutomationDecision (exhaustive branches)', () => {
+  it('blocks when confidence is none even if strategy is not blocked', () => {
+    expect(getPreflightAutomationDecision({
+      blocked: false,
+      confidence: 'none',
+      strategy: 'fresh',
+    })).toEqual({ action: 'block', reason: 'identity_or_freshness_block' });
+  });
+
+  it('blocks when strategy is blocked even if confidence is high', () => {
+    expect(getPreflightAutomationDecision({
+      blocked: false,
+      confidence: 'high',
+      strategy: 'blocked',
+    })).toEqual({ action: 'block', reason: 'identity_or_freshness_block' });
+  });
+
+  it('proceeds when confidence is medium but strategy is fresh (no rebind note)', () => {
+    expect(getPreflightAutomationDecision({
+      blocked: false,
+      confidence: 'medium',
+      strategy: 'fresh',
+    })).toEqual({ action: 'proceed', reason: 'verified_or_fresh' });
+  });
+
+  it('proceeds for high confidence fresh path', () => {
+    expect(getPreflightAutomationDecision({
+      blocked: false,
+      confidence: 'high',
+      strategy: 'fresh',
+    })).toEqual({ action: 'proceed', reason: 'verified_or_fresh' });
+  });
+});
+
 describe('classifyRefFreshness', () => {
   const targets = new Set(['src/a.ts']);
 
