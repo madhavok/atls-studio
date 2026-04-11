@@ -9,6 +9,10 @@ import {
   handleSearchSimilar,
   handleAnalyzeDeps,
   handleAnalyzeBlastRadius,
+  handleAnalyzeCalls,
+  handleAnalyzeStructure,
+  handleAnalyzeImpact,
+  handleAnalyzeExtractPlan,
 } from './query';
 import { useRetentionStore } from '../../../stores/retentionStore';
 
@@ -290,6 +294,39 @@ describe('query handlers', () => {
       'impact_analysis',
       expect.objectContaining({ symbol_names: ['Foo'], from: 'anchor.ts' }),
     );
+    expect(out.ok).toBe(true);
+  });
+
+  it('handleAnalyzeCalls proxies call_hierarchy', async () => {
+    const batch = vi.fn(async () => ({ roots: [] }));
+    const ctx = { atlsBatchQuery: batch, store: () => minimalStore() } as any;
+    const out = await handleAnalyzeCalls({ symbol: 'main', file_path: 'app.ts' }, ctx);
+    expect(batch).toHaveBeenCalledWith('call_hierarchy', { symbol: 'main', file_path: 'app.ts' });
+    expect(out.ok).toBe(true);
+    expect(out.kind).toBe('analysis');
+  });
+
+  it('handleAnalyzeStructure proxies symbol_dep_graph', async () => {
+    const batch = vi.fn(async () => ({ nodes: [] }));
+    const ctx = { atlsBatchQuery: batch, store: () => minimalStore() } as any;
+    const out = await handleAnalyzeStructure({ file_paths: ['x.ts'] }, ctx);
+    expect(batch).toHaveBeenCalledWith('symbol_dep_graph', { file_paths: ['x.ts'] });
+    expect(out.ok).toBe(true);
+  });
+
+  it('handleAnalyzeImpact proxies change_impact', async () => {
+    const batch = vi.fn(async () => ({ ripples: [] }));
+    const ctx = { atlsBatchQuery: batch, store: () => minimalStore() } as any;
+    const out = await handleAnalyzeImpact({ file_paths: ['y.ts'] }, ctx);
+    expect(batch).toHaveBeenCalledWith('change_impact', { file_paths: ['y.ts'] });
+    expect(out.ok).toBe(true);
+  });
+
+  it('handleAnalyzeExtractPlan proxies extract_plan', async () => {
+    const batch = vi.fn(async () => ({ plan: [] }));
+    const ctx = { atlsBatchQuery: batch, store: () => minimalStore() } as any;
+    const out = await handleAnalyzeExtractPlan({ scope: 'mod' }, ctx);
+    expect(batch).toHaveBeenCalledWith('extract_plan', { scope: 'mod' });
     expect(out.ok).toBe(true);
   });
 });
