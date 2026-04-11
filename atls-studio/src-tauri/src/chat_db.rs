@@ -1869,6 +1869,116 @@ mod tests {
     }
 
     #[test]
+    fn session_state_batch_and_get_all() {
+        let (_dir, state) = test_state();
+        create_session(&state, "s1", "T", "agent", false).unwrap();
+        set_session_state_batch(
+            &state,
+            "s1",
+            vec![
+                ("hash_stack".into(), "[]".into()),
+                ("edit_hash_stack".into(), "[1]".into()),
+            ],
+        )
+        .unwrap();
+        let all = get_all_session_state(&state, "s1").unwrap();
+        let mut map = std::collections::HashMap::<String, String>::new();
+        for e in &all {
+            map.insert(e.key.clone(), e.value.clone());
+        }
+        assert_eq!(map.get("hash_stack").map(String::as_str), Some("[]"));
+        assert_eq!(map.get("edit_hash_stack").map(String::as_str), Some("[1]"));
+        set_session_state(&state, "s1", "hash_stack", "[2]").unwrap();
+        assert_eq!(
+            get_session_state(&state, "s1", "hash_stack").unwrap().as_deref(),
+            Some("[2]")
+        );
+        state.close().unwrap();
+    }
+
+    #[test]
+    fn replace_segments_preserves_rich_tool_args_json() {
+        let (_dir, state) = test_state();
+        create_session(&state, "s1", "T", "agent", false).unwrap();
+        add_message(&state, "m1", "s1", "assistant", "", None, None).unwrap();
+        let tool_json = r#"{"path":"a.ts","__toolCallId":"tc1","__thoughtSignature":"sig","__syntheticChildren":[{"id":"c1","name":"n"}]}"#;
+        add_segments(
+            &state,
+            "m1",
+            vec![SegmentInput {
+                message_id: "m1".into(),
+                seq: 0,
+                segment_type: "tool".into(),
+                content: String::new(),
+                tool_name: Some("read_file".into()),
+                tool_args: Some(tool_json.into()),
+                tool_result: Some("ok".into()),
+            }],
+        )
+        .unwrap();
+        let tool_json2 = r#"{"path":"b.ts","__toolCallId":"tc2"}"#;
+        replace_segments(
+            &state,
+            "m1",
+            vec![SegmentInput {
+                message_id: "m1".into(),
+                seq: 0,
+                segment_type: "tool".into(),
+                content: String::new(),
+                tool_name: Some("grep".into()),
+                tool_args: Some(tool_json2.into()),
+                tool_result: None,
+            }],
+        )
+        .unwrap();
+        let segs = get_segments(&state, "m1").unwrap();
+        assert_eq!(segs.len(), 1);
+        assert_eq!(segs[0].tool_name.as_deref(), Some("grep"));
+        assert_eq!(segs[0].tool_args.as_deref(), Some(tool_json2));
+        let parsed: serde_json::Value = serde_json::from_str(segs[0].tool_args.as_deref().unwrap()).unwrap();
+        assert_eq!(parsed["__toolCallId"], "tc2");
+        assert_eq!(parsed["path"], "b.ts");
+        state.close().unwrap();
+    }
+
+    #[test]
+    fn archived_chunks_round_trip_and_clear_on_resave() {
+        let (_dir, state) = test_state();
+        create_session(&state, "s1", "T", "agent", false).unwrap();
+        save_archived_chunks(
+            &state,
+            "s1",
+            vec![ArchivedChunkInput {
+                hash: "fullhash".into(),
+                short_hash: "short".into(),
+                entry_type: "raw".into(),
+                source: Some("p.ts".into()),
+                content: "body".into(),
+                tokens: 5,
+                digest: Some("d".into()),
+                edit_digest: Some("ed".into()),
+                summary: Some("su".into()),
+                pinned: true,
+            }],
+        )
+        .unwrap();
+        let rows = get_archived_chunks(&state, "s1").unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].hash, "fullhash");
+        assert_eq!(rows[0].short_hash, "short");
+        assert_eq!(rows[0].entry_type, "raw");
+        assert_eq!(rows[0].content, "body");
+        assert_eq!(rows[0].digest.as_deref(), Some("d"));
+        assert_eq!(rows[0].edit_digest.as_deref(), Some("ed"));
+        assert_eq!(rows[0].summary.as_deref(), Some("su"));
+        assert!(rows[0].pinned);
+        assert_eq!(rows[0].source.as_deref(), Some("p.ts"));
+        save_archived_chunks(&state, "s1", vec![]).unwrap();
+        assert!(get_archived_chunks(&state, "s1").unwrap().is_empty());
+        state.close().unwrap();
+    }
+
+    #[test]
     fn delete_session_removes_data() {
         let (_dir, state) = test_state();
         create_session(&state, "s1", "T", "agent", false).unwrap();

@@ -267,4 +267,134 @@ mod tests {
         assert!(names.iter().any(|n| n == "batch_query"));
         assert!(names.iter().any(|n| n == "scan_project"));
     }
+
+    #[tokio::test]
+    async fn call_tool_rejects_unknown_name() {
+        let mut h = Handlers::new();
+        let err = h
+            .call_tool("not_a_real_tool", Some(serde_json::json!({})))
+            .await
+            .unwrap_err();
+        assert!(err.contains("Unknown tool"), "{}", err);
+    }
+
+    #[tokio::test]
+    async fn call_tool_batch_query_help_ok() {
+        let mut h = Handlers::new();
+        let v = h
+            .call_tool(
+                "batch_query",
+                Some(serde_json::json!({ "operation": "help" })),
+            )
+            .await
+            .expect("batch_query help");
+        assert!(
+            v.get("operations").is_some() || v.get("details").is_some() || v.get("inventory").is_some(),
+            "expected help payload keys, got: {:?}",
+            v
+        );
+    }
+
+    #[tokio::test]
+    async fn call_tool_find_issues_ok() {
+        let mut h = Handlers::new();
+        let v = h
+            .call_tool("find_issues", Some(serde_json::json!({})))
+            .await
+            .expect("find_issues");
+        assert!(v.get("issues").is_some() || v.get("summary").is_some() || v.is_array());
+    }
+
+    #[tokio::test]
+    async fn call_tool_scan_project_ok() {
+        let mut h = Handlers::new();
+        let v = h
+            .call_tool("scan_project", Some(serde_json::json!({})))
+            .await
+            .expect("scan_project");
+        assert_eq!(v.get("status").and_then(|x| x.as_str()), Some("complete"));
+    }
+
+    #[tokio::test]
+    async fn call_tool_get_codebase_overview_ok() {
+        let mut h = Handlers::new();
+        let v = h
+            .call_tool("get_codebase_overview", Some(serde_json::json!({})))
+            .await
+            .expect("overview");
+        assert!(v.get("file_count").is_some() || v.get("stats").is_some());
+    }
+
+    #[tokio::test]
+    async fn call_tool_get_patterns_ok() {
+        let mut h = Handlers::new();
+        let v = h
+            .call_tool(
+                "get_patterns",
+                Some(serde_json::json!({ "detail": "summary" })),
+            )
+            .await
+            .expect("get_patterns");
+        assert!(v.is_object());
+    }
+
+    #[tokio::test]
+    async fn call_tool_export_json_ok() {
+        let mut h = Handlers::new();
+        let v = h
+            .call_tool(
+                "export",
+                Some(serde_json::json!({ "format": "json" })),
+            )
+            .await
+            .expect("export json");
+        assert!(v.get("issues").is_some() || v.get("summary").is_some());
+    }
+
+    #[tokio::test]
+    async fn call_tool_unified_batch_runs_step() {
+        let mut h = Handlers::new();
+        let v = h
+            .call_tool(
+                "batch",
+                Some(serde_json::json!({
+                    "version": "1.0",
+                    "steps": [{
+                        "id": "s1",
+                        "use": "search.code",
+                        "with": { "queries": ["fn"] }
+                    }]
+                })),
+            )
+            .await
+            .expect("unified batch");
+        let steps = v
+            .get("step_results")
+            .and_then(|s| s.as_array())
+            .expect("step_results");
+        assert_eq!(steps.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn list_tools_names_are_dispatchable() {
+        let mut h = Handlers::new();
+        let names: Vec<String> = h.list_tools().into_iter().map(|t| t.name).collect();
+        for name in &names {
+            let minimal = match name.as_str() {
+                "batch_query" => serde_json::json!({ "operation": "help" }),
+                "batch" => serde_json::json!({
+                    "version": "1.0",
+                    "steps": [{ "id": "h", "use": "search.code", "with": { "queries": ["fn"] } }]
+                }),
+                "find_issues" => serde_json::json!({}),
+                "scan_project" => serde_json::json!({}),
+                "get_codebase_overview" => serde_json::json!({}),
+                "get_patterns" => serde_json::json!({ "detail": "summary" }),
+                "export" => serde_json::json!({ "format": "json" }),
+                other => panic!("unexpected tool in list_tools: {}", other),
+            };
+            let res = h.call_tool(name, Some(minimal)).await;
+            assert!(res.is_ok(), "tool {} failed: {:?}", name, res.err());
+        }
+    }
 }

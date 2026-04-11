@@ -16,3 +16,6 @@ thiserror = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 rusqlite = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"

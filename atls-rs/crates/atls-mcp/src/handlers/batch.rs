@@ -780,3 +780,39 @@ pub async fn handle_unified_batch(
         "duration_ms": start.elapsed().as_millis()
     }))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::handle_batch_query;
+    use crate::project::ProjectManager;
+    use std::sync::Arc;
+    use tokio::sync::Mutex;
+
+    #[tokio::test]
+    async fn help_operation_lists_operations() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().to_string_lossy().to_string();
+        let pm = Arc::new(Mutex::new(ProjectManager::new()));
+        let args = serde_json::json!({
+            "operation": "help",
+            "root_path": root,
+        });
+        let v = handle_batch_query(&pm, args).await.unwrap();
+        let ops = v["operations"].as_array().expect("operations array");
+        assert!(ops.iter().any(|x| x.as_str() == Some("code_search")));
+    }
+
+    #[tokio::test]
+    async fn symbol_usage_requires_names() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().to_string_lossy().to_string();
+        let pm = Arc::new(Mutex::new(ProjectManager::new()));
+        let args = serde_json::json!({
+            "operation": "symbol_usage",
+            "root_path": root,
+            "symbol_names": [],
+        });
+        let err = handle_batch_query(&pm, args).await.unwrap_err();
+        assert!(err.contains("symbol_names"));
+    }
+}

@@ -102,3 +102,26 @@ pub async fn handle_get_patterns(
         }))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::handle_get_patterns;
+    use crate::project::ProjectManager;
+    use std::sync::Arc;
+    use tokio::sync::Mutex;
+
+    #[tokio::test]
+    async fn patterns_summary_nonzero_with_builtin() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().to_string_lossy().to_string();
+        let pm = Arc::new(Mutex::new(ProjectManager::new()));
+        let v = handle_get_patterns(
+            &pm,
+            serde_json::json!({ "root_path": root, "detail": "summary" }),
+        )
+        .await
+        .unwrap();
+        let total = v["total"].as_u64().expect("total");
+        assert!(total > 0, "builtin patterns should load");
+    }
+}

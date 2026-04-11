@@ -169,3 +169,90 @@ impl Queries {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::Queries;
+    use crate::db::Database;
+    use crate::file::FileRelationType;
+    use crate::symbol::SymbolRelationType;
+    use crate::types::{IssueSeverity, Language, ParsedIssue, ParsedSymbol, SymbolKind, SymbolMetadata};
+    use std::path::PathBuf;
+
+    fn sample_symbol() -> ParsedSymbol {
+        ParsedSymbol {
+            name: "foo".into(),
+            kind: SymbolKind::Function,
+            line: 1,
+            end_line: None,
+            scope_id: None,
+            signature: Some("fn foo()".into()),
+            complexity: Some(1),
+            body_preview: None,
+            metadata: SymbolMetadata {
+                parameters: None,
+                return_type: None,
+                visibility: None,
+                modifiers: None,
+                parent_symbol: None,
+                extends: None,
+                implements: None,
+            },
+        }
+    }
+
+    #[test]
+    fn insert_get_file_path_slash_variants() {
+        let db = Database::open_in_memory().unwrap();
+        let conn = db.conn();
+        let path = PathBuf::from("src/a/b.rs");
+        let id = Queries::insert_file(&conn, &path, "deadbeef", &Language::Rust, Some(10)).unwrap();
+        assert_eq!(id, 1);
+
+        let back = Queries::get_file_by_path(&conn, &PathBuf::from("src\\a\\b.rs"))
+            .unwrap()
+            .expect("row");
+        assert_eq!(back.hash, "deadbeef");
+        assert_eq!(back.language, Language::Rust);
+        assert_eq!(back.line_count, Some(10));
+    }
+
+    #[test]
+    fn insert_symbol_issue_relations_roundtrip() {
+        let db = Database::open_in_memory().unwrap();
+        let conn = db.conn();
+        let fid = Queries::insert_file(
+            &conn,
+            &PathBuf::from("lib.rs"),
+            "abc",
+            &Language::Rust,
+            None,
+        )
+        .unwrap();
+        let sid1 = Queries::insert_symbol(&conn, fid, &sample_symbol()).unwrap();
+        let mut sym2 = sample_symbol();
+        sym2.name = "bar".into();
+        sym2.line = 3;
+        let sid2 = Queries::insert_symbol(&conn, fid, &sym2).unwrap();
+
+        let issue = ParsedIssue {
+            pattern_id: "p1".into(),
+            severity: IssueSeverity::Medium,
+            message: "m".into(),
+            line: 2,
+            col: 0,
+            end_line: None,
+            end_col: None,
+            file_path: None,
+        };
+        let iid = Queries::insert_issue(&conn, fid, &issue, "cat", None).unwrap();
+        assert!(iid > 0);
+
+        let fid2 = Queries::insert_file(&conn, &PathBuf::from("dep.rs"), "def", &Language::Rust, None).unwrap();
+        Queries::insert_file_relation(&conn, fid, fid2, &FileRelationType::Imports).unwrap();
+        Queries::insert_symbol_relation(&conn, sid1, sid2, &SymbolRelationType::Calls).unwrap();
+
+        Queries::update_file_indexed(&conn, fid).unwrap();
+        Queries::delete_file(&conn, fid2).unwrap();
+    }
+}

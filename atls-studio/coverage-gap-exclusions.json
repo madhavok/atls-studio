@@ -4,14 +4,29 @@
       "atls-studio/src/vite-env.d.ts",
       "atls-studio/src/prompts/index.ts",
       "atls-studio/src/components/AtlsPanel/types.ts",
-      "atls-studio/src/__tests__/bracket-stress.ts"
+      "atls-studio/src/__tests__/bracket-stress.ts",
+      "atls-studio/src/__tests__/bracket_stress.ts",
+      "atls-studio/src/__tests__/torture-brackets.ts",
+      "atls-studio/src/__test_tool_probe.ts",
+      "atls-studio/src/_test_tool_probe.ts",
+      "atls-studio/src/services/batch/index.ts",
+      "atls-studio/src/services/batch/types.ts",
+      "atls-studio/src/utils/uhppTypes.ts",
+      "atls-studio/src/utils/uhppCanonical.ts"
     ],
     "pathPrefixes": [],
     "notes": [
       "vite-env.d.ts: triple-slash reference only; no executable lines.",
-      "prompts/index.ts and Atlspanel/types.ts: type-only / re-export barrels with 0 instrumentable lines in Vitest v8.",
+      "prompts/index.ts, batch/index.ts, AtlsPanel/types.ts, uhppTypes.ts: type-only / re-export barrels with 0 instrumentable lines in Vitest v8.",
+      "batch/types.ts: large schema of type aliases only; no runtime code.",
+      "uhppCanonical.ts: type-only / constants if present without executable lines in coverage.",
+      "App.tsx: excluded from Vitest coverage include (vite.config.ts); validated with Playwright E2E. Raise unit coverage only when extracting testable hooks from the shell.",
+      "main.tsx: keep in coverage; thin entry.",
+      "__test_tool_probe.ts / _test_tool_probe.ts: ad-hoc probes, not part of CI tests.",
+      "__tests__/bracket*.ts and torture-brackets.ts: manual stress harnesses.",
       "scripts/fetch-models.ts is outside src/ and not part of Vitest coverage include; listed under test-gap-reports/scripts-out-of-scope.txt instead of gap lists.",
-      "bracket-stress.ts: manual stress harness, not imported by the Vitest suite."
+      "Do not add broad pathPrefixes to hide low coverage; add explicit paths with a one-line rationale only.",
+      "vite.config.ts `coverage.exclude` must stay in sync with type-only / E2E-first entries above so CI thresholds measure executable app code, not barrels or App shell."
     ]
   },
   "rustTauri": {

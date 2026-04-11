@@ -1,0 +1,4 @@
+# Scripts not under Vitest src/ include
+These are intentionally out of scope for the Vitest coverage report (see coverage-gap-exclusions.json).
+
+atls-studio/scripts/fetch-models.ts

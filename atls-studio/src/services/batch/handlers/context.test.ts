@@ -58,6 +58,41 @@ describe('context handlers snapshot authority', () => {
     expect(useContextStore.getState().chunks.size).toBe(2);
   });
 
+  it('multi-path load surfaces _hash_warnings when a reused ref is suspect (external stale)', async () => {
+    const ctx = makeCtx({
+      atlsBatchQuery: vi.fn().mockResolvedValue({
+        results: [
+          { file: 'src/a.ts', content: 'export const a = 1;\n', content_hash: 'hashaaa1' },
+          { file: 'src/b.ts', content: 'export const b = 2;\n', content_hash: 'hashbbb1' },
+        ],
+      }),
+    });
+
+    await handleLoad({ file_paths: ['src/a.ts', 'src/b.ts'] }, ctx);
+
+    const st = useContextStore.getState();
+    const aEntry = [...st.chunks.entries()].find(([, c]) => c.source === 'src/a.ts');
+    expect(aEntry).toBeDefined();
+    const [aKey, aChunk] = aEntry!;
+    useContextStore.setState((s) => {
+      const nc = new Map(s.chunks);
+      nc.set(aKey, {
+        ...aChunk,
+        suspectSince: Date.now(),
+        freshnessCause: 'external_file_change',
+      });
+      return { chunks: nc };
+    });
+
+    const result = await handleLoad({ file_paths: ['src/a.ts', 'src/b.ts'] }, ctx);
+
+    expect(result.ok).toBe(true);
+    const withWarn = result as { _hash_warnings?: string[]; summary: string };
+    expect(withWarn._hash_warnings).toBeDefined();
+    expect(withWarn._hash_warnings![0]).toMatch(/stale|externally/i);
+    expect(withWarn.summary).toMatch(/stale|externally/i);
+  });
+
   it('returns canonical snapshot results for read.context', async () => {
     const ctx = makeCtx({
       atlsBatchQuery: vi.fn().mockResolvedValue({

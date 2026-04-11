@@ -2371,3 +2371,55 @@ impl<T> OptionalResult<T> for rusqlite::Result<T> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::db::queries::Queries;
+    use crate::db::Database;
+    use crate::query::QueryEngine;
+    use crate::types::{Language, ParsedSymbol, SymbolKind, SymbolMetadata};
+    use std::path::PathBuf;
+
+    fn sym(name: &str, line: u32) -> ParsedSymbol {
+        ParsedSymbol {
+            name: name.into(),
+            kind: SymbolKind::Function,
+            line,
+            end_line: None,
+            scope_id: None,
+            signature: None,
+            complexity: None,
+            body_preview: None,
+            metadata: SymbolMetadata {
+                parameters: None,
+                return_type: None,
+                visibility: None,
+                modifiers: None,
+                parent_symbol: None,
+                extends: None,
+                implements: None,
+            },
+        }
+    }
+
+    #[test]
+    fn find_symbol_resolves_fn_anchor_syntax() {
+        let db = Database::open_in_memory().unwrap();
+        let conn = db.conn();
+        let fid = Queries::insert_file(&conn, &PathBuf::from("lib.rs"), "h", &Language::Rust, None).unwrap();
+        Queries::insert_symbol(&conn, fid, &sym("my_fn", 10)).unwrap();
+        drop(conn);
+        let q = QueryEngine::new(db);
+        let hits = q.find_symbol("fn(my_fn)").unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].name, "my_fn");
+    }
+
+    #[test]
+    fn find_symbol_suggestions_empty_when_no_match() {
+        let db = Database::open_in_memory().unwrap();
+        let q = QueryEngine::new(db);
+        let s = q.find_symbol_suggestions("zzz_nonexistent", 5).unwrap();
+        assert!(s.is_empty());
+    }
+}

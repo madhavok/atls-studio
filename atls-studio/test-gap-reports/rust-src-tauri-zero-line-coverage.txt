@@ -1,0 +1,4 @@
+# Rust (src-tauri) — 0% line coverage
+Generated from src-tauri/target/llvm-cov-tauri-summary.json (cargo llvm-cov --json --summary-only)
+Files: 0
+

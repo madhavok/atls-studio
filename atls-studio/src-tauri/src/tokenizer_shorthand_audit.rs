@@ -84,6 +84,20 @@ const OP_SHORTHAND: &[(&str, &str)] = &[
 ];
 
 #[test]
+fn op_shorthand_short_codes_are_ascii_and_nonempty() {
+    for (full, short) in OP_SHORTHAND {
+        assert!(!full.is_empty(), "empty full name");
+        assert!(!short.is_empty(), "empty short for {full}");
+        assert!(
+            short.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit()),
+            "short {:?} should be lowercase alphanumeric for {}",
+            short,
+            full
+        );
+    }
+}
+
+#[test]
 fn full_shorthand_token_audit() {
     let providers = [
         ("anthropic", test_models::ANTHROPIC),

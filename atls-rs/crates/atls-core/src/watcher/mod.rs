@@ -33,3 +33,21 @@ impl Default for WatcherConfig {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn watcher_config_default() {
+        let c = WatcherConfig::default();
+        assert_eq!(c.debounce_ms, 2000);
+        assert!(c.recursive);
+    }
+
+    #[test]
+    fn watcher_error_display() {
+        let e = WatcherError::Path("bad".to_string());
+        assert!(format!("{}", e).contains("bad"));
+    }
+}

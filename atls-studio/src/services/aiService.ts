@@ -151,6 +151,7 @@ import { hashBp3Prefix, computeLogicalBp3Hit, computeLogicalStaticHit, type Bp3S
 import type { ExpandedFilePath } from './batch/types';
 import { formatBatchResult } from './batch/resultFormatter';
 import { coerceBatchSteps } from './batch/coerceBatchSteps';
+import { truncateToolResult } from './toolResultLimits';
 import './batch/intents/index';
 import { resolveIntents, buildIntentContext, isPressured } from './batch/intents';
 import type { Step } from './batch/types';
@@ -3297,13 +3298,6 @@ export async function executeToolCall(
 // ============================================================================
 
 // toTOON and formatResult imported from '../utils/toon'
-
-const TOOL_RESULT_CHAR_LIMIT = 400000;
-
-function truncateToolResult(result: string): string {
-  if (result.length <= TOOL_RESULT_CHAR_LIMIT) return result;
-  return result.substring(0, TOOL_RESULT_CHAR_LIMIT) + '\n[truncated]';
-}
 
 /**
  * Build token-efficient workspace representation.

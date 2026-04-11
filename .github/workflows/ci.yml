@@ -33,6 +33,10 @@ jobs:
         working-directory: atls-studio
         run: npm run test:coverage
 
+      - name: Coverage gap report (fail if any TS file at 0% lines)
+        working-directory: atls-studio
+        run: npm run test:coverage:gaps -- --fail-on-gaps
+
       - name: Install Playwright Chromium
         working-directory: atls-studio
         run: npx playwright install --with-deps chromium
@@ -73,6 +77,17 @@ jobs:
           name: tauri-lcov
           path: atls-studio/src-tauri/lcov.info
 
-      - name: Cargo test (atls-rs workspace)
+      # Runs workspace tests and produces reports for scripts/list-coverage-gaps.ts
+      - name: Rust coverage (atls-rs workspace)
         working-directory: atls-rs
-        run: cargo test
+        run: |
+          cargo llvm-cov --workspace --all-features --lcov --output-path lcov.info
+          cargo llvm-cov report --workspace --json --summary-only --output-path target/llvm-cov-atls-rs-summary.json
+
+      - name: Upload atls-rs coverage artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: atls-rs-coverage
+          path: |
+            atls-rs/lcov.info
+            atls-rs/target/llvm-cov-atls-rs-summary.json

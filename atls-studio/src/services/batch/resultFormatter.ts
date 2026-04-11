@@ -209,10 +209,16 @@ export function formatBatchResult(result: UnifiedBatchResult): string {
     const staleSuffix = step.use.startsWith('verify.') && step.ok && staleVerifyStepIds.has(step.id)
       ? ' [STALE: cached verification result — rerun canonical command]'
       : '';
-    if (step.summary) {
-      lines.push(`${label} ${step.id} (${step.use}): ${capStepSummary(step.summary, step.use, step)}${suffix}${staleSuffix}${durationTag}`);
-    } else if (step.error) {
-      lines.push(`${label} ${step.id} (${step.use}): ${capStepSummary(step.error, step.use, step)}${durationTag}`);
+    const primary = (typeof step.summary === 'string' ? step.summary.trim() : '')
+      || (typeof step.error === 'string' ? step.error.trim() : '')
+      || '';
+    if (primary) {
+      lines.push(`${label} ${step.id} (${step.use}): ${capStepSummary(primary, step.use, step)}${suffix}${staleSuffix}${durationTag}`);
+    } else {
+      const fallback = step.ok
+        ? `[completed${step.refs?.length ? ` — ${step.refs.length} ref(s)` : ''}]`
+        : '[failed — no message]';
+      lines.push(`${label} ${step.id} (${step.use}): ${fallback}${suffix}${staleSuffix}${durationTag}`);
     }
 
     if (step.use.startsWith('delegate.') && step.ok) {
@@ -303,14 +309,28 @@ export function stepOutputToResult(
       } as StepResult)
     : undefined;
 
+  const summaryTrim = typeof output.summary === 'string' ? output.summary.trim() : '';
+  const errorTrim = typeof output.error === 'string' ? output.error.trim() : '';
+  let summary: string | undefined = summaryTrim || undefined;
+  let error: string | undefined = errorTrim || undefined;
+  if (!summary && !error) {
+    if (output.ok) {
+      summary = output.refs.length > 0
+        ? `OK (${output.refs.length} ref${output.refs.length === 1 ? '' : 's'})`
+        : 'OK';
+    } else {
+      error = 'Step failed (no message)';
+    }
+  }
+
   return {
     id: stepId,
     use: use as StepResult['use'],
     ok: output.ok,
     refs: output.refs.length > 0 ? output.refs : undefined,
     artifacts,
-    summary: output.summary,
-    error: output.error,
+    summary,
+    error,
     classification: output.classification,
     duration_ms: durationMs,
     tokens_delta: output.tokens,

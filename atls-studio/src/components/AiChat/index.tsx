@@ -32,108 +32,14 @@ import {
 } from '../../utils/modelCapabilities';
 import { resolveModelSettings, type OutputSpeedLevel, type ThinkingLevel } from '../../utils/modelSettings';
 import { useRoundHistoryStore } from '../../stores/roundHistoryStore';
-import { parseTaskCompleteArgs } from '../../utils/structuredOutput';
 import { serializeForTokenEstimate } from '../../utils/toon';
-
-function isTaskCompleteCall(tc: { name: string; args?: Record<string, unknown> }): boolean {
-  return tc.name === 'task_complete';
-}
-
-function coerceStringArray(value: unknown): string[] {
-  if (Array.isArray(value)) return value.filter((v): v is string => typeof v === 'string');
-  if (typeof value === 'string') return [value];
-  return [];
-}
-
-/** Tauri v2 dialog may return a path string or `{ path: string }`. */
-function dialogSelectedPath(entry: unknown): string | null {
-  if (typeof entry === 'string') return entry;
-  if (entry !== null && typeof entry === 'object' && 'path' in entry) {
-    const p = (entry as { path: unknown }).path;
-    if (typeof p === 'string') return p;
-  }
-  return null;
-}
-
-function getTaskCompleteArgs(tc: { args?: Record<string, unknown> }): { summary: string; filesChanged: string[] } {
-  const parsed = parseTaskCompleteArgs(tc.args ?? {});
-
-  if (parsed.filesChanged.length > 0) {
-    return parsed;
-  }
-
-  const legacyFilesChanged = coerceStringArray(tc.args?.files_changed ?? tc.args?.filesChanged);
-  return {
-    summary: parsed.summary,
-    filesChanged: legacyFilesChanged,
-  };
-}
-
-function getTaskCompleteSummaryFromParts(parts: MessagePart[]): string {
-  const textParts = parts
-    .filter((part): part is Extract<MessagePart, { type: 'text' }> => part.type === 'text')
-    .map((part) => cleanStreamingContent(part.content).trim())
-    .filter(Boolean);
-  if (textParts.length > 0) return textParts.join('\n\n');
-  const taskCompletePart = [...parts].reverse().find((part): part is Extract<MessagePart, { type: 'tool' }> => {
-    return part.type === 'tool' && isTaskCompleteCall(part.toolCall);
-  });
-  if (!taskCompletePart) return '';
-  return getTaskCompleteArgs(taskCompletePart.toolCall).summary.trim();
-}
-
-// Clean streaming content - remove JSON tool_use artifacts that may leak into text.
-// Only applies aggressive stripping when the content looks like a pure leaked JSON
-// fragment, not when it contains mixed prose + JSON.
-function cleanStreamingContent(content: string): string {
-  if (!content) return '';
-
-  if (/^\s*\[->\s+.+\]\s*$/.test(content)) return content;
-
-  const trimmed = content.trim();
-
-  // --- Phase 1: Tiny fragments that are clearly partial JSON wire artifacts ---
-  if (trimmed === '[' || trimmed === '[{' || trimmed === '[]') {
-    return '';
-  }
-  // Short partial prefixes with no prose at all (< ~80 chars, no whitespace-separated words)
-  if (trimmed.length < 80 && !/\s\w+\s/.test(trimmed)) {
-    if (/^\[?\{?"?(?:type)?:?"?(?:tool_use|tool_result|text)?"?\s*,?\s*$/s.test(trimmed)) {
-      return '';
-    }
-    if (/^\{?\s*"?(?:functionCall|functionResponse)"?\s*:?\s*\{?\s*$/s.test(trimmed)) {
-      return '';
-    }
-  }
-
-  // --- Phase 2: Entire content is a valid JSON array of content blocks ---
-  if (trimmed.startsWith('[{') && trimmed.endsWith(']') && trimmed.includes('"type"')) {
-    try {
-      const parsed = JSON.parse(trimmed);
-      if (Array.isArray(parsed) && parsed.every((b: any) => typeof b === 'object' && b.type)) {
-        const hasOnlyTools = parsed.every((b: any) => b.type === 'tool_use' || b.type === 'tool_result');
-        if (hasOnlyTools) return '';
-
-        const textParts = parsed
-          .filter((block: any) => block.type === 'text' && block.text)
-          .map((block: any) => block.text);
-        return textParts.length > 0 ? textParts.join('\n') : '';
-      }
-    } catch {
-      // Not valid JSON array — fall through, do NOT apply regex stripping
-    }
-  }
-
-  // --- Phase 3: Strip trailing partial JSON leaked at the end of real prose ---
-  // Only strip when the fragment is clearly an incomplete JSON object at the tail.
-  let cleaned = content;
-  // Trailing incomplete tool_use / functionCall object appended after prose
-  cleaned = cleaned.replace(/,?\s*\{"type"\s*:\s*"tool_use"[^}]*$/s, '');
-  cleaned = cleaned.replace(/\{\s*"functionCall"\s*:\s*\{[^}]*$/s, '');
-  cleaned = cleaned.replace(/\{\s*"functionResponse"\s*:\s*\{[^}]*$/s, '');
-
-  return cleaned;
-}
+import {
+  cleanStreamingContent,
+  dialogSelectedPath,
+  getTaskCompleteArgs,
+  getTaskCompleteSummaryFromParts,
+  isTaskCompleteCall,
+} from './aiChatPure';
 
 // Context Panel - collapsible panel showing task plan, blackboard, chunks, budget
 const ContextPanel = memo(function ContextPanel() {

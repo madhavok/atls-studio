@@ -141,3 +141,27 @@ fn extract_kotlin_imports(content: &str) -> Vec<ImportInfo> {
     }
     imports
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::file::Language;
+
+    #[test]
+    #[allow(deprecated)]
+    fn kotlin_symbols_and_imports_non_kotlin_empty() {
+        let kt = r#"
+            import foo.Bar
+            class C {
+                fun hello() {}
+            }
+        "#;
+        let syms = extract_symbols_fallback(kt, Language::Kotlin);
+        assert!(!syms.is_empty());
+        let imports = extract_imports_fallback(kt, Language::Kotlin);
+        assert!(imports.iter().any(|i| i.module == "foo.Bar"));
+
+        assert!(extract_symbols_fallback(kt, Language::Rust).is_empty());
+        assert!(extract_imports_fallback(kt, Language::Rust).is_empty());
+    }
+}

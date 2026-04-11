@@ -9,6 +9,7 @@ import { safeListen } from '../../utils/tauri';
 import { useAppStore } from '../../stores/appStore';
 import { MarkdownMessage } from '../AiChat/MarkdownMessage';
 import { AtlsInternals, INTERNALS_TAB_ID } from '../AtlsInternals';
+import { normalizeEditorPath } from './codeViewerPaths';
 
 
 // Symbol usage types
@@ -76,10 +77,7 @@ export function CodeViewer() {
     return fileContents[path] !== originalContents[path] && originalContents[path] !== undefined;
   }, [fileContents, originalContents]);
 
-  // Normalize path for consistent key lookup
-  const normalizePath = useCallback((path: string): string => {
-    return path.replace(/\\/g, '/');
-  }, []);
+  const normalizePath = useCallback((path: string): string => normalizeEditorPath(path), []);
 
   const hasDesignPreview =
     chatMode === 'designer' && designPreviewContent.length > 0;

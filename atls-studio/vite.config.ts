@@ -23,13 +23,26 @@ export default defineConfig(({ mode }) => ({
       provider: "v8",
       reporter: ["text", "json-summary"],
       include: ["src/**/*.{ts,tsx}"],
-      exclude: ["src/**/*.test.ts", "src/**/*.test.tsx"],
+      exclude: [
+        "src/**/*.test.ts",
+        "src/**/*.test.tsx",
+        // Root shell: exercised by Playwright; composition-only unit tests are low ROI.
+        "src/App.tsx",
+        // Type-only / re-export surfaces (see coverage-gap-exclusions.json).
+        "src/vite-env.d.ts",
+        "src/services/batch/index.ts",
+        "src/services/batch/types.ts",
+        "src/utils/uhppTypes.ts",
+        "src/utils/uhppCanonical.ts",
+        "src/prompts/index.ts",
+        "src/components/AtlsPanel/types.ts",
+      ],
       thresholds: {
-        // Baseline ~37% stmts / 32% branch / 28% funcs / 38% lines. Tighten over time.
-        statements: 36,
-        branches: 30,
-        functions: 27,
-        lines: 37,
+        // Raised as coverage improves; repo target ~90% on meaningful runtime code (see coverage-gap-exclusions.json).
+        statements: 40,
+        branches: 35,
+        functions: 31,
+        lines: 42,
       },
     },
   },

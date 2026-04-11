@@ -713,3 +713,40 @@ impl QueryEngine {
         })
     }
 }
+
+#[cfg(test)]
+mod parse_import_tests {
+    use super::parse_imports_from_content;
+
+    #[test]
+    fn parses_ts_rust_python_cpp_java_cs_and_go_block() {
+        let src = r#"
+import { x } from 'react';
+use std::fmt;
+from os.path import join
+#include "local.h"
+import com.example.Widget;
+using System.Linq;
+import (
+ "fmt"
+    "strings"
+)
+"#;
+        let m = parse_imports_from_content(src, 50);
+        assert!(m.contains(&"react".to_string()));
+        assert!(m.contains(&"std::fmt".to_string()));
+        assert!(m.contains(&"os.path".to_string()));
+        assert!(m.contains(&"local.h".to_string()));
+        assert!(m.contains(&"com.example.Widget".to_string()));
+        assert!(m.contains(&"System.Linq".to_string()));
+        assert!(m.contains(&"fmt".to_string()));
+        assert!(m.contains(&"strings".to_string()));
+    }
+
+    #[test]
+    fn dedupes_and_respects_max_lines() {
+        let src = "import { a } from 'dup'\nimport { b } from 'dup'\nimport { c } from 'other'\n";
+        let m = parse_imports_from_content(src, 3);
+        assert_eq!(m, vec!["dup", "other"]);
+    }
+}

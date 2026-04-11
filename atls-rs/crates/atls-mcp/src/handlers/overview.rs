@@ -89,3 +89,22 @@ pub async fn handle_get_codebase_overview(
         }
     }))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::handle_get_codebase_overview;
+    use crate::project::ProjectManager;
+    use std::sync::Arc;
+    use tokio::sync::Mutex;
+
+    #[tokio::test]
+    async fn overview_reports_zero_files_for_empty_project() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().to_string_lossy().to_string();
+        let pm = Arc::new(Mutex::new(ProjectManager::new()));
+        let v = handle_get_codebase_overview(&pm, serde_json::json!({ "root_path": root }))
+            .await
+            .unwrap();
+        assert_eq!(v["stats"]["files"], 0);
+    }
+}

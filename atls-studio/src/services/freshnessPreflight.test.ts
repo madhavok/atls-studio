@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useContextStore } from '../stores/contextStore';
-import { getPreflightAutomationDecision, runFreshnessPreflight } from './freshnessPreflight';
+import { classifyRefFreshness, getFreshnessHintForRefs, getPreflightAutomationDecision, runFreshnessPreflight } from './freshnessPreflight';
 import { clearFreshnessJournal, getFreshnessJournal, recordFreshnessJournal } from './freshnessJournal';
 
 function resetStore() {
@@ -363,5 +363,88 @@ describe('runFreshnessPreflight', () => {
     expect(result.blocked).toBe(false);
     const journalDecision = result.decisions.find(d => d.factors?.includes('journal_line_delta'));
     expect(journalDecision).toBeUndefined();
+  });
+});
+
+describe('getFreshnessHintForRefs', () => {
+  const warn = 'WARNING: some refs may be stale (file changed externally); re-read before editing';
+
+  it('returns undefined for empty refs', () => {
+    expect(getFreshnessHintForRefs({ chunks: new Map(), archivedChunks: new Map() }, [])).toBeUndefined();
+  });
+
+  it('strips h: prefix when matching short hash', () => {
+    const chunks = new Map([
+      ['k', { shortHash: 'a1b2c3d4', hash: 'a1b2c3d4full', suspectSince: 1, freshnessCause: 'external_file_change' as const }],
+    ]);
+    expect(getFreshnessHintForRefs({ chunks, archivedChunks: new Map() }, ['h:a1b2c3d4'])).toBe(warn);
+  });
+
+  it('matches chunk by hash prefix when short differs', () => {
+    const chunks = new Map([
+      ['k', { shortHash: 'xxxxxxxx', hash: 'deadbeef99', suspectSince: 1, freshnessCause: 'watcher_event' as const }],
+    ]);
+    expect(getFreshnessHintForRefs({ chunks, archivedChunks: new Map() }, ['deadbeef'])).toBe(warn);
+  });
+
+  it('warns for suspect archived chunk with unknown cause', () => {
+    const archivedChunks = new Map([
+      ['k', { shortHash: 'beeff00d', hash: 'beeff00d', suspectSince: 1, freshnessCause: undefined }],
+    ]);
+    expect(getFreshnessHintForRefs({ chunks: new Map(), archivedChunks }, ['beeff00d'])).toBe(warn);
+  });
+
+  it('does not warn when suspectSince is set but cause is rebaseable (same_file_prior_edit)', () => {
+    const chunks = new Map([
+      ['k', { shortHash: 'cafebabe', hash: 'cafebabe', suspectSince: 1, freshnessCause: 'same_file_prior_edit' as const }],
+    ]);
+    expect(getFreshnessHintForRefs({ chunks, archivedChunks: new Map() }, ['cafebabe'])).toBeUndefined();
+  });
+
+  it('does not warn for session_restore suspect cause (not treated as external stale in hint)', () => {
+    const chunks = new Map([
+      ['k', { shortHash: 'abad1dea', hash: 'abad1dea', suspectSince: 1, freshnessCause: 'session_restore' as const }],
+    ]);
+    expect(getFreshnessHintForRefs({ chunks, archivedChunks: new Map() }, ['abad1dea'])).toBeUndefined();
+  });
+});
+
+describe('classifyRefFreshness', () => {
+  const targets = new Set(['src/a.ts']);
+
+  it('is fresh when source is missing', () => {
+    expect(classifyRefFreshness(undefined, 'r1', 'r1', undefined, undefined, targets)).toBe('fresh');
+  });
+
+  it('is fresh when source file is not in target set', () => {
+    expect(classifyRefFreshness('other/b.ts', 'r1', 'r2', undefined, 'external_file_change', targets)).toBe('fresh');
+  });
+
+  it('with suspectSince and rebaseable cause returns rebaseable', () => {
+    expect(classifyRefFreshness('src/a.ts', 'r1', 'r1', 1, 'hash_forward', targets)).toBe('rebaseable');
+  });
+
+  it('with suspectSince and suspect cause returns suspect', () => {
+    expect(classifyRefFreshness('src/a.ts', 'r1', 'r1', 1, 'external_file_change', targets)).toBe('suspect');
+  });
+
+  it('with suspectSince and non-rebaseable neutral cause returns suspect', () => {
+    expect(classifyRefFreshness('src/a.ts', 'r1', 'r1', 1, 'session_restore', targets)).toBe('suspect');
+  });
+
+  it('revision mismatch with rebaseable cause returns rebaseable', () => {
+    expect(classifyRefFreshness('src/a.ts', 'r1', 'r2', undefined, 'same_file_prior_edit', targets)).toBe('rebaseable');
+  });
+
+  it('revision mismatch with suspect cause returns suspect', () => {
+    expect(classifyRefFreshness('src/a.ts', 'r1', 'r2', undefined, 'unknown', targets)).toBe('suspect');
+  });
+
+  it('revision mismatch with session_restore returns suspect', () => {
+    expect(classifyRefFreshness('src/a.ts', 'r1', 'r2', undefined, 'session_restore', targets)).toBe('suspect');
+  });
+
+  it('is fresh when revisions align and not suspect', () => {
+    expect(classifyRefFreshness('src/a.ts', 'r1', 'r1', undefined, undefined, targets)).toBe('fresh');
   });
 });

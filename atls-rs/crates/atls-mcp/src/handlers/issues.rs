@@ -190,3 +190,21 @@ pub async fn handle_find_issues(
         "_next": "Use find_issues with file_paths narrowed to specific files to drill down"
     }))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::handle_find_issues;
+    use crate::project::ProjectManager;
+    use std::sync::Arc;
+    use tokio::sync::Mutex;
+
+    #[tokio::test]
+    async fn find_issues_empty_project() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().to_string_lossy().to_string();
+        let pm = Arc::new(Mutex::new(ProjectManager::new()));
+        let args = serde_json::json!({ "root_path": root });
+        let v = handle_find_issues(&pm, args).await.unwrap();
+        assert_eq!(v["total"], 0);
+    }
+}

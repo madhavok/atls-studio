@@ -70,3 +70,37 @@ describe('resolveSearchRefs', () => {
     expect(resolved).toEqual({ message: 'Use h:abc12345:sig, then continue.' });
   });
 });
+
+/** Strings passed as the first argument to Tauri `atls_batch_query` from TS batch handlers. */
+const FRONTEND_ATLS_BATCH_QUERY_OPS = [
+  'help',
+  'context',
+  'read_lines',
+  'code_search',
+  'find_symbol',
+  'symbol_usage',
+  'find_issues',
+  'detect_patterns',
+  'call_hierarchy',
+  'symbol_dep_graph',
+  'change_impact',
+  'impact_analysis',
+  'extract_plan',
+  'verify',
+  'git',
+  'workspaces',
+  'create_files',
+  'delete_files',
+  'refactor',
+  'split_module',
+  'find_similar_code',
+  'find_similar_functions',
+  'find_conceptual_matches',
+  'find_pattern_implementations',
+] as const;
+
+describe('atls_batch_query operation crosswalk', () => {
+  it('lists each frontend dispatch operation string once (keep aligned with batch_query/mod.rs match arms)', () => {
+    expect(new Set(FRONTEND_ATLS_BATCH_QUERY_OPS).size).toBe(FRONTEND_ATLS_BATCH_QUERY_OPS.length);
+  });
+});

@@ -167,3 +167,47 @@ describe('resultFormatter truncation anchors', () => {
     expect(out).toContain('h:abcdef:628-682');
   });
 });
+
+describe('resultFormatter step message invariants', () => {
+  it('stepOutputToResult synthesizes summary when summary and error are empty', () => {
+    const output: StepOutput = {
+      kind: 'raw',
+      ok: true,
+      refs: ['h:abc'],
+      summary: '',
+    };
+    const step = stepOutputToResult('s1', 'session.stats', output, 0);
+    expect(step.summary).toBe('OK (1 ref)');
+    expect(step.error).toBeUndefined();
+  });
+
+  it('stepOutputToResult synthesizes error on failure with no message', () => {
+    const output: StepOutput = {
+      kind: 'raw',
+      ok: false,
+      refs: [],
+      summary: '',
+    };
+    const step = stepOutputToResult('s1', 'session.stats', output, 0);
+    expect(step.error).toBe('Step failed (no message)');
+  });
+
+  it('formatBatchResult never omits a step line when summary and error are absent', () => {
+    const result: UnifiedBatchResult = {
+      ok: true,
+      duration_ms: 1,
+      step_results: [
+        {
+          id: 'x',
+          use: 'session.stats',
+          ok: true,
+          duration_ms: 1,
+          refs: ['h:abc123'],
+        },
+      ],
+    };
+    const out = formatBatchResult(result);
+    expect(out).toContain('x (session.stats):');
+    expect(out).toContain('[completed');
+  });
+});

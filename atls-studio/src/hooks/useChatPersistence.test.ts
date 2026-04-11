@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { useContextStore, setBulkRevisionResolver } from '../stores/contextStore';
-import { rehydrateChunkDates, serializeMemorySnapshot, applyHashFirstFreshness } from './useChatPersistence';
+import { rehydrateChunkDates, serializeMemorySnapshot, applyHashFirstFreshness, isReservedNoteKey } from './useChatPersistence';
 import { recordFreshnessJournal, getFreshnessJournal, clearFreshnessJournal, serializeJournal, restoreJournal } from '../services/freshnessJournal';
 
 const DUMMY_GEMINI_CACHE = {
@@ -558,5 +558,12 @@ describe('full snapshot round-trip', () => {
     expect(journal).toBeDefined();
     expect(journal?.lineDelta).toBe(5);
     expect(journal?.currentRevision).toBe('rev-rt');
+  });
+});
+
+describe('isReservedNoteKey', () => {
+  it('detects __ctx_ prefix', () => {
+    expect(isReservedNoteKey('__ctx_foo')).toBe(true);
+    expect(isReservedNoteKey('normal')).toBe(false);
   });
 });

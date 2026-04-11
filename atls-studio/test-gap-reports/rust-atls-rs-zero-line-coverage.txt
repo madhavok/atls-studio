@@ -1,0 +1,4 @@
+# Rust (atls-rs) — 0% line coverage
+Generated from atls-rs/target/llvm-cov-atls-rs-summary.json (cargo llvm-cov --workspace --json --summary-only)
+Files: 0
+

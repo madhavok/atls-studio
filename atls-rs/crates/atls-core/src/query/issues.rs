@@ -396,3 +396,80 @@ impl IssueSeverity {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::IssueFilterOptions;
+    use crate::db::queries::Queries;
+    use crate::db::Database;
+    use crate::query::{QueryEngine, QueryError};
+    use crate::types::{IssueSeverity, Language, ParsedIssue};
+    use std::path::PathBuf;
+
+    #[test]
+    fn count_issues_empty_db() {
+        let db = Database::open_in_memory().unwrap();
+        let q = QueryEngine::new(db);
+        let n = q.count_issues(&IssueFilterOptions::default()).unwrap();
+        assert_eq!(n, 0);
+    }
+
+    #[test]
+    fn find_issues_after_insert() {
+        let db = Database::open_in_memory().unwrap();
+        let conn = db.conn();
+        let fid = Queries::insert_file(
+            &conn,
+            &PathBuf::from("x.rs"),
+            "h",
+            &Language::Rust,
+            None,
+        )
+        .unwrap();
+        let issue = ParsedIssue {
+            pattern_id: "lint/x".into(),
+            severity: IssueSeverity::High,
+            message: "bad".into(),
+            line: 1,
+            col: 0,
+            end_line: None,
+            end_col: None,
+            file_path: None,
+        };
+        Queries::insert_issue(&conn, fid, &issue, "style", None).unwrap();
+        drop(conn);
+
+        let q = QueryEngine::new(db);
+        let rows = q.find_issues(&IssueFilterOptions::default()).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].pattern_id, "lint/x");
+    }
+
+    #[test]
+    fn get_category_stats_aggregates() -> Result<(), QueryError> {
+        let db = Database::open_in_memory().unwrap();
+        let conn = db.conn();
+        let fid = Queries::insert_file(&conn, &PathBuf::from("a.rs"), "h", &Language::Rust, None).unwrap();
+        let issue = ParsedIssue {
+            pattern_id: "p".into(),
+            severity: IssueSeverity::Low,
+            message: "m".into(),
+            line: 1,
+            col: 0,
+            end_line: None,
+            end_col: None,
+            file_path: None,
+        };
+        Queries::insert_issue(&conn, fid, &issue, "alpha", None).unwrap();
+        Queries::insert_issue(&conn, fid, &issue, "beta", None).unwrap();
+        drop(conn);
+
+        let q = QueryEngine::new(db);
+        let stats = q.get_category_stats()?;
+        let mut cats: Vec<_> = stats.iter().map(|s| s.category.as_str()).collect();
+        cats.sort();
+        assert!(cats.contains(&"alpha"));
+        assert!(cats.contains(&"beta"));
+        Ok(())
+    }
+}

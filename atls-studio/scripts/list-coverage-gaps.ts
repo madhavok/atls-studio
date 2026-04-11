@@ -9,6 +9,15 @@
  *
  * Env:
  *   ATLS_REPO_ROOT — repo root (default: parent of atls-studio/ directory)
+ *
+ * CI generates Rust summaries in `.github/workflows/ci.yml`:
+ *   - Tauri: `atls-studio/src-tauri` → `cargo llvm-cov --all-features --lcov ...`
+ *   - atls-rs: `cargo llvm-cov --workspace --all-features --lcov ...` then
+ *     `cargo llvm-cov report --workspace --json --summary-only --output-path target/llvm-cov-atls-rs-summary.json`
+ *
+ * Local atls-rs JSON (for rust-atls-rs-zero-line-coverage.txt):
+ *   cd ../atls-rs && cargo llvm-cov --workspace --all-features --lcov --output-path lcov.info && \
+ *     cargo llvm-cov report --workspace --json --summary-only --output-path target/llvm-cov-atls-rs-summary.json
  */
 
 import { mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
@@ -176,7 +185,8 @@ function main(): void {
       [
         "# Rust (atls-rs) — not generated",
         "Run from repo root:",
-        "  cd atls-rs && cargo llvm-cov --workspace --json --summary-only --output-path target/llvm-cov-atls-rs-summary.json",
+        "  cd atls-rs && cargo llvm-cov --workspace --all-features --lcov --output-path lcov.info && \\",
+        "    cargo llvm-cov report --workspace --json --summary-only --output-path target/llvm-cov-atls-rs-summary.json",
         "",
       ].join("\n"),
       "utf8",

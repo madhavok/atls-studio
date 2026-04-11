@@ -94,3 +94,50 @@ impl From<ParsedIssue> for Issue {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parsed_issue_round_trip_json() {
+        let p = ParsedIssue {
+            pattern_id: "p1".to_string(),
+            severity: IssueSeverity::High,
+            message: "msg".to_string(),
+            line: 3,
+            col: 0,
+            end_line: Some(4),
+            end_col: Some(10),
+            file_path: Some("a.kt".to_string()),
+        };
+        let json = serde_json::to_string(&p).unwrap();
+        let back: ParsedIssue = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.pattern_id, "p1");
+        assert_eq!(back.severity, IssueSeverity::High);
+        assert_eq!(back.file_path.as_deref(), Some("a.kt"));
+    }
+
+    #[test]
+    fn from_parsed_issue_copies_fields_and_zeroes_ids() {
+        let parsed = ParsedIssue {
+            pattern_id: "x".to_string(),
+            severity: IssueSeverity::Low,
+            message: "m".to_string(),
+            line: 1,
+            col: 2,
+            end_line: None,
+            end_col: None,
+            file_path: None,
+        };
+        let issue = Issue::from(parsed);
+        assert_eq!(issue.id, 0);
+        assert_eq!(issue.file_id, 0);
+        assert_eq!(issue.pattern_id, "x");
+        assert_eq!(issue.severity, IssueSeverity::Low);
+        assert_eq!(issue.line, 1);
+        assert_eq!(issue.col, 2);
+        assert_eq!(issue.category, "");
+        assert!(!issue.suppressed);
+    }
+}

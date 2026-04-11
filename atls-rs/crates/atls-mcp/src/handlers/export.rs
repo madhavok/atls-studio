@@ -172,3 +172,34 @@ pub async fn handle_export(
         _ => Err(format!("Unsupported export format: {}", format)),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::handle_export;
+    use crate::project::ProjectManager;
+    use std::sync::Arc;
+    use tokio::sync::Mutex;
+
+    #[tokio::test]
+    async fn export_requires_format() {
+        let pm = Arc::new(Mutex::new(ProjectManager::new()));
+        let err = handle_export(&pm, serde_json::json!({}))
+            .await
+            .unwrap_err();
+        assert!(err.contains("format"));
+    }
+
+    #[tokio::test]
+    async fn export_json_empty_issues() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().to_string_lossy().to_string();
+        let pm = Arc::new(Mutex::new(ProjectManager::new()));
+        let v = handle_export(
+            &pm,
+            serde_json::json!({ "format": "json", "root_path": root }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(v["summary"]["total"], 0);
+    }
+}

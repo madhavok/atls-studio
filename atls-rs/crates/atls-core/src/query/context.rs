@@ -839,3 +839,54 @@ impl<T> OptionalResult<T> for rusqlite::Result<T> {
 }
 
 const DEFAULT_RELATED_FILES_LIMIT: usize = 10;
+
+#[cfg(test)]
+mod tests {
+    use crate::db::queries::Queries;
+    use crate::db::Database;
+    use crate::query::QueryEngine;
+    use crate::types::{Language, ParsedSymbol, SymbolKind, SymbolMetadata};
+    use std::path::PathBuf;
+
+    #[test]
+    fn get_database_stats_zeros_on_empty() {
+        let db = Database::open_in_memory().unwrap();
+        let q = QueryEngine::new(db);
+        let s = q.get_database_stats().unwrap();
+        assert_eq!(s.file_count, 0);
+        assert_eq!(s.symbol_count, 0);
+        assert_eq!(s.issue_count, 0);
+    }
+
+    #[test]
+    fn get_database_stats_counts_rows() {
+        let db = Database::open_in_memory().unwrap();
+        let conn = db.conn();
+        let fid = Queries::insert_file(&conn, &PathBuf::from("m.rs"), "hh", &Language::Rust, None).unwrap();
+        let sym = ParsedSymbol {
+            name: "main".into(),
+            kind: SymbolKind::Function,
+            line: 1,
+            end_line: None,
+            scope_id: None,
+            signature: None,
+            complexity: None,
+            body_preview: None,
+            metadata: SymbolMetadata {
+                parameters: None,
+                return_type: None,
+                visibility: None,
+                modifiers: None,
+                parent_symbol: None,
+                extends: None,
+                implements: None,
+            },
+        };
+        Queries::insert_symbol(&conn, fid, &sym).unwrap();
+        drop(conn);
+        let q = QueryEngine::new(db);
+        let s = q.get_database_stats().unwrap();
+        assert_eq!(s.file_count, 1);
+        assert_eq!(s.symbol_count, 1);
+    }
+}

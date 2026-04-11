@@ -211,3 +211,18 @@ impl Default for ProjectManager {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::ProjectManager;
+
+    #[tokio::test]
+    async fn get_or_create_reuses_cached_project() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path();
+        let pm = ProjectManager::new();
+        let a = pm.get_or_create_project(Some(path)).await.unwrap();
+        let b = pm.get_or_create_project(Some(path)).await.unwrap();
+        assert!(std::sync::Arc::ptr_eq(&a, &b));
+    }
+}
