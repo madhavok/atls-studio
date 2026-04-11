@@ -3,8 +3,37 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { handleDrop, handlePin, handleStage, handleStats, handleTaskAdvance, handleTaskPlan } from './session';
+import {
+  handleCompact,
+  handleCompactHistory,
+  handleDrop,
+  handlePin,
+  handleRecall,
+  handleSessionDebug,
+  handleStage,
+  handleStats,
+  handleTaskAdvance,
+  handleTaskPlan,
+  handleTaskStatus,
+  handleUnload,
+  handleUnpin,
+  handleUnstage,
+  resetRecallBudget,
+} from './session';
 import { useContextStore } from '../../../stores/contextStore';
+
+const invokeMock = vi.hoisted(() =>
+  vi.fn((cmd: string) => {
+    if (cmd === 'resolve_hash_ref') {
+      return Promise.resolve({ content: 'staged-from-invoke', source: 'src/invoked.ts' });
+    }
+    return Promise.resolve(null);
+  }),
+);
+
+vi.mock('@tauri-apps/api/core', () => ({
+  invoke: invokeMock,
+}));
 
 function createMockCtx(overrides?: Partial<{
   taskPlan: { goal: string; subtasks: Array<{ id: string; title: string; status: string }>; activeSubtaskId: string | null } | null;
@@ -307,5 +336,359 @@ describe('handleTaskAdvance advance gate', () => {
 
     expect(result.ok).toBe(true);
     expect(result.summary).not.toContain('WARNING');
+  });
+});
+
+describe('handleTaskPlan', () => {
+  beforeEach(() => {
+    useContextStore.getState().resetSession();
+  });
+
+  it('errors when goal missing', async () => {
+    const r = await handleTaskPlan({ subtasks: ['a: A'] }, createMockCtx() as any);
+    expect(r.ok).toBe(false);
+    expect(r.error).toMatch(/missing goal/);
+  });
+
+  it('accepts object subtasks', async () => {
+    const r = await handleTaskPlan(
+      { goal: 'g', subtasks: [{ id: 'x1', title: 'T1' }] },
+      createMockCtx() as any,
+    );
+    expect(r.ok).toBe(true);
+    const p = useContextStore.getState().taskPlan;
+    expect(p?.subtasks[0]).toMatchObject({ id: 'x1', title: 'T1', status: 'active' });
+  });
+});
+
+describe('handleTaskStatus', () => {
+  beforeEach(() => {
+    useContextStore.getState().resetSession();
+  });
+
+  it('reports no plan', async () => {
+    const r = await handleTaskStatus({}, createMockCtx() as any);
+    expect(r.ok).toBe(true);
+    expect(r.summary).toMatch(/no plan/);
+  });
+
+  it('lists subtask statuses', async () => {
+    await handleTaskPlan(
+      { goal: 'g2', subtasks: ['p1: One', 'p2: Two'] },
+      createMockCtx() as any,
+    );
+    const r = await handleTaskStatus({}, createMockCtx() as any);
+    expect(r.ok).toBe(true);
+    expect(r.summary).toContain('p1(active)');
+    expect(r.summary).toContain('p2(pending)');
+  });
+});
+
+describe('handleTaskAdvance errors', () => {
+  beforeEach(() => {
+    useContextStore.getState().resetSession();
+  });
+
+  it('errors when no plan', async () => {
+    const r = await handleTaskAdvance(
+      { summary: 'x'.repeat(60) },
+      createMockCtx() as any,
+    );
+    expect(r.ok).toBe(false);
+    expect(r.error).toMatch(/no active plan/);
+  });
+
+  it('errors when no active subtask', async () => {
+    // Bypass setTaskPlan normalization (it forces an active subtask when none marked active).
+    const now = Date.now();
+    useContextStore.setState({
+      taskPlan: {
+        id: 'inconsistent',
+        goal: 'g',
+        subtasks: [
+          { id: 'a', title: 'a', status: 'pending' },
+          { id: 'b', title: 'b', status: 'pending' },
+        ],
+        activeSubtaskId: 'a',
+        status: 'active',
+        createdAt: now,
+        retryCount: 0,
+        evidenceRefs: [],
+      },
+    });
+    const r = await handleTaskAdvance({ summary: 'y'.repeat(60) }, createMockCtx() as any);
+    expect(r.ok).toBe(false);
+    expect(r.error).toMatch(/no active subtask/);
+  });
+
+  it('errors when explicit subtask missing', async () => {
+    useContextStore.getState().setTaskPlan({
+      goal: 'g',
+      subtasks: [{ id: 'a', title: 'a', status: 'active' as const }],
+      activeSubtaskId: 'a',
+    });
+    const r = await handleTaskAdvance(
+      { subtask: 'nope', summary: 'z'.repeat(60) },
+      createMockCtx() as any,
+    );
+    expect(r.ok).toBe(false);
+    expect(r.error).toMatch(/not found/);
+  });
+
+  it('errors when subtask already done', async () => {
+    useContextStore.getState().setTaskPlan({
+      goal: 'g',
+      subtasks: [
+        { id: 'a', title: 'a', status: 'done' as const },
+        { id: 'b', title: 'b', status: 'active' as const },
+      ],
+      activeSubtaskId: 'b',
+    });
+    const r = await handleTaskAdvance(
+      { subtask: 'a', summary: 'z'.repeat(60) },
+      createMockCtx() as any,
+    );
+    expect(r.ok).toBe(false);
+    expect(r.error).toMatch(/already done/);
+  });
+
+  it('errors when summary too short', async () => {
+    useContextStore.getState().setTaskPlan({
+      goal: 'g',
+      subtasks: [
+        { id: 'a', title: 'a', status: 'active' as const },
+        { id: 'b', title: 'b', status: 'pending' as const },
+      ],
+      activeSubtaskId: 'a',
+    });
+    const r = await handleTaskAdvance({ summary: 'short' }, createMockCtx() as any);
+    expect(r.ok).toBe(false);
+    expect(r.error).toMatch(/min 50 chars/);
+  });
+});
+
+describe('handleUnload / handleCompact', () => {
+  beforeEach(() => {
+    useContextStore.getState().resetSession();
+  });
+
+  it('handleUnload frees chunks', async () => {
+    const h = useContextStore.getState().addChunk('body', 'smart', 'f.ts');
+    const ctx = createMockCtx() as any;
+    const r = await handleUnload({ hashes: [`h:${h}`] }, ctx);
+    expect(r.ok).toBe(true);
+    expect(r.summary).toMatch(/unload:/);
+  });
+
+  it('handleUnload errors when hashes missing', async () => {
+    const r = await handleUnload({}, createMockCtx() as any);
+    expect(r.ok).toBe(false);
+    expect(r.error).toMatch(/missing hashes/);
+  });
+
+  it('handleCompact compacts chunks (pointer tier)', async () => {
+    const h = useContextStore.getState().addChunk('compact me', 'smart', 'c.ts');
+    const ctx = createMockCtx() as any;
+    const r = await handleCompact({ hashes: [`h:${h}`] }, ctx);
+    expect(r.ok).toBe(true);
+    expect(r.summary).toMatch(/compact:/);
+  });
+
+  it('handleCompact errors when hashes missing', async () => {
+    const r = await handleCompact({}, createMockCtx() as any);
+    expect(r.ok).toBe(false);
+    expect(r.error).toMatch(/missing hashes/);
+  });
+});
+
+describe('handleStage content and batch', () => {
+  beforeEach(() => {
+    useContextStore.getState().resetSession();
+    invokeMock.mockClear();
+  });
+
+  it('stages raw content with label', async () => {
+    const r = await handleStage(
+      { content: 'inline body', label: 'lbl' },
+      createMockCtx() as any,
+    );
+    expect(r.ok).toBe(true);
+    expect(r.summary).toMatch(/staged \[lbl\]/);
+  });
+
+  it('stage_batch resolves hashes via invoke', async () => {
+    const r = await handleStage(
+      { hashes: ['deadbeef12'] },
+      createMockCtx({ sessionId: 's1' }) as any,
+    );
+    expect(r.ok).toBe(true);
+    expect(r.summary).toMatch(/stage_batch/);
+    expect(invokeMock).toHaveBeenCalled();
+  });
+});
+
+describe('handleUnstage', () => {
+  beforeEach(() => {
+    useContextStore.getState().resetSession();
+  });
+
+  it('unstages all with hashes *', async () => {
+    const store = useContextStore.getState();
+    store.stageSnippet('k1', 'a', 's', undefined, undefined, undefined, 'snapshot');
+    const r = await handleUnstage({ hashes: ['*'] }, createMockCtx() as any);
+    expect(r.ok).toBe(true);
+    expect(r.summary).toMatch(/unstaged all/);
+  });
+
+  it('errors when nothing matched', async () => {
+    const r = await handleUnstage({ hashes: ['h:deadbeef', 'h:cafebabe'] }, createMockCtx() as any);
+    expect(r.ok).toBe(false);
+    expect(r.error).toMatch(/none of/);
+  });
+
+  it('unstages by hash key', async () => {
+    const store = useContextStore.getState();
+    store.stageSnippet('h:abc', 'x', 's', undefined, undefined, undefined, 'snapshot');
+    const r = await handleUnstage({ hash: 'abc' }, createMockCtx() as any);
+    expect(r.ok).toBe(true);
+    expect(r.summary).toContain('h:abc');
+  });
+});
+
+describe('handleUnpin', () => {
+  beforeEach(() => {
+    useContextStore.getState().resetSession();
+  });
+
+  it('unpins after pin', async () => {
+    const h = useContextStore.getState().addChunk('p', 'smart', 'p.ts');
+    await handlePin({ hashes: [`h:${h}`] }, createMockCtx() as any);
+    const r = await handleUnpin({ hashes: [`h:${h}`] }, createMockCtx() as any);
+    expect(r.ok).toBe(true);
+    expect(r.summary).toMatch(/unpin:/);
+  });
+
+  it('errors when hashes missing', async () => {
+    const r = await handleUnpin({}, createMockCtx() as any);
+    expect(r.ok).toBe(false);
+    expect(r.error).toMatch(/missing hashes/);
+  });
+});
+
+describe('handleRecall', () => {
+  beforeEach(() => {
+    useContextStore.getState().resetSession();
+    resetRecallBudget();
+  });
+
+  it('returns chunk content', async () => {
+    const h = useContextStore.getState().addChunk('recall-body', 'smart', 'r.ts');
+    const r = await handleRecall({ hashes: [`h:${h}`] }, createMockCtx() as any);
+    expect(r.ok).toBe(true);
+    expect(r.summary).toContain('recall-body');
+  });
+
+  it('truncates oversized recall', async () => {
+    const big = `${'Q'.repeat(51_000)}`;
+    const h = useContextStore.getState().addChunk(big, 'smart', 'big.ts');
+    const r = await handleRecall({ hashes: [`h:${h}`] }, createMockCtx() as any);
+    expect(r.ok).toBe(true);
+    expect(r.summary).toContain('[truncated at 50k chars]');
+  });
+
+  it('respects batch char budget', async () => {
+    resetRecallBudget();
+    const a = useContextStore.getState().addChunk('A'.repeat(60_000), 'smart', 'a.ts');
+    const b = useContextStore.getState().addChunk('B'.repeat(60_000), 'smart', 'b.ts');
+    const r = await handleRecall({ hashes: [`h:${a}`, `h:${b}`] }, createMockCtx() as any);
+    expect(r.ok).toBe(true);
+    expect(r.summary).toContain('BUDGET_EXCEEDED');
+  });
+});
+
+describe('handleSessionDebug', () => {
+  beforeEach(() => {
+    useContextStore.getState().resetSession();
+  });
+
+  it('includes chunk and plan summary', async () => {
+    useContextStore.getState().addChunk('d', 'smart', 'd.ts');
+    await handleTaskPlan({ goal: 'dg', subtasks: ['s1: Step'] }, createMockCtx() as any);
+    const r = await handleSessionDebug({}, createMockCtx() as any);
+    expect(r.ok).toBe(true);
+    expect(r.summary).toMatch(/debug:/);
+    expect(r.summary).toContain('Plan:');
+  });
+});
+
+describe('handleCompactHistory', () => {
+  beforeEach(() => {
+    useContextStore.getState().resetSession();
+  });
+
+  function compressibleHistory(): Array<{ role: string; content: unknown }> {
+    const oldestAssistant = 'A'.repeat(4000);
+    const recentAssistant = 'B'.repeat(4000);
+    const latestAssistant = 'C'.repeat(4000);
+    return [
+      { role: 'user', content: 'initial request' },
+      { role: 'assistant', content: oldestAssistant },
+      { role: 'user', content: 'tool results 1' },
+      { role: 'assistant', content: 'round 1 filler' },
+      { role: 'user', content: 'ok' },
+      { role: 'assistant', content: 'round 2 filler' },
+      { role: 'user', content: 'ok' },
+      { role: 'assistant', content: recentAssistant },
+      { role: 'user', content: 'tool results 4' },
+      { role: 'assistant', content: latestAssistant },
+      { role: 'user', content: 'tool results 5' },
+    ];
+  }
+
+  it('no tool loop state', async () => {
+    const r = await handleCompactHistory({}, createMockCtx() as any);
+    expect(r.ok).toBe(true);
+    expect(r.summary).toMatch(/no active tool loop/);
+  });
+
+  it('compresses when tool loop state present', async () => {
+    const history = compressibleHistory();
+    const r = await handleCompactHistory(
+      {},
+      {
+        ...createMockCtx(),
+        toolLoopState: {
+          round: 8,
+          priorTurnBoundary: 0,
+          conversationHistory: history,
+        },
+      } as any,
+    );
+    expect(r.ok).toBe(true);
+    expect(r.summary).toMatch(/compact_history: compressed/);
+  });
+});
+
+describe('handleDrop scope dormant max', () => {
+  beforeEach(() => {
+    useContextStore.getState().resetSession();
+  });
+
+  it('respects max when collecting dormant hashes', async () => {
+    const store = useContextStore.getState();
+    const hashes: string[] = [];
+    for (let i = 0; i < 4; i++) {
+      const sh = store.addChunk(`c${i}`, 'smart', `src/x${i}.ts`, undefined, undefined, `rev${i}`, {
+        sourceRevision: `rev${i}`,
+        viewKind: 'latest',
+      });
+      hashes.push(`h:${sh}`);
+    }
+    const { compacted } = store.compactChunks(hashes);
+    expect(compacted).toBeGreaterThan(0);
+
+    const r = await handleDrop({ scope: 'dormant', max: 2 }, createMockCtx() as any);
+    expect(r.ok).toBe(true);
+    expect(r.summary).toContain('scope:dormant');
   });
 });
