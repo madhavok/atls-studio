@@ -1,3 +1,4 @@
+// TODO: UHPP Phase 6 — not wired to runtime chat path. Only imported by uhppTypes.ts barrel + tests.
 /**
  * UHPP Phase 6: Shorthand Notation — Parser, Compiler, and Reference
  *

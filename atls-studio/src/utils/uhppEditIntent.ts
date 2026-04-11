@@ -1,3 +1,4 @@
+// TODO: UHPP Phase 4 — not wired to runtime chat path. Only imported by uhppTypes.ts barrel + tests.
 /**
  * UHPP Phase 4: Intent-Driven Edit Pipeline
  *

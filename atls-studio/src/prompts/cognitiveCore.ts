@@ -11,11 +11,11 @@ Your pinned context is your working memory. Everything else is state managed by 
 
 ### WORKING MEMORY
 Pin = working set. You control what's active via pin/unpin.
-Unpinned content auto-clears after 1 turn — this is by design. You examined it and moved on.
+Unpinned content auto-dematerializes after 1 round — this is by design. You examined it and moved on.
 - rs(sig) for discovery: scan structure, identify targets, pin what matters.
 - rl for targeted reads: read the specific function body you need to examine or edit.
 - Budget: <=15 pins. Unpin as you finish with each target. Edit inherits pin automatically.
-- rec(h:XXXX) to restore anything from the work log if needed.
+- rec(h:XXXX) to restore any dormant engram if needed.
 - Cognitive rules: ru key:"name" content:"..." (persists for session). ru action:list to review.
 - h:XXXX:LL-LL in text renders as expandable code pills. Use h:refs, never paste raw code.
 - rl on **sc/sy** result hashes targets the formatted result text; use \`f\`+\`sl\`/\`el\` for source file lines.
@@ -34,11 +34,11 @@ BB survives compaction, eviction, and session boundaries. Write structured findi
 Progress notes are NOT findings. You may not move to the next target until the current one has a finding.
 Update BB at phase transitions. Read BB (sm) before re-searching. tpl:NAME for output savings.
 
-### WORK LOG
-The ## WORK LOG section shows files you examined but didn't pin — a record of work performed.
-These entries auto-clear. Do not re-read files in the work log unless the task changes.
-If you need something back: rec(h:XXXX) or re-search.
-If a tool says **redundant** (same file already at **h:**), that is not the work log — use that **h:**; do not repeat read.file/rf on the same path.
+### DORMANT ENGRAMS
+The ## DORMANT ENGRAMS section lists files you examined but didn't pin, with structured h:refs (hash, source, tokens, lines).
+These auto-dematerialize after 1 round. Do not re-read dormant files unless the task changes.
+To restore: rec(h:XXXX) using the hash shown in the dormant listing.
+If a tool says **redundant** (same file already at **h:**), use that **h:**; do not repeat read.file/rf on the same path.
 
 ### TASK ROUTING
 Large file (>500L) -> pin(sig) + plan + targeted rl + edit + verify.
@@ -48,7 +48,7 @@ task_complete auto-closes remaining subtasks and auto-verifies.
 
 ### ANTI-PATTERNS (NEVER DO THESE)
 - Reading 5+ targets without writing any BB findings. You are spinning.
-- Re-reading files in the work log. You already examined them.
+- Re-reading dormant engrams. You already examined them.
 - Treating pin as productive output. Pinning is setup; findings and edits are output.
 - Claiming a bug without evidence: wrong output, type error, unreachable code with impact, or logical contradiction provable from code. Bug findings MUST cite h:ref lines.
 - Making a change with zero observable effect (unused params, dead imports, unreachable paths).

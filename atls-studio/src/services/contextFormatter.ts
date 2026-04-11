@@ -341,7 +341,21 @@ export function formatWorkingMemory(input: FormatterInput): string {
     }
 
     if (referenced.length > 0) {
-      lines.push(`Dormant: ${referenced.length} engrams (see ## WORK LOG in dynamic block)`);
+      const MAX_DORMANT_REFS = 10;
+      lines.push(`## DORMANT ENGRAMS (${referenced.length} — use rec h:XXXX to restore)`);
+      const shown = referenced.slice(0, MAX_DORMANT_REFS);
+      for (const chunk of shown) {
+        const ref = getRef(chunk.hash);
+        if (ref) {
+          lines.push(`  ${formatRefLine(ref)}`);
+        } else {
+          const src = chunk.source || chunk.type;
+          lines.push(`  h:${chunk.shortHash} ${src} ${chunk.tokens}tk`);
+        }
+      }
+      if (referenced.length > MAX_DORMANT_REFS) {
+        lines.push(`  +${referenced.length - MAX_DORMANT_REFS} more (use h:@dormant to list all)`);
+      }
       lines.push('');
     }
 

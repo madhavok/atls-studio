@@ -131,16 +131,6 @@ export interface PromptPressureBuckets {
   cacheChurnTokens: number;
 }
 
-export interface PromptAssemblyState {
-  staticPrefix: string;
-  historyWindow: Array<{ role: string; content: unknown }>;
-  stagedAnchors: string;
-  workingMemoryBlock: string;
-  workspaceContextBlock: string;
-  currentRoundMessages: Array<{ role: string; content: unknown }>;
-  cacheStrategy: 'prefix_stable' | 'rolling_cache' | 'none';
-}
-
 export function createPromptLayerBudgets(
   contextWindowTokens: number,
   staticSystemBudgetTokens: number,

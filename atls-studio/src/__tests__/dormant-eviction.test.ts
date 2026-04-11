@@ -22,6 +22,8 @@ vi.mock('../services/hashProtocol', () => ({
   dematerialize: vi.fn(),
   getRef: vi.fn(() => null),
   shouldMaterialize: vi.fn(() => false),
+  /** LRU/over-cap tests use count-based eviction; turn 0 disables turn-age staleness. */
+  getTurn: vi.fn(() => 0),
 }));
 
 vi.mock('../services/hashProtocolQuery', () => ({
@@ -39,8 +41,7 @@ vi.mock('./roundHistoryStore', () => ({
 }));
 
 import { useContextStore, type ContextChunk } from '../stores/contextStore';
-import { evict as hppEvict, getRef, type ChunkRef } from '../services/hashProtocol';
-import { buildDormantBlock } from '../services/aiService';
+import { evict as hppEvict } from '../services/hashProtocol';
 import { hashContentSync } from '../utils/contextHash';
 
 const SOURCE_PATH = 'src/components/Panel.tsx';
@@ -253,7 +254,7 @@ describe('reconcileSourceRevision: dormant eviction', () => {
 
 describe('evictStaleDormantChunks: LRU order', () => {
   /** Must match MAX_DORMANT_CHUNKS in contextStore.ts */
-  const MAX_DORMANT_CHUNKS = 100;
+  const MAX_DORMANT_CHUNKS = 30;
 
   beforeEach(() => {
     useContextStore.getState().resetSession();
@@ -289,7 +290,7 @@ describe('evictStaleDormantChunks: LRU order', () => {
 
   it('evicts excess compacted stubs when count exceeds MAX_DORMANT_CHUNKS', () => {
     const base = Date.now();
-    const many = Array.from({ length: 101 }, (_, i) =>
+    const many = Array.from({ length: MAX_DORMANT_CHUNKS + 1 }, (_, i) =>
       makeChunk({
         hash: `srch_${i.toString().padStart(3, '0')}_1234567890ab`,
         type: 'search',
@@ -303,7 +304,7 @@ describe('evictStaleDormantChunks: LRU order', () => {
     const result = useContextStore.getState().evictStaleDormantChunks();
 
     expect(result.evicted).toBe(1);
-    expect(useContextStore.getState().chunks.size).toBe(100);
+    expect(useContextStore.getState().chunks.size).toBe(MAX_DORMANT_CHUNKS);
   });
 });
 
@@ -348,47 +349,6 @@ describe('pruneObsoleteTaskArtifacts: compacted stub auto-drop', () => {
 
     expect(r.dropped).toBe(0);
     expect(useContextStore.getState().chunks.has(big.hash)).toBe(true);
-  });
-});
-
-describe('buildDormantBlock', () => {
-  const refStub = (hash: string, shortHash: string): ChunkRef => ({
-    hash,
-    shortHash,
-    type: 'search',
-    source: 'q',
-    totalLines: 1,
-    tokens: 10,
-    editDigest: '',
-    visibility: 'referenced',
-    seenAtTurn: 0,
-  });
-
-  beforeEach(() => {
-    useContextStore.getState().resetSession();
-    vi.clearAllMocks();
-    vi.mocked(getRef).mockImplementation((h: string) => refStub(h, h.slice(0, 6)));
-  });
-
-  it('caps dormant listing at 40 lines with overflow summary', () => {
-    const many = Array.from({ length: 45 }, (_, i) =>
-      makeChunk({
-        hash: `db_${i.toString().padStart(3, '0')}_1234567890ab`,
-        type: 'search',
-        compacted: true,
-        tokens: 12,
-        source: `hit${i}.ts`,
-      }),
-    );
-    seedChunks(many);
-
-    const block = buildDormantBlock();
-
-    const lines = block.split('\n');
-    expect(lines[0]).toBe('## DORMANT ENGRAMS');
-    expect(lines.length).toBe(43);
-    expect(lines[41]).toMatch(/^\.\.\. and 5 more dormant engrams/);
-    expect(lines[42]).toMatch(/↩.*rec.*restore.*dr.*free/);
   });
 });
 

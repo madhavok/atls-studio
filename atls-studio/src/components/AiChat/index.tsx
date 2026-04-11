@@ -33,7 +33,6 @@ import {
 import { resolveModelSettings, type OutputSpeedLevel, type ThinkingLevel } from '../../utils/modelSettings';
 import { useRoundHistoryStore } from '../../stores/roundHistoryStore';
 import { parseTaskCompleteArgs } from '../../utils/structuredOutput';
-import { selectRecentHistory } from '../../services/historySelector';
 import { serializeForTokenEstimate } from '../../utils/toon';
 
 function isTaskCompleteCall(tc: { name: string; args?: Record<string, unknown> }): boolean {
@@ -3175,10 +3174,7 @@ export function AiChat() {
       return;
     }
 
-    // Build chat history for API — token-budget-aware selection that preserves the
-    // original task message and recent reasoning instead of a hard slice(-20) cap.
-    const recentMessages = selectRecentHistory(messages);
-    const chatMessages: ChatMessage[] = recentMessages.map(m => ({
+    const chatMessages: ChatMessage[] = messages.map(m => ({
       role: m.role,
       content: m.content,
       parts: m.parts,
@@ -3590,9 +3586,7 @@ export function AiChat() {
       }
     }
 
-    // Build chat history for API — same budget-aware selection as handleSend
-    const recentMessages = [...selectRecentHistory(messages), { id: crypto.randomUUID(), role: 'user' as const, content: continuationPrompt, timestamp: new Date() }];
-    const chatMessages: ChatMessage[] = recentMessages.map(m => ({
+    const chatMessages: ChatMessage[] = [...messages, { id: crypto.randomUUID(), role: 'user' as const, content: continuationPrompt, timestamp: new Date() }].map(m => ({
       role: m.role,
       content: m.content,
       parts: (m as any).parts,

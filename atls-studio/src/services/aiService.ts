@@ -193,7 +193,6 @@ import {
   getStagedTokens,
   getEstimatedTotalPromptTokens,
   getStaticSystemTokens,
-  type PromptAssemblyState,
   type PromptPressureBuckets,
   type PromptReliefAction,
 } from './promptMemory';
@@ -1137,7 +1136,7 @@ function assembleProviderMessages(
   provider: AIProvider,
   mode: ChatMode,
   dynamicContextBlock: string,
-): { messages: ApiMessage[]; geminiDynamicContext: string; assembly: PromptAssemblyState } {
+): { messages: ApiMessage[]; geminiDynamicContext: string } {
   const layeredMessages: ApiMessage[] = [];
   const isGemini = provider === 'google' || provider === 'vertex';
   let geminiDynamicContext = '';
@@ -1198,19 +1197,7 @@ function assembleProviderMessages(
     });
   }
 
-  return {
-    messages: layeredMessages,
-    geminiDynamicContext,
-    assembly: {
-      staticPrefix: '',
-      historyWindow: durableHistory.slice(0, Math.max(0, lastUserIndex)),
-      stagedAnchors: useContextStore.getState().getStagedBlock(),
-      workingMemoryBlock: buildWorkingMemoryBlock(),
-      workspaceContextBlock: dynamicContextBlock,
-      currentRoundMessages: layeredMessages,
-      cacheStrategy: isGemini ? 'rolling_cache' : 'prefix_stable',
-    },
-  };
+  return { messages: layeredMessages, geminiDynamicContext };
 }
 
 /**
@@ -3662,9 +3649,6 @@ function buildDynamicContextBlock(
     parts.push(`Sel:\n\`\`\`\n${text}\n\`\`\``);
   }
 
-  const dormantBlock = buildDormantBlock();
-  if (dormantBlock) parts.push(dormantBlock);
-
   return parts.length > 0 ? parts.join('\n') : '';
 }
 
@@ -3904,44 +3888,6 @@ function _buildBlackboardBlock(): string {
   });
   if (bbLines.length <= 1) return '';
   return bbLines.join('\n');
-}
-
-const MAX_WORKLOG_LINE_WIDTH = 120;
-
-/**
- * Build compact work log for the dynamic (uncached) user message.
- * Shows filenames of examined-but-unpinned content as a pipe-delimited list.
- * Replaces the old per-entry dormant engram listing.
- */
-export function buildDormantBlock(): string {
-  const ctxState = useContextStore.getState();
-  const seen = new Set<string>();
-  ctxState.chunks.forEach(c => {
-    if (c.type === 'msg:user' || c.type === 'msg:asst') return;
-    const ref = getRef(c.hash);
-    const isDormant = c.compacted
-      ? (ref ? !shouldMaterialize(ref) : true)
-      : (ref != null && !shouldMaterialize(ref));
-    if (!isDormant) return;
-    const src = c.source ? c.source.split(/[/\\]/).pop() || c.source : c.shortHash;
-    seen.add(src);
-  });
-  if (seen.size === 0) return '';
-  const names = Array.from(seen);
-  const lines: string[] = [];
-  let current = '';
-  for (const name of names) {
-    const sep = current ? ' | ' : '';
-    if (current && (current.length + sep.length + name.length) > MAX_WORKLOG_LINE_WIDTH) {
-      lines.push(current);
-      current = name;
-    } else {
-      current += sep + name;
-    }
-  }
-  if (current) lines.push(current);
-  lines.push('rec h:XXXX to restore any');
-  return `## WORK LOG (${seen.size} examined, not pinned — auto-clearing)\n` + lines.join('\n');
 }
 
 /**
