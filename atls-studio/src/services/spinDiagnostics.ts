@@ -10,6 +10,7 @@
  */
 
 import { hashContentSync } from '../utils/contextHash';
+import type { StepResult } from './batch/types';
 
 // ---------------------------------------------------------------------------
 // Round Fingerprint — accumulated during a single tool-loop round
@@ -24,9 +25,23 @@ export interface RoundFingerprint {
   hashRefsEvicted: string[];
   assistantTextHash: string;
   steeringInjected: string[];
+  hadRealChangeThisRound: boolean;
+  changeDryRunPreviewRound: boolean;
+  volatileRefsSuggested: boolean;
+  hadSessionPinStep: boolean;
+}
+
+/** True when change.* artifacts indicate a preview only (align with batch executor). */
+export function stepArtifactsDryRunPreview(artifacts: Record<string, unknown> | undefined): boolean {
+  if (!artifacts || typeof artifacts !== 'object') return false;
+  return artifacts.dry_run === true
+    || artifacts.dry_run === 1
+    || artifacts.status === 'preview'
+    || (typeof artifacts._next === 'string' && artifacts._next.toLowerCase().includes('dry_run:false'));
 }
 
 let _current: RoundFingerprint = emptyFingerprint();
+let _sawOkChangeStep = false;
 
 function emptyFingerprint(): RoundFingerprint {
   return {
@@ -38,15 +53,44 @@ function emptyFingerprint(): RoundFingerprint {
     hashRefsEvicted: [],
     assistantTextHash: '',
     steeringInjected: [],
+    hadRealChangeThisRound: false,
+    changeDryRunPreviewRound: false,
+    volatileRefsSuggested: false,
+    hadSessionPinStep: false,
   };
 }
 
 export function resetRoundFingerprint(): void {
   _current = emptyFingerprint();
+  _sawOkChangeStep = false;
 }
 
 export function getRoundFingerprint(): Readonly<RoundFingerprint> {
-  return _current;
+  return {
+    ..._current,
+    changeDryRunPreviewRound: _sawOkChangeStep && !_current.hadRealChangeThisRound,
+  };
+}
+
+/**
+ * Per-batch semantics: real vs dry-run change.*, VOLATILE pin hints, session.pin usage.
+ * Safe to call multiple times per round (multiple batch tool calls).
+ */
+export function recordBatchSpinSemantics(stepResults: StepResult[]): void {
+  for (const step of stepResults) {
+    if (step.ok && step.use.startsWith('change.')) {
+      _sawOkChangeStep = true;
+      if (!stepArtifactsDryRunPreview(step.artifacts)) {
+        _current.hadRealChangeThisRound = true;
+      }
+    }
+    if (step.ok && typeof step.summary === 'string' && /VOLATILE|pin to keep/i.test(step.summary)) {
+      _current.volatileRefsSuggested = true;
+    }
+    if (step.ok && step.use === 'session.pin') {
+      _current.hadSessionPinStep = true;
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------

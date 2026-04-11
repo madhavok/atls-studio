@@ -234,6 +234,7 @@ import { canSteerExecution } from './universalFreshness';
 import {
   resetRoundFingerprint, getRoundFingerprint,
   recordToolSignature, recordTargetFiles, recordBbDelta,
+  recordBatchSpinSemantics,
   recordAssistantTextHash, recordSteeringInjected,
   recordHashRefsConsumed, recordHashRefsEvicted,
   extractTargetFilesFromStepResults, extractBbDeltaFromStepResults,
@@ -3255,6 +3256,7 @@ async function executeToolCallDetailed(
 
         // Spin diagnostics: accumulate round fingerprint from batch results
         recordToolSignature(result.step_results.map(s => s.use));
+        recordBatchSpinSemantics(result.step_results);
         recordTargetFiles(extractTargetFilesFromStepResults(result.step_results));
         recordBbDelta(extractBbDeltaFromStepResults(result.step_results, args));
         {

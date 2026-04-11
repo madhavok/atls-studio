@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import { useRoundHistoryStore, isMainChatRound } from '../../../stores/roundHistoryStore';
-import { diagnoseSpinning, type SpinDiagnosis, type SpinMode } from '../../../services/spinDetector';
+import { diagnoseSpinning, phaseCategoryFromSnapshot, type SpinDiagnosis, type SpinMode } from '../../../services/spinDetector';
 
 const MODE_LABELS: Record<SpinMode, string> = {
   context_loss: 'Context Loss',
@@ -33,23 +33,15 @@ function confidenceBar(confidence: number) {
   );
 }
 
-function categorizeTools(sig: string[]): string {
-  if (sig.some(s => s.startsWith('change.'))) return 'edit';
-  if (sig.some(s => s.startsWith('verify.'))) return 'verify';
-  if (sig.some(s => s.startsWith('delegate.'))) return 'delegate';
-  if (sig.some(s => s.startsWith('search.'))) return 'search';
-  if (sig.some(s => s.startsWith('read.'))) return 'read';
-  if (sig.some(s => s === 'session.bb.write')) return 'bb';
-  return 'other';
-}
-
 const PHASE_COLORS: Record<string, string> = {
   search: 'bg-blue-500/60',
   read: 'bg-cyan-500/60',
   edit: 'bg-green-500/60',
+  preview: 'bg-amber-500/50',
   verify: 'bg-yellow-500/60',
   bb: 'bg-purple-500/60',
   delegate: 'bg-teal-500/60',
+  consolidate: 'bg-violet-500/50',
   other: 'bg-studio-border/40',
 };
 
@@ -159,7 +151,7 @@ export function SpinTraceSection() {
     const recent = mainSnapshots.slice(-10);
     return recent.map((s) => ({
       round: s.round,
-      category: categorizeTools(s.toolSignature ?? []),
+      category: phaseCategoryFromSnapshot(s),
       toolCount: s.toolSignature?.length ?? 0,
       fileCount: s.targetFiles?.length ?? 0,
       bbCount: s.bbDelta?.length ?? 0,

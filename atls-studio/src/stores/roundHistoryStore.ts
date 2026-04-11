@@ -94,6 +94,14 @@ export interface RoundSnapshot {
   assistantTextHash?: string;
   /** Which <<SYSTEM:...>> steering blocks were injected this round. */
   steeringInjected?: string[];
+  /** True when at least one ok change.* step applied (not dry-run preview). */
+  hadRealChangeThisRound?: boolean;
+  /** True when ok change.* steps were all dry-run previews (no disk mutation). */
+  changeDryRunPreviewRound?: boolean;
+  /** Tool output mentioned VOLATILE / pin to keep for this round. */
+  volatileRefsSuggested?: boolean;
+  /** Batch included a successful session.pin step. */
+  hadSessionPinStep?: boolean;
 }
 
 interface RoundHistoryState {

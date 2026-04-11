@@ -43,6 +43,12 @@ export interface SpinFingerprint {
   steeringInjected: string[];
   isResearchRound: boolean;
   coveragePlateau: boolean;
+  hadRealChangeThisRound: boolean;
+  changeDryRunPreviewRound: boolean;
+  volatileRefsSuggested: boolean;
+  hadSessionPinStep: boolean;
+  /** False for snapshots saved before dry-run vs real-change semantics existed. */
+  spinSemanticsPresent: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -57,6 +63,10 @@ const DEFAULT_WINDOW = 5;
 // ---------------------------------------------------------------------------
 
 function toFingerprint(s: RoundSnapshot): SpinFingerprint {
+  const semanticsPresent = s.hadRealChangeThisRound !== undefined
+    || s.changeDryRunPreviewRound !== undefined;
+  const hadReal = s.hadRealChangeThisRound ?? false;
+  const dryPreview = s.changeDryRunPreviewRound ?? false;
   return {
     round: s.round,
     toolSignature: s.toolSignature ?? [],
@@ -69,7 +79,17 @@ function toFingerprint(s: RoundSnapshot): SpinFingerprint {
     steeringInjected: s.steeringInjected ?? [],
     isResearchRound: s.isResearchRound ?? true,
     coveragePlateau: s.coveragePlateau ?? false,
+    hadRealChangeThisRound: hadReal,
+    changeDryRunPreviewRound: dryPreview,
+    volatileRefsSuggested: s.volatileRefsSuggested ?? false,
+    hadSessionPinStep: s.hadSessionPinStep ?? false,
+    spinSemanticsPresent: semanticsPresent,
   };
+}
+
+/** Phase label for UI timeline — distinguishes real edits from dry-run previews. */
+export function phaseCategoryFromSnapshot(s: RoundSnapshot): string {
+  return categorizeTools(toFingerprint(s));
 }
 
 function jaccard(a: string[], b: string[]): number {
@@ -89,15 +109,22 @@ function intersectionCount(a: string[], b: string[]): number {
   return count;
 }
 
-function categorizeTools(sig: string[]): string {
+function categorizeTools(fp: SpinFingerprint): string {
+  const sig = fp.toolSignature;
+  const hasChangeOp = sig.some(s => s.startsWith('change.'));
+  if (fp.spinSemanticsPresent) {
+    if (fp.hadRealChangeThisRound) return 'edit';
+    if (fp.changeDryRunPreviewRound || (hasChangeOp && !fp.hadRealChangeThisRound)) return 'preview';
+  } else if (hasChangeOp) {
+    return 'edit';
+  }
+
   const hasSearch = sig.some(s => s.startsWith('search.'));
   const hasRead = sig.some(s => s.startsWith('read.'));
-  const hasEdit = sig.some(s => s.startsWith('change.'));
   const hasVerify = sig.some(s => s.startsWith('verify.'));
   const hasBb = sig.some(s => s === 'session.bb.write');
   const hasDelegate = sig.some(s => s.startsWith('delegate.'));
 
-  if (hasEdit) return 'edit';
   if (hasVerify) return 'verify';
   if (hasDelegate) return 'delegate';
   if (hasBb && !hasSearch && !hasRead) return 'consolidate';
@@ -162,7 +189,7 @@ function detectGoalDrift(window: SpinFingerprint[]): SpinDiagnosis | null {
   let triggerRound = 0;
   let score = 0;
 
-  const categories = window.map(fp => categorizeTools(fp.toolSignature));
+  const categories = window.map(fp => categorizeTools(fp));
 
   for (let i = 2; i < categories.length; i++) {
     const prevCat = categories[i - 1];
@@ -199,13 +226,29 @@ function detectGoalDrift(window: SpinFingerprint[]): SpinDiagnosis | null {
 // Detector: Stuck in Phase
 // ---------------------------------------------------------------------------
 
+function detectVolatileUnpinned(window: SpinFingerprint[]): SpinDiagnosis | null {
+  const bad = window.filter(fp => fp.volatileRefsSuggested && !fp.hadSessionPinStep);
+  if (bad.length < 2) return null;
+  const evidence = bad.map(fp =>
+    `Round ${fp.round}: VOLATILE / pin-to-keep in tool output but no session.pin in that batch`,
+  );
+  return {
+    spinning: true,
+    mode: 'tool_confusion',
+    confidence: Math.min(0.45 + bad.length * 0.12, 1.0),
+    evidence,
+    triggerRound: bad[0].round,
+    suggestedAction: 'Pin hashes before the next round (session.pin / pi) so staged reads do not expire, or write a bb:finding to consolidate. Re-read after expiry loses context.',
+  };
+}
+
 function detectStuckInPhase(window: SpinFingerprint[]): SpinDiagnosis | null {
   if (window.length < MIN_WINDOW) return null;
   let evidence: string[] = [];
   let triggerRound = 0;
   let score = 0;
 
-  const categories = window.map(fp => categorizeTools(fp.toolSignature));
+  const categories = window.map(fp => categorizeTools(fp));
 
   // 3+ consecutive rounds with same category and no BB delta
   let streak = 1;
@@ -216,7 +259,10 @@ function detectStuckInPhase(window: SpinFingerprint[]): SpinDiagnosis | null {
         const phase = categories[i];
         score += 0.15 * streak;
         if (!triggerRound) triggerRound = window[i - streak + 1].round;
-        evidence.push(`${streak} consecutive ${phase} rounds (${window[i - streak + 1].round}-${window[i].round}) with no BB findings`);
+        const detail = phase === 'preview'
+          ? `${streak} consecutive dry-run / preview rounds (${window[i - streak + 1].round}-${window[i].round}) — change previews without dry_run:false, pins, or BB updates`
+          : `${streak} consecutive ${phase} rounds (${window[i - streak + 1].round}-${window[i].round}) with no BB findings`;
+        evidence.push(detail);
       }
     } else {
       streak = 1;
@@ -231,13 +277,16 @@ function detectStuckInPhase(window: SpinFingerprint[]): SpinDiagnosis | null {
   }
 
   if (score < 0.3) return null;
+  const previewStreak = evidence.some(e => e.includes('dry-run / preview'));
   return {
     spinning: true,
     mode: 'stuck_in_phase',
     confidence: Math.min(score, 1.0),
     evidence,
     triggerRound: triggerRound || window[0].round,
-    suggestedAction: 'Write BB findings for what you know so far, then transition to edits. Reading more will not help.',
+    suggestedAction: previewStreak
+      ? 'Stop previewing: run change with dry_run:false, or pin refs (pi), and add BB notes or findings so context survives the next turn.'
+      : 'Write BB findings for what you know so far, then transition to edits. Reading more will not help.',
   };
 }
 
@@ -357,6 +406,7 @@ export function diagnoseSpinning(
 
   const detectors = [
     detectContextLoss,
+    detectVolatileUnpinned,
     detectToolConfusion,
     detectStuckInPhase,
     detectGoalDrift,
