@@ -114,6 +114,35 @@ describe('executeUnifiedBatch interruption handling', () => {
     expect(applySpy).toHaveBeenCalled();
   });
 
+  it('blocks a third change.* dry_run after two consecutive dry-run previews (spin breaker)', async () => {
+    const changeSpy = vi.fn().mockImplementation(async () =>
+      raw('preview', {
+        dry_run: true,
+        _next: 'Preview complete. Set dry_run:false to apply',
+      }),
+    );
+    handlers.set('change.edit', changeSpy as unknown as OpHandler);
+
+    const result = await executeUnifiedBatch(
+      {
+        version: '1.0',
+        steps: [
+          { id: 'p1', use: 'change.edit' },
+          { id: 'p2', use: 'change.edit' },
+          { id: 'p3', use: 'change.edit', with: { dry_run: true } },
+        ],
+      },
+      makeCtx(),
+    );
+
+    expect(result.ok).toBe(true);
+    expect(changeSpy).toHaveBeenCalledTimes(2);
+    expect(result.step_results).toHaveLength(3);
+    expect(result.step_results[2].summary).toMatch(/BLOCKED/);
+    expect(result.step_results[2].summary).toMatch(/dry-run preview spin/);
+    expect(result.step_results[2].error).toBe('dry_run_spin_blocked');
+  });
+
   it('does not cascade-stop batch for rename dry_run preview (read-only, files_modified:0)', async () => {
     const afterSpy = vi.fn().mockReturnValue(raw('done', { ok: true }));
 
