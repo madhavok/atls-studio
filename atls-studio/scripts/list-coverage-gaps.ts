@@ -13,11 +13,11 @@
  * CI generates Rust summaries in `.github/workflows/ci.yml`:
  *   - Tauri: `atls-studio/src-tauri` → `cargo llvm-cov --all-features --lcov ...`
  *   - atls-rs: `cargo llvm-cov --workspace --all-features --lcov ...` then
- *     `cargo llvm-cov report --workspace --json --summary-only --output-path target/llvm-cov-atls-rs-summary.json`
+ *     `cargo llvm-cov report --json --summary-only --output-path target/llvm-cov-atls-rs-summary.json`
+ *     (`report` does not accept `--workspace`.)
  *
- * Local atls-rs JSON (for rust-atls-rs-zero-line-coverage.txt):
- *   cd ../atls-rs && cargo llvm-cov --workspace --all-features --lcov --output-path lcov.info && \
- *     cargo llvm-cov report --workspace --json --summary-only --output-path target/llvm-cov-atls-rs-summary.json
+ * Local atls-rs JSON (for rust-atls-rs-zero-line-coverage.txt), one shot:
+ *   cd ../atls-rs && cargo llvm-cov --workspace --all-features --json --summary-only --output-path target/llvm-cov-atls-rs-summary.json
  */
 
 import { mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
@@ -171,7 +171,7 @@ function main(): void {
       join(outDir, "rust-atls-rs-zero-line-coverage.txt"),
       [
         "# Rust (atls-rs) — 0% line coverage",
-        "Generated from atls-rs/target/llvm-cov-atls-rs-summary.json (cargo llvm-cov --workspace --json --summary-only)",
+        "Generated from atls-rs/target/llvm-cov-atls-rs-summary.json (cargo llvm-cov --workspace --all-features --json --summary-only)",
         `Files: ${rustRs.length}`,
         "",
         ...rustRs,

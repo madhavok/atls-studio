@@ -1,7 +1,19 @@
+/** @vitest-environment happy-dom */
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { useContextStore, setBulkRevisionResolver } from '../stores/contextStore';
-import { rehydrateChunkDates, serializeMemorySnapshot, applyHashFirstFreshness, isReservedNoteKey } from './useChatPersistence';
+import { useAppStore } from '../stores/appStore';
+import { useCostStore } from '../stores/costStore';
+import { useRoundHistoryStore } from '../stores/roundHistoryStore';
+import {
+  rehydrateChunkDates,
+  serializeMemorySnapshot,
+  applyHashFirstFreshness,
+  isReservedNoteKey,
+  applyV4SessionExtras,
+} from './useChatPersistence';
 import { recordFreshnessJournal, getFreshnessJournal, clearFreshnessJournal, serializeJournal, restoreJournal } from '../services/freshnessJournal';
+import type { PersistedMemorySnapshot } from '../services/chatDb';
+import { emptyRollingSummary } from '../services/historyDistiller';
 
 const DUMMY_GEMINI_CACHE = {
   version: '1',
@@ -407,6 +419,81 @@ describe('applyHashFirstFreshness', () => {
     expect(fresh?.stageState).not.toBe('stale');
     expect(stale?.stageState).toBe('stale');
   });
+
+  it('bulk revision resolver receives paths from archived file-backed chunks', async () => {
+    const store = useContextStore.getState();
+    const hash = store.addChunk('arch body', 'file', 'src/archived-only.ts', undefined, undefined, 'rev-a', {
+      sourceRevision: 'rev-a',
+      viewKind: 'latest',
+    });
+    let requested: string[] = [];
+    useContextStore.setState((s) => {
+      const archived = new Map(s.archivedChunks);
+      const ch = s.chunks.get(hash);
+      if (ch) archived.set(hash, ch);
+      const chunks = new Map(s.chunks);
+      chunks.delete(hash);
+      return { chunks, archivedChunks: archived };
+    });
+
+    setBulkRevisionResolver(async (paths) => {
+      requested = paths;
+      return new Map(paths.map(p => [p, 'rev-new']));
+    });
+
+    const result = await applyHashFirstFreshness();
+    expect(requested.some(p => p.includes('archived-only'))).toBe(true);
+    // Archived chunks are not mutated here (only live chunks + staged); resolver still ran.
+    expect(result.suspect).toBe(0);
+    expect(result.staleSnippets).toBe(0);
+  });
+
+  it('counts evictedPaths when resolver reports a missing file', async () => {
+    const store = useContextStore.getState();
+    store.addChunk('gone', 'smart', 'src/missing.ts', undefined, undefined, 'rev-old', {
+      sourceRevision: 'rev-old',
+      viewKind: 'latest',
+    });
+
+    setBulkRevisionResolver(async (paths) => {
+      const m = new Map<string, string | null>();
+      for (const p of paths) m.set(p, null);
+      return m;
+    });
+
+    const result = await applyHashFirstFreshness();
+    expect(result.evictedPaths).toBe(1);
+    expect(result.suspect).toBe(1);
+  });
+
+  it('returns zeros when only snapshot view chunks exist (no file paths)', async () => {
+    useContextStore.setState((s) => {
+      const chunks = new Map(s.chunks);
+      chunks.set('only-snap', {
+        hash: 'only-snap',
+        shortHash: 'only-sn',
+        type: 'file',
+        source: 'src/nothing-to-resolve.ts',
+        content: 'x',
+        tokens: 1,
+        createdAt: new Date(),
+        viewKind: 'snapshot',
+        sourceRevision: 'r1',
+      } as import('../stores/contextStore').ContextChunk);
+      return { chunks };
+    });
+
+    setBulkRevisionResolver(async () => new Map([['src/nothing-to-resolve.ts', 'r2']]));
+
+    const result = await applyHashFirstFreshness();
+    expect(result).toEqual({
+      preserved: 0,
+      suspect: 0,
+      staleSnippets: 0,
+      evictedPaths: 0,
+      changedPaths: [],
+    });
+  });
 });
 
 describe('freshness journal persistence', () => {
@@ -565,5 +652,197 @@ describe('isReservedNoteKey', () => {
   it('detects __ctx_ prefix', () => {
     expect(isReservedNoteKey('__ctx_foo')).toBe(true);
     expect(isReservedNoteKey('normal')).toBe(false);
+  });
+});
+
+function baseSnapshot(overrides: Partial<PersistedMemorySnapshot> = {}): PersistedMemorySnapshot {
+  return {
+    version: 4,
+    savedAt: new Date().toISOString(),
+    chunks: [],
+    archivedChunks: [],
+    droppedManifest: [],
+    stagedSnippets: [],
+    blackboardEntries: [],
+    cognitiveRules: [],
+    taskPlan: null,
+    freedTokens: 0,
+    stageVersion: 0,
+    transitionBridge: null,
+    batchMetrics: { toolCalls: 0, manageOps: 0 },
+    hashStack: [],
+    editHashStack: [],
+    readHashStack: [],
+    stageHashStack: [],
+    memoryEvents: [],
+    reconcileStats: null,
+    ...overrides,
+  };
+}
+
+describe('applyV4SessionExtras', () => {
+  beforeEach(() => {
+    useContextStore.getState().resetSession();
+    useCostStore.getState().resetChat();
+    useRoundHistoryStore.getState().reset();
+    useAppStore.setState({
+      promptMetrics: {
+        modePromptTokens: 1,
+        toolRefTokens: 0,
+        shellGuideTokens: 0,
+        nativeToolTokens: 0,
+        primerTokens: 0,
+        contextControlTokens: 0,
+        workspaceContextTokens: 0,
+        entryManifestTokens: 0,
+        totalOverheadTokens: 0,
+        compressionSavings: 0,
+        compressionCount: 0,
+        rollingSavings: 0,
+        rolledRounds: 0,
+        roundCount: 0,
+        cumulativeInputSaved: 0,
+        orphanSummaryRemovals: 0,
+      },
+      cacheMetrics: {
+        sessionCacheWrites: 0,
+        sessionCacheReads: 0,
+        sessionUncached: 0,
+        sessionRequests: 0,
+        lastRequestHitRate: 0,
+        sessionHitRate: 0,
+      },
+    });
+    useContextStore.getState().setRollingSummary({
+      decisions: ['keep'],
+      filesChanged: [],
+      userPreferences: [],
+      workDone: [],
+      findings: [],
+      errors: [],
+      currentGoal: 'x',
+      nextSteps: [],
+      blockers: [],
+    });
+  });
+
+  it('no-ops for snapshot versions below 4', () => {
+    const snap = baseSnapshot({ version: 3 });
+    applyV4SessionExtras(snap);
+    expect(useRoundHistoryStore.getState().snapshots).toEqual([]);
+    expect(useCostStore.getState().chatCostCents).toBe(0);
+    expect(useContextStore.getState().rollingSummary.decisions).toEqual(['keep']);
+  });
+
+  it('merges prompt metrics, cache metrics, round history, and chat cost for v4', () => {
+    applyV4SessionExtras(baseSnapshot({
+      promptMetrics: {
+        modePromptTokens: 10,
+        toolRefTokens: 2,
+        shellGuideTokens: 0,
+        nativeToolTokens: 0,
+        primerTokens: 0,
+        contextControlTokens: 0,
+        workspaceContextTokens: 0,
+        entryManifestTokens: 0,
+        totalOverheadTokens: 0,
+        compressionSavings: 0,
+        compressionCount: 0,
+        rollingSavings: 5,
+        rolledRounds: 3,
+        roundCount: 0,
+        cumulativeInputSaved: 0,
+        orphanSummaryRemovals: 0,
+      },
+      cacheMetrics: {
+        sessionCacheWrites: 2,
+        sessionCacheReads: 1,
+        sessionUncached: 0,
+        sessionRequests: 1,
+        lastRequestHitRate: 0.5,
+        sessionHitRate: 0.5,
+      },
+      roundHistorySnapshots: [{ round: 1, timestamp: 1, costCents: 1 } as import('../stores/roundHistoryStore').RoundSnapshot],
+      costChat: {
+        chatCostCents: 42,
+        chatApiCalls: 2,
+        chatSubAgentCostCents: 7,
+        subAgentUsages: [{
+          invocationId: 'inv-1',
+          type: 'retriever',
+          provider: 'anthropic',
+          model: 'claude',
+          inputTokens: 1,
+          outputTokens: 2,
+          cacheReadTokens: 0,
+          cacheWriteTokens: 0,
+          costCents: 3,
+          rounds: 1,
+          toolCalls: 0,
+          pinTokens: 0,
+          timestamp: '2026-01-01T00:00:00.000Z',
+        }],
+      },
+    }));
+
+    expect(useAppStore.getState().promptMetrics.modePromptTokens).toBe(10);
+    expect(useAppStore.getState().promptMetrics.rollingSavings).toBe(5);
+    expect(useAppStore.getState().cacheMetrics.sessionCacheWrites).toBe(2);
+    expect(useRoundHistoryStore.getState().snapshots).toHaveLength(1);
+    expect(useCostStore.getState().chatCostCents).toBe(42);
+    expect(useCostStore.getState().chatSubAgentCostCents).toBe(7);
+    const u = useCostStore.getState().subAgentUsages[0];
+    expect(u?.invocationId).toBe('inv-1');
+    expect(u?.timestamp).toBeInstanceOf(Date);
+  });
+
+  it('applies default rollingSavings / rolledRounds when omitted on promptMetrics', () => {
+    applyV4SessionExtras(baseSnapshot({
+      promptMetrics: {
+        modePromptTokens: 0,
+        toolRefTokens: 0,
+        shellGuideTokens: 0,
+        nativeToolTokens: 0,
+        primerTokens: 0,
+        contextControlTokens: 0,
+        workspaceContextTokens: 0,
+        entryManifestTokens: 0,
+        totalOverheadTokens: 0,
+        compressionSavings: 0,
+        compressionCount: 0,
+        roundCount: 0,
+        cumulativeInputSaved: 0,
+        orphanSummaryRemovals: 0,
+      },
+    }));
+    expect(useAppStore.getState().promptMetrics.rollingSavings).toBe(0);
+    expect(useAppStore.getState().promptMetrics.rolledRounds).toBe(0);
+  });
+
+  it('v4 clears rolling summary to empty template', () => {
+    applyV4SessionExtras(baseSnapshot({}));
+    const rs = useContextStore.getState().rollingSummary;
+    expect(rs).toEqual(emptyRollingSummary());
+  });
+
+  it('v6 restores rolling summary including defaulted findings', () => {
+    applyV4SessionExtras(baseSnapshot({
+      version: 6,
+      rollingSummary: {
+        decisions: ['d1'],
+        filesChanged: ['a.ts'],
+        userPreferences: [],
+        workDone: [],
+        findings: [],
+        errors: [],
+        currentGoal: 'g',
+        nextSteps: ['n1'],
+        blockers: [],
+      },
+    }));
+    const rs = useContextStore.getState().rollingSummary;
+    expect(rs.decisions).toEqual(['d1']);
+    expect(rs.findings).toEqual([]);
+    expect(rs.nextSteps).toEqual(['n1']);
   });
 });

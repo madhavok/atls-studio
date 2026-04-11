@@ -247,4 +247,46 @@ mod tests {
         assert_eq!(n, 2);
         assert!(a.starts_with("blk_"));
     }
+
+    #[test]
+    fn stream_chunk_usage_omits_optional_token_fields_when_none() {
+        let c = StreamChunk::Usage {
+            input_tokens: 1,
+            output_tokens: 2,
+            cache_creation_input_tokens: None,
+            cache_read_input_tokens: None,
+            openai_cached_tokens: None,
+            cached_content_tokens: None,
+        };
+        let v = serde_json::to_value(&c).unwrap();
+        assert_eq!(v.get("type"), Some(&serde_json::json!("usage")));
+        assert_eq!(v.get("input_tokens"), Some(&serde_json::json!(1)));
+        assert!(!v.as_object().unwrap().contains_key("cache_creation_input_tokens"));
+    }
+
+    #[test]
+    fn stream_chunk_tool_input_available_serializes_input_json() {
+        let c = StreamChunk::ToolInputAvailable {
+            tool_call_id: "c1".to_string(),
+            tool_name: "batch".to_string(),
+            input: serde_json::json!({"q": "x"}),
+            thought_signature: None,
+        };
+        let v = serde_json::to_value(&c).unwrap();
+        assert_eq!(v.get("type"), Some(&serde_json::json!("tool_input_available")));
+        assert!(!v.as_object().unwrap().contains_key("thought_signature"));
+        assert_eq!(v.pointer("/input/q"), Some(&serde_json::json!("x")));
+    }
+
+    #[test]
+    fn stream_chunk_done_and_error_serialize() {
+        let d = serde_json::to_value(&StreamChunk::Done).unwrap();
+        assert_eq!(d.get("type"), Some(&serde_json::json!("done")));
+        let e = StreamChunk::Error {
+            error_text: "oops".to_string(),
+        };
+        let v = serde_json::to_value(&e).unwrap();
+        assert_eq!(v.get("type"), Some(&serde_json::json!("error")));
+        assert_eq!(v.get("error_text"), Some(&serde_json::json!("oops")));
+    }
 }

@@ -15,7 +15,18 @@ import {
   CollapseIcon, ChatIcon, IgnoreIcon, PlayIcon, StopIcon,
   DragHandleIcon, IgnoredIndicatorIcon,
 } from './icons';
-import { flattenVisiblePaths, isImageFile } from './fileExplorerTreeUtils';
+import {
+  filterFileNodesByQuery,
+  flattenVisiblePaths,
+  isImageFile,
+} from './fileExplorerTreeUtils';
+import {
+  effectiveContextMenuPaths,
+  parentPathForRename,
+  pathsToRelativeClipboardText,
+  resolveRootFolderForMenuPath,
+  workspaceEntryAbsPath,
+} from './fileExplorerPaths';
 
 // --- Context menu state ---
 interface ContextMenuState {
@@ -73,22 +84,16 @@ function ContextMenu({
   const menuRef = useRef<HTMLDivElement>(null);
 
   /** Root that contains menu.path (for multi-root workspaces) */
-  const rootForPath = useMemo(() => {
-    const path = menu.path.replace(/\\/g, '/');
-    for (const r of rootFolders) {
-      const root = r.replace(/\\/g, '/');
-      if (path.startsWith(root + '/') || path === root) return r;
-    }
-    return projectPath || rootFolders[0] || '';
-  }, [menu.path, projectPath, rootFolders]);
-  
+  const rootForPath = useMemo(
+    () => resolveRootFolderForMenuPath(menu.path, projectPath, rootFolders),
+    [menu.path, projectPath, rootFolders],
+  );
+
   // Determine effective paths: if right-clicked item is in selection, use full selection
-  const effectivePaths = useMemo(() => {
-    if (selectedPaths.has(menu.path) && selectedPaths.size > 1) {
-      return Array.from(selectedPaths);
-    }
-    return [menu.path];
-  }, [menu.path, selectedPaths]);
+  const effectivePaths = useMemo(
+    () => effectiveContextMenuPaths(menu.path, selectedPaths),
+    [menu.path, selectedPaths],
+  );
 
   const isMulti = effectivePaths.length > 1;
   const hasIgnoredInSelection = menu.ignored;
@@ -117,8 +122,7 @@ function ContextMenu({
   };
   const handleCopyRelativePath = async () => {
     try {
-      const rel = effectivePaths.map(p => p.replace(projectPath, '').replace(/^[/\\]/, '')).join('\n');
-      await writeText(rel);
+      await writeText(pathsToRelativeClipboardText(effectivePaths, projectPath));
     } catch (e) { console.error('Failed to copy relative path:', e); }
     onClose();
   };
@@ -970,23 +974,10 @@ export function FileExplorer() {
   const workspaces = projectProfile?.workspaces ?? [];
   const projectRoot = activeRoot ?? projectPath ?? rootFolders[0] ?? '';
 
-  // Filter files
-  const filterFiles = useCallback((nodes: FileNode[], query: string): FileNode[] => {
-    if (!query) return nodes;
-    return nodes.reduce<FileNode[]>((acc, node) => {
-      if (node.name.toLowerCase().includes(query.toLowerCase())) {
-        acc.push(node);
-      } else if (node.children) {
-        const filtered = filterFiles(node.children, query);
-        if (filtered.length > 0) {
-          acc.push({ ...node, children: filtered, expanded: true });
-        }
-      }
-      return acc;
-    }, []);
-  }, []);
-
-  const filteredFiles = useMemo(() => filterFiles(files, searchQuery), [files, searchQuery, filterFiles]);
+  const filteredFiles = useMemo(
+    () => filterFileNodesByQuery(files, searchQuery),
+    [files, searchQuery],
+  );
 
   // Refresh
   const handleRefresh = useCallback(async () => {
@@ -1049,9 +1040,7 @@ export function FileExplorer() {
   }, [handleRefresh, addToast]);
 
   const handleRename = useCallback((path: string, name: string) => {
-    const lastSep = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'));
-    const parentPath = lastSep > 0 ? path.substring(0, lastSep) : path.substring(0, lastSep === 0 ? 1 : 0) || '.';
-    setInlineEdit({ parentPath, nodePath: path, mode: 'rename', initialValue: name });
+    setInlineEdit({ parentPath: parentPathForRename(path), nodePath: path, mode: 'rename', initialValue: name });
   }, []);
 
   const handleNewFile = useCallback((dirPath: string) => {
@@ -1205,11 +1194,10 @@ export function FileExplorer() {
   }, []);
 
   // Resolve workspace absolute path (abs_path from profile, or projectRoot + rel path)
-  const getWorkspaceAbsPath = useCallback((ws: WorkspaceEntry): string => {
-    if (ws.abs_path) return ws.abs_path;
-    const rel = ws.path === '.' ? '' : ws.path.replace(/\//g, (projectRoot?.includes('\\') ? '\\' : '/'));
-    return projectRoot ? (rel ? `${projectRoot.replace(/\/$|\\$/, '')}${projectRoot.includes('\\') ? '\\' : '/'}${rel}` : projectRoot) : '';
-  }, [projectRoot]);
+  const getWorkspaceAbsPath = useCallback(
+    (ws: WorkspaceEntry): string => workspaceEntryAbsPath(ws, projectRoot),
+    [projectRoot],
+  );
 
   // Start workspace: get scripts, create terminal, run default command
   const handleWorkspaceStart = useCallback(async (ws: WorkspaceEntry, scriptName?: string) => {
@@ -1532,7 +1520,7 @@ export function FileExplorer() {
             rootFileTrees.map((rt) => {
               const isCollapsed = collapsedRoots.has(rt.root);
               const isActive = activeRoot === rt.root || activeRoot?.replace(/\\/g, '/') === rt.root.replace(/\\/g, '/');
-              const rootFilteredFiles = filterFiles(rt.files, searchQuery);
+              const rootFilteredFiles = filterFileNodesByQuery(rt.files, searchQuery);
               const rootVisiblePaths = flattenVisiblePaths(rootFilteredFiles, expandedFolders);
               return (
                 <div key={rt.root} className="mb-0.5">

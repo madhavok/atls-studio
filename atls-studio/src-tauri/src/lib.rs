@@ -115,6 +115,57 @@ pub(crate) fn strip_ansi(s: &str) -> String {
     re.replace_all(s, "").to_string()
 }
 
+#[cfg(test)]
+mod shell_strip_tests {
+    use super::{resolve_shell, resolve_shell_exe, strip_ansi};
+
+    #[test]
+    fn resolve_shell_returns_nonempty_invocation_pair() {
+        let (exe, arg) = resolve_shell();
+        assert!(!exe.is_empty());
+        assert!(!arg.is_empty());
+        if cfg!(windows) {
+            assert!(exe == "pwsh" || exe == "powershell");
+            assert_eq!(arg, "-Command");
+        } else {
+            assert_eq!(exe, "sh");
+            assert_eq!(arg, "-c");
+        }
+    }
+
+    #[test]
+    fn resolve_shell_exe_matches_platform_conventions() {
+        let s = resolve_shell_exe();
+        assert!(!s.is_empty());
+        if cfg!(windows) {
+            assert!(
+                s == "pwsh.exe" || s == "powershell.exe",
+                "unexpected shell exe: {s}"
+            );
+        } else {
+            assert!(!s.contains('\\'));
+        }
+    }
+
+    #[test]
+    fn strip_ansi_empty_and_plain_passthrough() {
+        assert_eq!(strip_ansi(""), "");
+        assert_eq!(strip_ansi("hello"), "hello");
+    }
+
+    #[test]
+    fn strip_ansi_strips_sgr_and_osc() {
+        assert_eq!(strip_ansi("\x1b[31merr\x1b[0m"), "err");
+        assert_eq!(strip_ansi("\x1b]0;title\x07prompt"), "prompt");
+    }
+
+    #[test]
+    fn strip_ansi_strips_mode_and_charset_sequences() {
+        assert_eq!(strip_ansi("\x1b[?25lvisible\x1b[?25h"), "visible");
+        assert_eq!(strip_ansi("\x1b(B\x1b)0utf8"), "utf8");
+    }
+}
+
 // ============================================================================
 // Content Buffer State (in-memory draft/revise/flush cycle)
 // ============================================================================

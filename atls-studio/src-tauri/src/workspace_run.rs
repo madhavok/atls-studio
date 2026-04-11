@@ -195,6 +195,11 @@ mod tests {
     #[test]
     fn sort_key_prefers_tauri_dev() {
         assert!(npm_script_sort_key("tauri:dev") < npm_script_sort_key("build"));
+        assert_eq!(npm_script_sort_key("tauri:dev"), 0);
+        assert_eq!(npm_script_sort_key("tauri dev"), 0);
+        assert_eq!(npm_script_sort_key("dev"), 1);
+        assert_eq!(npm_script_sort_key("start"), 2);
+        assert_eq!(npm_script_sort_key("build"), 3);
         assert!(npm_script_sort_key("dev") < npm_script_sort_key("z"));
     }
 
@@ -202,6 +207,14 @@ mod tests {
     fn detects_tauri_from_dev_dependencies() {
         let pkg: serde_json::Value = serde_json::json!({
             "devDependencies": { "@tauri-apps/api": "2.0.0" }
+        });
+        assert!(package_json_has_tauri_dep(&pkg));
+    }
+
+    #[test]
+    fn detects_tauri_from_dependencies() {
+        let pkg: serde_json::Value = serde_json::json!({
+            "dependencies": { "@tauri-apps/api": "2.0.0" }
         });
         assert!(package_json_has_tauri_dep(&pkg));
     }

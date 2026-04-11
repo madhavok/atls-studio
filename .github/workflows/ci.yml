@@ -82,7 +82,7 @@ jobs:
         working-directory: atls-rs
         run: |
           cargo llvm-cov --workspace --all-features --lcov --output-path lcov.info
-          cargo llvm-cov report --workspace --json --summary-only --output-path target/llvm-cov-atls-rs-summary.json
+          cargo llvm-cov report --json --summary-only --output-path target/llvm-cov-atls-rs-summary.json
 
       - name: Upload atls-rs coverage artifacts
         uses: actions/upload-artifact@v4

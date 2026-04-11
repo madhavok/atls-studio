@@ -10,6 +10,7 @@ import { useAppStore } from '../../stores/appStore';
 import { MarkdownMessage } from '../AiChat/MarkdownMessage';
 import { AtlsInternals, INTERNALS_TAB_ID } from '../AtlsInternals';
 import { normalizeEditorPath } from './codeViewerPaths';
+import { mergeDefinitionsAndReferencesUnique } from './codeViewerSymbolRefs';
 
 
 // Symbol usage types
@@ -383,13 +384,7 @@ export function CodeViewer() {
         path: root 
       });
 
-      const seen = new Set<string>();
-      const references = [...usage.definitions, ...usage.references].filter((entry) => {
-        const key = `${entry.file}:${entry.line}:${entry.kind ?? ''}`;
-        if (seen.has(key)) return false;
-        seen.add(key);
-        return true;
-      });
+      const references = mergeDefinitionsAndReferencesUnique(usage.definitions, usage.references);
 
       setRefsState({
         isOpen: true,

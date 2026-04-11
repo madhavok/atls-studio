@@ -9,9 +9,15 @@ vi.mock('../stores/swarmStore', () => ({
 const { orchestrator } = await import('./orchestrator');
 
 describe('orchestrator', () => {
-  it('cancel forwards to swarm store', () => {
+  it('cancel forwards to swarm store (immediate)', () => {
     cancelSwarm.mockClear();
     orchestrator.cancel('immediate');
     expect(cancelSwarm).toHaveBeenCalledWith('immediate');
+  });
+
+  it('cancel forwards to swarm store (graceful)', () => {
+    cancelSwarm.mockClear();
+    orchestrator.cancel('graceful');
+    expect(cancelSwarm).toHaveBeenCalledWith('graceful');
   });
 });

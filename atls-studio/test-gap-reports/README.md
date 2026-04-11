@@ -9,7 +9,8 @@ From `atls-studio/`:
 1. **TypeScript:** `npm run test:coverage`
 2. **Rust (Tauri):** `cd src-tauri && cargo llvm-cov --json --summary-only --output-path target/llvm-cov-tauri-summary.json`  
    Requires `cargo install cargo-llvm-cov` and `rustup component add llvm-tools-preview`.
-3. **Rust (atls-rs):** `cd ../../atls-rs && cargo llvm-cov --workspace --json --summary-only --output-path target/llvm-cov-atls-rs-summary.json`
+3. **Rust (atls-rs):** `cd ../../atls-rs && cargo llvm-cov --workspace --all-features --json --summary-only --output-path target/llvm-cov-atls-rs-summary.json`  
+   (CI uses an `lcov` run plus `cargo llvm-cov report --json --summary-only --output-path …`; see `.github/workflows/ci.yml`.)
 4. **Lists:** `npm run test:coverage:gaps`
 
 Or run `npm run test:coverage:report` after step 2–3 if the LLVM JSON files already exist.

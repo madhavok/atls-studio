@@ -40,4 +40,65 @@ describe('getMessageParts / extractFirstTextFromMessage', () => {
   it('generateTitle falls back when no user text', () => {
     expect(generateTitle([])).toBe('New Conversation');
   });
+
+  it('getMessageParts prefers parts over segments and toolCalls', () => {
+    const msg = {
+      parts: [{ type: 'text' as const, content: 'from parts' }],
+      segments: [{ type: 'text' as const, content: 'from segments' }],
+    };
+    expect(getMessageParts(msg)).toEqual([{ type: 'text', content: 'from parts' }]);
+  });
+
+  it('getMessageParts maps toolCalls with leading text content', () => {
+    const msg = {
+      content: 'intro',
+      toolCalls: [
+        { id: '1', name: 'x', status: 'completed' as const },
+      ],
+    };
+    const parts = getMessageParts(msg);
+    expect(parts[0]).toEqual({ type: 'text', content: 'intro' });
+    expect(parts[1]).toMatchObject({ type: 'tool', toolCall: expect.objectContaining({ name: 'x' }) });
+  });
+
+  it('getMessageParts returns empty for empty message', () => {
+    expect(getMessageParts({ content: '' })).toEqual([]);
+  });
+
+  it('extractFirstTextFromMessage reads first text part when content blank', () => {
+    const msg: Message = {
+      id: '1',
+      role: 'assistant',
+      content: '',
+      timestamp: new Date(),
+      parts: [
+        { type: 'reasoning', content: 'r' },
+        { type: 'text', content: '  body  ' },
+      ],
+    };
+    expect(extractFirstTextFromMessage(msg)).toBe('body');
+  });
+
+  it('generateTitle truncates long titles', () => {
+    const long = 'abcdefghij '.repeat(8).trim();
+    const messages: Message[] = [
+      { id: '1', role: 'user', content: long, timestamp: new Date() },
+    ];
+    const title = generateTitle(messages);
+    expect(title.length).toBeLessThanOrEqual(50);
+    expect(title.endsWith('...')).toBe(true);
+  });
+
+  it('generateTitle falls back when user message has no text', () => {
+    const messages: Message[] = [
+      {
+        id: '1',
+        role: 'user',
+        content: '',
+        timestamp: new Date(),
+        parts: [{ type: 'tool', toolCall: { id: 'x', name: 'n', status: 'completed' } }],
+      },
+    ];
+    expect(generateTitle(messages)).toBe('New Conversation');
+  });
 });

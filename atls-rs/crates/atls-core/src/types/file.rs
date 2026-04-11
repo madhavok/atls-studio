@@ -206,3 +206,78 @@ pub struct FileNode {
     pub imports: Vec<PathBuf>,
     pub exports: Vec<PathBuf>,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::TimeZone;
+
+    #[test]
+    fn language_from_str_aliases() {
+        assert_eq!(Language::from_str("TS"), Language::TypeScript);
+        assert_eq!(Language::from_str("typescript"), Language::TypeScript);
+        assert_eq!(Language::from_str("golang"), Language::Go);
+        assert_eq!(Language::from_str("c++"), Language::Cpp);
+        assert_eq!(Language::from_str("c#"), Language::CSharp);
+        assert_eq!(Language::from_str("rb"), Language::Ruby);
+        assert_eq!(Language::from_str("not-a-lang"), Language::Unknown);
+    }
+
+    #[test]
+    fn language_from_extension_strips_dot_and_case() {
+        assert_eq!(Language::from_extension(".TS"), Language::TypeScript);
+        assert_eq!(Language::from_extension("MTS"), Language::TypeScript);
+        assert_eq!(Language::from_extension("pyi"), Language::Python);
+        assert_eq!(Language::from_extension("hpp"), Language::Cpp);
+        assert_eq!(Language::from_extension("csx"), Language::CSharp);
+        assert_eq!(Language::from_extension("xyz"), Language::Unknown);
+    }
+
+    #[test]
+    fn language_as_str_extensions_roundtrip_for_known() {
+        for lang in Language::all_known() {
+            let s = lang.as_str();
+            assert_eq!(Language::from_str(s), *lang);
+            let exts = lang.extensions();
+            assert!(!exts.is_empty(), "{s} should list extensions");
+            for ext in exts {
+                assert_eq!(Language::from_extension(ext), *lang);
+            }
+        }
+    }
+
+    #[test]
+    fn all_known_excludes_unknown() {
+        assert!(!Language::all_known().contains(&Language::Unknown));
+        assert_eq!(Language::all_known().len(), 15);
+    }
+
+    #[test]
+    fn file_relation_type_roundtrip() {
+        assert_eq!(FileRelationType::from_str("IMPORTS"), Some(FileRelationType::Imports));
+        assert_eq!(FileRelationType::from_str("EXPORTS"), Some(FileRelationType::Exports));
+        assert_eq!(FileRelationType::from_str("other"), None);
+        assert_eq!(FileRelationType::Imports.as_str(), "IMPORTS");
+        assert_eq!(FileRelationType::Exports.as_str(), "EXPORTS");
+    }
+
+    #[test]
+    fn file_info_serde_roundtrip() {
+        let info = FileInfo {
+            id: 42,
+            path: PathBuf::from("src/lib.rs"),
+            hash: "abc".into(),
+            language: Language::Rust,
+            last_indexed: chrono::Utc.with_ymd_and_hms(2024, 6, 1, 12, 0, 0).unwrap(),
+            line_count: Some(100),
+        };
+        let json = serde_json::to_string(&info).unwrap();
+        let back: FileInfo = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.id, info.id);
+        assert_eq!(back.path, info.path);
+        assert_eq!(back.hash, info.hash);
+        assert_eq!(back.language, info.language);
+        assert_eq!(back.line_count, info.line_count);
+        assert_eq!(back.last_indexed, info.last_indexed);
+    }
+}
