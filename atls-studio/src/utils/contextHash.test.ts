@@ -7,6 +7,9 @@ import {
   isCompressedRef,
   flattenCodeSearchHits,
   extractSearchSummary,
+  extractSymbolSummary,
+  extractDepsSummary,
+  sliceContentByLines,
   generateEditReadyDigest,
 } from './contextHash';
 
@@ -134,6 +137,52 @@ describe('flattenCodeSearchHits (code_search API shapes)', () => {
   it('returns [] when outer results are query wrappers without nested hits', () => {
     const payload = { results: [{ query: 'z', results: [] }] };
     expect(flattenCodeSearchHits(payload)).toEqual([]);
+  });
+});
+
+describe('extractSymbolSummary', () => {
+  it('counts results array when present', () => {
+    expect(extractSymbolSummary({ results: [{}, {}] }, ['Foo', 'Bar'])).toBe('2 refs for Foo, Bar');
+  });
+
+  it('falls back to symbol list when no results', () => {
+    expect(extractSymbolSummary({}, ['X'])).toBe('symbols: X');
+  });
+
+  it('handles nullish payload', () => {
+    expect(extractSymbolSummary(null, ['A', 'B'])).toBe('A, B');
+  });
+});
+
+describe('extractDepsSummary', () => {
+  it('counts results for graph mode', () => {
+    expect(extractDepsSummary({ results: [{ f: 1 }] }, ['src/a.ts'], 'graph')).toBe(
+      'graph: 1 entries for src/a.ts',
+    );
+  });
+
+  it('falls back when empty results', () => {
+    expect(extractDepsSummary({ results: [] }, ['p1', 'p2'], 'impact')).toBe('deps impact: p1, p2');
+  });
+});
+
+describe('sliceContentByLines', () => {
+  const body = 'aa\nbb\ncc\ndd';
+
+  it('prefixes lines when raw is false', () => {
+    expect(sliceContentByLines(body, '2-3', false)).toBe('   2|bb\n   3|cc');
+  });
+
+  it('returns raw lines when raw is true', () => {
+    expect(sliceContentByLines(body, '2-3', true)).toBe('bb\ncc');
+  });
+
+  it('returns empty string for invalid spec', () => {
+    expect(sliceContentByLines(body, '0-1', false)).toBe('');
+  });
+
+  it('open-ended range runs to EOF', () => {
+    expect(sliceContentByLines(body, '3-', true)).toBe('cc\ndd');
   });
 });
 

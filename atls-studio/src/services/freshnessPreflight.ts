@@ -279,6 +279,12 @@ export async function runFreshnessPreflight(
   opts?: {
     atlsBatchQuery?: (op: string, p: Record<string, unknown>) => Promise<unknown>;
     contentByPath?: Map<string, string>;
+    /**
+     * When true, context is still fetched and refreshedHashes populated, but refreshRoundEnd
+     * is skipped so staged/chunk revision mismatch used for rebase classification is preserved.
+     * Intended for tests and advanced callers that reconcile separately.
+     */
+    skipRefreshAfterContext?: boolean;
   },
 ): Promise<PreflightResult> {
   const warnings: string[] = [];
@@ -329,7 +335,9 @@ export async function runFreshnessPreflight(
       const h = refreshedHashes?.get(normalizePathKey(path));
       return Promise.resolve(typeof h === 'string' ? h : null);
     };
-    await useContextStore.getState().refreshRoundEnd({ paths: files, getRevisionForPath });
+    if (!opts?.skipRefreshAfterContext) {
+      await useContextStore.getState().refreshRoundEnd({ paths: files, getRevisionForPath });
+    }
   }
 
   const store = useContextStore.getState();

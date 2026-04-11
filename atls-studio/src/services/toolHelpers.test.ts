@@ -1,13 +1,33 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { invoke } from '@tauri-apps/api/core';
 import { useContextStore } from '../stores/contextStore';
-import { getAtlsBatchQueryTimeoutMs, resolveSearchRefs } from './toolHelpers';
+import type { PreflightResult } from './freshnessPreflight';
+import { runFreshnessPreflight } from './freshnessPreflight';
+import { atlsBatchQuery, getAtlsBatchQueryTimeoutMs, resolveSearchRefs } from './toolHelpers';
 
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: vi.fn(),
 }));
 
+vi.mock('./freshnessPreflight', async (importOriginal) => {
+  const mod = await importOriginal<typeof import('./freshnessPreflight')>();
+  return { ...mod, runFreshnessPreflight: vi.fn() };
+});
+
 const invokeMock = vi.mocked(invoke);
+const runFreshnessPreflightMock = vi.mocked(runFreshnessPreflight);
+
+function preflightOk(overrides: Partial<PreflightResult> = {}): PreflightResult {
+  return {
+    params: {},
+    warnings: [],
+    blocked: false,
+    confidence: 'high',
+    strategy: 'fresh',
+    decisions: [],
+    ...overrides,
+  };
+}
 
 describe('getAtlsBatchQueryTimeoutMs', () => {
   it('uses 300s floor for refactor (non-rollback)', () => {
@@ -102,5 +122,102 @@ const FRONTEND_ATLS_BATCH_QUERY_OPS = [
 describe('atls_batch_query operation crosswalk', () => {
   it('lists each frontend dispatch operation string once (keep aligned with batch_query/mod.rs match arms)', () => {
     expect(new Set(FRONTEND_ATLS_BATCH_QUERY_OPS).size).toBe(FRONTEND_ATLS_BATCH_QUERY_OPS.length);
+  });
+});
+
+describe('atlsBatchQuery', () => {
+  beforeAll(() => {
+    if (!('localStorage' in globalThis)) {
+      const store = new Map<string, string>();
+      Object.defineProperty(globalThis, 'localStorage', {
+        configurable: true,
+        value: {
+          clear: () => store.clear(),
+          getItem: (k: string) => store.get(k) ?? null,
+          setItem: (k: string, v: string) => store.set(k, v),
+          removeItem: (k: string) => void store.delete(k),
+          get length() {
+            return store.size;
+          },
+          key: (i: number) => Array.from(store.keys())[i] ?? null,
+        } satisfies Storage,
+      });
+    }
+  });
+
+  beforeEach(() => {
+    globalThis.localStorage.clear();
+    invokeMock.mockReset();
+    runFreshnessPreflightMock.mockReset();
+    useContextStore.getState().resetSession();
+    useContextStore.setState({ hashStack: [], editHashStack: [] });
+    runFreshnessPreflightMock.mockResolvedValue(preflightOk());
+  });
+
+  it('invokes atls_batch_query with preflight params and strips stale_policy', async () => {
+    runFreshnessPreflightMock.mockResolvedValue(
+      preflightOk({
+        params: { file_paths: ['a.ts'], stale_policy: 'refresh_first', other: 1 },
+      }),
+    );
+    invokeMock.mockResolvedValue({ ok: true });
+
+    await atlsBatchQuery('context', { unused: true });
+
+    const batchCalls = invokeMock.mock.calls.filter((c) => c[0] === 'atls_batch_query');
+    expect(batchCalls.length).toBe(1);
+    const args = batchCalls[0]![1] as Record<string, unknown>;
+    expect(args.operation).toBe('context');
+    expect(args.params).toEqual({ file_paths: ['a.ts'], other: 1 });
+    expect(args.params).not.toHaveProperty('stale_policy');
+  });
+
+  it('throws preflight error when blocked', async () => {
+    runFreshnessPreflightMock.mockResolvedValue(
+      preflightOk({ blocked: true, error: 'File changed externally', confidence: 'none', strategy: 'blocked' }),
+    );
+
+    await expect(atlsBatchQuery('read_lines', {})).rejects.toThrow('File changed externally');
+    expect(invokeMock).not.toHaveBeenCalled();
+  });
+
+  it('throws when automation requires review (low-confidence rebind)', async () => {
+    runFreshnessPreflightMock.mockResolvedValue(
+      preflightOk({ confidence: 'low', strategy: 'line_relocation' }),
+    );
+
+    await expect(atlsBatchQuery('read_lines', {})).rejects.toThrow(
+      /Low-confidence line_relocation rebind detected/,
+    );
+    expect(invokeMock).not.toHaveBeenCalled();
+  });
+
+  it('refresh_first retry on find_issues: refreshRoundEnd then second preflight', async () => {
+    const refreshSpy = vi
+      .spyOn(useContextStore.getState(), 'refreshRoundEnd')
+      .mockResolvedValue({
+        total: 0,
+        updated: 0,
+        invalidated: 0,
+        preserved: 0,
+        pathsProcessed: 0,
+      });
+    runFreshnessPreflightMock
+      .mockResolvedValueOnce(
+        preflightOk({ blocked: true, confidence: 'none', strategy: 'blocked' }),
+      )
+      .mockResolvedValueOnce(preflightOk());
+    invokeMock.mockResolvedValue({ hits: [] });
+
+    await atlsBatchQuery('find_issues', {
+      stale_policy: 'refresh_first',
+      file_paths: ['src/x.ts'],
+    });
+
+    expect(refreshSpy).toHaveBeenCalledWith({ paths: ['src/x.ts'] });
+    expect(runFreshnessPreflightMock).toHaveBeenCalledTimes(2);
+    expect(invokeMock.mock.calls.some((c) => c[0] === 'atls_batch_query')).toBe(true);
+
+    refreshSpy.mockRestore();
   });
 });

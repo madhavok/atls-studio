@@ -7,7 +7,8 @@ import { tryParseAgentExecPtyBuffer } from './terminalExecCapture';
 
 // Strip ANSI escape sequences from PTY output for AI consumption
 const ANSI_RE = /\x1b\[[0-9;]*[a-zA-Z]|\x1b\][^\x07]*\x07|\x1b\[\??[0-9;]*[hl]|\x1b[()][0-9A-B]|\x1b\[[\d;]*m|\x1b/g;
-function stripAnsi(s: string): string {
+/** Strips ANSI escape sequences from PTY output (testable, reusable). */
+export function stripAnsiSequences(s: string): string {
   return s.replace(ANSI_RE, '');
 }
 
@@ -227,7 +228,7 @@ function processAgentDisplayChunk(terminalId: string, data: string): void {
   const startTag = ds.activeMarker ? `##ATLS_START_${ds.activeMarker}##` : null;
 
   for (const rawLine of parts) {
-    const clean = stripAnsi(rawLine.replace(/\r/g, '')).trim();
+    const clean = stripAnsiSequences(rawLine.replace(/\r/g, '')).trim();
 
     switch (ds.phase) {
       case 'awaiting_start':
@@ -823,7 +824,7 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
     entries.push({
       id: crypto.randomUUID().slice(0, 8),
       command: '',
-      output: stripAnsi(message),
+      output: stripAnsiSequences(message),
       exitCode: null,
       status: 'message',
       timestamp: Date.now(),

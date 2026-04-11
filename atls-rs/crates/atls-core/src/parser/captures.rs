@@ -140,3 +140,57 @@ pub fn capture_text(capture: &Capture, source: &str) -> String {
         .unwrap_or("")
         .to_string()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn query_match_get_capture_and_offender() {
+        let cap = Capture {
+            name: "offender".to_string(),
+            start_byte: 0,
+            end_byte: 3,
+            start_row: 0,
+            end_row: 0,
+            start_column: 0,
+            end_column: 3,
+        };
+        let other = Capture {
+            name: "other".to_string(),
+            start_byte: 4,
+            end_byte: 5,
+            start_row: 0,
+            end_row: 0,
+            start_column: 4,
+            end_column: 5,
+        };
+        let m = QueryMatch {
+            pattern_index: 0,
+            captures: vec![other.clone(), cap.clone()],
+        };
+        assert_eq!(m.get_capture("offender").unwrap().start_byte, 0);
+        assert!(m.get_capture("nope").is_none());
+        assert_eq!(m.get_offender().unwrap().name, "offender");
+
+        let no_offender = QueryMatch {
+            pattern_index: 1,
+            captures: vec![other],
+        };
+        assert_eq!(no_offender.get_offender().unwrap().name, "other");
+    }
+
+    #[test]
+    fn capture_text_slices_source_bytes() {
+        let c = Capture {
+            name: "x".to_string(),
+            start_byte: 4,
+            end_byte: 7,
+            start_row: 0,
+            end_row: 0,
+            start_column: 0,
+            end_column: 0,
+        };
+        assert_eq!(capture_text(&c, "foo bar baz"), "bar");
+    }
+}

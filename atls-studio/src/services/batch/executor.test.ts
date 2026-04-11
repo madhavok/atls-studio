@@ -976,6 +976,95 @@ describe('executeUnifiedBatch multiedit multibatch stress', () => {
     expect(rollbackSpy).not.toHaveBeenCalled(); // interrupt happens first
   });
 
+  it('injects change.rollback after a failing step when on_error is rollback, policy allows it, and a prior change step exposed _rollback', async () => {
+    const rollbackSpy = vi.fn(async () => raw('rolled back', { ok: true }));
+
+    handlers.set('change.refactor', async () =>
+      raw('extract ok', {
+        status: 'success',
+        _rollback: { restore: [{ file: 'src/a.py', hash: 'h:abc123' }], delete: ['src/b.py'] },
+      }),
+    );
+    handlers.set('verify.build', async () => raw('verify failed', { error: 'lint' }, false));
+    handlers.set('change.rollback', rollbackSpy as unknown as OpHandler);
+
+    const result = await executeUnifiedBatch(
+      {
+        version: '1.0',
+        policy: { rollback_on_failure: true },
+        steps: [
+          { id: 'extract', use: 'change.refactor', with: {} },
+          { id: 'verify', use: 'verify.build', with: {}, on_error: 'rollback' },
+        ],
+      },
+      makeCtx(),
+    );
+
+    expect(rollbackSpy).toHaveBeenCalledOnce();
+    expect(rollbackSpy.mock.calls[0]![0]).toMatchObject({
+      restore: [{ file: 'src/a.py', hash: 'h:abc123' }],
+      delete: ['src/b.py'],
+    });
+    const rollbackStep = result.step_results.find((r) => r.id === 'verify__rollback');
+    expect(rollbackStep?.use).toBe('change.rollback');
+    expect(rollbackStep?.ok).toBe(true);
+  });
+
+  it('does not inject change.rollback when rollback_on_failure is false even if on_error is rollback', async () => {
+    const rollbackSpy = vi.fn();
+
+    handlers.set('change.refactor', async () =>
+      raw('extract ok', {
+        status: 'success',
+        _rollback: { restore: [{ file: 'src/a.py', hash: 'h:x' }] },
+      }),
+    );
+    handlers.set('verify.build', async () => raw('verify failed', { error: 'lint' }, false));
+    handlers.set('change.rollback', rollbackSpy as unknown as OpHandler);
+
+    const result = await executeUnifiedBatch(
+      {
+        version: '1.0',
+        policy: { rollback_on_failure: false },
+        steps: [
+          { id: 'extract', use: 'change.refactor', with: {} },
+          { id: 'verify', use: 'verify.build', with: {}, on_error: 'rollback' },
+        ],
+      },
+      makeCtx(),
+    );
+
+    expect(rollbackSpy).not.toHaveBeenCalled();
+    expect(result.step_results.some((r) => r.id === 'verify__rollback')).toBe(false);
+  });
+
+  it('does not inject change.rollback when no prior change step produced _rollback.restore', async () => {
+    const rollbackSpy = vi.fn();
+
+    handlers.set('change.edit', async () => raw('edited', { status: 'ok' }));
+    handlers.set('verify.build', async () => raw('verify failed', { error: 'lint' }, false));
+    handlers.set('change.rollback', rollbackSpy as unknown as OpHandler);
+
+    const result = await executeUnifiedBatch(
+      {
+        version: '1.0',
+        policy: { rollback_on_failure: true },
+        steps: [
+          {
+            id: 'edit',
+            use: 'change.edit',
+            with: { file: 'x.ts', line_edits: [{ line: 1, action: 'delete' }] },
+          },
+          { id: 'verify', use: 'verify.build', with: {}, on_error: 'rollback' },
+        ],
+      },
+      makeCtx(),
+    );
+
+    expect(rollbackSpy).not.toHaveBeenCalled();
+    expect(result.step_results).toHaveLength(2);
+  });
+
   it('normalizes path separators for snapshot lookup (backslash read vs forward edit)', async () => {
     const editSpy = vi.fn(async (params: Record<string, unknown>) => {
       expect(params.content_hash).toBe('same-hash');

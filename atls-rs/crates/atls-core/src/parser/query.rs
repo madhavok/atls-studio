@@ -93,3 +93,26 @@ pub fn execute_query_string(
     let query = compile_query(lang, query_str)?;
     execute_query(&query, tree, source)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::file::Language;
+    use crate::parser::registry::ParserRegistry;
+
+    #[test]
+    fn compile_query_rejects_invalid_syntax() {
+        let err = compile_query(Language::Rust, "(((not valid ts query").unwrap_err();
+        assert!(matches!(err, QueryError::CompilationError(_)));
+    }
+
+    #[test]
+    fn execute_query_string_finds_function_in_rust() {
+        let src = "fn hello() -> i32 { 1 }";
+        let reg = ParserRegistry::new();
+        let tree = reg.parse(Language::Rust, src).unwrap();
+        let res = execute_query_string(Language::Rust, "(function_item) @f", &tree, src.as_bytes()).unwrap();
+        assert!(!res.matches.is_empty());
+        assert!(res.matches[0].get_capture("f").is_some());
+    }
+}

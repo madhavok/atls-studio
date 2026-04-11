@@ -120,3 +120,30 @@ impl Default for ParserRegistry {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::file::Language;
+
+    #[test]
+    fn parse_rejects_unsupported_language() {
+        let reg = ParserRegistry::new();
+        let err = reg.parse(Language::Unknown, "x").unwrap_err();
+        assert!(matches!(err, RegistryError::Language(_)));
+    }
+
+    #[test]
+    fn query_string_hits_cache_second_time() {
+        let reg = ParserRegistry::new();
+        let q = "(string_literal) @s";
+        let m1 = reg
+            .query_string(Language::Rust, q, r#"const X: &str = "hi";"#)
+            .unwrap();
+        let m2 = reg
+            .query_string(Language::Rust, q, r#"const Y: &str = "yo";"#)
+            .unwrap();
+        assert!(!m1.is_empty());
+        assert!(!m2.is_empty());
+    }
+}

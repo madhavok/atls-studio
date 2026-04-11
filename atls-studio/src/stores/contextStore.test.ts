@@ -313,6 +313,35 @@ describe('same-source reconciliation', () => {
     expect(latestEvent?.action).toBe('reconcile');
   });
 
+  it('reconcileSourceRevision updates archived latest chunks for the exact path', () => {
+    const store = useContextStore.getState();
+    const short = store.addChunk(
+      'archived body',
+      'smart',
+      'src/in-archive.ts',
+      undefined,
+      undefined,
+      'rev-a',
+      { sourceRevision: 'rev-a', viewKind: 'latest' },
+    );
+    useContextStore.setState((state) => {
+      const found = [...state.chunks].find(([, c]) => c.shortHash === short);
+      if (!found) return {};
+      const [k, chunk] = found;
+      const chunks = new Map(state.chunks);
+      const archivedChunks = new Map(state.archivedChunks);
+      chunks.delete(k);
+      archivedChunks.set(k, { ...chunk });
+      return { chunks, archivedChunks };
+    });
+
+    const stats = store.reconcileSourceRevision('src/in-archive.ts', 'rev-b');
+    expect(stats.updated).toBeGreaterThanOrEqual(1);
+    const archived = [...useContextStore.getState().archivedChunks.values()].find(c => c.shortHash === short);
+    expect(archived?.sourceRevision).toBe('rev-b');
+    expect(archived?.observedRevision).toBe('rev-b');
+  });
+
   it('invalidates legacy composite comma-joined source on reconcile for a touched path', () => {
     const store = useContextStore.getState();
     const compositeShort = store.addChunk(

@@ -53,7 +53,7 @@ interface PendingToolCall {
   args: Record<string, unknown>;
 }
 
-function looksLikeNaturalStop(text: string): boolean {
+export function looksLikeNaturalStop(text: string): boolean {
   const trimmed = text.trim();
   if (!trimmed) return false;
 
@@ -74,7 +74,7 @@ function looksLikeNaturalStop(text: string): boolean {
 const PRIOR_THOUGHT_START = '<<PRIOR_THOUGHT>>';
 const PRIOR_THOUGHT_END = '<</PRIOR_THOUGHT>>';
 
-function mergeReasoningAndText(reasoning: string, text: string): string {
+export function mergeReasoningAndText(reasoning: string, text: string): string {
   const r = reasoning.trim();
   const t = text.trim();
   const wrapped = r ? `${PRIOR_THOUGHT_START}\n${r}\n${PRIOR_THOUGHT_END}` : '';

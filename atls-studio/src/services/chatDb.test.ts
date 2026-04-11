@@ -287,4 +287,47 @@ describe('chatDb', () => {
     expect(out[0].createdAt.toISOString()).toBe('2024-01-02T03:04:05.000Z');
     await chatDb.close();
   });
+
+  it('saveMemorySnapshot and getMemorySnapshot round-trip JSON via invoke', async () => {
+    const snap = {
+      version: 6 as const,
+      savedAt: new Date().toISOString(),
+      chunks: [],
+      archivedChunks: [],
+      droppedManifest: [],
+      stagedSnippets: [],
+      blackboardEntries: [],
+      cognitiveRules: [],
+      taskPlan: null,
+      freedTokens: 0,
+      stageVersion: 0,
+      transitionBridge: null,
+      batchMetrics: { toolCalls: 0, manageOps: 0 },
+      hashStack: [],
+      editHashStack: [],
+      readHashStack: [],
+      stageHashStack: [],
+      memoryEvents: [],
+      reconcileStats: null,
+      freshnessJournal: [],
+    };
+    invoke.mockImplementation(async (cmd: string, args: Record<string, unknown>) => {
+      if (cmd === 'chat_db_save_memory_snapshot') {
+        expect(args.sessionId).toBe('sess-mem');
+        expect(typeof args.snapshotJson).toBe('string');
+        expect(JSON.parse(args.snapshotJson as string).version).toBe(6);
+        return undefined;
+      }
+      if (cmd === 'chat_db_get_memory_snapshot') {
+        return JSON.stringify(snap);
+      }
+      return undefined;
+    });
+    await chatDb.init('/proj');
+    await chatDb.saveMemorySnapshot('sess-mem', snap as any);
+    const back = await chatDb.getMemorySnapshot('sess-mem');
+    expect(back?.version).toBe(6);
+    expect(invoke).toHaveBeenCalledWith('chat_db_save_memory_snapshot', expect.any(Object));
+    await chatDb.close();
+  });
 });

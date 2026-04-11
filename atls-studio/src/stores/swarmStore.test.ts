@@ -77,6 +77,34 @@ describe('swarmStore', () => {
     expect(s.tasks.find((t) => t.id === id)?.status).toBe('cancelled');
   });
 
+  it('getReadyTasks respects dependencies (diamond: merge task waits for both branches)', () => {
+    const base = {
+      description: '',
+      assignedModel: 'm',
+      assignedProvider: 'anthropic' as const,
+      assignedRole: 'coder' as const,
+      contextHashes: [] as string[],
+      fileClaims: [] as string[],
+      contextFiles: [] as string[],
+    };
+    const a = useSwarmStore.getState().addTask({ ...base, title: 'root', dependencies: [] });
+    const b = useSwarmStore.getState().addTask({ ...base, title: 'left', dependencies: [a] });
+    const c = useSwarmStore.getState().addTask({ ...base, title: 'right', dependencies: [a] });
+    const d = useSwarmStore.getState().addTask({ ...base, title: 'merge', dependencies: [b, c] });
+
+    const ids = (tasks: { id: string }[]) => tasks.map(t => t.id).sort();
+    expect(ids(useSwarmStore.getState().getReadyTasks())).toEqual([a]);
+
+    useSwarmStore.getState().updateTaskStatus(a, 'completed');
+    expect(ids(useSwarmStore.getState().getReadyTasks())).toEqual(ids([{ id: b }, { id: c }]));
+
+    useSwarmStore.getState().updateTaskStatus(b, 'completed');
+    expect(useSwarmStore.getState().getReadyTasks().map(t => t.id)).toEqual([c]);
+
+    useSwarmStore.getState().updateTaskStatus(c, 'completed');
+    expect(useSwarmStore.getState().getReadyTasks().map(t => t.id)).toEqual([d]);
+  });
+
   it('addTask updateTaskStatus updateStats and filters by status', () => {
     const id = useSwarmStore.getState().addTask({
       title: 'a',

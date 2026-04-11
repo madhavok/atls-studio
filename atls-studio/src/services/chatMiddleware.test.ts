@@ -4,11 +4,15 @@ import {
   COMPACT_HISTORY_TOKEN_THRESHOLD,
 } from './promptMemory';
 
+const pruneStagedMock = vi.hoisted(() =>
+  vi.fn(() => ({ freed: 0, removed: 0, reliefAction: 'none' as const })),
+);
+
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }));
 vi.mock('../stores/contextStore', () => ({
   useContextStore: {
     getState: () => ({
-      pruneStagedSnippets: vi.fn(() => ({ removed: 0 })),
+      pruneStagedSnippets: pruneStagedMock,
     }),
   },
 }));
@@ -37,7 +41,13 @@ function mockAppState() {
   };
 }
 
-const { createGuardrailCallbacks, historyCompressionMiddleware, contextHygieneMiddleware } = await import('./chatMiddleware');
+const {
+  createGuardrailCallbacks,
+  historyCompressionMiddleware,
+  contextHygieneMiddleware,
+  promptBudgetMiddleware,
+  runBeforeRoundMiddlewares,
+} = await import('./chatMiddleware');
 const { useAppStore } = await import('../stores/appStore');
 
 describe('createGuardrailCallbacks', () => {
@@ -83,6 +93,45 @@ describe('historyCompressionMiddleware', () => {
     };
     const result = await historyCompressionMiddleware(ctx);
     expect(result.reliefAction).toBe('none');
+  });
+});
+
+describe('promptBudgetMiddleware', () => {
+  it('sets reliefAction when staged snippets are pruned', async () => {
+    pruneStagedMock.mockReturnValueOnce({ freed: 10, removed: 2, reliefAction: 'evict_staged' });
+    const ctx = {
+      conversationHistory: [],
+      round: 0,
+      priorTurnBoundary: 0,
+      config: {} as any,
+      mode: 'agent' as any,
+      reliefAction: 'none' as any,
+      abortSignal: new AbortController().signal,
+      isSessionValid: () => true,
+    };
+    const result = await promptBudgetMiddleware(ctx);
+    expect(result.reliefAction).toBe('evict_staged');
+  });
+});
+
+describe('runBeforeRoundMiddlewares', () => {
+  it('runs middlewares in order and preserves ctx when compress skips', async () => {
+    const ctx = {
+      conversationHistory: [{ role: 'user', content: 'hi' }],
+      round: 1,
+      priorTurnBoundary: 0,
+      config: {} as any,
+      mode: 'chat' as any,
+      reliefAction: 'none' as any,
+      abortSignal: new AbortController().signal,
+      isSessionValid: () => true,
+    };
+    const out = await runBeforeRoundMiddlewares(ctx, [
+      historyCompressionMiddleware,
+      promptBudgetMiddleware,
+    ]);
+    expect(out.round).toBe(1);
+    expect(out.reliefAction).toBe('none');
   });
 });
 

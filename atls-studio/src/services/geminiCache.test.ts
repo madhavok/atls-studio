@@ -6,11 +6,18 @@ vi.mock('@tauri-apps/api/core', () => ({
   invoke: (...args: unknown[]) => invoke(...args),
 }));
 
+const mockChunks = new Map<string, { content?: string }>();
+const mockArchived = new Map<string, { content?: string }>();
+
 vi.mock('../stores/contextStore', () => ({
   useContextStore: {
     getState: () => ({
-      chunks: new Map(),
-      archivedChunks: new Map(),
+      get chunks() {
+        return mockChunks;
+      },
+      get archivedChunks() {
+        return mockArchived;
+      },
     }),
   },
 }));
@@ -21,11 +28,15 @@ import {
   restoreGeminiCacheSnapshot,
   manageGeminiRollingCache,
   geminiUncachedMessagesStartIndex,
+  hydrateHppReferences,
+  cleanupGeminiCache,
 } from './geminiCache';
 
 describe('geminiCache', () => {
   beforeEach(() => {
     invoke.mockReset();
+    mockChunks.clear();
+    mockArchived.clear();
     resetHppHydrationCache();
     restoreGeminiCacheSnapshot({
       version: 'v6',
@@ -90,6 +101,65 @@ describe('geminiCache', () => {
     expect(call).toBeDefined();
     const payload = call![1] as { messages: { role: string; content: string }[] };
     expect(payload.messages).toHaveLength(1);
-    expect(payload.messages[0].role).toBe('user');
+       expect(payload.messages[0].role).toBe('user');
+  });
+
+  it('hydrateHppReferences appends chunk excerpt for known h: short hash', () => {
+    resetHppHydrationCache();
+    mockChunks.set('abc123deadbeef00', { content: 'FULL_SNIPPET_BODY' });
+    const out = hydrateHppReferences([
+      { role: 'user', content: 'Use h:abc123 for context.' },
+    ]);
+    expect(out[0].content).toContain('FULL_SNIPPET_BODY');
+    expect(out[0].content).toContain('h:abc123');
+  });
+
+  it('hydrateHppReferences truncates long chunk content in cache excerpt', () => {
+    resetHppHydrationCache();
+    const long = 'y'.repeat(2000);
+    mockChunks.set('feed00deadbeef99', { content: long });
+    const out = hydrateHppReferences([{ role: 'user', content: 'Ref h:feed00' }]);
+    expect(out[0].content).toContain('...[cache hydration truncated');
+    expect((out[0].content as string).length).toBeLessThan(long.length + 50);
+  });
+
+  it('returns null cache when gemini_create_cache throws and clears in-memory names', async () => {
+    invoke.mockRejectedValueOnce(new Error('quota'));
+    const big = 'z'.repeat(450_000);
+    const messages = [{ role: 'user' as const, content: big }];
+    restoreGeminiCacheSnapshot({
+      version: 'v6',
+      googleCacheName: 'stale-name',
+      vertexCacheName: null,
+      googleCachedMessageCount: 1,
+      vertexCachedMessageCount: 0,
+    });
+    const r = await manageGeminiRollingCache('google', 'k', 'gemini-2.0-flash', 'sys', messages);
+    expect(r.cacheName).toBeNull();
+    expect(getGeminiCacheSnapshot().googleCacheName).toBeNull();
+  });
+
+  it('cleanupGeminiCache deletes both providers and resets state', async () => {
+    restoreGeminiCacheSnapshot({
+      version: 'v6',
+      googleCacheName: 'g-del',
+      vertexCacheName: 'v-del',
+      googleCachedMessageCount: 2,
+      vertexCachedMessageCount: 1,
+    });
+    invoke.mockResolvedValue(undefined);
+    await cleanupGeminiCache('api-key', 'vertex-token', 'proj', 'us-central1');
+    expect(invoke).toHaveBeenCalledWith(
+      'gemini_delete_cache',
+      expect.objectContaining({ cacheName: 'g-del', provider: 'google' }),
+    );
+    expect(invoke).toHaveBeenCalledWith(
+      'gemini_delete_cache',
+      expect.objectContaining({ cacheName: 'v-del', provider: 'vertex', projectId: 'proj', region: 'us-central1' }),
+    );
+    const snap = getGeminiCacheSnapshot();
+    expect(snap.googleCacheName).toBeNull();
+    expect(snap.vertexCacheName).toBeNull();
+    expect(snap.googleCachedMessageCount).toBe(0);
   });
 });

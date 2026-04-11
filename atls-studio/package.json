@@ -21,6 +21,7 @@
     "test:coverage": "vitest run --coverage",
     "test:coverage:gaps": "tsx scripts/list-coverage-gaps.ts",
     "test:coverage:report": "npm run test:coverage && npm run test:coverage:gaps",
+    "test:update-snapshots": "vitest run -u",
     "test:e2e": "playwright test",
     "test:validation-fixes": "cd src-tauri && cargo test path_utils --no-fail-fast && cargo test refactor_engine --no-fail-fast",
     "models:fetch": "tsx scripts/fetch-models.ts"

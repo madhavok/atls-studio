@@ -38,7 +38,7 @@ export function resetHppHydrationCache(): void {
   _hppHydrationState.cacheValid = false;
 }
 
-function hydrateHppReferences(messages: ChatMessage[]): ChatMessage[] {
+export function hydrateHppReferences(messages: ChatMessage[]): ChatMessage[] {
   const store = useContextStore.getState();
   if (_hppHydrationState.cacheValid && _hppHydrationState.lastMessageCount === messages.length) {
     const currentHashCount = store.chunks.size + store.archivedChunks.size;

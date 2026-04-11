@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildAgentExecPs1Content, escapePsSingleQuotedPath } from './terminalStore';
+import { buildAgentExecPs1Content, escapePsSingleQuotedPath, stripAnsiSequences } from './terminalStore';
 
 describe('buildAgentExecPs1Content', () => {
   it('embeds PowerShell $ variables literally (no JS template interpolation)', () => {
@@ -13,6 +13,12 @@ describe('buildAgentExecPs1Content', () => {
     const body = buildAgentExecPs1Content('pwd', '##S##', '##E_');
     expect(body).toContain('\r\n');
     expect(body).toContain('} 2>&1 | Out-String');
+  });
+});
+
+describe('stripAnsiSequences', () => {
+  it('removes common color codes', () => {
+    expect(stripAnsiSequences('\x1b[31mred\x1b[0m')).toBe('red');
   });
 });
 

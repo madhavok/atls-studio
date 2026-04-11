@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { hashContentSync } from '../utils/contextHash';
 import { useContextStore } from '../stores/contextStore';
 import { classifyRefFreshness, getFreshnessHintForRefs, getPreflightAutomationDecision, runFreshnessPreflight } from './freshnessPreflight';
 import { clearFreshnessJournal, getFreshnessJournal, recordFreshnessJournal } from './freshnessJournal';
@@ -118,6 +119,69 @@ describe('runFreshnessPreflight', () => {
     expect(result.strategy).toBe('edit_journal');
     expect(result.decisions[0]?.linesAfter).toBe('4-4');
     expect(result.decisions[0]?.factors).toContain('journal_line_delta');
+  });
+
+  it('uses shape_match when awareness shapeHash matches current sig hash', async () => {
+    const store = useContextStore.getState();
+    const sigBody = 'export const shaped = 1;';
+    const shapeHash = hashContentSync(sigBody);
+    // snapshotHash must match staged sourceRevision or getAwareness() returns undefined
+    store.setAwareness({
+      filePath: 'src/shape-demo.ts',
+      snapshotHash: 'rev-old',
+      level: 2,
+      readRegions: [],
+      shapeHash,
+      recordedAt: Date.now(),
+    });
+    store.stageSnippet('stage:shape', 'const inline = 0;', 'src/shape-demo.ts', '2-2', 'rev-old', undefined, 'latest');
+    useContextStore.setState((state) => ({
+      stagedSnippets: new Map([...state.stagedSnippets].map(([key, snippet]) => [
+        key,
+        key === 'stage:shape'
+          ? {
+            ...snippet,
+            suspectSince: Date.now(),
+            freshness: 'shifted',
+            freshnessCause: 'same_file_prior_edit' as const,
+            observedRevision: 'rev-new',
+          }
+          : snippet,
+      ])),
+    }));
+
+    const fullContent = `line one\n${sigBody}\n`;
+    const batchQuery = vi.fn(async (op: string, p: Record<string, unknown>) => {
+      if (op === 'context' && p.shape === 'sig') {
+        return { results: [{ file: 'src/shape-demo.ts', shaped_content: sigBody }] };
+      }
+      return {
+        results: [{
+          file: 'src/shape-demo.ts',
+          path: 'src/shape-demo.ts',
+          content: fullContent,
+          content_hash: 'rev-new',
+        }],
+      };
+    });
+
+    const result = await runFreshnessPreflight(
+      'draft',
+      { file: 'src/shape-demo.ts', lines: '2-2' },
+      {
+        atlsBatchQuery: batchQuery,
+        contentByPath: new Map([['src/shape-demo.ts', fullContent]]),
+        skipRefreshAfterContext: true,
+      },
+    );
+
+    expect(result.blocked).toBe(false);
+    expect(result.strategy).toBe('shape_match');
+    expect(result.confidence).toBe('high');
+    expect(result.shapeUnchanged).toBe(true);
+    expect(result.shapeHashPrevious).toBe(shapeHash);
+    expect(result.shapeHashCurrent).toBe(shapeHash);
+    expect(result.decisions.some(d => d.strategy === 'shape_match' && d.factors?.includes('shape_hash_match'))).toBe(true);
   });
 
   it('falls back to snippet fingerprint rebinding when line math is insufficient', async () => {
