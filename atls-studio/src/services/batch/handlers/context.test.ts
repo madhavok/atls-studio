@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useContextStore } from '../../../stores/contextStore';
-import { handleLoad, handleRead, handleReadLines, handleReadShaped } from './context';
+import { handleEmit, handleLoad, handleRead, handleReadLines, handleReadShaped, handleShape } from './context';
 
 const invokeMock = vi.fn();
 const invokeWithTimeoutMock = vi.fn();
@@ -279,5 +279,126 @@ describe('context handlers snapshot authority', () => {
       file_path: 'src/demo.ts',
     }));
     expect(result.ok).toBe(true);
+  });
+});
+
+describe('context handlers validation and errors', () => {
+  beforeEach(() => {
+    resetContextStore();
+    invokeMock.mockReset();
+    invokeWithTimeoutMock.mockReset();
+  });
+
+  it('handleLoad errors when file_paths missing', async () => {
+    const r = await handleLoad({}, makeCtx());
+    expect(r.ok).toBe(false);
+    expect(r.error).toMatch(/missing file_paths/);
+  });
+
+  it('handleRead errors when file_paths missing', async () => {
+    const r = await handleRead({ type: 'full' }, makeCtx());
+    expect(r.ok).toBe(false);
+    expect(r.error).toMatch(/missing file_paths/);
+  });
+
+  it('handleRead maps backend failure', async () => {
+    const r = await handleRead(
+      { type: 'full', file_paths: ['a.ts'] },
+      makeCtx({ atlsBatchQuery: vi.fn().mockRejectedValue(new Error('ctx down')) }),
+    );
+    expect(r.ok).toBe(false);
+    expect(r.error).toMatch(/ctx down/);
+  });
+
+  it('handleReadLines rejects non-stringifiable ref', async () => {
+    const r = await handleReadLines({ ref: {} as unknown as string, lines: '1' }, makeCtx());
+    expect(r.ok).toBe(false);
+    expect(r.error).toMatch(/ref must be a string/);
+  });
+
+  it('handleReadLines rejects ref that is too long', async () => {
+    const r = await handleReadLines({ ref: `h:${'a'.repeat(220)}:1-2`, lines: '1' }, makeCtx());
+    expect(r.ok).toBe(false);
+    expect(r.error).toMatch(/ref too long/);
+  });
+
+  it('handleReadLines rejects ref not starting with h:', async () => {
+    const r = await handleReadLines({ ref: 'path/to:1-2', lines: '1' }, makeCtx());
+    expect(r.ok).toBe(false);
+    expect(r.error).toMatch(/must start with h:/);
+  });
+
+  it('handleReadLines requires start_line and end_line together with file_path', async () => {
+    const r = await handleReadLines({ file_path: 'x.ts', start_line: 1 }, makeCtx());
+    expect(r.ok).toBe(false);
+    expect(r.error).toMatch(/paired range required/);
+  });
+
+  it('handleReadLines requires lines when hash present', async () => {
+    const r = await handleReadLines({ hash: 'h:deadbeef12' }, makeCtx());
+    expect(r.ok).toBe(false);
+    expect(r.error).toMatch(/requires lines/);
+  });
+
+  it('handleReadLines surfaces backend read_lines error', async () => {
+    const r = await handleReadLines(
+      { hash: 'h:abad1dea00000000000000000000', lines: '1' },
+      makeCtx({
+        atlsBatchQuery: vi.fn().mockResolvedValue({ error: 'stale', hint: 're-read' }),
+      }),
+    );
+    expect(r.ok).toBe(false);
+    expect(r.error).toMatch(/stale/);
+    expect(r.error).toMatch(/re-read/);
+  });
+
+  it('handleReadLines errors on invalid engram line spec', async () => {
+    const ctx = makeCtx({ atlsBatchQuery: vi.fn() });
+    const short = useContextStore.getState().addChunk('one\ntwo', 'search', 'q');
+    const r = await handleReadLines({ hash: `h:${short}`, lines: 'garbage-range' }, ctx);
+    expect(r.ok).toBe(false);
+    expect(r.error).toMatch(/invalid lines spec/);
+  });
+
+  it('handleReadShaped errors when file_paths missing', async () => {
+    const r = await handleReadShaped({ shape: 'sig' }, makeCtx());
+    expect(r.ok).toBe(false);
+    expect(r.error).toMatch(/missing file_paths/);
+  });
+
+  it('handleReadShaped errors when shape missing', async () => {
+    const r = await handleReadShaped({ file_paths: ['a.ts'] }, makeCtx());
+    expect(r.ok).toBe(false);
+    expect(r.error).toMatch(/missing shape/);
+  });
+
+  it('handleShape errors when hash missing', async () => {
+    const r = await handleShape({}, makeCtx());
+    expect(r.ok).toBe(false);
+    expect(r.error).toMatch(/missing hash/);
+  });
+
+  it('handleShape maps resolve failure', async () => {
+    invokeWithTimeoutMock.mockRejectedValueOnce(new Error('no such ref'));
+    const r = await handleShape({ hash: 'deadbeef12' }, makeCtx());
+    expect(r.ok).toBe(false);
+    expect(r.error).toMatch(/no such ref/);
+  });
+
+  it('handleEmit errors when content missing', async () => {
+    const r = await handleEmit({ label: 'x' }, makeCtx());
+    expect(r.ok).toBe(false);
+    expect(r.error).toMatch(/missing content/);
+  });
+
+  it('handleEmit adds chunk and registers hash', async () => {
+    invokeMock.mockResolvedValue(undefined);
+    const r = await handleEmit({ content: 'hello emit', label: 'lbl' }, makeCtx());
+    expect(r.ok).toBe(true);
+    expect(r.refs?.[0]).toMatch(/^h:/);
+    expect(invokeMock).toHaveBeenCalledWith(
+      'register_hash_content',
+      expect.objectContaining({ content: 'hello emit', source: 'lbl' }),
+    );
   });
 });
