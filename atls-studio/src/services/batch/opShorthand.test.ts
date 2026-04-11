@@ -16,9 +16,9 @@ describe('opShorthand registry', () => {
     }
   });
 
-  it('covers exactly 75 operations', () => {
-    expect(Object.keys(SHORT_TO_OP)).toHaveLength(75);
-    expect(Object.keys(OP_TO_SHORT)).toHaveLength(75);
+  it('covers exactly 76 operations', () => {
+    expect(Object.keys(SHORT_TO_OP)).toHaveLength(76);
+    expect(Object.keys(OP_TO_SHORT)).toHaveLength(76);
   });
 
   it('has no duplicate short codes', () => {

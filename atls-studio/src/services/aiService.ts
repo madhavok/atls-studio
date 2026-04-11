@@ -231,6 +231,15 @@ import { parseHashRef } from '../utils/hashRefParsers';
 import { executeWithConcurrency } from './aiConcurrency';
 import { classifyVerifyResult } from './batch/handlers/verify';
 import { canSteerExecution } from './universalFreshness';
+import {
+  resetRoundFingerprint, getRoundFingerprint,
+  recordToolSignature, recordTargetFiles, recordBbDelta,
+  recordAssistantTextHash, recordSteeringInjected,
+  recordHashRefsConsumed, recordHashRefsEvicted,
+  extractTargetFilesFromStepResults, extractBbDeltaFromStepResults,
+  extractSteeringBlocks, extractHashRefs,
+} from './spinDiagnostics';
+import { diagnoseSpinning } from './spinDetector';
 
 /** Content block types for multimodal messages */
 export type TextContentBlock = { type: 'text'; text: string };
@@ -1714,6 +1723,7 @@ async function streamChatViaTauri(
   try {
     for (let round = 0; round < maxRounds; round++) {
       _roundHadMutations = false;
+      resetRoundFingerprint();
 
       // HPP: advance turn counter so previously-materialized chunks become referenced
       if (round > 0) {
@@ -1767,6 +1777,7 @@ async function streamChatViaTauri(
         dynamicContextInput?.projectTree,
         round === 0 ? dynamicContextInput?.isFirstTurn : false,
       );
+      recordSteeringInjected(extractSteeringBlocks(dynamicContextBlock));
       const roundLastUserIndex = conversationHistory.reduceRight((acc, msg, index) => acc === -1 && msg.role === 'user' ? index : acc, -1);
       useAppStore.getState().setPromptMetrics({
         bp3PriorTurnsTokens: estimateHistoryTokens(conversationHistory.slice(0, Math.max(0, roundLastUserIndex))),
@@ -2198,6 +2209,8 @@ async function streamChatViaTauri(
         }
       }
 
+      recordAssistantTextHash(assistantTextContent);
+
       /** Per-round ATLS Internals snapshot. `isResearchRound` must reflect post-tool mutations when tools ran (see call sites). */
       const captureInternalsSnapshot = async (isResearchRound: boolean): Promise<void> => {
         const ctxState = useContextStore.getState();
@@ -2304,6 +2317,7 @@ async function streamChatViaTauri(
           newCoverage: ctxState.roundNewCoverage,
           coveragePlateau: ctxState.coveragePlateauStreak >= 2,
           substantiveBbWrites: bm.hadSubstantiveBbWrite ? 1 : 0,
+          ...getRoundFingerprint(),
         });
       };
       
@@ -2489,7 +2503,16 @@ async function streamChatViaTauri(
         args: tc.inputJson ? JSON.parse(tc.inputJson) : {},
         thoughtSignature: tc.thoughtSignature,
       }));
-      
+
+      // Spin diagnostics: extract hash refs from tool call params
+      {
+        const paramRefs: string[] = [];
+        for (const tc of toolCallEntries) {
+          if (tc.args) paramRefs.push(...extractHashRefs(JSON.stringify(tc.args)));
+        }
+        if (paramRefs.length > 0) recordHashRefsConsumed(paramRefs);
+      }
+
       // Add all tool_use blocks to assistant content first
       for (const tc of toolCallEntries) {
         assistantContent.push({
@@ -2920,9 +2943,19 @@ async function streamChatViaTauri(
       if (estimatedHistoryTokens > safetyThreshold || providerExceedsThreshold) {
         const triggerSource = providerExceedsThreshold && estimatedHistoryTokens <= safetyThreshold
           ? 'provider-reported' : 'heuristic';
+        const preCompressionHashes = new Set(useContextStore.getState().chunks.keys());
         const count = compressToolLoopHistory(conversationHistory, round, priorTurnBoundary, { emergency: true });
         if (count > 0) {
           console.log(`[aiService] SAFETY: auto-compressed ${count} history entries (${triggerSource}: history=${(estimatedHistoryTokens / 1000).toFixed(1)}k, provider=${(roundInputTokens / 1000).toFixed(1)}k, threshold=${(safetyThreshold / 1000).toFixed(1)}k${round > 0 ? ', mid-loop emergency' : ''})`);
+          const postHashes = useContextStore.getState().chunks;
+          const evicted: string[] = [];
+          for (const h of preCompressionHashes) {
+            const chunk = postHashes.get(h);
+            if (!chunk || chunk.compacted) evicted.push(`h:${h.slice(0, 6)}`);
+          }
+          if (evicted.length > 0) {
+            recordHashRefsEvicted(evicted);
+          }
         }
       }
     }
@@ -3218,6 +3251,16 @@ async function executeToolCallDetailed(
         }
         if (result.step_results.some(step => step.ok && step.use.startsWith('verify.'))) {
           _hadVerification = true;
+        }
+
+        // Spin diagnostics: accumulate round fingerprint from batch results
+        recordToolSignature(result.step_results.map(s => s.use));
+        recordTargetFiles(extractTargetFilesFromStepResults(result.step_results));
+        recordBbDelta(extractBbDeltaFromStepResults(result.step_results, args));
+        {
+          const batchHashRefs = result.step_results
+            .flatMap(s => [...(s.refs ?? []), ...(s.summary ? extractHashRefs(s.summary) : [])]);
+          if (batchHashRefs.length > 0) recordHashRefsConsumed(batchHashRefs);
         }
 
         const lastEditRef = result.step_results
@@ -3624,6 +3667,27 @@ function buildDynamicContextBlock(
       parts.push(`<<SYSTEM: FORCE STOP — ${tls.totalResearchRounds} rounds without any code changes. Call task_complete NOW with an honest summary of what you examined and found. This session will not continue.>>`);
     } else if (tls.totalResearchRounds >= TOTAL_RESEARCH_ROUND_BUDGET) {
       parts.push(`<<SYSTEM: ${tls.totalResearchRounds} rounds reading without making any changes. You MUST now: (1) make an edit, (2) call task_complete with findings, or (3) declare a specific blocker. Next round without a mutation or task_complete will force-stop.>>`);
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // SPIN EARLY WARNING — mode-specific intervention from spin detector
+  // -------------------------------------------------------------------------
+  if (tls && tls.mode !== 'ask' && tls.mode !== 'retriever' && tls.round >= 2) {
+    const snapshots = useRoundHistoryStore.getState().snapshots;
+    if (snapshots.length >= 3) {
+      const diagnosis = diagnoseSpinning(snapshots);
+      if (diagnosis.spinning && diagnosis.confidence >= 0.7) {
+        const steeringByMode: Record<string, string> = {
+          context_loss: '<<SYSTEM: SPIN — context loss. You are re-examining files you already processed. Check BB for existing findings. Use rec(h:XXXX) to restore evicted context.>>',
+          goal_drift: '<<SYSTEM: SPIN — goal drift. Recent actions diverge from the task plan. Review BB status and refocus on the original goal.>>',
+          stuck_in_phase: `<<SYSTEM: SPIN — stuck in phase. You've spent ${tls.consecutiveReadOnlyRounds} rounds reading without producing findings or edits. Write BB findings for what you know, then act.>>`,
+          tool_confusion: `<<SYSTEM: SPIN — tool confusion. Last ${Math.min(5, tls.round)} rounds used nearly identical tool calls. Declare a specific blocker or try a fundamentally different approach.>>`,
+          completion_gate: `<<SYSTEM: SPIN — completion blocked by: ${tls.completionBlocker ?? 'unknown'}. Address this specific requirement or call task_complete with an honest summary.>>`,
+        };
+        const msg = steeringByMode[diagnosis.mode];
+        if (msg) parts.push(msg);
+      }
     }
   }
 

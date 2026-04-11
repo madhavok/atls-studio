@@ -76,6 +76,24 @@ export interface RoundSnapshot {
   coveragePlateau?: boolean;
   /** BB writes this round that met the substantive quality threshold. */
   substantiveBbWrites?: number;
+
+  // --- Spin diagnostic fingerprint ---
+  /** Ordered tool names invoked this round (e.g. ["search.code","read.file","session.pin"]). */
+  toolSignature?: string[];
+  /** File paths touched by tool calls this round. */
+  targetFiles?: string[];
+  /** BB keys written or updated this round (empty = no convergence output). */
+  bbDelta?: string[];
+  /** Net pin/unpin: positive = net pins added, negative = net unpins. */
+  wmDelta?: number;
+  /** Hash refs the model referenced in tool params this round. */
+  hashRefsConsumed?: string[];
+  /** Hash refs evicted by compression middleware this round. */
+  hashRefsEvicted?: string[];
+  /** Short FNV hash of the assistant's visible text this round (detects literal repetition). */
+  assistantTextHash?: string;
+  /** Which <<SYSTEM:...>> steering blocks were injected this round. */
+  steeringInjected?: string[];
 }
 
 interface RoundHistoryState {

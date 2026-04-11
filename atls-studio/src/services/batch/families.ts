@@ -94,6 +94,7 @@ export const OPERATION_FAMILIES = {
       { op: 'session.recall' },
       { op: 'session.stats' },
       { op: 'session.debug' },
+      { op: 'session.diagnose' },
       { op: 'session.bb.write' },
       { op: 'session.bb.read' },
       { op: 'session.bb.delete' },

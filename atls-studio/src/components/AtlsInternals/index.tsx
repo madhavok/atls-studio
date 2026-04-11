@@ -14,6 +14,7 @@ import { SubAgentSection } from './sections/SubAgentSection';
 import { MemoryTelemetrySection } from './sections/MemoryTelemetrySection';
 import { ReconcileFreshnessSection } from './sections/ReconcileFreshnessSection';
 import { IndexDbSection } from './sections/IndexDbSection';
+import { SpinTraceSection } from './sections/SpinTraceSection';
 
 export const INTERNALS_TAB_ID = '__atls_internals__';
 
@@ -25,6 +26,7 @@ interface SectionDef {
 }
 
 const SECTIONS: SectionDef[] = [
+  { id: 'spin', title: 'Spin Trace', subtitle: 'Spin detection, fingerprints, and early warning', component: SpinTraceSection },
   { id: 'hpp', title: 'HPP Protocol', subtitle: 'Hash Pointer materialization state machine', component: HppSection },
   { id: 'bb', title: 'Blackboard', subtitle: 'Persistent session knowledge store', component: BlackboardSection },
   { id: 'wm', title: 'Working Memory', subtitle: 'Ephemeral task-scoped context chunks', component: WorkingMemorySection },

@@ -28,6 +28,8 @@ import { classifyStageSnippet, MAX_PERSISTENT_STAGE_ENTRY_TOKENS } from '../serv
 import { emptyRollingSummary } from '../services/historyDistiller';
 import { useSwarmStore } from '../stores/swarmStore';
 import { serializeJournal, restoreJournal } from '../services/freshnessJournal';
+import { diagnoseSpinning } from '../services/spinDetector';
+import type { PersistedSpinDiagnosis } from '../services/chatDb';
 
 // Reserved blackboard note keys for per-session context state
 const RESERVED_NOTE_PREFIX = '__ctx_';
@@ -142,6 +144,21 @@ export function applyV4SessionExtras(snapshot: PersistedMemorySnapshot): void {
   }
 }
 
+function buildSpinDiagnosisSummary(snapshots: import('../stores/roundHistoryStore').RoundSnapshot[]): PersistedSpinDiagnosis | undefined {
+  if (snapshots.length < 3) return undefined;
+  const d = diagnoseSpinning(snapshots);
+  if (!d.spinning) return undefined;
+  return {
+    spinning: d.spinning,
+    mode: d.mode,
+    confidence: d.confidence,
+    evidence: d.evidence,
+    triggerRound: d.triggerRound,
+    suggestedAction: d.suggestedAction,
+    detectedAtRound: snapshots[snapshots.length - 1]?.round ?? 0,
+  };
+}
+
 export function serializeMemorySnapshot(
   ctxState: ReturnType<typeof useContextStore.getState>,
   geminiCache: GeminiCacheSnapshot,
@@ -201,6 +218,7 @@ export function serializeMemorySnapshot(
       Object.entries(ctxState.fileReadSpinRanges).map(([k, v]) => [k, [...v]]),
     ),
     freshnessJournal: serializeJournal(),
+    spinDiagnosisSummary: buildSpinDiagnosisSummary(rounds.snapshots),
   };
 }
 

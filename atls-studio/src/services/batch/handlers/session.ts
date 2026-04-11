@@ -669,6 +669,44 @@ export const handleSessionDebug: OpHandler = async (_params, ctx) => {
 };
 
 // ---------------------------------------------------------------------------
+// diagnose (spin diagnostics)
+// ---------------------------------------------------------------------------
+
+export const handleSessionDiagnose: OpHandler = async (_params, _ctx) => {
+  const { useRoundHistoryStore } = await import('../../../stores/roundHistoryStore');
+  const { diagnoseSpinning, formatSpinTrace, computeWmDiff } = await import('../../spinDetector');
+
+  const snapshots = useRoundHistoryStore.getState().snapshots;
+  if (snapshots.length < 3) {
+    return ok('diagnose: Not enough rounds yet (need at least 3). No spin diagnosis available.');
+  }
+
+  const diagnosis = diagnoseSpinning(snapshots);
+  const trace = formatSpinTrace(snapshots);
+
+  const mainSnaps = snapshots.filter(s => !s.isSubagentRound && !s.isSwarmRound);
+  const older = mainSnaps.length >= 4 ? mainSnaps[mainSnaps.length - 4] : mainSnaps[0];
+  const newer = mainSnaps[mainSnaps.length - 1];
+  const wmDiff = computeWmDiff(older, newer);
+
+  const parts: string[] = [];
+
+  if (diagnosis.spinning) {
+    parts.push(`SPIN DETECTED: ${diagnosis.mode} (confidence: ${(diagnosis.confidence * 100).toFixed(0)}%)`);
+    parts.push(`Trigger: round ${diagnosis.triggerRound}`);
+    parts.push(`Evidence:\n${diagnosis.evidence.map(e => `  - ${e}`).join('\n')}`);
+    parts.push(`Action: ${diagnosis.suggestedAction}`);
+  } else {
+    parts.push('No spin detected.');
+  }
+
+  parts.push(`\nRound trace (last ${Math.min(mainSnaps.length, 5)}):\n${trace}`);
+  parts.push(`\nWM diff (${older?.round ?? '?'} -> ${newer?.round ?? '?'}):\n${wmDiff}`);
+
+  return ok(parts.join('\n'));
+};
+
+// ---------------------------------------------------------------------------
 // compact_history
 // ---------------------------------------------------------------------------
 

@@ -12,6 +12,7 @@ import {
   handleUnload, handleCompact, handleStage, handleUnstage,
   handleDrop, handlePin, handleUnpin, handleRecall,
   handleStats, handleCompactHistory, handleSessionDebug,
+  handleSessionDiagnose,
 } from './handlers/session';
 
 import {
@@ -107,6 +108,7 @@ const OP_MAP: ReadonlyMap<OperationKind, OpHandler> = new Map<OperationKind, OpH
   ['session.recall', handleRecall],
   ['session.stats', handleStats],
   ['session.debug', handleSessionDebug],
+  ['session.diagnose', handleSessionDiagnose],
   ['session.compact_history', handleCompactHistory],
 
   // session — blackboard
@@ -153,7 +155,7 @@ export function getHandler(op: OperationKind): OpHandler | undefined {
 
 export function isReadonlyOp(op: OperationKind): boolean {
   return op.startsWith('search.') || op.startsWith('read.') || op.startsWith('analyze.')
-    || op.startsWith('verify.') || op === 'session.stats' || op === 'session.debug'
+    || op.startsWith('verify.')     || op === 'session.stats' || op === 'session.debug' || op === 'session.diagnose'
     || op === 'session.bb.read' || op === 'session.bb.list' || op === 'session.status'
     || op === 'session.recall'
     || op === 'system.git'

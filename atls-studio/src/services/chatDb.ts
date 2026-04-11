@@ -1158,6 +1158,18 @@ export interface PersistedMemorySnapshot {
   fileReadSpinRanges?: Record<string, string[]>;
   /** v6+ (optional): freshness journal for higher-fidelity rebase after restart */
   freshnessJournal?: Array<[string, FreshnessJournalEntry]>;
+  /** v6+ (optional): spin diagnosis from last detection run */
+  spinDiagnosisSummary?: PersistedSpinDiagnosis;
+}
+
+export interface PersistedSpinDiagnosis {
+  spinning: boolean;
+  mode: string;
+  confidence: number;
+  evidence: string[];
+  triggerRound: number;
+  suggestedAction: string;
+  detectedAtRound: number;
 }
 
 export interface DbHashRegistryEntry {

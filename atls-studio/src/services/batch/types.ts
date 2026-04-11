@@ -62,6 +62,7 @@ export type SessionOp =
   | 'session.recall'
   | 'session.stats'
   | 'session.debug'
+  | 'session.diagnose'
   | 'session.compact_history'
   | 'session.bb.write'
   | 'session.bb.read'

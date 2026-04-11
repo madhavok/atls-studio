@@ -56,6 +56,7 @@ const SHORT_TO_OP_ENTRIES: ReadonlyArray<readonly [string, OperationKind]> = [
   ['rec', 'session.recall'],
   ['st',  'session.stats'],
   ['db',  'session.debug'],
+  ['dg',  'session.diagnose'],
   ['bw',  'session.bb.write'],
   ['br',  'session.bb.read'],
   ['bd',  'session.bb.delete'],
