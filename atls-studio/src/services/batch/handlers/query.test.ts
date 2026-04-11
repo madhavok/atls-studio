@@ -467,4 +467,245 @@ describe('query handlers', () => {
     expect(batch).toHaveBeenCalledWith('extract_plan', { scope: 'mod' });
     expect(out.ok).toBe(true);
   });
+
+  it('handleSearchCode errors when queries missing', async () => {
+    const ctx = { atlsBatchQuery: vi.fn(), store: () => minimalStore() } as any;
+    const out = await handleSearchCode({ queries: [] }, ctx);
+    expect(out.ok).toBe(false);
+    expect(String(out.error)).toMatch(/missing queries/);
+    expect(ctx.atlsBatchQuery).not.toHaveBeenCalled();
+  });
+
+  it('handleSearchCode maps code_search errors', async () => {
+    const ctx = {
+      atlsBatchQuery: vi.fn().mockRejectedValue(new Error('fts down')),
+      store: () => minimalStore(),
+    } as any;
+    const out = await handleSearchCode({ queries: ['q'] }, ctx);
+    expect(out.ok).toBe(false);
+    expect(out.summary).toMatch(/fts down/);
+  });
+
+  it('handleSearchCode maps non-Error code_search rejections', async () => {
+    const ctx = {
+      atlsBatchQuery: vi.fn().mockRejectedValue('plain'),
+      store: () => minimalStore(),
+    } as any;
+    const out = await handleSearchCode({ queries: ['q'] }, ctx);
+    expect(out.ok).toBe(false);
+    expect(out.summary).toMatch(/plain/);
+  });
+
+  it('handleSearchCode literal fallback ignores context fetch failure', async () => {
+    const ctx = {
+      atlsBatchQuery: vi.fn(async (op: string) => {
+        if (op === 'code_search') return { results: [{ query: 'x', results: [] }] };
+        if (op === 'context') throw new Error('no ctx');
+        return {};
+      }),
+      store: () => minimalStore(),
+    } as any;
+    const out = await handleSearchCode(
+      { queries: ['needle'], file_paths: ['_t/f.py'] },
+      ctx,
+    );
+    expect(out.ok).toBe(true);
+    expect(out.content).toMatchObject({ file_paths: [], lines: [], end_lines: [] });
+  });
+
+  it('handleSearchCode reuses retention chunk on identical repeat', async () => {
+    const res = { results: [{ query: 'q', results: [{ file: 'a.ts', line: 1 }] }] };
+    const batch = vi.fn(async () => res);
+    const ctx = { atlsBatchQuery: batch, store: () => minimalStore() } as any;
+    const params = { queries: ['alpha'] };
+    const first = await handleSearchCode(params, ctx);
+    const second = await handleSearchCode(params, ctx);
+    expect(first.ok).toBe(true);
+    expect(second.ok).toBe(true);
+    expect(second.summary).toMatch(/reusing h:/);
+  });
+
+  it('handleSearchCode caps literal fallback rows with max_file_paths', async () => {
+    const ctx = {
+      atlsBatchQuery: vi.fn(async (op: string) => {
+        if (op === 'code_search') return { results: [{ query: 'hit', results: [] }] };
+        if (op === 'context') {
+          return {
+            results: [{
+              file: '_t/cap.py',
+              content: 'hit one\nhit two\n',
+            }],
+          };
+        }
+        return {};
+      }),
+      store: () => minimalStore(),
+    } as any;
+    const out = await handleSearchCode(
+      { queries: ['hit'], file_paths: ['_t/cap.py'], max_file_paths: 1 },
+      ctx,
+    );
+    expect(out.ok).toBe(true);
+    expect(out.content?.file_paths).toEqual(['_t/cap.py']);
+    expect(out.summary).toMatch(/hits capped to 1/);
+  });
+
+  it('handleSearchCode literal fallback resolves file from context path field', async () => {
+    const ctx = {
+      atlsBatchQuery: vi.fn(async (op: string) => {
+        if (op === 'code_search') return { results: [{ query: 'z', results: [] }] };
+        if (op === 'context') {
+          return { results: [{ path: 'by-path.rs', content: 'fn z() { z }\n' }] };
+        }
+        return {};
+      }),
+      store: () => minimalStore(),
+    } as any;
+    const out = await handleSearchCode(
+      { queries: ['z'], file_paths: ['by-path.rs'] },
+      ctx,
+    );
+    expect(out.ok).toBe(true);
+    expect(out.content).toMatchObject({ file_paths: ['by-path.rs'], lines: [1] });
+  });
+
+  it('handleSearchSymbol maps find_symbol errors', async () => {
+    const ctx = {
+      atlsBatchQuery: vi.fn().mockRejectedValue(new Error('sym')),
+      store: () => minimalStore(),
+    } as any;
+    const out = await handleSearchSymbol({ symbol_names: ['S'] }, ctx);
+    expect(out.ok).toBe(false);
+    expect(out.summary).toMatch(/sym/);
+  });
+
+  it('handleSearchUsage maps symbol_usage errors', async () => {
+    const ctx = {
+      atlsBatchQuery: vi.fn().mockRejectedValue('uerr'),
+      store: () => minimalStore(),
+    } as any;
+    const out = await handleSearchUsage({ symbol_names: ['U'] }, ctx);
+    expect(out.ok).toBe(false);
+    expect(out.summary).toMatch(/uerr/);
+  });
+
+  it('handleSearchSimilar maps backend errors', async () => {
+    const ctx = {
+      atlsBatchQuery: vi.fn().mockRejectedValue(new Error('sim')),
+      store: () => minimalStore(),
+    } as any;
+    const out = await handleSearchSimilar({ type: 'code', query: 'x' }, ctx);
+    expect(out.ok).toBe(false);
+    expect(out.summary).toMatch(/sim/);
+  });
+
+  it('handleSearchSimilar does not override params.concept with query', async () => {
+    const batch = vi.fn(async () => ({ hits: [] }));
+    const ctx = { atlsBatchQuery: batch, store: () => minimalStore() } as any;
+    await handleSearchSimilar({
+      type: 'concept',
+      concept: 'pinned',
+      query: ['other'],
+    }, ctx);
+    expect(batch).toHaveBeenCalledWith(
+      'find_conceptual_matches',
+      expect.objectContaining({ concept: 'pinned', query: ['other'] }),
+    );
+    expect(batch.mock.calls[0][1]).not.toHaveProperty('concepts');
+  });
+
+  it('handleSearchSimilar does not add function_names when functions is set', async () => {
+    const batch = vi.fn(async () => ({ hits: [] }));
+    const ctx = { atlsBatchQuery: batch, store: () => minimalStore() } as any;
+    await handleSearchSimilar({
+      type: 'function',
+      functions: ['already'],
+      query: 'fallback',
+    }, ctx);
+    expect(batch).toHaveBeenCalledWith(
+      'find_similar_functions',
+      expect.objectContaining({ functions: ['already'] }),
+    );
+    expect(batch.mock.calls[0][1]).not.toHaveProperty('function_names');
+  });
+
+  it('handleSearchIssues maps find_issues errors', async () => {
+    const ctx = {
+      atlsBatchQuery: vi.fn().mockRejectedValue(new Error('iss')),
+      store: () => minimalStore(),
+    } as any;
+    const out = await handleSearchIssues({}, ctx);
+    expect(out.ok).toBe(false);
+    expect(out.summary).toMatch(/iss/);
+  });
+
+  it('handleSearchPatterns maps detect_patterns errors', async () => {
+    const ctx = {
+      atlsBatchQuery: vi.fn().mockRejectedValue(new Error('pat')),
+      store: () => minimalStore(),
+    } as any;
+    const out = await handleSearchPatterns({}, ctx);
+    expect(out.ok).toBe(false);
+    expect(out.summary).toMatch(/pat/);
+  });
+
+  it('handleAnalyzeDeps maps backend errors', async () => {
+    const ctx = {
+      atlsBatchQuery: vi.fn().mockRejectedValue(new Error('dep')),
+      store: () => minimalStore(),
+    } as any;
+    const out = await handleAnalyzeDeps({ file_paths: ['a.ts'] }, ctx);
+    expect(out.ok).toBe(false);
+    expect(out.summary).toMatch(/dep/);
+  });
+
+  it('handleAnalyzeCalls maps call_hierarchy errors', async () => {
+    const ctx = {
+      atlsBatchQuery: vi.fn().mockRejectedValue(new Error('call')),
+      store: () => minimalStore(),
+    } as any;
+    const out = await handleAnalyzeCalls({ symbol: 'x' }, ctx);
+    expect(out.ok).toBe(false);
+    expect(out.summary).toMatch(/call/);
+  });
+
+  it('handleAnalyzeStructure maps symbol_dep_graph errors', async () => {
+    const ctx = {
+      atlsBatchQuery: vi.fn().mockRejectedValue(new Error('struct')),
+      store: () => minimalStore(),
+    } as any;
+    const out = await handleAnalyzeStructure({ file_paths: ['f.ts'] }, ctx);
+    expect(out.ok).toBe(false);
+    expect(out.summary).toMatch(/struct/);
+  });
+
+  it('handleAnalyzeImpact maps change_impact errors', async () => {
+    const ctx = {
+      atlsBatchQuery: vi.fn().mockRejectedValue(new Error('impact')),
+      store: () => minimalStore(),
+    } as any;
+    const out = await handleAnalyzeImpact({ file_paths: ['g.ts'] }, ctx);
+    expect(out.ok).toBe(false);
+    expect(out.summary).toMatch(/impact/);
+  });
+
+  it('handleAnalyzeBlastRadius maps impact_analysis errors', async () => {
+    const ctx = {
+      atlsBatchQuery: vi.fn().mockRejectedValue(new Error('blast')),
+      store: () => minimalStore(),
+    } as any;
+    const out = await handleAnalyzeBlastRadius({ symbol_names: ['Z'] }, ctx);
+    expect(out.ok).toBe(false);
+    expect(out.summary).toMatch(/blast/);
+  });
+
+  it('handleAnalyzeExtractPlan maps extract_plan errors', async () => {
+    const ctx = {
+      atlsBatchQuery: vi.fn().mockRejectedValue(new Error('ex')),
+      store: () => minimalStore(),
+    } as any;
+    const out = await handleAnalyzeExtractPlan({ scope: 's' }, ctx);
+    expect(out.ok).toBe(false);
+    expect(out.summary).toMatch(/ex/);
+  });
 });
