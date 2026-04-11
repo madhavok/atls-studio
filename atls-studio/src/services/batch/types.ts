@@ -174,7 +174,6 @@ export interface ExecutionPolicy {
   mode?: 'readonly' | 'mutable' | 'safe-mutable';
   verify_after_change?: boolean;
   auto_stage_refs?: boolean;
-  auto_pin_outputs?: 'none' | 'sig' | 'full';
   rollback_on_failure?: boolean;
   max_steps?: number;
   stop_on_verify_failure?: boolean;

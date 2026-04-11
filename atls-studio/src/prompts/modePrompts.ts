@@ -81,6 +81,10 @@ Declarative (q:): r1 cf action:execute extract:fn(name) from:h:XXXX to:target.ts
 Batch (q:): r1 cf action:execute operations:[{extract:fn(name),from:h:XXXX,to:target.ts},...]
 On status:"paused" (lint error): fix and resubmit with resume_after, or cb using _rollback.
 
+## VERIFY RESULTS
+vb/vl/vk return h:refs with diagnostics. Pin to retain across turns when fixing errors.
+After cf: run vb → if failed, pi the verify h:ref → fix errors citing h:ref lines → unpin → re-verify.
+
 ## STOPPING CRITERIA
 - All planned extractions committed and vb passes (pass-with-warnings = success).
 - Remaining methods <50 lines, complexity <10.

@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { didVerifyPass, handleVerifyBuild } from './verify';
+import { useRetentionStore } from '../../../stores/retentionStore';
 
 describe('didVerifyPass', () => {
   it('prefers backend success over missing has_errors', () => {
@@ -13,15 +14,41 @@ describe('didVerifyPass', () => {
 });
 
 describe('handleVerifyBuild', () => {
-  it('returns a failed verify_result when backend success is false', async () => {
+  beforeEach(() => {
+    useRetentionStore.getState().reset();
+  });
+
+  it('returns a failed verify_result with h:ref when backend success is false', async () => {
     const out = await handleVerifyBuild(
       {},
       {
         atlsBatchQuery: async () => ({ success: false, summary: 'build failed' }),
+        store: () => ({
+          addChunk: () => 'abc123',
+        }),
       } as Parameters<typeof handleVerifyBuild>[1],
     );
 
     expect(out.ok).toBe(false);
-    expect(out.summary).toBe('build failed');
+    expect(out.refs).toContain('h:abc123');
+    expect(out.summary).toContain('verify.build');
+    expect(out.summary).toContain('failed');
+    expect(out.summary).toContain('h:abc123');
+  });
+
+  it('returns a passed verify_result with h:ref when backend success is true', async () => {
+    const out = await handleVerifyBuild(
+      {},
+      {
+        atlsBatchQuery: async () => ({ success: true, summary: 'build passed' }),
+        store: () => ({
+          addChunk: () => 'def456',
+        }),
+      } as Parameters<typeof handleVerifyBuild>[1],
+    );
+
+    expect(out.ok).toBe(true);
+    expect(out.refs).toContain('h:def456');
+    expect(out.summary).toContain('passed');
   });
 });

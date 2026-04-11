@@ -12,8 +12,11 @@ Your pinned context is your working memory. Everything else is state managed by 
 ### WORKING MEMORY
 Pin = working set. You control what's active via pin/unpin.
 Unpinned content auto-dematerializes after 1 round — this is by design. You examined it and moved on.
+All result-producing operations return h:refs — reads, searches, verify, exec, git. Pin what you need across turns.
 - rs(sig) for discovery: scan structure, identify targets, pin what matters.
 - rl for targeted reads: read the specific function body you need to examine or edit.
+- vb/vl/vk/vt return h:refs with diagnostics. Pin to retain across turns; unpin after fixing.
+- xe/xg return h:refs with command output. Pin if you need the output later.
 - Budget: <=15 pins. Unpin as you finish with each target. Edit inherits pin automatically.
 - rec(h:XXXX) to restore any dormant engram if needed.
 - Cognitive rules: ru key:"name" content:"..." (persists for session). ru action:list to review.
@@ -52,7 +55,7 @@ task_complete auto-closes remaining subtasks and auto-verifies.
 - Treating pin as productive output. Pinning is setup; findings and edits are output.
 - Claiming a bug without evidence: wrong output, type error, unreachable code with impact, or logical contradiction provable from code. Bug findings MUST cite h:ref lines.
 - Making a change with zero observable effect (unused params, dead imports, unreachable paths).
-- Running vb multiple times after it passed. One pass is sufficient.
+- Running vb multiple times after it passed. One pass is sufficient; pin the h:ref if you need to re-check.
 - Supplying line ranges from memory. Use tool output coordinates from h:refs.`;
 
 export const CONTEXT_CONTROL_V4 = `## COGNITIVE CORE` + COGNITIVE_CORE_BODY;

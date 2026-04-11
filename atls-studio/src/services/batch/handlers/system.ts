@@ -4,6 +4,7 @@
 
 import { ensureTerminalTarget, getTerminalStore, resolveTerminalTarget } from '../../../stores/terminalStore';
 import { toTOON, formatResult, FORMAT_RESULT_MAX_GIT } from '../../../utils/toon';
+import { countTokensSync } from '../../../utils/tokenCounter';
 import type { HandlerContext, OpHandler, StepOutput } from '../types';
 
 /** Strip PTY echo noise and PowerShell cd error blocks; exported for unit tests. */
@@ -101,7 +102,16 @@ export const handleSystemExec: OpHandler = async (params, ctx) => {
       output: sanitizedOutput,
       success: result.success,
     });
-    return ok(content, normalizedResult);
+    const hash = ctx.store().addChunk(content, 'exec:out', cmd, undefined, undefined, undefined, { ttl: 3 });
+    const tk = countTokensSync(content);
+    return {
+      kind: 'raw' as const,
+      ok: true,
+      refs: [`h:${hash}`],
+      summary: `exec: ${cmd} → h:${hash} (${(tk / 1000).toFixed(1)}k tk)`,
+      tokens: tk,
+      content: normalizedResult,
+    };
   } catch (error) {
     const content = toTOON({
       exitCode: -1,
@@ -158,9 +168,20 @@ export const handleSystemGit: OpHandler = async (params, ctx) => {
 
     if (MUTATING_GIT_ACTIONS.includes(action)) {
       echoGitToTerminal(ctx, result, action);
+      return ok(content, result);
     }
 
-    return ok(content, result);
+    const source = `git.${action}`;
+    const hash = ctx.store().addChunk(content, 'result', source, undefined, undefined, undefined, { ttl: 3 });
+    const tk = countTokensSync(content);
+    return {
+      kind: 'raw' as const,
+      ok: true,
+      refs: [`h:${hash}`],
+      summary: `${source} → h:${hash} (${(tk / 1000).toFixed(1)}k tk)`,
+      tokens: tk,
+      content: result,
+    };
   } catch (error) {
     return err(`system.git: ERROR ${error instanceof Error ? error.message : String(error)}`);
   }

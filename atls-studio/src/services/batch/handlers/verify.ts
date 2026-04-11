@@ -9,6 +9,9 @@
 
 import { getTerminalStore, resolveTerminalTarget } from '../../../stores/terminalStore';
 import { buildWorkspaceVerifyHint } from '../../toolHelpers';
+import { countTokensSync } from '../../../utils/tokenCounter';
+import { formatResult } from '../../../utils/toon';
+import { checkRetention } from './retention';
 import type { OpHandler, StepOutput, VerifyClassification } from '../types';
 
 const VALID_STATUSES: readonly string[] = ['pass', 'pass-with-warnings', 'fail', 'tool-error'];
@@ -117,7 +120,23 @@ function makeVerifyHandler(mode: string): OpHandler {
         typeof r.summary === 'string' ? r.summary : `verify.${mode}: ${passed ? 'passed' : 'failed'}`;
       const summary = buildVerifyStepSummary(mode, passed, r, baseSummary);
       echoVerifyToTerminal(ctx, raw, mode, passed);
-      return verifyResult(passed, summary, raw, classification);
+
+      const resultStr = formatResult(raw);
+      const opKind = `verify.${mode}` as const;
+      const retained = checkRetention(opKind, params, resultStr, passed, 'verify_result', opKind, classification);
+      if (retained.reused) return retained.output;
+
+      const hash = ctx.store().addChunk(resultStr, 'result', opKind, undefined, summary);
+      const tk = countTokensSync(resultStr);
+      return {
+        kind: 'verify_result' as const,
+        ok: passed,
+        refs: [`h:${hash}`],
+        summary: `${opKind}: ${passed ? 'passed' : 'failed'} → h:${hash} (${(tk / 1000).toFixed(1)}k tk)`,
+        tokens: tk,
+        content: raw,
+        classification,
+      };
     } catch (caught) {
       return verifyErr(`verify.${mode}: ERROR ${caught instanceof Error ? caught.message : String(caught)}`, 'tool-error');
     }

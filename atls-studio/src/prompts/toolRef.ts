@@ -121,7 +121,7 @@ key/keys, cmd also auto-resolved
 ### Task Recipes (follow the matching recipe)
 Bug hunt: si -> rs(sig) top 3-5 suspects -> pi sigs -> rl + bw finding per fn -> fix confirmed -> task_complete
 Feature: rs(sig) targets -> pi -> spl -> ce per subtask -> task_complete
-Refactor: ax -> spl -> cf per extraction -> task_complete
+Refactor: ax -> spl -> cf per extraction -> vb -> pi if failed (fix from h:ref) -> task_complete
 Investigation: iv -> bw structured findings per target -> task_complete with report
 Review: rs(sig) -> pi -> rl changed fns -> bw review finding per fn -> task_complete
 
@@ -139,7 +139,7 @@ Review: rs(sig) -> pi -> rl changed fns -> bw review finding per fn -> task_comp
 - **pin: no matching chunks**: **hashes** must list real **h:**… from tool output, or use step dataflow \`pi in:r1.refs\`. Never put the text \`in:r1.refs\` inside the **hashes** field.
 - **change.edit** "file not found": **f** / **file_path** must be a real workspace path or **h:…** (optional :line span). Invalid: \`in:c1.refs[0]:2-4\` as **f**. After **cc**, use the **path** you created or **h:** from the create result.
 - **annotate.design** (\`nd\`): **Designer mode only** — in agent/agent_v2 it always errors; skip family tests there.
-- **VOLATILE / expire next round**: Hint to **pi** or **bw** — informational, not a failure.
+- **VOLATILE / expire next round**: Result has an h:ref but will dematerialize if not pinned. **pi** to keep, **bw** to persist as finding.
 
 ### Rules
 - f/ps resolve from active workspace root. Subfolder prefix if monorepo (e.g. \`atls-studio/src/foo.ts\`).

@@ -357,7 +357,7 @@ export const handleSearchIssues: OpHandler = async (params, ctx) => {
     const resultStr = formatResult(result, FORMAT_RESULT_MAX_SEARCH);
     const retained = checkRetention('search.issues', params, resultStr, true, 'search_results', 'find_issues');
     if (retained.reused) return retained.output;
-    const hash = ctx.store().addChunk(resultStr, 'search', 'find_issues');
+    const hash = ctx.store().addChunk(resultStr, 'issues', 'find_issues');
     const tk = countTokensSync(resultStr);
     return {
       kind: 'search_results', ok: true,
