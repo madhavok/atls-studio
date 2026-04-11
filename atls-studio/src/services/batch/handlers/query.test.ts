@@ -1,4 +1,4 @@
-import { beforeEach, describe, it, expect, vi } from 'vitest';
+import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
 import {
   handleSearchCode,
   handleSearchSymbol,
@@ -15,10 +15,15 @@ import {
   handleAnalyzeExtractPlan,
 } from './query';
 import { useRetentionStore } from '../../../stores/retentionStore';
+import { useAppStore } from '../../../stores/appStore';
 
 describe('query handlers', () => {
   beforeEach(() => {
     useRetentionStore.getState().reset();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
   it('exports search handlers', () => {
@@ -174,6 +179,59 @@ describe('query handlers', () => {
     invalidateArtifactsForPaths: () => {},
   });
 
+  it('handleSearchCode uses multi-line literal match when FTS empty and scoped', async () => {
+    const ctx = {
+      atlsBatchQuery: vi.fn(async (op: string) => {
+        if (op === 'code_search') {
+          return { results: [{ query: 'needle', results: [] }] };
+        }
+        if (op === 'context') {
+          return {
+            results: [{
+              file: '_test/ml.py',
+              content: 'def block():\n    a = 1\n    b = 2\n',
+            }],
+          };
+        }
+        return {};
+      }),
+      store: () => minimalStore(),
+    } as any;
+
+    const out = await handleSearchCode(
+      { queries: ['    a = 1\n    b = 2'], file_paths: ['_test/ml.py'] },
+      ctx,
+    );
+    expect(out.ok).toBe(true);
+    expect(out.content).toMatchObject({
+      file_paths: ['_test/ml.py'],
+      lines: [2],
+      end_lines: [3],
+    });
+  });
+
+  it('handleSearchCode prepends manifest note when hits overlap entry manifest', async () => {
+    vi.spyOn(useAppStore, 'getState').mockReturnValue({
+      projectProfile: {
+        entryManifest: [{ path: 'src/ManifestHit.ts' }],
+      },
+    } as any);
+
+    const ctx = {
+      atlsBatchQuery: vi.fn(async () => ({
+        results: [{
+          query: 'q',
+          results: [{ file: 'src/ManifestHit.ts', line: 1 }],
+        }],
+      })),
+      store: () => minimalStore(),
+    } as any;
+
+    const out = await handleSearchCode({ queries: ['x'] }, ctx);
+    expect(out.ok).toBe(true);
+    expect(out.summary).toMatch(/MANIFEST:.*ManifestHit/);
+  });
+
   it('handleSearchSymbol errors when symbol_names missing', async () => {
     const ctx = { atlsBatchQuery: vi.fn(), store: () => minimalStore() } as any;
     const out = await handleSearchSymbol({}, ctx);
@@ -215,6 +273,38 @@ describe('query handlers', () => {
     expect(out.refs).toEqual([]);
   });
 
+  it('handleSearchMemory summarizes hits with region breakdown and recall hint', async () => {
+    const searchMemory = () => [
+      {
+        region: 'active' as const,
+        ref: 'h:111',
+        source: 's1',
+        type: 'note',
+        tokens: 5,
+        hits: [{ lineNumber: 1, line: 'alpha' }],
+      },
+      {
+        region: 'archived' as const,
+        ref: 'h:222',
+        hits: [{ lineNumber: 2, line: 'beta' }],
+      },
+      {
+        region: 'dormant' as const,
+        ref: 'h:333',
+        hits: [{ lineNumber: 3, line: 'gamma' }],
+      },
+    ];
+    const ctx = {
+      store: () => ({ ...minimalStore(), searchMemory }),
+    } as any;
+    const out = await handleSearchMemory({ query: 'ab' }, ctx);
+    expect(out.ok).toBe(true);
+    expect(out.summary).toMatch(/3 hits/);
+    expect(out.summary).toMatch(/active:1 archived:1 dormant:1/);
+    expect(out.summary).toMatch(/rec h:XXXX/);
+    expect(out.refs?.length).toBe(1);
+  });
+
   it('handleSearchUsage calls symbol_usage and maps structured content', async () => {
     const batch = vi.fn(async () => ({
       results: [{ query: 'X', results: [{ file: 'u.ts', line: 3 }] }],
@@ -252,6 +342,54 @@ describe('query handlers', () => {
       expect.objectContaining({ type: 'code', query: 'auth' }),
     );
     expect(out.ok).toBe(true);
+  });
+
+  it('handleSearchSimilar coerces query to function_names for type function', async () => {
+    const batch = vi.fn(async () => ({ hits: [] }));
+    const ctx = { atlsBatchQuery: batch, store: () => minimalStore() } as any;
+    const out = await handleSearchSimilar({ type: 'function', query: 'doThing' }, ctx);
+    expect(batch).toHaveBeenCalledWith(
+      'find_similar_functions',
+      expect.objectContaining({ function_names: ['doThing'] }),
+    );
+    expect(out.ok).toBe(true);
+  });
+
+  it('handleSearchSimilar leaves existing function_names when type function', async () => {
+    const batch = vi.fn(async () => ({ hits: [] }));
+    const ctx = { atlsBatchQuery: batch, store: () => minimalStore() } as any;
+    await handleSearchSimilar({ type: 'function', function_names: ['keep'] }, ctx);
+    expect(batch).toHaveBeenCalledWith(
+      'find_similar_functions',
+      expect.objectContaining({ function_names: ['keep'] }),
+    );
+  });
+
+  it('handleSearchSimilar coerces query array to concepts for type concept', async () => {
+    const batch = vi.fn(async () => ({ hits: [] }));
+    const ctx = { atlsBatchQuery: batch, store: () => minimalStore() } as any;
+    await handleSearchSimilar({ type: 'concept', query: ['auth', 'login'] }, ctx);
+    expect(batch).toHaveBeenCalledWith(
+      'find_conceptual_matches',
+      expect.objectContaining({ concepts: ['auth', 'login'] }),
+    );
+  });
+
+  it('handleSearchSimilar maps type pattern to find_pattern_implementations', async () => {
+    const batch = vi.fn(async () => ({ hits: [] }));
+    const ctx = { atlsBatchQuery: batch, store: () => minimalStore() } as any;
+    await handleSearchSimilar({ type: 'pattern', ids: ['singleton'] }, ctx);
+    expect(batch).toHaveBeenCalledWith(
+      'find_pattern_implementations',
+      expect.objectContaining({ type: 'pattern', ids: ['singleton'] }),
+    );
+  });
+
+  it('handleSearchSimilar falls back to find_similar_code for unknown type', async () => {
+    const batch = vi.fn(async () => ({ hits: [] }));
+    const ctx = { atlsBatchQuery: batch, store: () => minimalStore() } as any;
+    await handleSearchSimilar({ type: 'not_a_real_kind', query: 'x' }, ctx);
+    expect(batch).toHaveBeenCalledWith('find_similar_code', expect.any(Object));
   });
 
   it('handleAnalyzeDeps errors when file_paths missing', async () => {
