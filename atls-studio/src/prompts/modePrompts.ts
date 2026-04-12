@@ -79,7 +79,7 @@ Leaf utilities -> self-contained helpers -> shared clusters. Leave tightly coupl
 ## EXECUTION
 Declarative (q:): r1 cf action:execute extract:fn(name) from:h:XXXX to:target.ts
 Batch (q:): r1 cf action:execute operations:[{extract:fn(name),from:h:XXXX,to:target.ts},...]
-On status:"paused" (lint error): fix and resubmit with resume_after, or cb using _rollback.
+If cf returns status:"paused" or lint hints: fix operations (e.g. remove_lines) and resubmit with resume_after, or cb using _rollback. The runtime does not stop the agent; continue until task_complete.
 
 ## VERIFY RESULTS
 vb/vl/vk return h:refs with diagnostics. Pin to retain across turns when fixing errors.

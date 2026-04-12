@@ -225,8 +225,8 @@ describe('executeUnifiedBatch interruption handling', () => {
     expect(afterSpy).toHaveBeenCalled();
   });
 
-  it('still pauses batch when execute fails with _rollback + paused status', async () => {
-    const afterSpy = vi.fn();
+  it('does not interrupt batch when refactor returns paused + resume_after (subsequent steps still run)', async () => {
+    const afterSpy = vi.fn().mockReturnValue(raw('verify ok', { ok: true }));
 
     handlers.set('change.refactor', async () =>
       raw('lint failed', {
@@ -250,14 +250,13 @@ describe('executeUnifiedBatch interruption handling', () => {
       makeCtx(),
     );
 
-    expect(result.ok).toBe(false);
-    expect(result.interruption).toBeDefined();
-    expect(result.interruption!.kind).toBe('paused_on_error');
-    expect(afterSpy).not.toHaveBeenCalled();
+    expect(result.ok).toBe(true);
+    expect(result.interruption).toBeUndefined();
+    expect(afterSpy).toHaveBeenCalled();
   });
 
-  it('interrupts the batch when a step pauses for lint/rollback follow-up', async () => {
-    const mutateSpy = vi.fn();
+  it('continues batch when a step reports paused for lint/rollback follow-up (no runtime stop)', async () => {
+    const mutateSpy = vi.fn().mockReturnValue(raw('edited', { ok: true }));
 
     handlers.set('change.refactor', async () =>
       raw('lint paused', {
@@ -281,16 +280,10 @@ describe('executeUnifiedBatch interruption handling', () => {
       makeCtx(),
     );
 
-    expect(result.ok).toBe(false);
-    expect(result.interruption).toEqual({
-      kind: 'paused_on_error',
-      step_id: 'refactor',
-      step_index: 0,
-      tool_name: 'change.refactor',
-      summary: 'Fix the failing operation and resume_after:0',
-    });
-    expect(result.step_results).toHaveLength(1);
-    expect(mutateSpy).not.toHaveBeenCalled();
+    expect(result.ok).toBe(true);
+    expect(result.interruption).toBeUndefined();
+    expect(result.step_results).toHaveLength(2);
+    expect(mutateSpy).toHaveBeenCalled();
   });
 
   it('does not interrupt the batch for blocked system.exec output', async () => {
@@ -1177,11 +1170,8 @@ describe('executeUnifiedBatch multiedit multibatch stress', () => {
     expect(callOrder).toEqual(['read', 'edit']);
   });
 
-  it('interruption from paused refactor preempts rollback injection', async () => {
-    // When change.refactor returns status:paused with _rollback, we interrupt before
-    // the rollback-injection block. Rollback injection only runs when a step fails
-    // without triggering interruption — which cannot happen when _rollback is present.
-    const rollbackSpy = vi.fn();
+  it('failed refactor with on_error:rollback still injects change.rollback (no batch interruption)', async () => {
+    const rollbackSpy = vi.fn(async () => raw('rolled back', { ok: true }));
 
     handlers.set('change.refactor', async () =>
       raw('paused', {
@@ -1200,9 +1190,9 @@ describe('executeUnifiedBatch multiedit multibatch stress', () => {
       ],
     }, makeCtx());
 
-    expect(result.ok).toBe(false);
-    expect(result.interruption?.kind).toBe('paused_on_error');
-    expect(rollbackSpy).not.toHaveBeenCalled(); // interrupt happens first
+    expect(result.ok).toBe(true);
+    expect(result.interruption).toBeUndefined();
+    expect(rollbackSpy).toHaveBeenCalled();
   });
 
   it('injects change.rollback after a failing step when on_error is rollback, policy allows it, and a prior change step exposed _rollback', async () => {

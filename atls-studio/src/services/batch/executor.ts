@@ -13,7 +13,6 @@ import type {
   StepResult,
   RefExpr,
   HandlerContext,
-  BatchInterruption,
   VerifyClassification,
   OperationKind,
 } from './types';
@@ -1093,18 +1092,6 @@ function getArtifact(output: StepOutput): Record<string, unknown> | null {
   return output.content as Record<string, unknown>;
 }
 
-function summarizeInterruption(artifact: Record<string, unknown>, fallback: string): string {
-  const actionRequired = artifact.action_required;
-  if (typeof actionRequired === 'string' && actionRequired.trim()) return actionRequired.trim();
-  const next = artifact._next;
-  if (typeof next === 'string' && next.trim()) return next.trim();
-  const warning = artifact._warning;
-  if (typeof warning === 'string' && warning.trim()) return warning.trim();
-  const summary = artifact.summary;
-  if (typeof summary === 'string' && summary.trim()) return summary.trim();
-  return fallback;
-}
-
 /** system.exec outputs that indicate policy-block or confirmation — not real execution failures. */
 function isBlockingSystemExec(
   stepUse: string,
@@ -1141,42 +1128,6 @@ function isDryRunPreview(output: StepOutput): boolean {
     || (typeof art._next === 'string' && art._next.toLowerCase().includes('dry_run:false'));
 }
 
-function detectBatchInterruption(stepId: string, stepIndex: number, stepUse: string, output: StepOutput): BatchInterruption | null {
-  const artifact = getArtifact(output);
-  if (!artifact) return null;
-  if (isBlockingSystemExec(stepUse, artifact)) return null;
-
-  const status = typeof artifact.status === 'string' ? artifact.status.toLowerCase() : '';
-  const hasRollback = Boolean(artifact._rollback);
-  const hasResumeAfter = artifact.resume_after !== undefined;
-
-  const reason = typeof artifact.reason === 'string' ? artifact.reason : undefined;
-  const isSuspectExternal = reason === 'suspect_external_change';
-
-  // _rollback is informational on successful execute responses — only treat it
-  // as a pause when the status actually indicates a problem.
-  const isSuccessStatus = status === 'success' || status === 'no_changes' || status === 'no_effect';
-  const isPaused =
-    status === 'paused'
-    || status === 'failed_lint'
-    || status === 'error'
-    || (hasRollback && !isSuccessStatus)
-    || hasResumeAfter;
-  if (isPaused) {
-    return {
-      kind: 'paused_on_error',
-      step_id: stepId,
-      step_index: stepIndex,
-      tool_name: stepUse,
-      summary: summarizeInterruption(artifact, `${stepId}: paused and requires follow-up before continuing`),
-      interruption_reason: isSuspectExternal ? 'suspect_external_change' : undefined,
-    };
-  }
-
-  // Dry-run / preview no longer emit confirmation_required — rollback covers apply; agent chat should not halt.
-  return null;
-}
-
 // ---------------------------------------------------------------------------
 // Progress callback — fired after each step so callers can stream partial results
 // ---------------------------------------------------------------------------
@@ -1210,7 +1161,6 @@ export async function executeUnifiedBatch(
   const bbRefs: string[] = [];
   const verifyResults: Array<{ step_id: string; passed: boolean; summary: string; classification?: VerifyClassification }> = [];
   let batchOk = true;
-  let interruption: BatchInterruption | undefined;
   let spinBreaker: string | undefined;
   let spinBlocked = false;
   let dryRunPreviewCount = 0;
@@ -1663,15 +1613,9 @@ export async function executeUnifiedBatch(
     }
 
     if (!isAutoStep) userStepIndex += 1;
-    const stepInterruption = detectBatchInterruption(step.id, i, step.use, output);
     const stepArtifact = getArtifact(output);
     const shouldTreatBlockedSystemExecAsNonFatal =
       stepArtifact !== null && isBlockingSystemExec(step.use, stepArtifact);
-    if (stepInterruption && !shouldTreatBlockedSystemExecAsNonFatal) {
-      interruption = stepInterruption;
-      batchOk = false;
-      break;
-    }
     // Track consecutive dry-run previews — block on repeat
     if (output.ok && step.use.startsWith('change.') && isDryRunPreview(output)) {
       dryRunPreviewCount += 1;
@@ -1690,17 +1634,25 @@ export async function executeUnifiedBatch(
         break;
       }
       if (errorBehavior === 'rollback' && request.policy?.rollback_on_failure) {
-        // Collect restore/delete from most recent change step with _rollback (refactor execute)
+        // Collect restore/delete from _rollback: failing change.* step first, else prior change.* output
         let rollbackWith: Record<string, unknown> = {};
-        for (let j = i - 1; j >= 0; j--) {
-          const prior = stepsToRun[j];
-          if (prior?.use?.startsWith('change.')) {
-            const priorOut = stepOutputs.get(prior.id);
-            const content = priorOut?.content as Record<string, unknown> | undefined;
-            const rb = content?._rollback as Record<string, unknown> | undefined;
-            if (rb?.restore) {
-              rollbackWith = { restore: rb.restore, delete: rb.delete };
-              break;
+        const selfContent = output.content as Record<string, unknown> | undefined;
+        const selfRb = step.use.startsWith('change.')
+          ? (selfContent?._rollback as Record<string, unknown> | undefined)
+          : undefined;
+        if (selfRb?.restore) {
+          rollbackWith = { restore: selfRb.restore, delete: selfRb.delete };
+        } else {
+          for (let j = i - 1; j >= 0; j--) {
+            const prior = stepsToRun[j];
+            if (prior?.use?.startsWith('change.')) {
+              const priorOut = stepOutputs.get(prior.id);
+              const content = priorOut?.content as Record<string, unknown> | undefined;
+              const rb = content?._rollback as Record<string, unknown> | undefined;
+              if (rb?.restore) {
+                rollbackWith = { restore: rb.restore, delete: rb.delete };
+                break;
+              }
             }
           }
         }
@@ -1806,7 +1758,6 @@ export async function executeUnifiedBatch(
     final_refs: allRefs.length > 0 ? allRefs : undefined,
     bb_refs: bbRefs.length > 0 ? bbRefs : undefined,
     verify: verifyResults.length > 0 ? verifyResults : undefined,
-    interruption,
     intent_metrics: intentResult.metrics.length > 0 ? intentResult.metrics : undefined,
     duration_ms: Date.now() - batchStart,
   };
