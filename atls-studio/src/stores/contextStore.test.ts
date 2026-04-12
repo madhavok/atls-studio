@@ -4,7 +4,15 @@
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { dematerialize, materialize } from '../services/hashProtocol';
-import { setRoundRefreshRevisionResolver, setBulkRevisionResolver, setWorkspacesAccessor, useContextStore } from './contextStore';
+import {
+  setRoundRefreshRevisionResolver,
+  setBulkRevisionResolver,
+  setWorkspacesAccessor,
+  useContextStore,
+  ARCHIVE_MAX_TOKENS,
+  autoManagePass2ChunkPressureExceedsGate,
+  type ContextChunk,
+} from './contextStore';
 import { STAGED_ANCHOR_BUDGET_TOKENS, STAGED_TOTAL_HARD_CAP_TOKENS, MAX_PERSISTENT_STAGE_ENTRIES } from '../services/promptMemory';
 import { hashContentSync } from '../utils/contextHash';
 import * as tokenCounter from '../utils/tokenCounter';
@@ -1504,6 +1512,61 @@ describe('reconcileRestoredSession', () => {
     expect(stats.updated).toBe(0);
     expect(stats.invalidated).toBe(0);
     expect(stats.evicted).toBe(0);
+   });
+});
+
+// ---------------------------------------------------------------------------
+// Archive LRU trim + Pass 2 auto-manage gate
+// ---------------------------------------------------------------------------
+
+describe('evictArchiveIfNeeded state persistence', () => {
+  beforeEach(() => resetStore());
+
+  it('compactChunks writes LRU-trimmed archivedChunks when over ARCHIVE_MAX_TOKENS', () => {
+    const mk = (seed: string, tokens: number, lastAccessed: number): ContextChunk => {
+      const hash = hashContentSync(seed);
+      return {
+        hash,
+        shortHash: hash.slice(0, 6),
+        type: 'file',
+        content: 'x',
+        tokens,
+        createdAt: new Date(lastAccessed),
+        lastAccessed,
+        source: `${seed}.ts`,
+      };
+    };
+    const oldest = mk('archive-lru-oldest', 20_000, 1_000);
+    const mid = mk('archive-lru-mid', 20_000, 2_000);
+    const newest = mk('archive-lru-newest', 20_000, 3_000);
+    useContextStore.setState({
+      archivedChunks: new Map([
+        [oldest.hash, oldest],
+        [mid.hash, mid],
+        [newest.hash, newest],
+      ]),
+    });
+
+    const workShort = addTestChunk('compact triggers archive trim body', 'file', 'src/trim-work.ts');
+    useContextStore.getState().compactChunks([workShort]);
+
+    const arch = useContextStore.getState().archivedChunks;
+    let sum = 0;
+    for (const c of arch.values()) sum += c.tokens;
+    expect(sum).toBeLessThanOrEqual(ARCHIVE_MAX_TOKENS);
+    expect(arch.has(oldest.hash)).toBe(false);
+    expect(arch.has(mid.hash)).toBe(true);
+    expect(arch.has(newest.hash)).toBe(true);
+  });
+});
+
+describe('autoManagePass2ChunkPressureExceedsGate', () => {
+  it('subtracts staged relief so Pass 2 does not run when chunk pressure alone is misleading', () => {
+    const maxTokens = 100_000;
+    const threshold = maxTokens * 0.9;
+    expect(85_000 + 10_000 > threshold).toBe(true);
+    expect(autoManagePass2ChunkPressureExceedsGate(85_000, 10_000, 8_000, maxTokens)).toBe(false);
+    expect(autoManagePass2ChunkPressureExceedsGate(85_000, 10_000, 0, maxTokens)).toBe(true);
   });
 });
 

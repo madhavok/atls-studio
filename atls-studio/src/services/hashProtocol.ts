@@ -87,15 +87,21 @@ function pruneEvictedRefsIfBurden(): void {
     else active++;
   }
   if (active === 0 || evicted / active < 1.5) return;
-  pruneEvictedOldestWhile(() => {
-    let e = 0;
-    let a = 0;
-    for (const [, r] of refs) {
-      if (r.visibility === 'evicted') e++;
-      else a++;
+  const evictedRows: Array<[string, ChunkRef]> = [];
+  for (const [h, r] of refs) {
+    if (r.visibility === 'evicted') evictedRows.push([h, r]);
+  }
+  evictedRows.sort((a, b) => a[1].seenAtTurn - b[1].seenAtTurn);
+  const activeCount = active;
+  let e = evicted;
+  let i = 0;
+  while (activeCount > 0 && e / activeCount >= 1.2 && i < evictedRows.length) {
+    const [h, r] = evictedRows[i++];
+    if (refs.get(h) === r && r.visibility === 'evicted') {
+      removeRefFromIndexes(h, r);
+      e--;
     }
-    return a > 0 && e / a >= 1.2;
-  });
+  }
 }
 
 function pruneEvictedOldestWhile(shouldContinue: () => boolean): void {

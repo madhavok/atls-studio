@@ -144,7 +144,7 @@ function isSubstantiveBbWrite(key?: string, content?: string): boolean {
 }
 
 // Max tokens for archived chunks — LRU-evicted when exceeded
-const ARCHIVE_MAX_TOKENS = 50000;
+export const ARCHIVE_MAX_TOKENS = 50000;
 
 // Stale dormant engrams above this threshold are archived on eviction;
 // those at or below (e.g. batch call stubs at ~7tk) are dropped outright.
@@ -721,35 +721,42 @@ function pruneStagedSnippetsToBudget(
     // takeAnchor updates anchorMetrics inline.
   }
 
-  const takeFromList = (
-    list: Array<[string, StagedSnippet]>,
-    skipPersistent: boolean,
-    startIdx = 0,
-  ): boolean => {
-    for (let i = startIdx; i < list.length; i++) {
-      const [key, snippet] = list[i];
+  let nonPersistentIdx = 0;
+  const takeOneNonPersistent = (): boolean => {
+    while (nonPersistentIdx < nonPersistentCandidates.length) {
+      const [key, snippet] = nonPersistentCandidates[nonPersistentIdx++];
       if (!next.has(key)) continue;
-      if (skipPersistent && snippet.admissionClass === 'persistentAnchor') continue;
       next.delete(key);
       removed.push({ key, snippet });
       freed += snippet.tokens;
       runningTotal -= snippet.tokens;
-      if (snippet.admissionClass === 'persistentAnchor') {
-        anchorMetrics.tokens -= snippet.tokens;
-        anchorMetrics.count--;
-      }
+      return true;
+    }
+    return false;
+  };
+
+  const takeOneAnchorOverflow = (): boolean => {
+    while (anchorCandIdx < anchorOnlyCandidates.length) {
+      const [key, snippet] = anchorOnlyCandidates[anchorCandIdx++];
+      if (!next.has(key)) continue;
+      next.delete(key);
+      removed.push({ key, snippet });
+      freed += snippet.tokens;
+      runningTotal -= snippet.tokens;
+      anchorMetrics.tokens -= snippet.tokens;
+      anchorMetrics.count--;
       return true;
     }
     return false;
   };
 
   // 2) Global total cap: evict non–persistent-anchor entries first.
-  while (runningTotal > STAGED_TOTAL_HARD_CAP_TOKENS && takeFromList(nonPersistentCandidates, false)) {
+  while (runningTotal > STAGED_TOTAL_HARD_CAP_TOKENS && takeOneNonPersistent()) {
     // Drain transients / non-persistent until under cap or exhausted.
   }
   // 3) If still over cap, evict persistent anchors only (Step 2 already drained non-anchors).
-  while (runningTotal > STAGED_TOTAL_HARD_CAP_TOKENS && takeFromList(anchorOnlyCandidates, false, anchorCandIdx)) {
-    // Same anchor ordering as sortedCandidates.
+  while (runningTotal > STAGED_TOTAL_HARD_CAP_TOKENS && takeOneAnchorOverflow()) {
+    // Same anchor ordering as sortedCandidates; anchorCandIdx continues after takeAnchor.
   }
 
   return {
@@ -1804,6 +1811,16 @@ function evictArchiveIfNeeded(archive: Map<string, ContextChunk>): Map<string, C
   return out;
 }
 
+/** Pass 2 auto-manage gate: chunk-layer pressure vs maxTokens, adjusted for staged tokens freed in Pass 1. */
+export function autoManagePass2ChunkPressureExceedsGate(
+  currentUsed: number,
+  incomingTokens: number,
+  stagedReliefFreed: number,
+  maxTokens: number,
+): boolean {
+  return currentUsed + incomingTokens - stagedReliefFreed > maxTokens * 0.90;
+}
+
 const CHAT_TYPES = new Set(['msg:user', 'msg:asst']);
 
 /** Collect + sort chat chunks once (expensive part). Reuse across multiple adaptive-count slices. */
@@ -2096,6 +2113,7 @@ export const useContextStore = create<ContextStoreState>()(
         _autoManagePending = true;
       } else if (wouldExceed90) {
         _autoManageInProgress = true;
+        let sortedChat: Array<[string, ContextChunk]> | undefined;
         try {
           const stagedRelief = pruneStagedSnippetsToBudget(state.stagedSnippets, 'overBudget');
           if (stagedRelief.removed.length > 0) {
@@ -2106,7 +2124,7 @@ export const useContextStore = create<ContextStoreState>()(
             estimatedPromptPressure -= stagedRelief.freed;
           }
 
-          const sortedChat = getSortedChatEntries(newChunks);
+          sortedChat = getSortedChatEntries(newChunks);
           const { hashes: protectedChat } = buildProtectedChatHashes(sortedChat, currentUsed, state.maxTokens);
           const completedSubtaskIds = new Set(
             (state.taskPlan?.subtasks || [])
@@ -2173,11 +2191,13 @@ export const useContextStore = create<ContextStoreState>()(
           totalFreed = 0;
           currentUsed = 0;
           for (const c of newChunks.values()) currentUsed += c.tokens;
-          if (currentUsed + tokens > state.maxTokens * 0.90) {
+          // Pass 2 gate uses chunk-layer sums; subtract Pass 1 staged relief so we do not over-compact.
+          if (autoManagePass2ChunkPressureExceedsGate(currentUsed, tokens, stagedReliefFreed, state.maxTokens)) {
             _autoManageInProgress = true;
             try {
-              const sortedChatAfterPass1 = getSortedChatEntries(newChunks);
-              const { hashes: protectedChat2 } = buildProtectedChatHashes(sortedChatAfterPass1, currentUsed, state.maxTokens);
+              const sortedChatPass2 =
+                sortedChat?.filter(([k]) => newChunks.has(k)) ?? getSortedChatEntries(newChunks);
+              const { hashes: protectedChat2 } = buildProtectedChatHashes(sortedChatPass2, currentUsed, state.maxTokens);
               const completedSubtaskIds2 = new Set(
                 (state.taskPlan?.subtasks || []).filter(s => s.status === 'done').map(s => s.id)
               );
@@ -2229,7 +2249,7 @@ export const useContextStore = create<ContextStoreState>()(
       }
       const manifestUpdate = newManifest ? { droppedManifest: capDroppedManifest(newManifest) } : {};
       if (totalFreed > 0) {
-        if (newArchive) evictArchiveIfNeeded(newArchive);
+        if (newArchive) newArchive = evictArchiveIfNeeded(newArchive);
         return {
           chunks: newChunks,
           ...(newArchive ? { archivedChunks: newArchive } : {}),
@@ -2426,10 +2446,10 @@ export const useContextStore = create<ContextStoreState>()(
         hppDematerialize(chunk.hash);
       }
 
-      evictArchiveIfNeeded(newArchive);
+      const trimmedArchive = evictArchiveIfNeeded(newArchive);
       return {
         chunks: newChunks,
-        archivedChunks: newArchive,
+        archivedChunks: trimmedArchive,
         freedTokens: state.freedTokens + freedTokens,
         lastFreed: freedTokens,
         lastFreedAt: Date.now(),
@@ -2486,10 +2506,10 @@ export const useContextStore = create<ContextStoreState>()(
           }
         }
         for (const key of toDelete) newChunks.delete(key);
-        evictArchiveIfNeeded(newArchive);
+        const trimmedArchiveWildcard = evictArchiveIfNeeded(newArchive);
         return {
           chunks: newChunks,
-          archivedChunks: newArchive,
+          archivedChunks: trimmedArchiveWildcard,
           freedTokens: state.freedTokens + freed,
           lastFreed: freed,
           lastFreedAt: Date.now(),
@@ -2519,10 +2539,10 @@ export const useContextStore = create<ContextStoreState>()(
         }
       }
       
-      evictArchiveIfNeeded(newArchive);
+      const trimmedArchiveUnload = evictArchiveIfNeeded(newArchive);
       return {
         chunks: newChunks,
-        archivedChunks: newArchive,
+        archivedChunks: trimmedArchiveUnload,
         freedTokens: state.freedTokens + freed,
         lastFreed: freed,
         lastFreedAt: Date.now(),
@@ -3708,12 +3728,12 @@ export const useContextStore = create<ContextStoreState>()(
         subtasks,
         activeSubtaskId: subtaskId,
       };
-      evictArchiveIfNeeded(newArchive);
+      const trimmedArchiveSubtask = evictArchiveIfNeeded(newArchive);
       return {
         taskPlan: updatedPlan,
         task: updatedPlan,
         chunks: newChunks,
-        archivedChunks: newArchive,
+        archivedChunks: trimmedArchiveSubtask,
         freedTokens: state.freedTokens + freedTokens,
         lastFreed: freedTokens,
         lastFreedAt: Date.now(),
@@ -5335,11 +5355,11 @@ export const useContextStore = create<ContextStoreState>()(
 
       if (evicted === 0) return {};
 
-      evictArchiveIfNeeded(newArchive);
+      const trimmedArchiveDormant = evictArchiveIfNeeded(newArchive);
 
       return {
         chunks: newChunks,
-        archivedChunks: newArchive,
+        archivedChunks: trimmedArchiveDormant,
         freedTokens: state.freedTokens + freedTokens,
         lastFreed: freedTokens,
         lastFreedAt: Date.now(),
