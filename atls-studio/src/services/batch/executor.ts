@@ -1509,7 +1509,7 @@ export async function executeUnifiedBatch(
       continue;
     }
 
-    // Block further reads/searches and repeated dry-run previews after the spin breaker fires
+    // Block further reads/searches and repeated dry-run previews after dry-run preview spin (read-spin is tracked only)
     const isParamsDryRun = mergedParams.dry_run === true || mergedParams.dry_run === 'true';
     if (spinBlocked && (
       step.use.startsWith('read.')
@@ -1644,11 +1644,8 @@ export async function executeUnifiedBatch(
       // pollute range counts that gate subsequent investigation reads.
       if (spinEntries.length > 0 && step.use !== 'read.shaped') {
         const br = ctx.store().recordFileReadSpin(spinEntries);
-        if (br) {
-          const isHardBlock = br.startsWith('<<STOP:');
-          if (isHardBlock) { spinBreaker = br; spinBlocked = true; }
-          else if (!spinBlocked) { spinBreaker = br; }
-        }
+        // Read-spin is tracked in the store and surfaced via spin_breaker / UI; it does not hard-block steps.
+        if (br) spinBreaker = br;
       }
     }
     if (output.ok && step.use === 'session.bb.write') {

@@ -5511,7 +5511,7 @@ export const useContextStore = create<ContextStoreState>()(
         }
 
         if (nextSpin[compositeKey] >= EXACT_SPIN_LIMIT) {
-          breaker = `<<STOP: "${p}" range ${rangeKey} has been read ${nextSpin[compositeKey]} times without a write or BB entry. Use the content you already have (h:ref from prior read). Do NOT re-read the same range.>>`;
+          breaker = `<<WARN: "${p}" range ${rangeKey} has been read ${nextSpin[compositeKey]} times without a write or BB entry. Use the content you already have (h:ref from prior read). Do NOT re-read the same range.>>`;
         } else if (nextRanges[pathKey].length >= RANGE_NUDGE_LIMIT && !breaker) {
           const priorRanges = nextRanges[pathKey].filter(r => r !== rangeKey).join(', ');
           breaker = `<<NUDGE: "${p}" has been read at ${nextRanges[pathKey].length} different ranges (${nextRanges[pathKey].join(', ')}). Prior reads: ${priorRanges}. Search or use h:refs to find the right span before reading more.>>`;

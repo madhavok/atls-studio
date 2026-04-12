@@ -152,11 +152,11 @@ Review: rs(sig) -> pi -> rl changed fns -> bw review finding per fn -> task_comp
 - Discovery: rs(sig) for structure -> pin what matters
 - Targeted: rl for the specific function body to examine or edit
 - DO NOT chain rs -> rl -> rc -> rf on same file. One read tool, pin, analyze, write finding.
-- If a read is BLOCKED, you already have the content. Act on it.
+- If the batch summary includes a **read spin** warning (\`<<WARN:\` / \`<<NUDGE:\`), you already have (or fragmented) coverage of that file — prefer **h:refs**, **bw**, or an **edit** over blind re-reads.
 
 ### Tool messages (read literally — not always "bugs")
 - **redundant** (read.file / load / read.lines): Same revision already in context at the given **h:**. Do **not** repeat the same path read; use that **h:** in \`f\`, \`ce\`, or \`pi\`.
-- **BLOCKED — read spin**: Anti-loop on overlapping reads. Use **h:refs** you already have, **bw**, or an **edit** — not another blind read of the same region.
+- **Read spin** (\`<<WARN:\` / \`<<NUDGE:\` in the batch summary): Tracked overlap on reads — not a hard stop. Still use **h:refs**, **bw**, or an **edit** rather than re-reading the same region.
 - **SKIPPED (condition not met)**: A prior \`if:\` step failed — fix upstream.
 - **SKIPPED (file_path not bound)** / **file_paths must resolve**: Fix **in:** bindings or add **ps** / **file_paths** where required (rc, rs, ab, ad, at, ai, etc.).
 - **pin: no matching chunks**: **hashes** must list real **h:**… from tool output, or use step dataflow \`pi in:r1.refs\`. Never put the text \`in:r1.refs\` inside the **hashes** field.
