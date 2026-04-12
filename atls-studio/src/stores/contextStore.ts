@@ -2096,15 +2096,15 @@ export const useContextStore = create<ContextStoreState>()(
         _autoManagePending = true;
       } else if (wouldExceed90) {
         _autoManageInProgress = true;
-
-        const stagedRelief = pruneStagedSnippetsToBudget(state.stagedSnippets, 'overBudget');
-        if (stagedRelief.removed.length > 0) {
-          nextStagedSnippets = stagedRelief.staged;
-          stageVersionBump = 1;
-          stagedReliefFreed = stagedRelief.freed;
-          stagedReliefRefs = stagedRelief.removed.map(({ key }) => key);
-          estimatedPromptPressure -= stagedRelief.freed;
-        }
+        try {
+          const stagedRelief = pruneStagedSnippetsToBudget(state.stagedSnippets, 'overBudget');
+          if (stagedRelief.removed.length > 0) {
+            nextStagedSnippets = stagedRelief.staged;
+            stageVersionBump = 1;
+            stagedReliefFreed = stagedRelief.freed;
+            stagedReliefRefs = stagedRelief.removed.map(({ key }) => key);
+            estimatedPromptPressure -= stagedRelief.freed;
+          }
 
           const sortedChat = getSortedChatEntries(newChunks);
           const { hashes: protectedChat } = buildProtectedChatHashes(sortedChat, currentUsed, state.maxTokens);
@@ -2164,18 +2164,20 @@ export const useContextStore = create<ContextStoreState>()(
             autoEvictedHashes.push(current.hash);
             newChunks.delete(key);
           }
-
+        } finally {
           _autoManageInProgress = false;
-          if (_autoManagePending) {
-            _autoManagePending = false;
-            const pass1Freed = totalFreed;
-            totalFreed = 0;
-            currentUsed = 0;
-            for (const c of newChunks.values()) currentUsed += c.tokens;
-            if (currentUsed + tokens > state.maxTokens * 0.90) {
-              _autoManageInProgress = true;
-              try {
-              const { hashes: protectedChat2 } = buildProtectedChatHashes(sortedChat, currentUsed, state.maxTokens);
+        }
+        if (_autoManagePending) {
+          _autoManagePending = false;
+          const pass1Freed = totalFreed;
+          totalFreed = 0;
+          currentUsed = 0;
+          for (const c of newChunks.values()) currentUsed += c.tokens;
+          if (currentUsed + tokens > state.maxTokens * 0.90) {
+            _autoManageInProgress = true;
+            try {
+              const sortedChatAfterPass1 = getSortedChatEntries(newChunks);
+              const { hashes: protectedChat2 } = buildProtectedChatHashes(sortedChatAfterPass1, currentUsed, state.maxTokens);
               const completedSubtaskIds2 = new Set(
                 (state.taskPlan?.subtasks || []).filter(s => s.status === 'done').map(s => s.id)
               );
@@ -2210,12 +2212,12 @@ export const useContextStore = create<ContextStoreState>()(
                 autoEvictedHashes.push(cur.hash);
                 newChunks.delete(key);
               }
-              } finally {
-                _autoManageInProgress = false;
-              }
+            } finally {
+              _autoManageInProgress = false;
             }
-            totalFreed += pass1Freed;
           }
+          totalFreed += pass1Freed;
+        }
       }
 
       newChunks.set(hash, chunk);
@@ -3189,9 +3191,11 @@ export const useContextStore = create<ContextStoreState>()(
         const newChunks = new Map(s.chunks);
         let newDropped = s.droppedManifest;
         let droppedCopied = false;
+        let ttlMutated = false;
         for (const [key, chunk] of chunksWithTtl) {
           const remaining = (chunk.ttl ?? 0) - 1;
           if (remaining <= 0) {
+            ttlMutated = true;
             newChunks.delete(key);
             if (!droppedCopied) {
               newDropped = new Map(s.droppedManifest);
@@ -3208,10 +3212,15 @@ export const useContextStore = create<ContextStoreState>()(
               subtaskId: chunk.subtaskId,
             });
           } else {
+            ttlMutated = true;
             newChunks.set(key, { ...chunk, ttl: remaining });
           }
         }
-        return newChunks.size !== s.chunks.size ? { chunks: newChunks, droppedManifest: capDroppedManifest(newDropped) } : {};
+        if (!ttlMutated) return {};
+        return {
+          chunks: newChunks,
+          ...(droppedCopied ? { droppedManifest: capDroppedManifest(newDropped) } : {}),
+        };
       });
     }
 
@@ -3261,21 +3270,27 @@ export const useContextStore = create<ContextStoreState>()(
     let invalidated = 0;
     let preserved = 0;
     const unresolvablePaths: string[] = [];
-    // Build normalized-path index once to avoid O(M×N) fallback scan
+    // Normalized revision index + paths bulk explicitly reported as unresolvable (null).
     let normalizedRevIndex: Map<string, string> | null = null;
+    let bulkExplicitNull: Set<string> | null = null;
     if (revisionMap) {
       normalizedRevIndex = new Map();
+      bulkExplicitNull = new Set();
       for (const [k, v] of revisionMap) {
-        if (v != null) normalizedRevIndex.set(normalizeSourcePath(k), v);
+        const nk = normalizeSourcePath(k);
+        if (v != null) normalizedRevIndex.set(nk, v);
+        else bulkExplicitNull.add(nk);
       }
     }
     for (const path of paths) {
-      let rev = revisionMap ? (revisionMap.get(path) ?? null) : await perPathResolver!(path);
-      if (rev == null && normalizedRevIndex) {
-        rev = normalizedRevIndex.get(path) ?? null;
-      }
-      if (rev == null && perPathResolver && revisionMap) {
-        rev = await perPathResolver(path);
+      let rev: string | null = null;
+      if (!revisionMap) {
+        rev = await perPathResolver!(path);
+      } else {
+        rev = normalizedRevIndex!.get(path) ?? null;
+        if (rev == null && perPathResolver && !bulkExplicitNull!.has(path)) {
+          rev = await perPathResolver(path);
+        }
       }
       if (rev == null) {
         unresolvablePaths.push(path);

@@ -458,6 +458,21 @@ describe('refreshRoundEnd', () => {
     expect(chunk?.sourceRevision).toBe('rev-1');
   });
 
+  it('decrements unpinned chunk TTL each round even when map size unchanged', async () => {
+    const store = useContextStore.getState();
+    const shortHash = store.addChunk('export const u = 1;', 'smart', 'src/ttl-decr.ts', undefined, undefined, 'rev-t', {
+      sourceRevision: 'rev-t',
+      viewKind: 'latest',
+      ttl: 3,
+    });
+    await store.refreshRoundEnd({
+      paths: ['src/ttl-decr.ts'],
+      getRevisionForPath: async () => 'rev-t',
+    });
+    const chunk = Array.from(useContextStore.getState().chunks.values()).find(c => c.shortHash === shortHash);
+    expect(chunk?.ttl).toBe(2);
+  });
+
   it('external revision change: invalidates derived, updates latest, preserves snapshot', async () => {
     const store = useContextStore.getState();
     // Use separate sources to prevent addChunk auto-compaction (same-source forwarding)
@@ -585,6 +600,20 @@ describe('refreshRoundEnd', () => {
     expect(unresolved.length).toBeGreaterThanOrEqual(1);
     const refs = unresolved[0]?.refs ?? [];
     expect(refs.some(r => r.startsWith('file_marked:'))).toBe(true);
+  });
+
+  it('bulk resolver explicit null skips per-path resolver', async () => {
+    const store = useContextStore.getState();
+    store.addChunk('export const f = 1;', 'smart', 'src/f-null-bulk.ts', undefined, undefined, 'rev-1', {
+      sourceRevision: 'rev-1',
+      viewKind: 'latest',
+    });
+    const perPathSpy = vi.fn(async () => 'rev-fallback');
+    await store.refreshRoundEnd({
+      bulkGetRevisions: async paths => new Map(paths.map(p => [p, null] as const)),
+      getRevisionForPath: perPathSpy,
+    });
+    expect(perPathSpy).not.toHaveBeenCalled();
   });
 
   it('bulk resolver takes precedence over per-path resolver', async () => {
