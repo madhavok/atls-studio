@@ -611,12 +611,16 @@ function recordSnapshotFromOutput(
       const rlFile = artifact.file as string | undefined;
       const rlActualRange = artifact.actual_range as Array<[number, number | null]> | undefined;
       const rlHash = SnapshotTracker.extractHash(artifact);
+      const lineTotal = typeof artifact.lines === 'number' ? artifact.lines : undefined;
       if (rlFile && rlHash && Array.isArray(rlActualRange)) {
         for (const range of rlActualRange) {
           const start = range[0];
           const end = range[1] ?? start;
           if (typeof start === 'number' && typeof end === 'number') {
-            snapshotTracker.record(rlFile, rlHash, 'lines', { readRegion: { start, end } });
+            snapshotTracker.record(rlFile, rlHash, 'lines', {
+              readRegion: { start, end },
+              ...(lineTotal != null ? { fullFileLineCount: lineTotal } : {}),
+            });
           }
         }
       }

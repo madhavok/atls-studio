@@ -298,6 +298,8 @@ export interface ContextChunk {
   lastRebind?: RebindOutcome;
   createdAtRev?: number;
   readSpan?: ReadSpan;
+  /** Optional per-file revisions when `source` is comma-joined; avoids full evict if only unrelated paths drifted. */
+  compositeSourceRevisions?: Record<string, string>;
 }
 
 export interface ReadSpan {
@@ -690,28 +692,11 @@ function pruneStagedSnippetsToBudget(
       return getStageRecency(snippetA) - getStageRecency(snippetB);
     });
 
-  let candidateIdx = 0;
-  const takeLowestValue = (): boolean => {
-    // Walk the pre-sorted list, skipping already-removed entries.
-    while (candidateIdx < sortedCandidates.length) {
-      const [key, snippet] = sortedCandidates[candidateIdx++];
-      if (!next.has(key)) continue; // already removed by a prior pass
-      next.delete(key);
-      removed.push({ key, snippet });
-      freed += snippet.tokens;
-      runningTotal -= snippet.tokens;
-      return true;
-    }
-    return false;
-  };
+  const nonPersistentCandidates = sortedCandidates.filter(
+    ([, s]) => s.admissionClass !== 'persistentAnchor',
+  );
 
-  while (runningTotal > STAGED_TOTAL_HARD_CAP_TOKENS && takeLowestValue()) {
-    // Evict until total tokens are within budget.
-  }
-  const anchorMetrics = getPersistentAnchorMetrics(next);
-  // Build anchor-only candidate list: O(anchors) eviction instead of O(all).
-  // takeLowestValue() exhausts lower-priority items before reaching anchors, so
-  // anchor-budget loops that call it waste iterations and over-evict transients.
+  let anchorMetrics = getPersistentAnchorMetrics(next);
   const anchorOnlyCandidates = sortedCandidates.filter(
     ([, s]) => s.admissionClass === 'persistentAnchor',
   );
@@ -730,11 +715,39 @@ function pruneStagedSnippetsToBudget(
     }
     return false;
   };
+
+  // 1) Anchor-specific caps first so persistent anchors are not consumed by the global total-cap pass.
   while (anchorMetrics.tokens > STAGED_ANCHOR_BUDGET_TOKENS && takeAnchor()) {
     // takeAnchor updates anchorMetrics inline.
   }
   while (anchorMetrics.count > MAX_PERSISTENT_STAGE_ENTRIES && takeAnchor()) {
     // takeAnchor updates anchorMetrics inline.
+  }
+
+  const takeFromList = (list: Array<[string, StagedSnippet]>, skipPersistent: boolean): boolean => {
+    for (const [key, snippet] of list) {
+      if (!next.has(key)) continue;
+      if (skipPersistent && snippet.admissionClass === 'persistentAnchor') continue;
+      next.delete(key);
+      removed.push({ key, snippet });
+      freed += snippet.tokens;
+      runningTotal -= snippet.tokens;
+      if (snippet.admissionClass === 'persistentAnchor') {
+        anchorMetrics.tokens -= snippet.tokens;
+        anchorMetrics.count--;
+      }
+      return true;
+    }
+    return false;
+  };
+
+  // 2) Global total cap: evict non–persistent-anchor entries first.
+  while (runningTotal > STAGED_TOTAL_HARD_CAP_TOKENS && takeFromList(nonPersistentCandidates, false)) {
+    // Drain transients / non-persistent until under cap or exhausted.
+  }
+  // 3) If still over cap, allow evicting persistent anchors (same priority order as sortedCandidates).
+  while (runningTotal > STAGED_TOTAL_HARD_CAP_TOKENS && takeFromList(sortedCandidates, false)) {
+    // May include persistent anchors when staging is anchor-heavy.
   }
 
   return {
@@ -852,7 +865,7 @@ interface ContextStoreState {
   task: TaskPlan | null;
   
   // Actions
-  addChunk: (content: string, type: ChunkType, source?: string, symbols?: DigestSymbol[], summary?: string, backendHash?: string, opts?: { subtaskIds?: string[]; boundDuringPlanning?: boolean; fullHash?: string; sourceRevision?: string; viewKind?: EngramViewKind; editSessionId?: string; origin?: EngramOrigin; readSpan?: ReadSpan; ttl?: number }) => string;
+  addChunk: (content: string, type: ChunkType, source?: string, symbols?: DigestSymbol[], summary?: string, backendHash?: string, opts?: { subtaskIds?: string[]; boundDuringPlanning?: boolean; fullHash?: string; sourceRevision?: string; viewKind?: EngramViewKind; editSessionId?: string; origin?: EngramOrigin; readSpan?: ReadSpan; ttl?: number; compositeSourceRevisions?: Record<string, string> }) => string;
   findReusableRead: (span: ReadSpan) => string | null;
   touchChunk: (hash: string) => void;
   compactChunks: (hashes: string[], opts?: { confirmWildcard?: boolean; tier?: 'pointer' | 'sig'; sigContentByRef?: Map<string, string> }) => { compacted: number; freedTokens: number };
@@ -1080,6 +1093,15 @@ function isExactSourcePathMatch(source: string | undefined, path: string): boole
   return !!source && normalizeSourcePath(source) === normalizeSourcePath(path);
 }
 
+function compositeRevisionForPath(revMap: Record<string, string> | undefined, path: string): string | undefined {
+  if (!revMap) return undefined;
+  const pathNorm = normalizeSourcePath(path);
+  for (const [k, v] of Object.entries(revMap)) {
+    if (normalizeSourcePath(k) === pathNorm) return v;
+  }
+  return undefined;
+}
+
 function isFileBackedType(type: string): boolean {
   return type === 'file' || type === 'smart' || type === 'raw' || type === 'result';
 }
@@ -1107,7 +1129,9 @@ interface ReconcileSourceRevisionBatch {
   dormantEvicted: number;
 }
 
-function reconcileWorkingChunkForSourceRevision(
+/** `working` = chunk lives in the active chunks map; `archived` = chunk is in archivedChunks only. */
+function reconcileChunkForSourceRevision(
+  surface: 'working' | 'archived',
   path: string,
   currentRevision: string,
   key: string,
@@ -1126,9 +1150,18 @@ function reconcileWorkingChunkForSourceRevision(
       batch.stats.preserved++;
       return;
     }
-    newChunks.delete(key);
-    if (chunk.tokens > DORMANT_ARCHIVE_THRESHOLD) {
-      newArchived.set(key, { ...chunk });
+    const held = compositeRevisionForPath(chunk.compositeSourceRevisions, path);
+    if (held != null && canonicalizeSnapshotHash(held) === canonicalizeSnapshotHash(currentRevision)) {
+      batch.stats.preserved++;
+      return;
+    }
+    if (surface === 'working') {
+      newChunks.delete(key);
+      if (chunk.tokens > DORMANT_ARCHIVE_THRESHOLD) {
+        newArchived.set(key, { ...chunk });
+      }
+    } else {
+      newArchived.delete(key);
     }
     batch.stats.invalidated++;
     batch.evictedHashes.push(chunk.hash);
@@ -1139,16 +1172,37 @@ function reconcileWorkingChunkForSourceRevision(
     return;
   }
   if (chunk.viewKind === 'derived' && chunk.sourceRevision && chunk.sourceRevision !== currentRevision) {
-    newChunks.delete(key);
+    if (surface === 'working') {
+      newChunks.delete(key);
+      if (chunk.tokens > DORMANT_ARCHIVE_THRESHOLD) {
+        newArchived.set(key, { ...chunk });
+      }
+    } else if (chunk.tokens > DORMANT_ARCHIVE_THRESHOLD) {
+      newArchived.set(key, {
+        ...chunk,
+        observedRevision: currentRevision,
+        freshness: 'suspect',
+        freshnessCause: effectiveCause,
+        suspectSince: chunk.suspectSince ?? Date.now(),
+      });
+    } else {
+      newArchived.delete(key);
+    }
     batch.stats.invalidated++;
-    batch.evictedHashes.push(chunk.hash);
+    if (surface === 'working' || chunk.tokens <= DORMANT_ARCHIVE_THRESHOLD) {
+      batch.evictedHashes.push(chunk.hash);
+    }
     return;
   }
   if (chunk.compacted && !chunk.pinned && chunk.sourceRevision && chunk.sourceRevision !== currentRevision) {
-    newChunks.delete(key);
-    if (chunk.tokens > DORMANT_ARCHIVE_THRESHOLD) {
-      newArchived.set(key, { ...chunk });
-    } else {
+    if (surface === 'working') {
+      newChunks.delete(key);
+      if (chunk.tokens > DORMANT_ARCHIVE_THRESHOLD) {
+        newArchived.set(key, { ...chunk });
+      } else {
+        newArchived.delete(key);
+      }
+    } else if (chunk.tokens <= DORMANT_ARCHIVE_THRESHOLD) {
       newArchived.delete(key);
     }
     batch.stats.invalidated++;
@@ -1169,7 +1223,8 @@ function reconcileWorkingChunkForSourceRevision(
       freshnessCause: 'session_restore',
       suspectSince: chunk.suspectSince ?? Date.now(),
     };
-    newChunks.set(key, stuck);
+    if (surface === 'working') newChunks.set(key, stuck);
+    else newArchived.set(key, stuck);
     batch.stats.updated++;
     return;
   }
@@ -1186,8 +1241,36 @@ function reconcileWorkingChunkForSourceRevision(
     delete nextChunk.freshnessCause;
   }
   if (nextChunk.viewKind == null && isFileBackedType(nextChunk.type)) nextChunk.viewKind = 'latest';
-  newChunks.set(key, nextChunk);
+  if (surface === 'working') newChunks.set(key, nextChunk);
+  else newArchived.set(key, nextChunk);
   batch.stats.updated++;
+}
+
+function reconcileWorkingChunkForSourceRevision(
+  path: string,
+  currentRevision: string,
+  key: string,
+  chunk: ContextChunk,
+  newChunks: Map<string, ContextChunk>,
+  newArchived: Map<string, ContextChunk>,
+  effectiveCause: FreshnessCause,
+  isSessionRestore: boolean,
+  isSameFilePriorEdit: boolean,
+  batch: ReconcileSourceRevisionBatch,
+): void {
+  reconcileChunkForSourceRevision(
+    'working',
+    path,
+    currentRevision,
+    key,
+    chunk,
+    newChunks,
+    newArchived,
+    effectiveCause,
+    isSessionRestore,
+    isSameFilePriorEdit,
+    batch,
+  );
 }
 
 function reconcileArchivedChunkForSourceRevision(
@@ -1201,69 +1284,20 @@ function reconcileArchivedChunkForSourceRevision(
   isSameFilePriorEdit: boolean,
   batch: ReconcileSourceRevisionBatch,
 ): void {
-  if (!sourceTouchesPath(chunk.source, path)) return;
-  batch.stats.total++;
-  if (!isExactSourcePathMatch(chunk.source, path)) {
-    if (chunk.viewKind === 'snapshot') {
-      batch.stats.preserved++;
-      return;
-    }
-    newArchived.delete(key);
-    batch.stats.invalidated++;
-    batch.evictedHashes.push(chunk.hash);
-    return;
-  }
-  if (chunk.viewKind === 'snapshot') {
-    batch.stats.preserved++;
-    return;
-  }
-  if (chunk.viewKind === 'derived' && chunk.sourceRevision && chunk.sourceRevision !== currentRevision) {
-    newArchived.delete(key);
-    batch.stats.invalidated++;
-    batch.evictedHashes.push(chunk.hash);
-    return;
-  }
-  if (chunk.compacted && !chunk.pinned && chunk.sourceRevision && chunk.sourceRevision !== currentRevision) {
-    if (chunk.tokens <= DORMANT_ARCHIVE_THRESHOLD) {
-      newArchived.delete(key);
-    }
-    batch.stats.invalidated++;
-    batch.dormantEvicted++;
-    batch.evictedHashes.push(chunk.hash);
-    return;
-  }
-  if (
-    isSessionRestore &&
-    chunk.sourceRevision &&
-    chunk.sourceRevision !== currentRevision &&
-    !sessionRestoreBodyMatchesDisk(chunk, currentRevision)
-  ) {
-    const stuck: ContextChunk = {
-      ...chunk,
-      observedRevision: currentRevision,
-      freshness: 'suspect',
-      freshnessCause: 'session_restore',
-      suspectSince: chunk.suspectSince ?? Date.now(),
-    };
-    newArchived.set(key, stuck);
-    batch.stats.updated++;
-    return;
-  }
-  const nextChunk = { ...chunk, sourceRevision: currentRevision, observedRevision: currentRevision };
-  delete nextChunk.suspectSince;
-  const alreadyFreshFromEdit = isSameFilePriorEdit
-    && chunk.origin === 'edit-refresh'
-    && chunk.sourceRevision === currentRevision;
-  if (isSameFilePriorEdit && !alreadyFreshFromEdit) {
-    nextChunk.freshness = 'shifted';
-    nextChunk.freshnessCause = effectiveCause;
-  } else {
-    delete nextChunk.freshness;
-    delete nextChunk.freshnessCause;
-  }
-  if (nextChunk.viewKind == null && isFileBackedType(nextChunk.type)) nextChunk.viewKind = 'latest';
-  newArchived.set(key, nextChunk);
-  batch.stats.updated++;
+  const dummyChunks = new Map<string, ContextChunk>();
+  reconcileChunkForSourceRevision(
+    'archived',
+    path,
+    currentRevision,
+    key,
+    chunk,
+    dummyChunks,
+    newArchived,
+    effectiveCause,
+    isSessionRestore,
+    isSameFilePriorEdit,
+    batch,
+  );
 }
 
 function reconcileStagedSnippetForSourceRevision(
@@ -1819,7 +1853,8 @@ function buildTieredEvictionCandidates(
   for (const entry of entries) {
     const [h, c] = entry;
     if (isProtected(h, c)) continue;
-    if (isCompletedSubtask(c) && !isChatChunk(c)) tier1.push(entry);
+    // Completed subtask: evict tool/output chunks first; include chat so scrollback does not crowd WM.
+    if (isCompletedSubtask(c)) tier1.push(entry);
     else if (!isChatChunk(c)) tier2.push(entry);
     else tier3.push(entry);
   }
@@ -1900,7 +1935,7 @@ export const useContextStore = create<ContextStoreState>()(
    * Tags chunk with current activeSubtaskId.
    * Returns the shortHash for display/reference.
    */
-  addChunk: (content: string, type: ChunkType, source?: string, symbols?: DigestSymbol[], summary?: string, backendHash?: string, opts?: { subtaskIds?: string[]; boundDuringPlanning?: boolean; fullHash?: string; sourceRevision?: string; viewKind?: EngramViewKind; editSessionId?: string; origin?: EngramOrigin; readSpan?: ReadSpan; ttl?: number }) => {
+  addChunk: (content: string, type: ChunkType, source?: string, symbols?: DigestSymbol[], summary?: string, backendHash?: string, opts?: { subtaskIds?: string[]; boundDuringPlanning?: boolean; fullHash?: string; sourceRevision?: string; viewKind?: EngramViewKind; editSessionId?: string; origin?: EngramOrigin; readSpan?: ReadSpan; ttl?: number; compositeSourceRevisions?: Record<string, string> }) => {
     const hash = backendHash || hashContentSync(content);
     const shortHash = hash.slice(0, SHORT_HASH_LEN);
     const tokens = countTokensSync(content);
@@ -1944,6 +1979,7 @@ export const useContextStore = create<ContextStoreState>()(
       origin: opts?.origin ?? 'read',
       freshness: 'fresh',
       readSpan: opts?.readSpan,
+      ...(opts?.compositeSourceRevisions ? { compositeSourceRevisions: { ...opts.compositeSourceRevisions } } : {}),
       ttl: opts?.ttl ?? (type === 'result' ? 3 : type === 'search' ? 5 : undefined),
     };
 
@@ -3090,7 +3126,7 @@ export const useContextStore = create<ContextStoreState>()(
 
       return {
         chunks: newChunks,
-        archivedChunks: newArchived,
+        archivedChunks: evictArchiveIfNeeded(newArchived),
         stagedSnippets: newStaged,
         stageVersion: stats.invalidated > 0 ? state.stageVersion + 1 : state.stageVersion,
         reconcileStats: stats,
@@ -4026,7 +4062,7 @@ export const useContextStore = create<ContextStoreState>()(
     const found = findOrPromoteEngram(hashRef, newChunks, state.archivedChunks, state.stagedSnippets);
     if (!found) return { ok: false, error: `engram not found: ${hashRef}` };
     const [key, chunk] = found;
-    newChunks.set(key, { ...chunk, type: newType });
+    newChunks.set(key, { ...chunk, type: newType, lastAccessed: Date.now() });
     set({ chunks: newChunks });
     return { ok: true };
   },

@@ -209,7 +209,7 @@ export function classifyStageSnippet(
   persistencePolicy: StagePersistencePolicy;
   demotedFrom?: StageAdmissionClass;
 } {
-  if (key.startsWith('entry:')) {
+  if (key.startsWith('entry:') || key.startsWith('edit:')) {
     if (tokens <= MAX_PERSISTENT_STAGE_ENTRY_TOKENS) {
       return { admissionClass: 'persistentAnchor', persistencePolicy: 'persist' };
     }

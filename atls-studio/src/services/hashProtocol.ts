@@ -56,6 +56,36 @@ const shortHashIndex = new Map<string, Set<ChunkRef>>();
 const divergedRefs = new Set<ChunkRef>();
 let lastTurnDelta = { dematerialized: 0, newMaterialized: 0 };
 
+/** Bound refs Map size in long sessions with heavy read/evict churn (evicted rows are GC'd lazily). */
+const HPP_REFS_MAX_ENTRIES = 8000;
+
+function removeRefFromIndexes(hash: string, ref: ChunkRef): void {
+  refs.delete(hash);
+  const bucket = shortHashIndex.get(ref.shortHash);
+  if (bucket) {
+    bucket.delete(ref);
+    if (bucket.size === 0) shortHashIndex.delete(ref.shortHash);
+  }
+  divergedRefs.delete(ref);
+}
+
+/** Drop oldest evicted ref rows when the map exceeds the soft cap. */
+function pruneRefsMapIfNeeded(): void {
+  if (refs.size <= HPP_REFS_MAX_ENTRIES) return;
+  const evictedRows: Array<[string, ChunkRef]> = [];
+  for (const [h, r] of refs) {
+    if (r.visibility === 'evicted') evictedRows.push([h, r]);
+  }
+  evictedRows.sort((a, b) => a[1].seenAtTurn - b[1].seenAtTurn);
+  let i = 0;
+  while (refs.size > HPP_REFS_MAX_ENTRIES && i < evictedRows.length) {
+    const [h, r] = evictedRows[i++];
+    if (refs.get(h) === r && r.visibility === 'evicted') {
+      removeRefFromIndexes(h, r);
+    }
+  }
+}
+
 function addShortHashIndexEntry(shortHash: string, ref: ChunkRef): void {
   let bucket = shortHashIndex.get(shortHash);
   if (!bucket) {
@@ -110,15 +140,11 @@ export async function advanceTurn(): Promise<number> {
   // GC: remove evicted refs older than 1 turn to prevent unbounded Map growth
   for (const [hash, ref] of refs) {
     if (ref.visibility === 'evicted' && ref.seenAtTurn < currentTurn - 1) {
-      refs.delete(hash);
-      const bucket = shortHashIndex.get(ref.shortHash);
-      if (bucket) {
-        bucket.delete(ref);
-        if (bucket.size === 0) shortHashIndex.delete(ref.shortHash);
-      }
+      removeRefFromIndexes(hash, ref);
     }
   }
   lastTurnDelta.dematerialized = dematerialized;
+  const materializedThisRoundBeforeHook = lastTurnDelta.newMaterialized;
   lastTurnDelta.newMaterialized = 0;
   const hook = getRoundRefreshHook();
   if (hook) {
@@ -131,6 +157,9 @@ export async function advanceTurn(): Promise<number> {
       console.error('[hashProtocol] Round-refresh hook failed:', err);
     }
   }
+  // Full round = materializations since last advanceTurn + hook-triggered materializations this tick.
+  lastTurnDelta.newMaterialized = materializedThisRoundBeforeHook + lastTurnDelta.newMaterialized;
+  pruneRefsMapIfNeeded();
   return currentTurn;
 }
 

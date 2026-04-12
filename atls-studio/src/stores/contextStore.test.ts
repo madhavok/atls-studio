@@ -315,6 +315,28 @@ describe('same-source reconciliation', () => {
     expect(latestEvent?.action).toBe('reconcile');
   });
 
+  it('preserves composite-source chunk when compositeSourceRevisions still matches touched path', () => {
+    const store = useContextStore.getState();
+    const compositeHash = store.addChunk(
+      'merged a+b',
+      'smart',
+      'src/a.ts,src/b.ts',
+      undefined,
+      undefined,
+      'rev-ab',
+      {
+        sourceRevision: 'rev-ab',
+        viewKind: 'latest',
+        compositeSourceRevisions: { 'src/a.ts': 'rev-a1', 'src/b.ts': 'rev-b1' },
+      },
+    );
+    const stats = store.reconcileSourceRevision('src/a.ts', 'rev-a1');
+    expect(stats.preserved).toBeGreaterThanOrEqual(1);
+    const chunk = Array.from(useContextStore.getState().chunks.values()).find(c => c.shortHash === compositeHash);
+    expect(chunk).toBeDefined();
+    expect(chunk?.source).toBe('src/a.ts,src/b.ts');
+  });
+
   it('reconcileSourceRevision updates archived latest chunks for the exact path', () => {
     const store = useContextStore.getState();
     const short = store.addChunk(
@@ -798,6 +820,14 @@ describe('staged lifecycle policy', () => {
     expect(snippet?.admissionClass).toBe('transientAnchor');
     expect(snippet?.persistencePolicy).toBe('persistAsDemoted');
     expect(snippet?.demotedFrom).toBe('persistentAnchor');
+  });
+
+  it('treats edit: keys like entry: for anchor classification', () => {
+    const store = useContextStore.getState();
+    const result = store.stageSnippet('edit:note1', 'note body', 'src/a.ts', undefined, undefined, undefined, 'derived');
+    expect(result.ok).toBe(true);
+    const snippet = useContextStore.getState().stagedSnippets.get('edit:note1');
+    expect(snippet?.admissionClass).toBe('persistentAnchor');
   });
 
   it('keeps persistent staged anchors bounded by count and budget', () => {

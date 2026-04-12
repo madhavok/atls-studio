@@ -74,6 +74,18 @@ describe('SnapshotTracker hasReadCoverage / canonical gate', () => {
     expect(t.hasReadCoverage('src/b.ts', 999, 1000)).toBe(false);
   });
 
+  it('hasCanonicalRead is true for read.lines when merged regions cover 1..fullFileLineCount', () => {
+    const t = new SnapshotTracker();
+    t.record('src/full-lines.ts', 'abc', 'lines', { readRegion: { start: 1, end: 42 }, fullFileLineCount: 42 });
+    expect(t.hasCanonicalRead('src/full-lines.ts')).toBe(true);
+  });
+
+  it('hasCanonicalRead is false when read.lines omits tail vs fullFileLineCount', () => {
+    const t = new SnapshotTracker();
+    t.record('src/partial-lines.ts', 'abc', 'lines', { readRegion: { start: 1, end: 10 }, fullFileLineCount: 100 });
+    expect(t.hasCanonicalRead('src/partial-lines.ts')).toBe(false);
+  });
+
   it('does not downgrade canonical when adding line regions', () => {
     const t = new SnapshotTracker();
     t.record('src/c.ts', 'full', 'canonical');

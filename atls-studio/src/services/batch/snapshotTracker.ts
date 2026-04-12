@@ -34,11 +34,14 @@ export interface SnapshotIdentity {
   readKind: ReadKind;
   readRegions?: LineRegion[];
   shapeHash?: string;
+  /** Total lines in file (from read_lines / context) — used to treat full-span line reads as mutation authority. */
+  fullFileLineCount?: number;
 }
 
 export interface RecordOpts {
   readRegion?: LineRegion;
   shapeHash?: string;
+  fullFileLineCount?: number;
 }
 
 function normalizePathKey(p: string): string {
@@ -101,6 +104,9 @@ export class SnapshotTracker {
       if (opts?.shapeHash) {
         existing.shapeHash = opts.shapeHash;
       }
+      if (opts?.fullFileLineCount != null) {
+        existing.fullFileLineCount = opts.fullFileLineCount;
+      }
       return;
     }
 
@@ -115,6 +121,7 @@ export class SnapshotTracker {
       // Carry forward existing readRegions and shapeHash
       identity.readRegions = existing.readRegions ? [...existing.readRegions] : undefined;
       identity.shapeHash = existing.shapeHash;
+      identity.fullFileLineCount = existing.fullFileLineCount;
     }
 
     if (opts?.readRegion) {
@@ -123,6 +130,9 @@ export class SnapshotTracker {
     }
     if (opts?.shapeHash) {
       identity.shapeHash = opts.shapeHash;
+    }
+    if (opts?.fullFileLineCount != null) {
+      identity.fullFileLineCount = opts.fullFileLineCount;
     }
 
     this.snapshots.set(key, identity);
@@ -228,13 +238,17 @@ export class SnapshotTracker {
   }
 
   /**
-   * Gate for mutation: returns true only if the file was read via a full
-   * canonical read (not shaped, cached, or line-range) in this batch.
-   * Shaped/cached reads may omit content and cannot authorize edits.
+   * Gate for mutation: true for full canonical read, or read.lines whose merged
+   * regions cover the entire file (1..fullFileLineCount) with matching snapshot hash.
    */
   hasCanonicalRead(filePath: string): boolean {
     const identity = this.snapshots.get(normalizePathKey(filePath));
-    return identity?.readKind === 'canonical';
+    if (!identity) return false;
+    if (identity.readKind === 'canonical') return true;
+    if (identity.readKind !== 'lines') return false;
+    const n = identity.fullFileLineCount;
+    if (n == null || n < 1 || !identity.readRegions?.length) return false;
+    return regionsCover(identity.readRegions, { start: 1, end: n });
   }
 
   /**
@@ -280,13 +294,17 @@ export class SnapshotTracker {
           const rec = entry as Record<string, unknown>;
           const fp = SnapshotTracker.extractFilePath(rec);
           const sh = SnapshotTracker.extractHash(rec);
-          if (fp && sh) this.record(fp, sh, readKind);
+          const lineCount = typeof rec.lines === 'number' ? rec.lines : undefined;
+          const opts = lineCount != null ? { fullFileLineCount: lineCount } : undefined;
+          if (fp && sh) this.record(fp, sh, readKind, opts);
         }
       }
     } else {
       const fp = SnapshotTracker.extractFilePath(response);
       const sh = SnapshotTracker.extractHash(response);
-      if (fp && sh) this.record(fp, sh, readKind);
+      const lineCount = typeof response.lines === 'number' ? response.lines : undefined;
+      const opts = lineCount != null ? { fullFileLineCount: lineCount } : undefined;
+      if (fp && sh) this.record(fp, sh, readKind, opts);
     }
   }
 }

@@ -4,6 +4,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import {
   getTurn,
+  getTurnDelta,
   advanceTurn,
   resetProtocol,
   materialize,
@@ -55,6 +56,19 @@ describe('hashProtocol', () => {
       const turn = await advanceTurn();
       expect(turn).toBe(1);
       expect(resolved).toBe(true);
+      setRoundRefreshHook(null);
+    });
+
+    it('advanceTurn getTurnDelta newMaterialized sums pre-hook count and hook materializations', async () => {
+      resetProtocol();
+      materialize('aa111111', 'file', 'src/a.ts', 10, 5, '');
+      materialize('bb222222', 'file', 'src/b.ts', 8, 3, '');
+      expect(getTurnDelta().newMaterialized).toBe(2);
+      setRoundRefreshHook(() => {
+        materialize('cc333333', 'file', 'src/c.ts', 4, 2, '');
+      });
+      await advanceTurn();
+      expect(getTurnDelta().newMaterialized).toBe(3);
       setRoundRefreshHook(null);
     });
 
