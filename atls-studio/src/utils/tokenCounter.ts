@@ -10,6 +10,7 @@
 
 import { invoke } from '@tauri-apps/api/core';
 import { useAppStore } from '../stores/appStore';
+import { getPricingProviderForModel } from './pricingProvider';
 import { estimateTokens, hashContentSync } from './contextHash';
 
 // ---------------------------------------------------------------------------
@@ -85,7 +86,8 @@ function ensureProviderSubscription(): void {
   useAppStore.subscribe((state, prev) => {
     if (
       state.settings.selectedProvider !== prev.settings.selectedProvider ||
-      state.settings.selectedModel !== prev.settings.selectedModel
+      state.settings.selectedModel !== prev.settings.selectedModel ||
+      state.availableModels !== prev.availableModels
     ) {
       _cachedProvider = undefined;
       _cachedModel = undefined;
@@ -99,9 +101,9 @@ function getActiveProviderModel(): { provider: string; model: string } {
   if (_cachedProvider !== undefined && _cachedModel !== undefined) {
     return { provider: _cachedProvider, model: _cachedModel };
   }
-  const { settings } = useAppStore.getState();
-  _cachedProvider = settings.selectedProvider;
+  const { settings, availableModels } = useAppStore.getState();
   _cachedModel = settings.selectedModel;
+  _cachedProvider = getPricingProviderForModel(settings.selectedModel, settings.selectedProvider, availableModels);
   return { provider: _cachedProvider, model: _cachedModel };
 }
 

@@ -128,6 +128,7 @@ import { useRefactorStore } from '../stores/refactorStore';
 import { formatChunkRef, hashContentSync, isCompressedRef, sliceContentByLines, extractSearchSummary, extractSymbolSummary, extractDepsSummary, SHORT_HASH_LEN, type DigestSymbol } from '../utils/contextHash';
 import { resolveHashRefsWithMeta, setRecencyResolver, setEditRecencyResolver, setReadRecencyResolver, setStageRecencyResolver, type HashLookup, type SetRefLookup } from '../utils/hashResolver';
 import { toTOON, formatResult, expandBatchQ } from '../utils/toon';
+import { getProviderFromModelId } from '../utils/pricingProvider';
 import { countTokensSync, countTokens as countTokensAsync } from '../utils/tokenCounter';
 import { BATCH_TOOL_REF, DESIGNER_TOOL_REF, SUBAGENT_TOOL_REF, NATIVE_TOOL_TOKENS_ESTIMATE } from '../prompts/toolRef';
 import { CONTEXT_CONTROL_V4, CONTEXT_CONTROL_V2, CONTEXT_CONTROL_DESIGNER } from '../prompts/cognitiveCore';
@@ -4044,8 +4045,5 @@ export async function streamChat(
  * Get provider from model ID
  */
 export function getProviderFromModel(modelId: string): AIProvider {
-  if (modelId.startsWith('gpt-') || modelId.startsWith('o1') || modelId.startsWith('o3') || modelId.startsWith('o4')) return 'openai';
-  if (modelId.startsWith('gemini-')) return 'google';
-  if (modelId.startsWith('claude-')) return 'anthropic';
-  return 'anthropic';
+  return getProviderFromModelId(modelId);
 }

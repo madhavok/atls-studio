@@ -6,7 +6,7 @@ import { appendTextToSegments as _appendText, appendReasoningToSegments as _appe
 import { useSwarmStore } from '../../stores/swarmStore';
 import { useCostStore, formatCost, calculateCost, type AIProvider as CostProvider } from '../../stores/costStore';
 import { useAttachmentStore, type ChatAttachment, consumeInternalDragPayload } from '../../stores/attachmentStore';
-import { streamChat, stopChat, getProviderFromModel, resetStaticPromptCache, resetProjectTreeCache, type ChatMessage, type AIConfig, type AIProvider, type WorkspaceContext, type ChatMode } from '../../services/aiService';
+import { streamChat, stopChat, resetStaticPromptCache, resetProjectTreeCache, type ChatMessage, type AIConfig, type AIProvider, type WorkspaceContext, type ChatMode } from '../../services/aiService';
 import type { SubAgentProgressEvent } from '../../services/batch/types';
 import { orchestrator } from '../../services/orchestrator';
 import { ModelModeSelector } from '../ModelModeSelector';
@@ -30,6 +30,7 @@ import {
   isExtendedContextEnabled,
   modelSupportsExtendedContext,
 } from '../../utils/modelCapabilities';
+import { getPricingProviderForModel } from '../../utils/pricingProvider';
 import { resolveModelSettings, type OutputSpeedLevel, type ThinkingLevel } from '../../utils/modelSettings';
 import { useRoundHistoryStore } from '../../stores/roundHistoryStore';
 import { serializeForTokenEstimate } from '../../utils/toon';
@@ -478,6 +479,7 @@ const ContextMetrics = memo(function ContextMetrics() {
   const getPromptTokens = useContextStore((s) => s.getPromptTokens);
   const availableModels = useAppStore(state => state.availableModels);
   const selectedModel = useAppStore(state => state.settings.selectedModel);
+  const selectedProvider = useAppStore(state => state.settings.selectedProvider);
   const extendedContext = useAppStore(state => state.settings.extendedContext);
   const extendedContextByModelId = useAppStore(state => state.settings.extendedContextByModelId);
   const extendedResolution = useMemo(
@@ -491,7 +493,7 @@ const ContextMetrics = memo(function ContextMetrics() {
   const maxTokens = currentModel
     ? (getEffectiveContextWindow(currentModel.id, currentModel.provider, currentModel.contextWindow, extendedResolution) ?? 200000)
     : 200000;
-  const provider = currentModel?.provider || getProviderFromModel(selectedModel);
+  const provider = getPricingProviderForModel(selectedModel, selectedProvider, availableModels);
 
   const latestSnapshot = useRoundHistoryStore(s => s.snapshots.length > 0 ? s.snapshots[s.snapshots.length - 1] : undefined);
   const wmTokens = useMemo(() => getPromptTokens(), [chunks, getPromptTokens]);
@@ -2439,11 +2441,7 @@ export function AiChat() {
   }, [settings]);
 
   const getSelectedModelProvider = useCallback((): AIProvider => {
-    const selectedModelInfo = availableModels.find(m => m.id === settings.selectedModel);
-    if (selectedModelInfo?.provider) return selectedModelInfo.provider;
-    const heuristic = getProviderFromModel(settings.selectedModel);
-    if (heuristic === 'google' && settings.selectedProvider === 'vertex') return 'vertex';
-    return heuristic;
+    return getPricingProviderForModel(settings.selectedModel, settings.selectedProvider, availableModels);
   }, [availableModels, settings.selectedModel, settings.selectedProvider]);
 
   const serializeAttachmentForDebug = useCallback((attachment: ChatAttachment) => ({
