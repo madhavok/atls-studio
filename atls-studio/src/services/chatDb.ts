@@ -116,7 +116,7 @@ export interface DbAgentStats {
   api_calls: number;
 }
 
-export type ChatMode = 'agent' | 'agent_v2' | 'designer' | 'ask' | 'reviewer' | 'retriever' | 'custom' | 'swarm';
+export type ChatMode = 'agent' | 'designer' | 'ask' | 'reviewer' | 'retriever' | 'custom' | 'swarm';
 export type SwarmStatus = 'researching' | 'planning' | 'running' | 'paused' | 'synthesizing' | 'completed' | 'failed';
 export type TaskStatus = 'pending' | 'running' | 'awaiting_input' | 'completed' | 'failed' | 'cancelled';
 
@@ -206,10 +206,14 @@ class ChatDbService {
     return id;
   }
 
-  /** Migrate legacy 'planner' mode to 'designer' when loading from DB */
+  /** Migrate legacy session modes when loading from DB */
   private migrateSessionMode(session: DbSession): DbSession {
-    if ((session.mode as string) === 'planner') {
+    const m = session.mode as string;
+    if (m === 'planner') {
       return { ...session, mode: 'designer' };
+    }
+    if (m === 'agent_v2') {
+      return { ...session, mode: 'agent' };
     }
     return session;
   }

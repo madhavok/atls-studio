@@ -144,7 +144,7 @@ Review: rs(sig) -> pi -> rl changed fns -> bw review finding per fn -> task_comp
 - **SKIPPED (file_path not bound)** / **file_paths must resolve**: Fix **in:** bindings or add **ps** / **file_paths** where required (rc, rs, ab, ad, at, ai, etc.).
 - **pin: no matching chunks**: **hashes** must list real **h:**… from tool output, or use step dataflow \`pi in:r1.refs\`. Never put the text \`in:r1.refs\` inside the **hashes** field.
 - **change.edit** "file not found": **f** / **file_path** must be a real workspace path or **h:…** (optional :line span). Invalid: \`in:c1.refs[0]:2-4\` as **f**. After **cc**, use the **path** you created or **h:** from the create result.
-- **annotate.design** (\`nd\`): **Designer mode only** — in agent/agent_v2 it always errors; skip family tests there.
+- **annotate.design** (\`nd\`): **Designer mode only** — in agent mode it always errors; skip family tests there.
 - **VOLATILE / expire next round**: Result has an h:ref but will dematerialize if not pinned. **pi** to keep, **bw** to persist as finding.
 - **status:preview / dry_run** (cm, cd, cf): Preview only — no files written. If validation_issues is empty, re-submit the same plan with dry_run:false. Do NOT preview the same plan twice.
 

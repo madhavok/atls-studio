@@ -81,7 +81,6 @@ export function SessionPicker({
   const getModeIcon = (mode: string) => {
     switch (mode) {
       case 'agent': return '🤖';
-      case 'agent_v2': return '⚡';
       case 'designer': return '📋';
       case 'reviewer': return '👁️';
       case 'ask': return '❓';

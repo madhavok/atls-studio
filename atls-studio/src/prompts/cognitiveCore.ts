@@ -59,9 +59,8 @@ task_complete auto-closes remaining subtasks and auto-verifies.
 - Repeating a change.* dry_run/preview. One preview, then execute (dry_run:false) or abandon.
 - Supplying line ranges from memory. Use tool output coordinates from h:refs.`;
 
-export const CONTEXT_CONTROL_V4 = `## COGNITIVE CORE` + COGNITIVE_CORE_BODY;
-
-export const CONTEXT_CONTROL_V2 = `## COGNITIVE CORE` + COGNITIVE_CORE_BODY;
+/** Working-memory + convergence instructions for all ATLS tool modes (non-designer). */
+export const CONTEXT_CONTROL = `## COGNITIVE CORE` + COGNITIVE_CORE_BODY;
 
 export const CONTEXT_CONTROL_DESIGNER = `## Context (Designer)
 • pi(hashes:["h:XXXX",...]) — keep chunks in memory. h:XXXX from read/search results.

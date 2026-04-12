@@ -92,8 +92,7 @@ const SearchIcon = () => (
 
 // Mode info
 const MODES: { id: ChatMode; name: string; description: string; icon: React.ReactNode }[] = [
-  { id: 'agent', name: 'Agent', description: 'Full AI with ATLS tools', icon: <SparklesIcon /> },
-  { id: 'agent_v2', name: 'Agent 2.0', description: 'Slim cognitive prompts, same tools', icon: <SparklesIcon /> },
+  { id: 'agent', name: 'Agent', description: 'Full AI with ATLS tools and unified edit/cognitive stack', icon: <SparklesIcon /> },
   { id: 'designer', name: 'Designer', description: 'Agentic project planner for coding', icon: <BrainIcon /> },
   { id: 'reviewer', name: 'Reviewer', description: 'Find issues & review', icon: <ReviewIcon /> },
   { id: 'retriever', name: 'Retriever', description: 'UHPP semantic search (test)', icon: <SearchIcon /> },
@@ -1178,7 +1177,7 @@ export function ModelModeSelector() {
       </div>
 
       {/* Custom Agent dropdown + Context */}
-      {(chatMode === 'agent' || chatMode === 'agent_v2') && (customAgents.length > 0 || agentMenuOpen) && (
+      {chatMode === 'agent' && (customAgents.length > 0 || agentMenuOpen) && (
         <>
           <span className="text-studio-border">|</span>
           <div ref={agentRef} className="relative">
@@ -1274,7 +1273,7 @@ export function ModelModeSelector() {
       </div>
 
       {/* Row 2: SubAgent in selection box (agent/designer mode) */}
-      {(chatMode === 'agent' || chatMode === 'agent_v2' || chatMode === 'designer') && (
+      {(chatMode === 'agent' || chatMode === 'designer') && (
         <div className="border border-studio-border/60 rounded px-2 py-1 bg-studio-surface/30 flex items-center flex-wrap gap-y-1 gap-x-0">
           <SubAgentModelSelector models={availableModels} inline={false} />
           <SubAgentGenerationSettings disabled={settings.subagentModel === 'none'} />

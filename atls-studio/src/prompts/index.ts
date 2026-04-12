@@ -18,12 +18,11 @@ export {
 } from './toolRef';
 
 export {
-  CONTEXT_CONTROL_V4,
-  CONTEXT_CONTROL_V2,
+  CONTEXT_CONTROL,
   CONTEXT_CONTROL_DESIGNER,
 } from './cognitiveCore';
 
-export { EDIT_DISCIPLINE, EDIT_DISCIPLINE_V2 } from './editDiscipline';
+export { EDIT_DISCIPLINE } from './editDiscipline';
 
 export { HASH_PROTOCOL_CORE, HASH_PROTOCOL_ADVANCED, HASH_PROTOCOL_SPEC } from './hashProtocol';
 

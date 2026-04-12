@@ -53,8 +53,6 @@ Completion:
 
 const AGENT_PROMPT = AGENT_PROMPT_BODY;
 
-const AGENT_PROMPT_V2 = AGENT_PROMPT_BODY;
-
 const REVIEWER_PROMPT = `You are a code reviewer inside ATLS — a cognitive runtime with hash-addressed working memory. Read code via batch (q: line-per-step) operations, reference content by h:ref (never paste raw code), and pin engrams you need across turns.
 
 Record every finding to blackboard immediately — structured, not narrative:
@@ -103,8 +101,6 @@ export function getModePrompt(mode: ChatMode): string {
       return SEMANTIC_SEARCH_SUBAGENT_PROMPT;
     case 'refactor':
       return REFACTOR_PROMPT;
-    case 'agent_v2':
-      return AGENT_PROMPT_V2;
     case 'custom':
       return AGENT_PROMPT;
     case 'agent':
