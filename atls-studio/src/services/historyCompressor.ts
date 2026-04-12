@@ -303,11 +303,11 @@ export function extractToolDescription(
   name: string,
   input: Record<string, unknown>,
 ): string {
+  const genericStub = input._stubbed;
+  if (typeof genericStub === 'string' && genericStub.length > 0) {
+    return `${name}:${genericStub.slice(0, 140)}`;
+  }
   if (name === 'batch') {
-    const stubbed = input._stubbed;
-    if (typeof stubbed === 'string' && stubbed.length > 0) {
-      return `batch:${stubbed.slice(0, 140)}`;
-    }
     const steps = input.steps as Array<{ use?: string; with?: Record<string, unknown> }> | undefined;
     if (Array.isArray(steps) && steps.length > 0) {
       const first = steps[0];
@@ -637,9 +637,11 @@ function batchHasChangePreviewStep(steps: Array<Record<string, unknown>>): boole
 }
 
 /**
- * Summarize batch steps into a compact stub like "7 steps: search×3, read×2, pin×2".
+ * Compact summary for stubbed batch `steps` (main agent + subagent).
+ * Appends `| change:preview(dry_run)` when any change.* step has with.dry_run so
+ * compression labels keep preview intent after `_stubbed` replaces steps.
  */
-function summarizeBatchSteps(steps: Array<Record<string, unknown>>): string {
+export function formatBatchToolUseStubSummary(steps: Array<Record<string, unknown>>): string {
   const counts = new Map<string, number>();
   for (const step of steps) {
     const op = String(step.use || 'unknown');
@@ -687,7 +689,7 @@ export function stubBatchToolUseInputs(
     const inputTokens = countTokensSync(inputStr);
     if (inputTokens < BATCH_INPUT_STUB_THRESHOLD) continue;
 
-    const stub = summarizeBatchSteps(steps as Array<Record<string, unknown>>);
+    const stub = formatBatchToolUseStubSummary(steps as Array<Record<string, unknown>>);
     block.input = {
       _stubbed: stub,
       version: block.input.version ?? '1.0',

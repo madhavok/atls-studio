@@ -19,6 +19,7 @@ import { useRoundHistoryStore, type RoundSnapshot } from '../stores/roundHistory
 import { countTokensSync } from '../utils/tokenCounter';
 import { buildSubagentPrompt, type SubagentRole } from '../prompts/subagentPrompts';
 import { coerceBatchSteps } from './batch/coerceBatchSteps';
+import { formatBatchToolUseStubSummary } from './historyCompressor';
 import { expandBatchQ } from '../utils/toon';
 import { dematerialize, getRef } from './hashProtocol';
 import {
@@ -1195,13 +1196,10 @@ export async function executeSubagent(
         const b = block as { type?: string; input?: Record<string, unknown> };
         if (b.type === 'tool_use' && b.input && Array.isArray(b.input.steps)) {
           const steps = b.input.steps as Array<Record<string, unknown>>;
-          const counts = new Map<string, number>();
-          for (const step of steps) {
-            const family = String(step.use || 'unknown').split('.')[0];
-            counts.set(family, (counts.get(family) || 0) + 1);
-          }
-          const summary = [...counts.entries()].map(([f, n]) => `${f}×${n}`).join(', ');
-          b.input = { _stubbed: `${steps.length} steps: ${summary}`, version: b.input.version ?? '1.0' } as any;
+          b.input = {
+            _stubbed: formatBatchToolUseStubSummary(steps),
+            version: b.input.version ?? '1.0',
+          } as any;
         }
       }
 
