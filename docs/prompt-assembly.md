@@ -58,7 +58,7 @@ Because state is never merged into `conversationHistory`, old turns contain only
 
 ### Tool-loop steering signals
 
-Steering signals (phase budget, verify gate, convergence, force stop, etc.) are **conditional sections within the state preamble**, not fake user messages in chat history. When a condition is true (e.g. `roundsInCurrentPhase >= PHASE_ROUND_BUDGET`), the signal appears in the state block. When the condition is false, it is absent. Tool-loop counters are published via `toolLoopSteering` on `appStore` and read by `buildDynamicContextBlock()`.
+Steering signals (completion gates, spin nudges, pending actions, edit-awareness hints, etc.) are **conditional sections within the state preamble**, not fake user messages in chat history. When a condition is true, the signal appears in the state block for that round; when false, it is absent. Tool-loop counters are published via `toolLoopSteering` on `appStore` and read by `buildDynamicContextBlock()` (and by the spin detector).
 
 ### Logical cache metrics vs provider metrics
 
@@ -118,17 +118,17 @@ Each round of the tool loop:
 
 ### Main agent tool-loop guards
 
-The **main** chat tool loop in [`aiService.ts`](../atls-studio/src/services/aiService.ts) enforces behavioral guardrails via **conditional steering signals in the state preamble** — not by injecting fake user messages into chat history. Numeric thresholds are defined in [`promptMemory.ts`](../atls-studio/src/services/promptMemory.ts). Counter updates remain in the tool loop; the corresponding text is emitted by `buildDynamicContextBlock()` when conditions are true:
+The **main** chat tool loop in [`aiService.ts`](../atls-studio/src/services/aiService.ts) combines **telemetry** (counters on `toolLoopSteering` and round snapshots) with **conditional steering** in the state preamble — not fake user rows in chat history. Phase and soft-round constants live in [`promptMemory.ts`](../atls-studio/src/services/promptMemory.ts). **Research-round force-stop** (`TOTAL_RESEARCH_ROUND_BUDGET`, `RESEARCH_FORCE_STOP_MARGIN`, `FORCE STOP` preamble text, and `stoppedReason: research_budget`) has been **removed**; read-only rounds are still counted for snapshots and spin diagnosis.
 
 | Mechanism | Role |
 |-----------|------|
-| **Research round budget** | Caps consecutive **read-only** tool rounds (`TOTAL_RESEARCH_ROUND_BUDGET` + `RESEARCH_FORCE_STOP_MARGIN` for warnings and hard stop). Agent progress can end with `research_budget` if the model does not call `task_complete` after a force-stop path. |
-| **Verify gate** | In **agent** and **refactor** modes, if the model calls `task_complete` after making code changes without running any `verify.*` step, the state preamble signals that verification is required (unless the force-stop margin is already active). |
-| **Coverage plateau** | When coverage tracking shows no new files or symbols examined across multiple rounds, the state preamble nudges the model to summarize, act, or call `task_complete`. |
-| **Read-only spin** | After several consecutive rounds without mutations (non-**ask** / non-**retriever** modes), the state preamble requires an edit, structured blackboard write, or explicit blocker. |
-| **Phase budget** | With an active `session.plan` subtask, `PHASE_ROUND_BUDGET` limits how many rounds can stay in the same phase before nudging `session.advance` with a summary. |
-| **Incomplete subtasks** | When `hasActivePlanWithIncompleteSubtasks()` is true, the state preamble reminds the model to advance or complete phases. |
-| **Convergence** | After `TOTAL_ROUND_SOFT_BUDGET` / `TOTAL_ROUND_ESCALATION` rounds, escalating nudges toward `task_complete`. |
+| **Read-only round counters** | Each read-only tool round increments `consecutiveReadOnlyRounds` and `totalResearchRounds`; a mutation resets the consecutive counter. Published on `toolLoopSteering` and round snapshots. **No** automatic session stop from these counts. |
+| **Completion / verify steering** | When `completionBlocked` is set on `toolLoopSteering`, `buildDynamicContextBlock()` may inject verification or “continue implementation” `<<SYSTEM:…>>` lines (including stale-verify handling). |
+| **Auto-verify after `task_complete`** | In **agent** and **refactor** modes, after `task_complete` with mutations and no verify yet, the loop may run `verify.build` before finishing — **not** gated on any removed force-stop margin. |
+| **Spin early warning** | `diagnoseSpinning()` (round snapshots, coverage plateau flags, tool signatures, etc.) can trigger `<<SYSTEM: SPIN — …>>` lines in the preamble (e.g. **stuck in phase** cites `consecutiveReadOnlyRounds`). **Guidance only** — not a hard loop break. |
+| **Pending action block** | `buildPendingActionBlock()` surfaces high-priority agent pending actions (blocked, confirmation, state changed) as a `## ACTION REQUIRED` / `## BLOCKED` section in the dynamic context. |
+| **Edit-awareness** | Recent damaged edits, healthy edits, and escalated repairs produce `<<DAMAGED EDIT:…>>` / `<<RECENT EDITS:…>>` / `<<ESCALATED REPAIR:…>>` lines when BB state warrants it. |
+| **Phase / soft-round budgets** | `PHASE_ROUND_BUDGET`, `TOTAL_ROUND_SOFT_BUDGET`, and `TOTAL_ROUND_ESCALATION` are evaluated in the tool loop (currently **logging**); they are **not** separate dedicated preamble lines in `buildDynamicContextBlock()` — rely on spin nudges and static cognitive guidance for consolidation pressure. |
 
 ### State Block (dynamic context + staged + WM)
 

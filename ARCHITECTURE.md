@@ -407,7 +407,7 @@ The final prompt separates **chat** (the event log) from **state** (current sess
 
 **Clean history**: `conversationHistory` contains only real turns — user text, assistant text/reasoning, tool_use, tool_result. No `<<TASK>>`, `<<PLAN>>`, blackboard blocks, or steering signals fossilized in old messages. This means the model sees exactly one current state snapshot per round, not N stale copies plus one current.
 
-**Tool-loop steering signals** (phase budget, verify gate, convergence, force stop, etc.) are conditional sections within the state preamble. When a condition is true, the signal appears; when false, it's absent. They are not appended to chat history as fake user messages.
+**Tool-loop steering signals** (completion gates, spin nudges, pending actions, edit-awareness hints, etc.) are conditional sections within the state preamble. When a condition is true, the signal appears; when false, it's absent. They are not appended to chat history as fake user messages. Read-only round counters are tracked for telemetry and spin diagnosis; there is no research-round force-stop in the tool loop.
 
 The system places two Anthropic cache breakpoints:
 - **BP1+BP2**: On the last tool definition (caches system prompt + all tool schemas as one block)

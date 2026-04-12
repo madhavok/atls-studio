@@ -2861,7 +2861,7 @@ async function streamChatViaTauri(
         hadProgressSinceLastAdvance = true;
       }
 
-      // Track consecutive read-only rounds for force-stop ceiling.
+      // Track consecutive read-only rounds (telemetry + spin diagnosis; no force-stop).
       if (!hadMutationsThisRound) {
         consecutiveReadOnlyRounds++;
         totalResearchRounds++;
@@ -2869,7 +2869,7 @@ async function streamChatViaTauri(
         consecutiveReadOnlyRounds = 0;
       }
 
-      // Layer 2C: session.advance abuse detection + phase budget (steering via state block)
+      // Layer 2C: session.advance abuse detection + phase budget (logging)
       const taskPlanAdv = useContextStore.getState().taskPlan;
       if (taskPlanAdv?.activeSubtaskId) {
         if (taskPlanAdv.activeSubtaskId !== lastActiveSubtaskId) {
@@ -2891,13 +2891,13 @@ async function streamChatViaTauri(
         }
       }
 
-      // Plan nudge (steering emitted via state block)
+      // Plan nudge (logging)
       if (round === 1 && !useContextStore.getState().taskPlan && !hadMutationsThisRound
           && mode !== 'ask' && mode !== 'retriever' && mode !== 'designer') {
         console.log('[aiService] Task plan nudge active (via state block)');
       }
 
-      // Layer 2D: Total-round convergence guard (steering emitted via state block)
+      // Layer 2D: Total-round convergence guard (logging; not separate preamble lines)
       if (mode !== 'ask' && mode !== 'retriever' && mode !== 'designer') {
         if (round + 1 >= TOTAL_ROUND_ESCALATION) {
           console.log(`[aiService] Convergence escalation at round ${round + 1} (via state block)`);
