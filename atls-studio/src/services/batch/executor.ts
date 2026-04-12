@@ -25,6 +25,7 @@ import { resetRecallBudget } from './handlers/session';
 import { SnapshotTracker, AwarenessLevel } from './snapshotTracker';
 import type { LineRegion } from './snapshotTracker';
 import { buildIntentContext, resolveIntents, isPressured } from './intents';
+import { validateBatchSteps } from './validateBatchSteps';
 import { useRetentionStore } from '../../stores/retentionStore';
 import { useAppStore } from '../../stores/appStore';
 import { invoke } from '@tauri-apps/api/core';
@@ -1158,6 +1159,27 @@ export async function executeUnifiedBatch(
   onStepComplete?: OnBatchStepComplete,
 ): Promise<UnifiedBatchResult> {
   const batchStart = Date.now();
+
+  const validation = validateBatchSteps(request.steps ?? []);
+  if (!validation.ok) {
+    const msg = `batch: ERROR ${validation.error}`;
+    return {
+      ok: false,
+      summary: msg,
+      step_results: [
+        {
+          id: '__batch_validation__',
+          use: 'session.stats',
+          ok: false,
+          error: validation.error,
+          summary: msg,
+          duration_ms: 0,
+        },
+      ],
+      duration_ms: Date.now() - batchStart,
+    };
+  }
+
   const stepOutputs = new Map<string, StepOutput>();
   const namedBindings = new Map<string, StepOutput>();
   const results: StepResult[] = [];
@@ -1426,6 +1448,35 @@ export async function executeUnifiedBatch(
     if (step.use.startsWith('verify.') && !mergedParams.workspace && batchEditedPaths.size > 0) {
       const inferred = inferWorkspaceFromPaths(batchEditedPaths);
       if (inferred) mergedParams.workspace = inferred;
+    }
+
+    // session.pin: prior step bound to hashes.refs but returned no h:refs (empty array or missing)
+    if (step.use === 'session.pin') {
+      const inHashes = step.in?.hashes;
+      const fromStep =
+        inHashes && typeof inHashes === 'object' && inHashes !== null && 'from_step' in inHashes
+          ? String((inHashes as { from_step: string }).from_step).trim()
+          : '';
+      const hashesParam = mergedParams.hashes;
+      const emptyHashes =
+        hashesParam === undefined
+        || hashesParam === null
+        || (Array.isArray(hashesParam) && hashesParam.length === 0);
+      if (fromStep && emptyHashes) {
+        const output: StepOutput = {
+          kind: 'raw',
+          ok: false,
+          refs: [],
+          summary:
+            `pin: ERROR step '${fromStep}' produced no h:refs — cannot pin. Re-run a read/search that returns VOLATILE refs, or pass explicit hashes:h:… (pin in the same batch as the read when possible).`,
+          error: `pin: empty refs from step '${fromStep}'`,
+        };
+        stepOutputs.set(step.id, output);
+        recordStepResult(step.id, step.use, output, Date.now() - stepStart);
+        batchOk = false;
+        if (step.on_error === 'stop') break;
+        continue;
+      }
     }
 
     // Dispatch (runtime JSON may use non-OperationKind names e.g. OpenAI multi_tool_use.*)

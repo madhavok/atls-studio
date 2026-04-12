@@ -24,6 +24,13 @@ WRONG: batch 1 reads, batch 2 pins. The refs expired between batches.
 - Do **not** paste commit messages, PR/description prose, bullets, or narration into \`q\` — those lines become fake steps and fail (unknown operation).
 - Put explanations in normal assistant text. Lines in \`q\` used only as comments must start with \`#\` or \`--\` (parser skips them).
 
+### JSON \`steps\` array (native batch args) — same discipline as \`q\`
+When you pass \`batch\` with a \`steps\` array instead of line-oriented \`q\`:
+- Each element must be a real step: \`id\` (short identifier) + \`use\` (operation name or short code) + optional \`with\` / \`in\` / \`if\`.
+- **Never** put markdown headings, numbered outline lines, English sentences, or backtick-wrapped code fragments in \`id\` — use tokens like \`bw1\`, \`s1\`, \`p1\` only.
+- **Never** put prose, placeholders, or punctuation alone in \`use\` — only registered operations (e.g. \`session.bb.write\`, \`search.issues\`, \`intent.search_replace\`).
+- Narration and findings belong in the assistant message or in \`session.bb.write\` content — **not** as extra fake \`steps\`.
+
 ### Operation Families
 ${generateFamilyLines()}
 

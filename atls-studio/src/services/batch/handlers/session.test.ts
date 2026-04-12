@@ -327,6 +327,19 @@ describe('handlePin', () => {
     expect(result.ok).toBe(false);
     expect(result.error).toMatch(/missing hashes/);
   });
+
+  it('includes executor binding warning when hashes resolved to nothing from from_step', async () => {
+    const result = await handlePin(
+      {
+        _binding_warning_hashes:
+          "hashes: resolved to nothing from step 's3' (0 refs). Use explicit path or provide value directly.",
+      },
+      createMockCtx() as unknown as Parameters<typeof handlePin>[1],
+    );
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain("step 's3'");
+    expect(result.error).toMatch(/deduped|empty/i);
+  });
 });
 
 describe('handleDrop', () => {

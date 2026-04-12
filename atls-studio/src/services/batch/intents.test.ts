@@ -1235,6 +1235,18 @@ describe('resolveIntents — new intents', () => {
     expect(result.metrics[0].intentName).toBe('intent.search_replace');
   });
 
+  it('intent.search_replace with no old_text or search_query emits only a gate step (session.emit)', () => {
+    const steps = [{
+      id: 'sr1',
+      use: 'intent.search_replace' as const,
+      with: { new_text: 'only_new', _intentId: 'sr1' },
+    }];
+    const result = resolveIntents(steps, emptyContext());
+    expect(result.expanded).toHaveLength(1);
+    expect(result.expanded[0].use).toBe('session.emit');
+    expect(result.expanded[0].id).toContain('blocked');
+  });
+
   it('expands intent.extract into primitives', () => {
     const steps = [{
       id: 'ex1',

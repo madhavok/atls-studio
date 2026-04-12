@@ -541,11 +541,17 @@ function materializeFileRefsContentIfNeeded(out: StepOutput, store: ContextStore
 }
 
 export const handlePin: OpHandler = async (params, ctx) => {
+  const bindingWarnHashes = typeof params._binding_warning_hashes === 'string' ? params._binding_warning_hashes : '';
   let rawHashes = normalizeHashRefsToStrings(params.hashes ?? params.refs);
   if (!rawHashes.length) {
     rawHashes = recoverDataflowIn(params, ctx);
   }
   if (!rawHashes.length) {
+    if (bindingWarnHashes) {
+      return err(
+        `pin: ERROR ${bindingWarnHashes} If the prior step was a search/read that returned no new refs (deduped or empty), re-run it or pin a different step that has h:refs.`,
+      );
+    }
     return err('pin: ERROR missing hashes param (expected string[], h:… strings, or {ref}/{hash}/{h} objects)');
   }
 

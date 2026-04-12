@@ -27,6 +27,20 @@ export const resolveSearchReplace: IntentResolver = (
   const force = params.force === true;
   const intentId = (params._intentId as string) ?? 'search_replace';
 
+  const sq = searchQuery.trim();
+  const ot = oldText.trim();
+  if (!sq && !ot) {
+    return {
+      steps: [
+        {
+          id: makeStepId(intentId, 'blocked'),
+          use: 'session.emit',
+          with: { label: 'intent.search_replace' },
+        },
+      ],
+    };
+  }
+
   const steps: Step[] = [];
   const prepareNext: Step[] = [];
 
