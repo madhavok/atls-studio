@@ -537,6 +537,7 @@ const ContextMetrics = memo(function ContextMetrics() {
       { label: 'Tool Reference', tokens: pm.toolRefTokens, color: 'bg-blue-500' },
       { label: 'Shell Guide', tokens: pm.shellGuideTokens, color: 'bg-cyan-500' },
       { label: 'Native Tools', tokens: pm.nativeToolTokens, color: 'bg-rose-500' },
+      { label: 'Primer', tokens: pm.primerTokens, color: 'bg-teal-500' },
       { label: 'Context Control (BP1)', tokens: pm.contextControlTokens, color: 'bg-indigo-500' },
       { label: 'Workspace Ctx', tokens: pm.workspaceContextTokens, color: 'bg-amber-500' },
     ].filter(s => s.tokens > 0);
@@ -544,7 +545,7 @@ const ContextMetrics = memo(function ContextMetrics() {
       segs.push({ label: 'Entry Manifest', tokens: pm.entryManifestTokens ?? 0, color: 'bg-emerald-500' });
     }
     return segs;
-  }, [pm.modePromptTokens, pm.toolRefTokens, pm.shellGuideTokens, pm.nativeToolTokens, pm.contextControlTokens, pm.workspaceContextTokens, pm.entryManifestTokens, emDepth]);
+  }, [pm.modePromptTokens, pm.toolRefTokens, pm.shellGuideTokens, pm.nativeToolTokens, pm.primerTokens, pm.contextControlTokens, pm.workspaceContextTokens, pm.entryManifestTokens, emDepth]);
 
   return (
     <div className="px-2 text-[9px] text-studio-muted">

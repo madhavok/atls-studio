@@ -106,6 +106,8 @@ interface FingerprintRow {
   evictedCount: number;
   steeringCount: number;
   textHashShort: string;
+  wmDelta: number;
+  hashRefsCount: number;
 }
 
 function FingerprintTimeline({ rows }: { rows: FingerprintRow[] }) {
@@ -115,12 +117,14 @@ function FingerprintTimeline({ rows }: { rows: FingerprintRow[] }) {
 
   return (
     <div className="space-y-0.5">
-      <div className="grid grid-cols-[40px_88px_1fr_40px_40px_40px] gap-1 text-[9px] text-studio-muted uppercase tracking-wider pb-1 border-b border-studio-border/20">
+      <div className="grid grid-cols-[40px_88px_1fr_40px_40px_36px_36px_40px] gap-1 text-[9px] text-studio-muted uppercase tracking-wider pb-1 border-b border-studio-border/20">
         <span>Rnd</span>
         <span>Phase</span>
         <span>Tools</span>
         <span>Files</span>
         <span>BB</span>
+        <span>WM∆</span>
+        <span>Refs</span>
         <span>Flags</span>
       </div>
       {rows.map((row) => {
@@ -131,7 +135,7 @@ function FingerprintTimeline({ rows }: { rows: FingerprintRow[] }) {
         if (row.steeringCount > 0) flags.push(`S${row.steeringCount}`);
 
         return (
-          <div key={row.round} className="grid grid-cols-[40px_88px_1fr_40px_40px_40px] gap-1 text-[10px] items-center">
+          <div key={row.round} className="grid grid-cols-[40px_88px_1fr_40px_40px_36px_36px_40px] gap-1 text-[10px] items-center">
             <span className="text-studio-muted font-mono">{row.round}</span>
             <span
               className={`${PHASE_COLORS[row.phaseColorKey] ?? PHASE_COLORS.other} rounded px-1 py-0.5 text-center text-[9px] font-mono truncate`}
@@ -146,6 +150,10 @@ function FingerprintTimeline({ rows }: { rows: FingerprintRow[] }) {
             <span className={`font-mono ${row.bbCount > 0 ? 'text-green-400' : 'text-studio-muted'}`}>
               {row.bbCount || '-'}
             </span>
+            <span className={`font-mono text-[9px] ${row.wmDelta > 0 ? 'text-green-400' : row.wmDelta < 0 ? 'text-red-400' : 'text-studio-muted'}`}>
+              {row.wmDelta !== 0 ? (row.wmDelta > 0 ? `+${row.wmDelta}` : row.wmDelta) : '-'}
+            </span>
+            <span className="text-studio-muted font-mono text-[9px]">{row.hashRefsCount || '-'}</span>
             <span className="text-studio-muted font-mono text-[9px]">
               {flags.length > 0 ? flags.join(',') : '-'}
             </span>
@@ -181,6 +189,8 @@ export function SpinTraceSection() {
       evictedCount: s.hashRefsEvicted?.length ?? 0,
       steeringCount: s.steeringInjected?.length ?? 0,
       textHashShort: s.assistantTextHash?.slice(0, 4) ?? '',
+      wmDelta: s.wmDelta ?? 0,
+      hashRefsCount: s.hashRefsConsumed?.length ?? 0,
     }));
   }, [mainSnapshots]);
 
@@ -234,6 +244,35 @@ export function SpinTraceSection() {
           </div>
         </div>
       </div>
+
+      {/* Research convergence */}
+      {mainSnapshots.length > 0 && (() => {
+        const l = mainSnapshots[mainSnapshots.length - 1];
+        if (l.totalResearchRounds == null && l.newCoverage == null) return null;
+        return (
+          <div className="grid grid-cols-3 gap-2">
+            {l.totalResearchRounds != null && (
+              <div className="bg-studio-surface/50 rounded px-2 py-1.5 border border-studio-border/30">
+                <div className="text-[10px] text-studio-muted">Research Rounds</div>
+                <div className="text-sm font-semibold font-mono text-studio-text">{l.totalResearchRounds}</div>
+              </div>
+            )}
+            {l.newCoverage != null && (
+              <div className="bg-studio-surface/50 rounded px-2 py-1.5 border border-studio-border/30">
+                <div className="text-[10px] text-studio-muted">New Coverage</div>
+                <div className={`text-sm font-semibold font-mono ${l.coveragePlateau ? 'text-amber-400' : 'text-studio-text'}`}>{l.newCoverage}</div>
+                {l.coveragePlateau && <div className="text-[9px] text-amber-400">plateau</div>}
+              </div>
+            )}
+            {(l.substantiveBbWrites ?? 0) > 0 && (
+              <div className="bg-studio-surface/50 rounded px-2 py-1.5 border border-studio-border/30">
+                <div className="text-[10px] text-studio-muted">Substantive BB Writes</div>
+                <div className="text-sm font-semibold font-mono text-green-400">{l.substantiveBbWrites}</div>
+              </div>
+            )}
+          </div>
+        );
+      })()}
 
       {/* Fingerprint timeline */}
       <div>

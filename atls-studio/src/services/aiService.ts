@@ -1489,6 +1489,7 @@ function createChatSession(isSwarm: boolean): ChatSessionContext {
     currentAbortController = null;
   }
   resetMainAgentTerminal();
+  invalidateHistoryCache();
 
   const controller = new AbortController();
   const session: ChatSessionContext = {
@@ -1663,12 +1664,25 @@ async function streamChatViaTauri(
   //   Injected into last user message of assembled payload, not into history
   // =========================================================================
 
-  const conversationHistory = normalizeConversationHistory(messages);
-  const rs = useContextStore.getState().rollingSummary;
-  if (!isRollingSummaryEmpty(rs)) {
-    const trimmed = trimSummaryToTokenBudget(rs, ROLLING_SUMMARY_MAX_TOKENS);
-    if (!isRollingSummaryEmpty(trimmed)) {
-      conversationHistory.unshift(formatSummaryMessage(trimmed));
+  // Reuse the compressed history from end of previous turn when possible.
+  // This keeps the message prefix byte-identical to what Anthropic cached,
+  // avoiding a full cache WRITE on the first round of a new user turn.
+  let conversationHistory: Array<{ role: string; content: unknown }>;
+  let historyReusedFromCache = false;
+
+  if (_endOfTurnHistory && messages.length > _endOfTurnUiMessageCount) {
+    const newMessages = messages.slice(_endOfTurnUiMessageCount);
+    const newNormalized = normalizeConversationHistory(newMessages);
+    conversationHistory = [..._endOfTurnHistory, ...newNormalized];
+    historyReusedFromCache = true;
+  } else {
+    conversationHistory = normalizeConversationHistory(messages);
+    const rs = useContextStore.getState().rollingSummary;
+    if (!isRollingSummaryEmpty(rs)) {
+      const trimmed = trimSummaryToTokenBudget(rs, ROLLING_SUMMARY_MAX_TOKENS);
+      if (!isRollingSummaryEmpty(trimmed)) {
+        conversationHistory.unshift(formatSummaryMessage(trimmed));
+      }
     }
   }
   const priorTurnBoundary = 0;
@@ -1752,6 +1766,7 @@ async function streamChatViaTauri(
         reliefAction: 'none',
         abortSignal,
         isSessionValid,
+        historyReusedFromCache,
       });
       const reliefAction = roundContext.reliefAction;
 
@@ -2969,6 +2984,21 @@ async function streamChatViaTauri(
       callbacks.onDone();
     }
 
+    // End-of-turn compression: compress history NOW so the prefix is cached
+    // by Anthropic with the compressed bytes. On the next user turn we reuse
+    // this compressed history instead of rebuilding from UI messages (which
+    // would produce uncompressed content → different bytes → cache miss).
+    if (shouldNotifyDone && conversationHistory.length > 0) {
+      try {
+        compressToolLoopHistory(conversationHistory, undefined, priorTurnBoundary);
+        _endOfTurnHistory = structuredClone(conversationHistory);
+        _endOfTurnUiMessageCount = useAppStore.getState().messages.length;
+      } catch (e) {
+        console.warn('[aiService] End-of-turn history cache failed:', e);
+        invalidateHistoryCache();
+      }
+    }
+
     // Prune low-value context chunks on natural completion
     const finalStatus = useAppStore.getState().agentProgress.stoppedReason;
     if (shouldNotifyDone && finalStatus === 'completed') {
@@ -3753,11 +3783,25 @@ export function resetStaticPromptCache(): void {
   _cachedStaticPrompt = null;
   _prevStaticKey = null;
   _prevBp3Snapshot = null;
+  invalidateHistoryCache();
   useAppStore.getState().resetLogicalCache();
 }
 
 let _prevStaticKey: string | null = null;
 let _prevBp3Snapshot: Bp3Snapshot | null = null;
+
+// ---------------------------------------------------------------------------
+// End-of-turn history cache — preserves compressed prefix across user turns
+// so Anthropic's prefix cache sees byte-identical content (cache READ instead
+// of cache WRITE on the first round of a new turn).
+// ---------------------------------------------------------------------------
+let _endOfTurnHistory: Array<{ role: string; content: unknown }> | null = null;
+let _endOfTurnUiMessageCount = 0;
+
+function invalidateHistoryCache(): void {
+  _endOfTurnHistory = null;
+  _endOfTurnUiMessageCount = 0;
+}
 
 // Cached project tree for static prompt injection — stable across rounds for prompt caching
 let _cachedProjectTree: { root: string; text: string } | null = null;

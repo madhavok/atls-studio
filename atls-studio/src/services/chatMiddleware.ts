@@ -36,6 +36,8 @@ export interface RoundContext {
   reliefAction: PromptReliefAction;
   abortSignal: AbortSignal;
   isSessionValid: () => boolean;
+  /** When true, conversationHistory was reused from end-of-turn cache — skip round 0 compression. */
+  historyReusedFromCache?: boolean;
 }
 
 /** Middleware that runs before each tool loop round. Can mutate context. */
@@ -90,8 +92,12 @@ export function createGuardrailCallbacks(
  */
 export const historyCompressionMiddleware: BeforeRoundMiddleware = async (ctx) => {
   // Within a tool loop, skip compression to keep history append-only for
-  // prefix cache stability. Compression is deferred to the next user turn.
+  // prefix cache stability. Compression is deferred to end-of-turn.
   if (ctx.round > 0) return ctx;
+
+  // When history was reused from end-of-turn cache, compression already ran.
+  // Skip to preserve the byte-identical prefix for provider cache hits.
+  if (ctx.historyReusedFromCache) return ctx;
 
   // Use real tokenizer for the gate decision (warms LRU cache for sync calls inside compressor)
   const historyTokensBefore = await estimateHistoryTokensAsync(ctx.conversationHistory);

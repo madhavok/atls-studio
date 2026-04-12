@@ -133,6 +133,24 @@ export function ContextMetricsSection() {
             {latestMainSnapshot.legacyHistoryTelemetryKnownWrong ? (
               <span className="text-amber-400 sm:col-span-2">legacyHistoryTelemetryKnownWrong</span>
             ) : null}
+            {latestMainSnapshot.reliefAction && latestMainSnapshot.reliefAction !== 'none' && (
+              <span>
+                <span className="text-studio-muted">Relief action: </span>
+                <span className="text-amber-400 font-medium">{latestMainSnapshot.reliefAction}</span>
+              </span>
+            )}
+            {latestMainSnapshot.archivedTokens > 0 && (
+              <span>
+                <span className="text-studio-muted">Archived: </span>
+                <span className="text-studio-text font-mono">{latestMainSnapshot.archivedTokens.toLocaleString()} tk</span>
+              </span>
+            )}
+            {(latestMainSnapshot.rollingSummaryTokens ?? 0) > 0 && (
+              <span>
+                <span className="text-studio-muted">Rolling summary: </span>
+                <span className="text-studio-text font-mono">{latestMainSnapshot.rollingSummaryTokens.toLocaleString()} tk</span>
+              </span>
+            )}
           </div>
         </div>
       )}
@@ -145,6 +163,7 @@ export function ContextMetricsSection() {
           <OverheadRow label="Tool References" tokens={promptMetrics.toolRefTokens} total={overheadTokens} />
           <OverheadRow label="Shell Guide" tokens={promptMetrics.shellGuideTokens} total={overheadTokens} />
           <OverheadRow label="Native Tools" tokens={promptMetrics.nativeToolTokens} total={overheadTokens} />
+          <OverheadRow label="Primer" tokens={promptMetrics.primerTokens} total={overheadTokens} />
           <OverheadRow label="Context Control" tokens={promptMetrics.contextControlTokens} total={overheadTokens} />
           {emDepth !== 'off' && <OverheadRow label="Entry Manifest" tokens={promptMetrics.entryManifestTokens ?? 0} total={overheadTokens} />}
         </div>

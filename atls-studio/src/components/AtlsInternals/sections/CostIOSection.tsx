@@ -9,6 +9,7 @@ const COLORS = {
   input: '#3b82f6',
   output: '#a855f7',
   cacheRead: 'rgba(34,197,94,0.55)',
+  cacheWrite: '#f59e0b',
   cost: '#eab308',
 };
 
@@ -38,21 +39,23 @@ export function CostIOSection() {
     return researchCount / mainSnapshots.length;
   }, [mainSnapshots]);
 
-  const { chartData, totalInput, totalOutput, totalCacheRead } = useMemo(() => {
+  const { chartData, totalInput, totalOutput, totalCacheRead, totalCacheWrite } = useMemo(() => {
     const cd = mainSnapshots.map((s) => ({
       round: s.round,
       Input: s.inputTokens,
       Output: s.outputTokens,
       'Cache Read': s.cacheReadTokens,
+      'Cache Write': s.cacheWriteTokens,
       Cost: Math.round(s.costCents * 100) / 100,
     }));
-    let tIn = 0, tOut = 0, tCache = 0;
+    let tIn = 0, tOut = 0, tCache = 0, tCacheW = 0;
     for (const s of mainSnapshots) {
       tIn += s.inputTokens;
       tOut += s.outputTokens;
       tCache += s.cacheReadTokens;
+      tCacheW += s.cacheWriteTokens;
     }
-    return { chartData: cd, totalInput: tIn, totalOutput: tOut, totalCacheRead: tCache };
+    return { chartData: cd, totalInput: tIn, totalOutput: tOut, totalCacheRead: tCache, totalCacheWrite: tCacheW };
   }, [mainSnapshots]);
 
   const costAxisMax = useMemo(() => {
@@ -118,6 +121,7 @@ export function CostIOSection() {
             />
             <Bar yAxisId="tokens" dataKey="Input" stackId="io" fill={COLORS.input} fillOpacity={0.85} radius={[0, 0, 0, 0]} maxBarSize={40} isAnimationActive={false} />
             <Bar yAxisId="tokens" dataKey="Cache Read" stackId="io" fill={COLORS.cacheRead} fillOpacity={0.9} radius={[0, 0, 0, 0]} maxBarSize={40} isAnimationActive={false} />
+            <Bar yAxisId="tokens" dataKey="Cache Write" stackId="io" fill={COLORS.cacheWrite} fillOpacity={0.85} radius={[0, 0, 0, 0]} maxBarSize={40} isAnimationActive={false} />
             <Bar yAxisId="tokens" dataKey="Output" stackId="io" fill={COLORS.output} fillOpacity={0.85} radius={[2, 2, 0, 0]} maxBarSize={40} isAnimationActive={false} />
             <Line
               yAxisId="cost"
@@ -153,6 +157,7 @@ export function CostIOSection() {
         <StatCard label="Main input" value={fmtK(totalInput)} />
         <StatCard label="Main output" value={fmtK(totalOutput)} />
         <StatCard label="Main cache reads" value={fmtK(totalCacheRead)} />
+        <StatCard label="Main cache writes" value={fmtK(totalCacheWrite)} subtitle="1.25× input price" />
         <StatCard
           label="Avg input cost"
           value={mainSnapshots.length > 0 ? formatCost(avgInputCost) : '—'}
