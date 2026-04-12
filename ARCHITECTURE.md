@@ -207,9 +207,10 @@ Optional **operation and parameter shorthands** (for example `sc` / `search.code
 | **understand** | `read.context`, `read.shaped`, `read.lines`, `read.file`, `analyze.deps`, `analyze.calls`, `analyze.structure`, `analyze.impact`, `analyze.blast_radius`, `analyze.extract_plan` | Comprehend code |
 | **change** | `change.edit`, `change.create`, `change.delete`, `change.refactor`, `change.rollback`, `change.split_module` | Modify code |
 | **verify** | `verify.build`, `verify.test`, `verify.lint`, `verify.typecheck` | Validate changes |
-| **session** | `session.plan`, `session.advance`, `session.status`, `session.pin`, `session.unpin`, `session.compact`, `session.drop`, `session.recall`, `session.stage`, `session.unstage`, `session.unload`, `session.bb.write`, `session.bb.read`, `session.bb.delete`, `session.bb.list`, `session.rule`, `session.emit`, `session.shape`, `session.load`, `session.debug`, `session.stats`, `session.compact_history` | Manage memory and tasks |
-| **annotate** | `annotate.engram`, `annotate.note`, `annotate.link`, `annotate.split`, `annotate.merge`, `annotate.retype`, `annotate.design` | Annotate and connect engrams |
+| **session** | `session.plan`, `session.advance`, `session.status`, `session.pin`, `session.unpin`, `session.stage`, `session.unstage`, `session.compact`, `session.unload`, `session.drop`, `session.recall`, `session.stats`, `session.debug`, `session.diagnose`, `session.bb.write`, `session.bb.read`, `session.bb.delete`, `session.bb.list`, `session.rule`, `session.emit`, `session.shape`, `session.load`, `session.compact_history` | Manage memory and tasks |
+| **annotate** | `annotate.engram`, `annotate.note`, `annotate.link`, `annotate.retype`, `annotate.split`, `annotate.merge`, `annotate.design` | Annotate and connect engrams |
 | **delegate** | `delegate.retrieve`, `delegate.design`, `delegate.code`, `delegate.test` | Engram-first subagents (snapshot loop, role allowlists; see [docs/subagents.md](docs/subagents.md)) |
+| **system** | `system.exec`, `system.git`, `system.workspaces`, `system.help` | Shell, git, workspace listing, built-in help |
 | **intent** | `intent.understand`, `intent.edit`, `intent.edit_multi`, `intent.investigate`, `intent.diagnose`, `intent.survey`, `intent.refactor`, `intent.create`, `intent.test`, `intent.search_replace`, `intent.extract` | Macro operations (expand to primitives) |
 
 ### 4.2 Dataflow Between Steps

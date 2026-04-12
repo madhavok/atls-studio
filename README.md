@@ -16,7 +16,7 @@ Through the ATLS runtime, the model gets structured control over its active work
 
 - **Hash-addressed engrams** with four activation states (active, dormant, archived, evicted) and model-controlled lifecycle transitions
 - **Freshness tracking** — per-engram five-state taxonomy, **universal execution authority** (`canSteerExecution` across blackboard, staged snippets, WM, pins), and a cascade of recovery strategies (edit journal, shape match, symbol identity, fingerprint, line relocation)
-- **Unified batch executor** — one tool surface (`batch()`) with 75 `OperationKind` steps (primitives + `intent.*` macros), step-to-step dataflow, intent macros, and multi-level error recovery
+- **Unified batch executor** — one tool surface (`batch()`) with 76 `OperationKind` steps (primitives + `intent.*` macros), step-to-step dataflow, intent macros, and multi-level error recovery
 - **Universal Hash Pointer Protocol (UHPP)** — rich reference syntax with shapes, line ranges, set selectors, diffs, and boolean operations
 - **History compression** via hash-reference deflation, a **rolling verbatim window**, and a **distilled rolling summary** (`[Rolling Summary]`) for API assembly — large tool results replaced with hash pointers, older rounds summarized into structured facts, recallable on demand
 - **Prompt cache optimization** — append-only history within tool loops, mutable content isolated to the uncached dynamic block

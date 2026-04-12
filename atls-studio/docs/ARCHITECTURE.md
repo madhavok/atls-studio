@@ -218,7 +218,7 @@ All operations are organized into 9 families with short codes for efficient rout
 | **Understand** | read.context, read.shaped, read.lines, read.file, analyze.deps, analyze.calls, analyze.structure, analyze.impact, analyze.blast_radius, analyze.extract_plan | rc, rs, rl, rf, ad, ac, at, ai, ab, ax |
 | **Change** | change.edit, change.create, change.delete, change.refactor, change.rollback, change.split_module | ce, cc, cd, cf, cb, cm |
 | **Verify** | verify.build, verify.test, verify.lint, verify.typecheck | vb, vt, vl, vk |
-| **Session** | plan, advance, status, pin, unpin, stage, unstage, compact, unload, drop, recall, stats, debug, bb.write, bb.read, bb.delete, bb.list, rule, emit, shape, load, compact_history | spl, sa, ss, pi, pu, sg, ust, pc, ulo, dro, rec, st, db, bw, br, bd, bl, ru, em, sh, ld, ch |
+| **Session** | plan, advance, status, pin, unpin, stage, unstage, compact, unload, drop, recall, stats, debug, diagnose, bb.write, bb.read, bb.delete, bb.list, rule, emit, shape, load, compact_history | spl, sa, ss, pi, pu, sg, ust, pc, ulo, dro, rec, st, db, dg, bw, br, bd, bl, ru, em, sh, ld, ch |
 | **Annotation** | engram, note, link, retype, split, merge, design | eng, nn, nk, nr, ns, nm, nd |
 | **Delegate** | retrieve, design, code, test | dr, dd, dc, dt |
 | **System** | exec, git, workspaces, help | xe, xg, xw, xh |

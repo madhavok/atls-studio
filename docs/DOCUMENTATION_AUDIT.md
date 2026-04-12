@@ -1,6 +1,6 @@
 # Documentation audit log
 
-Last pass: accuracy audit (reference docs vs source). Use this table to see what each file is for and whether it was checked against code.
+Last pass: 2026-04-12 — README operation counts verified against `ALL_OPERATIONS` in [`atls-studio/src/services/batch/families.ts`](../atls-studio/src/services/batch/families.ts) (76 ops); Tauri `generate_handler` in `lib.rs` matches [tauri-commands.md](./tauri-commands.md). Use this table to see what each file is for and whether it was checked against code.
 
 | File | Kind | Notes |
 |------|------|--------|

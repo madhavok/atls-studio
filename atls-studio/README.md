@@ -7,7 +7,7 @@ An AI-powered cognitive development environment with managed working memory, bui
 - **Engram-based Memory** — Hash-addressed knowledge units with lifecycle management (active → dormant → archived → evicted). Pin to retain, recall by hash, auto-evict under pressure.
 - **Universal Hash Pointers (UHPP)** — Reference any content by hash with line ranges, symbol selectors, shapes, diffs, and composition chains. `h:XXXX:fn(name):sig` targets a function signature directly.
 - **Multi-Provider AI** — Supports Anthropic (Claude), OpenAI (GPT), Google (Gemini), Vertex AI, and LM Studio for local models. Streaming responses with tool execution loops.
-- **9 Operation Families, 60+ Operations** — Discover, Understand, Change, Verify, Session, Annotation, Delegate, System, and Intent operations with short codes for efficient batch execution.
+- **9 operation families, 76 `OperationKind` steps** — Discover, Understand, Change, Verify, Session, Annotation, Delegate, System, and Intent operations with short codes for efficient batch execution (see [`src/services/batch/families.ts`](src/services/batch/families.ts)).
 - **Subagent Architecture** — Four specialized agents (Retriever, Designer, Coder, Tester) with isolated memory, compressed state snapshots, and different permission levels.
 - **Batch Execution** — Positional rebasing across sequential edits, snapshot tracking with content hashing, automatic context refresh, and interruption detection.
 - **Smart Editing** — Shadow editing with drift tolerance, body bounds detection (brace-based and indent-based), syntax validation with bracket hints, and per-file undo stacks.
@@ -37,42 +37,11 @@ An AI-powered cognitive development environment with managed working memory, bui
 └──────────────────────────────────────────┘
 ```
 
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for detailed architecture documentation.
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for app-package architecture notes, or the repository overview at [`../ARCHITECTURE.md`](../ARCHITECTURE.md).
 
-## Getting Started
+Development uses **npm** and **Node 20+** from this directory — see [Getting Started](#getting-started) below.
 
-### Prerequisites
-
-- [Rust](https://rustup.rs/) (latest stable)
-- [Node.js](https://nodejs.org/) v18+
-- [pnpm](https://pnpm.io/) package manager
-
-### Setup
-
-```bash
-# Install dependencies
-pnpm install
-
-# Run in development mode
-pnpm tauri dev
-
-# Build for production
-pnpm tauri build
-```
-
-### Configuration
-
-Provider API keys are configured in the application settings:
-
-| Provider | Setting |
-|----------|----------|
-| Anthropic | API key |
-| OpenAI | API key |
-| Google | API key |
-| Vertex AI | Project ID + Location + OAuth token |
-| LM Studio | Base URL (default: `http://localhost:1234`) |
-
-## Project Structure
+## Project structure
 
 ```
 atls-studio/
@@ -101,10 +70,6 @@ atls-studio/
     └── ARCHITECTURE.md           # Detailed architecture documentation
 ```
 
-## License
-
-Proprietary — All rights reserved.
-
 This file lives in the **app package** folder (`<clone>/atls-studio/` — one directory inside the repository root, alongside `docs/` and `atls-rs/`). Paths in docs often write `atls-studio/src/…` meaning **this** folder’s `src/`, not the repository root.
 
 | Location | Role |
@@ -129,7 +94,7 @@ ATLS Studio is a minimal, purpose-built development environment where ATLS provi
 
 Edits in `change.edit` / `line_edits` apply **sequentially in array order** (top-down). Each `line` / `anchor` resolves against the file **after** all prior edits in the same array. Multi-step batches that edit the same file with numeric lines are adjusted between steps by the executor (see `docs/freshness.md`). Use inclusive **`line` + `end_line`** for spans and chain from **`edits_resolved`** in the step result when coordinating follow-up edits (see [`../docs/batch-executor.md`](../docs/batch-executor.md)).
 
-## Architecture
+### UI layout
 
 ```
 ┌──────────────────────────────────────────────────────────────────────┐
@@ -196,6 +161,18 @@ Creates platform-specific installers in `src-tauri/target/release/bundle/`.
 
 If you run `cargo build` directly under `src-tauri`, run `npm run build` in this directory first so `dist/` exists — Tauri embeds that bundle at compile time.
 
+### Provider API keys
+
+Configure provider credentials in the in-app **Settings** UI:
+
+| Provider | Setting |
+|----------|----------|
+| Anthropic | API key |
+| OpenAI | API key |
+| Google | API key |
+| Vertex AI | Project ID + Location + OAuth token |
+| LM Studio | Base URL (default: `http://localhost:1234`) |
+
 ### TypeScript
 
 ```bash
@@ -211,7 +188,7 @@ npm run test:all    # Frontend + Rust backend tests
 
 HPP validation (parser, materialization, ref formatting) runs as part of `npm run test` via [`src/__tests__/hpp-validation.test.ts`](src/__tests__/hpp-validation.test.ts).
 
-## Project Structure
+## App directories
 
 ```
 atls-studio/              # this app package
@@ -233,7 +210,7 @@ atls-studio/              # this app package
 └── package.json
 ```
 
-## Features
+## UI features
 
 ### File Explorer
 - Hierarchical tree view
