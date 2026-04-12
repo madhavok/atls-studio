@@ -88,6 +88,24 @@ describe('diagnoseSpinning', () => {
     expect(d.mode).not.toBe('tool_confusion');
   });
 
+  it('stuck_in_phase uses one evidence line for a single long preview run (no overlapping ranges)', () => {
+    const snaps: RoundSnapshot[] = [5, 6, 7, 8].map((r) => baseSnap({
+      round: r,
+      toolSignature: ['change.split_module'],
+      hadRealChangeThisRound: false,
+      changeDryRunPreviewRound: true,
+      bbDelta: [],
+      isResearchRound: true,
+      volatileRefsSuggested: false,
+      hadSessionPinStep: false,
+    }));
+    const d = diagnoseSpinning(snaps, 5);
+    const phaseLines = d.evidence.filter(e => /consecutive dry-run/i.test(e));
+    expect(phaseLines.length).toBe(1);
+    expect(phaseLines[0]).toMatch(/\(5-8\)/);
+    expect(phaseLines[0]).toMatch(/4 consecutive/);
+  });
+
   it('many consecutive split_module previews match user modularization loop (no false tool_confusion)', () => {
     const snaps: RoundSnapshot[] = [7, 8, 9, 10, 11].map((r) => baseSnap({
       round: r,

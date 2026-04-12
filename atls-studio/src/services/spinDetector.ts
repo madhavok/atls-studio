@@ -250,23 +250,37 @@ function detectStuckInPhase(window: SpinFingerprint[]): SpinDiagnosis | null {
 
   const categories = window.map(fp => categorizeTools(fp));
 
-  // 3+ consecutive rounds with same category and no BB delta
-  let streak = 1;
-  for (let i = 1; i < categories.length; i++) {
-    if (categories[i] === categories[i - 1]) {
-      streak++;
-      if (streak >= 3 && window.slice(i - streak + 1, i + 1).every(fp => fp.bbDelta.length === 0)) {
-        const phase = categories[i];
-        score += 0.15 * streak;
-        if (!triggerRound) triggerRound = window[i - streak + 1].round;
-        const detail = phase === 'preview'
-          ? `${streak} consecutive dry-run / preview rounds (${window[i - streak + 1].round}-${window[i].round}) — change previews without dry_run:false, pins, or BB updates`
-          : `${streak} consecutive ${phase} rounds (${window[i - streak + 1].round}-${window[i].round}) with no BB findings`;
-        evidence.push(detail);
+  // Maximal contiguous runs: same phase, 3+ rounds, no BB writes — one line per run (no overlapping ranges).
+  type PhaseRun = { phase: string; len: number; startRound: number; endRound: number };
+  const runs: PhaseRun[] = [];
+  let runStart = 0;
+  for (let i = 1; i <= categories.length; i++) {
+    const atEnd = i === categories.length;
+    if (!atEnd && categories[i] === categories[i - 1]) continue;
+    const runEnd = i - 1;
+    const len = runEnd - runStart + 1;
+    if (len >= 3) {
+      const slice = window.slice(runStart, i);
+      if (slice.every(fp => fp.bbDelta.length === 0)) {
+        runs.push({
+          phase: categories[runStart],
+          len,
+          startRound: window[runStart].round,
+          endRound: window[runEnd].round,
+        });
       }
-    } else {
-      streak = 1;
     }
+    runStart = i;
+  }
+
+  if (runs.length > 0) {
+    const best = runs.reduce((a, b) => (b.len > a.len ? b : a));
+    triggerRound = best.startRound;
+    score += Math.min(0.25 * (best.len - 3) + 0.5, 1.0);
+    const detail = best.phase === 'preview'
+      ? `${best.len} consecutive dry-run / preview rounds (${best.startRound}-${best.endRound}) — change previews without dry_run:false, pins, or BB updates`
+      : `${best.len} consecutive ${best.phase} rounds (${best.startRound}-${best.endRound}) with no BB findings`;
+    evidence.push(detail);
   }
 
   // Research rounds with coverage plateau
