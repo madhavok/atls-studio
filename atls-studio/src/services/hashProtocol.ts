@@ -131,15 +131,11 @@ export function getTurnDelta(): { dematerialized: number; newMaterialized: numbe
 export async function advanceTurn(): Promise<number> {
   currentTurn++;
   let dematerialized = 0;
-  for (const ref of refs.values()) {
+  for (const [hash, ref] of refs) {
     if (ref.visibility === 'materialized' && ref.seenAtTurn < currentTurn && !ref.pinned) {
       ref.visibility = 'referenced';
       dematerialized++;
-    }
-  }
-  // GC: remove evicted refs older than 1 turn to prevent unbounded Map growth
-  for (const [hash, ref] of refs) {
-    if (ref.visibility === 'evicted' && ref.seenAtTurn < currentTurn - 1) {
+    } else if (ref.visibility === 'evicted' && ref.seenAtTurn < currentTurn - 1) {
       removeRefFromIndexes(hash, ref);
     }
   }
@@ -209,6 +205,7 @@ export function materialize(
     existing.seenAtTurn = currentTurn;
     existing.tokens = tokens;
     existing.totalLines = totalLines;
+    // '' = no digest from caller: keep prior sig. (source uses ?? so '' can clear.)
     existing.editDigest = editDigest || existing.editDigest;
     existing.source = source ?? existing.source;
     lastTurnDelta.newMaterialized += 1;

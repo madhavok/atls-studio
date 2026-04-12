@@ -41,7 +41,7 @@ vi.mock('./roundHistoryStore', () => ({
 }));
 
 import { useContextStore, type ContextChunk } from '../stores/contextStore';
-import { evict as hppEvict } from '../services/hashProtocol';
+import { archive as hppArchive, evict as hppEvict } from '../services/hashProtocol';
 import { hashContentSync } from '../utils/contextHash';
 
 const SOURCE_PATH = 'src/components/Panel.tsx';
@@ -349,6 +349,21 @@ describe('pruneObsoleteTaskArtifacts: compacted stub auto-drop', () => {
 
     expect(r.dropped).toBe(0);
     expect(useContextStore.getState().chunks.has(big.hash)).toBe(true);
+  });
+
+  it('syncs HPP archive (not evict) when auto-dropping stubs to archivedChunks', () => {
+    const searchStub = makeChunk({
+      hash: 'hpp_drop_srch_1234567890ab',
+      type: 'search',
+      compacted: true,
+      tokens: 40,
+    });
+    seedChunks([searchStub]);
+
+    useContextStore.getState().pruneObsoleteTaskArtifacts();
+
+    expect(hppArchive).toHaveBeenCalledWith(searchStub.hash);
+    expect(hppEvict).not.toHaveBeenCalled();
   });
 });
 

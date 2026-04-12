@@ -19,11 +19,6 @@ import { estimateTokens, hashContentSync } from './contextHash';
 
 const CACHE_MAX = 2048;
 
-interface CacheEntry {
-  key: string;
-  value: number;
-}
-
 class LRUCache {
   private map = new Map<string, number>();
   private maxSize: number;

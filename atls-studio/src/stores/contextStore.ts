@@ -544,10 +544,7 @@ const MAX_MEMORY_EVENTS = 100;
 function shouldAutoCompactChunk(chunk: ContextChunk): boolean {
   if (chunk.pinned) return false;
   if (CHAT_TYPES.has(chunk.type)) return false;
-  if (chunk.type === 'result' && chunk.tokens <= 12) return false;
   return chunk.type === 'issues'
-    || chunk.type === 'result'
-    || chunk.type === 'call'
     || chunk.type === 'symbol'
     || chunk.type === 'deps'
     || chunk.type === 'search'
@@ -745,9 +742,9 @@ function pruneStagedSnippetsToBudget(
   while (runningTotal > STAGED_TOTAL_HARD_CAP_TOKENS && takeFromList(nonPersistentCandidates, false)) {
     // Drain transients / non-persistent until under cap or exhausted.
   }
-  // 3) If still over cap, allow evicting persistent anchors (same priority order as sortedCandidates).
-  while (runningTotal > STAGED_TOTAL_HARD_CAP_TOKENS && takeFromList(sortedCandidates, false)) {
-    // May include persistent anchors when staging is anchor-heavy.
+  // 3) If still over cap, evict persistent anchors only (Step 2 already drained non-anchors).
+  while (runningTotal > STAGED_TOTAL_HARD_CAP_TOKENS && takeFromList(anchorOnlyCandidates, false)) {
+    // Same anchor ordering as sortedCandidates.
   }
 
   return {
@@ -1760,7 +1757,7 @@ const BB_TEMPLATES: ReadonlyArray<readonly [string, string]> = [
 ] as const;
 
 /**
- * Evict oldest archived chunks (by createdAt) until total archived tokens <= ARCHIVE_MAX_TOKENS.
+ * Evict archived chunks by LRU (least recently used via lastAccessed) until total archived tokens <= ARCHIVE_MAX_TOKENS.
  * Returns the (potentially trimmed) archive map. Call after any operation that adds to archive.
  */
 function evictArchiveIfNeeded(archive: Map<string, ContextChunk>): Map<string, ContextChunk> {
@@ -3485,7 +3482,7 @@ export const useContextStore = create<ContextStoreState>()(
       };
     });
     for (const hash of result.compacted) hppDematerialize(hash);
-    for (const hash of result.dropped) hppEvict(hash);
+    for (const hash of result.dropped) hppArchive(hash);
     return { compacted: result.compacted.length, dropped: result.dropped.length, freedTokens: result.freedTokens };
   },
   recordMemoryEvent: (event) => {
@@ -4675,7 +4672,7 @@ export const useContextStore = create<ContextStoreState>()(
       };
     });
     for (const hash of compacted) hppDematerialize(hash);
-    for (const hash of dropped) hppEvict(hash);
+    for (const hash of dropped) hppArchive(hash);
   },
 
   getTaskCompleteRecord: () => get().taskCompleteRecord,

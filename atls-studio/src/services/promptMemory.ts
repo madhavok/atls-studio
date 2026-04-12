@@ -157,6 +157,10 @@ export function getStaticSystemTokens(promptMetrics: PromptMetrics): number {
     + (promptMetrics.contextControlTokens ?? 0);
 }
 
+/**
+ * Staged-snippet bucket size. Takes `promptMetrics` for signature parity with sibling bucket getters
+ * (e.g. getStaticSystemTokens); staged total is passed explicitly as `stagedTokens`.
+ */
 export function getStagedTokens(_promptMetrics: PromptMetrics, stagedTokens: number): number {
   return stagedTokens;
 }
