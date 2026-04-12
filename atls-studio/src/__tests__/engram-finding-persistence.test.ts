@@ -14,8 +14,19 @@ vi.mock('../services/hashProtocol', () => ({
   archive: vi.fn(),
   materialize: vi.fn(),
   dematerialize: vi.fn(),
-  getRef: vi.fn(() => null),
-  shouldMaterialize: vi.fn(() => false),
+  /** Stub ref so findReusableRead can treat chunks as in-context materialized (matches formatter+HPP contract). */
+  getRef: vi.fn(() => ({
+    hash: 'mockhash000000000000000000000000',
+    shortHash: 'mockha',
+    type: 'file',
+    source: 'src/bar.ts',
+    totalLines: 1,
+    tokens: 1,
+    editDigest: '',
+    visibility: 'materialized' as const,
+    seenAtTurn: 0,
+  })),
+  shouldMaterialize: vi.fn(() => true),
 }));
 
 vi.mock('../services/hashProtocolQuery', () => ({

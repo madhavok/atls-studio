@@ -3,6 +3,7 @@
  * recency stack management, and createSetRefLookup wiring.
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { dematerialize, materialize } from '../services/hashProtocol';
 import { setRoundRefreshRevisionResolver, setBulkRevisionResolver, setWorkspacesAccessor, useContextStore } from './contextStore';
 import { STAGED_ANCHOR_BUDGET_TOKENS, STAGED_TOTAL_HARD_CAP_TOKENS, MAX_PERSISTENT_STAGE_ENTRIES } from '../services/promptMemory';
 import { hashContentSync } from '../utils/contextHash';
@@ -738,6 +739,51 @@ describe('findReusableRead and getChunkContent', () => {
     expect(result.ok).toBe(true);
     expect(result.hashes).toHaveLength(2);
   });
+
+  it('findReusableRead returns null when HPP ref is dormant (dematerialized)', () => {
+    const readSpan = { filePath: 'src/dormant.ts', sourceRevision: 'rev_d' };
+    const shortHash = useContextStore.getState().addChunk('line1\nline2', 'file', 'src/dormant.ts', undefined, undefined, undefined, { readSpan });
+    const chunk = Array.from(useContextStore.getState().chunks.values()).find(c => c.source === 'src/dormant.ts')!;
+    materialize(
+      chunk.hash,
+      chunk.type,
+      chunk.source,
+      chunk.tokens,
+      chunk.content.split('\n').length,
+      chunk.editDigest || chunk.digest || '',
+      chunk.shortHash,
+    );
+    expect(useContextStore.getState().findReusableRead(readSpan)).toBe(shortHash);
+    dematerialize(chunk.hash);
+    expect(useContextStore.getState().findReusableRead(readSpan)).toBeNull();
+  });
+
+  it('findReusableRead matches again after rematerialize', () => {
+    const readSpan = { filePath: 'src/rematerialize.ts', sourceRevision: 'rev_r' };
+    const shortHash = useContextStore.getState().addChunk('content', 'file', 'src/rematerialize.ts', undefined, undefined, undefined, { readSpan });
+    const chunk = Array.from(useContextStore.getState().chunks.values()).find(c => c.source === 'src/rematerialize.ts')!;
+    materialize(
+      chunk.hash,
+      chunk.type,
+      chunk.source,
+      chunk.tokens,
+      chunk.content.split('\n').length,
+      chunk.editDigest || chunk.digest || '',
+      chunk.shortHash,
+    );
+    dematerialize(chunk.hash);
+    expect(useContextStore.getState().findReusableRead(readSpan)).toBeNull();
+    materialize(
+      chunk.hash,
+      chunk.type,
+      chunk.source,
+      chunk.tokens,
+      chunk.content.split('\n').length,
+      chunk.editDigest || chunk.digest || '',
+      chunk.shortHash,
+    );
+    expect(useContextStore.getState().findReusableRead(readSpan)).toBe(shortHash);
+  });
 });
 
 describe('staged lifecycle policy', () => {
@@ -1169,6 +1215,16 @@ describe('clearReadSpansForPaths', () => {
       sourceRevision: 'abc123',
       readSpan: { filePath: 'src/lib.rs', sourceRevision: 'abc123' },
     });
+    const libChunk = Array.from(useContextStore.getState().chunks.values()).find(c => c.source === 'src/lib.rs')!;
+    materialize(
+      libChunk.hash,
+      libChunk.type,
+      libChunk.source,
+      libChunk.tokens,
+      libChunk.content.split('\n').length,
+      libChunk.editDigest || libChunk.digest || '',
+      libChunk.shortHash,
+    );
     const reuseBefore = useContextStore.getState().findReusableRead({ filePath: 'src/lib.rs', sourceRevision: 'abc123' });
     expect(reuseBefore).not.toBeNull();
 

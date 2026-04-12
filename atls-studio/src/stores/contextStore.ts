@@ -2231,6 +2231,9 @@ export const useContextStore = create<ContextStoreState>()(
       if (rs.sourceRevision !== span.sourceRevision) continue;
       if ((rs.shape ?? '') !== (span.shape ?? '')) continue;
       if ((rs.contextType ?? '') !== (span.contextType ?? '')) continue;
+      // Align with HPP + formatter: reuse only when the model would see full body this turn
+      const ref = hppGetRef(chunk.hash);
+      if (!ref || !hppShouldMaterialize(ref)) continue;
       // Full-file span: both undefined means match
       if (span.startLine == null && rs.startLine == null) {
         matchHash = chunk.hash;
