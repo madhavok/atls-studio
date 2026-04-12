@@ -195,6 +195,7 @@ export type SetSelector =
   | { kind: 'all' }
   | { kind: 'stale' }
   | { kind: 'dormant' }
+  | { kind: 'dematerialized' }
   | { kind: 'head'; path: string; offset?: number }
   | { kind: 'tag'; name: string; path: string }
   | { kind: 'commit'; sha: string; path: string }

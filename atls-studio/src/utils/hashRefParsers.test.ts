@@ -168,6 +168,11 @@ describe('parseSetRef', () => {
     expect(result).toEqual({ selector: { kind: 'dormant' }, modifier: 'auto' });
   });
 
+  it('parses @dematerialized', () => {
+    const result = parseSetRef('h:@dematerialized');
+    expect(result).toEqual({ selector: { kind: 'dematerialized' }, modifier: 'auto' });
+  });
+
   it('parses @latest', () => {
     const result = parseSetRef('h:@latest');
     expect(result).toEqual({ selector: { kind: 'latest', count: 1 }, modifier: 'auto' });

@@ -152,6 +152,7 @@ function parseSingleSetCore(rest: string): ParsedSetRef | null {
   if (body === 'pinned') return finalizeSetRef({ kind: 'pinned' });
   if (body === 'stale') return finalizeSetRef({ kind: 'stale' });
   if (body === 'dormant') return finalizeSetRef({ kind: 'dormant' });
+  if (body === 'dematerialized') return finalizeSetRef({ kind: 'dematerialized' });
 
   if (body === 'latest') return finalizeSetRef({ kind: 'latest', count: 1 });
   if (body.startsWith('latest:')) {

@@ -94,8 +94,12 @@ export class SnapshotTracker {
     const existing = this.snapshots.get(key);
 
     if (existing && existing.readKind === 'canonical' && readKind !== 'canonical') {
-      // Don't downgrade readKind, but still update snapshotHash and accumulate readRegions/shapeHash
-      existing.snapshotHash = bare;
+      // Don't downgrade readKind. Shaped reads carry a derived hash — keep canonical snapshotHash for CE gates.
+      if (readKind !== 'shaped') {
+        existing.snapshotHash = bare;
+      } else {
+        existing.shapeHash = opts?.shapeHash ?? bare;
+      }
       existing.readAt = Date.now();
       if (opts?.readRegion) {
         const regions = existing.readRegions ? [...existing.readRegions, opts.readRegion] : [opts.readRegion];

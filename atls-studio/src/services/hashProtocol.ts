@@ -72,13 +72,40 @@ function removeRefFromIndexes(hash: string, ref: ChunkRef): void {
 /** Drop oldest evicted ref rows when the map exceeds the soft cap. */
 function pruneRefsMapIfNeeded(): void {
   if (refs.size <= HPP_REFS_MAX_ENTRIES) return;
+  pruneEvictedOldestWhile(() => refs.size > HPP_REFS_MAX_ENTRIES);
+}
+
+/**
+ * When a burst eviction leaves evicted ≫ active rows, trim evicted early so the refs map
+ * does not sit at ~2× until the next turn (grace period still applies for light churn).
+ */
+function pruneEvictedRefsIfBurden(): void {
+  let evicted = 0;
+  let active = 0;
+  for (const [, r] of refs) {
+    if (r.visibility === 'evicted') evicted++;
+    else active++;
+  }
+  if (active === 0 || evicted / active < 1.5) return;
+  pruneEvictedOldestWhile(() => {
+    let e = 0;
+    let a = 0;
+    for (const [, r] of refs) {
+      if (r.visibility === 'evicted') e++;
+      else a++;
+    }
+    return a > 0 && e / a >= 1.2;
+  });
+}
+
+function pruneEvictedOldestWhile(shouldContinue: () => boolean): void {
   const evictedRows: Array<[string, ChunkRef]> = [];
   for (const [h, r] of refs) {
     if (r.visibility === 'evicted') evictedRows.push([h, r]);
   }
   evictedRows.sort((a, b) => a[1].seenAtTurn - b[1].seenAtTurn);
   let i = 0;
-  while (refs.size > HPP_REFS_MAX_ENTRIES && i < evictedRows.length) {
+  while (shouldContinue() && i < evictedRows.length) {
     const [h, r] = evictedRows[i++];
     if (refs.get(h) === r && r.visibility === 'evicted') {
       removeRefFromIndexes(h, r);
@@ -156,6 +183,7 @@ export async function advanceTurn(): Promise<number> {
   // Full round = materializations since last advanceTurn + hook-triggered materializations this tick.
   lastTurnDelta.newMaterialized = materializedThisRoundBeforeHook + lastTurnDelta.newMaterialized;
   pruneRefsMapIfNeeded();
+  pruneEvictedRefsIfBurden();
   return currentTurn;
 }
 
@@ -404,11 +432,16 @@ function getStaleRefs(): ChunkRef[] {
 }
 
 /**
- * Get refs classified as "dormant" — compacted/archived chunks still in memory.
- * In HPP terms these are referenced or archived visibility.
+ * Cold storage in HPP — archived visibility (not last round's dematerialized refs).
+ * Use {@link getDematerializedRefs} for recently dematerialized (referenced) rows.
  */
 function getDormantRefs(): ChunkRef[] {
-  return collectRefsWhere(r => r.visibility === 'referenced' || r.visibility === 'archived');
+  return collectRefsWhere(r => r.visibility === 'archived');
+}
+
+/** Dematerialized this or last round — still "warm"; listed separately from dormant (archived). */
+function getDematerializedRefs(): ChunkRef[] {
+  return collectRefsWhere(r => r.visibility === 'referenced');
 }
 
 /**
@@ -437,6 +470,8 @@ export function queryRefs(selector: SetSelector): ChunkRef[] {
       return getStaleRefs();
     case 'dormant':
       return getDormantRefs();
+    case 'dematerialized':
+      return getDematerializedRefs();
     case 'head':
     case 'tag':
     case 'commit':

@@ -337,6 +337,14 @@ describe('SnapshotTracker tiered awareness', () => {
     expect(tracker.isStructurallyUnchanged('src/foo.ts', 'shape_different')).toBe(false);
   });
 
+  it('shaped read after canonical keeps getHash as canonical (derived hash goes to shapeHash)', () => {
+    const tracker = new SnapshotTracker();
+    tracker.record('src/foo.ts', 'canonical_abc', 'canonical');
+    tracker.record('src/foo.ts', 'derived_shaped_xyz', 'shaped', { shapeHash: 'sig_body' });
+    expect(tracker.getHash('src/foo.ts')).toBe('canonical_abc');
+    expect(tracker.getIdentity('src/foo.ts')?.shapeHash).toBe('sig_body');
+  });
+
   it('record accumulates readRegions even when canonical exists', () => {
     const tracker = new SnapshotTracker();
     tracker.record('src/foo.ts', 'hash1', 'canonical');

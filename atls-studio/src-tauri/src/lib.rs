@@ -382,18 +382,19 @@ pub(crate) fn lookup_undo_history(
     None
 }
 
-pub(crate) fn fnv1a32_utf16(content: &str, offset_basis: u32) -> u32 {
-    let mut hash = offset_basis;
-    for code_unit in content.encode_utf16() {
-        hash ^= code_unit as u32;
-        hash = hash.wrapping_mul(0x01000193);
-    }
-    hash
-}
-
 pub(crate) fn content_hash(content: &str) -> String {
-    let h1 = fnv1a32_utf16(content, 0x811c9dc5);
-    let h2 = fnv1a32_utf16(content, 0x050c5d1f);
+    // Match TS `hashContentSync`: two streams over UTF-16 code units, distinct odd multipliers.
+    const H1_SEED: u32 = 0x811c9dc5;
+    const H2_SEED: u32 = 0x050c5d1f;
+    const FNV_PRIME: u32 = 0x0100_0193;
+    const MIX_PRIME: u32 = 0x9e37_79b1;
+    let mut h1 = H1_SEED;
+    let mut h2 = H2_SEED;
+    for code_unit in content.encode_utf16() {
+        let c = code_unit as u32;
+        h1 = (h1 ^ c).wrapping_mul(FNV_PRIME);
+        h2 = (h2 ^ c).wrapping_mul(MIX_PRIME);
+    }
     format!("{:08x}{:08x}", h1, h2)
 }
 
@@ -4080,6 +4081,11 @@ function alsoStay() {
         assert_eq!(h1, h2, "content_hash must be deterministic");
         assert_eq!(h1.len(), 16, "content_hash produces 16-char hex");
         assert!(h1.chars().all(|c| c.is_ascii_hexdigit()), "content_hash is hex");
+    }
+
+    #[test]
+    fn test_content_hash_ts_parity_hello_world() {
+        assert_eq!(content_hash("hello world"), "d58b3fa72014b76f");
     }
 
     #[test]

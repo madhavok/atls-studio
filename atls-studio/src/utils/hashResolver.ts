@@ -236,7 +236,7 @@ export const BB_REF_PATTERN = /h:bb:[a-zA-Z0-9_.\-:]+/g;
 
 /** Matches h:@selector with optional modifier chain (heuristic; prefer `matchesSetRefString` when correctness matters). */
 export const SET_REF_PATTERN = new RegExp(
-  `h:@(?:sub:[a-zA-Z0-9_-]+|file=[^\\s:]+|type=[a-z:]+|edited|latest(?::\\d+)?|pinned|all|stale|dormant|HEAD(?:~\\d+)?:[^\\s:]+|tag:[^\\s:]+:[^\\s]+|commit:[0-9a-fA-F]+:[^\\s]+|ws:[a-zA-Z0-9_@/.#-]+|search\\([^\\n)]*\\))(?::${HASH_MODIFIER_TOKEN_RE})?`,
+  `h:@(?:sub:[a-zA-Z0-9_-]+|file=[^\\s:]+|type=[a-z:]+|edited|latest(?::\\d+)?|pinned|all|stale|dormant|dematerialized|HEAD(?:~\\d+)?:[^\\s:]+|tag:[^\\s:]+:[^\\s]+|commit:[0-9a-fA-F]+:[^\\s]+|ws:[a-zA-Z0-9_@/.#-]+|search\\([^\\n)]*\\))(?::${HASH_MODIFIER_TOKEN_RE})?`,
   'g',
 );
 

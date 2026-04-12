@@ -327,23 +327,27 @@ export function formatWorkingMemory(input: FormatterInput): string {
 
     syncHppPinsWithStore(sortedChunks);
 
-    // Separate materialized (full content) from referenced (digest only)
+    // Materialized vs not: dematerialized (referenced, still warm) vs archived (cold)
     const materialized: ContextChunk[] = [];
-    const referenced: ContextChunk[] = [];
+    const dematerialized: ContextChunk[] = [];
+    const archivedChunks: ContextChunk[] = [];
 
     for (const chunk of sortedChunks) {
       const ref = getRef(chunk.hash);
       if (ref && !shouldMaterialize(ref)) {
-        referenced.push(chunk);
+        if (ref.visibility === 'archived') archivedChunks.push(chunk);
+        else dematerialized.push(chunk);
       } else {
         materialized.push(chunk);
       }
     }
 
-    if (referenced.length > 0) {
-      const MAX_DORMANT_REFS = 10;
-      lines.push(`## DORMANT ENGRAMS (${referenced.length} — use rec h:XXXX to restore)`);
-      const shown = referenced.slice(0, MAX_DORMANT_REFS);
+    const MAX_SECTION_REFS = 10;
+    if (dematerialized.length > 0) {
+      lines.push(
+        `## DEMATERIALIZED (${dematerialized.length} — last round(s); h:@dematerialized lists hashes)`,
+      );
+      const shown = dematerialized.slice(0, MAX_SECTION_REFS);
       for (const chunk of shown) {
         const ref = getRef(chunk.hash);
         if (ref) {
@@ -353,8 +357,26 @@ export function formatWorkingMemory(input: FormatterInput): string {
           lines.push(`  h:${chunk.shortHash} ${src} ${chunk.tokens}tk`);
         }
       }
-      if (referenced.length > MAX_DORMANT_REFS) {
-        lines.push(`  +${referenced.length - MAX_DORMANT_REFS} more (use h:@dormant to list all)`);
+      if (dematerialized.length > MAX_SECTION_REFS) {
+        lines.push(`  +${dematerialized.length - MAX_SECTION_REFS} more`);
+      }
+      lines.push('');
+    }
+
+    if (archivedChunks.length > 0) {
+      lines.push(`## DORMANT / ARCHIVED (${archivedChunks.length} — cold; use rec h:XXXX or h:@dormant)`);
+      const shown = archivedChunks.slice(0, MAX_SECTION_REFS);
+      for (const chunk of shown) {
+        const ref = getRef(chunk.hash);
+        if (ref) {
+          lines.push(`  ${formatArchivedRefLine(ref)}`);
+        } else {
+          const src = chunk.source || chunk.type;
+          lines.push(`  h:${chunk.shortHash} ${src} ${chunk.tokens}tk`);
+        }
+      }
+      if (archivedChunks.length > MAX_SECTION_REFS) {
+        lines.push(`  +${archivedChunks.length - MAX_SECTION_REFS} more`);
       }
       lines.push('');
     }

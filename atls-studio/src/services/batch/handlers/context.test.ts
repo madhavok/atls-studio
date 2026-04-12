@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useContextStore } from '../../../stores/contextStore';
+import { materialize as hppMaterialize } from '../../hashProtocol';
 import { handleEmit, handleLoad, handleRead, handleReadLines, handleReadShaped, handleShape } from './context';
 
 const invokeMock = vi.fn();
@@ -69,6 +70,20 @@ describe('context handlers snapshot authority', () => {
     });
 
     await handleLoad({ file_paths: ['src/a.ts', 'src/b.ts'] }, ctx);
+
+    const st0 = useContextStore.getState();
+    for (const [, c] of st0.chunks) {
+      const lineCount = (c.content.match(/\n/g) || []).length + 1;
+      hppMaterialize(
+        c.hash,
+        c.type,
+        c.source,
+        c.tokens,
+        lineCount,
+        c.editDigest || c.digest || '',
+        c.shortHash,
+      );
+    }
 
     const st = useContextStore.getState();
     const aEntry = [...st.chunks.entries()].find(([, c]) => c.source === 'src/a.ts');

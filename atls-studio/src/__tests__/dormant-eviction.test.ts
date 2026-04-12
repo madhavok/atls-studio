@@ -5,7 +5,7 @@
  *   snapshot                          -> preserved
  *   derived + stale                   -> evicted
  *   compacted + stale + unpinned      -> evicted (archived if >20tk, dropped if <=20tk)
- *   compacted + stale + pinned        -> updated (pin protects)
+ *   compacted + stale + pinned        -> suspect; sourceRevision kept (pin does not fake-freshen digest)
  *   active latest + stale             -> updated to new revision
  */
 
@@ -122,7 +122,7 @@ describe('reconcileSourceRevision: dormant eviction', () => {
     expect(useContextStore.getState().archivedChunks.has(batchStub.hash)).toBe(false);
   });
 
-  it('preserves pinned dormant chunks even when stale', () => {
+  it('marks pinned+compacted chunks suspect when file revision changes (does not fake-freshen)', () => {
     const pinned = makeChunk({
       hash: 'pinned_dormant_1234567890',
       compacted: true,
@@ -137,7 +137,9 @@ describe('reconcileSourceRevision: dormant eviction', () => {
     expect(stats.invalidated).toBe(0);
     const updated = useContextStore.getState().chunks.get(pinned.hash);
     expect(updated).toBeDefined();
-    expect(updated!.sourceRevision).toBe(NEW_REV);
+    expect(updated!.sourceRevision).toBe(OLD_REV);
+    expect(updated!.observedRevision).toBe(NEW_REV);
+    expect(updated!.freshness).toBe('suspect');
   });
 
   it('updates active (non-compacted) latest chunks to new revision', () => {

@@ -70,7 +70,7 @@ ru action?:set|delete|list key?:name content?:"text" — list needs only action:
 em content:"text" type?:name
 pi hashes:h:HASH1,h:HASH2 — or \`pi in:r1.refs\` (dataflow). **hashes** = **h:**… only; use \`in:r1.refs\` on the step line, not inside \`hashes\` as text.
 pu hashes:h:HASH1,h:HASH2 — unpin (requires actual h:refs, not step IDs)
-dro hashes:h:HASH1,h:HASH2 — or scope:dormant max?:N (drops without hashes)
+dro hashes:h:HASH1,h:HASH2 — or scope:dormant max?:N (drops without hashes). Set refs: h:@dormant (archived/cold), h:@dematerialized (last-round refs)
 rec hashes:h:HASH1 — recall evicted/archived content back into context
 pc hashes:h:HASH1,h:HASH2 tier?:pointer|sig — compact to digest
 sh hash:h:XXXX — resolve + reshape a hash ref

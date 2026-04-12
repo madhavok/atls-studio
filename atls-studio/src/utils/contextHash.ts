@@ -4,7 +4,7 @@
  * Hash generation and token estimation for context chunks.
  * Every piece of content gets a unique hash for tracking.
  * 
- * Uses dual FNV-1a hashing (two 32-bit seeds) to produce a 16-char hex hash.
+ * Uses dual FNV-1a–style mixing (two 32-bit streams, distinct primes) for a 16-char hex hash.
  * First SHORT_HASH_LEN (6) chars used as shortHash for display; full 16 chars as Map key.
  */
 
@@ -53,32 +53,21 @@ const CHUNK_TAG_TYPES: ChunkType[] = [
 const CHUNK_TAG_TYPES_BY_LENGTH: ChunkType[] = [...CHUNK_TAG_TYPES].sort((a, b) => b.length - a.length);
 
 /**
- * FNV-1a 32-bit hash with configurable offset basis.
- * Used internally to produce two independent 32-bit hashes.
- */
-function fnv1a32(content: string, offsetBasis: number): number {
-  let hash = offsetBasis;
-  for (let i = 0; i < content.length; i++) {
-    hash ^= content.charCodeAt(i);
-    // FNV prime for 32-bit: 0x01000193
-    hash = Math.imul(hash, 0x01000193);
-  }
-  return hash >>> 0; // ensure unsigned
-}
-
-/**
  * Synchronous hash producing 16 hex chars (64 bits of entropy).
- * Concatenates two independent FNV-1a 32-bit hashes with different seeds.
+ * Dual UTF-16 code-unit streams with distinct odd multipliers (matches Rust `content_hash`).
  * Collision probability ~50% at ~4 billion entries (vs ~77k with old djb2 8-char).
  */
+const FNV_PRIME_32 = 0x01000193;
+/** Second stream uses a different odd multiplier so h1‖h2 is not two copies of the same recurrence. */
+const HASH_MIX_PRIME_32 = 0x9e3779b1;
+
 export function hashContentSync(content: string): string {
-  // Single-pass dual FNV-1a: compute both hashes in one loop instead of two.
   let h1 = 0x811c9dc5;
   let h2 = 0x050c5d1f;
   for (let i = 0; i < content.length; i++) {
     const c = content.charCodeAt(i);
-    h1 = Math.imul(h1 ^ c, 0x01000193);
-    h2 = Math.imul(h2 ^ c, 0x01000193);
+    h1 = Math.imul(h1 ^ c, FNV_PRIME_32);
+    h2 = Math.imul(h2 ^ c, HASH_MIX_PRIME_32);
   }
   return ((h1 >>> 0).toString(16).padStart(8, '0') + (h2 >>> 0).toString(16).padStart(8, '0'));
 }
@@ -95,7 +84,7 @@ export function estimateTokens(content: string): number {
   if (!content || content.length === 0) return 0;
   const len = content.length;
 
-  let hasCode = false;
+  let codeLikeCount = 0;
   let newlineCount = 0;
   let wsCount = 0;
   let cjkCount = 0;
@@ -104,10 +93,8 @@ export function estimateTokens(content: string): number {
     const c = content.charCodeAt(i);
     if (c === 10) newlineCount++;
     if (c === 32 || c === 9 || c === 10 || c === 13) wsCount++;
-    if (!hasCode) {
-      if (c === 123 || c === 125 || c === 91 || c === 93 || c === 40 || c === 41 || c === 59) {
-        hasCode = true;
-      }
+    if (c === 123 || c === 125 || c === 91 || c === 93 || c === 40 || c === 41 || c === 59) {
+      codeLikeCount++;
     }
     // CJK Unified Ideographs + common CJK ranges
     if (c >= 0x3000 && ((c >= 0x4E00 && c <= 0x9FFF) || (c >= 0x3400 && c <= 0x4DBF) || (c >= 0x3000 && c <= 0x303F))) {
@@ -118,6 +105,10 @@ export function estimateTokens(content: string): number {
   const lineCount = newlineCount + 1;
   const charsPerLine = len / lineCount;
   const wsRatio = wsCount / len;
+  // Code-like: need local density (sparse `{}` in a huge JSON blob must not flip the whole string).
+  const density = len > 0 ? codeLikeCount / len : 0;
+  const hasCode =
+    (codeLikeCount >= 3 && density >= 0.006) || density >= 0.015;
 
   let charsPerToken: number;
   if (hasCode && charsPerLine > 200) {

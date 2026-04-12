@@ -721,8 +721,13 @@ function pruneStagedSnippetsToBudget(
     // takeAnchor updates anchorMetrics inline.
   }
 
-  const takeFromList = (list: Array<[string, StagedSnippet]>, skipPersistent: boolean): boolean => {
-    for (const [key, snippet] of list) {
+  const takeFromList = (
+    list: Array<[string, StagedSnippet]>,
+    skipPersistent: boolean,
+    startIdx = 0,
+  ): boolean => {
+    for (let i = startIdx; i < list.length; i++) {
+      const [key, snippet] = list[i];
       if (!next.has(key)) continue;
       if (skipPersistent && snippet.admissionClass === 'persistentAnchor') continue;
       next.delete(key);
@@ -743,7 +748,7 @@ function pruneStagedSnippetsToBudget(
     // Drain transients / non-persistent until under cap or exhausted.
   }
   // 3) If still over cap, evict persistent anchors only (Step 2 already drained non-anchors).
-  while (runningTotal > STAGED_TOTAL_HARD_CAP_TOKENS && takeFromList(anchorOnlyCandidates, false)) {
+  while (runningTotal > STAGED_TOTAL_HARD_CAP_TOKENS && takeFromList(anchorOnlyCandidates, false, anchorCandIdx)) {
     // Same anchor ordering as sortedCandidates.
   }
 
@@ -1205,6 +1210,24 @@ function reconcileChunkForSourceRevision(
     batch.stats.invalidated++;
     batch.dormantEvicted++;
     batch.evictedHashes.push(chunk.hash);
+    return;
+  }
+  if (
+    chunk.compacted &&
+    chunk.pinned &&
+    chunk.sourceRevision &&
+    chunk.sourceRevision !== currentRevision
+  ) {
+    const stuck: ContextChunk = {
+      ...chunk,
+      observedRevision: currentRevision,
+      freshness: 'suspect',
+      freshnessCause: effectiveCause,
+      suspectSince: chunk.suspectSince ?? Date.now(),
+    };
+    if (surface === 'working') newChunks.set(key, stuck);
+    else newArchived.set(key, stuck);
+    batch.stats.updated++;
     return;
   }
   if (
@@ -5640,6 +5663,12 @@ export const useContextStore = create<ContextStoreState>()(
       }
       case 'dormant':
         matched = pool.filter(c => !!c.compacted);
+        break;
+      case 'dematerialized':
+        matched = pool.filter(c => {
+          const r = hppGetRef(c.hash);
+          return r?.visibility === 'referenced';
+        });
         break;
       case 'workspace': {
         const wsName = selector.name.toLowerCase();

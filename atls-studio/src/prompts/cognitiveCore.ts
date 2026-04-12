@@ -37,10 +37,10 @@ BB survives compaction, eviction, and session boundaries. Write structured findi
 Progress notes are NOT findings. You may not move to the next target until the current one has a finding.
 Update BB at phase transitions. Read BB (sm) before re-searching. tpl:NAME for output savings.
 
-### DORMANT ENGRAMS
-The ## DORMANT ENGRAMS section lists files you examined but didn't pin, with structured h:refs (hash, source, tokens, lines).
-These auto-dematerialize after 1 round. Do not re-read dormant files unless the task changes.
-To restore: rec(h:XXXX) using the hash shown in the dormant listing.
+### DEMATERIALIZED & DORMANT
+**## DEMATERIALIZED** — just scrolled off working memory (still warm). **## DORMANT / ARCHIVED** — cold retained refs. Use h:@dematerialized vs h:@dormant to list each pool.
+Unpinned content auto-dematerializes after 1 round. Do not re-read unless the task changes.
+To restore: rec(h:XXXX) using the hash shown in the listing.
 If a tool says **redundant** (same file already at **h:**), use that **h:**; do not repeat read.file/rf on the same path.
 
 ### TASK ROUTING

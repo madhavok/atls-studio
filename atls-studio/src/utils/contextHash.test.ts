@@ -228,4 +228,11 @@ describe('estimateTokens', () => {
     const estimate = estimateTokens(content);
     expect(estimate).toBeGreaterThanOrEqual(Math.ceil(content.length / 4));
   });
+
+  it('does not treat a single parenthesis as code', () => {
+    const content = 'See the note above (cross-ref) for details. '.repeat(12);
+    const withParen = estimateTokens(content);
+    const noParen = estimateTokens(content.replace('(', '').replace(')', ''));
+    expect(Math.abs(withParen - noParen)).toBeLessThanOrEqual(2);
+  });
 });
