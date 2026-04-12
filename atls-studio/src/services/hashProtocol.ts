@@ -50,8 +50,18 @@ export interface RefLine {
 
 let currentTurn = 0;
 const refs = new Map<string, ChunkRef>();
-const shortHashIndex = new Map<string, ChunkRef>();
+/** shortHash (6 hex) → refs with that prefix; multiple entries ⇒ ambiguous for bare short lookup */
+const shortHashIndex = new Map<string, Set<ChunkRef>>();
 let lastTurnDelta = { dematerialized: 0, newMaterialized: 0 };
+
+function addShortHashIndexEntry(shortHash: string, ref: ChunkRef): void {
+  let bucket = shortHashIndex.get(shortHash);
+  if (!bucket) {
+    bucket = new Set();
+    shortHashIndex.set(shortHash, bucket);
+  }
+  bucket.add(ref);
+}
 
 export function getTurn(): number {
   return currentTurn;
@@ -144,7 +154,7 @@ export function materialize(
     seenAtTurn: currentTurn,
   };
   refs.set(hash, ref);
-  shortHashIndex.set(shortHash, ref);
+  addShortHashIndexEntry(shortHash, ref);
   lastTurnDelta.newMaterialized += 1;
   return ref;
 }
@@ -190,18 +200,23 @@ export function getRef(hash: string): ChunkRef | undefined {
   const normalized = hash.startsWith('h:') ? hash.slice(2) : hash;
   const direct = refs.get(normalized);
   if (direct) return direct;
-  // O(1) short-hash lookup via secondary index
-  const byShort = shortHashIndex.get(normalized);
-  if (byShort) return byShort;
-  // Prefix match (longer than shortHash but shorter than full)
-  if (normalized.length >= SHORT_HASH_LEN) {
+  // Bare 6-char short hash: O(1) when unique; multiple refs share prefix ⇒ undefined (no silent overwrite)
+  if (normalized.length === SHORT_HASH_LEN) {
+    const bucket = shortHashIndex.get(normalized);
+    if (bucket && bucket.size === 1) {
+      return bucket.values().next().value as ChunkRef;
+    }
+    return undefined;
+  }
+  // Longer prefix (exclusive of full map key): unique prefix match only
+  if (normalized.length > SHORT_HASH_LEN) {
     let match: ChunkRef | undefined;
     let matchCount = 0;
     for (const [, ref] of refs) {
       if (ref.hash.startsWith(normalized)) {
         match = ref;
         matchCount++;
-        if (matchCount > 1) return undefined; // ambiguous
+        if (matchCount > 1) return undefined;
       }
     }
     if (matchCount === 1) return match;

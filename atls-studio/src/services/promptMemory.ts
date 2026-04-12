@@ -161,18 +161,8 @@ export function getStagedTokens(_promptMetrics: PromptMetrics, stagedTokens: num
   return stagedTokens;
 }
 
-export function getEstimatedTotalPromptTokens(
-  buckets: Omit<PromptPressureBuckets, 'estimatedTotalPromptTokens'>,
-): number {
-  return buckets.staticSystemTokens
-    + buckets.conversationHistoryTokens
-    + buckets.stagedTokens
-    + buckets.wmTokens
-    + buckets.workspaceContextTokens
-    + buckets.blackboardTokens;
-}
-
-export function getPromptPressureTokens(
+/** Sum of user-visible prompt pressure buckets (single source of truth for totals). */
+export function sumPromptPressureBuckets(
   buckets: Pick<
     PromptPressureBuckets,
     | 'staticSystemTokens'
@@ -189,6 +179,26 @@ export function getPromptPressureTokens(
     + buckets.wmTokens
     + buckets.workspaceContextTokens
     + buckets.blackboardTokens;
+}
+
+export function getEstimatedTotalPromptTokens(
+  buckets: Omit<PromptPressureBuckets, 'estimatedTotalPromptTokens'>,
+): number {
+  return sumPromptPressureBuckets(buckets);
+}
+
+export function getPromptPressureTokens(
+  buckets: Pick<
+    PromptPressureBuckets,
+    | 'staticSystemTokens'
+    | 'conversationHistoryTokens'
+    | 'stagedTokens'
+    | 'wmTokens'
+    | 'workspaceContextTokens'
+    | 'blackboardTokens'
+  >,
+): number {
+  return sumPromptPressureBuckets(buckets);
 }
 
 export function classifyStageSnippet(

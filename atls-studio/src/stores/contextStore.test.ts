@@ -6,6 +6,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { setRoundRefreshRevisionResolver, setBulkRevisionResolver, setWorkspacesAccessor, useContextStore } from './contextStore';
 import { STAGED_ANCHOR_BUDGET_TOKENS, STAGED_TOTAL_HARD_CAP_TOKENS, MAX_PERSISTENT_STAGE_ENTRIES } from '../services/promptMemory';
 import { hashContentSync } from '../utils/contextHash';
+import * as tokenCounter from '../utils/tokenCounter';
 
 function resetStore() {
   useContextStore.getState().resetSession();
@@ -1415,5 +1416,22 @@ describe('addAnnotation promotes staged snippets', () => {
     expect(chunk).toBeDefined();
     expect(chunk!.content).toBe(body);
     expect(chunk!.annotations?.some(a => a.content === 'pinned note')).toBe(true);
+  });
+});
+
+describe('addChunk async token reconcile', () => {
+  beforeEach(() => {
+    resetStore();
+    vi.restoreAllMocks();
+  });
+
+  it('writes countTokens result back to chunk.tokens', async () => {
+    vi.spyOn(tokenCounter, 'countTokens').mockResolvedValue(90210);
+    const body = 'unique-reconcile-body-xyz-123';
+    const key = hashContentSync(body);
+    useContextStore.getState().addChunk(body, 'result');
+    await vi.waitFor(() => {
+      expect(useContextStore.getState().chunks.get(key)?.tokens).toBe(90210);
+    });
   });
 });

@@ -127,6 +127,14 @@ describe('HPP hard tests', () => {
     expect(getRef('aabb')).toBeUndefined();
   });
 
+  it('getRef returns undefined when two refs share the same 6-char short prefix', () => {
+    materialize('aabbcc1111111111', 'file', 'src/a.ts', 10, 5, '');
+    materialize('aabbcc2222222222', 'file', 'src/b.ts', 10, 5, '');
+    expect(getRef('aabbcc')).toBeUndefined();
+    expect(getRef('aabbcc1')).toBeDefined();
+    expect(getRef('aabbcc2')).toBeDefined();
+  });
+
   // ── formatRefLine with and without digest ──
 
   it('formatRefLine with digest includes newline', () => {

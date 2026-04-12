@@ -21,7 +21,7 @@ import {
   SHORT_HASH_LEN,
   type DigestSymbol,
 } from '../utils/contextHash';
-import { countTokensSync } from '../utils/tokenCounter';
+import { countTokensSync, countTokens } from '../utils/tokenCounter';
 import {
   formatWorkingMemory,
   formatTaggedContext,
@@ -43,7 +43,6 @@ import type { HashLookupResult, SetRefLookup, SetSelector } from '../utils/hashR
 import { resetProtocol, evict as hppEvict, setPinned as hppSetPinned, archive as hppArchive, materialize as hppMaterialize, dematerialize as hppDematerialize, getRef as hppGetRef, shouldMaterialize as hppShouldMaterialize, getTurn as hppGetTurn } from '../services/hashProtocol';
 import { useRoundHistoryStore } from './roundHistoryStore';
 import { formatAge } from '../utils/formatHelpers';
-import { commonPrefixLen } from './contextHelpers';
 import { canonicalizeSnapshotHash } from '../services/batch/snapshotTracker';
 import { emptyRollingSummary, type RollingSummary } from '../services/historyDistiller';
 import { freshnessTelemetry, incSessionRestoreReconcileCount, incCognitiveRulesExpired } from '../services/freshnessTelemetry';
@@ -1089,6 +1088,237 @@ function stagedRestoreBodyMatchesDisk(snippet: StagedSnippet, currentRevision: s
   return canonicalizeSnapshotHash(h) === canonicalizeSnapshotHash(currentRevision);
 }
 
+/** Mutated by reconcileSourceRevision row helpers (single stats + evict list). */
+interface ReconcileSourceRevisionBatch {
+  stats: ReconcileStats;
+  evictedHashes: string[];
+  dormantEvicted: number;
+}
+
+function reconcileWorkingChunkForSourceRevision(
+  path: string,
+  currentRevision: string,
+  key: string,
+  chunk: ContextChunk,
+  newChunks: Map<string, ContextChunk>,
+  newArchived: Map<string, ContextChunk>,
+  effectiveCause: FreshnessCause,
+  isSessionRestore: boolean,
+  isSameFilePriorEdit: boolean,
+  batch: ReconcileSourceRevisionBatch,
+): void {
+  if (!sourceTouchesPath(chunk.source, path)) return;
+  batch.stats.total++;
+  if (!isExactSourcePathMatch(chunk.source, path)) {
+    if (chunk.viewKind === 'snapshot') {
+      batch.stats.preserved++;
+      return;
+    }
+    newChunks.delete(key);
+    batch.stats.invalidated++;
+    batch.evictedHashes.push(chunk.hash);
+    return;
+  }
+  if (chunk.viewKind === 'snapshot') {
+    batch.stats.preserved++;
+    return;
+  }
+  if (chunk.viewKind === 'derived' && chunk.sourceRevision && chunk.sourceRevision !== currentRevision) {
+    newChunks.delete(key);
+    batch.stats.invalidated++;
+    batch.evictedHashes.push(chunk.hash);
+    return;
+  }
+  if (chunk.compacted && !chunk.pinned && chunk.sourceRevision && chunk.sourceRevision !== currentRevision) {
+    newChunks.delete(key);
+    if (chunk.tokens > DORMANT_ARCHIVE_THRESHOLD) {
+      newArchived.set(key, { ...chunk });
+    } else {
+      newArchived.delete(key);
+    }
+    batch.stats.invalidated++;
+    batch.dormantEvicted++;
+    batch.evictedHashes.push(chunk.hash);
+    return;
+  }
+  if (
+    isSessionRestore &&
+    chunk.sourceRevision &&
+    chunk.sourceRevision !== currentRevision &&
+    !sessionRestoreBodyMatchesDisk(chunk, currentRevision)
+  ) {
+    const stuck: ContextChunk = {
+      ...chunk,
+      observedRevision: currentRevision,
+      freshness: 'suspect',
+      freshnessCause: 'session_restore',
+      suspectSince: chunk.suspectSince ?? Date.now(),
+    };
+    newChunks.set(key, stuck);
+    batch.stats.updated++;
+    return;
+  }
+  const nextChunk = { ...chunk, sourceRevision: currentRevision, observedRevision: currentRevision };
+  delete nextChunk.suspectSince;
+  const alreadyFreshFromEdit = isSameFilePriorEdit
+    && chunk.origin === 'edit-refresh'
+    && chunk.sourceRevision === currentRevision;
+  if (isSameFilePriorEdit && !alreadyFreshFromEdit) {
+    nextChunk.freshness = 'shifted';
+    nextChunk.freshnessCause = effectiveCause;
+  } else {
+    delete nextChunk.freshness;
+    delete nextChunk.freshnessCause;
+  }
+  if (nextChunk.viewKind == null && isFileBackedType(nextChunk.type)) nextChunk.viewKind = 'latest';
+  newChunks.set(key, nextChunk);
+  batch.stats.updated++;
+}
+
+function reconcileArchivedChunkForSourceRevision(
+  path: string,
+  currentRevision: string,
+  key: string,
+  chunk: ContextChunk,
+  newArchived: Map<string, ContextChunk>,
+  effectiveCause: FreshnessCause,
+  isSessionRestore: boolean,
+  isSameFilePriorEdit: boolean,
+  batch: ReconcileSourceRevisionBatch,
+): void {
+  if (!sourceTouchesPath(chunk.source, path)) return;
+  batch.stats.total++;
+  if (!isExactSourcePathMatch(chunk.source, path)) {
+    if (chunk.viewKind === 'snapshot') {
+      batch.stats.preserved++;
+      return;
+    }
+    newArchived.delete(key);
+    batch.stats.invalidated++;
+    batch.evictedHashes.push(chunk.hash);
+    return;
+  }
+  if (chunk.viewKind === 'snapshot') {
+    batch.stats.preserved++;
+    return;
+  }
+  if (chunk.viewKind === 'derived' && chunk.sourceRevision && chunk.sourceRevision !== currentRevision) {
+    newArchived.delete(key);
+    batch.stats.invalidated++;
+    batch.evictedHashes.push(chunk.hash);
+    return;
+  }
+  if (chunk.compacted && !chunk.pinned && chunk.sourceRevision && chunk.sourceRevision !== currentRevision) {
+    if (chunk.tokens <= DORMANT_ARCHIVE_THRESHOLD) {
+      newArchived.delete(key);
+    }
+    batch.stats.invalidated++;
+    batch.dormantEvicted++;
+    batch.evictedHashes.push(chunk.hash);
+    return;
+  }
+  if (
+    isSessionRestore &&
+    chunk.sourceRevision &&
+    chunk.sourceRevision !== currentRevision &&
+    !sessionRestoreBodyMatchesDisk(chunk, currentRevision)
+  ) {
+    const stuck: ContextChunk = {
+      ...chunk,
+      observedRevision: currentRevision,
+      freshness: 'suspect',
+      freshnessCause: 'session_restore',
+      suspectSince: chunk.suspectSince ?? Date.now(),
+    };
+    newArchived.set(key, stuck);
+    batch.stats.updated++;
+    return;
+  }
+  const nextChunk = { ...chunk, sourceRevision: currentRevision, observedRevision: currentRevision };
+  delete nextChunk.suspectSince;
+  const alreadyFreshFromEdit = isSameFilePriorEdit
+    && chunk.origin === 'edit-refresh'
+    && chunk.sourceRevision === currentRevision;
+  if (isSameFilePriorEdit && !alreadyFreshFromEdit) {
+    nextChunk.freshness = 'shifted';
+    nextChunk.freshnessCause = effectiveCause;
+  } else {
+    delete nextChunk.freshness;
+    delete nextChunk.freshnessCause;
+  }
+  if (nextChunk.viewKind == null && isFileBackedType(nextChunk.type)) nextChunk.viewKind = 'latest';
+  newArchived.set(key, nextChunk);
+  batch.stats.updated++;
+}
+
+function reconcileStagedSnippetForSourceRevision(
+  path: string,
+  currentRevision: string,
+  key: string,
+  snippet: StagedSnippet,
+  newStaged: Map<string, StagedSnippet>,
+  effectiveCause: FreshnessCause,
+  isSessionRestore: boolean,
+  isSameFilePriorEdit: boolean,
+  batch: ReconcileSourceRevisionBatch,
+): void {
+  if (!sourceTouchesPath(snippet.source, path)) return;
+  batch.stats.total++;
+  if (!isExactSourcePathMatch(snippet.source, path)) {
+    if (snippet.viewKind === 'snapshot') {
+      batch.stats.preserved++;
+      return;
+    }
+    newStaged.delete(key);
+    batch.stats.invalidated++;
+    return;
+  }
+  if (snippet.viewKind === 'snapshot') {
+    batch.stats.preserved++;
+    return;
+  }
+  if (snippet.viewKind === 'derived' && snippet.sourceRevision && snippet.sourceRevision !== currentRevision) {
+    newStaged.delete(key);
+    batch.stats.invalidated++;
+    return;
+  }
+  if (
+    isSessionRestore &&
+    snippet.sourceRevision &&
+    snippet.sourceRevision !== currentRevision &&
+    !stagedRestoreBodyMatchesDisk(snippet, currentRevision)
+  ) {
+    const stuck: StagedSnippet = {
+      ...snippet,
+      observedRevision: currentRevision,
+      freshness: 'suspect',
+      freshnessCause: 'session_restore',
+      suspectSince: snippet.suspectSince ?? Date.now(),
+      stageState: 'stale',
+    };
+    newStaged.set(key, stuck);
+    batch.stats.updated++;
+    return;
+  }
+  const nextSnippet = { ...snippet, sourceRevision: currentRevision, observedRevision: currentRevision };
+  delete nextSnippet.suspectSince;
+  const alreadyFreshFromEdit = isSameFilePriorEdit
+    && snippet.origin === 'edit-refresh'
+    && snippet.sourceRevision === currentRevision;
+  if (isSameFilePriorEdit && !alreadyFreshFromEdit) {
+    nextSnippet.freshness = 'shifted';
+    nextSnippet.freshnessCause = effectiveCause;
+    nextSnippet.stageState = 'stale';
+  } else {
+    delete nextSnippet.freshness;
+    delete nextSnippet.freshnessCause;
+    nextSnippet.stageState = 'current';
+  }
+  if (nextSnippet.viewKind == null) nextSnippet.viewKind = 'latest';
+  newStaged.set(key, nextSnippet);
+  batch.stats.updated++;
+}
+
 function defaultViewKindForChunk(type: string, opts?: { viewKind?: EngramViewKind }): EngramViewKind | undefined {
   if (opts?.viewKind) return opts.viewKind;
   if (type === 'result') return 'derived';
@@ -1195,11 +1425,11 @@ function refToBaseHash(ref: string): string {
  *
  * Namespace: h:bb:X is reserved for blackboard; never resolved here.
  */
-// Reverse index: shortHash → full map key. Rebuilt lazily.
-let _shortHashIndex: Map<string, string> | null = null;
+// Reverse index: shortHash → full map keys (multiple chunks may share a 6-char prefix). Rebuilt lazily.
+let _shortHashIndex: Map<string, string[]> | null = null;
 let _shortHashIndexChunksRef: Map<string, unknown> | null = null;
 
-function getShortHashIndex(chunks: Map<string, { hash: string; shortHash: string }>): Map<string, string> {
+function getShortHashIndex(chunks: Map<string, { hash: string; shortHash: string }>): Map<string, string[]> {
   // Cache is valid if it was built from the same Map reference (identity check)
   // AND the size hasn't changed. Zustand creates new Map refs on mutation,
   // so identity + size is a reliable invalidation signal.
@@ -1209,7 +1439,10 @@ function getShortHashIndex(chunks: Map<string, { hash: string; shortHash: string
   _shortHashIndex = new Map();
   _shortHashIndexChunksRef = chunks as Map<string, unknown>;
   for (const [key, chunk] of chunks) {
-    _shortHashIndex.set(chunk.shortHash, key);
+    const sh = chunk.shortHash;
+    const arr = _shortHashIndex.get(sh);
+    if (arr) arr.push(key);
+    else _shortHashIndex.set(sh, [key]);
   }
   return _shortHashIndex;
 }
@@ -1220,10 +1453,10 @@ function invalidateShortHashIndex(): void {
 }
 
 // Reverse index: shortHash → staged map key (same pattern as getShortHashIndex).
-let _stagedShortHashIndex: Map<string, string> | null = null;
+let _stagedShortHashIndex: Map<string, string[]> | null = null;
 let _stagedShortHashIndexRef: Map<string, StagedSnippet> | null = null;
 
-function getStagedShortHashIndex(staged: Map<string, StagedSnippet>): Map<string, string> {
+function getStagedShortHashIndex(staged: Map<string, StagedSnippet>): Map<string, string[]> {
   if (
     _stagedShortHashIndex
     && _stagedShortHashIndexRef === staged
@@ -1235,7 +1468,10 @@ function getStagedShortHashIndex(staged: Map<string, StagedSnippet>): Map<string
   _stagedShortHashIndexRef = staged;
   for (const [key] of staged) {
     const keyBase = refToBaseHash(key.startsWith('h:') ? key : `h:${key}`);
-    _stagedShortHashIndex.set(keyBase.slice(0, SHORT_HASH_LEN), key);
+    const short = keyBase.slice(0, SHORT_HASH_LEN);
+    const arr = _stagedShortHashIndex.get(short);
+    if (arr) arr.push(key);
+    else _stagedShortHashIndex.set(short, [key]);
   }
   return _stagedShortHashIndex;
 }
@@ -1252,31 +1488,30 @@ function findChunkByRef<T extends { hash: string; shortHash: string }>(
   const direct = chunks.get(normalized);
   if (direct) return [normalized, direct];
 
-  // 2. O(1) shortHash lookup via reverse index
-  const shortIdx = getShortHashIndex(chunks as Map<string, { hash: string; shortHash: string }>);
-  const fullKey = shortIdx.get(normalized);
-  if (fullKey) {
-    const chunk = chunks.get(fullKey);
-    if (chunk) return [fullKey, chunk];
+  // 2. O(1) shortHash lookup when exactly one chunk has this 6-char prefix
+  if (normalized.length === SHORT_HASH_LEN) {
+    const shortIdx = getShortHashIndex(chunks as Map<string, { hash: string; shortHash: string }>);
+    const keysAt = shortIdx.get(normalized);
+    if (keysAt?.length === 1) {
+      const fullKey = keysAt[0];
+      const chunk = chunks.get(fullKey);
+      if (chunk) return [fullKey, chunk];
+    }
+    if (keysAt && keysAt.length > 1) {
+      return null;
+    }
   }
 
-  // 3. Prefix match — requires MIN_PREFIX_LEN to reduce short-prefix collisions
+  // 3. Prefix match — unique match only (no arbitrary tie-break on collision)
   if (!opts?.strict && normalized.length >= MIN_PREFIX_LEN) {
-    let best: [string, T] | null = null;
-    let bestLen = 0;
+    const matches: [string, T][] = [];
     for (const [key, chunk] of chunks) {
       if (key.startsWith(normalized) || chunk.hash.startsWith(normalized)) {
-        const overlap = Math.max(
-          commonPrefixLen(key, normalized),
-          commonPrefixLen(chunk.hash, normalized),
-        );
-        if (overlap > bestLen) {
-          bestLen = overlap;
-          best = [key, chunk];
-        }
+        matches.push([key, chunk]);
       }
     }
-    return best;
+    if (matches.length === 1) return matches[0];
+    return null;
   }
 
   return null;
@@ -1293,28 +1528,29 @@ function findStagedByRef(staged: Map<string, StagedSnippet>, ref: string): [stri
     const snippet = staged.get(candidate);
     if (snippet) return [candidate, snippet];
   }
-  const shortIdx = getStagedShortHashIndex(staged);
-  const indexedKey =
-    shortIdx.get(baseHash)
-    ?? (baseHash.length >= SHORT_HASH_LEN ? shortIdx.get(baseHash.slice(0, SHORT_HASH_LEN)) : undefined);
-  if (indexedKey) {
-    const snippet = staged.get(indexedKey);
-    if (snippet) return [indexedKey, snippet];
+  if (baseHash.length >= SHORT_HASH_LEN) {
+    const shortIdx = getStagedShortHashIndex(staged);
+    const pref = baseHash.slice(0, SHORT_HASH_LEN);
+    const keysAt = shortIdx.get(pref);
+    if (keysAt?.length === 1) {
+      const indexedKey = keysAt[0];
+      const snippet = staged.get(indexedKey);
+      if (snippet) return [indexedKey, snippet];
+    }
+    if (keysAt && keysAt.length > 1 && baseHash.length === SHORT_HASH_LEN) {
+      return null;
+    }
   }
-  let best: [string, StagedSnippet] | null = null;
-  let bestLen = 0;
+  const matches: [string, StagedSnippet][] = [];
   for (const [key, snippet] of staged) {
     const keyBase = refToBaseHash(key.startsWith('h:') ? key : `h:${key}`);
     if (keyBase === baseHash) return [key, snippet];
     if (baseHash.length >= MIN_PREFIX_LEN && keyBase.startsWith(baseHash)) {
-      const overlap = commonPrefixLen(keyBase, baseHash);
-      if (overlap > bestLen) {
-        bestLen = overlap;
-        best = [key, snippet];
-      }
+      matches.push([key, snippet]);
     }
   }
-  return best;
+  if (matches.length === 1) return matches[0];
+  return null;
 }
 
 /**
@@ -1697,6 +1933,8 @@ export const useContextStore = create<ContextStoreState>()(
     };
 
     let collisionReturnShort: string | undefined;
+    let tokenMapKeyForReconcile = hash;
+    let tokenExpectedHashForReconcile = hash;
     set(state => {
       const newChunks = new Map(state.chunks);
       let newArchive: Map<string, ContextChunk> | undefined;
@@ -1708,6 +1946,8 @@ export const useContextStore = create<ContextStoreState>()(
         const disambiguated = hash + '_' + suffix;
         const disambiguatedShort = hashContentSync(disambiguated).slice(0, SHORT_HASH_LEN);
         collisionReturnShort = disambiguatedShort;
+        tokenMapKeyForReconcile = disambiguated;
+        tokenExpectedHashForReconcile = disambiguated;
         newChunks.set(disambiguated, { ...chunk, hash: disambiguated, shortHash: disambiguatedShort });
         return { chunks: newChunks };
       }
@@ -1948,6 +2188,21 @@ export const useContextStore = create<ContextStoreState>()(
         ...manifestUpdate,
       };
     });
+
+    void countTokens(content)
+      .then(realTokens => {
+        if (typeof realTokens !== 'number' || !Number.isFinite(realTokens) || realTokens < 0) return;
+        const t = Math.floor(realTokens);
+        set(s => {
+          const nc = new Map(s.chunks);
+          const cur = nc.get(tokenMapKeyForReconcile);
+          if (!cur || cur.hash !== tokenExpectedHashForReconcile) return {};
+          if (cur.tokens === t) return {};
+          nc.set(tokenMapKeyForReconcile, { ...cur, tokens: t });
+          return { chunks: nc };
+        });
+      })
+      .catch(() => {});
 
     const returnShort = collisionReturnShort ?? shortHash;
 
@@ -2740,11 +2995,9 @@ export const useContextStore = create<ContextStoreState>()(
   },
 
   reconcileSourceRevision: (path: string, currentRevision: string, cause?: FreshnessCause) => {
-    const pathNorm = normalizeSourcePath(path);
     const effectiveCause = cause ?? consumeRevisionAdvanceCause(path) ?? 'external_file_change';
     const isSessionRestore = effectiveCause === 'session_restore';
     const isSameFilePriorEdit = effectiveCause === 'same_file_prior_edit';
-    let dormantEvicted = 0;
     let stats: ReconcileStats = {
       source: path,
       revision: currentRevision,
@@ -2759,198 +3012,47 @@ export const useContextStore = create<ContextStoreState>()(
       const newChunks = new Map(state.chunks);
       const newArchived = new Map(state.archivedChunks);
       const newStaged = new Map(state.stagedSnippets);
+      const batch: ReconcileSourceRevisionBatch = { stats, evictedHashes, dormantEvicted: 0 };
 
       for (const [key, chunk] of state.chunks) {
-        if (!sourceTouchesPath(chunk.source, path)) continue;
-        stats.total++;
-        if (!isExactSourcePathMatch(chunk.source, path)) {
-          if (chunk.viewKind === 'snapshot') {
-            stats.preserved++;
-            continue;
-          }
-          newChunks.delete(key);
-          stats.invalidated++;
-          evictedHashes.push(chunk.hash);
-          continue;
-        }
-        if (chunk.viewKind === 'snapshot') {
-          stats.preserved++;
-          continue;
-        }
-        if (chunk.viewKind === 'derived' && chunk.sourceRevision && chunk.sourceRevision !== currentRevision) {
-          newChunks.delete(key);
-          stats.invalidated++;
-          evictedHashes.push(chunk.hash);
-          continue;
-        }
-        if (chunk.compacted && !chunk.pinned && chunk.sourceRevision && chunk.sourceRevision !== currentRevision) {
-          newChunks.delete(key);
-          if (chunk.tokens > DORMANT_ARCHIVE_THRESHOLD) {
-            newArchived.set(key, { ...chunk });
-          } else {
-            newArchived.delete(key);
-          }
-          stats.invalidated++;
-          dormantEvicted++;
-          evictedHashes.push(chunk.hash);
-          continue;
-        }
-        if (
-          isSessionRestore &&
-          chunk.sourceRevision &&
-          chunk.sourceRevision !== currentRevision &&
-          !sessionRestoreBodyMatchesDisk(chunk, currentRevision)
-        ) {
-          const stuck: ContextChunk = {
-            ...chunk,
-            observedRevision: currentRevision,
-            freshness: 'suspect',
-            freshnessCause: 'session_restore',
-            suspectSince: chunk.suspectSince ?? Date.now(),
-          };
-          newChunks.set(key, stuck);
-          stats.updated++;
-          continue;
-        }
-        const nextChunk = { ...chunk, sourceRevision: currentRevision, observedRevision: currentRevision };
-        delete nextChunk.suspectSince;
-        const alreadyFreshFromEdit = isSameFilePriorEdit
-          && chunk.origin === 'edit-refresh'
-          && chunk.sourceRevision === currentRevision;
-        if (isSameFilePriorEdit && !alreadyFreshFromEdit) {
-          nextChunk.freshness = 'shifted';
-          nextChunk.freshnessCause = effectiveCause;
-        } else {
-          delete nextChunk.freshness;
-          delete nextChunk.freshnessCause;
-        }
-        if (nextChunk.viewKind == null && isFileBackedType(nextChunk.type)) nextChunk.viewKind = 'latest';
-        newChunks.set(key, nextChunk);
-        stats.updated++;
+        reconcileWorkingChunkForSourceRevision(
+          path,
+          currentRevision,
+          key,
+          chunk,
+          newChunks,
+          newArchived,
+          effectiveCause,
+          isSessionRestore,
+          isSameFilePriorEdit,
+          batch,
+        );
       }
-
       for (const [key, chunk] of state.archivedChunks) {
-        if (!sourceTouchesPath(chunk.source, path)) continue;
-        stats.total++;
-        if (!isExactSourcePathMatch(chunk.source, path)) {
-          if (chunk.viewKind === 'snapshot') {
-            stats.preserved++;
-            continue;
-          }
-          newArchived.delete(key);
-          stats.invalidated++;
-          evictedHashes.push(chunk.hash);
-          continue;
-        }
-        if (chunk.viewKind === 'snapshot') {
-          stats.preserved++;
-          continue;
-        }
-        if (chunk.viewKind === 'derived' && chunk.sourceRevision && chunk.sourceRevision !== currentRevision) {
-          newArchived.delete(key);
-          stats.invalidated++;
-          evictedHashes.push(chunk.hash);
-          continue;
-        }
-        if (chunk.compacted && !chunk.pinned && chunk.sourceRevision && chunk.sourceRevision !== currentRevision) {
-          if (chunk.tokens <= DORMANT_ARCHIVE_THRESHOLD) {
-            newArchived.delete(key);
-          }
-          stats.invalidated++;
-          dormantEvicted++;
-          evictedHashes.push(chunk.hash);
-          continue;
-        }
-        if (
-          isSessionRestore &&
-          chunk.sourceRevision &&
-          chunk.sourceRevision !== currentRevision &&
-          !sessionRestoreBodyMatchesDisk(chunk, currentRevision)
-        ) {
-          const stuck: ContextChunk = {
-            ...chunk,
-            observedRevision: currentRevision,
-            freshness: 'suspect',
-            freshnessCause: 'session_restore',
-            suspectSince: chunk.suspectSince ?? Date.now(),
-          };
-          newArchived.set(key, stuck);
-          stats.updated++;
-          continue;
-        }
-        const nextChunk = { ...chunk, sourceRevision: currentRevision, observedRevision: currentRevision };
-        delete nextChunk.suspectSince;
-        const alreadyFreshFromEdit = isSameFilePriorEdit
-          && chunk.origin === 'edit-refresh'
-          && chunk.sourceRevision === currentRevision;
-        if (isSameFilePriorEdit && !alreadyFreshFromEdit) {
-          nextChunk.freshness = 'shifted';
-          nextChunk.freshnessCause = effectiveCause;
-        } else {
-          delete nextChunk.freshness;
-          delete nextChunk.freshnessCause;
-        }
-        if (nextChunk.viewKind == null && isFileBackedType(nextChunk.type)) nextChunk.viewKind = 'latest';
-        newArchived.set(key, nextChunk);
-        stats.updated++;
+        reconcileArchivedChunkForSourceRevision(
+          path,
+          currentRevision,
+          key,
+          chunk,
+          newArchived,
+          effectiveCause,
+          isSessionRestore,
+          isSameFilePriorEdit,
+          batch,
+        );
       }
-
       for (const [key, snippet] of state.stagedSnippets) {
-        if (!sourceTouchesPath(snippet.source, path)) continue;
-        stats.total++;
-        if (!isExactSourcePathMatch(snippet.source, path)) {
-          if (snippet.viewKind === 'snapshot') {
-            stats.preserved++;
-            continue;
-          }
-          newStaged.delete(key);
-          stats.invalidated++;
-          continue;
-        }
-        if (snippet.viewKind === 'snapshot') {
-          stats.preserved++;
-          continue;
-        }
-        if (snippet.viewKind === 'derived' && snippet.sourceRevision && snippet.sourceRevision !== currentRevision) {
-          newStaged.delete(key);
-          stats.invalidated++;
-          continue;
-        }
-        if (
-          isSessionRestore &&
-          snippet.sourceRevision &&
-          snippet.sourceRevision !== currentRevision &&
-          !stagedRestoreBodyMatchesDisk(snippet, currentRevision)
-        ) {
-          const stuck: StagedSnippet = {
-            ...snippet,
-            observedRevision: currentRevision,
-            freshness: 'suspect',
-            freshnessCause: 'session_restore',
-            suspectSince: snippet.suspectSince ?? Date.now(),
-            stageState: 'stale',
-          };
-          newStaged.set(key, stuck);
-          stats.updated++;
-          continue;
-        }
-        const nextSnippet = { ...snippet, sourceRevision: currentRevision, observedRevision: currentRevision };
-        delete nextSnippet.suspectSince;
-        const alreadyFreshFromEdit = isSameFilePriorEdit
-          && snippet.origin === 'edit-refresh'
-          && snippet.sourceRevision === currentRevision;
-        if (isSameFilePriorEdit && !alreadyFreshFromEdit) {
-          nextSnippet.freshness = 'shifted';
-          nextSnippet.freshnessCause = effectiveCause;
-          nextSnippet.stageState = 'stale';
-        } else {
-          delete nextSnippet.freshness;
-          delete nextSnippet.freshnessCause;
-          nextSnippet.stageState = 'current';
-        }
-        if (nextSnippet.viewKind == null) nextSnippet.viewKind = 'latest';
-        newStaged.set(key, nextSnippet);
-        stats.updated++;
+        reconcileStagedSnippetForSourceRevision(
+          path,
+          currentRevision,
+          key,
+          snippet,
+          newStaged,
+          effectiveCause,
+          isSessionRestore,
+          isSameFilePriorEdit,
+          batch,
+        );
       }
 
       if (stats.total === 0) {
@@ -2979,7 +3081,7 @@ export const useContextStore = create<ContextStoreState>()(
           refs: [
             ...(stats.updated > 0 ? [`updated:${stats.updated}`] : []),
             ...(stats.invalidated > 0 ? [`invalidated:${stats.invalidated}`] : []),
-            ...(dormantEvicted > 0 ? [`dormant_evicted:${dormantEvicted}`] : []),
+            ...(batch.dormantEvicted > 0 ? [`dormant_evicted:${batch.dormantEvicted}`] : []),
             ...(stats.preserved > 0 ? [`preserved:${stats.preserved}`] : []),
           ],
         }),
