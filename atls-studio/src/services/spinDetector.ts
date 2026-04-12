@@ -9,6 +9,8 @@
  */
 
 import type { RoundSnapshot } from '../stores/roundHistoryStore';
+import type { OperationKind } from './batch/types';
+import { OP_TO_SHORT } from './batch/opShorthand';
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -92,6 +94,49 @@ export function phaseCategoryFromSnapshot(s: RoundSnapshot): string {
   return categorizeTools(toFingerprint(s));
 }
 
+function shortOpLabel(op: string): string {
+  const mapped = OP_TO_SHORT[op as OperationKind];
+  if (mapped) return mapped;
+  const dot = op.lastIndexOf('.');
+  return dot >= 0 ? op.slice(dot + 1) : op;
+}
+
+/** Unique ops in step order, joined as batch shorthands (e.g. rs+ax). */
+function summarizeToolSignature(sig: string[]): string {
+  const seen = new Set<string>();
+  const order: string[] = [];
+  for (const op of sig) {
+    if (!seen.has(op)) {
+      seen.add(op);
+      order.push(op);
+    }
+  }
+  const parts = order.map(shortOpLabel);
+  const joined = parts.slice(0, 5).join('+');
+  return order.length > 5 ? `${joined}+…` : joined;
+}
+
+/**
+ * Spin Trace “Phase” column: coarse bucket (edit/preview/read/…) when known,
+ * otherwise exact op shorthands so batches never show as “other”.
+ */
+export function phaseDisplayFromSnapshot(s: RoundSnapshot): string {
+  const fp = toFingerprint(s);
+  const sig = fp.toolSignature;
+  if (sig.length === 0) return '—';
+  const cat = categorizeTools(fp);
+  if (cat === 'other') return summarizeToolSignature(sig);
+  return cat;
+}
+
+/** Badge color key aligned with PHASE_COLORS in Spin Trace UI. */
+export function phaseColorKeyFromSnapshot(s: RoundSnapshot): string {
+  const fp = toFingerprint(s);
+  const cat = categorizeTools(fp);
+  if (cat !== 'other') return cat;
+  return fp.toolSignature.length > 0 ? 'mixed_ops' : 'other';
+}
+
 function jaccard(a: string[], b: string[]): number {
   if (a.length === 0 && b.length === 0) return 0;
   const setA = new Set(a);
@@ -130,6 +175,13 @@ function categorizeTools(fp: SpinFingerprint): string {
   if (hasBb && !hasSearch && !hasRead) return 'consolidate';
   if (hasSearch && !hasRead) return 'search';
   if (hasRead) return 'read';
+
+  if (sig.some(t => t.startsWith('analyze.'))) return 'analyze';
+  if (sig.some(t => t.startsWith('session.'))) return 'session';
+  if (sig.some(t => t.startsWith('annotate.'))) return 'annotate';
+  if (sig.some(t => t.startsWith('intent.'))) return 'intent';
+  if (sig.some(t => t.startsWith('system.'))) return 'system';
+
   return 'other';
 }
 

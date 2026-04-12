@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { diagnoseSpinning, phaseCategoryFromSnapshot } from './spinDetector';
+import { diagnoseSpinning, phaseCategoryFromSnapshot, phaseDisplayFromSnapshot } from './spinDetector';
 import type { RoundSnapshot } from '../stores/roundHistoryStore';
 
 function baseSnap(overrides: Partial<RoundSnapshot>): RoundSnapshot {
@@ -66,6 +66,21 @@ describe('phaseCategoryFromSnapshot', () => {
       toolSignature: ['change.edit'],
     });
     expect(phaseCategoryFromSnapshot(s)).toBe('edit');
+  });
+
+  it('classifies session + analyze batch as analyze, not other', () => {
+    const s = baseSnap({
+      toolSignature: ['session.plan', 'analyze.extract_plan'],
+    });
+    expect(phaseCategoryFromSnapshot(s)).toBe('analyze');
+  });
+
+  it('phaseDisplayFromSnapshot falls back to op shorthands when still other', () => {
+    const s = baseSnap({
+      toolSignature: ['custom.vendor_op'],
+    });
+    expect(phaseCategoryFromSnapshot(s)).toBe('other');
+    expect(phaseDisplayFromSnapshot(s)).toBe('vendor_op');
   });
 });
 

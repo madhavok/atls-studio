@@ -1,6 +1,12 @@
 import { useMemo } from 'react';
 import { useRoundHistoryStore, isMainChatRound } from '../../../stores/roundHistoryStore';
-import { diagnoseSpinning, phaseCategoryFromSnapshot, type SpinDiagnosis, type SpinMode } from '../../../services/spinDetector';
+import {
+  diagnoseSpinning,
+  phaseColorKeyFromSnapshot,
+  phaseDisplayFromSnapshot,
+  type SpinDiagnosis,
+  type SpinMode,
+} from '../../../services/spinDetector';
 
 const MODE_LABELS: Record<SpinMode, string> = {
   context_loss: 'Context Loss',
@@ -42,6 +48,12 @@ const PHASE_COLORS: Record<string, string> = {
   bb: 'bg-purple-500/60',
   delegate: 'bg-teal-500/60',
   consolidate: 'bg-violet-500/50',
+  analyze: 'bg-sky-500/55',
+  session: 'bg-indigo-500/55',
+  annotate: 'bg-fuchsia-500/50',
+  intent: 'bg-rose-500/45',
+  system: 'bg-slate-500/55',
+  mixed_ops: 'bg-orange-500/45',
   other: 'bg-studio-border/40',
 };
 
@@ -81,7 +93,9 @@ function DiagnosisCard({ diagnosis }: { diagnosis: SpinDiagnosis }) {
 
 interface FingerprintRow {
   round: number;
-  category: string;
+  phaseLabel: string;
+  phaseColorKey: string;
+  phaseTitle: string;
   toolCount: number;
   fileCount: number;
   bbCount: number;
@@ -99,7 +113,7 @@ function FingerprintTimeline({ rows }: { rows: FingerprintRow[] }) {
 
   return (
     <div className="space-y-0.5">
-      <div className="grid grid-cols-[40px_60px_1fr_40px_40px_40px] gap-1 text-[9px] text-studio-muted uppercase tracking-wider pb-1 border-b border-studio-border/20">
+      <div className="grid grid-cols-[40px_88px_1fr_40px_40px_40px] gap-1 text-[9px] text-studio-muted uppercase tracking-wider pb-1 border-b border-studio-border/20">
         <span>Rnd</span>
         <span>Phase</span>
         <span>Tools</span>
@@ -115,10 +129,13 @@ function FingerprintTimeline({ rows }: { rows: FingerprintRow[] }) {
         if (row.steeringCount > 0) flags.push(`S${row.steeringCount}`);
 
         return (
-          <div key={row.round} className="grid grid-cols-[40px_60px_1fr_40px_40px_40px] gap-1 text-[10px] items-center">
+          <div key={row.round} className="grid grid-cols-[40px_88px_1fr_40px_40px_40px] gap-1 text-[10px] items-center">
             <span className="text-studio-muted font-mono">{row.round}</span>
-            <span className={`${PHASE_COLORS[row.category] ?? PHASE_COLORS.other} rounded px-1 py-0.5 text-center text-[9px]`}>
-              {row.category}
+            <span
+              className={`${PHASE_COLORS[row.phaseColorKey] ?? PHASE_COLORS.other} rounded px-1 py-0.5 text-center text-[9px] font-mono truncate`}
+              title={row.phaseTitle}
+            >
+              {row.phaseLabel}
             </span>
             <span className="text-studio-text font-mono truncate" title={`${row.toolCount} tools`}>
               {row.toolCount > 0 ? `${row.toolCount} ops` : '-'}
@@ -151,7 +168,9 @@ export function SpinTraceSection() {
     const recent = mainSnapshots.slice(-10);
     return recent.map((s) => ({
       round: s.round,
-      category: phaseCategoryFromSnapshot(s),
+      phaseLabel: phaseDisplayFromSnapshot(s),
+      phaseColorKey: phaseColorKeyFromSnapshot(s),
+      phaseTitle: (s.toolSignature?.length ?? 0) > 0 ? (s.toolSignature ?? []).join(', ') : '',
       toolCount: s.toolSignature?.length ?? 0,
       fileCount: s.targetFiles?.length ?? 0,
       bbCount: s.bbDelta?.length ?? 0,
