@@ -71,8 +71,9 @@ describe('HPP hard tests', () => {
     for (let i = 6; i < 10; i++) {
       materialize(hashes[i], 'file', `src/file${i}.ts`, 100 + i, 10 + i, '');
     }
-    expect(getAllRefs()).toHaveLength(10);
-    expect(getActiveRefs()).toHaveLength(8); // 2 evicted
+    // advanceTurn GC drops evicted refs after seenAtTurn < currentTurn - 1, so hashes[1]/[2] are gone
+    expect(getAllRefs()).toHaveLength(8);
+    expect(getActiveRefs()).toHaveLength(8);
 
     // Turn 4: check latest refs
     await advanceTurn();

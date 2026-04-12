@@ -1619,7 +1619,7 @@ function findOrPromoteEngram(
       }
     }
     chunksMap.set(promoted.hash, promoted);
-    hppMaterialize(promoted.hash, promoted.type, promoted.source, promoted.tokens, (promoted.content.match(/\n/g) || []).length + 1, promoted.editDigest || promoted.digest || '');
+    hppMaterialize(promoted.hash, promoted.type, promoted.source, promoted.tokens, (promoted.content.match(/\n/g) || []).length + 1, promoted.editDigest || promoted.digest || '', promoted.shortHash);
     return [promoted.hash, chunksMap.get(promoted.hash)!];
   }
 
@@ -2617,7 +2617,7 @@ export const useContextStore = create<ContextStoreState>()(
               }
             }
             newChunks.set(archived[0], recalled);
-            hppMaterialize(recalled.hash, recalled.type, recalled.source, recalled.tokens, (recalled.content.match(/\n/g) || []).length + 1, recalled.editDigest || recalled.digest || '');
+            hppMaterialize(recalled.hash, recalled.type, recalled.source, recalled.tokens, (recalled.content.match(/\n/g) || []).length + 1, recalled.editDigest || recalled.digest || '', recalled.shortHash);
             hppSetPinned(archived[0], true, shape);
             count++;
           } else {
@@ -3184,15 +3184,18 @@ export const useContextStore = create<ContextStoreState>()(
     let invalidated = 0;
     let preserved = 0;
     const unresolvablePaths: string[] = [];
+    // Build normalized-path index once to avoid O(M×N) fallback scan
+    let normalizedRevIndex: Map<string, string> | null = null;
+    if (revisionMap) {
+      normalizedRevIndex = new Map();
+      for (const [k, v] of revisionMap) {
+        if (v != null) normalizedRevIndex.set(normalizeSourcePath(k), v);
+      }
+    }
     for (const path of paths) {
       let rev = revisionMap ? (revisionMap.get(path) ?? null) : await perPathResolver!(path);
-      if (rev == null && revisionMap) {
-        for (const [k, v] of revisionMap) {
-          if (v != null && normalizeSourcePath(k) === path) {
-            rev = v;
-            break;
-          }
-        }
+      if (rev == null && normalizedRevIndex) {
+        rev = normalizedRevIndex.get(path) ?? null;
       }
       if (rev == null) {
         unresolvablePaths.push(path);
@@ -5712,7 +5715,7 @@ export const useContextStore = create<ContextStoreState>()(
           }
           restored++;
           restoredRefs.push({ shortHash: promoted.shortHash, source: binding.source, tokens: promoted.tokens, from: 'staged' });
-          hppMaterialize(promoted.hash, promoted.type, promoted.source, promoted.tokens, (promoted.content.match(/\n/g) || []).length + 1, promoted.editDigest || promoted.digest || '');
+          hppMaterialize(promoted.hash, promoted.type, promoted.source, promoted.tokens, (promoted.content.match(/\n/g) || []).length + 1, promoted.editDigest || promoted.digest || '', promoted.shortHash);
           continue;
         }
 
@@ -5738,7 +5741,7 @@ export const useContextStore = create<ContextStoreState>()(
           newArchive.delete(key);
           restored++;
           restoredRefs.push({ shortHash: arc.shortHash, source: arc.source, tokens: arc.tokens, from: 'archive' });
-          hppMaterialize(arc.hash, arc.type, arc.source, arc.tokens, (arc.content.match(/\n/g) || []).length + 1, arc.editDigest || arc.digest || '');
+          hppMaterialize(arc.hash, arc.type, arc.source, arc.tokens, (arc.content.match(/\n/g) || []).length + 1, arc.editDigest || arc.digest || '', arc.shortHash);
           continue;
         }
 

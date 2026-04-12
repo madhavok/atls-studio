@@ -820,20 +820,24 @@ export const handleEmit: OpHandler = async (params, ctx) => {
   if (!content) return err('emit: ERROR missing content param');
 
   const { materialize, dematerialize } = await import('../../hashProtocol');
-  const hash = ctx.store().addChunk(content, 'result', label);
+  const store = ctx.store();
+  store.addChunk(content, 'result', label);
   const tokens = countTokensSync(content);
   const totalLines = Math.max(1, content.split('\n').length);
-  materialize(hash, 'result', label, tokens, totalLines, '');
-  dematerialize(hash);
+  const chunkEntry = [...store.chunks.values()].find(c => c.content === content && c.type === 'result');
+  const hashKey = chunkEntry?.hash ?? hashContentSync(content);
+  const displayShort = chunkEntry?.shortHash ?? hashKey.slice(0, SHORT_HASH_LEN);
+  materialize(hashKey, 'result', label, tokens, totalLines, '', displayShort);
+  dematerialize(hashKey);
 
   invoke('register_hash_content', {
-    hash,
+    hash: hashKey,
     content,
     source: label,
     lang: lang || null,
   }).catch(e => console.warn('[emit] register_hash_content failed:', e));
 
-  return ok(`emit: h:${hash.slice(0, SHORT_HASH_LEN)} (${tokens}tk) "${label}" — use h:${hash.slice(0, SHORT_HASH_LEN)} in response`, [`h:${hash}`], tokens);
+  return ok(`emit: h:${displayShort} (${tokens}tk) "${label}" — use h:${displayShort} in response`, [`h:${hashKey}`], tokens);
 };
 
 // ---------------------------------------------------------------------------

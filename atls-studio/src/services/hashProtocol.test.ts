@@ -153,6 +153,24 @@ describe('hashProtocol', () => {
     it('returns undefined for unknown hash', () => {
       expect(getRef('deadbeef')).toBeUndefined();
     });
+
+    it('indexes displayShortHash when map key is disambiguated (not16-hex content hash)', () => {
+      const mapKey = 'aabbccdddddddd_z9';
+      const displayShort = 'f3e2a1';
+      materialize(mapKey, 'file', 'src/k.ts', 10, 2, '', displayShort);
+      expect(getRef(displayShort)?.hash).toBe(mapKey);
+      expect(getRef(mapKey)?.shortHash).toBe(displayShort);
+      expect(getRef('aabbcc')).toBeUndefined();
+    });
+
+    it('migrates short-hash bucket when displayShortHash changes on same ref', () => {
+      const mapKey = 'disamb_key_zz';
+      materialize(mapKey, 'file', 'a.ts', 1, 1, '', '111111');
+      expect(getRef('111111')?.hash).toBe(mapKey);
+      materialize(mapKey, 'file', 'a.ts', 2, 1, '', '222222');
+      expect(getRef('111111')).toBeUndefined();
+      expect(getRef('222222')?.hash).toBe(mapKey);
+    });
   });
 
   describe('getRefsBySource', () => {

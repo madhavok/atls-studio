@@ -80,7 +80,7 @@ describe('syncHppPinsWithStore (via formatWorkingMemory)', () => {
     useContextStore.getState().addChunk(body, 'result', 'lbl');
     const fullKey = hashContentSync(body);
     const chunk = useContextStore.getState().chunks.get(fullKey)!;
-    materialize(chunk.hash, 'result', 'lbl', chunk.tokens, 1, '');
+    materialize(chunk.hash, 'result', 'lbl', chunk.tokens, 1, '', chunk.shortHash);
     dematerialize(chunk.hash);
     expect(getRef(chunk.hash)?.visibility).toBe('referenced');
   });

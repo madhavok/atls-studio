@@ -76,7 +76,7 @@ function syncHppPinsWithStore(chunks: ContextChunk[]): void {
     if (chunk.pinned) {
       let ref = getRef(chunk.hash);
       if (!ref || ref.visibility === 'referenced') {
-        materialize(chunk.hash, chunk.type, chunk.source, chunk.tokens, totalLines, digest);
+        materialize(chunk.hash, chunk.type, chunk.source, chunk.tokens, totalLines, digest, chunk.shortHash);
         ref = getRef(chunk.hash);
       }
       setPinned(chunk.hash, true, chunk.pinnedShape ?? ref?.pinnedShape);
@@ -394,6 +394,7 @@ export function formatWorkingMemory(input: FormatterInput): string {
             chunk.hash, chunk.type, chunk.source,
             chunk.tokens, totalLines,
             chunk.editDigest || chunk.digest || '',
+            chunk.shortHash,
           );
         } else {
           if (chunk.type === 'call' && chunk.summary) {
@@ -406,6 +407,7 @@ export function formatWorkingMemory(input: FormatterInput): string {
             chunk.hash, chunk.type, chunk.source,
             chunk.tokens, totalLines,
             chunk.editDigest || chunk.digest || '',
+            chunk.shortHash,
           );
         }
         lines.push('');

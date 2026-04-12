@@ -63,6 +63,25 @@ function addShortHashIndexEntry(shortHash: string, ref: ChunkRef): void {
   bucket.add(ref);
 }
 
+/** Move ref between short-hash buckets when store display short ≠ hash.slice(0, 6) (e.g. disambiguated map keys). */
+function syncRefShortHash(ref: ChunkRef, newShort: string): void {
+  if (ref.shortHash === newShort) return;
+  const oldBucket = shortHashIndex.get(ref.shortHash);
+  if (oldBucket) {
+    oldBucket.delete(ref);
+    if (oldBucket.size === 0) shortHashIndex.delete(ref.shortHash);
+  }
+  ref.shortHash = newShort;
+  addShortHashIndexEntry(newShort, ref);
+}
+
+function resolveMaterialShortHash(hash: string, displayShortHash?: string): string {
+  if (displayShortHash != null && displayShortHash.length === SHORT_HASH_LEN) {
+    return displayShortHash;
+  }
+  return hash.slice(0, SHORT_HASH_LEN);
+}
+
 export function getTurn(): number {
   return currentTurn;
 }
@@ -78,6 +97,17 @@ export async function advanceTurn(): Promise<number> {
     if (ref.visibility === 'materialized' && ref.seenAtTurn < currentTurn && !ref.pinned) {
       ref.visibility = 'referenced';
       dematerialized++;
+    }
+  }
+  // GC: remove evicted refs older than 1 turn to prevent unbounded Map growth
+  for (const [hash, ref] of refs) {
+    if (ref.visibility === 'evicted' && ref.seenAtTurn < currentTurn - 1) {
+      refs.delete(hash);
+      const bucket = shortHashIndex.get(ref.shortHash);
+      if (bucket) {
+        bucket.delete(ref);
+        if (bucket.size === 0) shortHashIndex.delete(ref.shortHash);
+      }
     }
   }
   lastTurnDelta.dematerialized = dematerialized;
@@ -119,6 +149,9 @@ export function resetProtocol(): void {
 /**
  * Register a chunk as materialized (the model is about to see full content).
  * If already referenced, promotes back to materialized for this turn.
+ *
+ * @param displayShortHash — Must match `ContextChunk.shortHash` when `hash` is a disambiguated map key
+ *   (content-hash collision path); otherwise defaults to `hash.slice(0, SHORT_HASH_LEN)`.
  */
 export function materialize(
   hash: string,
@@ -127,11 +160,13 @@ export function materialize(
   tokens: number,
   totalLines: number,
   editDigest: string,
+  displayShortHash?: string,
 ): ChunkRef {
-  const shortHash = hash.slice(0, SHORT_HASH_LEN);
+  const shortHash = resolveMaterialShortHash(hash, displayShortHash);
   const existing = refs.get(hash);
 
   if (existing) {
+    syncRefShortHash(existing, shortHash);
     existing.visibility = 'materialized';
     existing.seenAtTurn = currentTurn;
     existing.tokens = tokens;
