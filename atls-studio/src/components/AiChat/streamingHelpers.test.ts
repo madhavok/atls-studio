@@ -89,12 +89,12 @@ describe('streamingHelpers', () => {
     expect(refs.segmentsRevisionRef.current).toBeGreaterThan(0);
   });
 
-  it('clearStreamingState clears without setting streaming flag', () => {
+  it('clearStreamingState clears segments and ends streaming', () => {
     const refs = makeRefs();
     appendTextToSegments(refs, 'x');
     refs.isStreamingRef.current = true;
     clearStreamingState(refs);
     expect(refs.streamingSegmentsRef.current).toEqual([]);
-    expect(refs.isStreamingRef.current).toBe(true);
+    expect(refs.isStreamingRef.current).toBe(false);
   });
 });

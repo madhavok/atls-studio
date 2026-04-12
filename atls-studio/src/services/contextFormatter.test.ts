@@ -54,7 +54,7 @@ describe('syncHppPinsWithStore (via formatWorkingMemory)', () => {
   });
 
   it('clears HPP pin when store chunk is unpinned', async () => {
-    const hash = useContextStore.getState().addChunk('x', 'file', 'a.ts');
+    const hash = useContextStore.getState().addChunk('x', 'search', 'a.ts');
     useContextStore.getState().pinChunks([hash]);
     formatWorkingMemory(wmInput());
     expect(getRef(hash)?.pinned).toBe(true);

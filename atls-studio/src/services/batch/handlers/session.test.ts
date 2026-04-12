@@ -282,7 +282,7 @@ describe('handlePin', () => {
   });
 
   it('recovers dataflow from params.in string (with: { in: "r1.refs" })', async () => {
-    const h = useContextStore.getState().addChunk('pin-via-in', 'smart', 'recover.ts');
+    const h = useContextStore.getState().addChunk('pin-via-in', 'search', 'recover.ts');
     const stepOutputs = new Map<string, StepOutput>([
       ['r1', { kind: 'file_refs', ok: true, refs: [`h:${h}`], summary: 'read' }],
     ]);
@@ -300,7 +300,7 @@ describe('handlePin', () => {
   });
 
   it('recovers dataflow from params.in with in: prefix ("in:r1.refs")', async () => {
-    const h = useContextStore.getState().addChunk('pin-via-in-prefix', 'smart', 'recover2.ts');
+    const h = useContextStore.getState().addChunk('pin-via-in-prefix', 'search', 'recover2.ts');
     const stepOutputs = new Map<string, StepOutput>([
       ['r1', { kind: 'file_refs', ok: true, refs: [`h:${h}`], summary: 'read' }],
     ]);
@@ -717,7 +717,7 @@ describe('handleUnpin', () => {
   });
 
   it('recovers dataflow from params.in string', async () => {
-    const h = useContextStore.getState().addChunk('unpin-in', 'smart', 'unpin-in.ts');
+    const h = useContextStore.getState().addChunk('unpin-in', 'search', 'unpin-in.ts');
     await handlePin({ hashes: [`h:${h}`] }, createMockCtx() as any);
     const stepOutputs = new Map<string, StepOutput>([
       ['r1', { kind: 'raw', ok: true, refs: [`h:${h}`], summary: 'read' }],

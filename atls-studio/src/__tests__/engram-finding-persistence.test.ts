@@ -7,27 +7,31 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-vi.mock('../services/hashProtocol', () => ({
-  resetProtocol: vi.fn(),
-  evict: vi.fn(),
-  setPinned: vi.fn(),
-  archive: vi.fn(),
-  materialize: vi.fn(),
-  dematerialize: vi.fn(),
-  /** Stub ref so findReusableRead can treat chunks as in-context materialized (matches formatter+HPP contract). */
-  getRef: vi.fn(() => ({
-    hash: 'mockhash000000000000000000000000',
-    shortHash: 'mockha',
-    type: 'file',
-    source: 'src/bar.ts',
-    totalLines: 1,
-    tokens: 1,
-    editDigest: '',
-    visibility: 'materialized' as const,
-    seenAtTurn: 0,
-  })),
-  shouldMaterialize: vi.fn(() => true),
-}));
+vi.mock('../services/hashProtocol', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../services/hashProtocol')>();
+  return {
+    ...actual,
+    resetProtocol: vi.fn(),
+    evict: vi.fn(),
+    setPinned: vi.fn(),
+    archive: vi.fn(),
+    materialize: vi.fn(),
+    dematerialize: vi.fn(),
+    /** Stub ref so findReusableRead can treat chunks as in-context materialized (matches formatter+HPP contract). */
+    getRef: vi.fn(() => ({
+      hash: 'mockhash000000000000000000000000',
+      shortHash: 'mockha',
+      type: 'file',
+      source: 'src/bar.ts',
+      totalLines: 1,
+      tokens: 1,
+      editDigest: '',
+      visibility: 'materialized' as const,
+      seenAtTurn: 0,
+    })),
+    shouldMaterialize: vi.fn(() => true),
+  };
+});
 
 vi.mock('../services/hashProtocolQuery', () => ({
   getActiveRefs: vi.fn(() => []),

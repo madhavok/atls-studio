@@ -105,6 +105,8 @@ describe('roundHistoryStore', () => {
       mainRoundCount: 0,
       mainRoundsCostSum: 0,
       avgMainRoundCost: 0,
+      avgInputCost: 0,
+      avgOutputCost: 0,
     });
   });
 
