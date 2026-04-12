@@ -779,6 +779,63 @@ describe('executeUnifiedBatch intra-step snapshot line rebasing', () => {
     expect(editSpy).toHaveBeenCalledOnce();
   });
 
+  it('does not mutate step.with.line_edits when change.edit fails', async () => {
+    const snapshot = [
+      { line: 5, action: 'insert_before', content: 'a\nb' },
+      { line: 15, action: 'replace', content: 'x' },
+    ];
+    const steps = [
+      {
+        id: 'edit',
+        use: 'change.edit' as const,
+        with: {
+          file: 'src/a.ts',
+          line_edits: snapshot.map((e) => ({ ...e })),
+        },
+      },
+    ];
+
+    handlers.set('change.edit', async () => raw('failed', { error: 'backend rejected' }, false));
+
+    await executeUnifiedBatch({ version: '1.0', steps }, makeCtx());
+
+    const le = steps[0].with.line_edits as Array<Record<string, unknown>>;
+    expect(le[0].line).toBe(5);
+    expect(le[1].line).toBe(15);
+    expect(le.map((e) => e.action)).toEqual(['insert_before', 'replace']);
+  });
+
+  it('intra-step insert_before shifts a later edit at the same snapshot line', async () => {
+    const editSpy = vi.fn(async (params: Record<string, unknown>) => {
+      const le = params.line_edits as Array<Record<string, unknown>>;
+      expect(le).toHaveLength(2);
+      expect(le[0].line).toBe(10);
+      expect(le[1].line).toBe(11);
+      return raw('applied', { status: 'ok' });
+    });
+
+    handlers.set('change.edit', editSpy as unknown as OpHandler);
+
+    await executeUnifiedBatch({
+      version: '1.0',
+      steps: [
+        {
+          id: 'edit',
+          use: 'change.edit',
+          with: {
+            file: 'src/a.ts',
+            line_edits: [
+              { line: 10, action: 'insert_before', content: '// x' },
+              { line: 10, action: 'replace', content: 'y' },
+            ],
+          },
+        },
+      ],
+    }, makeCtx());
+
+    expect(editSpy).toHaveBeenCalledOnce();
+  });
+
   it('strips legacy line_numbering from params after rebase', async () => {
     const editSpy = vi.fn(async (params: Record<string, unknown>) => {
       expect(params.line_numbering).toBeUndefined();
@@ -2200,6 +2257,29 @@ describe('executeUnifiedBatch line-edit pipeline stress', () => {
     expect(calls[1][0]).toBe(6);
     expect(calls[2][0]).toBe(8);
     expect(calls[3][0]).toBe(1);
+  });
+
+  it('inter-step insert_before shifts a future step that targets the same line number', async () => {
+    const calls: number[] = [];
+    handlers.set('read.context', async () => raw('rc', {
+      results: [{ file: 'src/a.ts', content_hash: 'v0', content: 'x' }],
+    }));
+    handlers.set('change.edit', async (params: Record<string, unknown>) => {
+      const le = params.line_edits as Array<Record<string, unknown>>;
+      calls.push(le[0].line as number);
+      return raw('ok', { status: 'ok', drafts: [{ file: 'src/a.ts', content_hash: 'v1' }] });
+    });
+
+    await executeUnifiedBatch({
+      version: '1.0',
+      steps: [
+        { id: 'r', use: 'read.context', with: { file_paths: ['src/a.ts'] } },
+        { id: 'e1', use: 'change.edit', with: { file: 'src/a.ts', line_edits: [{ line: 10, action: 'insert_before', content: '//\n' }] } },
+        { id: 'e2', use: 'change.edit', with: { file: 'src/a.ts', line_edits: [{ line: 10, action: 'replace', content: 'z' }] } },
+      ],
+    }, makeCtx());
+
+    expect(calls).toEqual([10, 11]);
   });
 
   it('rejects when one numeric edit is out of range even if another uses end anchor', async () => {

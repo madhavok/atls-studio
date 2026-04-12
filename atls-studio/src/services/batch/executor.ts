@@ -105,6 +105,41 @@ function countContentLines(content: string): number {
 interface PositionalDelta {
   line: number;
   delta: number;
+  /**
+   * When true (insert_before / prepend), shifts targets where `line >= anchor`.
+   * When false/undefined (insert_after, replace, delete, …), shifts where `line > anchor`.
+   */
+  lineInclusive?: boolean;
+}
+
+/** Shallow-clone each line_edit object so intra-step rebase cannot mutate `step.with`. */
+function cloneLineEditEntry(le: unknown): unknown {
+  if (!le || typeof le !== 'object') return le;
+  return { ...(le as Record<string, unknown>) };
+}
+
+/**
+ * Fork line_edits arrays before snapshot→sequential conversion so the batch request
+ * object keeps original coordinates for UI / persistence even when a step fails.
+ */
+function forkLineEditsForIntraStepRebase(params: Record<string, unknown>): Record<string, unknown> {
+  let next = params;
+  let forked = false;
+  if (Array.isArray(params.line_edits)) {
+    next = { ...next, line_edits: (params.line_edits as unknown[]).map(cloneLineEditEntry) };
+    forked = true;
+  }
+  if (params.mode === 'batch_edits' && Array.isArray(params.edits)) {
+    const edits = (params.edits as unknown[]).map((ed) => {
+      if (!ed || typeof ed !== 'object') return ed;
+      const e = ed as Record<string, unknown>;
+      if (!Array.isArray(e.line_edits)) return { ...e };
+      return { ...e, line_edits: e.line_edits.map(cloneLineEditEntry) };
+    });
+    next = { ...next, edits };
+    forked = true;
+  }
+  return forked ? next : params;
 }
 
 /**
@@ -194,7 +229,10 @@ function computePositionalDeltas(lineEdits: unknown): PositionalDelta[] {
 
     const d = computeSingleEditNetDelta(e);
     const originalLine = line > 0 ? line - cumulativeDelta : 0;
-    if (d !== 0 && originalLine > 0) deltas.push({ line: originalLine, delta: d });
+    if (d !== 0 && originalLine > 0) {
+      const lineInclusive = action === 'insert_before' || action === 'prepend';
+      deltas.push({ line: originalLine, delta: d, lineInclusive });
+    }
     cumulativeDelta += d;
   }
   return deltas;
@@ -273,8 +311,9 @@ function backfillResolvedBodySpans(
 /**
  * Every numeric `line` in the array is relative to the file **before** any edit in this step.
  * Convert to sequential coordinates (what Rust expects) by shifting each entry i>0 by the sum
- * of net deltas from prior edits j<i whose snapshot line is strictly before this entry's snapshot
- * line (same rule as `rebaseSubsequentSteps`). Mutates `line_edits` in place. Skips symbol-only entries.
+ * of net deltas from prior edits j<i (insert_before/prepend use an inclusive boundary at the anchor
+ * line; other actions use a strict “below anchor” rule, matching `rebaseSubsequentSteps`).
+ * Mutates `line_edits` in place. Skips symbol-only entries.
  */
 /**
  * Compute the positional shift that edit `e` (at snapshot line `snapLine`)
@@ -294,6 +333,12 @@ function intraStepShiftFromEdit(e: Record<string, unknown>, snapLine: number, ta
     return shift;
   }
   const d = computeSingleEditNetDelta(e);
+  if (action === 'insert_before' || action === 'prepend') {
+    return snapLine <= targetSnap ? d : 0;
+  }
+  if (action === 'insert_after' || action === 'append') {
+    return snapLine < targetSnap ? d : 0;
+  }
   return (snapLine < targetSnap) ? d : 0;
 }
 
@@ -417,7 +462,8 @@ function applyDeltasToLineEdits(
       const targetLine = entry.line as number;
       let shift = 0;
       for (const d of deltas) {
-        if (d.line < targetLine) shift += d.delta;
+        const applies = d.lineInclusive ? d.line <= targetLine : d.line < targetLine;
+        if (applies) shift += d.delta;
       }
       if (shift !== 0) entry.line = targetLine + shift;
     }
@@ -425,7 +471,8 @@ function applyDeltasToLineEdits(
       const targetEnd = entry.end_line as number;
       let endShift = 0;
       for (const d of deltas) {
-        if (d.line < targetEnd) endShift += d.delta;
+        const applies = d.lineInclusive ? d.line <= targetEnd : d.line < targetEnd;
+        if (applies) endShift += d.delta;
       }
       if (endShift !== 0) entry.end_line = targetEnd + endShift;
     }
@@ -433,7 +480,8 @@ function applyDeltasToLineEdits(
       const targetDest = entry.destination as number;
       let destShift = 0;
       for (const d of deltas) {
-        if (d.line < targetDest) destShift += d.delta;
+        const applies = d.lineInclusive ? d.line <= targetDest : d.line < targetDest;
+        if (applies) destShift += d.delta;
       }
       if (destShift !== 0) entry.destination = targetDest + destShift;
     }
@@ -1402,6 +1450,7 @@ export async function executeUnifiedBatch(
 
     // Optional: all line numbers in one change.edit are relative to the same pre-edit snapshot
     if (step.use === 'change.edit') {
+      mergedParams = forkLineEditsForIntraStepRebase(mergedParams);
       applyIntraStepSnapshotRebaseIfNeeded(mergedParams);
     }
 

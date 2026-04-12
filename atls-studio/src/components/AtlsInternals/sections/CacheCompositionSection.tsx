@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import { useContextStore } from '../../../stores/contextStore';
 import { useAppStore } from '../../../stores/appStore';
 import { getGeminiCacheSnapshot } from '../../../services/geminiCache';
+import { useRoundHistoryStore } from '../../../stores/roundHistoryStore';
 
 interface Block {
   key: string;
@@ -36,6 +37,7 @@ export function CacheCompositionSection() {
   const getUsedTokens = useContextStore((s) => s.getUsedTokens);
   const getBlackboardTokenCount = useContextStore((s) => s.getBlackboardTokenCount);
   const contextUsage = useAppStore((s) => s.contextUsage);
+  const latestSnap = useRoundHistoryStore((s) => s.snapshots.at(-1));
   const maxTokens = contextUsage.maxTokens || 200000;
 
   const { blocks, providerLabel, note } = useMemo(() => {
@@ -208,6 +210,16 @@ export function CacheCompositionSection() {
       </div>
       {note && (
         <div className="text-[10px] text-studio-muted italic">{note}</div>
+      )}
+      {latestSnap && (latestSnap.cacheStablePrefixTokens != null || latestSnap.cacheChurnTokens != null) && (
+        <div className="flex gap-4 text-[10px] text-studio-muted mt-1">
+          {latestSnap.cacheStablePrefixTokens != null && (
+            <span>Stable prefix: <span className="text-emerald-400 font-medium">{fmtK(latestSnap.cacheStablePrefixTokens)}</span></span>
+          )}
+          {latestSnap.cacheChurnTokens != null && (
+            <span>Churn: <span className="text-amber-400 font-medium">{fmtK(latestSnap.cacheChurnTokens)}</span></span>
+          )}
+        </div>
       )}
     </div>
   );
