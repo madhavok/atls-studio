@@ -819,6 +819,14 @@ describe('resolveSymbolToLines', () => {
       expect(result![0]).toBe(5);
       expect(result![1]).toBe(7);
     });
+
+    it('resolves one-line const arrow with braced body (blockEnd === line)', () => {
+      const oneLine = 'const inline = () => { return 1; };';
+      const result = resolveSymbolToLines(oneLine, 'fn', 'inline');
+      expect(result).not.toBeNull();
+      expect(result![0]).toBe(1);
+      expect(result![1]).toBe(1);
+    });
   });
 
   // ---- Tiered fallback: C-family return-type syntax ----
@@ -847,6 +855,14 @@ describe('resolveSymbolToLines', () => {
       expect(result).not.toBeNull();
       expect(result![0]).toBe(6);
       expect(result![1]).toBe(8);
+    });
+
+    it('resolves void fn on same line after `from =` (not an ESM from-module line)', () => {
+      const content = ['from = x; void foo() {', '  return 1;', '}'].join('\n');
+      const result = resolveSymbolToLines(content, 'fn', 'foo');
+      expect(result).not.toBeNull();
+      expect(result![0]).toBe(1);
+      expect(result![1]).toBe(3);
     });
   });
 

@@ -238,7 +238,8 @@ function tryVariableBoundFnMatch(lines: string[], escapedName: string): number[]
     const line = lines[i];
     if (arrowRe.test(line) || assignedFnRe.test(line)) {
       const blockEnd = findBlockEnd(lines, i, lines.length);
-      if (blockEnd > i) matches.push(i);
+      // Same-line braced bodies: findBlockEnd can return start when `}` closes on that line.
+      if (blockEnd > i || line.includes('{')) matches.push(i);
     }
   }
   return matches;
@@ -257,7 +258,9 @@ function tryCFamilyFnMatch(lines: string[], escapedName: string, baseName: strin
     const line = lines[i];
     if (nameRe.test(line) && !rejectRe.test(line)) {
       const trimmed = line.trimStart();
-      if (!trimmed.startsWith('import ') && !trimmed.startsWith('from ')) {
+      // Skip JS/TS import lines; skip only `from './m'` style (not `from = x` or `from (`).
+      const isFromModulePath = /^from\s+['"`]/.test(trimmed);
+      if (!trimmed.startsWith('import ') && !isFromModulePath) {
         const blockEnd = findBlockEnd(lines, i, lines.length);
         if (blockEnd > i || trimmed.includes('{')) matches.push(i);
       }
