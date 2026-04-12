@@ -196,20 +196,7 @@ export function formatWorkingMemory(input: FormatterInput): string {
     lines.push('');
   }
 
-  // Pinned-context inventory — scannable one-liner so the model knows what it
-  // already has before deciding to read or edit.
-  const pinnedEntries: string[] = [];
-  for (const chunk of chunks.values()) {
-    if (!chunk.pinned) continue;
-    const ref = getRef(chunk.hash);
-    const basename = chunk.source?.split('/').pop() ?? '?';
-    const shape = ref?.pinnedShape ? `:${ref.pinnedShape}` : '';
-    pinnedEntries.push(`h:${chunk.shortHash} ${basename}${shape} (${chunk.tokens}tk)`);
-  }
-  if (pinnedEntries.length > 0) {
-    lines.push(`Pinned: ${pinnedEntries.join(', ')}`);
-    lines.push('');
-  }
+  // Pin inventory is now in ## HASH MANIFEST (dynamic context block)
 
   // BB summary — full content is in the dynamic context block.
   if (blackboardEntries.size > 0) {
@@ -342,44 +329,7 @@ export function formatWorkingMemory(input: FormatterInput): string {
       }
     }
 
-    const MAX_SECTION_REFS = 10;
-    if (dematerialized.length > 0) {
-      lines.push(
-        `## DEMATERIALIZED (${dematerialized.length} — last round(s); h:@dematerialized lists hashes)`,
-      );
-      const shown = dematerialized.slice(0, MAX_SECTION_REFS);
-      for (const chunk of shown) {
-        const ref = getRef(chunk.hash);
-        if (ref) {
-          lines.push(`  ${formatRefLine(ref)}`);
-        } else {
-          const src = chunk.source || chunk.type;
-          lines.push(`  h:${chunk.shortHash} ${src} ${chunk.tokens}tk`);
-        }
-      }
-      if (dematerialized.length > MAX_SECTION_REFS) {
-        lines.push(`  +${dematerialized.length - MAX_SECTION_REFS} more`);
-      }
-      lines.push('');
-    }
-
-    if (archivedChunks.length > 0) {
-      lines.push(`## DORMANT / ARCHIVED (${archivedChunks.length} — cold; use rec h:XXXX or h:@dormant)`);
-      const shown = archivedChunks.slice(0, MAX_SECTION_REFS);
-      for (const chunk of shown) {
-        const ref = getRef(chunk.hash);
-        if (ref) {
-          lines.push(`  ${formatArchivedRefLine(ref)}`);
-        } else {
-          const src = chunk.source || chunk.type;
-          lines.push(`  h:${chunk.shortHash} ${src} ${chunk.tokens}tk`);
-        }
-      }
-      if (archivedChunks.length > MAX_SECTION_REFS) {
-        lines.push(`  +${archivedChunks.length - MAX_SECTION_REFS} more`);
-      }
-      lines.push('');
-    }
+    // Dematerialized and archived listings are now in ## HASH MANIFEST
 
     // Materialized section — full content (first read this turn)
     if (materialized.length > 0) {
@@ -390,13 +340,9 @@ export function formatWorkingMemory(input: FormatterInput): string {
         const ref = getRef(chunk.hash);
         const effectivePinShape = ref?.pinnedShape ?? chunk.pinnedShape;
         const shapedPin = chunk.pinned && !!effectivePinShape;
-        const pinIndicator = chunk.pinned
-          ? (shapedPin ? `[P:${effectivePinShape}] ` : '[P] ')
-          : '';
         const compactIndicator = chunk.compacted ? '[C] ' : '';
         const summaryHint = chunk.summary ? ` — ${chunk.summary}` : '';
-        const suspectHint = formatSuspectHint(chunk.suspectSince, chunk.freshness, chunk.freshnessCause, chunk.origin);
-        const tag = `${compactIndicator}${pinIndicator}<<h:${chunk.shortHash} tk:${chunk.tokens} ${chunk.type}>> ${chunk.source || ''}${suspectHint}${summaryHint}`;
+        const tag = `${compactIndicator}<<h:${chunk.shortHash} tk:${chunk.tokens} ${chunk.type}>> ${chunk.source || ''}${summaryHint}`;
         lines.push(tag.trim());
         const metaLines = formatEngramMeta(chunk);
         if (metaLines.length > 0) lines.push(...metaLines);
@@ -437,20 +383,7 @@ export function formatWorkingMemory(input: FormatterInput): string {
     }
   }
 
-  // Archived engrams — visible to hash resolution but outside working memory token budget
-  const archivedHppRefs = getArchivedRefs();
-  if (archivedHppRefs.length > 0) {
-    const totalArchivedTokens = archivedHppRefs.reduce((sum, r) => sum + r.tokens, 0);
-    const shown = archivedHppRefs.slice(0, 10);
-    lines.push(`## ARCHIVED ENGRAMS (${archivedHppRefs.length} total, ${(totalArchivedTokens / 1000).toFixed(1)}k tk — use recall or pin to restore)`);
-    for (const ref of shown) {
-      lines.push(`  ${formatArchivedRefLine(ref)}`);
-    }
-    if (archivedHppRefs.length > 10) {
-      lines.push(`  +${archivedHppRefs.length - 10} more (use h:@all to list)`);
-    }
-    lines.push('');
-  }
+  // Archived engrams listing is now in ## HASH MANIFEST
 
   if (droppedManifest.size > 0) {
     const totalTokens = Array.from(droppedManifest.values()).reduce((sum, e) => sum + e.tokens, 0);

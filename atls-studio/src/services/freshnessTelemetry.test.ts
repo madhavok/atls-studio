@@ -65,6 +65,8 @@ describe('freshnessTelemetry', () => {
       'engramsMarkedSuspectFromPaths',
       'fileTreeChangedCoarseNoPaths',
       'fileTreeChangedWithPaths',
+      'manifestEvicted',
+      'manifestForwarded',
       'retentionEntriesDistilled',
       'sessionRestoreReconcileCount',
       'stagedSnippetsMarkedStale',

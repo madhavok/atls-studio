@@ -44,10 +44,13 @@ BB survives compaction, eviction, and session boundaries. Write structured findi
 Progress notes are NOT findings. You may not move to the next target until the current one has a finding.
 Update BB at phase transitions. Read BB (sm) before re-searching. tpl:NAME for output savings.
 
-### DEMATERIALIZED & DORMANT
-**## DEMATERIALIZED** — just scrolled off working memory (still warm). **## DORMANT / ARCHIVED** — cold retained refs. Use h:@dematerialized vs h:@dormant to list each pool.
-Unpinned content auto-dematerializes after 1 round. Do not re-read unless the task changes.
-To restore: rec(h:XXXX) using the hash shown in the listing.
+### HASH MANIFEST
+## HASH MANIFEST at the top of each round indexes every hash in context.
+Each row: hash, pin state, visibility (active/demat/arch), type, source, tokens, freshness.
+Forward rows (h:OLD -> h:NEW) reconcile any prior-round refs to current hashes — consult before using old h:refs.
+Suspect entries mean the source file changed externally — re-read before editing.
+h:@dematerialized and h:@dormant set-refs still work for filtering by pool.
+rec(h:XXXX) restores any archived hash to active.
 If a tool says **redundant** (same file already at **h:**), use that **h:**; do not repeat read.file/rf on the same path.
 
 ### TASK ROUTING

@@ -45,7 +45,10 @@ import { useRoundHistoryStore } from './roundHistoryStore';
 import { formatAge } from '../utils/formatHelpers';
 import { canonicalizeSnapshotHash } from '../services/batch/snapshotTracker';
 import { emptyRollingSummary, type RollingSummary } from '../services/historyDistiller';
-import { freshnessTelemetry, incSessionRestoreReconcileCount, incCognitiveRulesExpired } from '../services/freshnessTelemetry';
+import { freshnessTelemetry, incSessionRestoreReconcileCount, incCognitiveRulesExpired, setManifestMetricsAccessor } from '../services/freshnessTelemetry';
+import { recordForwarding as manifestRecordForwarding, recordEviction as manifestRecordEviction, resolveForward as manifestResolveForward, getManifestMetrics } from '../services/hashManifest';
+
+setManifestMetricsAccessor(getManifestMetrics);
 
 // Minimum chars required for prefix-based hash resolution (reduces collision risk)
 /** Match SHORT_HASH_LEN (6) so h:abcdef-style refs resolve (annotate.link, synapses). */
@@ -1699,6 +1702,14 @@ function findOrPromoteEngram(
   const found = findChunkByRef(chunksMap, ref);
   if (found) return found;
 
+  // Transparent forward-map resolution: if ref matches a forwarded hash, retry with the new hash
+  const bareRef = ref.startsWith('h:') ? ref.slice(2) : ref;
+  const forwarded = manifestResolveForward(bareRef.slice(0, SHORT_HASH_LEN));
+  if (forwarded) {
+    const resolved = findChunkByRef(chunksMap, forwarded);
+    if (resolved) return resolved;
+  }
+
   const archived = findChunkByRef(archivedChunks, ref);
   if (archived) {
     const [, arc] = archived;
@@ -2094,6 +2105,7 @@ export const useContextStore = create<ContextStoreState>()(
               suspectKind: undefined,
             });
             autoCompactedHashes.push(c.hash);
+            manifestRecordForwarding(c.shortHash, shortHash, source || '', 'hash_forward', hppGetTurn());
             // Transfer pin (single owner: latest read), annotations, synapses, and readCount to the new chunk
             if (c.pinned) {
               chunk.pinned = true;
@@ -2873,6 +2885,9 @@ export const useContextStore = create<ContextStoreState>()(
       return { chunks: newChunks, archivedChunks: newArchived, stagedSnippets: newStaged, stageVersion: state.stageVersion + 1 };
     });
     for (const hash of evictedHashes) hppEvict(hash);
+    for (const target of normalized) {
+      manifestRecordEviction(target, '', 'stale_hash', hppGetTurn());
+    }
     return evicted;
   },
 
@@ -4208,6 +4223,7 @@ export const useContextStore = create<ContextStoreState>()(
     newChunks.set(newHash, newChunk);
     set({ chunks: newChunks });
     state.pushHash(newHash);
+    manifestRecordForwarding(oldChunk.shortHash, newShortHash, oldChunk.source || '', 'edit_engram', hppGetTurn());
 
     return { ok: true, newHash: newShortHash };
   },

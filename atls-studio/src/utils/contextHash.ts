@@ -468,7 +468,7 @@ export function flattenCodeSearchHits(result: unknown): CodeSearchHitRow[] {
           for (const m of matches) {
             if (m && typeof m === 'object') {
               const mObj = m as Record<string, unknown>;
-              pushRow(gf, mObj.line ?? mObj.l, undefined);
+              pushRow(gf, mObj.line ?? mObj.l, mObj.end_line ?? mObj.endLine);
             }
           }
         }

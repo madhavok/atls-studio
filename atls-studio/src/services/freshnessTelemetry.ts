@@ -49,7 +49,14 @@ export function incCognitiveRulesExpired(n = 1): void { freshnessTelemetry.cogni
 export function incRetentionEntriesDistilled(n = 1): void { freshnessTelemetry.retentionEntriesDistilled += n; }
 export function incSessionRestoreReconcileCount(n = 1): void { freshnessTelemetry.sessionRestoreReconcileCount += n; }
 
+let _getManifestMetrics: (() => { forwarded: number; evicted: number }) | null = null;
+
+export function setManifestMetricsAccessor(fn: () => { forwarded: number; evicted: number }): void {
+  _getManifestMetrics = fn;
+}
+
 export function getFreshnessMetrics(): Record<string, number> {
+  const mm = _getManifestMetrics?.() ?? { forwarded: 0, evicted: 0 };
   return {
     fileTreeChangedWithPaths: freshnessTelemetry.fileTreeChangedWithPaths,
     fileTreeChangedCoarseNoPaths: freshnessTelemetry.fileTreeChangedCoarseNoPaths,
@@ -65,5 +72,7 @@ export function getFreshnessMetrics(): Record<string, number> {
     cognitiveRulesExpired: freshnessTelemetry.cognitiveRulesExpired,
     retentionEntriesDistilled: freshnessTelemetry.retentionEntriesDistilled,
     sessionRestoreReconcileCount: freshnessTelemetry.sessionRestoreReconcileCount,
+    manifestForwarded: mm.forwarded,
+    manifestEvicted: mm.evicted,
   };
 }

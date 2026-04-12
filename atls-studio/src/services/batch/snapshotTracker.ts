@@ -105,9 +105,6 @@ export class SnapshotTracker {
         const regions = existing.readRegions ? [...existing.readRegions, opts.readRegion] : [opts.readRegion];
         existing.readRegions = mergeRanges(regions);
       }
-      if (opts?.shapeHash) {
-        existing.shapeHash = opts.shapeHash;
-      }
       if (opts?.fullFileLineCount != null) {
         existing.fullFileLineCount = opts.fullFileLineCount;
       }

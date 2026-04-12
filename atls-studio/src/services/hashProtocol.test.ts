@@ -335,8 +335,7 @@ describe('hashProtocol', () => {
       const line = formatRefLine(ref);
       expect(line).toContain('h:aabbcc');
       expect(line).toContain('src/foo.ts');
-      expect(line).toContain('100tk');
-      expect(line).toContain('25L');
+      expect(line).toContain('fn bar:1-5');
     });
   });
 

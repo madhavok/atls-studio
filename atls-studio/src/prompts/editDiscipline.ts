@@ -31,5 +31,6 @@ export const EDIT_DISCIPLINE = `### EDIT + VERIFY DISCIPLINE
 - Do not rewrite comments to match your edit and call that "fixing the comment/code mismatch."
 
 ### POST-EDIT CONTEXT
-- Engrams auto-refresh after edit. On edit_outside_read_range: rl the region, retry in same batch.
+- Engrams auto-refresh after edit. Consult ## HASH MANIFEST for per-hash freshness before editing.
+- On edit_outside_read_range: rl the region, retry in same batch.
 - rl on **sc/sy** result hashes targets the formatted search/symbol text; use \`f\`+line range for file lines.`;

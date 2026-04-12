@@ -632,7 +632,7 @@ export function shouldMaterialize(ref: ChunkRef): boolean {
  */
 export function formatRefLine(ref: ChunkRef): string {
   const src = ref.source || ref.type;
-  const header = `h:${ref.shortHash} ${src} ${ref.tokens}tk ${ref.totalLines}L`;
+  const header = `h:${ref.shortHash} ${src}`;
   if (ref.editDigest) {
     return `${header}\n${ref.editDigest}`;
   }
@@ -642,7 +642,7 @@ export function formatRefLine(ref: ChunkRef): string {
 /** Compact manifest line for archived refs shown outside working memory. */
 export function formatArchivedRefLine(ref: ChunkRef): string {
   const src = ref.source || ref.type;
-  return `h:${ref.shortHash} [archived] ${src} ${ref.tokens}tk — recall to restore`;
+  return `h:${ref.shortHash} ${src}`;
 }
 
 /**

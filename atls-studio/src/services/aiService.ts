@@ -137,7 +137,8 @@ import { HASH_PROTOCOL_CORE } from '../prompts/hashProtocol';
 import { getModePrompt } from '../prompts/modePrompts';
 import { getShellGuide } from '../prompts/shellGuide';
 import { GEMINI_REINFORCEMENT, GEMINI_RECENCY_BOOST } from '../prompts/providerOverrides';
-import { advanceTurn, dematerialize, getAllRefs, getRef, shouldMaterialize, getTurn, setRoundRefreshHook } from './hashProtocol';
+import { advanceTurn, dematerialize, getAllRefs, getRef, shouldMaterialize, getTurn, setRoundRefreshHook, getArchivedRefs as getArchivedHppRefs } from './hashProtocol';
+import { formatHashManifest, pruneStaleEntries, getForwardMap, getEvictionMap } from './hashManifest';
 import { useRoundHistoryStore, type VerificationConfidence } from '../stores/roundHistoryStore';
 import {
   executeUnifiedBatch,
@@ -3597,6 +3598,36 @@ function buildDynamicContextBlock(
   const parts: string[] = [];
 
   // -------------------------------------------------------------------------
+  // HASH MANIFEST — authoritative index of every hash the model may encounter
+  // -------------------------------------------------------------------------
+  {
+    const currentTurn = getTurn();
+    pruneStaleEntries(currentTurn, 5);
+    const ctxState = useContextStore.getState();
+    const allRefs = getAllRefs();
+    const activeChunks: Array<{ shortHash: string; type: string; source?: string; tokens: number; pinned?: boolean; pinnedShape?: string; compacted?: boolean; freshness?: string; freshnessCause?: string; suspectSince?: number }> = [];
+    const dematRefs: typeof allRefs = [];
+    for (const ref of allRefs) {
+      if (ref.visibility === 'materialized') {
+        const chunk = ctxState.chunks.get(ref.hash);
+        if (chunk && chunk.type !== 'msg:user' && chunk.type !== 'msg:asst') {
+          activeChunks.push({
+            shortHash: chunk.shortHash, type: chunk.type, source: chunk.source,
+            tokens: chunk.tokens, pinned: chunk.pinned, pinnedShape: chunk.pinnedShape,
+            compacted: chunk.compacted, freshness: chunk.freshness as string | undefined,
+            freshnessCause: chunk.freshnessCause as string | undefined, suspectSince: chunk.suspectSince,
+          });
+        }
+      } else if (ref.visibility === 'referenced') {
+        dematRefs.push(ref);
+      }
+    }
+    const archivedRefs = getArchivedHppRefs();
+    const manifestBlock = formatHashManifest({ activeChunks, dematRefs, archivedRefs, turn: currentTurn });
+    parts.push(manifestBlock);
+  }
+
+  // -------------------------------------------------------------------------
   // ORIENTATION — model reads these first to know where it is
   // -------------------------------------------------------------------------
 
@@ -3809,8 +3840,9 @@ function _buildStaticSystemPrompt(
   // Inject refactor config early for cache key (refactor mode only)
   const refactorPart = mode === 'refactor' ? useRefactorStore.getState().getConfigForPrompt() : '';
   // P0 #1: Check cache — key includes refactor config for invalidation when thresholds change
-  const manifestFingerprint = JSON.stringify(entryManifest ?? '').length;
-  const cacheKey = `${mode}|${shellContext?.os ?? ''}|${shellContext?.shell ?? ''}|${shellContext?.cwd ?? ''}|${atlsReady ?? false}|${provider ?? ''}|${refactorPart}|${entryManifestDepth ?? 'off'}|${manifestFingerprint}`;
+  const manifestFingerprint = hashContentSync(JSON.stringify(entryManifest ?? [])).slice(0, 8);
+  const subagentFlag = !!(useAppStore.getState().settings.subagentModel && useAppStore.getState().settings.subagentProvider);
+  const cacheKey = `${mode}|${shellContext?.os ?? ''}|${shellContext?.shell ?? ''}|${shellContext?.cwd ?? ''}|${atlsReady ?? false}|${provider ?? ''}|${refactorPart}|${entryManifestDepth ?? 'off'}|${manifestFingerprint}|${subagentFlag}`;
   if (_cachedStaticPrompt && _cachedStaticPrompt.key === cacheKey) {
     useAppStore.getState().setPromptMetrics(_cachedStaticPrompt.metrics);
     return _cachedStaticPrompt.prompt;

@@ -141,13 +141,13 @@ describe('HPP hard tests', () => {
   it('formatRefLine with digest includes newline', () => {
     const ref1 = materialize('aabbccdd11223344', 'file', 'src/auth.ts', 2400, 89, 'fn authenticate:15-32 | cls AuthService:34-89');
     const line = formatRefLine(ref1);
-    expect(line).toBe('h:aabbcc src/auth.ts 2400tk 89L\nfn authenticate:15-32 | cls AuthService:34-89');
+    expect(line).toBe('h:aabbcc src/auth.ts\nfn authenticate:15-32 | cls AuthService:34-89');
   });
 
   it('formatRefLine without digest is one line', () => {
     const ref1 = materialize('aabbccdd11223344', 'file', 'src/simple.ts', 100, 20, '');
     const line = formatRefLine(ref1);
-    expect(line).toBe('h:aabbcc src/simple.ts 100tk 20L');
+    expect(line).toBe('h:aabbcc src/simple.ts');
     expect(line.includes('\n')).toBe(false);
   });
 
