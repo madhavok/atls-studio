@@ -191,20 +191,6 @@ export function getEstimatedTotalPromptTokens(
   return sumPromptPressureBuckets(buckets);
 }
 
-export function getPromptPressureTokens(
-  buckets: Pick<
-    PromptPressureBuckets,
-    | 'staticSystemTokens'
-    | 'conversationHistoryTokens'
-    | 'stagedTokens'
-    | 'wmTokens'
-    | 'workspaceContextTokens'
-    | 'blackboardTokens'
-  >,
-): number {
-  return sumPromptPressureBuckets(buckets);
-}
-
 export function classifyStageSnippet(
   key: string,
   tokens: number,

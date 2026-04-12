@@ -21,6 +21,7 @@ export type SpinMode =
   | 'goal_drift'
   | 'stuck_in_phase'
   | 'tool_confusion'
+  | 'volatile_unpinned'
   | 'completion_gate'
   | 'none';
 
@@ -282,15 +283,15 @@ function detectVolatileUnpinned(window: SpinFingerprint[]): SpinDiagnosis | null
   const bad = window.filter(fp => fp.volatileRefsSuggested && !fp.hadSessionPinStep);
   if (bad.length < 2) return null;
   const evidence = bad.map(fp =>
-    `Round ${fp.round}: VOLATILE / pin-to-keep in tool output but no session.pin in that batch`,
+    `Round ${fp.round}: VOLATILE refs emitted but NO session.pin in that batch — content LOST next round`,
   );
   return {
     spinning: true,
-    mode: 'tool_confusion',
-    confidence: Math.min(0.45 + bad.length * 0.12, 1.0),
+    mode: 'volatile_unpinned',
+    confidence: Math.min(0.55 + bad.length * 0.15, 1.0),
     evidence,
     triggerRound: bad[0].round,
-    suggestedAction: 'Pin hashes before the next round (session.pin / pi) so staged reads do not expire, or write a bb:finding to consolidate. Re-read after expiry loses context.',
+    suggestedAction: 'PIN IMMEDIATELY. Every read/search returns h:refs that expire after ONE round. Add pi in:rN.refs in the SAME batch as your reads — not the next batch.',
   };
 }
 

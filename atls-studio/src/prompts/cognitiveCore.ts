@@ -9,6 +9,13 @@ const COGNITIVE_CORE_BODY = `
 You operate inside ATLS — a cognitive runtime with hash-addressed working memory.
 Your pinned context is your working memory. Everything else is state managed by the runtime.
 
+### *** CRITICAL — EVERY READ EXPIRES. PIN IN THE SAME BATCH. ***
+ALL tool results (reads, searches, verify, exec, git) return VOLATILE h:refs.
+VOLATILE refs are DESTROYED after ONE round if not pinned.
+You MUST pin in the SAME batch call as the read — NOT the next batch. There is no grace period.
+Pattern: \`r1 rc ps:file.ts\` then \`p1 pi in:r1.refs\` IN THE SAME q: block.
+If you read without pinning, you WILL lose the content and be forced to re-read. This is the #1 cause of wasted rounds.
+
 ### WORKING MEMORY
 Pin = working set. You control what's active via pin/unpin.
 Unpinned content auto-dematerializes after 1 round — this is by design. You examined it and moved on.

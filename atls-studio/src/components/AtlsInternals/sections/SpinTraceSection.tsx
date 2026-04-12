@@ -13,6 +13,7 @@ const MODE_LABELS: Record<SpinMode, string> = {
   goal_drift: 'Goal Drift',
   stuck_in_phase: 'Stuck in Phase',
   tool_confusion: 'Tool Confusion',
+  volatile_unpinned: 'Volatile — Not Pinned',
   completion_gate: 'Completion Gate',
   none: 'None',
 };
@@ -22,6 +23,7 @@ const MODE_COLORS: Record<SpinMode, string> = {
   goal_drift: 'text-orange-400',
   stuck_in_phase: 'text-yellow-400',
   tool_confusion: 'text-purple-400',
+  volatile_unpinned: 'text-red-500',
   completion_gate: 'text-blue-400',
   none: 'text-studio-muted',
 };

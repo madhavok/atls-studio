@@ -53,6 +53,7 @@ it source_file:path test_file?:path — reads source sigs + test context (read-o
 // ---------------------------------------------------------------------------
 
 const ANTI_SPIN_RULES = `
+- **PIN IN SAME BATCH:** Every read returns VOLATILE refs that DIE after one round. Always include \`pi in:rN.refs\` in the SAME q: block as your reads. Never defer pinning to a later batch call.
 - **2-read rule:** After 2 reads of the same file, you MUST write a BB finding, make an edit, or stop. Do not re-read hoping for different content.
 - **Search once, act:** After completing a search, ACT on results. Do not re-search the same query.
 - **BLOCKED = done:** If a read returns BLOCKED or a spin warning, you already have the content. Use what you have.

@@ -48,7 +48,7 @@ describe('parseBatchStepLines', () => {
   it('skips volatile nudge lines', () => {
     const result = [
       '[OK] s1 (read.context): loaded file',
-      '⚠ VOLATILE — refs expire next round. pin to keep: `pi h:abc`',
+      '⚠ VOLATILE — WILL BE LOST NEXT ROUND. PIN NOW in this batch or write to BB. Add: `pi h:abc`',
       '[ATLS] 1 steps: 1 pass (10ms) | ok',
     ].join('\n');
 
@@ -95,7 +95,7 @@ describe('parseBatchStepLines', () => {
       '  BB: h:bb:retriever_findings',
       '  (Blackboard bodies are inlined in the step summary when present.)',
       '[OK] e1 (change.edit): applied 2 edits to src/api.ts',
-      '⚠ VOLATILE — refs expire next round. pin to keep: `pi h:aaa111 h:bbb222`',
+      '⚠ VOLATILE — WILL BE LOST NEXT ROUND. PIN NOW in this batch or write to BB. Add: `pi h:aaa111 h:bbb222`',
       '[ATLS] 4 steps: 4 pass (1200ms) | ok',
     ].join('\n');
 

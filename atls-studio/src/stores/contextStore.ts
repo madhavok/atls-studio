@@ -3274,6 +3274,9 @@ export const useContextStore = create<ContextStoreState>()(
       if (rev == null && normalizedRevIndex) {
         rev = normalizedRevIndex.get(path) ?? null;
       }
+      if (rev == null && perPathResolver && revisionMap) {
+        rev = await perPathResolver(path);
+      }
       if (rev == null) {
         unresolvablePaths.push(path);
         continue;

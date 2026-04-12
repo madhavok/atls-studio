@@ -3686,6 +3686,7 @@ function buildDynamicContextBlock(
           goal_drift: '<<SYSTEM: SPIN — goal drift. Recent actions diverge from the task plan. Review BB status and refocus on the original goal.>>',
           stuck_in_phase: `<<SYSTEM: SPIN — stuck in phase. You've spent ${tls.consecutiveReadOnlyRounds} rounds reading without producing findings or edits. Write BB findings for what you know, then act.>>`,
           tool_confusion: `<<SYSTEM: SPIN — tool confusion. Last ${Math.min(5, tls.round)} rounds used nearly identical tool calls. Declare a specific blocker or try a fundamentally different approach.>>`,
+          volatile_unpinned: '<<SYSTEM: CRITICAL — YOU ARE NOT PINNING. Reads/searches returned VOLATILE h:refs but you did NOT pin them in the SAME batch. They are NOW GONE. You MUST add pi in:rN.refs (or pi hashes:h:XXXX) in the SAME batch call as your reads. Do NOT defer pinning to the next round — refs expire after ONE round.>>',
           completion_gate: `<<SYSTEM: SPIN — completion blocked by: ${tls.completionBlocker ?? 'unknown'}. Address this specific requirement or call task_complete with an honest summary.>>`,
         };
         const msg = steeringByMode[diagnosis.mode];

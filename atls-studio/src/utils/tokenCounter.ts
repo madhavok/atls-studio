@@ -227,6 +227,15 @@ function recordDrift(heuristic: number, real: number): void {
   }
 }
 
+export function getDriftStats(): { samples: number; avgPct: number; maxPct: number; overThreshold: number } {
+  return {
+    samples: _driftSamples,
+    avgPct: _driftSamples > 0 ? _driftSumAbsPct / _driftSamples : 0,
+    maxPct: _driftMaxAbsPct,
+    overThreshold: _driftOverThreshold,
+  };
+}
+
 /**
  * Synchronous token count — returns real BPE count from cache when available,
  * otherwise falls back to heuristic estimateTokens. The heuristic result is

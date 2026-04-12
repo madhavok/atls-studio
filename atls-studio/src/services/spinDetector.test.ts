@@ -150,7 +150,7 @@ describe('diagnoseSpinning', () => {
     }));
     const d = diagnoseSpinning(snaps);
     expect(d.spinning).toBe(true);
-    expect(d.mode).toBe('tool_confusion');
+    expect(d.mode).toBe('volatile_unpinned');
     expect(d.evidence.some(e => /VOLATILE|pin/i.test(e))).toBe(true);
   });
 });

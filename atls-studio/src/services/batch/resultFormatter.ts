@@ -262,7 +262,7 @@ export function formatBatchResult(result: UnifiedBatchResult): string {
   if (volatileRefs.length > 0) {
     const shortRefs = volatileRefs.slice(0, 8).join(' ');
     const overflow = volatileRefs.length > 8 ? ` +${volatileRefs.length - 8} more` : '';
-    lines.push(`⚠ VOLATILE — refs expire next round. pin to keep: \`pi ${shortRefs}\`${overflow}`);
+    lines.push(`⚠ VOLATILE — WILL BE LOST NEXT ROUND. PIN NOW in this batch or write to BB. Add: \`pi ${shortRefs}\`${overflow}`);
   }
 
   const counts = { pass: 0, warn: 0, fail: 0, toolError: 0, other: 0 };

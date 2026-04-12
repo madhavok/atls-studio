@@ -12,6 +12,13 @@ Everything resolves through **workspace paths** and **h:XXXX** (UHPP). Arrays: c
 Complex values: inline {…} syntax where noted (le, creates).
 Dataflow: in:stepId.path (e.g. in:r1.refs) binds prior step output into this step. **f**, **ps**, **hashes** must be real paths or **h:**… — never paste \`in:r1.refs\` as if it were a path or hash string. Conditional: if:stepId.ok. on_error:stop|continue|rollback
 
+### *** PIN IN THE SAME BATCH — NON-NEGOTIABLE ***
+Every read/search/verify returns VOLATILE h:refs. They are DESTROYED after one round.
+You MUST include \`pi in:rN.refs\` (or \`pi hashes:h:XXXX,...\`) in the SAME q: block as the reads.
+DO NOT defer pinning to a separate batch call — by then the refs are gone and you must re-read.
+Correct: \`r1 rc ps:file.ts\` + \`p1 pi in:r1.refs\` in one q: block.
+WRONG: batch 1 reads, batch 2 pins. The refs expired between batches.
+
 ### q: field — executable steps only
 - \`q\` must contain **only** step lines (format above). Each non-empty line with two or more tokens is parsed and **executed** as a batch step.
 - Do **not** paste commit messages, PR/description prose, bullets, or narration into \`q\` — those lines become fake steps and fail (unknown operation).
@@ -145,7 +152,7 @@ Review: rs(sig) -> pi -> rl changed fns -> bw review finding per fn -> task_comp
 - **pin: no matching chunks**: **hashes** must list real **h:**… from tool output, or use step dataflow \`pi in:r1.refs\`. Never put the text \`in:r1.refs\` inside the **hashes** field.
 - **change.edit** "file not found": **f** / **file_path** must be a real workspace path or **h:…** (optional :line span). Invalid: \`in:c1.refs[0]:2-4\` as **f**. After **cc**, use the **path** you created or **h:** from the create result.
 - **annotate.design** (\`nd\`): **Designer mode only** — in agent mode it always errors; skip family tests there.
-- **VOLATILE / expire next round**: Result has an h:ref but will dematerialize if not pinned. **pi** to keep, **bw** to persist as finding.
+- **VOLATILE / WILL BE LOST**: Result has h:refs that EXPIRE after ONE round. You MUST \`pi\` in the SAME batch or \`bw\` to persist. If you see this warning and did not pin, your content is already scheduled for deletion.
 - **status:preview / dry_run** (cm, cd, cf): Preview only — no files written. If validation_issues is empty, re-submit the same plan with dry_run:false. Do NOT preview the same plan twice.
 
 ### Rules
