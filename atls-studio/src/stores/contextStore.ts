@@ -709,20 +709,32 @@ function pruneStagedSnippetsToBudget(
     // Evict until total tokens are within budget.
   }
   const anchorMetrics = getPersistentAnchorMetrics(next);
-  while (anchorMetrics.tokens > STAGED_ANCHOR_BUDGET_TOKENS && takeLowestValue()) {
-    // Incrementally update anchor metrics instead of re-scanning the entire map.
-    const last = removed[removed.length - 1];
-    if (last.snippet.admissionClass === 'persistentAnchor') {
-      anchorMetrics.tokens -= last.snippet.tokens;
+  // Build anchor-only candidate list: O(anchors) eviction instead of O(all).
+  // takeLowestValue() exhausts lower-priority items before reaching anchors, so
+  // anchor-budget loops that call it waste iterations and over-evict transients.
+  const anchorOnlyCandidates = sortedCandidates.filter(
+    ([, s]) => s.admissionClass === 'persistentAnchor',
+  );
+  let anchorCandIdx = 0;
+  const takeAnchor = (): boolean => {
+    while (anchorCandIdx < anchorOnlyCandidates.length) {
+      const [key, snippet] = anchorOnlyCandidates[anchorCandIdx++];
+      if (!next.has(key)) continue; // already removed
+      next.delete(key);
+      removed.push({ key, snippet });
+      freed += snippet.tokens;
+      runningTotal -= snippet.tokens;
+      anchorMetrics.tokens -= snippet.tokens;
       anchorMetrics.count--;
+      return true;
     }
+    return false;
+  };
+  while (anchorMetrics.tokens > STAGED_ANCHOR_BUDGET_TOKENS && takeAnchor()) {
+    // takeAnchor updates anchorMetrics inline.
   }
-  while (anchorMetrics.count > MAX_PERSISTENT_STAGE_ENTRIES && takeLowestValue()) {
-    const last = removed[removed.length - 1];
-    if (last.snippet.admissionClass === 'persistentAnchor') {
-      anchorMetrics.tokens -= last.snippet.tokens;
-      anchorMetrics.count--;
-    }
+  while (anchorMetrics.count > MAX_PERSISTENT_STAGE_ENTRIES && takeAnchor()) {
+    // takeAnchor updates anchorMetrics inline.
   }
 
   return {
@@ -1115,6 +1127,9 @@ function reconcileWorkingChunkForSourceRevision(
       return;
     }
     newChunks.delete(key);
+    if (chunk.tokens > DORMANT_ARCHIVE_THRESHOLD) {
+      newArchived.set(key, { ...chunk });
+    }
     batch.stats.invalidated++;
     batch.evictedHashes.push(chunk.hash);
     return;

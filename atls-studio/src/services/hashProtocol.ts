@@ -52,6 +52,8 @@ let currentTurn = 0;
 const refs = new Map<string, ChunkRef>();
 /** shortHash (6 hex) → refs with that prefix; multiple entries ⇒ ambiguous for bare short lookup */
 const shortHashIndex = new Map<string, Set<ChunkRef>>();
+/** Refs whose displayShortHash diverges from hash.slice(0,6) — enables O(diverged) fallback in getRef prefix scan. */
+const divergedRefs = new Set<ChunkRef>();
 let lastTurnDelta = { dematerialized: 0, newMaterialized: 0 };
 
 function addShortHashIndexEntry(shortHash: string, ref: ChunkRef): void {
@@ -73,6 +75,12 @@ function syncRefShortHash(ref: ChunkRef, newShort: string): void {
   }
   ref.shortHash = newShort;
   addShortHashIndexEntry(newShort, ref);
+  // Keep divergedRefs in sync: add when display diverges from natural prefix, remove when aligned
+  if (newShort !== ref.hash.slice(0, SHORT_HASH_LEN)) {
+    divergedRefs.add(ref);
+  } else {
+    divergedRefs.delete(ref);
+  }
 }
 
 function resolveMaterialShortHash(hash: string, displayShortHash?: string): string {
@@ -135,6 +143,7 @@ export function resetProtocol(): void {
   currentTurn = 0;
   refs.clear();
   shortHashIndex.clear();
+  divergedRefs.clear();
   lastTurnDelta = { dematerialized: 0, newMaterialized: 0 };
 }
 
@@ -261,10 +270,10 @@ export function getRef(hash: string): ChunkRef | undefined {
     };
     const fromBucket = tryBucket(shortHashIndex.get(prefix6));
     if (fromBucket !== undefined) return fromBucket;
-    // display short can diverge from hash.slice(0,6) — fall back to full scan
+    // display short can diverge from hash.slice(0,6) — scan only diverged refs (O(diverged) not O(all))
     let match: ChunkRef | undefined;
     let matchCount = 0;
-    for (const [, ref] of refs) {
+    for (const ref of divergedRefs) {
       if (ref.hash.startsWith(normalized)) {
         match = ref;
         matchCount++;
