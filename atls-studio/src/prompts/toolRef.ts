@@ -164,7 +164,7 @@ Review: rs(sig) -> pi -> rl changed fns -> bw review finding per fn -> task_comp
 - **edit_outside_read_range**: The edit targets lines not covered by a prior \`rl\` / \`read.lines\`. Read the target region first (same batch is ideal), then retry. When planning multi-region edits on the same file, read ALL target regions upfront before the edit step.
 - **annotate.design** (\`nd\`): **Designer mode only** — in agent mode it always errors; skip family tests there.
 - **VOLATILE / WILL BE LOST**: Result has h:refs that EXPIRE after ONE round. You MUST \`pi\` in the SAME batch or \`bw\` to persist. If you see this warning and did not pin, your content is already scheduled for deletion.
-- **status:preview / dry_run** (cm, cd, cf): Preview only — no files written. If validation_issues is empty, re-submit the same plan with dry_run:false. Do NOT preview the same plan twice.
+- **status:preview / dry_run** (cm, cd, cf): Preview only — no files written. If validation_issues is empty, re-submit the same plan with dry_run:false. Repeating the same preview may add a \`<<WARN:\` in the batch summary — prefer applying or changing the plan instead of redundant previews.
 
 ### Rules
 - f/ps resolve from active workspace root. Subfolder prefix if monorepo (e.g. \`atls-studio/src/foo.ts\`).

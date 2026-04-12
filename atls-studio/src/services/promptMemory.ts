@@ -44,11 +44,6 @@ export const TOTAL_ROUND_SOFT_BUDGET = 6;
 /** Escalation threshold: stronger nudge to close out the session. */
 export const TOTAL_ROUND_ESCALATION = 8;
 
-/** Absolute ceiling on read-only rounds before force-stop (Layer 3 safety net). */
-export const TOTAL_RESEARCH_ROUND_BUDGET = 25;
-/** Additional rounds after budget warning before auto task_complete. */
-export const RESEARCH_FORCE_STOP_MARGIN = 5;
-
 /** Safety ceiling for subagent rounds — budget-based stopping is the real limiter. */
 export const SUBAGENT_MAX_ROUNDS = 100;
 /** Role-specific round caps — tight to prevent wasteful spinning.

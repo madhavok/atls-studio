@@ -1188,7 +1188,6 @@ export async function executeUnifiedBatch(
   const verifyResults: Array<{ step_id: string; passed: boolean; summary: string; classification?: VerifyClassification }> = [];
   let batchOk = true;
   let spinBreaker: string | undefined;
-  let spinBlocked = false;
   let dryRunPreviewCount = 0;
 
   // Expose step outputs to handlers (e.g. session.pin resolves step IDs to hashes)
@@ -1509,23 +1508,6 @@ export async function executeUnifiedBatch(
       continue;
     }
 
-    // Block further reads/searches and repeated dry-run previews after dry-run preview spin (read-spin is tracked only)
-    const isParamsDryRun = mergedParams.dry_run === true || mergedParams.dry_run === 'true';
-    if (spinBlocked && (
-      step.use.startsWith('read.')
-      || step.use.startsWith('search.')
-      || (step.use.startsWith('change.') && isParamsDryRun)
-    )) {
-      const output: StepOutput = {
-        kind: 'raw', ok: false, refs: [],
-        summary: `${step.id}: BLOCKED — ${isParamsDryRun ? 'dry-run preview spin' : 'read spin'} detected. ${isParamsDryRun ? 'Execute with dry_run:false or abandon.' : 'Use existing h:refs, write to BB, or make an edit.'}`,
-        error: isParamsDryRun ? 'dry_run_spin_blocked' : 'read_spin_blocked',
-      };
-      stepOutputs.set(step.id, output);
-      recordStepResult(step.id, step.use, output, 0);
-      continue;
-    }
-
     const handler = getHandler(step.use);
     if (!handler) {
       const output: StepOutput = {
@@ -1655,12 +1637,10 @@ export async function executeUnifiedBatch(
       // Any BB write counts as "acting before reading more" — full reset so the
       // agent can proceed with new reads after writing findings.
       ctx.store().resetFileReadSpin();
-      spinBlocked = false;
       spinBreaker = undefined;
     }
     if (output.ok && step.use.startsWith('change.') && !isDryRunPreview(output)) {
       ctx.store().resetFileReadSpin();
-      spinBlocked = false;
       spinBreaker = undefined;
     }
 
@@ -1668,12 +1648,11 @@ export async function executeUnifiedBatch(
     const stepArtifact = getArtifact(output);
     const shouldTreatBlockedSystemExecAsNonFatal =
       stepArtifact !== null && isBlockingSystemExec(step.use, stepArtifact);
-    // Track consecutive dry-run previews — block on repeat
+    // Track consecutive dry-run previews — warn in summary only (no step blocking)
     if (output.ok && step.use.startsWith('change.') && isDryRunPreview(output)) {
       dryRunPreviewCount += 1;
       if (dryRunPreviewCount >= 2) {
-        spinBreaker = `<<STOP: ${step.use} dry-run previewed ${dryRunPreviewCount}x. Execute with dry_run:false or abandon. Do NOT preview again.>>`;
-        spinBlocked = true;
+        spinBreaker = `<<WARN: ${step.use} dry-run previewed ${dryRunPreviewCount}x. Execute with dry_run:false to apply; avoid redundant previews.>>`;
       }
     } else if (output.ok && step.use.startsWith('change.')) {
       dryRunPreviewCount = 0;

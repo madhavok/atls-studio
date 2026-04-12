@@ -533,10 +533,8 @@ export interface ToolLoopSteering {
   mode: string;
   consecutiveReadOnlyRounds: number;
   roundsInCurrentPhase: number;
-  totalResearchRounds: number;
   anyRoundHadMutations: boolean;
   hadVerification: boolean;
-  forceStopInjected: boolean;
   hadProgressSinceLastAdvance: boolean;
   activeSubtaskId: string | null;
   completionBlocked: boolean;

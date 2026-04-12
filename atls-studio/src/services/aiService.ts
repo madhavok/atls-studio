@@ -190,8 +190,6 @@ import {
   PHASE_ROUND_BUDGET,
   TOTAL_ROUND_SOFT_BUDGET,
   TOTAL_ROUND_ESCALATION,
-  TOTAL_RESEARCH_ROUND_BUDGET,
-  RESEARCH_FORCE_STOP_MARGIN,
   createPromptLayerBudgets,
   getStagedTokens,
   getEstimatedTotalPromptTokens,
@@ -1696,7 +1694,6 @@ async function streamChatViaTauri(
   let lastActiveSubtaskId: string | null = null;
   let totalResearchRounds = 0;
   let anyRoundHadMutations = false;
-  let forceStopInjected = false;
   _hadVerification = false;
   const advanceCountBySubtask = new Map<string, number>();
   let hadProgressSinceLastAdvance = false;
@@ -1765,10 +1762,8 @@ async function streamChatViaTauri(
         mode,
         consecutiveReadOnlyRounds,
         roundsInCurrentPhase,
-        totalResearchRounds,
         anyRoundHadMutations,
         hadVerification: _hadVerification,
-        forceStopInjected,
         hadProgressSinceLastAdvance,
         activeSubtaskId: lastActiveSubtaskId,
         completionBlocked: runtimeCompletionBlocker != null,
@@ -2824,17 +2819,9 @@ async function streamChatViaTauri(
 
       conversationHistory.push({ role: 'user', content: toolResults });
 
-      // Hard stop: model had one round after FORCE STOP and still didn't call task_complete
-      if (forceStopInjected && !taskCompleteCalled) {
-        console.log('[aiService] Research budget hard stop — model did not call task_complete after FORCE STOP');
-        useAppStore.getState().setAgentProgress({ status: 'stopped', stoppedReason: 'research_budget' });
-        break;
-      }
-
       // task_complete was called — auto-verify if needed, then stop.
       if (taskCompleteCalled) {
-        const forceStopActive = totalResearchRounds >= TOTAL_RESEARCH_ROUND_BUDGET + RESEARCH_FORCE_STOP_MARGIN;
-        if (anyRoundHadMutations && !_hadVerification && !forceStopActive
+        if (anyRoundHadMutations && !_hadVerification
             && (mode === 'agent' || mode === 'refactor')) {
           try {
             console.log('[aiService] Auto-verify: running verify.build after task_complete');
@@ -2917,16 +2904,6 @@ async function streamChatViaTauri(
         } else if (round + 1 >= TOTAL_ROUND_SOFT_BUDGET) {
           console.log(`[aiService] Convergence nudge at round ${round + 1} (via state block)`);
         }
-      }
-
-      // Layer 3A: Total research round budget — absolute ceiling (steering via state block)
-      if (totalResearchRounds >= TOTAL_RESEARCH_ROUND_BUDGET + RESEARCH_FORCE_STOP_MARGIN
-          && mode !== 'ask' && mode !== 'retriever') {
-        console.log(`[aiService] FORCE STOP: ${totalResearchRounds} research rounds without mutations (via state block)`);
-        forceStopInjected = true;
-      } else if (totalResearchRounds >= TOTAL_RESEARCH_ROUND_BUDGET
-          && mode !== 'ask' && mode !== 'retriever') {
-        console.log(`[aiService] Research budget warning: ${totalResearchRounds} total research rounds (via state block)`);
       }
 
       // Signal UI to save current-round text before next round streams new tokens
@@ -3696,11 +3673,6 @@ function buildDynamicContextBlock(
       } else {
         parts.push('<<SYSTEM: Continue any remaining implementation. When complete, run final verification and provide a summary.>>');
       }
-    }
-    if (tls.forceStopInjected) {
-      parts.push(`<<SYSTEM: FORCE STOP — ${tls.totalResearchRounds} rounds without any code changes. Call task_complete NOW with an honest summary of what you examined and found. This session will not continue.>>`);
-    } else if (tls.totalResearchRounds >= TOTAL_RESEARCH_ROUND_BUDGET) {
-      parts.push(`<<SYSTEM: ${tls.totalResearchRounds} rounds reading without making any changes. You MUST now: (1) make an edit, (2) call task_complete with findings, or (3) declare a specific blocker. Next round without a mutation or task_complete will force-stop.>>`);
     }
   }
 

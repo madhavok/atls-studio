@@ -34,11 +34,6 @@ import {
 import { resolveModelSettings, type ResolvedModelSettings } from '../utils/modelSettings';
 import { formatEntryManifestSection } from './aiService';
 import { isExtendedContextEnabled, modelSupportsExtendedContext } from '../utils/modelCapabilities';
-import {
-  subagentToolResultIndicatesExploration,
-  subagentToolResultIndicatesProgress,
-} from './subagentProgress';
-
 export type { AIProvider };
 
 const PRIOR_THOUGHT_START = '<<PRIOR_THOUGHT>>';
@@ -781,8 +776,6 @@ function checkStopConditions(
   preExistingSources: Set<string>,
   lastBatchResult: string | null,
   noToolCalls: boolean,
-  hasSpinBreaker?: boolean,
-  consecutiveReadOnlyRounds?: number,
 ): StopCheck {
   // Role-specific round cap (falls back to safety ceiling)
   const maxRounds = SUBAGENT_MAX_ROUNDS_BY_ROLE[role] ?? SUBAGENT_MAX_ROUNDS;
@@ -799,22 +792,6 @@ function checkStopConditions(
   // Empty round (model said done with no tool calls)
   if (noToolCalls) {
     return { shouldStop: true, reason: 'model completed (no tool calls)' };
-  }
-
-  // Read spin detected — batch executor flagged repeated reads of the same files
-  if (hasSpinBreaker) {
-    return { shouldStop: true, reason: 'read spin detected — subagent reading same files repeatedly without acting' };
-  }
-
-  // Consecutive idle rounds — subagent is not making progress.
-  // Tightened after audit: all 4 roles spin in read-only loops without acting.
-  if (consecutiveReadOnlyRounds != null) {
-    const limit = (role === 'retriever') ? 2
-      : (role === 'design') ? 3
-      : 4;
-    if (consecutiveReadOnlyRounds >= limit) {
-      return { shouldStop: true, reason: `${consecutiveReadOnlyRounds} consecutive idle rounds without progress` };
-    }
   }
 
   // Pin budget saturation for retriever/design
@@ -1006,7 +983,6 @@ export async function executeSubagent(
   let lastToolResults: Array<{ type: string; tool_use_id: string; name: string; content: string }> | null = null;
   let lastBatchOutcome: string | null = null;
   let lastErrors: string[] = [];
-  let consecutiveReadOnlyRounds = 0;
 
   const roleStatusMap: Record<SubagentType, SubAgentProgress['status']> = {
     retriever: 'searching',
@@ -1113,7 +1089,7 @@ export async function executeSubagent(
         const stop = checkStopConditions(
           role, round, totalInputTokens, totalOutputTokens,
           tokenBudget, pinBudget, preExistingHashes, preExistingSources,
-          lastBatchOutcome, true, false, consecutiveReadOnlyRounds,
+          lastBatchOutcome, true,
         );
         console.log(`[subagent:${role}] No tool calls, stopping: ${stop.reason || 'model completed'}`);
         break;
@@ -1239,31 +1215,11 @@ export async function executeSubagent(
         }
       }
 
-      // Track consecutive idle rounds for spin detection.
-      // Any substantive work (edits, pins, stages, BB writes, verify, exec)
-      // resets the counter — not just change.* mutations.
-      const batchText = lastBatchOutcome ?? '';
-      // Read/search/intent/analyze exploration counts as progress so we do not hit
-      // consecutiveReadOnlyRounds while still researching (all roles; see subagentProgress.ts).
-      const hadExplorationRound = toolResults.some(tr =>
-        subagentToolResultIndicatesExploration(tr.content),
-      );
-      const hadProgress = hadExplorationRound || toolResults.some(tr =>
-        subagentToolResultIndicatesProgress(tr.content),
-      ) || (batchText.includes('[OK]') && subagentToolResultIndicatesProgress(batchText));
-      if (hadProgress) {
-        consecutiveReadOnlyRounds = 0;
-      } else {
-        consecutiveReadOnlyRounds++;
-      }
-
-      const hasSpinBreaker = lastBatchOutcome?.includes('<<STOP:') ?? false;
-
       // Check stop conditions
       const stop = checkStopConditions(
         role, round, totalInputTokens, totalOutputTokens,
         tokenBudget, pinBudget, preExistingHashes, preExistingSources,
-        lastBatchOutcome, false, hasSpinBreaker, consecutiveReadOnlyRounds,
+        lastBatchOutcome, false,
       );
       if (stop.shouldStop) {
         console.log(`[subagent:${role}] Stopping: ${stop.reason}`);
