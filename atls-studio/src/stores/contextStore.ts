@@ -178,7 +178,7 @@ export type EngramViewKind = 'latest' | 'snapshot' | 'derived';
 export interface MemoryEvent {
   id: string;
   at: number;
-  action: 'read' | 'write' | 'compact' | 'archive' | 'drop' | 'evict' | 'invalidate' | 'reconcile' | 'retry' | 'block';
+  action: 'read' | 'write' | 'compact' | 'archive' | 'drop' | 'evict' | 'invalidate' | 'reconcile' | 'retry' | 'block' | 'auto-unpin';
   reason: string;
   refs?: string[];
   source?: string;
@@ -886,8 +886,9 @@ interface ContextStoreState {
   compactChunks: (hashes: string[], opts?: { confirmWildcard?: boolean; tier?: 'pointer' | 'sig'; sigContentByRef?: Map<string, string> }) => { compacted: number; freedTokens: number };
   unloadChunks: (hashes: string[], opts?: { confirmWildcard?: boolean }) => { freed: number; count: number; pinnedKept: number };
   dropChunks: (hashes: string[], opts?: { confirmWildcard?: boolean }) => { dropped: number; freedTokens: number };
-  pinChunks: (hashes: string[], shape?: string) => { count: number; alreadyPinned: number };
+  pinChunks: (hashes: string[], shape?: string) => { count: number; alreadyPinned: number; skippedFullFile: number };
   unpinChunks: (hashes: string[]) => number;
+  findPinnedFileEngram: (filePath: string) => string | null;
   registerEditHash: (hash: string, source: string, editSessionId?: string) => { registered: boolean; reason?: string };
   invalidateStaleHashes: (shortHashes: string[]) => number;
   /** Invalidate derived shapes (staged, chunks, bindings) where source matches path and sourceRevision !== currentRevision. */
@@ -2705,13 +2706,24 @@ export const useContextStore = create<ContextStoreState>()(
   pinChunks: (hashes: string[], shape?: string) => {
     let count = 0;
     let alreadyPinned = 0;
+    let skippedFullFile = 0;
     
+    const isFullFileRead = (chunk: ContextChunk): boolean =>
+      !chunk.compacted
+      && (chunk.viewKind === 'latest' || chunk.viewKind == null)
+      && isFileBackedType(chunk.type)
+      && chunk.type !== 'result';
+
     set(state => {
       const newChunks = new Map(state.chunks);
       const newArchived = new Map(state.archivedChunks);
       
       for (const h of hashes) {
         const found = findChunkByRef(newChunks, h);
+        if (found && isFullFileRead(found[1])) {
+          skippedFullFile++;
+          continue;
+        }
         if (found && !found[1].pinned) {
           newChunks.set(found[0], {
             ...found[1],
@@ -2767,7 +2779,7 @@ export const useContextStore = create<ContextStoreState>()(
       return { chunks: newChunks, archivedChunks: newArchived };
     });
     
-    return { count, alreadyPinned };
+    return { count, alreadyPinned, skippedFullFile };
   },
   
   /**
@@ -2806,6 +2818,16 @@ export const useContextStore = create<ContextStoreState>()(
     return count;
   },
   
+  findPinnedFileEngram: (filePath: string): string | null => {
+    const FULL_FILE_TYPES = new Set(['file', 'smart', 'full']);
+    for (const [key, chunk] of get().chunks) {
+      if (!chunk.pinned) continue;
+      if (!FULL_FILE_TYPES.has(chunk.type)) continue;
+      if (chunk.source && sourcesMatch(chunk.source, filePath)) return key;
+    }
+    return null;
+  },
+
   /**
    * Register an edit-result hash as a lightweight stub for hash chaining.
    * Maps h:NEW → source path so subsequent edits can resolve the reference

@@ -372,8 +372,9 @@ export interface ContextStoreApi {
   unloadChunks: (hashes: string[], opts?: { confirmWildcard?: boolean }) => { freed: number; count: number; pinnedKept: number };
   compactChunks: (hashes: string[], opts?: { confirmWildcard?: boolean; tier?: 'pointer' | 'sig'; sigContentByRef?: Map<string, string> }) => { compacted: number; freedTokens: number };
   dropChunks: (hashes: string[], opts?: { confirmWildcard?: boolean }) => { dropped: number; freedTokens: number };
-  pinChunks: (hashes: string[], shape?: string) => { count: number; alreadyPinned: number };
+  pinChunks: (hashes: string[], shape?: string) => { count: number; alreadyPinned: number; skippedFullFile: number };
   unpinChunks: (hashes: string[]) => number;
+  findPinnedFileEngram: (filePath: string) => string | null;
   invalidateStaleHashes: (hashes: string[]) => void;
   markEngramsSuspect: (sourcePaths?: string[], cause?: FreshnessCause, suspectKind?: 'content' | 'structural' | 'unknown') => number;
   clearSuspect: (hashRefOrSource: string) => number;

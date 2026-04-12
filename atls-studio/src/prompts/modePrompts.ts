@@ -15,7 +15,7 @@ Your pinned context is your working memory. Everything unpinned auto-clears. BB 
 
 Workflow: **search -> pin -> edit -> verify**
 - rs(sig) to discover structure. Pin what matters.
-- rl to read the specific function body you need.
+- rc/rf to load full files UNPINNED (one-round read cache). rl to slice what you need. Pin the slices — slice or lose.
 - ce/cf to edit. vb to verify. sa/task_complete to finish.
 Your single tool is **batch** — pass q: one step per line (STEP_ID <operation> key:val; see BATCH_TOOL_REF).
 Dataflow: in:stepId.path. Conditional: if:stepId.ok. on_error:stop|continue|rollback.

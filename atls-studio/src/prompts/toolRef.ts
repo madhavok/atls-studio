@@ -141,17 +141,19 @@ qs/queries, le/line_edits, sl/start_line, el/end_line, sf/severity_filter, ff/fo
 key/keys, cmd also auto-resolved
 
 ### Task Recipes (follow the matching recipe)
-Bug hunt: si -> rs(sig) top 3-5 suspects -> pi sigs -> rl + bw finding per fn -> fix confirmed -> task_complete
-Feature: rs(sig) targets -> pi -> spl -> ce per subtask -> task_complete
+Bug hunt: si -> rs(sig) top 3-5 suspects -> pi sigs -> rc (unpinned) -> rl slices + pi slices + bw finding per fn -> fix confirmed -> task_complete
+Feature: rs(sig) targets -> pi sigs -> spl -> rc + rl slices + pi slices -> ce per subtask -> task_complete
 Refactor: ax -> spl -> cf per extraction -> vb -> pi if failed (fix from h:ref) -> task_complete
 Refactor (split): ax -> cm dry_run:true -> cm dry_run:false -> vb -> task_complete
 Investigation: iv -> bw structured findings per target -> task_complete with report
-Review: rs(sig) -> pi -> rl changed fns -> bw review finding per fn -> task_complete
+Review: rs(sig) -> pi sigs -> rc (unpinned) -> rl changed fns + pi slices -> bw review finding per fn -> task_complete
 
-### Read Pattern (standard two-step)
-- Discovery: rs(sig) for structure -> pin what matters
-- Targeted: rl for the specific function body to examine or edit
-- DO NOT chain rs -> rl -> rc -> rf on same file. One read tool, pin, analyze, write finding.
+### Read Pattern (slice or lose)
+- Discovery: rs(sig) for structure -> pin sigs
+- Load: rc/rf loads full file UNPINNED into dynamic context (one-round read cache)
+- Slice: rl targets in the SAME batch -> pin the slices. Full file dematerializes at turn end.
+- If you skip slicing, you lose the file content next round. Slice or lose.
+- DO NOT pin full files. DO NOT chain rs -> rl -> rc -> rf on same file. One read tool, pin slices, analyze, write finding.
 - If the batch summary includes a **read spin** warning (\`<<WARN:\` / \`<<NUDGE:\`), you already have (or fragmented) coverage of that file — prefer **h:refs**, **bw**, or an **edit** over blind re-reads.
 
 ### Tool messages (read literally — not always "bugs")

@@ -8,7 +8,7 @@ import { safeListen } from '../utils/tauri';
 import type { ContextUsage, StreamChunk } from '../stores/appStore';
 import { useAppStore } from '../stores/appStore';
 import { useContextStore } from '../stores/contextStore';
-import { useCostStore, calculateCost, type AIProvider as CostProvider } from '../stores/costStore';
+import { useCostStore, calculateCost, calculateCostBreakdown, type AIProvider as CostProvider } from '../stores/costStore';
 import { useRoundHistoryStore } from '../stores/roundHistoryStore';
 import { getEffectiveContextWindow, getExtendedContextResolutionFromSettings } from '../utils/modelCapabilities';
 import { resolveHashRefsWithMeta, type HashLookup } from '../utils/hashResolver';
@@ -134,7 +134,14 @@ function pushSwarmRoundSnapshot(
     ? (getEffectiveContextWindow(modelInfo.id, modelInfo.provider, modelInfo.contextWindow, extendedResolution)
       ?? (provider === 'google' || provider === 'vertex' ? 1000000 : 200000))
     : (provider === 'google' || provider === 'vertex' ? 1000000 : 200000);
-
+  const breakdown = calculateCostBreakdown(
+    provider as CostProvider,
+    config.model,
+    r.roundInputTokens,
+    r.roundOutputTokens,
+    r.roundCacheReadTokens,
+    r.roundCacheWriteTokens,
+  );
   useRoundHistoryStore.getState().pushSnapshot({
     round: roundIndex,
     timestamp: Date.now(),
@@ -161,6 +168,8 @@ function pushSwarmRoundSnapshot(
     cacheReadTokens: r.roundCacheReadTokens,
     cacheWriteTokens: r.roundCacheWriteTokens,
     costCents: r.roundCostCents,
+    inputCostCents: breakdown.inputCostCents,
+    outputCostCents: breakdown.outputCostCents,
     compressionSavings: 0,
     rollingSavings: 0,
     rolledRounds: 0,

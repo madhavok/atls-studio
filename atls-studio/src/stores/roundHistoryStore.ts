@@ -37,6 +37,8 @@ export interface RoundSnapshot {
   cacheWriteTokens: number;
   // Cost
   costCents: number;
+  inputCostCents?: number;
+  outputCostCents?: number;
   // Savings
   compressionSavings: number;
   /** Tokens removed by rolling window (not hash compression) */
@@ -122,16 +124,22 @@ export function computeMainChatRoundCostStats(snapshots: RoundSnapshot[]): {
   mainRoundCount: number;
   mainRoundsCostSum: number;
   avgMainRoundCost: number;
+  avgInputCost: number;
+  avgOutputCost: number;
 } {
   const main = snapshots.filter(isMainChatRound);
-  let sum = 0;
+  let sum = 0, inputSum = 0, outputSum = 0;
   for (const s of main) {
     sum += s.costCents;
+    inputSum += s.inputCostCents ?? 0;
+    outputSum += s.outputCostCents ?? 0;
   }
   const n = main.length;
   const mainRoundsCostSum = Math.round(sum * 100) / 100;
   const avgMainRoundCost = n > 0 ? Math.round((sum / n) * 100) / 100 : 0;
-  return { mainRoundCount: n, mainRoundsCostSum, avgMainRoundCost };
+  const avgInputCost = n > 0 ? Math.round((inputSum / n) * 100) / 100 : 0;
+  const avgOutputCost = n > 0 ? Math.round((outputSum / n) * 100) / 100 : 0;
+  return { mainRoundCount: n, mainRoundsCostSum, avgMainRoundCost, avgInputCost, avgOutputCost };
 }
 
 export const useRoundHistoryStore = create<RoundHistoryState>((set) => ({

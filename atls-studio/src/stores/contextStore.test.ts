@@ -60,9 +60,9 @@ describe('queryBySetSelector', () => {
     });
   });
 
-  it('kind=pinned returns only pinned chunks', () => {
-    const h1 = addTestChunk('fn foo() {}', 'file', 'src/foo.ts');
-    addTestChunk('fn bar() {}', 'file', 'src/bar.ts');
+  it('kind=pinned returns only pinned chunks (derived viewKind allowed)', () => {
+    const h1 = addTestChunk('fn foo() {}', 'file', 'src/foo.ts', { viewKind: 'derived' });
+    addTestChunk('fn bar() {}', 'file', 'src/bar.ts', { viewKind: 'derived' });
 
     useContextStore.getState().pinChunks([h1]);
 
@@ -71,9 +71,20 @@ describe('queryBySetSelector', () => {
     expect(result.entries[0].source).toBe('src/foo.ts');
   });
 
-  it('pinChunks accepts shaped ref (h:XXXX:15-50) and pins base chunk', () => {
-    const shortHash = addTestChunk('fn foo() { return 1; }\nfn bar() { return 2; }', 'file', 'src/foo.ts');
-    addTestChunk('other', 'file', 'src/other.ts');
+  it('pinChunks blocks full-file reads (latest viewKind)', () => {
+    const shortHash = addTestChunk('fn foo() { return 1; }', 'file', 'src/foo.ts');
+
+    const { count, skippedFullFile } = useContextStore.getState().pinChunks([shortHash]);
+
+    expect(count).toBe(0);
+    expect(skippedFullFile).toBe(1);
+    const result = useContextStore.getState().queryBySetSelector({ kind: 'pinned' });
+    expect(result.hashes).toHaveLength(0);
+  });
+
+  it('pinChunks accepts shaped ref (h:XXXX:15-50) on derived chunks', () => {
+    const shortHash = addTestChunk('fn foo() { return 1; }\nfn bar() { return 2; }', 'file', 'src/foo.ts', { viewKind: 'derived' });
+    addTestChunk('other', 'file', 'src/other.ts', { viewKind: 'derived' });
 
     const { count } = useContextStore.getState().pinChunks([`h:${shortHash}:15-50`]);
 
@@ -86,7 +97,15 @@ describe('queryBySetSelector', () => {
   it('hash forwarding moves pin+shape to new read and unpins compacted stub', () => {
     const store = useContextStore.getState();
     const s1 = store.addChunk('first read body content here', 'raw', 'src/same.ts');
-    store.pinChunks([s1], 'sig');
+    // Simulate pin on the first chunk by directly mutating store state
+    // (pinChunks blocks full-file reads; forwarding is tested here, not pin mechanics)
+    const s1Key = [...useContextStore.getState().chunks.entries()].find(([, c]) => c.shortHash === s1)?.[0];
+    useContextStore.setState(state => {
+      const newChunks = new Map(state.chunks);
+      const chunk = newChunks.get(s1Key!);
+      if (chunk) newChunks.set(s1Key!, { ...chunk, pinned: true, pinnedShape: 'sig' });
+      return { chunks: newChunks };
+    });
     const s2 = store.addChunk('second read replaces first', 'raw', 'src/same.ts');
 
     const chunks = useContextStore.getState().chunks;
@@ -103,7 +122,7 @@ describe('queryBySetSelector', () => {
 
   it('pinChunks updates pinnedShape when already pinned', () => {
     const store = useContextStore.getState();
-    const h = addTestChunk('fn x() {}', 'file', 'src/a.ts');
+    const h = addTestChunk('fn x() {}', 'file', 'src/a.ts', { viewKind: 'derived' });
     store.pinChunks([h], 'sig');
     const mapKey = [...useContextStore.getState().chunks.entries()].find(([, c]) => c.shortHash === h)?.[0];
     expect(mapKey).toBeDefined();
@@ -205,6 +224,47 @@ describe('queryBySetSelector', () => {
     const result = useContextStore.getState().queryBySetSelector({ kind: 'all' });
     expect(result.entries[0].content).toBe('function authenticate() {}');
     expect(result.entries[0].source).toBe('src/auth.ts');
+  });
+});
+
+describe('findPinnedFileEngram', () => {
+  beforeEach(() => resetStore());
+
+  it('returns hash of a pinned file-type engram matching the path (derived)', () => {
+    const h = addTestChunk('function main() {}', 'file', 'src/app.ts', { viewKind: 'derived' });
+    useContextStore.getState().pinChunks([h]);
+
+    const result = useContextStore.getState().findPinnedFileEngram('src/app.ts');
+    expect(result).not.toBeNull();
+    const chunk = useContextStore.getState().chunks.get(result!);
+    expect(chunk?.shortHash).toBe(h);
+  });
+
+  it('returns hash for smart-type pinned engram (derived)', () => {
+    const h = addTestChunk('export class Foo {}', 'smart', 'src/foo.ts', { viewKind: 'derived' });
+    useContextStore.getState().pinChunks([h]);
+
+    expect(useContextStore.getState().findPinnedFileEngram('src/foo.ts')).not.toBeNull();
+  });
+
+  it('returns null when no pinned engram matches the path', () => {
+    addTestChunk('fn bar() {}', 'file', 'src/bar.ts');
+
+    expect(useContextStore.getState().findPinnedFileEngram('src/bar.ts')).toBeNull();
+  });
+
+  it('returns null for pinned engrams of non-file types', () => {
+    const h = addTestChunk('search result', 'result', 'src/search.ts');
+    useContextStore.getState().pinChunks([h]);
+
+    expect(useContextStore.getState().findPinnedFileEngram('src/search.ts')).toBeNull();
+  });
+
+  it('returns null when path does not match any chunk source', () => {
+    const h = addTestChunk('fn foo() {}', 'file', 'src/foo.ts');
+    useContextStore.getState().pinChunks([h]);
+
+    expect(useContextStore.getState().findPinnedFileEngram('src/other.ts')).toBeNull();
   });
 });
 

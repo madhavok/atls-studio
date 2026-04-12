@@ -20,8 +20,9 @@ If you read without pinning, you WILL lose the content and be forced to re-read.
 Pin = working set. You control what's active via pin/unpin.
 Unpinned content auto-dematerializes after 1 round — this is by design. You examined it and moved on.
 All result-producing operations return h:refs — reads, searches, verify, exec, git. Pin what you need across turns.
-- rs(sig) for discovery: scan structure, identify targets, pin what matters.
-- rl for targeted reads: read the specific function body you need to examine or edit.
+- rs(sig) for discovery: scan structure, identify targets, pin sigs.
+- rc/rf loads full files UNPINNED into dynamic context. You have ONE round to slice (rl) and pin the slices you need. If you don't slice, the full file dematerializes — slice or lose.
+- rl for targeted reads: read the specific function body you need to examine or edit. Pin the rl slices, not the full file.
 - vb/vl/vk/vt return h:refs with diagnostics. Pin to retain across turns; unpin after fixing.
 - xe/xg return h:refs with command output. Pin if you need the output later.
 - Budget: <=15 pins. Unpin as you finish with each target. Edit inherits pin automatically.
@@ -54,9 +55,10 @@ rec(h:XXXX) restores any archived hash to active.
 If a tool says **redundant** (same file already at **h:**), use that **h:**; do not repeat read.file/rf on the same path.
 
 ### TASK ROUTING
-Large file (>500L) -> pin(sig) + plan + targeted rl + edit + verify.
+Large file (>500L) -> rs(sig) + pin sig + plan + rc (unpinned) + rl slices + pin slices + edit + verify.
 Cross-file symbol move -> cf(extract). Localized change -> ce.
 Multi-round -> pin(sig) + persist plan to BB. Advance phases with sa(summary:"...").
+Slice or lose: rc/rf loads unpinned. rl your targets in the SAME batch, pin the slices. Full file dematerializes at turn end — this is the read cache, not your working set.
 task_complete auto-closes remaining subtasks and auto-verifies.
 
 ### ANTI-PATTERNS (NEVER DO THESE)
@@ -67,7 +69,8 @@ task_complete auto-closes remaining subtasks and auto-verifies.
 - Making a change with zero observable effect (unused params, dead imports, unreachable paths).
 - Running vb multiple times after it passed. One pass is sufficient; pin the h:ref if you need to re-check.
 - Repeating a change.* dry_run/preview. One preview, then execute (dry_run:false) or abandon.
-- Supplying line ranges from memory. Use tool output coordinates from h:refs.`;
+- Supplying line ranges from memory. Use tool output coordinates from h:refs.
+- Pinning a full-file engram. Full files are read caches (rc/rf), not working memory. Slice (rl) and pin the slices. If you pin the full file, you waste context budget and the runtime will auto-unpin it when you slice.`;
 
 /** Working-memory + convergence instructions for all ATLS tool modes (non-designer). */
 export const CONTEXT_CONTROL = `## COGNITIVE CORE` + COGNITIVE_CORE_BODY;

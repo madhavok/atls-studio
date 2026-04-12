@@ -27,7 +27,7 @@ export function CostIOSection() {
   const subagentSnapshots = useMemo(() => snapshots.filter((s) => s.isSubagentRound), [snapshots]);
   const swarmSnapshots = useMemo(() => snapshots.filter((s) => s.isSwarmRound), [snapshots]);
 
-  const { mainRoundsCostSum, avgMainRoundCost } = useMemo(
+  const { mainRoundsCostSum, avgMainRoundCost, avgInputCost, avgOutputCost } = useMemo(
     () => computeMainChatRoundCostStats(snapshots),
     [snapshots],
   );
@@ -153,6 +153,16 @@ export function CostIOSection() {
         <StatCard label="Main input" value={fmtK(totalInput)} />
         <StatCard label="Main output" value={fmtK(totalOutput)} />
         <StatCard label="Main cache reads" value={fmtK(totalCacheRead)} />
+        <StatCard
+          label="Avg input cost"
+          value={mainSnapshots.length > 0 ? formatCost(avgInputCost) : '—'}
+          subtitle="per main round"
+        />
+        <StatCard
+          label="Avg output cost"
+          value={mainSnapshots.length > 0 ? formatCost(avgOutputCost) : '—'}
+          subtitle="per main round"
+        />
         {mainSnapshots.length > 0 && (
           <StatCard
             label="Research ratio"
@@ -213,4 +223,3 @@ function StatCard({ label, value, subtitle, accent }: { label: string; value: st
     </div>
   );
 }
-

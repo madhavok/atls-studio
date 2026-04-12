@@ -190,6 +190,77 @@ const GEMINI_CACHED_MULT = 0.25;         // 25% of base input price (75% discoun
 // For Anthropic: inputTokens = uncached only; cacheReadTokens/cacheWriteTokens priced separately.
 // For OpenAI: inputTokens = total prompt tokens; cacheReadTokens = cached subset (50% discount).
 // For Google/Vertex: inputTokens = total prompt tokens; cacheReadTokens = cached subset (75% discount).
+export interface CostBreakdown {
+  inputCostCents: number;
+  outputCostCents: number;
+  totalCostCents: number;
+}
+
+export function calculateCostBreakdown(
+  provider: AIProvider,
+  model: string,
+  inputTokens: number,
+  outputTokens: number,
+  cacheReadTokens = 0,
+  cacheWriteTokens = 0,
+): CostBreakdown {
+  const zero: CostBreakdown = { inputCostCents: 0, outputCostCents: 0, totalCostCents: 0 };
+  if (
+    !Number.isFinite(inputTokens) || !Number.isFinite(outputTokens) ||
+    !Number.isFinite(cacheReadTokens) || !Number.isFinite(cacheWriteTokens) ||
+    inputTokens < 0 || outputTokens < 0 || cacheReadTokens < 0 || cacheWriteTokens < 0
+  ) {
+    return zero;
+  }
+  const providerPricing = PRICING[provider];
+  if (!providerPricing) {
+    console.warn(`[CostStore] No pricing for provider: ${provider}`);
+    return zero;
+  }
+  if (!model || typeof model !== 'string') {
+    console.warn(`[CostStore] Invalid model value: ${model} (provider: ${provider})`);
+    return zero;
+  }
+
+  const normalizedModel = model.toLowerCase();
+  const modelPricing = providerPricing.find(p => normalizedModel.startsWith(p.prefix));
+  if (!modelPricing) {
+    console.warn(`[CostStore] No pricing for model: ${model} (provider: ${provider})`);
+    return zero;
+  }
+
+  const perM = 1_000_000;
+  let inputCostCents: number;
+
+  if (provider === 'anthropic') {
+    // Anthropic: input_tokens = uncached only, cache tokens are separate line items
+    const uncachedCost = (inputTokens / perM) * modelPricing.input;
+    const cacheReadCost = (cacheReadTokens / perM) * modelPricing.input * ANTHROPIC_CACHE_READ_MULT;
+    const cacheWriteCost = (cacheWriteTokens / perM) * modelPricing.input * ANTHROPIC_CACHE_WRITE_MULT;
+    inputCostCents = uncachedCost + cacheReadCost + cacheWriteCost;
+  } else if (provider === 'openai' && cacheReadTokens > 0) {
+    // OpenAI: prompt_tokens includes cached; subtract cached portion and re-add at 50% rate
+    const uncached = Math.max(0, inputTokens - cacheReadTokens);
+    const uncachedCost = (uncached / perM) * modelPricing.input;
+    const cachedCost = (cacheReadTokens / perM) * modelPricing.input * OPENAI_CACHED_MULT;
+    inputCostCents = uncachedCost + cachedCost;
+  } else if ((provider === 'google' || provider === 'vertex') && cacheReadTokens > 0) {
+    // Google/Vertex with Gemini Context Caching: cached tokens at 75% discount
+    const uncached = Math.max(0, inputTokens - cacheReadTokens);
+    const uncachedCost = (uncached / perM) * modelPricing.input;
+    const cachedCost = (cacheReadTokens / perM) * modelPricing.input * GEMINI_CACHED_MULT;
+    inputCostCents = uncachedCost + cachedCost;
+  } else {
+    // No cache data: full rate on all input tokens
+    inputCostCents = (inputTokens / perM) * modelPricing.input;
+  }
+
+  const outputCostCents = (outputTokens / perM) * modelPricing.output;
+
+  return { inputCostCents, outputCostCents, totalCostCents: inputCostCents + outputCostCents };
+}
+
+/** Convenience wrapper — returns total cost only. Use calculateCostBreakdown for input/output split. */
 export function calculateCost(
   provider: AIProvider,
   model: string,
@@ -198,59 +269,7 @@ export function calculateCost(
   cacheReadTokens = 0,
   cacheWriteTokens = 0,
 ): number {
-  if (
-    !Number.isFinite(inputTokens) || !Number.isFinite(outputTokens) ||
-    !Number.isFinite(cacheReadTokens) || !Number.isFinite(cacheWriteTokens) ||
-    inputTokens < 0 || outputTokens < 0 || cacheReadTokens < 0 || cacheWriteTokens < 0
-  ) {
-    return 0;
-  }
-  const providerPricing = PRICING[provider];
-  if (!providerPricing) {
-    console.warn(`[CostStore] No pricing for provider: ${provider}`);
-    return 0;
-  }
-  if (!model || typeof model !== 'string') {
-    console.warn(`[CostStore] Invalid model value: ${model} (provider: ${provider})`);
-    return 0;
-  }
-
-  const normalizedModel = model.toLowerCase();
-  const modelPricing = providerPricing.find(p => normalizedModel.startsWith(p.prefix));
-  if (!modelPricing) {
-    console.warn(`[CostStore] No pricing for model: ${model} (provider: ${provider})`);
-    return 0;
-  }
-
-  const perM = 1_000_000;
-  let inputCost: number;
-
-  if (provider === 'anthropic') {
-    // Anthropic: input_tokens = uncached only, cache tokens are separate line items
-    const uncachedCost = (inputTokens / perM) * modelPricing.input;
-    const cacheReadCost = (cacheReadTokens / perM) * modelPricing.input * ANTHROPIC_CACHE_READ_MULT;
-    const cacheWriteCost = (cacheWriteTokens / perM) * modelPricing.input * ANTHROPIC_CACHE_WRITE_MULT;
-    inputCost = uncachedCost + cacheReadCost + cacheWriteCost;
-  } else if (provider === 'openai' && cacheReadTokens > 0) {
-    // OpenAI: prompt_tokens includes cached; subtract cached portion and re-add at 50% rate
-    const uncached = Math.max(0, inputTokens - cacheReadTokens);
-    const uncachedCost = (uncached / perM) * modelPricing.input;
-    const cachedCost = (cacheReadTokens / perM) * modelPricing.input * OPENAI_CACHED_MULT;
-    inputCost = uncachedCost + cachedCost;
-  } else if ((provider === 'google' || provider === 'vertex') && cacheReadTokens > 0) {
-    // Google/Vertex with Gemini Context Caching: cached tokens at 75% discount
-    const uncached = Math.max(0, inputTokens - cacheReadTokens);
-    const uncachedCost = (uncached / perM) * modelPricing.input;
-    const cachedCost = (cacheReadTokens / perM) * modelPricing.input * GEMINI_CACHED_MULT;
-    inputCost = uncachedCost + cachedCost;
-  } else {
-    // No cache data: full rate on all input tokens
-    inputCost = (inputTokens / perM) * modelPricing.input;
-  }
-
-  const outputCost = (outputTokens / perM) * modelPricing.output;
-
-  return inputCost + outputCost;
+  return calculateCostBreakdown(provider, model, inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens).totalCostCents;
 }
 
 // Get today's date as YYYY-MM-DD

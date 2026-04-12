@@ -14,7 +14,7 @@ import type { ContextUsage, StreamChunk, AIProvider } from '../stores/appStore';
 import { useAppStore } from '../stores/appStore';
 import { useContextStore } from '../stores/contextStore';
 import { canSteerExecution } from './universalFreshness';
-import { useCostStore, calculateCost } from '../stores/costStore';
+import { useCostStore, calculateCost, calculateCostBreakdown } from '../stores/costStore';
 import { useRoundHistoryStore, type RoundSnapshot } from '../stores/roundHistoryStore';
 import { countTokensSync } from '../utils/tokenCounter';
 import { buildSubagentPrompt, type SubagentRole } from '../prompts/subagentPrompts';
@@ -1030,7 +1030,7 @@ export async function executeSubagent(
       totalCacheRead += result.cacheReadTokens;
       totalCacheWrite += result.cacheWriteTokens;
 
-      const roundCost = calculateCost(
+      const costBreakdown = calculateCostBreakdown(
         subagentProvider,
         subagentModel,
         result.inputTokens,
@@ -1038,6 +1038,7 @@ export async function executeSubagent(
         result.cacheReadTokens,
         result.cacheWriteTokens,
       );
+      const roundCost = costBreakdown.totalCostCents;
       totalCostCents += roundCost;
 
       useCostStore.getState().recordUsage({
@@ -1069,6 +1070,8 @@ export async function executeSubagent(
         cacheReadTokens: result.cacheReadTokens,
         cacheWriteTokens: result.cacheWriteTokens,
         costCents: roundCost,
+        inputCostCents: costBreakdown.inputCostCents,
+        outputCostCents: costBreakdown.outputCostCents,
         compressionSavings: 0, rollingSavings: 0, rolledRounds: 0,
         rollingSummaryTokens: 0, freedTokens: 0, cumulativeSaved: 0,
         toolCalls: totalToolCalls,

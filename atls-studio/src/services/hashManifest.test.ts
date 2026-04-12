@@ -183,4 +183,41 @@ describe('hashManifest', () => {
       expect(metrics.evicted).toBe(1);
     });
   });
+
+  describe('pin flag after auto-unpin', () => {
+    it('renders no P flag for an unpinned chunk', () => {
+      const output = formatHashManifest({
+        activeChunks: [
+          { shortHash: 'aaa111', type: 'file', source: 'src/large.ts', tokens: 500, pinned: false },
+        ],
+        dematRefs: [],
+        archivedRefs: [],
+        turn: 3,
+      });
+      expect(output).toContain('h:aaa111');
+      expect(output).not.toMatch(/h:aaa111\s+P/);
+    });
+
+    it('renders P flag for a pinned chunk and no P after unpin', () => {
+      const pinnedOutput = formatHashManifest({
+        activeChunks: [
+          { shortHash: 'bbb222', type: 'file', source: 'src/large.ts', tokens: 500, pinned: true },
+        ],
+        dematRefs: [],
+        archivedRefs: [],
+        turn: 2,
+      });
+      expect(pinnedOutput).toMatch(/h:bbb222\s+P/);
+
+      const unpinnedOutput = formatHashManifest({
+        activeChunks: [
+          { shortHash: 'bbb222', type: 'file', source: 'src/large.ts', tokens: 500, pinned: false },
+        ],
+        dematRefs: [],
+        archivedRefs: [],
+        turn: 3,
+      });
+      expect(unpinnedOutput).not.toMatch(/h:bbb222\s+P/);
+    });
+  });
 });

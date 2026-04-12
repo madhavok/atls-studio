@@ -123,7 +123,7 @@ function ensureAiServiceWiring(): void {
 
 // Eagerly wire at module load so accessors are available immediately
 initCrossStoreAccessors();
-import { useCostStore, calculateCost, type AIProvider as CostProvider } from '../stores/costStore';
+import { useCostStore, calculateCost, calculateCostBreakdown, type AIProvider as CostProvider } from '../stores/costStore';
 import { useRefactorStore } from '../stores/refactorStore';
 import { formatChunkRef, hashContentSync, isCompressedRef, sliceContentByLines, extractSearchSummary, extractSymbolSummary, extractDepsSummary, SHORT_HASH_LEN, type DigestSymbol } from '../utils/contextHash';
 import { resolveHashRefsWithMeta, setRecencyResolver, setEditRecencyResolver, setReadRecencyResolver, setStageRecencyResolver, type HashLookup, type SetRefLookup } from '../utils/hashResolver';
@@ -2265,6 +2265,7 @@ async function streamChatViaTauri(
         const rollingSummaryTokens = isRollingSummaryEmpty(trimmedRs)
           ? 0
           : countTokensSync(formatSummaryMessage(trimmedRs).content);
+        const costBreakdown = calculateCostBreakdown(config.provider as CostProvider, config.model, roundInputTokens, roundOutputTokens, roundCacheReadTokens, roundCacheWriteTokens);
         useRoundHistoryStore.getState().pushSnapshot({
           round: round + 1,
           timestamp: Date.now(),
@@ -2291,6 +2292,8 @@ async function streamChatViaTauri(
           cacheReadTokens: roundCacheReadTokens,
           cacheWriteTokens: roundCacheWriteTokens,
           costCents: roundCostCents,
+          inputCostCents: costBreakdown.inputCostCents,
+          outputCostCents: costBreakdown.outputCostCents,
           compressionSavings: appState.promptMetrics.compressionSavings,
           rollingSavings: appState.promptMetrics.rollingSavings ?? 0,
           rolledRounds: appState.promptMetrics.rolledRounds ?? 0,

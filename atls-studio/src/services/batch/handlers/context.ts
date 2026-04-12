@@ -661,8 +661,19 @@ export const handleReadLines: OpHandler = async (params, ctx) => {
     const rlFreshnessHint = getFreshnessHintForRefs(rlStore, rlRefs);
     const priorRanges = rlFile ? rlStore.getPriorReadRanges(rlFile).filter(r => r !== (actualLabel || targetLabel)) : [];
     const priorRangesHint = priorRanges.length > 0 ? `\nNOTE previously read regions for this file: ${priorRanges.join(', ')}.` : '';
+    let autoUnpinHint = '';
+    if (rlFile) {
+      const pinnedParent = rlStore.findPinnedFileEngram(rlFile);
+      if (pinnedParent) {
+        rlStore.unpinChunks([pinnedParent]);
+        const parentShort = pinnedParent.slice(0, 6);
+        rlStore.recordMemoryEvent({ action: 'auto-unpin', reason: 'slice-after-read', source: rlFile, refs: [parentShort] });
+        autoUnpinHint = `\nNOTE: auto-unpinned full-file engram h:${parentShort} (slice-after-read). Pin slices to retain targeted context.`;
+      }
+    }
+
     const rlSummary = `read_lines: ${rlFile}:${targetLabel} → ${rlH} (${tk}tk, ctx:${usedContextLines}${actualLabel ? ` actual:${actualLabel}` : ''})${prevSuffix}\n${rlContent}`;
-    const fullSummary = `${rlSummary}${rlFreshnessHint ? '\n' + rlFreshnessHint : ''}${priorRangesHint}`;
+    const fullSummary = `${rlSummary}${rlFreshnessHint ? '\n' + rlFreshnessHint : ''}${priorRangesHint}${autoUnpinHint}`;
     return {
       kind: 'file_refs', ok: true,
       refs: rlRefs,
