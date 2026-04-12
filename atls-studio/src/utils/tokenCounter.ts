@@ -10,7 +10,7 @@
 
 import { invoke } from '@tauri-apps/api/core';
 import { useAppStore } from '../stores/appStore';
-import { estimateTokens } from './contextHash';
+import { estimateTokens, hashContentSync } from './contextHash';
 
 // ---------------------------------------------------------------------------
 // LRU Cache (keyed by provider:model:contentHash)
@@ -72,23 +72,6 @@ class LRUCache {
 const cache = new LRUCache(CACHE_MAX);
 
 // ---------------------------------------------------------------------------
-// FNV-1a hash (matches contextHash.ts but inlined to avoid import cycles)
-// ---------------------------------------------------------------------------
-
-function quickHash(content: string): string {
-  let h1 = 0x811c9dc5;
-  let h2 = 0x050c5d1f;
-  for (let i = 0; i < content.length; i++) {
-    const c = content.charCodeAt(i);
-    h1 ^= c;
-    h1 = Math.imul(h1, 0x01000193);
-    h2 ^= c;
-    h2 = Math.imul(h2, 0x01000193);
-  }
-  return ((h1 >>> 0).toString(16).padStart(8, '0') + (h2 >>> 0).toString(16).padStart(8, '0'));
-}
-
-// ---------------------------------------------------------------------------
 // Provider/model resolution (cached; invalidated on settings change)
 // ---------------------------------------------------------------------------
 
@@ -132,7 +115,7 @@ function getActiveProviderModel(): { provider: string; model: string } {
  */
 export async function countTokens(content: string, precomputedHash?: string): Promise<number> {
   const { provider, model } = getActiveProviderModel();
-  const hash = precomputedHash || quickHash(content);
+  const hash = precomputedHash || hashContentSync(content);
   const cacheKey = `${provider}:${model}:${hash}`;
 
   const cached = cache.get(cacheKey);
@@ -168,7 +151,7 @@ export async function countTokensBatch(contents: string[], precomputedHashes?: s
       results[i] = 0;
       continue;
     }
-    const hash = precomputedHashes?.[i] || quickHash(contents[i]);
+    const hash = precomputedHashes?.[i] || hashContentSync(contents[i]);
     const cacheKey = keyPrefix + hash;
     const cached = cache.get(cacheKey);
     if (cached !== undefined) {
@@ -255,7 +238,7 @@ function recordDrift(heuristic: number, real: number): void {
  */
 export function countTokensSync(content: string, precomputedHash?: string): number {
   const { provider, model } = getActiveProviderModel();
-  const hash = precomputedHash || quickHash(content);
+  const hash = precomputedHash || hashContentSync(content);
   const cacheKey = `${provider}:${model}:${hash}`;
   const cached = cache.get(cacheKey);
   if (cached !== undefined) return cached;

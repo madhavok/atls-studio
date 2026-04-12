@@ -243,8 +243,25 @@ export function getRef(hash: string): ChunkRef | undefined {
     }
     return undefined;
   }
-  // Longer prefix (exclusive of full map key): unique prefix match only
+  // Longer prefix: narrow by short-hash bucket when possible, then unique prefix match
   if (normalized.length > SHORT_HASH_LEN) {
+    const prefix6 = normalized.slice(0, SHORT_HASH_LEN);
+    const tryBucket = (bucket: Set<ChunkRef> | undefined): ChunkRef | undefined => {
+      if (!bucket || bucket.size === 0) return undefined;
+      let match: ChunkRef | undefined;
+      let matchCount = 0;
+      for (const ref of bucket) {
+        if (ref.hash.startsWith(normalized)) {
+          match = ref;
+          matchCount++;
+          if (matchCount > 1) return undefined;
+        }
+      }
+      return matchCount === 1 ? match : undefined;
+    };
+    const fromBucket = tryBucket(shortHashIndex.get(prefix6));
+    if (fromBucket !== undefined) return fromBucket;
+    // display short can diverge from hash.slice(0,6) — fall back to full scan
     let match: ChunkRef | undefined;
     let matchCount = 0;
     for (const [, ref] of refs) {
@@ -480,7 +497,9 @@ export function createScopedView(): ScopedHppView {
     shouldMaterialize: (ref: ChunkRef) => {
       if (ref.visibility === 'archived' || ref.visibility === 'evicted') return false;
       if (ref.visibility !== 'materialized') return false;
-      return ref.seenAtTurn >= (startTurn + localTurn) || !!ref.pinned;
+      // Use startTurn only: localTurn advances without updating ref.seenAtTurn (global turn),
+      // so startTurn + localTurn would incorrectly dematerialize subagent content.
+      return ref.seenAtTurn >= startTurn || !!ref.pinned;
     },
 
     getActiveRefs: () => getActiveRefs(),

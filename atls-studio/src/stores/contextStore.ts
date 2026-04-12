@@ -2097,6 +2097,8 @@ export const useContextStore = create<ContextStoreState>()(
           _autoManageInProgress = false;
           if (_autoManagePending) {
             _autoManagePending = false;
+            const pass1Freed = totalFreed;
+            totalFreed = 0;
             currentUsed = 0;
             for (const c of newChunks.values()) currentUsed += c.tokens;
             if (currentUsed + tokens > state.maxTokens * 0.90) {
@@ -2141,6 +2143,7 @@ export const useContextStore = create<ContextStoreState>()(
                 _autoManageInProgress = false;
               }
             }
+            totalFreed += pass1Freed;
           }
       }
 
