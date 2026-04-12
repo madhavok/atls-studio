@@ -70,7 +70,7 @@ describe('phaseCategoryFromSnapshot', () => {
 });
 
 describe('diagnoseSpinning', () => {
-  it('does not flag stuck_in_phase as consecutive edit when rounds are dry-run previews', () => {
+  it('treats repeated change.* dry-run previews as stuck_in_phase, not tool_confusion (jaccard)', () => {
     const snaps: RoundSnapshot[] = [4, 5, 6].map((r) => baseSnap({
       round: r,
       toolSignature: ['change.split_module'],
@@ -82,8 +82,27 @@ describe('diagnoseSpinning', () => {
       hadSessionPinStep: false,
     }));
     const d = diagnoseSpinning(snaps);
-    expect(d.mode).not.toBe('stuck_in_phase');
+    expect(d.mode).toBe('stuck_in_phase');
+    expect(d.evidence.join(' ')).toMatch(/dry-run|preview/i);
     expect(d.evidence.join(' ')).not.toMatch(/consecutive edit rounds/i);
+    expect(d.mode).not.toBe('tool_confusion');
+  });
+
+  it('many consecutive split_module previews match user modularization loop (no false tool_confusion)', () => {
+    const snaps: RoundSnapshot[] = [7, 8, 9, 10, 11].map((r) => baseSnap({
+      round: r,
+      toolSignature: ['change.split_module'],
+      targetFiles: [],
+      hadRealChangeThisRound: false,
+      changeDryRunPreviewRound: true,
+      bbDelta: [],
+      isResearchRound: true,
+      volatileRefsSuggested: false,
+      hadSessionPinStep: false,
+    }));
+    const d = diagnoseSpinning(snaps);
+    expect(d.mode).not.toBe('tool_confusion');
+    expect(d.evidence.every(e => !/tool signature \d+% similar.*no new files/i.test(e))).toBe(true);
   });
 
   it('detects volatile output without session.pin when pattern repeats in window', () => {

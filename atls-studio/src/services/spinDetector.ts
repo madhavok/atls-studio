@@ -304,11 +304,18 @@ function detectToolConfusion(window: SpinFingerprint[]): SpinDiagnosis | null {
     const prev = window[i - 1];
     const curr = window[i];
 
-    // High Jaccard similarity of tool signatures with no new target files
+    // High Jaccard similarity of tool signatures with no new target files.
+    // Skip when both rounds are change.* dry-run previews: identical
+    // ['change.split_module'] lines are expected; stuck_in_phase handles that.
+    const bothChangePreviews =
+      prev.spinSemanticsPresent      && curr.spinSemanticsPresent
+      && prev.changeDryRunPreviewRound
+      && curr.changeDryRunPreviewRound;
+
     const sigSimilarity = jaccard(prev.toolSignature, curr.toolSignature);
     const newFiles = curr.targetFiles.filter(f => !prev.targetFiles.includes(f));
 
-    if (sigSimilarity > 0.8 && newFiles.length === 0) {
+    if (!bothChangePreviews && sigSimilarity > 0.8 && newFiles.length === 0) {
       score += 0.3;
       if (!triggerRound) triggerRound = curr.round;
       evidence.push(`Round ${curr.round}: tool signature ${(sigSimilarity * 100).toFixed(0)}% similar to round ${prev.round}, no new files`);
