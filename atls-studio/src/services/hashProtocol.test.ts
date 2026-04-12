@@ -21,6 +21,7 @@ import {
   sortRefs,
   setRoundRefreshHook,
   createScopedView,
+  getRefBurdenCounts,
 } from './hashProtocol';
 
 describe('hashProtocol', () => {
@@ -98,6 +99,65 @@ describe('hashProtocol', () => {
       resetProtocol();
       expect(getTurn()).toBe(0);
       expect(getAllRefs()).toHaveLength(0);
+      expect(getRefBurdenCounts()).toEqual({ active: 0, evicted: 0, total: 0 });
+    });
+
+    it('getRefBurdenCounts matches visibility split and invariant', () => {
+      materialize('aa111111', 'file', 'a.ts', 1, 1, '');
+      materialize('bb222222', 'file', 'b.ts', 1, 1, '');
+      evict('aa111111');
+      let manualEv = 0;
+      let manualAct = 0;
+      for (const r of getAllRefs()) {
+        if (r.visibility === 'evicted') manualEv++;
+        else manualAct++;
+      }
+      const b = getRefBurdenCounts();
+      expect(b.active).toBe(manualAct);
+      expect(b.evicted).toBe(manualEv);
+      expect(b.total).toBe(b.active + b.evicted);
+    });
+
+    it('rematerializing evicted ref updates burden counts', () => {
+      materialize('cc333333', 'file', 'c.ts', 1, 1, '');
+      evict('cc333333');
+      expect(getRefBurdenCounts()).toMatchObject({ active: 0, evicted: 1, total: 1 });
+      materialize('cc333333', 'file', 'c.ts', 2, 2, 'x');
+      expect(getRefBurdenCounts()).toMatchObject({ active: 1, evicted: 0, total: 1 });
+    });
+
+    it('double evict does not corrupt burden counts', () => {
+      materialize('dd444444', 'file', 'd.ts', 1, 1, '');
+      evict('dd444444');
+      evict('dd444444');
+      expect(getRefBurdenCounts()).toMatchObject({ active: 0, evicted: 1, total: 1 });
+    });
+
+    it('advanceTurn removes stale evicted rows and updates counts', async () => {
+      materialize('ee555555', 'file', 'e.ts', 1, 1, '');
+      evict('ee555555');
+      expect(getRefBurdenCounts().total).toBe(1);
+      await advanceTurn();
+      await advanceTurn();
+      expect(getRef('ee555555')).toBeUndefined();
+      expect(getRefBurdenCounts()).toEqual({ active: 0, evicted: 0, total: 0 });
+    });
+
+    it('pruneEvictedRefsIfBurden trims evicted rows when ratio is high', async () => {
+      for (let i = 0; i < 26; i++) {
+        const h = `ff${i.toString().padStart(6, '0')}`;
+        materialize(h, 'file', `${i}.ts`, 1, 1, '');
+      }
+      for (let i = 0; i < 16; i++) {
+        const h = `ff${i.toString().padStart(6, '0')}`;
+        evict(h);
+      }
+      expect(getRefBurdenCounts()).toMatchObject({ active: 10, evicted: 16, total: 26 });
+      await advanceTurn();
+      const after = getRefBurdenCounts();
+      expect(after.total).toBeLessThan(26);
+      expect(after.active).toBe(10);
+      expect(after.evicted).toBeLessThan(16);
     });
   });
 

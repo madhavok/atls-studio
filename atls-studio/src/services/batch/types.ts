@@ -528,6 +528,7 @@ export type FreshnessCause =
   | 'external_file_change'
   | 'watcher_event'
   | 'session_restore'
+  | 'ttl_expired'
   | 'unknown';
 export type EngramOrigin = 'read' | 'edit' | 'edit-refresh' | 'stage' | 'derived';
 

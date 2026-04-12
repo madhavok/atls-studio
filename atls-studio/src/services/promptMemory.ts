@@ -99,6 +99,13 @@ export const MAX_PERSISTENT_STAGE_ENTRY_TOKENS = 300;
 export const MAX_PERSISTENT_STAGE_ENTRIES = 12;
 export const MAX_TRANSIENT_STAGE_ENTRY_TOKENS = 1200;
 
+/** Keys classified as persistent anchors (`classifyStageSnippet`). New conventions must register a prefix here. */
+export const PERSISTENT_ANCHOR_KEY_PREFIXES: readonly string[] = ['entry:', 'edit:'];
+
+export function isPersistentAnchorKey(key: string): boolean {
+  return PERSISTENT_ANCHOR_KEY_PREFIXES.some(p => key.startsWith(p));
+}
+
 export type StageAdmissionClass = 'persistentAnchor' | 'transientAnchor' | 'transientPayload';
 export type StagePersistencePolicy = 'persist' | 'doNotPersist' | 'persistAsDemoted';
 export type StageEvictionReason = 'stale' | 'duplicated' | 'overBudget' | 'demoted' | 'manual' | 'migration';
@@ -204,7 +211,7 @@ export function classifyStageSnippet(
   persistencePolicy: StagePersistencePolicy;
   demotedFrom?: StageAdmissionClass;
 } {
-  if (key.startsWith('entry:') || key.startsWith('edit:')) {
+  if (isPersistentAnchorKey(key)) {
     if (tokens <= MAX_PERSISTENT_STAGE_ENTRY_TOKENS) {
       return { admissionClass: 'persistentAnchor', persistencePolicy: 'persist' };
     }

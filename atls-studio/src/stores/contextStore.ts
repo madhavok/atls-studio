@@ -716,6 +716,7 @@ function pruneStagedSnippetsToBudget(
   };
 
   // 1) Anchor-specific caps first so persistent anchors are not consumed by the global total-cap pass.
+  // Anchor token/entry caps apply only to `persistentAnchor` (entry:/edit: keys); `transientAnchor` is bounded mainly by STAGED_TOTAL_HARD_CAP_TOKENS.
   while (anchorMetrics.tokens > STAGED_ANCHOR_BUDGET_TOKENS && takeAnchor()) {
     // takeAnchor updates anchorMetrics inline.
   }
@@ -1083,6 +1084,20 @@ function normalizeSourcePath(source: string): string {
   return source.replace(/\\/g, '/').toLowerCase();
 }
 
+/** Normalize bulk revision map keys once — keeps bulk index aligned with `paths` from {@link normalizeSourcePath}. */
+function buildNormalizedRevisionIndex(
+  revisionMap: Map<string, string | null>,
+): { index: Map<string, string>; explicitNull: Set<string> } {
+  const index = new Map<string, string>();
+  const explicitNull = new Set<string>();
+  for (const [k, v] of revisionMap) {
+    const nk = normalizeSourcePath(k);
+    if (v != null) index.set(nk, v);
+    else explicitNull.add(nk);
+  }
+  return { index, explicitNull };
+}
+
 function sourcesMatch(a: string, b: string): boolean {
   return normalizeSourcePath(a) === normalizeSourcePath(b);
 }
@@ -1265,7 +1280,7 @@ function reconcileChunkForSourceRevision(
   if (isSameFilePriorEdit && !alreadyFreshFromEdit) {
     nextChunk.freshness = 'shifted';
     nextChunk.freshnessCause = effectiveCause;
-  } else {
+  } else if (chunk.freshnessCause !== 'ttl_expired') {
     delete nextChunk.freshness;
     delete nextChunk.freshnessCause;
   }
@@ -3058,10 +3073,7 @@ export const useContextStore = create<ContextStoreState>()(
     let evicted = 0;
     const deletedPaths: string[] = [];
 
-    const normalizedRevIndex = new Map<string, string>();
-    for (const [k, v] of revisionMap) {
-      if (v != null) normalizedRevIndex.set(normalizeSourcePath(k), v);
-    }
+    const { index: normalizedRevIndex } = buildNormalizedRevisionIndex(revisionMap);
 
     for (const path of paths) {
       const rev = normalizedRevIndex.get(path) ?? null;
@@ -3206,33 +3218,34 @@ export const useContextStore = create<ContextStoreState>()(
   },
 
   refreshRoundEnd: async (options) => {
-    // TTL: decrement and drop expired unpinned chunks (called after advanceTurn)
+    // TTL: decrement unpinned chunks; on expiry move to archive with ttl_expired (recallable), not droppedManifest.
     const chunksWithTtl = Array.from(get().chunks.entries()).filter(([, c]) => c.ttl != null && !c.pinned);
+    const ttlArchiveHashes: string[] = [];
     if (chunksWithTtl.length > 0) {
       set(s => {
         const newChunks = new Map(s.chunks);
-        let newDropped = s.droppedManifest;
-        let droppedCopied = false;
+        let newArchived = s.archivedChunks;
+        let archivedCopied = false;
         let ttlMutated = false;
         for (const [key, chunk] of chunksWithTtl) {
           const remaining = (chunk.ttl ?? 0) - 1;
           if (remaining <= 0) {
             ttlMutated = true;
             newChunks.delete(key);
-            if (!droppedCopied) {
-              newDropped = new Map(s.droppedManifest);
-              droppedCopied = true;
+            if (!archivedCopied) {
+              newArchived = new Map(s.archivedChunks);
+              archivedCopied = true;
             }
-            newDropped.set(chunk.hash, {
-              hash: chunk.hash,
-              shortHash: chunk.shortHash,
-              type: chunk.type,
-              source: chunk.source,
-              tokens: chunk.tokens,
-              digest: chunk.digest,
-              droppedAt: Date.now(),
-              subtaskId: chunk.subtaskId,
+            const now = Date.now();
+            newArchived.set(key, {
+              ...chunk,
+              ttl: undefined,
+              freshness: 'suspect',
+              freshnessCause: 'ttl_expired',
+              suspectSince: chunk.suspectSince ?? now,
+              lastAccessed: now,
             });
+            ttlArchiveHashes.push(chunk.hash);
           } else {
             ttlMutated = true;
             newChunks.set(key, { ...chunk, ttl: remaining });
@@ -3241,9 +3254,10 @@ export const useContextStore = create<ContextStoreState>()(
         if (!ttlMutated) return {};
         return {
           chunks: newChunks,
-          ...(droppedCopied ? { droppedManifest: capDroppedManifest(newDropped) } : {}),
+          ...(archivedCopied ? { archivedChunks: newArchived } : {}),
         };
       });
+      for (const h of ttlArchiveHashes) hppArchive(h);
     }
 
     const state = get();
@@ -3292,28 +3306,38 @@ export const useContextStore = create<ContextStoreState>()(
     let invalidated = 0;
     let preserved = 0;
     const unresolvablePaths: string[] = [];
-    // Normalized revision index + paths bulk explicitly reported as unresolvable (null).
-    let normalizedRevIndex: Map<string, string> | null = null;
-    let bulkExplicitNull: Set<string> | null = null;
-    if (revisionMap) {
-      normalizedRevIndex = new Map();
-      bulkExplicitNull = new Set();
-      for (const [k, v] of revisionMap) {
-        const nk = normalizeSourcePath(k);
-        if (v != null) normalizedRevIndex.set(nk, v);
-        else bulkExplicitNull.add(nk);
+    const revByPath = new Map<string, string | null>();
+
+    if (!revisionMap) {
+      if (perPathResolver) {
+        const resolved = await Promise.all(paths.map(async (p) => [p, await perPathResolver(p)] as const));
+        for (const [p, r] of resolved) revByPath.set(p, r);
       }
-    }
-    for (const path of paths) {
-      let rev: string | null = null;
-      if (!revisionMap) {
-        rev = await perPathResolver!(path);
-      } else {
-        rev = normalizedRevIndex!.get(path) ?? null;
-        if (rev == null && perPathResolver && !bulkExplicitNull!.has(path)) {
-          rev = await perPathResolver(path);
+    } else {
+      const { index: normalizedRevIndex, explicitNull: bulkExplicitNull } = buildNormalizedRevisionIndex(revisionMap);
+      const pendingFallback: string[] = [];
+      for (const path of paths) {
+        const fromBulk = normalizedRevIndex.get(path);
+        if (fromBulk != null) {
+          revByPath.set(path, fromBulk);
+        } else if (bulkExplicitNull.has(path)) {
+          revByPath.set(path, null);
+        } else if (perPathResolver) {
+          pendingFallback.push(path);
+        } else {
+          revByPath.set(path, null);
         }
       }
+      if (pendingFallback.length > 0 && perPathResolver) {
+        const parallel = await Promise.all(
+          pendingFallback.map(async (p) => [p, await perPathResolver(p)] as const),
+        );
+        for (const [p, r] of parallel) revByPath.set(p, r);
+      }
+    }
+
+    for (const path of paths) {
+      const rev = revByPath.get(path) ?? null;
       if (rev == null) {
         unresolvablePaths.push(path);
         continue;

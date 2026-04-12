@@ -50,6 +50,9 @@ export interface RefLine {
 
 let currentTurn = 0;
 const refs = new Map<string, ChunkRef>();
+/** Maintained counts for O(1) burden ratio in {@link pruneEvictedRefsIfBurden}. Invariant: refsActiveCount + refsEvictedCount === refs.size. */
+let refsActiveCount = 0;
+let refsEvictedCount = 0;
 /** shortHash (6 hex) → refs with that prefix; multiple entries ⇒ ambiguous for bare short lookup */
 const shortHashIndex = new Map<string, Set<ChunkRef>>();
 /** Refs whose displayShortHash diverges from hash.slice(0,6) — enables O(diverged) fallback in getRef prefix scan. */
@@ -156,6 +159,8 @@ function rebuildEvictedHeapFromRefs(): void {
 }
 
 function removeRefFromIndexes(hash: string, ref: ChunkRef): void {
+  if (ref.visibility === 'evicted') refsEvictedCount--;
+  else refsActiveCount--;
   refs.delete(hash);
   const bucket = shortHashIndex.get(ref.shortHash);
   if (bucket) {
@@ -176,12 +181,8 @@ function pruneRefsMapIfNeeded(): void {
  * does not sit at ~2× until the next turn (grace period still applies for light churn).
  */
 function pruneEvictedRefsIfBurden(): void {
-  let evicted = 0;
-  let active = 0;
-  for (const [, r] of refs) {
-    if (r.visibility === 'evicted') evicted++;
-    else active++;
-  }
+  const active = refsActiveCount;
+  const evicted = refsEvictedCount;
   if (active === 0 || evicted / active < 1.5) return;
   const activeCount = active;
   let e = evicted;
@@ -298,7 +299,14 @@ export function resetProtocol(): void {
   shortHashIndex.clear();
   divergedRefs.clear();
   evictedMinHeap.length = 0;
+  refsActiveCount = 0;
+  refsEvictedCount = 0;
   lastTurnDelta = { dematerialized: 0, newMaterialized: 0 };
+}
+
+/** Snapshot of non-evicted vs evicted ref rows (for tests / diagnostics). */
+export function getRefBurdenCounts(): { active: number; evicted: number; total: number } {
+  return { active: refsActiveCount, evicted: refsEvictedCount, total: refs.size };
 }
 
 /**
@@ -334,6 +342,10 @@ export function materialize(
   const existing = refs.get(hash);
 
   if (existing) {
+    if (existing.visibility === 'evicted') {
+      refsEvictedCount--;
+      refsActiveCount++;
+    }
     syncRefShortHash(existing, shortHash);
     existing.visibility = 'materialized';
     existing.seenAtTurn = currentTurn;
@@ -358,6 +370,7 @@ export function materialize(
   };
   refs.set(hash, ref);
   addShortHashIndexEntry(shortHash, ref);
+  refsActiveCount++;
   lastTurnDelta.newMaterialized += 1;
   return ref;
 }
@@ -390,7 +403,9 @@ export function archive(hash: string): void {
  */
 export function evict(hash: string): void {
   const ref = getRef(hash);
-  if (ref) {
+  if (ref && ref.visibility !== 'evicted') {
+    refsActiveCount--;
+    refsEvictedCount++;
     ref.visibility = 'evicted';
     evictedHeapPush({ hash: ref.hash, seenAtTurn: ref.seenAtTurn });
   }

@@ -481,6 +481,26 @@ describe('refreshRoundEnd', () => {
     expect(chunk?.ttl).toBe(2);
   });
 
+  it('TTL expiry archives chunk with ttl_expired; getChunkContent still returns body', async () => {
+    const store = useContextStore.getState();
+    const shortHash = store.addChunk('ttl-archive-body', 'smart', 'src/ttl-archive.ts', undefined, undefined, 'rev-a', {
+      sourceRevision: 'rev-a',
+      viewKind: 'latest',
+      ttl: 1,
+    });
+    await store.refreshRoundEnd({
+      paths: ['src/ttl-archive.ts'],
+      getRevisionForPath: async () => 'rev-a',
+    });
+    const state = useContextStore.getState();
+    expect(Array.from(state.chunks.values()).some(c => c.shortHash === shortHash)).toBe(false);
+    const archived = Array.from(state.archivedChunks.values()).find(c => c.shortHash === shortHash);
+    expect(archived?.freshnessCause).toBe('ttl_expired');
+    expect(archived?.ttl).toBeUndefined();
+    const content = state.getChunkContent(`h:${shortHash}`);
+    expect(content).toBe('ttl-archive-body');
+  });
+
   it('external revision change: invalidates derived, updates latest, preserves snapshot', async () => {
     const store = useContextStore.getState();
     // Use separate sources to prevent addChunk auto-compaction (same-source forwarding)
