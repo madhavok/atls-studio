@@ -230,7 +230,7 @@ export function classifyStageSnippet(
   }
 
   if (tokens <= MAX_PERSISTENT_STAGE_ENTRY_TOKENS) {
-    return { admissionClass: 'transientAnchor', persistencePolicy: 'persist' };
+    return { admissionClass: 'transientAnchor', persistencePolicy: 'persistAsDemoted' };
   }
   if (tokens <= MAX_TRANSIENT_STAGE_ENTRY_TOKENS) {
     return { admissionClass: 'transientAnchor', persistencePolicy: 'persistAsDemoted' };

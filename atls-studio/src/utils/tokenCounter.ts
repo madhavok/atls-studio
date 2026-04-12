@@ -169,6 +169,10 @@ export async function countTokensBatch(contents: string[], precomputedHashes?: s
       });
       for (let j = 0; j < uncachedIndices.length; j++) {
         const idx = uncachedIndices[j];
+        if (j >= counts.length) {
+          results[idx] = estimateTokens(contents[idx]);
+          continue;
+        }
         results[idx] = counts[j];
         const batchCacheKey = keyPrefix + uncachedHashes[j];
         cache.set(batchCacheKey, counts[j]);
@@ -207,6 +211,7 @@ const heuristicCache = new LRUCache(512);
 // Drift telemetry: track when heuristic diverges from real BPE counts
 let _driftSamples = 0;
 let _driftSumAbsPct = 0;
+let _driftWindowSum = 0;
 let _driftMaxAbsPct = 0;
 let _driftOverThreshold = 0;
 const DRIFT_THRESHOLD_PCT = 10;
@@ -217,16 +222,24 @@ function recordDrift(heuristic: number, real: number): void {
   const pct = Math.abs(((heuristic - real) / real) * 100);
   _driftSamples++;
   _driftSumAbsPct += pct;
+  _driftWindowSum += pct;
   if (pct > _driftMaxAbsPct) _driftMaxAbsPct = pct;
   if (pct > DRIFT_THRESHOLD_PCT) _driftOverThreshold++;
   if (_driftSamples % DRIFT_LOG_INTERVAL === 0) {
-    const avg = (_driftSumAbsPct / _driftSamples).toFixed(1);
+    const avg = (_driftWindowSum / DRIFT_LOG_INTERVAL).toFixed(1);
+    _driftWindowSum = 0;
     console.log(
-      `[tokenizer] heuristic drift: ${_driftSamples} samples, avg=${avg}%, max=${_driftMaxAbsPct.toFixed(1)}%, >${DRIFT_THRESHOLD_PCT}%=${_driftOverThreshold}`,
+      `[tokenizer] heuristic drift: ${_driftSamples} samples, window_avg=${avg}%, max=${_driftMaxAbsPct.toFixed(1)}%, >${DRIFT_THRESHOLD_PCT}%=${_driftOverThreshold}`,
     );
   }
 }
 
+/**
+ * Lifetime drift stats. Note: avgPct is the cumulative lifetime average,
+ * while recordDrift logs a per-window average (last DRIFT_LOG_INTERVAL samples).
+ * The two intentionally diverge — lifetime avg is stable for dashboards,
+ * window avg is sensitive for detecting recent regressions.
+ */
 export function getDriftStats(): { samples: number; avgPct: number; maxPct: number; overThreshold: number } {
   return {
     samples: _driftSamples,

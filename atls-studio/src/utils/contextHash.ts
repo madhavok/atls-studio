@@ -97,7 +97,7 @@ export function estimateTokens(content: string): number {
       codeLikeCount++;
     }
     // CJK Unified Ideographs + common CJK ranges
-    if (c >= 0x3000 && ((c >= 0x4E00 && c <= 0x9FFF) || (c >= 0x3400 && c <= 0x4DBF) || (c >= 0x3000 && c <= 0x303F))) {
+    if ((c >= 0x4E00 && c <= 0x9FFF) || (c >= 0x3400 && c <= 0x4DBF) || (c >= 0x3000 && c <= 0x303F)) {
       cjkCount++;
     }
   }
@@ -530,13 +530,13 @@ export function sliceContentByLines(content: string, linesSpec: string, raw?: bo
       const startStr = t.slice(0, dashPos);
       const endStr = t.slice(dashPos + 1);
       const start = parseInt(startStr, 10);
-      if (isNaN(start) || start < 1) return '';
+      if (isNaN(start) || start < 1) continue;
       const end = endStr ? parseInt(endStr, 10) : null;
-      if (endStr && (isNaN(end!) || end! < start)) return '';
+      if (endStr && (isNaN(end!) || end! < start)) continue;
       ranges.push([start, end]);
     } else {
       const line = parseInt(t, 10);
-      if (isNaN(line) || line < 1) return '';
+      if (isNaN(line) || line < 1) continue;
       ranges.push([line, line]);
     }
   }

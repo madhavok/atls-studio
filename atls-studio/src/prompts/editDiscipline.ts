@@ -10,6 +10,7 @@ export const EDIT_DISCIPLINE = `### EDIT + VERIFY DISCIPLINE
 - line_edits: line + end_line (1-based inclusive; single-line: end_line=line). action defaults to replace. line:"end" / negative indices / symbol+replace resolve to concrete bounds. move produces positional shifts — subsequent same-file edits are auto-rebased.
 - move is line-based with no structural awareness. Moving a property/member out of its enclosing object/class will emit move_structural_warning. For object property or class member moves, prefer explicit replace or refactor tools.
 - One concern per edit. Decompose large replacements. Count braces — unbalanced edits fail.
+- Multi-region edits on the same file: read ALL target regions before the edit step. Edits in earlier regions shift line numbers of later regions — use edits_resolved coordinates (not original line numbers) for subsequent same-file edits in later steps.
 - reindent:true on inserts — system handles indentation.
 - Chain from h:NEW after each edit. Use edits_resolved for chaining, not mental math.
 - Verify cadence: batch related change.* steps, then one vb at milestone or task end. Verify earlier only for public API / schema / dep / config changes.

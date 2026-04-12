@@ -23,6 +23,7 @@ WRONG: batch 1 reads, batch 2 pins. The refs expired between batches.
 - \`q\` must contain **only** step lines (format above). Each non-empty line with two or more tokens is parsed and **executed** as a batch step.
 - Do **not** paste commit messages, PR/description prose, bullets, or narration into \`q\` — those lines become fake steps and fail (unknown operation).
 - Put explanations in normal assistant text. Lines in \`q\` used only as comments must start with \`#\` or \`--\` (parser skips them).
+- \`bw\` content is a single quoted string — do not split prose across multiple steps. Correct: \`b1 bw key:findings content:"BUG — file.ts:fn, line 42. Return should be continue."\` Wrong: encoding each sentence of your findings as a separate batch step (they become invalid step IDs).
 
 ### JSON \`steps\` array (native batch args) — same discipline as \`q\`
 When you pass \`batch\` with a \`steps\` array instead of line-oriented \`q\`:
@@ -30,6 +31,8 @@ When you pass \`batch\` with a \`steps\` array instead of line-oriented \`q\`:
 - **Never** put markdown headings, numbered outline lines, English sentences, or backtick-wrapped code fragments in \`id\` — use tokens like \`bw1\`, \`s1\`, \`p1\` only.
 - **Never** put prose, placeholders, or punctuation alone in \`use\` — only registered operations (e.g. \`session.bb.write\`, \`search.issues\`, \`intent.search_replace\`).
 - Narration and findings belong in the assistant message or in \`session.bb.write\` content — **not** as extra fake \`steps\`.
+- Example JSON step (change.edit): \`{ "id": "e1", "use": "change.edit", "with": { "f": "src/utils/api.ts", "content_hash": "h:abc123", "le": [{ "line": 15, "end_line": 22, "content": "function auth() { return true; }" }] } }\`
+  \`le\` must be an array of objects — never a raw string or split across multiple JSON keys.
 
 ### Operation Families
 ${generateFamilyLines()}
@@ -158,6 +161,7 @@ Review: rs(sig) -> pi -> rl changed fns -> bw review finding per fn -> task_comp
 - **SKIPPED (file_path not bound)** / **file_paths must resolve**: Fix **in:** bindings or add **ps** / **file_paths** where required (rc, rs, ab, ad, at, ai, etc.).
 - **pin: no matching chunks**: **hashes** must list real **h:**… from tool output, or use step dataflow \`pi in:r1.refs\`. Never put the text \`in:r1.refs\` inside the **hashes** field.
 - **change.edit** "file not found": **f** / **file_path** must be a real workspace path or **h:…** (optional :line span). Invalid: \`in:c1.refs[0]:2-4\` as **f**. After **cc**, use the **path** you created or **h:** from the create result.
+- **edit_outside_read_range**: The edit targets lines not covered by a prior \`rl\` / \`read.lines\`. Read the target region first (same batch is ideal), then retry. When planning multi-region edits on the same file, read ALL target regions upfront before the edit step.
 - **annotate.design** (\`nd\`): **Designer mode only** — in agent mode it always errors; skip family tests there.
 - **VOLATILE / WILL BE LOST**: Result has h:refs that EXPIRE after ONE round. You MUST \`pi\` in the SAME batch or \`bw\` to persist. If you see this warning and did not pin, your content is already scheduled for deletion.
 - **status:preview / dry_run** (cm, cd, cf): Preview only — no files written. If validation_issues is empty, re-submit the same plan with dry_run:false. Do NOT preview the same plan twice.
