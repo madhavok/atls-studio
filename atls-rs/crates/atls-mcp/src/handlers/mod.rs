@@ -250,6 +250,13 @@ impl Default for Handlers {
 mod tests {
     use super::*;
 
+    /// Empty project root for handler tests — avoids relying on `current_dir()` in CI (llvm-cov, sparse checkouts).
+    fn temp_project_root() -> (tempfile::TempDir, String) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = dir.path().to_string_lossy().to_string();
+        (dir, root)
+    }
+
     #[test]
     fn levenshtein_identical_is_zero() {
         assert_eq!(levenshtein("batch", "batch"), 0);
@@ -280,11 +287,12 @@ mod tests {
 
     #[tokio::test]
     async fn call_tool_batch_query_help_ok() {
+        let (_dir, root) = temp_project_root();
         let mut h = Handlers::new();
         let v = h
             .call_tool(
                 "batch_query",
-                Some(serde_json::json!({ "operation": "help" })),
+                Some(serde_json::json!({ "operation": "help", "root_path": root })),
             )
             .await
             .expect("batch_query help");
@@ -297,9 +305,10 @@ mod tests {
 
     #[tokio::test]
     async fn call_tool_find_issues_ok() {
+        let (_dir, root) = temp_project_root();
         let mut h = Handlers::new();
         let v = h
-            .call_tool("find_issues", Some(serde_json::json!({})))
+            .call_tool("find_issues", Some(serde_json::json!({ "root_path": root })))
             .await
             .expect("find_issues");
         assert!(v.get("issues").is_some() || v.get("summary").is_some() || v.is_array());
@@ -307,9 +316,10 @@ mod tests {
 
     #[tokio::test]
     async fn call_tool_scan_project_ok() {
+        let (_dir, root) = temp_project_root();
         let mut h = Handlers::new();
         let v = h
-            .call_tool("scan_project", Some(serde_json::json!({})))
+            .call_tool("scan_project", Some(serde_json::json!({ "root_path": root })))
             .await
             .expect("scan_project");
         assert_eq!(v.get("status").and_then(|x| x.as_str()), Some("complete"));
@@ -317,9 +327,10 @@ mod tests {
 
     #[tokio::test]
     async fn call_tool_get_codebase_overview_ok() {
+        let (_dir, root) = temp_project_root();
         let mut h = Handlers::new();
         let v = h
-            .call_tool("get_codebase_overview", Some(serde_json::json!({})))
+            .call_tool("get_codebase_overview", Some(serde_json::json!({ "root_path": root })))
             .await
             .expect("overview");
         assert!(v.get("file_count").is_some() || v.get("stats").is_some());
@@ -327,11 +338,12 @@ mod tests {
 
     #[tokio::test]
     async fn call_tool_get_patterns_ok() {
+        let (_dir, root) = temp_project_root();
         let mut h = Handlers::new();
         let v = h
             .call_tool(
                 "get_patterns",
-                Some(serde_json::json!({ "detail": "summary" })),
+                Some(serde_json::json!({ "detail": "summary", "root_path": root })),
             )
             .await
             .expect("get_patterns");
@@ -340,11 +352,12 @@ mod tests {
 
     #[tokio::test]
     async fn call_tool_export_json_ok() {
+        let (_dir, root) = temp_project_root();
         let mut h = Handlers::new();
         let v = h
             .call_tool(
                 "export",
-                Some(serde_json::json!({ "format": "json" })),
+                Some(serde_json::json!({ "format": "json", "root_path": root })),
             )
             .await
             .expect("export json");
@@ -353,12 +366,14 @@ mod tests {
 
     #[tokio::test]
     async fn call_tool_unified_batch_runs_step() {
+        let (_dir, root) = temp_project_root();
         let mut h = Handlers::new();
         let v = h
             .call_tool(
                 "batch",
                 Some(serde_json::json!({
                     "version": "1.0",
+                    "root_path": root,
                     "steps": [{
                         "id": "s1",
                         "use": "search.code",
@@ -377,20 +392,22 @@ mod tests {
 
     #[tokio::test]
     async fn list_tools_names_are_dispatchable() {
+        let (_dir, root) = temp_project_root();
         let mut h = Handlers::new();
         let names: Vec<String> = h.list_tools().into_iter().map(|t| t.name).collect();
         for name in &names {
             let minimal = match name.as_str() {
-                "batch_query" => serde_json::json!({ "operation": "help" }),
+                "batch_query" => serde_json::json!({ "operation": "help", "root_path": &root }),
                 "batch" => serde_json::json!({
                     "version": "1.0",
+                    "root_path": &root,
                     "steps": [{ "id": "h", "use": "search.code", "with": { "queries": ["fn"] } }]
                 }),
-                "find_issues" => serde_json::json!({}),
-                "scan_project" => serde_json::json!({}),
-                "get_codebase_overview" => serde_json::json!({}),
-                "get_patterns" => serde_json::json!({ "detail": "summary" }),
-                "export" => serde_json::json!({ "format": "json" }),
+                "find_issues" => serde_json::json!({ "root_path": &root }),
+                "scan_project" => serde_json::json!({ "root_path": &root }),
+                "get_codebase_overview" => serde_json::json!({ "root_path": &root }),
+                "get_patterns" => serde_json::json!({ "detail": "summary", "root_path": &root }),
+                "export" => serde_json::json!({ "format": "json", "root_path": &root }),
                 other => panic!("unexpected tool in list_tools: {}", other),
             };
             let res = h.call_tool(name, Some(minimal)).await;
