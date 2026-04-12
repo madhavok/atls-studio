@@ -304,6 +304,10 @@ export function extractToolDescription(
   input: Record<string, unknown>,
 ): string {
   if (name === 'batch') {
+    const stubbed = input._stubbed;
+    if (typeof stubbed === 'string' && stubbed.length > 0) {
+      return `batch:${stubbed.slice(0, 140)}`;
+    }
     const steps = input.steps as Array<{ use?: string; with?: Record<string, unknown> }> | undefined;
     if (Array.isArray(steps) && steps.length > 0) {
       const first = steps[0];
@@ -464,7 +468,10 @@ export function compressToolLoopHistory(
         // Protocol-aware threshold: if the model already has this content
         // registered as a ref, compress more aggressively
         const existingRef = getRef(hashContentSync(tr.content));
-        const baseThreshold = TOOL_COMPRESSION_OVERRIDES[toolName] ?? COMPRESSION_THRESHOLD_TOKENS;
+        let baseThreshold = TOOL_COMPRESSION_OVERRIDES[toolName] ?? COMPRESSION_THRESHOLD_TOKENS;
+        if (toolName === 'batch' && toolResultTextLooksLikeChangePreview(tr.content)) {
+          baseThreshold = Math.max(baseThreshold, CHANGE_PREVIEW_RESULT_THRESHOLD_FLOOR);
+        }
         const threshold = existingRef ? Math.floor(baseThreshold * 0.6) : baseThreshold;
 
         if (tokens <= threshold) continue;
@@ -603,6 +610,32 @@ type ToolResultBlock = { type: string; tool_use_id: string; content: string; nam
 /** Minimum tokens in a batch input before it's worth stubbing. */
 const BATCH_INPUT_STUB_THRESHOLD = 80;
 
+/** Extra headroom before compressing batch tool_result text that looks like a change preview (dry_run). */
+const CHANGE_PREVIEW_RESULT_THRESHOLD_FLOOR = 280;
+
+function toolResultTextLooksLikeChangePreview(content: string): boolean {
+  if (content.length < 24) return false;
+  const dry = /"dry_run"\s*:\s*(true|1)\b|"dry_run"\s*:\s*true|dry_run:\s*1\b/i.test(content);
+  const preview = /status:\s*preview|"status"\s*:\s*"preview"/i.test(content)
+    || (content.includes('_next') && /dry_run:\s*false/i.test(content));
+  if (!dry && !preview) return false;
+  return /\bchange\.\w+/.test(content) || content.includes('split_module');
+}
+
+/**
+ * True if any change.* step was a dry-run / preview (not written to disk).
+ * Kept in stub text so history compression does not erase "was preview" after steps are stripped.
+ */
+function batchHasChangePreviewStep(steps: Array<Record<string, unknown>>): boolean {
+  for (const step of steps) {
+    const use = String(step.use || '');
+    if (!use.startsWith('change.')) continue;
+    const w = (step.with || {}) as Record<string, unknown>;
+    if (w.dry_run === true || w.dry_run === 1) return true;
+  }
+  return false;
+}
+
 /**
  * Summarize batch steps into a compact stub like "7 steps: search×3, read×2, pin×2".
  */
@@ -614,7 +647,11 @@ function summarizeBatchSteps(steps: Array<Record<string, unknown>>): string {
     counts.set(family, (counts.get(family) || 0) + 1);
   }
   const parts = [...counts.entries()].map(([f, n]) => `${f}×${n}`);
-  return `${steps.length} steps: ${parts.join(', ')}`;
+  let s = `${steps.length} steps: ${parts.join(', ')}`;
+  if (batchHasChangePreviewStep(steps)) {
+    s += ' | change:preview(dry_run)';
+  }
+  return s;
 }
 
 /**

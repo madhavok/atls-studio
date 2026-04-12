@@ -1,5 +1,11 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { compressToolLoopHistory, deflateToolResults, estimateHistoryTokens, analyzeHistoryBreakdown } from './historyCompressor';
+import {
+  compressToolLoopHistory,
+  deflateToolResults,
+  estimateHistoryTokens,
+  analyzeHistoryBreakdown,
+  extractToolDescription,
+} from './historyCompressor';
 import { ROLLING_SUMMARY_MARKER } from './historyDistiller';
 import { useContextStore } from '../stores/contextStore';
 import { useAppStore } from '../stores/appStore';
@@ -625,5 +631,13 @@ describe('analyzeHistoryBreakdown protectedTokens', () => {
     const breakdown = analyzeHistoryBreakdown(history, 0);
     expect(breakdown.compressibleTokens).toBeGreaterThan(0);
     expect(breakdown.protectedTokens).toBe(0);
+  });
+});
+
+describe('extractToolDescription (batch stub)', () => {
+  it('preserves stub summary including change preview marker', () => {
+    const stub =
+      '2 steps: change×1 | change:preview(dry_run)';
+    expect(extractToolDescription('batch', { _stubbed: stub, version: '1.0' })).toBe(`batch:${stub}`);
   });
 });
