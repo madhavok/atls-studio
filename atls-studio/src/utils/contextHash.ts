@@ -61,6 +61,13 @@ const FNV_PRIME_32 = 0x01000193;
 /** Second stream uses a different odd multiplier so h1‖h2 is not two copies of the same recurrence. */
 const HASH_MIX_PRIME_32 = 0x9e3779b1;
 
+// Pre-built hex lookup table — eliminates toString(16)+padStart per hash call
+const HEX8 = /* @__PURE__ */ (() => {
+  const t = new Array<string>(256);
+  for (let i = 0; i < 256; i++) t[i] = i.toString(16).padStart(2, '0');
+  return t;
+})();
+
 export function hashContentSync(content: string): string {
   let h1 = 0x811c9dc5;
   let h2 = 0x050c5d1f;
@@ -69,7 +76,10 @@ export function hashContentSync(content: string): string {
     h1 = Math.imul(h1 ^ c, FNV_PRIME_32);
     h2 = Math.imul(h2 ^ c, HASH_MIX_PRIME_32);
   }
-  return ((h1 >>> 0).toString(16).padStart(8, '0') + (h2 >>> 0).toString(16).padStart(8, '0'));
+  const a = h1 >>> 0;
+  const b = h2 >>> 0;
+  return HEX8[(a >>> 24) & 0xFF] + HEX8[(a >>> 16) & 0xFF] + HEX8[(a >>> 8) & 0xFF] + HEX8[a & 0xFF] +
+         HEX8[(b >>> 24) & 0xFF] + HEX8[(b >>> 16) & 0xFF] + HEX8[(b >>> 8) & 0xFF] + HEX8[b & 0xFF];
 }
 
 /**
@@ -91,14 +101,16 @@ export function estimateTokens(content: string): number {
 
   for (let i = 0; i < len; i++) {
     const c = content.charCodeAt(i);
-    if (c === 10) newlineCount++;
-    if (c === 32 || c === 9 || c === 10 || c === 13) wsCount++;
-    if (c === 123 || c === 125 || c === 91 || c === 93 || c === 40 || c === 41 || c === 59) {
+    if (c <= 32) {
+      if (c === 10) { newlineCount++; wsCount++; }
+      else if (c === 32 || c === 9 || c === 13) wsCount++;
+    } else if (c === 123 || c === 125 || c === 91 || c === 93 || c === 40 || c === 41 || c === 59) {
       codeLikeCount++;
-    }
-    // CJK Unified Ideographs + common CJK ranges
-    if ((c >= 0x4E00 && c <= 0x9FFF) || (c >= 0x3400 && c <= 0x4DBF) || (c >= 0x3000 && c <= 0x303F)) {
-      cjkCount++;
+    } else if (c >= 0x3000) {
+      // CJK Unified Ideographs + common CJK ranges (already know c >= 0x3000)
+      if ((c >= 0x4E00 && c <= 0x9FFF) || (c >= 0x3400 && c <= 0x4DBF) || c <= 0x303F) {
+        cjkCount++;
+      }
     }
   }
 

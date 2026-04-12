@@ -44,9 +44,8 @@ class LRUCache {
   }
 
   set(key: string, value: number): void {
-    if (this.map.has(key)) {
-      this.map.delete(key);
-    } else if (this.map.size >= this.maxSize) {
+    // Single delete() returns boolean — avoids redundant has() lookup
+    if (!this.map.delete(key) && this.map.size >= this.maxSize) {
       // Evict oldest (first key in Map iteration order)
       const oldest = this.map.keys().next().value;
       if (oldest !== undefined) this.map.delete(oldest);

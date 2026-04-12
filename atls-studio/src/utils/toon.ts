@@ -415,7 +415,12 @@ export function expandBatchIfShorthand(val: string): Record<string, unknown> {
  *   v1 verify.typecheck if:e1.ok
  */
 export function parseBatchLines(q: string): { version: '1.0'; steps: Record<string, unknown>[] } {
-  const lines = q.split('\n').map(l => l.trim()).filter(Boolean);
+  const rawLines = q.split('\n');
+  const lines: string[] = [];
+  for (let i = 0; i < rawLines.length; i++) {
+    const t = rawLines[i].trim();
+    if (t) lines.push(t);
+  }
   const steps: Record<string, unknown>[] = [];
 
   for (const line of lines) {

@@ -430,21 +430,18 @@ export function getRef(hash: string): ChunkRef | undefined {
   // Longer prefix: narrow by short-hash bucket when possible, then unique prefix match
   if (normalized.length > SHORT_HASH_LEN) {
     const prefix6 = normalized.slice(0, SHORT_HASH_LEN);
-    const tryBucket = (bucket: Set<ChunkRef> | undefined): ChunkRef | undefined => {
-      if (!bucket || bucket.size === 0) return undefined;
+    const bucket = shortHashIndex.get(prefix6);
+    if (bucket && bucket.size > 0) {
       let match: ChunkRef | undefined;
       let matchCount = 0;
       for (const ref of bucket) {
         if (ref.hash.startsWith(normalized)) {
           match = ref;
-          matchCount++;
-          if (matchCount > 1) return undefined;
+          if (++matchCount > 1) break;
         }
       }
-      return matchCount === 1 ? match : undefined;
-    };
-    const fromBucket = tryBucket(shortHashIndex.get(prefix6));
-    if (fromBucket !== undefined) return fromBucket;
+      if (matchCount === 1) return match;
+    }
     // display short can diverge from hash.slice(0,6) — scan only diverged refs (O(diverged) not O(all))
     let match: ChunkRef | undefined;
     let matchCount = 0;

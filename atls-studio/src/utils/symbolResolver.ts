@@ -212,15 +212,17 @@ export function findSimilarNames(names: string[], search: string): string[] {
 function tryClassMethodMatch(lines: string[], escapedName: string): number[] {
   const re = new RegExp(`^\\s+(?:async\\s+)?(?:static\\s+)?(?:get\\s+|set\\s+)?(?:#)?${escapedName}\\s*(?:<[^>]*>\\s*)?\\(`);
   const total = lines.length;
-  return lines.reduce<number[]>((acc, line, i) => {
+  const matches: number[] = [];
+  for (let i = 0; i < total; i++) {
+    const line = lines[i];
     const trimmed = line.trim();
-    if (!re.test(line)) return acc;
+    if (!re.test(line)) continue;
     // Reject if = precedes the name (it's an assignment, not a method)
-    if (trimmed.includes('=') && trimmed.indexOf('=') < trimmed.indexOf(escapedName.replace(/\\/g, ''))) return acc;
+    if (trimmed.includes('=') && trimmed.indexOf('=') < trimmed.indexOf(escapedName.replace(/\\/g, ''))) continue;
     const blockEnd = findBlockEnd(lines, i, total);
-    if (blockEnd > i || trimmed.includes('{')) acc.push(i);
-    return acc;
-  }, []);
+    if (blockEnd > i || trimmed.includes('{')) matches.push(i);
+  }
+  return matches;
 }
 
 /**
@@ -231,13 +233,15 @@ function tryClassMethodMatch(lines: string[], escapedName: string): number[] {
 function tryVariableBoundFnMatch(lines: string[], escapedName: string): number[] {
   const arrowRe = new RegExp(`^\\s*(?:export\\s+)?(?:const|let|var)\\s+${escapedName}\\s*(?::\\s*[^=]+)?\\s*=\\s*(?:async\\s+)?(?:\\([^)]*\\)|[a-zA-Z_]\\w*)\\s*(?::\\s*[^=\\n]*)?\\s*=>`);
   const assignedFnRe = new RegExp(`^\\s*(?:export\\s+)?(?:const|let|var)\\s+${escapedName}\\s*=\\s*(?:async\\s+)?function`);
-  const total = lines.length;
-  return lines.reduce<number[]>((acc, line, i) => {
-    if (!arrowRe.test(line) && !assignedFnRe.test(line)) return acc;
-    const blockEnd = findBlockEnd(lines, i, total);
-    if (blockEnd > i || line.includes('{')) acc.push(i);
-    return acc;
-  }, []);
+  const matches: number[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (arrowRe.test(line) || assignedFnRe.test(line)) {
+      const blockEnd = findBlockEnd(lines, i, lines.length);
+      if (blockEnd > i) matches.push(i);
+    }
+  }
+  return matches;
 }
 
 /**
@@ -248,16 +252,18 @@ function tryVariableBoundFnMatch(lines: string[], escapedName: string): number[]
 function tryCFamilyFnMatch(lines: string[], escapedName: string, baseName: string): number[] {
   const nameRe = new RegExp(`\\b${escapedName}\\s*(?:<[^>]*>\\s*)?\\(`);
   const rejectRe = new RegExp(`(?:\\.|->|[=(,])\\s*${escapedName}\\s*(?:<[^>]*>\\s*)?\\(`);
-  const total = lines.length;
-  return lines.reduce<number[]>((acc, line, i) => {
-    const trimmed = line.trim();
-    if (!trimmed.includes(baseName)) return acc;
-    if (!nameRe.test(trimmed)) return acc;
-    if (rejectRe.test(trimmed)) return acc;
-    const blockEnd = findBlockEnd(lines, i, total);
-    if (blockEnd > i || trimmed.includes('{')) acc.push(i);
-    return acc;
-  }, []);
+  const matches: number[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (nameRe.test(line) && !rejectRe.test(line)) {
+      const trimmed = line.trimStart();
+      if (!trimmed.startsWith('import ') && !trimmed.startsWith('from ')) {
+        const blockEnd = findBlockEnd(lines, i, lines.length);
+        if (blockEnd > i || trimmed.includes('{')) matches.push(i);
+      }
+    }
+  }
+  return matches;
 }
 
 /**
@@ -268,13 +274,11 @@ function tryGoTypeMatch(lines: string[], escapedName: string, kind: string | und
     : (kind === 'trait' || kind === 'interface') ? '\\s+interface\\b'
     : '(?:\\s+(?:struct|interface)\\b)?';
   const re = new RegExp(`^\\s*type\\s+${escapedName}${typeSuffix}`);
-  const total = lines.length;
-  return lines.reduce<number[]>((acc, line, i) => {
-    if (!re.test(line)) return acc;
-    const blockEnd = findBlockEnd(lines, i, total);
-    if (blockEnd >= i) acc.push(i);
-    return acc;
-  }, []);
+  const matches: number[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    if (re.test(lines[i])) matches.push(i);
+  }
+  return matches;
 }
 
 // ---------------------------------------------------------------------------
