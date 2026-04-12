@@ -12,6 +12,11 @@ Everything resolves through **workspace paths** and **h:XXXX** (UHPP). Arrays: c
 Complex values: inline {…} syntax where noted (le, creates).
 Dataflow: in:stepId.path (e.g. in:r1.refs) binds prior step output into this step. **f**, **ps**, **hashes** must be real paths or **h:**… — never paste \`in:r1.refs\` as if it were a path or hash string. Conditional: if:stepId.ok. on_error:stop|continue|rollback
 
+### q: field — executable steps only
+- \`q\` must contain **only** step lines (format above). Each non-empty line with two or more tokens is parsed and **executed** as a batch step.
+- Do **not** paste commit messages, PR/description prose, bullets, or narration into \`q\` — those lines become fake steps and fail (unknown operation).
+- Put explanations in normal assistant text. Lines in \`q\` used only as comments must start with \`#\` or \`--\` (parser skips them).
+
 ### Operation Families
 ${generateFamilyLines()}
 
