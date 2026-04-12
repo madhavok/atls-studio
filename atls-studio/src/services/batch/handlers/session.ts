@@ -469,6 +469,25 @@ function isPlausibleHashBaseSegment(base: string): boolean {
 }
 
 /**
+ * Recover hashes from a misplaced dataflow string in `params.in` (e.g. `"r1.refs"`).
+ * Models sometimes write `with: { in: "r1.refs" }` in structured JSON, imitating
+ * the `q:` line syntax `pi in:r1.refs`. The `q:` parser handles this correctly via
+ * `expandDataflow`, but when placed in `with` instead of `step.in`, the executor
+ * passes it through as a plain param. This recovers by resolving the step output.
+ */
+function recoverDataflowIn(params: Record<string, unknown>, ctx: HandlerContext): string[] {
+  const raw = params.in;
+  if (typeof raw !== 'string' || !raw.trim()) return [];
+  const val = raw.trim().replace(/^in:/, '');
+  const dotIdx = val.indexOf('.');
+  const stepId = dotIdx === -1 ? val : val.slice(0, dotIdx);
+  const output = ctx.getStepOutput?.(stepId);
+  if (!output?.refs?.length) return [];
+  materializeFileRefsContentIfNeeded(output, ctx.store());
+  return output.refs;
+}
+
+/**
  * Ensure read_lines / file_refs step outputs exist as engrams before pinChunks.
  * read.lines returns file_refs with embedded content but does not call addChunk until post-batch deflation;
  * session.pin in the same batch must materialize first.
@@ -522,7 +541,10 @@ function materializeFileRefsContentIfNeeded(out: StepOutput, store: ContextStore
 }
 
 export const handlePin: OpHandler = async (params, ctx) => {
-  const rawHashes = normalizeHashRefsToStrings(params.hashes ?? params.refs);
+  let rawHashes = normalizeHashRefsToStrings(params.hashes ?? params.refs);
+  if (!rawHashes.length) {
+    rawHashes = recoverDataflowIn(params, ctx);
+  }
   if (!rawHashes.length) {
     return err('pin: ERROR missing hashes param (expected string[], h:… strings, or {ref}/{hash}/{h} objects)');
   }
@@ -568,7 +590,8 @@ export const handlePin: OpHandler = async (params, ctx) => {
 };
 
 export const handleUnpin: OpHandler = async (params, ctx) => {
-  const rawHashes = normalizeHashRefsToStrings(params.hashes);
+  let rawHashes = normalizeHashRefsToStrings(params.hashes);
+  if (!rawHashes.length) rawHashes = recoverDataflowIn(params, ctx);
   if (!rawHashes.length) return err('unpin: ERROR missing hashes param');
 
   const { expanded, notes } = ctx.expandSetRefsInHashes(rawHashes);
@@ -583,7 +606,8 @@ export const handleUnpin: OpHandler = async (params, ctx) => {
 // ---------------------------------------------------------------------------
 
 export const handleRecall: OpHandler = async (params, ctx) => {
-  const rawHashes = normalizeHashRefsToStrings(params.hashes);
+  let rawHashes = normalizeHashRefsToStrings(params.hashes);
+  if (!rawHashes.length) rawHashes = recoverDataflowIn(params, ctx);
   if (!rawHashes.length) return err('recall: ERROR missing hashes param');
 
   const { expanded, notes } = ctx.expandSetRefsInHashes(rawHashes);

@@ -280,6 +280,53 @@ describe('handlePin', () => {
     expect(result.summary).toMatch(/pin: 1 chunk/);
     expect(useContextStore.getState().getChunkContent('h:deadbeef')).toContain('export const x');
   });
+
+  it('recovers dataflow from params.in string (with: { in: "r1.refs" })', async () => {
+    const h = useContextStore.getState().addChunk('pin-via-in', 'smart', 'recover.ts');
+    const stepOutputs = new Map<string, StepOutput>([
+      ['r1', { kind: 'file_refs', ok: true, refs: [`h:${h}`], summary: 'read' }],
+    ]);
+    const ctx = {
+      ...createMockCtx(),
+      forEachStepOutput: (fn: (id: string, out: StepOutput) => void) => {
+        for (const [id, out] of stepOutputs) fn(id, out);
+      },
+      getStepOutput: (id: string) => stepOutputs.get(id),
+    } as unknown as Parameters<typeof handlePin>[1];
+
+    const result = await handlePin({ in: 'r1.refs' }, ctx);
+    expect(result.ok).toBe(true);
+    expect(result.summary).toMatch(/pin: 1 chunk/);
+  });
+
+  it('recovers dataflow from params.in with in: prefix ("in:r1.refs")', async () => {
+    const h = useContextStore.getState().addChunk('pin-via-in-prefix', 'smart', 'recover2.ts');
+    const stepOutputs = new Map<string, StepOutput>([
+      ['r1', { kind: 'file_refs', ok: true, refs: [`h:${h}`], summary: 'read' }],
+    ]);
+    const ctx = {
+      ...createMockCtx(),
+      forEachStepOutput: (fn: (id: string, out: StepOutput) => void) => {
+        for (const [id, out] of stepOutputs) fn(id, out);
+      },
+      getStepOutput: (id: string) => stepOutputs.get(id),
+    } as unknown as Parameters<typeof handlePin>[1];
+
+    const result = await handlePin({ in: 'in:r1.refs' }, ctx);
+    expect(result.ok).toBe(true);
+    expect(result.summary).toMatch(/pin: 1 chunk/);
+  });
+
+  it('still errors when params.in references nonexistent step', async () => {
+    const ctx = {
+      ...createMockCtx(),
+      getStepOutput: () => undefined,
+    } as unknown as Parameters<typeof handlePin>[1];
+
+    const result = await handlePin({ in: 'r99.refs' }, ctx);
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatch(/missing hashes/);
+  });
 });
 
 describe('handleDrop', () => {
@@ -655,6 +702,21 @@ describe('handleUnpin', () => {
     expect(r.ok).toBe(false);
     expect(r.error).toMatch(/missing hashes/);
   });
+
+  it('recovers dataflow from params.in string', async () => {
+    const h = useContextStore.getState().addChunk('unpin-in', 'smart', 'unpin-in.ts');
+    await handlePin({ hashes: [`h:${h}`] }, createMockCtx() as any);
+    const stepOutputs = new Map<string, StepOutput>([
+      ['r1', { kind: 'raw', ok: true, refs: [`h:${h}`], summary: 'read' }],
+    ]);
+    const ctx = {
+      ...createMockCtx(),
+      getStepOutput: (id: string) => stepOutputs.get(id),
+    } as unknown as Parameters<typeof handleUnpin>[1];
+    const r = await handleUnpin({ in: 'r1.refs' }, ctx);
+    expect(r.ok).toBe(true);
+    expect(r.summary).toMatch(/unpin: 1/);
+  });
 });
 
 describe('handleRecall', () => {
@@ -685,6 +747,21 @@ describe('handleRecall', () => {
     const r = await handleRecall({ hashes: [`h:${a}`, `h:${b}`] }, createMockCtx() as any);
     expect(r.ok).toBe(true);
     expect(r.summary).toContain('BUDGET_EXCEEDED');
+  });
+
+  it('recovers dataflow from params.in string', async () => {
+    resetRecallBudget();
+    const h = useContextStore.getState().addChunk('recall-in-body', 'smart', 'recall-in.ts');
+    const stepOutputs = new Map<string, StepOutput>([
+      ['r1', { kind: 'raw', ok: true, refs: [`h:${h}`], summary: 'read' }],
+    ]);
+    const ctx = {
+      ...createMockCtx(),
+      getStepOutput: (id: string) => stepOutputs.get(id),
+    } as unknown as Parameters<typeof handleRecall>[1];
+    const r = await handleRecall({ in: 'r1.refs' }, ctx);
+    expect(r.ok).toBe(true);
+    expect(r.summary).toContain('recall-in-body');
   });
 });
 
