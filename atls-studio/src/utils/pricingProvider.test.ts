@@ -30,4 +30,8 @@ describe('getPricingProviderForModel', () => {
       getPricingProviderForModel('gemini-2.0-flash-custom', 'google', []),
     ).toBe('google');
   });
+
+  it('treats undefined catalog like empty (heuristic provider)', () => {
+    expect(getPricingProviderForModel('claude-3-5-sonnet-20241022', 'anthropic', undefined)).toBe('anthropic');
+  });
 });

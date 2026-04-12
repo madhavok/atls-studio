@@ -17,9 +17,9 @@ export function getProviderFromModelId(modelId: string): AIProvider {
 export function getPricingProviderForModel(
   modelId: string,
   selectedProvider: AIProvider,
-  availableModels: Array<{ id: string; provider: AIProvider }>,
+  availableModels: Array<{ id: string; provider: AIProvider }> | undefined,
 ): AIProvider {
-  const info = availableModels.find((m) => m.id === modelId);
+  const info = (availableModels ?? []).find((m) => m.id === modelId);
   if (info?.provider) return info.provider;
   const heuristic = getProviderFromModelId(modelId);
   if (heuristic === 'google' && selectedProvider === 'vertex') return 'vertex';
