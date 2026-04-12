@@ -106,6 +106,7 @@ function ensureProviderSubscription(): void {
     ) {
       _cachedProvider = undefined;
       _cachedModel = undefined;
+      clearTokenCache();
     }
   });
 }
