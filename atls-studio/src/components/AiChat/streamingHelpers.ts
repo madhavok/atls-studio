@@ -127,4 +127,5 @@ export function clearStreamingState(refs: StreamingRefs): void {
   refs.streamingSegmentsRef.current = [];
   refs.accumulatedSegmentsRef.current = [];
   refs.seenToolCallIds.current.clear();
+  refs.isStreamingRef.current = false;
 }

@@ -2435,7 +2435,7 @@ export function AiChat() {
       case 'openai': return settings.openaiApiKey;
       case 'google': return settings.googleApiKey;
       case 'vertex': return settings.vertexAccessToken;
-      case 'lmstudio': return settings.lmstudioBaseUrl;
+      case 'lmstudio': return '';
       default: return '';
     }
   }, [settings]);
@@ -3217,6 +3217,7 @@ export function AiChat() {
       });
       setIsGenerating(false);
       streamingSegmentsRef.current = [];
+      accumulatedSegmentsRef.current = [];
       seenToolCallIds.current.clear();
       subagentProgressByStepRef.current.clear();
       useAppStore.getState().setAgentProgress({ status: 'stopped', stoppedReason: 'error' });
@@ -3562,6 +3563,7 @@ export function AiChat() {
       });
       setIsGenerating(false);
       streamingSegmentsRef.current = [];
+      accumulatedSegmentsRef.current = [];
       seenToolCallIds.current.clear();
       subagentProgressByStepRef.current.clear();
       useAppStore.getState().setAgentProgress({ status: 'stopped', stoppedReason: 'error' });
