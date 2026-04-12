@@ -16,8 +16,13 @@ export const ROLLING_SUMMARY_MAX_TOKENS = 1650;
  *  Heuristic systematically undercounted hash-heavy content by ~15%.
  *  Thresholds raised to maintain same behavioral compression triggers. */
 export const CONVERSATION_HISTORY_BUDGET_TOKENS = 24000;
+/** Planned staged footprint in prompt budget math (not the same as admission warnings or hard prune). */
 export const STAGED_BUDGET_TOKENS = 4500;
-/** Hard cap on total tokens across all staged snippets — prevents unbounded growth when batch stages hundreds of refs. */
+/**
+ * Hard cap on total tokens across all staged snippets — enforced at prune time by
+ * `pruneStagedSnippetsToBudget` in `contextStore.ts` (e.g. round end / pressure relief), not at `stage()`.
+ * For the separate 25k stats-warning ceiling, see `STAGE_SOFT_CEILING` in `contextStore.ts`.
+ */
 export const STAGED_TOTAL_HARD_CAP_TOKENS = 65536;
 export const STAGED_ANCHOR_BUDGET_TOKENS = 1400;
 export const WM_BUDGET_TOKENS = 38000;

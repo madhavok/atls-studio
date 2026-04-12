@@ -536,12 +536,14 @@ export interface StagedSnippet {
   stageState?: 'current' | 'stale' | 'superseded';
 }
 
-// Soft ceiling for staged snippets (tokens) — stats line warns above this
-// so the model can self-manage. No hard rejection; staging always succeeds.
+// Staged token budgets are split across two modules — not a single soft/hard pair:
+// - STAGE_SOFT_CEILING (here): admission-time guidance only; `formatStatsLine` / context stats warn when staged total exceeds this (`contextFormatter.ts`). Staging still succeeds.
+// - STAGED_TOTAL_HARD_CAP_TOKENS + STAGED_BUDGET_TOKENS: see `promptMemory.ts` — hard cap enforced in `pruneStagedSnippetsToBudget` at round/relief boundaries; `STAGED_BUDGET_TOKENS` is the prompt-layer planning budget.
 export const STAGE_SOFT_CEILING = 25000;
 const MAX_MEMORY_EVENTS = 100;
 
 function shouldAutoCompactChunk(chunk: ContextChunk): boolean {
+  if (chunk.compacted) return false;
   if (chunk.pinned) return false;
   if (CHAT_TYPES.has(chunk.type)) return false;
   return chunk.type === 'issues'
@@ -3056,13 +3058,13 @@ export const useContextStore = create<ContextStoreState>()(
     let evicted = 0;
     const deletedPaths: string[] = [];
 
+    const normalizedRevIndex = new Map<string, string>();
+    for (const [k, v] of revisionMap) {
+      if (v != null) normalizedRevIndex.set(normalizeSourcePath(k), v);
+    }
+
     for (const path of paths) {
-      let rev = revisionMap.get(path) ?? null;
-      if (rev == null) {
-        for (const [k, v] of revisionMap) {
-          if (v != null && normalizeSourcePath(k) === path) { rev = v; break; }
-        }
-      }
+      const rev = normalizedRevIndex.get(path) ?? null;
       if (rev == null) {
         deletedPaths.push(path);
         continue;

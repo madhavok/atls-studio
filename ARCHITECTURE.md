@@ -351,6 +351,10 @@ The prompt formatter uses HPP to decide what to include:
 
 This means the working memory section of the prompt naturally shrinks as engrams age out, without the model needing to explicitly manage every transition.
 
+### 6.1 Tool results, blackboard, and snapshot engrams
+
+`call` and `result` chunk types are **always** auto-dropped from working memory during low-value pruning at round boundaries; they are intentional scaffolding, not durable storage. Anything the model must keep across turns should be written to the **blackboard** (or otherwise staged with a persistence policy that survives pruning). **Snapshot** engrams (`viewKind: 'snapshot'`), including legacy multi-file composite reads, are **preserved** during freshness reconciliation so point-in-time captures stay valid; they are not TTL-expired automatically and remain until the model drops them or the session is reset.
+
 ---
 
 ## 7. History Compression

@@ -59,6 +59,102 @@ let lastTurnDelta = { dematerialized: 0, newMaterialized: 0 };
 /** Bound refs Map size in long sessions with heavy read/evict churn (evicted rows are GC'd lazily). */
 const HPP_REFS_MAX_ENTRIES = 8000;
 
+/**
+ * Min-heap of evicted refs ordered by (seenAtTurn, hash). Pushed in {@link evict}; stale entries
+ * (removed/rematerialized) are discarded lazily on pop. Avoids O(n log n) sort each prune turn.
+ */
+const evictedMinHeap: Array<{ hash: string; seenAtTurn: number }> = [];
+
+function evictedHeapLess(
+  a: { hash: string; seenAtTurn: number },
+  b: { hash: string; seenAtTurn: number },
+): boolean {
+  if (a.seenAtTurn !== b.seenAtTurn) return a.seenAtTurn < b.seenAtTurn;
+  return a.hash < b.hash;
+}
+
+function evictedHeapParent(i: number): number {
+  return (i - 1) >> 1;
+}
+
+function evictedHeapLeft(i: number): number {
+  return (i << 1) + 1;
+}
+
+function evictedHeapRight(i: number): number {
+  return (i << 1) + 2;
+}
+
+function evictedHeapSwap(i: number, j: number): void {
+  const t = evictedMinHeap[i];
+  evictedMinHeap[i] = evictedMinHeap[j];
+  evictedMinHeap[j] = t;
+}
+
+function evictedHeapSink(i: number): void {
+  const n = evictedMinHeap.length;
+  for (;;) {
+    let smallest = i;
+    const l = evictedHeapLeft(i);
+    const r = evictedHeapRight(i);
+    if (l < n && evictedHeapLess(evictedMinHeap[l], evictedMinHeap[smallest])) smallest = l;
+    if (r < n && evictedHeapLess(evictedMinHeap[r], evictedMinHeap[smallest])) smallest = r;
+    if (smallest === i) break;
+    evictedHeapSwap(i, smallest);
+    i = smallest;
+  }
+}
+
+function evictedHeapSwim(i: number): void {
+  while (i > 0) {
+    const p = evictedHeapParent(i);
+    if (!evictedHeapLess(evictedMinHeap[i], evictedMinHeap[p])) break;
+    evictedHeapSwap(i, p);
+    i = p;
+  }
+}
+
+function evictedHeapPush(entry: { hash: string; seenAtTurn: number }): void {
+  evictedMinHeap.push(entry);
+  evictedHeapSwim(evictedMinHeap.length - 1);
+}
+
+/** Remove root; caller ensures heap non-empty. */
+function evictedHeapPopRaw(): { hash: string; seenAtTurn: number } {
+  const h = evictedMinHeap;
+  const root = h[0];
+  const last = h.pop()!;
+  if (h.length > 0) {
+    h[0] = last;
+    evictedHeapSink(0);
+  }
+  return root;
+}
+
+/** Drop stale roots until we find a ref that is still evicted with matching seenAtTurn, or heap empty. */
+function popValidEvictedOldest(): { hash: string; ref: ChunkRef } | undefined {
+  while (evictedMinHeap.length > 0) {
+    const top = evictedMinHeap[0];
+    const r = refs.get(top.hash);
+    if (!r || r.visibility !== 'evicted' || r.seenAtTurn !== top.seenAtTurn) {
+      evictedHeapPopRaw();
+      continue;
+    }
+    evictedHeapPopRaw();
+    return { hash: top.hash, ref: r };
+  }
+  return undefined;
+}
+
+function rebuildEvictedHeapFromRefs(): void {
+  evictedMinHeap.length = 0;
+  for (const [h, r] of refs) {
+    if (r.visibility === 'evicted') {
+      evictedHeapPush({ hash: h, seenAtTurn: r.seenAtTurn });
+    }
+  }
+}
+
 function removeRefFromIndexes(hash: string, ref: ChunkRef): void {
   refs.delete(hash);
   const bucket = shortHashIndex.get(ref.shortHash);
@@ -87,34 +183,32 @@ function pruneEvictedRefsIfBurden(): void {
     else active++;
   }
   if (active === 0 || evicted / active < 1.5) return;
-  const evictedRows: Array<[string, ChunkRef]> = [];
-  for (const [h, r] of refs) {
-    if (r.visibility === 'evicted') evictedRows.push([h, r]);
-  }
-  evictedRows.sort((a, b) => a[1].seenAtTurn - b[1].seenAtTurn);
   const activeCount = active;
   let e = evicted;
-  let i = 0;
-  while (activeCount > 0 && e / activeCount >= 1.2 && i < evictedRows.length) {
-    const [h, r] = evictedRows[i++];
-    if (refs.get(h) === r && r.visibility === 'evicted') {
-      removeRefFromIndexes(h, r);
+  while (activeCount > 0 && e / activeCount >= 1.2) {
+    let cand = popValidEvictedOldest();
+    if (!cand) {
+      rebuildEvictedHeapFromRefs();
+      cand = popValidEvictedOldest();
+    }
+    if (!cand) break;
+    if (refs.get(cand.hash) === cand.ref && cand.ref.visibility === 'evicted') {
+      removeRefFromIndexes(cand.hash, cand.ref);
       e--;
     }
   }
 }
 
 function pruneEvictedOldestWhile(shouldContinue: () => boolean): void {
-  const evictedRows: Array<[string, ChunkRef]> = [];
-  for (const [h, r] of refs) {
-    if (r.visibility === 'evicted') evictedRows.push([h, r]);
-  }
-  evictedRows.sort((a, b) => a[1].seenAtTurn - b[1].seenAtTurn);
-  let i = 0;
-  while (shouldContinue() && i < evictedRows.length) {
-    const [h, r] = evictedRows[i++];
-    if (refs.get(h) === r && r.visibility === 'evicted') {
-      removeRefFromIndexes(h, r);
+  while (shouldContinue()) {
+    let cand = popValidEvictedOldest();
+    if (!cand) {
+      rebuildEvictedHeapFromRefs();
+      cand = popValidEvictedOldest();
+    }
+    if (!cand) break;
+    if (refs.get(cand.hash) === cand.ref && cand.ref.visibility === 'evicted') {
+      removeRefFromIndexes(cand.hash, cand.ref);
     }
   }
 }
@@ -203,6 +297,7 @@ export function resetProtocol(): void {
   refs.clear();
   shortHashIndex.clear();
   divergedRefs.clear();
+  evictedMinHeap.length = 0;
   lastTurnDelta = { dematerialized: 0, newMaterialized: 0 };
 }
 
@@ -217,6 +312,11 @@ export function resetProtocol(): void {
 /**
  * Register a chunk as materialized (the model is about to see full content).
  * If already referenced, promotes back to materialized for this turn.
+ *
+ * **Update semantics (existing ref):** `source` uses nullish coalescing (`??`): passing `undefined`
+ * keeps the prior path; **`''` clears `source`.** `editDigest` uses `||`: **`''` means “no new digest
+ * from this call” and preserves the prior signature** — it does *not* clear `editDigest`. To replace
+ * a digest, pass the new non-empty string; there is no empty-string clear for `editDigest`.
  *
  * @param displayShortHash — Must match `ContextChunk.shortHash` when `hash` is a disambiguated map key
  *   (content-hash collision path); otherwise defaults to `hash.slice(0, SHORT_HASH_LEN)`.
@@ -239,7 +339,6 @@ export function materialize(
     existing.seenAtTurn = currentTurn;
     existing.tokens = tokens;
     existing.totalLines = totalLines;
-    // '' = no digest from caller: keep prior sig. (source uses ?? so '' can clear.)
     existing.editDigest = editDigest || existing.editDigest;
     existing.source = source ?? existing.source;
     lastTurnDelta.newMaterialized += 1;
@@ -293,6 +392,7 @@ export function evict(hash: string): void {
   const ref = getRef(hash);
   if (ref) {
     ref.visibility = 'evicted';
+    evictedHeapPush({ hash: ref.hash, seenAtTurn: ref.seenAtTurn });
   }
 }
 

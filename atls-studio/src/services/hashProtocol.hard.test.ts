@@ -191,4 +191,30 @@ describe('HPP hard tests', () => {
     evict('nonexistent1234');
     expect(getAllRefs()).toHaveLength(0);
   });
+
+  // ── Evicted-row burden prune: oldest evicted first (min-heap), hysteresis 1.5 / 1.2 ──
+
+  it('pruneEvictedRefsIfBurden drops oldest evicted until evicted/active < 1.2', async () => {
+    const h = (i: number) => `${String(i + 1).padStart(2, '0')}00000011111111`;
+    for (let i = 0; i < 8; i++) {
+      materialize(h(i), 'file', `src/f${i}.ts`, 10, 2, '');
+    }
+    await advanceTurn();
+    for (let i = 5; i < 8; i++) materialize(h(i), 'file', `src/f${i}.ts`, 10, 2, '');
+    for (let i = 0; i < 5; i++) materialize(h(i), 'file', `src/f${i}.ts`, 10, 2, '');
+    for (let i = 0; i < 5; i++) evict(h(i));
+
+    expect(getRef(h(0))?.visibility).toBe('evicted');
+    await advanceTurn();
+
+    expect(getRef(h(0))).toBeUndefined();
+    expect(getRef(h(1))).toBeUndefined();
+    for (let i = 2; i < 5; i++) {
+      expect(getRef(h(i))?.visibility).toBe('evicted');
+    }
+    for (let i = 5; i < 8; i++) {
+      expect(getRef(h(i))).toBeDefined();
+      expect(getRef(h(i))?.visibility).not.toBe('evicted');
+    }
+  });
 });
