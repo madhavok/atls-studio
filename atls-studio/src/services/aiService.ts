@@ -239,6 +239,7 @@ import {
   recordHashRefsConsumed, recordHashRefsEvicted,
   extractTargetFilesFromStepResults, extractBbDeltaFromStepResults,
   extractSteeringBlocks, extractHashRefs,
+  recordReadDiversity,
 } from './spinDiagnostics';
 import { diagnoseSpinning } from './spinDetector';
 
@@ -3271,6 +3272,7 @@ async function executeToolCallDetailed(
         recordToolSignature(result.step_results.map(s => s.use));
         recordBatchSpinSemantics(result.step_results);
         recordTargetFiles(extractTargetFilesFromStepResults(result.step_results));
+        recordReadDiversity(result.step_results);
         recordBbDelta(extractBbDeltaFromStepResults(result.step_results, args));
         {
           const batchHashRefs = result.step_results

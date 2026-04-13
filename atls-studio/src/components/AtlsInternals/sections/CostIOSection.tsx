@@ -39,6 +39,13 @@ export function CostIOSection() {
     return researchCount / mainSnapshots.length;
   }, [mainSnapshots]);
 
+  const avgNewCoverageResearchRounds = useMemo(() => {
+    const research = mainSnapshots.filter(s => s.isResearchRound);
+    if (research.length === 0) return null;
+    const sum = research.reduce((a, s) => a + (s.newCoverage ?? 0), 0);
+    return Math.round((sum / research.length) * 10) / 10;
+  }, [mainSnapshots]);
+
   const { chartData, costData, totalInput, totalOutput, totalCacheRead, totalCacheWrite } = useMemo(() => {
     const cd = mainSnapshots.map((s) => {
       // Anthropic: inputTokens = uncached only, cache buckets are non-overlapping → stack all.
@@ -195,8 +202,19 @@ export function CostIOSection() {
           <StatCard
             label="Research ratio"
             value={`${Math.round(researchRatio * 100)}%`}
-            subtitle={researchRatio > 0.7 ? 'high — agent may be spinning' : 'read-only rounds'}
+            subtitle={
+              researchRatio > 0.7
+                ? 'high — many mutation-free rounds; may be spinning'
+                : 'share of main rounds with no edit / delegate / BB write'
+            }
             accent={researchRatio > 0.7}
+          />
+        )}
+        {avgNewCoverageResearchRounds != null && (
+          <StatCard
+            label="Avg new files (research)"
+            value={String(avgNewCoverageResearchRounds)}
+            subtitle="mean newCoverage on mutation-free rounds; higher = more fresh paths per round"
           />
         )}
       </div>

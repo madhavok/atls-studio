@@ -106,6 +106,12 @@ export interface RoundSnapshot {
   volatileRefsSuggested?: boolean;
   /** Batch included a successful session.pin step. */
   hadSessionPinStep?: boolean;
+  /** Successful `read.*` steps this round (from batch fingerprints). */
+  readFileStepCount?: number;
+  /** Distinct paths read this round. */
+  uniqueReadPaths?: number;
+  /** Distinct path|line-range read spans this round. */
+  uniqueReadSpans?: number;
 }
 
 interface RoundHistoryState {

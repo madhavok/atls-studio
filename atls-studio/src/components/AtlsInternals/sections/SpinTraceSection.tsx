@@ -99,7 +99,9 @@ interface FingerprintRow {
   phaseColorKey: string;
   phaseTitle: string;
   toolCount: number;
-  fileCount: number;
+  pathCount: number;
+  readStepCount: number | undefined;
+  readSpanCount: number | undefined;
   bbCount: number;
   isResearch: boolean;
   hasPlateau: boolean;
@@ -117,11 +119,13 @@ function FingerprintTimeline({ rows }: { rows: FingerprintRow[] }) {
 
   return (
     <div className="space-y-0.5">
-      <div className="grid grid-cols-[40px_88px_1fr_40px_40px_36px_36px_40px] gap-1 text-[9px] text-studio-muted uppercase tracking-wider pb-1 border-b border-studio-border/20">
+      <div className="grid grid-cols-[36px_80px_minmax(0,1fr)_28px_28px_28px_26px_32px_30px_36px] gap-1 text-[9px] text-studio-muted uppercase tracking-wider pb-1 border-b border-studio-border/20">
         <span>Rnd</span>
         <span>Phase</span>
         <span>Tools</span>
-        <span>Files</span>
+        <span title="Unique paths touched by any op this round">Paths</span>
+        <span title="Successful read.* batch steps">Reads</span>
+        <span title="Distinct path + line span keys">Spans</span>
         <span>BB</span>
         <span>WM∆</span>
         <span>Refs</span>
@@ -135,7 +139,7 @@ function FingerprintTimeline({ rows }: { rows: FingerprintRow[] }) {
         if (row.steeringCount > 0) flags.push(`S${row.steeringCount}`);
 
         return (
-          <div key={row.round} className="grid grid-cols-[40px_88px_1fr_40px_40px_36px_36px_40px] gap-1 text-[10px] items-center">
+          <div key={row.round} className="grid grid-cols-[36px_80px_minmax(0,1fr)_28px_28px_28px_26px_32px_30px_36px] gap-1 text-[10px] items-center">
             <span className="text-studio-muted font-mono">{row.round}</span>
             <span
               className={`${PHASE_COLORS[row.phaseColorKey] ?? PHASE_COLORS.other} rounded px-1 py-0.5 text-center text-[9px] font-mono truncate`}
@@ -143,10 +147,21 @@ function FingerprintTimeline({ rows }: { rows: FingerprintRow[] }) {
             >
               {row.phaseLabel}
             </span>
-            <span className="text-studio-text font-mono truncate" title={`${row.toolCount} tools`}>
+            <span
+              className="text-studio-text font-mono truncate"
+              title={`${row.toolCount} batch steps (ops) this round`}
+            >
               {row.toolCount > 0 ? `${row.toolCount} ops` : '-'}
             </span>
-            <span className="text-studio-muted font-mono">{row.fileCount || '-'}</span>
+            <span className="text-studio-muted font-mono" title="Unique paths from tool targets (all op kinds)">
+              {row.pathCount || '-'}
+            </span>
+            <span className="text-studio-muted font-mono text-[9px]" title="Successful read.* steps">
+              {row.readStepCount != null && row.readStepCount > 0 ? row.readStepCount : '—'}
+            </span>
+            <span className="text-studio-muted font-mono text-[9px]" title="Distinct read spans (path + range)">
+              {row.readSpanCount != null && row.readSpanCount > 0 ? row.readSpanCount : '—'}
+            </span>
             <span className={`font-mono ${row.bbCount > 0 ? 'text-green-400' : 'text-studio-muted'}`}>
               {row.bbCount || '-'}
             </span>
@@ -182,7 +197,9 @@ export function SpinTraceSection() {
       phaseColorKey: phaseColorKeyFromSnapshot(s),
       phaseTitle: (s.toolSignature?.length ?? 0) > 0 ? (s.toolSignature ?? []).join(', ') : '',
       toolCount: s.toolSignature?.length ?? 0,
-      fileCount: s.targetFiles?.length ?? 0,
+      pathCount: s.targetFiles?.length ?? 0,
+      readStepCount: s.readFileStepCount,
+      readSpanCount: s.uniqueReadSpans,
       bbCount: s.bbDelta?.length ?? 0,
       isResearch: s.isResearchRound ?? false,
       hasPlateau: s.coveragePlateau ?? false,

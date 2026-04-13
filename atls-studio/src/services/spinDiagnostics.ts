@@ -29,6 +29,12 @@ export interface RoundFingerprint {
   changeDryRunPreviewRound: boolean;
   volatileRefsSuggested: boolean;
   hadSessionPinStep: boolean;
+  /** Successful `read.*` batch steps this round (cumulative if multiple batch calls). */
+  readFileStepCount: number;
+  /** Distinct file paths touched by those reads (normalized slashes). */
+  uniqueReadPaths: number;
+  /** Distinct path|range keys (range label aligned with batch executor / read-spin). */
+  uniqueReadSpans: number;
 }
 
 /** True when change.* artifacts indicate a preview only (align with batch executor). */
@@ -42,6 +48,9 @@ export function stepArtifactsDryRunPreview(artifacts: Record<string, unknown> | 
 
 let _current: RoundFingerprint = emptyFingerprint();
 let _sawOkChangeStep = false;
+let _readDiversityStepCount = 0;
+const _readDiversityPaths = new Set<string>();
+const _readDiversitySpans = new Set<string>();
 
 function emptyFingerprint(): RoundFingerprint {
   return {
@@ -57,18 +66,27 @@ function emptyFingerprint(): RoundFingerprint {
     changeDryRunPreviewRound: false,
     volatileRefsSuggested: false,
     hadSessionPinStep: false,
+    readFileStepCount: 0,
+    uniqueReadPaths: 0,
+    uniqueReadSpans: 0,
   };
 }
 
 export function resetRoundFingerprint(): void {
   _current = emptyFingerprint();
   _sawOkChangeStep = false;
+  _readDiversityStepCount = 0;
+  _readDiversityPaths.clear();
+  _readDiversitySpans.clear();
 }
 
 export function getRoundFingerprint(): Readonly<RoundFingerprint> {
   return {
     ..._current,
     changeDryRunPreviewRound: _sawOkChangeStep && !_current.hadRealChangeThisRound,
+    readFileStepCount: _readDiversityStepCount,
+    uniqueReadPaths: _readDiversityPaths.size,
+    uniqueReadSpans: _readDiversitySpans.size,
   };
 }
 
@@ -189,6 +207,94 @@ export function extractHashRefs(text: string): string[] {
     }
   }
   return result;
+}
+
+/**
+ * Serialize `actual_range` like batch executor `extractFileRefsWithRanges` / `resultFormatter.actualRangeLabel`.
+ */
+export function formatActualRangeLabel(actualRange: unknown): string | undefined {
+  if (!Array.isArray(actualRange) || actualRange.length === 0) return undefined;
+  return actualRange
+    .map((r: unknown) => {
+      if (!Array.isArray(r)) return '';
+      const s = r[0] as number;
+      const e = r[1] as number | null;
+      return e != null ? `${s}-${e}` : `${s}`;
+    })
+    .filter(Boolean)
+    .join(',');
+}
+
+function normalizeReadPath(p: string): string {
+  return p.replace(/\\/g, '/');
+}
+
+/** Paths and span keys (lowercased path in key for stable dedupe) from file_refs-shaped artifacts. */
+function collectReadSpanKeysFromArtifacts(arts: Record<string, unknown>): { paths: string[]; spanKeys: string[] } {
+  const paths: string[] = [];
+  const spanKeys: string[] = [];
+  const add = (file: string, actualRange: unknown): void => {
+    const norm = normalizeReadPath(file);
+    const rangeLabel = formatActualRangeLabel(actualRange) ?? '*';
+    paths.push(norm);
+    spanKeys.push(`${norm.toLowerCase()}|${rangeLabel}`);
+  };
+  if (typeof arts.file === 'string') {
+    add(arts.file, arts.actual_range);
+  }
+  const results = arts.results;
+  if (Array.isArray(results)) {
+    for (const item of results) {
+      if (item && typeof item === 'object') {
+        const rec = item as Record<string, unknown>;
+        if (typeof rec.file === 'string') {
+          add(rec.file, rec.actual_range);
+        }
+      }
+    }
+  }
+  return { paths, spanKeys };
+}
+
+/**
+ * Per-batch read diversity from step results (for tests and one-off analysis).
+ * Does not mutate round fingerprint state.
+ */
+export function extractReadDiversityFromStepResults(stepResults: StepResult[]): {
+  readFileStepCount: number;
+  uniqueReadPaths: number;
+  uniqueReadSpans: number;
+} {
+  const pathSet = new Set<string>();
+  const spanSet = new Set<string>();
+  let readFileStepCount = 0;
+  for (const step of stepResults) {
+    if (!step.ok || !step.use.startsWith('read.')) continue;
+    readFileStepCount++;
+    const arts = step.artifacts;
+    if (!arts || typeof arts !== 'object' || Array.isArray(arts)) continue;
+    const { paths, spanKeys } = collectReadSpanKeysFromArtifacts(arts as Record<string, unknown>);
+    for (const p of paths) pathSet.add(p);
+    for (const s of spanKeys) spanSet.add(s);
+  }
+  return {
+    readFileStepCount,
+    uniqueReadPaths: pathSet.size,
+    uniqueReadSpans: spanSet.size,
+  };
+}
+
+/** Merge read diversity from one batch into the current round (multiple batch calls per round supported). */
+export function recordReadDiversity(stepResults: StepResult[]): void {
+  for (const step of stepResults) {
+    if (!step.ok || !step.use.startsWith('read.')) continue;
+    _readDiversityStepCount++;
+    const arts = step.artifacts;
+    if (!arts || typeof arts !== 'object' || Array.isArray(arts)) continue;
+    const { paths, spanKeys } = collectReadSpanKeysFromArtifacts(arts as Record<string, unknown>);
+    for (const p of paths) _readDiversityPaths.add(p);
+    for (const s of spanKeys) _readDiversitySpans.add(s);
+  }
 }
 
 /** Extract file paths from batch step results. */

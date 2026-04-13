@@ -516,10 +516,11 @@ export function formatSpinTrace(
   const mainRounds = snapshots.filter(s => !s.isSubagentRound && !s.isSwarmRound);
   if (mainRounds.length === 0) return 'No rounds recorded.';
 
-  const window = mainRounds.slice(-windowSize).map(toFingerprint);
+  const slice = mainRounds.slice(-windowSize);
   const lines: string[] = [];
 
-  for (const fp of window) {
+  for (const s of slice) {
+    const fp = toFingerprint(s);
     const tools = fp.toolSignature.length > 0 ? fp.toolSignature.join(',') : '-';
     const files = fp.targetFiles.length > 0 ? `${fp.targetFiles.length} files` : '-';
     const bb = fp.bbDelta.length > 0 ? fp.bbDelta.join(',') : '-';
@@ -530,7 +531,11 @@ export function formatSpinTrace(
     if (fp.hashRefsEvicted.length > 0) flags.push(`E${fp.hashRefsEvicted.length}`);
     const flagStr = flags.length > 0 ? ` [${flags.join(',')}]` : '';
 
-    lines.push(`R${fp.round}${flagStr}: tools=${tools} | files=${files} | bb=${bb} | steering=${steering}`);
+    const readExtras = s.readFileStepCount !== undefined || s.uniqueReadSpans !== undefined
+      ? ` | reads=${s.readFileStepCount ?? '—'} spans=${s.uniqueReadSpans ?? '—'}`
+      : '';
+
+    lines.push(`R${fp.round}${flagStr}: tools=${tools} | files=${files} | bb=${bb} | steering=${steering}${readExtras}`);
   }
 
   return lines.join('\n');
