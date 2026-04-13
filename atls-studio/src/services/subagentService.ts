@@ -1056,6 +1056,7 @@ export async function executeSubagent(
       const snapshot: RoundSnapshot = {
         round: totalRounds,
         timestamp: Date.now(),
+        provider: subagentProvider,
         wmTokens: 0, bbTokens: 0, stagedTokens: 0, archivedTokens: 0,
         overheadTokens: 0, freeTokens: 0, maxTokens: 0,
         staticSystemTokens: 0, conversationHistoryTokens: 0,
@@ -1077,7 +1078,7 @@ export async function executeSubagent(
         toolCalls: totalToolCalls,
         manageOps: 0,
         hypotheticalNonBatchedCost: 0,
-        actualCost: totalCostCents,
+        actualCost: roundCost,
         isSubagentRound: true,
         subagentType: role,
         subagentModel,

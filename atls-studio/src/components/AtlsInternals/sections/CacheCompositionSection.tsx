@@ -37,7 +37,10 @@ export function CacheCompositionSection() {
   const getUsedTokens = useContextStore((s) => s.getUsedTokens);
   const getBlackboardTokenCount = useContextStore((s) => s.getBlackboardTokenCount);
   const contextUsage = useAppStore((s) => s.contextUsage);
-  const latestSnap = useRoundHistoryStore((s) => s.snapshots.at(-1));
+  const latestSnap = useRoundHistoryStore((s) => {
+    const a = s.snapshots;
+    return a.length > 0 ? a[a.length - 1] : undefined;
+  });
   const maxTokens = contextUsage.maxTokens || 200000;
 
   const { blocks, providerLabel, note } = useMemo(() => {

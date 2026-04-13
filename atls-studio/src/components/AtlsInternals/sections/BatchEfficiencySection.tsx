@@ -3,7 +3,7 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend as RLegend,
 } from 'recharts';
 import { useRoundHistoryStore, isMainChatRound } from '../../../stores/roundHistoryStore';
-import { useCostStore, formatCost } from '../../../stores/costStore';
+import { formatCost } from '../../../stores/costStore';
 
 const COLORS = {
   toolCalls: '#3b82f6',
@@ -13,7 +13,6 @@ const COLORS = {
 
 export function BatchEfficiencySection() {
   const snapshots = useRoundHistoryStore((s) => s.snapshots);
-  const chatCostCents = useCostStore((s) => s.chatCostCents);
 
   // Main chat agent only (subagent + swarm batching is separate)
   const mainSnapshots = useMemo(() => snapshots.filter(isMainChatRound), [snapshots]);
@@ -134,8 +133,8 @@ export function BatchEfficiencySection() {
 
         <div className="grid grid-cols-3 gap-2">
           <CostCard label="Hypothetical Cost" value={formatCost(totalHypothetical)} sub="without batching" warn />
-          <CostCard label="Actual Cost" value={formatCost(chatCostCents)} sub="with batching" />
-          <CostCard label="Saved" value={formatCost(Math.max(0, totalHypothetical - chatCostCents))} sub={`${savingsPct.toFixed(0)}% reduction`} accent />
+          <CostCard label="Actual Cost" value={formatCost(totalActual)} sub="main agent, with batching" />
+          <CostCard label="Saved" value={formatCost(Math.max(0, totalHypothetical - totalActual))} sub={`${savingsPct.toFixed(0)}% reduction`} accent />
         </div>
       </div>
 

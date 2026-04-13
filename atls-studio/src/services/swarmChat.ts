@@ -145,6 +145,7 @@ function pushSwarmRoundSnapshot(
   useRoundHistoryStore.getState().pushSnapshot({
     round: roundIndex,
     timestamp: Date.now(),
+    provider,
     wmTokens: 0,
     wmStoreTokens: 0,
     bbTokens: 0,

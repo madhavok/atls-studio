@@ -134,4 +134,101 @@ describe('roundHistoryStore', () => {
     expect(snapshot).toHaveProperty('legacyHistoryTelemetryKnownWrong', false);
     expect(snapshot).toHaveProperty('isSubagentRound', false);
   });
+
+  it('stores provider field on snapshot', () => {
+    useRoundHistoryStore.getState().pushSnapshot({
+      ...makeSnapshot(1),
+      provider: 'openai',
+    });
+    expect(useRoundHistoryStore.getState().snapshots[0]?.provider).toBe('openai');
+  });
+
+  describe('display token split: Anthropic vs OpenAI/Google/Vertex', () => {
+    function buildUncachedInput(s: RoundSnapshot): number {
+      const isAnthropicRound = s.provider === 'anthropic';
+      return isAnthropicRound ? s.inputTokens : Math.max(0, s.inputTokens - s.cacheReadTokens);
+    }
+
+    it('Anthropic: inputTokens is uncached-only, stacks without subtraction', () => {
+      const snap: RoundSnapshot = {
+        ...makeSnapshot(1),
+        provider: 'anthropic',
+        inputTokens: 5000,
+        cacheReadTokens: 8000,
+      };
+      expect(buildUncachedInput(snap)).toBe(5000);
+    });
+
+    it('OpenAI: inputTokens includes cached subset, subtract to get uncached', () => {
+      const snap: RoundSnapshot = {
+        ...makeSnapshot(1),
+        provider: 'openai',
+        inputTokens: 10000,
+        cacheReadTokens: 8000,
+      };
+      expect(buildUncachedInput(snap)).toBe(2000);
+    });
+
+    it('Google: same as OpenAI — subtract cached from total', () => {
+      const snap: RoundSnapshot = {
+        ...makeSnapshot(1),
+        provider: 'google',
+        inputTokens: 10000,
+        cacheReadTokens: 7500,
+      };
+      expect(buildUncachedInput(snap)).toBe(2500);
+    });
+
+    it('no cache reads: uncached equals full input regardless of provider', () => {
+      for (const provider of ['anthropic', 'openai', 'google', 'vertex'] as const) {
+        const snap: RoundSnapshot = {
+          ...makeSnapshot(1),
+          provider,
+          inputTokens: 15000,
+          cacheReadTokens: 0,
+        };
+        expect(buildUncachedInput(snap)).toBe(15000);
+      }
+    });
+
+    it('provider undefined: defaults to non-Anthropic (subtracts cache)', () => {
+      const snap: RoundSnapshot = {
+        ...makeSnapshot(1),
+        inputTokens: 10000,
+        cacheReadTokens: 6000,
+      };
+      expect(buildUncachedInput(snap)).toBe(4000);
+    });
+  });
+
+  describe('batch efficiency: main-only vs full-session cost bases', () => {
+    it('totalActual from main snapshots excludes subagent cost', () => {
+      const main1: RoundSnapshot = { ...makeSnapshot(1), actualCost: 50, hypotheticalNonBatchedCost: 80 };
+      const main2: RoundSnapshot = { ...makeSnapshot(2), actualCost: 30, hypotheticalNonBatchedCost: 60 };
+      const sub: RoundSnapshot = { ...makeSnapshot(3), actualCost: 200, hypotheticalNonBatchedCost: 200, isSubagentRound: true };
+
+      const mainOnly = [main1, main2, sub].filter(isMainChatRound);
+      let totalActual = 0, totalHypothetical = 0;
+      for (const s of mainOnly) {
+        totalActual += s.actualCost;
+        totalHypothetical += s.hypotheticalNonBatchedCost;
+      }
+
+      expect(totalActual).toBe(80);
+      expect(totalHypothetical).toBe(140);
+      expect(totalHypothetical - totalActual).toBe(60);
+    });
+
+    it('savings percentage uses main-only hypothetical and actual', () => {
+      const main: RoundSnapshot = { ...makeSnapshot(1), actualCost: 25, hypotheticalNonBatchedCost: 100 };
+      const mainOnly = [main].filter(isMainChatRound);
+      let actual = 0, hypothetical = 0;
+      for (const s of mainOnly) {
+        actual += s.actualCost;
+        hypothetical += s.hypotheticalNonBatchedCost;
+      }
+      const pct = hypothetical > 0 ? ((hypothetical - actual) / hypothetical) * 100 : 0;
+      expect(pct).toBe(75);
+    });
+  });
 });

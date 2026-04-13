@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import {
-  ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend as RLegend,
+  BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend as RLegend,
 } from 'recharts';
 import { useRoundHistoryStore, isMainChatRound, computeMainChatRoundCostStats } from '../../../stores/roundHistoryStore';
 import { useCostStore, formatCost } from '../../../stores/costStore';
@@ -39,13 +39,24 @@ export function CostIOSection() {
     return researchCount / mainSnapshots.length;
   }, [mainSnapshots]);
 
-  const { chartData, totalInput, totalOutput, totalCacheRead, totalCacheWrite } = useMemo(() => {
-    const cd = mainSnapshots.map((s) => ({
+  const { chartData, costData, totalInput, totalOutput, totalCacheRead, totalCacheWrite } = useMemo(() => {
+    const cd = mainSnapshots.map((s) => {
+      // Anthropic: inputTokens = uncached only, cache buckets are non-overlapping → stack all.
+      // OpenAI/Google/Vertex: inputTokens = total prompt including cached subset → subtract to avoid double-count.
+      const isAnthropicRound = s.provider === 'anthropic';
+      const uncachedInput = isAnthropicRound
+        ? s.inputTokens
+        : Math.max(0, s.inputTokens - s.cacheReadTokens);
+      return {
+        round: s.round,
+        Input: uncachedInput,
+        Output: s.outputTokens,
+        'Cache Read': s.cacheReadTokens,
+        'Cache Write': s.cacheWriteTokens,
+      };
+    });
+    const costD = mainSnapshots.map((s) => ({
       round: s.round,
-      Input: s.inputTokens,
-      Output: s.outputTokens,
-      'Cache Read': s.cacheReadTokens,
-      'Cache Write': s.cacheWriteTokens,
       Cost: Math.round(s.costCents * 100) / 100,
     }));
     let tIn = 0, tOut = 0, tCache = 0, tCacheW = 0;
@@ -55,17 +66,17 @@ export function CostIOSection() {
       tCache += s.cacheReadTokens;
       tCacheW += s.cacheWriteTokens;
     }
-    return { chartData: cd, totalInput: tIn, totalOutput: tOut, totalCacheRead: tCache, totalCacheWrite: tCacheW };
+    return { chartData: cd, costData: costD, totalInput: tIn, totalOutput: tOut, totalCacheRead: tCache, totalCacheWrite: tCacheW };
   }, [mainSnapshots]);
 
   const costAxisMax = useMemo(() => {
     let m = 0;
-    for (const row of chartData) {
+    for (const row of costData) {
       if (row.Cost > m) m = row.Cost;
     }
     const headroom = m > 0 ? m * 1.12 : 1;
     return Math.max(headroom, 0.01);
-  }, [chartData]);
+  }, [costData]);
 
   if (chatCostCents === 0 && chartData.length === 0 && subagentSnapshots.length === 0 && swarmSnapshots.length === 0) {
     return (
@@ -78,63 +89,75 @@ export function CostIOSection() {
   return (
     <div className="space-y-3">
       {chartData.length > 0 && (
-        <ResponsiveContainer width="100%" height={240}>
-          <ComposedChart data={chartData} margin={{ top: 4, right: 8, left: 4, bottom: 0 }} barCategoryGap="18%" barGap={1}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#262626" vertical={false} />
-            <XAxis
-              dataKey="round"
-              type="category"
-              tick={{ fill: '#737373', fontSize: 10 }}
-              tickLine={false}
-              label={{ value: 'Round', position: 'insideBottomRight', offset: -4, fill: '#737373', fontSize: 10 }}
-            />
-            <YAxis
-              yAxisId="tokens"
-              tickFormatter={fmtK}
-              tick={{ fill: '#737373', fontSize: 10 }}
-              tickLine={false}
-              axisLine={{ stroke: '#262626' }}
-              width={48}
-            />
-            <YAxis
-              yAxisId="cost"
-              orientation="right"
-              tick={{ fill: '#eab308', fontSize: 10 }}
-              tickLine={false}
-              axisLine={{ stroke: '#262626' }}
-              width={40}
-              tickFormatter={(v: number) => formatCost(v)}
-              domain={[0, costAxisMax]}
-            />
-            <Tooltip
-              contentStyle={{ backgroundColor: '#141414', border: '1px solid #262626', borderRadius: 6, fontSize: 11 }}
-              labelStyle={{ color: '#e5e5e5' }}
-              formatter={(value?: number, name?: string) => {
-                const v = value ?? 0;
-                return name === 'Cost' ? formatCost(v) : fmtK(v);
-              }}
-              labelFormatter={(l) => `Main Round ${l}`}
-            />
-            <RLegend
-              wrapperStyle={{ fontSize: 10, color: '#737373' }}
-              iconSize={8}
-            />
-            <Bar yAxisId="tokens" dataKey="Input" stackId="io" fill={COLORS.input} fillOpacity={0.85} radius={[0, 0, 0, 0]} maxBarSize={40} isAnimationActive={false} />
-            <Bar yAxisId="tokens" dataKey="Cache Read" stackId="io" fill={COLORS.cacheRead} fillOpacity={0.9} radius={[0, 0, 0, 0]} maxBarSize={40} isAnimationActive={false} />
-            <Bar yAxisId="tokens" dataKey="Cache Write" stackId="io" fill={COLORS.cacheWrite} fillOpacity={0.85} radius={[0, 0, 0, 0]} maxBarSize={40} isAnimationActive={false} />
-            <Bar yAxisId="tokens" dataKey="Output" stackId="io" fill={COLORS.output} fillOpacity={0.85} radius={[2, 2, 0, 0]} maxBarSize={40} isAnimationActive={false} />
-            <Line
-              yAxisId="cost"
-              type="monotone"
-              dataKey="Cost"
-              stroke={COLORS.cost}
-              strokeWidth={2}
-              dot={{ r: 2.5, fill: COLORS.cost, strokeWidth: 0 }}
-              activeDot={{ r: 4, fill: COLORS.cost }}
-              isAnimationActive={false}
-            />
-          </ComposedChart>
-        </ResponsiveContainer>
+        <>
+          {/* Token I/O stacked bars — single Y-axis */}
+          <ResponsiveContainer width="100%" height={180}>
+            <BarChart data={chartData} margin={{ top: 4, right: 8, left: 4, bottom: 0 }} barCategoryGap="18%" barGap={1}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#262626" vertical={false} />
+              <XAxis
+                dataKey="round"
+                type="category"
+                tick={{ fill: '#737373', fontSize: 10 }}
+                tickLine={false}
+              />
+              <YAxis
+                tickFormatter={fmtK}
+                tick={{ fill: '#737373', fontSize: 10 }}
+                tickLine={false}
+                axisLine={{ stroke: '#262626' }}
+                width={48}
+              />
+              <Tooltip
+                contentStyle={{ backgroundColor: '#141414', border: '1px solid #262626', borderRadius: 6, fontSize: 11 }}
+                labelStyle={{ color: '#e5e5e5' }}
+                formatter={(value?: number) => fmtK(value ?? 0)}
+                labelFormatter={(l) => `Main Round ${l}`}
+              />
+              <RLegend wrapperStyle={{ fontSize: 10, color: '#737373' }} iconSize={8} />
+              <Bar dataKey="Input" stackId="io" fill={COLORS.input} fillOpacity={0.85} radius={[0, 0, 0, 0]} maxBarSize={40} isAnimationActive={false} />
+              <Bar dataKey="Cache Read" stackId="io" fill={COLORS.cacheRead} fillOpacity={0.9} radius={[0, 0, 0, 0]} maxBarSize={40} isAnimationActive={false} />
+              <Bar dataKey="Cache Write" stackId="io" fill={COLORS.cacheWrite} fillOpacity={0.85} radius={[0, 0, 0, 0]} maxBarSize={40} isAnimationActive={false} />
+              <Bar dataKey="Output" stackId="io" fill={COLORS.output} fillOpacity={0.85} radius={[2, 2, 0, 0]} maxBarSize={40} isAnimationActive={false} />
+            </BarChart>
+          </ResponsiveContainer>
+
+          {/* Cost per round — separate chart, single Y-axis */}
+          <ResponsiveContainer width="100%" height={100}>
+            <LineChart data={costData} margin={{ top: 4, right: 8, left: 4, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#262626" vertical={false} />
+              <XAxis
+                dataKey="round"
+                type="category"
+                tick={{ fill: '#737373', fontSize: 10 }}
+                tickLine={false}
+                label={{ value: 'Round', position: 'insideBottomRight', offset: -4, fill: '#737373', fontSize: 10 }}
+              />
+              <YAxis
+                tickFormatter={(v: number) => formatCost(v)}
+                tick={{ fill: '#eab308', fontSize: 10 }}
+                tickLine={false}
+                axisLine={{ stroke: '#262626' }}
+                width={48}
+                domain={[0, costAxisMax]}
+              />
+              <Tooltip
+                contentStyle={{ backgroundColor: '#141414', border: '1px solid #262626', borderRadius: 6, fontSize: 11 }}
+                labelStyle={{ color: '#e5e5e5' }}
+                formatter={(value?: number) => formatCost(value ?? 0)}
+                labelFormatter={(l) => `Main Round ${l}`}
+              />
+              <Line
+                type="monotone"
+                dataKey="Cost"
+                stroke={COLORS.cost}
+                strokeWidth={2}
+                dot={{ r: 2.5, fill: COLORS.cost, strokeWidth: 0 }}
+                activeDot={{ r: 4, fill: COLORS.cost }}
+                isAnimationActive={false}
+              />
+            </LineChart>
+          </ResponsiveContainer>
+        </>
       )}
 
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">

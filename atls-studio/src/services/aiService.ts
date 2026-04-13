@@ -2284,6 +2284,7 @@ async function streamChatViaTauri(
         useRoundHistoryStore.getState().pushSnapshot({
           round: round + 1,
           timestamp: Date.now(),
+          provider: config.provider,
           wmTokens,
           wmStoreTokens,
           bbTokens,

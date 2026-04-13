@@ -35,6 +35,8 @@ export interface RoundSnapshot {
   outputTokens: number;
   cacheReadTokens: number;
   cacheWriteTokens: number;
+  // Provider (for cache token semantics: Anthropic = non-overlapping, OpenAI/Google/Vertex = overlapping)
+  provider?: string;
   // Cost
   costCents: number;
   inputCostCents?: number;
