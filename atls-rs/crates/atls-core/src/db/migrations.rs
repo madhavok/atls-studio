@@ -36,6 +36,75 @@ impl<'a> DatabaseMigrations<'a> {
         self.migrate_enhanced_fts5()?;
         self.migrate_workspaces_table()?;
         self.migrate_files_language_index()?;
+        self.migrate_search_intelligence_extensions()?;
+        Ok(())
+    }
+
+    /// Embeddings table, selection boosts, clone body hashes, optional workspace db path.
+    fn migrate_search_intelligence_extensions(&self) -> Result<(), MigrationError> {
+        let cs_exists = self
+            .conn
+            .query_row(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='code_signatures' LIMIT 1",
+                [],
+                |_| Ok(()),
+            )
+            .optional()?
+            .is_some();
+        if cs_exists {
+            let cols: Vec<String> = self
+                .conn
+                .prepare("PRAGMA table_info(code_signatures)")?
+                .query_map([], |row| row.get::<_, String>(1))?
+                .collect::<Result<_, _>>()?;
+            if !cols.iter().any(|c| c == "normalized_body_hash") {
+                self.conn.execute(
+                    "ALTER TABLE code_signatures ADD COLUMN normalized_body_hash TEXT",
+                    [],
+                )?;
+                self.conn.execute_batch(
+                    "CREATE INDEX IF NOT EXISTS idx_code_signatures_body_hash ON code_signatures(normalized_body_hash);",
+                )?;
+            }
+        }
+
+        self.conn.execute_batch(
+            r#"
+            CREATE TABLE IF NOT EXISTS symbol_embeddings (
+                symbol_id INTEGER PRIMARY KEY,
+                dim INTEGER NOT NULL,
+                model TEXT NOT NULL DEFAULT 'deterministic-v1',
+                vec BLOB NOT NULL,
+                FOREIGN KEY(symbol_id) REFERENCES symbols(id) ON DELETE CASCADE
+            );
+            CREATE TABLE IF NOT EXISTS symbol_search_boost (
+                symbol_id INTEGER PRIMARY KEY,
+                boost REAL NOT NULL DEFAULT 0,
+                updated_at INTEGER DEFAULT (unixepoch())
+            );
+            "#,
+        )?;
+
+        let workspaces_exists = self
+            .conn
+            .query_row(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='workspaces' LIMIT 1",
+                [],
+                |_| Ok(()),
+            )
+            .optional()?
+            .is_some();
+        if workspaces_exists {
+            let wcols: Vec<String> = self
+                .conn
+                .prepare("PRAGMA table_info(workspaces)")?
+                .query_map([], |row| row.get::<_, String>(1))?
+                .collect::<Result<_, _>>()?;
+            if !wcols.iter().any(|c| c == "db_path") {
+                self.conn
+                    .execute("ALTER TABLE workspaces ADD COLUMN db_path TEXT", [])?;
+            }
+        }
         Ok(())
     }
 
@@ -259,7 +328,8 @@ impl<'a> DatabaseMigrations<'a> {
                         normalized_signature TEXT,
                         hash TEXT
                     );
-                    INSERT INTO code_signatures_new SELECT * FROM code_signatures;
+                    INSERT INTO code_signatures_new (id, symbol_id, normalized_signature, hash)
+                    SELECT id, symbol_id, normalized_signature, hash FROM code_signatures;
                     DROP TABLE code_signatures;
                     ALTER TABLE code_signatures_new RENAME TO code_signatures;
                     CREATE INDEX IF NOT EXISTS idx_code_signatures_hash ON code_signatures(hash);

@@ -33,6 +33,13 @@ pub struct Database {
 }
 
 impl Database {
+    /// Wrap an open connection without running `init` (for read-only federation on migrated DBs).
+    pub fn from_connection_skip_init(conn: Connection) -> Self {
+        Self {
+            conn: Mutex::new(conn),
+        }
+    }
+
     /// Open or create a database at the given path
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self, DatabaseError> {
         let conn = Connection::open(path)?;
@@ -70,11 +77,23 @@ impl Database {
         f(&mut conn).map_err(DatabaseError::from)
     }
 
-    /// Get a reference to the underlying connection (acquires lock)
-    /// WARNING: Holds the lock for the lifetime of the returned guard
-    /// Prefer using with_conn() for short operations
+    /// Get a reference to the underlying connection (acquires lock).
+    /// Holds the lock for the lifetime of the returned guard.
+    /// Panics after 60s to prevent silent hangs from lock contention.
     pub fn conn(&self) -> std::sync::MutexGuard<'_, Connection> {
-        self.conn.lock().expect("Database lock poisoned")
+        let start = std::time::Instant::now();
+        loop {
+            match self.conn.try_lock() {
+                Ok(guard) => return guard,
+                Err(std::sync::TryLockError::Poisoned(e)) => panic!("Database lock poisoned: {}", e),
+                Err(std::sync::TryLockError::WouldBlock) => {
+                    if start.elapsed() > std::time::Duration::from_secs(60) {
+                        panic!("Database lock acquisition timed out after 60s — probable deadlock or long-held lock");
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(5));
+                }
+            }
+        }
     }
 
     /// Initialize the database (create tables, run migrations)

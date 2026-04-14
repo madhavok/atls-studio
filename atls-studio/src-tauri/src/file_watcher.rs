@@ -21,6 +21,62 @@ fn collect_changed_paths(root_path: &str, paths: &[std::path::PathBuf]) -> Vec<S
     changed_paths
 }
 
+/// After filesystem changes, refresh SQLite index for this watcher root (debounced batches).
+async fn queue_incremental_reindex_for_watch_batch(
+    app: &AppHandle,
+    watcher_root: &str,
+    changed_rel_paths: &[String],
+) {
+    if changed_rel_paths.is_empty() {
+        return;
+    }
+
+    let state = app.state::<crate::AtlsProjectState>();
+    let roots = state.roots.lock().await;
+    let active = state
+        .active_root
+        .read()
+        .ok()
+        .and_then(|g| (*g).clone());
+    let Ok((project, _)) = crate::resolve_project(&roots, &active, Some(watcher_root)) else {
+        return;
+    };
+    drop(roots);
+
+    let root_pb = std::path::PathBuf::from(watcher_root);
+    let indexer = project.indexer().clone();
+
+    let mut to_delete: Vec<String> = Vec::new();
+    let mut to_reindex: Vec<String> = Vec::new();
+    for rel in changed_rel_paths {
+        let abs = root_pb.join(rel);
+        if abs.is_file() {
+            to_reindex.push(rel.clone());
+        } else if !abs.exists() {
+            to_delete.push(rel.clone());
+        }
+    }
+
+    let n_delete = to_delete.len();
+    let n_reindex = to_reindex.len();
+    if !to_delete.is_empty() {
+        let _ = crate::git_ops::index_deleted_files(app, indexer.as_ref(), &root_pb, &to_delete).await;
+    }
+    if !to_reindex.is_empty() {
+        let _ = crate::git_ops::index_modified_files(app, indexer, root_pb.clone(), to_reindex).await;
+    }
+
+    let _ = app.emit(
+        "index_updated",
+        serde_json::json!({
+            "root": watcher_root,
+            "paths": changed_rel_paths,
+            "deleted_checked": n_delete,
+            "reindex_queued": n_reindex,
+        }),
+    );
+}
+
 async fn invalidate_freshness_for_paths(app: &AppHandle, root_path: &str, changed_paths: &[String]) {
     if changed_paths.is_empty() {
         return;
@@ -149,6 +205,12 @@ pub async fn start_file_watcher(
             let changed_paths = collect_changed_paths(&root_path_clone, &paths);
             if !changed_paths.is_empty() {
                 invalidate_freshness_for_paths(&app_clone, &root_path_clone, &changed_paths).await;
+                queue_incremental_reindex_for_watch_batch(
+                    &app_clone,
+                    &root_path_clone,
+                    &changed_paths,
+                )
+                .await;
                 let _ = app_clone.emit("file_tree_changed", serde_json::json!({
                     "root": root_path_clone,
                     "count": paths.len(),

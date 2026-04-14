@@ -1,0 +1,7 @@
+WHITESPACE = _{ " " | "\t" | "\r" | "\n" }
+ident = @{ (ASCII_ALPHA | "_" | "-")+ }
+pair = ${ ident ~ ":" ~ value }
+value = @{ (!(WHITESPACE) ~ ANY)+ }
+word = @{ (!(WHITESPACE) ~ ANY)+ }
+item = { pair | word }
+query = { SOI ~ item ~ (WHITESPACE+ ~ item)* ~ EOI }

@@ -30,6 +30,7 @@ const SHORT_TO_OP_ENTRIES: ReadonlyArray<readonly [string, OperationKind]> = [
   ['ai',  'analyze.impact'],
   ['ab',  'analyze.blast_radius'],
   ['ax',  'analyze.extract_plan'],
+  ['ag',  'analyze.graph'],
   // change
   ['ce',  'change.edit'],
   ['cc',  'change.create'],

@@ -2027,30 +2027,46 @@ impl QueryEngine {
         
         for func_name in function_names {
             // Get source function's signature, normalized signature, and body hash
-            let source: Option<(i64, String, Option<String>, Option<String>, Option<String>)> = conn.query_row(
-                "SELECT s.id, f.path, s.signature, cs.normalized_signature, cs.hash
-                 FROM symbols s
+            let source: Option<(
+                i64,
+                String,
+                Option<String>,
+                Option<String>,
+                Option<String>,
+                Option<String>,
+            )> = conn
+                .query_row(
+                    "SELECT s.id, f.path, s.signature, cs.normalized_signature, cs.hash, cs.normalized_body_hash FROM symbols s
                  JOIN files f ON s.file_id = f.id
                  LEFT JOIN code_signatures cs ON cs.symbol_id = s.id
                  WHERE s.name = ? AND s.kind IN ('function', 'method', 'arrow_function', 'generator_function')
                  LIMIT 1",
-                [func_name],
-                |row| Ok((
-                    row.get(0)?, 
-                    row.get(1)?,
-                    row.get::<_, Option<String>>(2)?,
-                    row.get::<_, Option<String>>(3)?,
-                    row.get::<_, Option<String>>(4)?,
-                ))
-            ).optional()?;
-            
-            let (source_id, compare_sig_owned, source_hash) = if let Some((id, _file, sig, norm, hash)) = source {
-                let sig_str = norm.or(sig).unwrap_or_else(|| func_name.to_string());
-                let sig_str = if sig_str.is_empty() { func_name.to_string() } else { sig_str };
-                (id, sig_str, hash)
-            } else {
-                (-1i64, func_name.to_string(), None)
-            };
+                    [func_name],
+                    |row| {
+                        Ok((
+                            row.get(0)?,
+                            row.get(1)?,
+                            row.get::<_, Option<String>>(2)?,
+                            row.get::<_, Option<String>>(3)?,
+                            row.get::<_, Option<String>>(4)?,
+                            row.get::<_, Option<String>>(5)?,
+                        ))
+                    },
+                )
+                .optional()?;
+
+            let (source_id, compare_sig_owned, source_hash, source_body_hash) =
+                if let Some((id, _file, sig, norm, hash, body_h)) = source {
+                    let sig_str = norm.or(sig).unwrap_or_else(|| func_name.to_string());
+                    let sig_str = if sig_str.is_empty() {
+                        func_name.to_string()
+                    } else {
+                        sig_str
+                    };
+                    (id, sig_str, hash, body_h)
+                } else {
+                    (-1i64, func_name.to_string(), None, None)
+                };
             let compare_sig = compare_sig_owned.as_str();
 
             let mut matches_for_func = Vec::new();
@@ -2087,6 +2103,47 @@ impl QueryEngine {
                             similarity: 1.0,
                             signature: sig,
                             match_type: "body_hash".to_string(),
+                        });
+                    }
+                }
+            }
+
+            // Type-2 clones: renamed identifiers, same normalized body hash
+            if let Some(ref bh) = source_body_hash {
+                if bh.len() >= 8 {
+                    let mut body_stmt = conn.prepare(
+                        "SELECT s.name, f.path, s.line, s.signature
+                         FROM code_signatures cs
+                         JOIN symbols s ON cs.symbol_id = s.id
+                         JOIN files f ON s.file_id = f.id
+                         WHERE cs.normalized_body_hash = ? AND cs.normalized_body_hash != ''
+                           AND s.id != ?
+                           AND s.kind IN ('function', 'method', 'arrow_function', 'generator_function')
+                         LIMIT 50",
+                    )?;
+                    let body_rows = body_stmt.query_map(rusqlite::params![bh, source_id], |row| {
+                        Ok((
+                            row.get::<_, String>(0)?,
+                            row.get::<_, String>(1)?,
+                            row.get::<_, u32>(2)?,
+                            row.get::<_, Option<String>>(3)?,
+                        ))
+                    })?;
+                    for row in body_rows {
+                        let (name, file, line, sig) = row?;
+                        let key = format!("{}:{}", &file, line);
+                        if seen_ids.contains(&key) {
+                            continue;
+                        }
+                        seen_ids.insert(key);
+                        matches_for_func.push(SimilarFunctionMatch {
+                            source: func_name.clone(),
+                            target: name,
+                            file,
+                            line,
+                            similarity: 0.95,
+                            signature: sig,
+                            match_type: "type2_clone".to_string(),
                         });
                     }
                 }

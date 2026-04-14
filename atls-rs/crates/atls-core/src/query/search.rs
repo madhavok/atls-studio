@@ -1,4 +1,8 @@
 use crate::query::{QueryEngine, QueryError};
+use crate::query::structured::StructuredFilters;
+use crate::types::symbol::format_qualified_symbol_name;
+use super::feedback;
+use super::hybrid;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -28,9 +32,17 @@ pub struct CodeSearchResult {
     #[serde(serialize_with = "serialize_relevance")]
     pub relevance: f64,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub symbol_id: Option<i64>,
+    /// Set when merging federated multi-DB search results.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_workspace: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub signature: Option<String>,
+    /// Enclosing scope + symbol when `metadata.parent_symbol` is set (e.g. `Point.distance`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub qualified_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub snippet: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -50,6 +62,8 @@ pub struct CompactSearchResult {
     pub r: f64,     // relevance
     #[serde(skip_serializing_if = "Option::is_none")]
     pub c: Option<String>, // snippet context
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub q: Option<String>, // qualified_name
 }
 
 /// Grouped search results by file (Phase 2)
@@ -77,6 +91,8 @@ pub struct GroupMatch {
     pub snippet: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub signature: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub qualified_name: Option<String>,
 }
 
 /// Tiered search response (Phase 4)
@@ -98,6 +114,7 @@ impl CodeSearchResult {
             k: self.kind.clone(),
             r: self.relevance,
             c: self.snippet.clone(),
+            q: self.qualified_name.clone(),
         }
     }
 }
@@ -111,6 +128,7 @@ impl CodeSearchResult {
             relevance: self.relevance,
             snippet: self.snippet.clone(),
             signature: self.signature.clone(),
+            qualified_name: self.qualified_name.clone(),
         }
     }
 }
@@ -298,7 +316,7 @@ fn is_test_symbol(name: &str) -> bool {
 }
 
 /// Apply heuristic reranking adjustments to normalised relevance scores.
-fn apply_heuristic_rerank(results: &mut [CodeSearchResult], query: &str) {
+pub(crate) fn apply_heuristic_rerank(results: &mut [CodeSearchResult], query: &str) {
     let pattern = detect_query_pattern(query);
     let query_terms: Vec<&str> = query.split_whitespace().collect();
 
@@ -515,6 +533,7 @@ fn build_fts_query(query: &str) -> String {
 
 /// Internal raw result before snippet population
 struct RawSearchHit {
+    symbol_id: Option<i64>,
     symbol: String,
     file: String,
     line: u32,
@@ -524,6 +543,7 @@ struct RawSearchHit {
     raw_bm25: f64,
     reason: Option<String>,
     signature: Option<String>,
+    parent_symbol: Option<String>,
 }
 
 impl QueryEngine {
@@ -537,6 +557,7 @@ impl QueryEngine {
     }
 
     /// Full search with optional file cache and configurable context lines.
+    /// `path_prefix`: when set, restricts FTS + fuzzy to files whose path starts with this prefix.
     pub fn search_code_full(
         &self,
         query: &str,
@@ -544,53 +565,95 @@ impl QueryEngine {
         file_cache: Option<&FileCache>,
         context_lines: usize,
     ) -> Result<Vec<CodeSearchResult>, QueryError> {
+        self.search_code_full_inner(query, limit, file_cache, context_lines, None)
+    }
+
+    pub fn search_code_full_scoped(
+        &self,
+        query: &str,
+        limit: usize,
+        file_cache: Option<&FileCache>,
+        context_lines: usize,
+        path_prefix: &str,
+    ) -> Result<Vec<CodeSearchResult>, QueryError> {
+        let norm = path_prefix.replace('\\', "/");
+        self.search_code_full_inner(query, limit, file_cache, context_lines, Some(norm))
+    }
+
+    fn search_code_full_inner(
+        &self,
+        query: &str,
+        limit: usize,
+        file_cache: Option<&FileCache>,
+        context_lines: usize,
+        path_prefix: Option<String>,
+    ) -> Result<Vec<CodeSearchResult>, QueryError> {
+        let structured = crate::query::structured::parse_structured_query(query);
+        if structured.has_structured_fields() {
+            return self.search_code_structured(&structured, limit, file_cache, context_lines);
+        }
+
         let conn = self.conn();
         let fetch_limit = limit.min(100).max(1);
-        // Fetch extra for dedup + reranking headroom
         let fetch_count = (fetch_limit * 3).min(150);
 
         let mut seen: HashSet<(String, String)> = HashSet::new();
 
-        // Phase 3.5: build FTS query with NEAR() for multi-word queries
         let fts_query = build_fts_query(query);
 
-        // BM25 weights: name=10, signature=5, kind=0.01 (near-zero to avoid
-        // "function"/"class" matching every symbol kind), body_preview=2
-        let mut stmt = conn.prepare(
-            "SELECT s.name, f.path, s.line, s.kind,
+        let path_like = path_prefix.as_ref().map(|p| format!("{}%", p.trim_end_matches('/')));
+        let path_clause = if path_like.is_some() {
+            " AND REPLACE(f.path, CHAR(92), '/') LIKE ?3"
+        } else {
+            ""
+        };
+
+        let fts_sql = format!(
+            "SELECT s.id, s.name, f.path, s.line, s.kind,
                     (bm25(symbols_fts, 10.0, 5.0, 0.01, 2.0)
                      - COALESCE(fi.importance_score, 0) * 0.1
                      - COALESCE(s.rank, 0) * 0.01) as rank,
+                    json_extract(s.metadata, '$.parent_symbol'),
                     s.signature
              FROM symbols_fts
              JOIN symbols s ON symbols_fts.rowid = s.id
              JOIN files f ON s.file_id = f.id
              LEFT JOIN file_importance fi ON fi.file_id = f.id
-             WHERE symbols_fts MATCH ?
+             WHERE symbols_fts MATCH ?1{path_clause}
              ORDER BY rank
-             LIMIT ?"
-        )?;
+             LIMIT ?2"
+        );
+        let mut stmt = conn.prepare(&fts_sql)?;
 
-        let rows = stmt.query_map(rusqlite::params![&fts_query, fetch_count as i64], |row| {
-            let score = row.get::<_, f64>(4)?;
+        let map_row = |row: &rusqlite::Row| {
+            let score = row.get::<_, f64>(5)?;
             Ok(RawSearchHit {
-                symbol: row.get(0)?,
-                file: row.get(1)?,
-                line: row.get(2)?,
-                kind: row.get(3)?,
+                symbol_id: Some(row.get(0)?),
+                symbol: row.get(1)?,
+                file: row.get(2)?,
+                line: row.get(3)?,
+                kind: row.get(4)?,
                 relevance: score,
                 raw_bm25: score,
                 reason: Some(format!("FTS match: {}", query)),
-                signature: row.get(5)?,
+                parent_symbol: row.get(6)?,
+                signature: row.get(7)?,
             })
-        })?;
+        };
 
         let mut raw_hits: Vec<RawSearchHit> = Vec::new();
-        for row in rows {
-            let hit = row?;
-            let key = (hit.file.clone(), hit.symbol.clone());
-            if seen.insert(key) {
-                raw_hits.push(hit);
+        {
+            let rows = if let Some(ref pl) = path_like {
+                stmt.query_map(rusqlite::params![&fts_query, fetch_count as i64, pl], map_row)?
+            } else {
+                stmt.query_map(rusqlite::params![&fts_query, fetch_count as i64], map_row)?
+            };
+            for row in rows {
+                let hit = row?;
+                let key = (hit.file.clone(), hit.symbol.clone());
+                if seen.insert(key) {
+                    raw_hits.push(hit);
+                }
             }
         }
 
@@ -600,57 +663,89 @@ impl QueryEngine {
         let query_trimmed = query.trim();
         if raw_hits.len() < fetch_limit && query_trimmed.len() >= 4 {
             let remaining = fetch_limit - raw_hits.len();
-            // Word-boundary-aware pattern: prefer starts-with or _-prefixed matches
             let escaped = query_trimmed.replace('%', "\\%").replace('_', "\\_");
             let pattern_prefix = format!("{}%", escaped);
             let pattern_word = format!("%\\_{}", escaped);
             let pattern_substr = format!("%{}%", escaped);
 
-            let mut fuzzy_stmt = conn.prepare(
-                "SELECT DISTINCT s.name, f.path, s.line, s.kind, s.rank, s.signature,
+            let fuzzy_path_clause = if path_like.is_some() {
+                " AND REPLACE(f.path, CHAR(92), '/') LIKE ?6"
+            } else {
+                ""
+            };
+            let fuzzy_sql = format!(
+                "SELECT DISTINCT s.id, s.name, f.path, s.line, s.kind, s.rank,
+                        json_extract(s.metadata, '$.parent_symbol'),
+                        s.signature,
                         CASE
-                            WHEN LOWER(s.name) LIKE LOWER(?) ESCAPE '\\' THEN 0.3
-                            WHEN LOWER(s.name) LIKE LOWER(?) ESCAPE '\\' THEN 0.25
+                            WHEN LOWER(s.name) LIKE LOWER(?1) ESCAPE '\\' THEN 0.3
+                            WHEN LOWER(s.name) LIKE LOWER(?2) ESCAPE '\\' THEN 0.25
                             ELSE 0.15
                         END as fuzzy_weight
                  FROM symbols s
                  JOIN files f ON s.file_id = f.id
-                 WHERE LOWER(s.name) LIKE LOWER(?) ESCAPE '\\'
-                    AND (s.name, f.path, s.line) NOT IN (
-                        SELECT s2.name, f2.path, s2.line
-                        FROM symbols s2
-                        JOIN files f2 ON s2.file_id = f2.id
-                        WHERE s2.id IN (SELECT rowid FROM symbols_fts WHERE symbols_fts MATCH ?)
-                    )
+                 WHERE LOWER(s.name) LIKE LOWER(?3) ESCAPE '\\'
+                    AND s.id NOT IN (SELECT rowid FROM symbols_fts WHERE symbols_fts MATCH ?4){fuzzy_path_clause}
                  ORDER BY fuzzy_weight DESC, s.rank DESC, s.name
-                 LIMIT ?"
-            )?;
+                 LIMIT ?5"
+            );
+            let mut fuzzy_stmt = conn.prepare(&fuzzy_sql)?;
 
-            let fuzzy_rows = fuzzy_stmt.query_map(
-                rusqlite::params![
-                    &pattern_prefix, &pattern_word, &pattern_substr,
-                    &fts_query, (remaining * 2) as i64
-                ],
-                |row| {
-                    let fuzzy_weight: f64 = row.get(6)?;
-                    Ok(RawSearchHit {
-                        symbol: row.get(0)?,
-                        file: row.get(1)?,
-                        line: row.get(2)?,
-                        kind: row.get(3)?,
-                        relevance: row.get::<_, f64>(4)? * fuzzy_weight,
-                        raw_bm25: f64::MAX,
-                        reason: Some(format!("Fuzzy match: {}", query)),
-                        signature: row.get(5)?,
-                    })
-                },
-            )?;
+            let fuzzy_map = |row: &rusqlite::Row| {
+                let fuzzy_weight: f64 = row.get(8)?;
+                Ok(RawSearchHit {
+                    symbol_id: Some(row.get(0)?),
+                    symbol: row.get(1)?,
+                    file: row.get(2)?,
+                    line: row.get(3)?,
+                    kind: row.get(4)?,
+                    relevance: row.get::<_, f64>(5)? * fuzzy_weight,
+                    raw_bm25: f64::MAX,
+                    reason: Some(format!("Fuzzy match: {}", query)),
+                    parent_symbol: row.get(6)?,
+                    signature: row.get(7)?,
+                })
+            };
+
+            let fuzzy_rows = if let Some(ref pl) = path_like {
+                fuzzy_stmt.query_map(
+                    rusqlite::params![&pattern_prefix, &pattern_word, &pattern_substr, &fts_query, (remaining * 2) as i64, pl],
+                    fuzzy_map,
+                )?
+            } else {
+                fuzzy_stmt.query_map(
+                    rusqlite::params![&pattern_prefix, &pattern_word, &pattern_substr, &fts_query, (remaining * 2) as i64],
+                    fuzzy_map,
+                )?
+            };
 
             for row in fuzzy_rows {
                 let hit = row?;
                 let key = (hit.file.clone(), hit.symbol.clone());
                 if seen.insert(key) {
                     raw_hits.push(hit);
+                }
+            }
+        }
+
+        // Hybrid RRF: merge FTS order with deterministic vector ranking when embeddings exist.
+        if query_trimmed.len() >= 3 {
+            if let Ok(vec_ids) = Self::search_embedding_ids_with_conn(&conn, query_trimmed, fetch_count) {
+                if !vec_ids.is_empty() && !raw_hits.is_empty() {
+                    let fts_ids: Vec<i64> = raw_hits.iter().filter_map(|h| h.symbol_id).collect();
+                    if !fts_ids.is_empty() {
+                        let fused = hybrid::reciprocal_rank_fusion_ids(&[fts_ids, vec_ids], 60.0);
+                        let rank_map: HashMap<i64, usize> = fused
+                            .into_iter()
+                            .enumerate()
+                            .map(|(i, (id, _))| (id, i))
+                            .collect();
+                        raw_hits.sort_by_key(|h| {
+                            h.symbol_id
+                                .and_then(|id| rank_map.get(&id).copied())
+                                .unwrap_or(10_000)
+                        });
+                    }
                 }
             }
         }
@@ -707,14 +802,20 @@ impl QueryEngine {
                 if let Some(penalty) = auto_penalties.get(&h.symbol.to_lowercase()) {
                     relevance *= penalty;
                 }
+                let qualified_name = h.parent_symbol.as_ref().map(|p| {
+                    format_qualified_symbol_name(&h.symbol, Some(p.as_str()))
+                });
                 CodeSearchResult {
                     symbol: h.symbol,
                     file: h.file,
                     line: h.line,
                     kind: h.kind,
                     relevance,
+                    symbol_id: h.symbol_id,
+                    source_workspace: None,
                     reason: h.reason,
                     signature: h.signature,
+                    qualified_name,
                     snippet: None,
                     context_before: None,
                     context_after: None,
@@ -724,6 +825,16 @@ impl QueryEngine {
 
         // Phase 3: heuristic reranking
         apply_heuristic_rerank(&mut results, query);
+
+        let ids: Vec<i64> = results.iter().filter_map(|r| r.symbol_id).collect();
+        let boosts = feedback::load_boosts_with_conn(&conn, &ids);
+        for r in &mut results {
+            if let Some(sid) = r.symbol_id {
+                if let Some(b) = boosts.get(&sid) {
+                    r.relevance *= (1.0 + b * 0.08).min(2.0);
+                }
+            }
+        }
 
         // Trim to requested limit
         results.truncate(fetch_limit);
@@ -740,7 +851,7 @@ impl QueryEngine {
     }
 
     /// Populate snippet fields on results using body_preview or file cache.
-    fn populate_snippets(
+    pub(crate) fn populate_snippets(
         &self,
         conn: &rusqlite::Connection,
         results: &mut [CodeSearchResult],
@@ -978,6 +1089,235 @@ impl QueryEngine {
         })
     }
 
+    /// Rank symbol IDs by cosine similarity of deterministic embeddings (empty if table unused).
+    pub fn search_symbol_ids_by_embedding(&self, query: &str, limit: usize) -> Result<Vec<i64>, QueryError> {
+        let conn = self.conn();
+        Self::search_embedding_ids_with_conn(&conn, query, limit)
+    }
+
+    fn search_embedding_ids_with_conn(conn: &rusqlite::Connection, query: &str, limit: usize) -> Result<Vec<i64>, QueryError> {
+        let n: i64 = conn.query_row("SELECT COUNT(*) FROM symbol_embeddings", [], |r| r.get(0))?;
+        if n == 0 {
+            return Ok(Vec::new());
+        }
+        let qv = hybrid::deterministic_embed(query);
+        let cap = limit.min(200).max(1);
+        let mut stmt = conn.prepare("SELECT symbol_id, vec FROM symbol_embeddings")?;
+        let rows = stmt.query_map([], |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, Vec<u8>>(1)?))
+        })?;
+        let mut scored: Vec<(i64, f32)> = Vec::new();
+        for row in rows {
+            let (id, blob) = row?;
+            let v = hybrid::blob_to_vec(&blob);
+            if v.len() != hybrid::EMBEDDING_DIM {
+                continue;
+            }
+            let s = hybrid::cosine_similarity(&qv, &v);
+            scored.push((id, s));
+        }
+        scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        Ok(scored.into_iter().take(cap).map(|(id, _)| id).collect())
+    }
+
+    /// Multi-DB search: merge by relevance (read-only connections; label → `source_workspace`).
+    pub fn search_code_federated(
+        db_paths: &[(String, std::path::PathBuf)],
+        query: &str,
+        per_db_limit: usize,
+        total_limit: usize,
+    ) -> Result<Vec<CodeSearchResult>, QueryError> {
+        use crate::db::Database;
+        use rusqlite::OpenFlags;
+
+        let mut all: Vec<CodeSearchResult> = Vec::new();
+        for (label, path) in db_paths {
+            let conn = rusqlite::Connection::open_with_flags(path.as_path(), OpenFlags::SQLITE_OPEN_READ_ONLY)
+                .map_err(QueryError::Sqlite)?;
+            let db = Database::from_connection_skip_init(conn);
+            let qe = QueryEngine::new(db);
+            let mut chunk = qe.search_code_full(query, per_db_limit, None, 1)?;
+            for r in &mut chunk {
+                r.source_workspace = Some(label.clone());
+            }
+            all.extend(chunk);
+        }
+        all.sort_by(|a, b| {
+            b.relevance
+                .partial_cmp(&a.relevance)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        all.truncate(total_limit.min(100).max(1));
+        Ok(all)
+    }
+
+    /// Structured `key:value` filters with optional FTS on free-text remainder.
+    pub fn search_code_structured(
+        &self,
+        filters: &StructuredFilters,
+        limit: usize,
+        file_cache: Option<&FileCache>,
+        context_lines: usize,
+    ) -> Result<Vec<CodeSearchResult>, QueryError> {
+        let conn = self.conn();
+        let fetch_limit = limit.min(100).max(1);
+
+        let mut sql = String::from(
+            "SELECT s.id, s.name, f.path, s.line, s.kind, s.rank, s.signature,
+                    json_extract(s.metadata, '$.parent_symbol')
+             FROM symbols s
+             JOIN files f ON s.file_id = f.id
+             WHERE 1=1",
+        );
+        let mut qp: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+
+        if let Some(ref k) = filters.kind {
+            let kl = k.to_lowercase();
+            match kl.as_str() {
+                "fn" | "function" => {
+                    sql.push_str(
+                        " AND s.kind IN ('function', 'method', 'arrow_function', 'generator_function')",
+                    );
+                }
+                "class" | "cls" => sql.push_str(" AND s.kind = 'class'"),
+                "method" => sql.push_str(" AND s.kind = 'method'"),
+                "struct" => sql.push_str(" AND s.kind = 'struct'"),
+                "enum" => sql.push_str(" AND s.kind = 'enum'"),
+                "interface" | "trait" => {
+                    sql.push_str(" AND s.kind IN ('interface', 'trait')");
+                }
+                _ => {
+                    sql.push_str(" AND s.kind = ?");
+                    qp.push(Box::new(k.clone()));
+                }
+            }
+        }
+
+        if let Some(ref n) = filters.name {
+            let pat = if n.contains('*') {
+                n.replace('*', "%")
+            } else {
+                format!("%{}%", n)
+            };
+            sql.push_str(" AND s.name LIKE ? ESCAPE '\\'");
+            qp.push(Box::new(pat));
+        }
+
+        if let Some(ref path) = filters.file {
+            let pat = if path.contains('*') {
+                path.replace('*', "%")
+            } else {
+                format!("%{}%", path.replace('\\', "/"))
+            };
+            sql.push_str(" AND f.path LIKE ? ESCAPE '\\'");
+            qp.push(Box::new(pat.replace('\\', "/")));
+        }
+
+        if let Some(ref lang) = filters.lang {
+            sql.push_str(" AND LOWER(f.language) = LOWER(?)");
+            qp.push(Box::new(lang.clone()));
+        }
+
+        if let Some(ref r) = filters.returns {
+            sql.push_str(
+                " AND LOWER(COALESCE(json_extract(s.metadata, '$.return_type'), '')) LIKE LOWER(?) ESCAPE '\\'",
+            );
+            let pat = format!("%{}%", r.replace('%', "\\%").replace('_', "\\_"));
+            qp.push(Box::new(pat));
+        }
+
+        if let Some(cmin) = filters.complexity_min {
+            sql.push_str(" AND s.complexity >= ?");
+            qp.push(Box::new(cmin));
+        }
+        if let Some(cmax) = filters.complexity_max {
+            sql.push_str(" AND s.complexity <= ?");
+            qp.push(Box::new(cmax));
+        }
+
+        if let Some(pmin) = filters.params_min {
+            sql.push_str(
+                " AND COALESCE(json_array_length(json_extract(s.metadata, '$.parameters')), 0) >= ?",
+            );
+            qp.push(Box::new(pmin));
+        }
+        if let Some(pmax) = filters.params_max {
+            sql.push_str(
+                " AND COALESCE(json_array_length(json_extract(s.metadata, '$.parameters')), 0) <= ?",
+            );
+            qp.push(Box::new(pmax));
+        }
+
+        if let Some(ref callee) = filters.calls {
+            sql.push_str(
+                " AND EXISTS (SELECT 1 FROM symbol_relations sr JOIN symbols s2 ON sr.to_symbol_id = s2.id
+                     WHERE sr.from_symbol_id = s.id AND sr.type = 'CALLS' AND s2.name = ?)",
+            );
+            qp.push(Box::new(callee.clone()));
+        }
+
+        if let Some(ref ft) = filters.free_text {
+            if !ft.trim().is_empty() {
+                let fts_q = build_fts_query(ft.trim());
+                sql.push_str(" AND s.id IN (SELECT rowid FROM symbols_fts WHERE symbols_fts MATCH ?)");
+                qp.push(Box::new(fts_q));
+            }
+        }
+
+        sql.push_str(" ORDER BY s.rank DESC, s.name LIMIT ?");
+        qp.push(Box::new((fetch_limit * 2) as i64));
+
+        let mut stmt = conn.prepare(&sql)?;
+        let param_refs: Vec<&dyn rusqlite::ToSql> = qp.iter().map(|p| p.as_ref()).collect();
+        let mut seen: HashSet<(String, String)> = HashSet::new();
+        let rows = stmt.query_map(param_refs.as_slice(), |row| {
+            let parent: Option<String> = row.get(7)?;
+            let symbol: String = row.get(1)?;
+            let qualified_name = parent
+                .as_ref()
+                .map(|p| format_qualified_symbol_name(&symbol, Some(p.as_str())));
+            Ok(CodeSearchResult {
+                symbol,
+                file: row.get(2)?,
+                line: row.get(3)?,
+                kind: row.get(4)?,
+                relevance: (row.get::<_, f64>(5)?).max(0.01),
+                symbol_id: Some(row.get(0)?),
+                source_workspace: None,
+                reason: Some("structured query".into()),
+                signature: row.get(6)?,
+                qualified_name,
+                snippet: None,
+                context_before: None,
+                context_after: None,
+            })
+        })?;
+
+        let mut results = Vec::new();
+        for row in rows {
+            let r = row?;
+            let key = (r.file.clone(), r.symbol.clone());
+            if seen.insert(key) {
+                results.push(r);
+                if results.len() >= fetch_limit {
+                    break;
+                }
+            }
+        }
+
+        let q_for_rerank = filters
+            .free_text
+            .as_deref()
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or("");
+        if !q_for_rerank.is_empty() {
+            apply_heuristic_rerank(&mut results, q_for_rerank);
+        }
+        results.truncate(fetch_limit);
+        self.populate_snippets(&conn, &mut results, file_cache, context_lines)?;
+        Ok(results)
+    }
+
     /// Search by symbol kind (e.g., "class User")
     pub fn search_by_kind(
         &self,
@@ -991,7 +1331,8 @@ impl QueryEngine {
         let mut seen: HashSet<(String, String)> = HashSet::new();
 
         let mut sql = String::from(
-            "SELECT s.name, f.path, s.line, s.kind, s.rank, s.signature
+            "SELECT s.id, s.name, f.path, s.line, s.kind, s.rank,
+                    json_extract(s.metadata, '$.parent_symbol'), s.signature
              FROM symbols s
              JOIN files f ON s.file_id = f.id
              WHERE s.kind = ?"
@@ -1012,14 +1353,22 @@ impl QueryEngine {
         let mut stmt = conn.prepare(&sql)?;
         let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
         let rows = stmt.query_map(params_refs.as_slice(), |row| {
+            let parent: Option<String> = row.get(6)?;
+            let symbol: String = row.get(1)?;
+            let qualified_name = parent
+                .as_ref()
+                .map(|p| format_qualified_symbol_name(&symbol, Some(p.as_str())));
             Ok(CodeSearchResult {
-                symbol: row.get(0)?,
-                file: row.get(1)?,
-                line: row.get(2)?,
-                kind: row.get(3)?,
-                relevance: row.get::<_, f64>(4)?,
+                symbol,
+                file: row.get(2)?,
+                line: row.get(3)?,
+                kind: row.get(4)?,
+                relevance: row.get::<_, f64>(5)?,
+                symbol_id: Some(row.get(0)?),
+                source_workspace: None,
                 reason: Some(format!("Kind: {}, query: {:?}", kind_str, query)),
-                signature: row.get(5)?,
+                signature: row.get(7)?,
+                qualified_name,
                 snippet: None,
                 context_before: None,
                 context_after: None,
@@ -1278,8 +1627,11 @@ mod tests {
                 line: 1,
                 kind: "variable".into(),
                 relevance: 0.9,
+                symbol_id: None,
+                source_workspace: None,
                 reason: None,
                 signature: None,
+                qualified_name: None,
                 snippet: None,
                 context_before: None,
                 context_after: None,
@@ -1290,8 +1642,11 @@ mod tests {
                 line: 5,
                 kind: "function".into(),
                 relevance: 0.8,
+                symbol_id: None,
+                source_workspace: None,
                 reason: None,
                 signature: None,
+                qualified_name: None,
                 snippet: None,
                 context_before: None,
                 context_after: None,
@@ -1313,8 +1668,11 @@ mod tests {
                 line: 1,
                 kind: "function".into(),
                 relevance: 0.7,
+                symbol_id: None,
+                source_workspace: None,
                 reason: None,
                 signature: None,
+                qualified_name: None,
                 snippet: None,
                 context_before: None,
                 context_after: None,
@@ -1325,8 +1683,11 @@ mod tests {
                 line: 5,
                 kind: "variable".into(),
                 relevance: 0.9,
+                symbol_id: None,
+                source_workspace: None,
                 reason: None,
                 signature: None,
+                qualified_name: None,
                 snippet: None,
                 context_before: None,
                 context_after: None,
@@ -1358,8 +1719,11 @@ mod tests {
             line: 42,
             kind: "function".into(),
             relevance: 0.95,
+            symbol_id: None,
+            source_workspace: None,
             reason: None,
             signature: Some("fn foo()".into()),
+            qualified_name: None,
             snippet: Some("fn foo() { }".into()),
             context_before: None,
             context_after: None,
@@ -1380,8 +1744,11 @@ mod tests {
             line: 10,
             kind: "method".into(),
             relevance: 0.8,
+            symbol_id: None,
+            source_workspace: None,
             reason: None,
             signature: None,
+            qualified_name: None,
             snippet: Some("fn bar()".into()),
             context_before: None,
             context_after: None,
@@ -1446,5 +1813,130 @@ mod tests {
             "strategy pattern",
             "adapter pattern",
         ]
+    }
+
+    /// Diagnostic: time each phase of search against a real DB.
+    /// Run with: cargo test -p atls-core -- --nocapture diagnose_search_perf --ignored
+    #[test]
+    #[ignore]
+    fn diagnose_search_perf() {
+        use std::time::Instant;
+
+        let db_path = std::path::Path::new("F:/source/atls-studio/.atls/atls.db");
+        if !db_path.exists() {
+            eprintln!("SKIP: no DB at {:?}", db_path);
+            return;
+        }
+
+        // Use a raw connection for diagnostics (not wrapped in Database/Mutex)
+        let raw = rusqlite::Connection::open_with_flags(
+            db_path,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        ).expect("open DB");
+        raw.pragma_update(None, "busy_timeout", 30000u32).unwrap();
+
+        let sym_count: i64 = raw.query_row("SELECT COUNT(*) FROM symbols", [], |r| r.get(0)).unwrap();
+        let emb_count: i64 = raw.query_row("SELECT COUNT(*) FROM symbol_embeddings", [], |r| r.get(0)).unwrap();
+        let file_count: i64 = raw.query_row("SELECT COUNT(*) FROM files", [], |r| r.get(0)).unwrap();
+        eprintln!("DB stats: {} symbols, {} embeddings, {} files", sym_count, emb_count, file_count);
+
+        let queries = ["parser", "parse", "parsing"];
+
+        for q in &queries {
+            eprintln!("\n=== Query: '{}' ===", q);
+
+            let fts_q = build_fts_query(q);
+            eprintln!("  FTS query: '{}'", fts_q);
+
+            // Phase 1: FTS
+            let t = Instant::now();
+            let fts_count: i64 = raw.query_row(
+                "SELECT COUNT(*) FROM symbols_fts WHERE symbols_fts MATCH ?",
+                [&fts_q],
+                |r| r.get(0),
+            ).unwrap_or(-1);
+            let fts_ms = t.elapsed().as_millis();
+            eprintln!("  FTS MATCH: {} hits in {}ms", fts_count, fts_ms);
+
+            // Phase 1b: FTS with JOIN (what search_code_full actually does)
+            let t = Instant::now();
+            let mut stmt = raw.prepare(
+                "SELECT COUNT(*) FROM symbols_fts
+                 JOIN symbols s ON symbols_fts.rowid = s.id
+                 JOIN files f ON s.file_id = f.id
+                 LEFT JOIN file_importance fi ON fi.file_id = f.id
+                 WHERE symbols_fts MATCH ?"
+            ).unwrap();
+            let fts_join_count: i64 = stmt.query_row([&fts_q], |r| r.get(0)).unwrap_or(-1);
+            let fts_join_ms = t.elapsed().as_millis();
+            eprintln!("  FTS+JOIN: {} hits in {}ms", fts_join_count, fts_join_ms);
+
+            // Phase 1c: FTS with path scope
+            let t = Instant::now();
+            let mut stmt2 = raw.prepare(
+                "SELECT COUNT(*) FROM symbols_fts
+                 JOIN symbols s ON symbols_fts.rowid = s.id
+                 JOIN files f ON s.file_id = f.id
+                 WHERE symbols_fts MATCH ?
+                   AND REPLACE(f.path, CHAR(92), '/') LIKE 'atls-rs/crates/atls-core/src%'"
+            ).unwrap();
+            let scoped_count: i64 = stmt2.query_row([&fts_q], |r| r.get(0)).unwrap_or(-1);
+            let scoped_ms = t.elapsed().as_millis();
+            eprintln!("  FTS+JOIN+scope: {} hits in {}ms", scoped_count, scoped_ms);
+
+            // Phase 2: Fuzzy LIKE
+            let t = Instant::now();
+            let pat = format!("%{}%", q);
+            let fuzzy_count: i64 = raw.query_row(
+                "SELECT COUNT(*) FROM symbols s
+                 JOIN files f ON s.file_id = f.id
+                 WHERE LOWER(s.name) LIKE LOWER(?)",
+                [&pat],
+                |r| r.get(0),
+            ).unwrap_or(-1);
+            let fuzzy_ms = t.elapsed().as_millis();
+            eprintln!("  Fuzzy LIKE: {} hits in {}ms", fuzzy_count, fuzzy_ms);
+
+            // Phase 3: Embedding scan
+            let t = Instant::now();
+            let mut emb_stmt = raw.prepare("SELECT symbol_id, vec FROM symbol_embeddings").unwrap();
+            let mut emb_scanned = 0i64;
+            let rows = emb_stmt.query_map([], |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, Vec<u8>>(1)?))
+            }).unwrap();
+            for row in rows {
+                let (_id, blob) = row.unwrap();
+                let v = super::hybrid::blob_to_vec(&blob);
+                if v.len() == super::hybrid::EMBEDDING_DIM {
+                    emb_scanned += 1;
+                }
+            }
+            let emb_ms = t.elapsed().as_millis();
+            eprintln!("  Embedding scan: {} vectors in {}ms", emb_scanned, emb_ms);
+        }
+
+        drop(raw);
+
+        // Phase 4: Full search_code_full (separate Database instance — own Mutex)
+        eprintln!("\n=== Full search_code_full('parser', 15) ===");
+        let conn2 = rusqlite::Connection::open_with_flags(
+            db_path,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        ).unwrap();
+        conn2.pragma_update(None, "journal_mode", "WAL").unwrap();
+        conn2.pragma_update(None, "busy_timeout", 30000u32).unwrap();
+        let db2 = crate::db::Database::from_connection_skip_init(conn2);
+        let qe = QueryEngine::new(db2);
+        let t = Instant::now();
+        let results = qe.search_code_full("parser", 15, None, 1);
+        let full_ms = t.elapsed().as_millis();
+        eprintln!("  search_code_full: {} results in {}ms", results.as_ref().map(|r| r.len()).unwrap_or(0), full_ms);
+
+        // Phase 5: Full scoped
+        eprintln!("\n=== Full search_code_full_scoped('parser', 15, 'atls-rs/') ===");
+        let t = Instant::now();
+        let scoped = qe.search_code_full_scoped("parser", 15, None, 1, "atls-rs/");
+        let scoped_ms = t.elapsed().as_millis();
+        eprintln!("  scoped: {} results in {}ms", scoped.as_ref().map(|r| r.len()).unwrap_or(0), scoped_ms);
     }
 }

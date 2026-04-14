@@ -1,10 +1,17 @@
 pub mod symbols;
 pub mod files;
 pub mod search;
+pub mod structured;
+pub mod grammar;
+pub mod hybrid;
+pub mod llm_query;
+pub mod feedback;
 pub mod issues;
 pub mod context;
+pub mod graph;
 
 pub use files::parse_imports_from_content;
+pub use structured::{parse_structured_query, StructuredFilters};
 pub use issues::{CategoryStat, IssueFilterOptions, NoiseMarking};
 pub use symbols::SymbolLineRange;
 

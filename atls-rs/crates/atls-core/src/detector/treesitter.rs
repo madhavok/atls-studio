@@ -404,4 +404,42 @@ mod tests {
         assert_eq!(issues.len(), 1, "Expected exactly one 'any' issue");
         assert_eq!(issues[0].line, 1, "Issue should be on line 1");
     }
+
+    /// Ensures ported catalog queries compile for gap languages (Dart/Ruby/Scala).
+    #[test]
+    fn repo_gap_language_pattern_queries_compile() {
+        use std::fs;
+        use std::path::Path;
+        use crate::types::Pattern;
+
+        let base = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../patterns");
+        for (file, lang) in [
+            ("dart.json", Language::Dart),
+            ("ruby.json", Language::Ruby),
+            ("scala.json", Language::Scala),
+        ] {
+            let path = base.join(file);
+            let text =
+                fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {}", path.display(), e));
+            let patterns: Vec<Pattern> =
+                serde_json::from_str(&text).unwrap_or_else(|e| panic!("parse {}: {}", file, e));
+            for p in patterns {
+                let Some(ref hints) = p.structural_hints else {
+                    continue;
+                };
+                let Some(ref qv) = hints.tree_sitter_query else {
+                    continue;
+                };
+                let q = match qv {
+                    serde_json::Value::String(s) => s.as_str(),
+                    _ => continue,
+                };
+                if TreeSitterDetector::is_placeholder_query(q) {
+                    continue;
+                }
+                compile_query(lang, q)
+                    .unwrap_or_else(|e| panic!("pattern {} in {} failed: {}", p.id, file, e));
+            }
+        }
+    }
 }

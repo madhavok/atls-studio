@@ -117,6 +117,7 @@ const FRONTEND_ATLS_BATCH_QUERY_OPS = [
   'find_similar_functions',
   'find_conceptual_matches',
   'find_pattern_implementations',
+  'symbol_graph',
 ] as const;
 
 describe('atls_batch_query operation crosswalk', () => {

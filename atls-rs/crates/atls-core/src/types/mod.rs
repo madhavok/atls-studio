@@ -9,7 +9,8 @@ pub use file::{FileInfo, FileRelationType, Language};
 pub use issue::{Issue, IssueSeverity, ParsedIssue};
 pub use pattern::{Pattern, PatternCategory, PatternSeverity, StructuralHints};
 pub use symbol::{
-    ParsedSymbol, Symbol, SymbolKind, SymbolMetadata, SymbolRelationType, SymbolVisibility,
+    format_qualified_symbol_name, ParsedSymbol, Symbol, SymbolKind, SymbolMetadata,
+    SymbolRelationType, SymbolVisibility,
 };
 pub use uhpp::{
     // Phase 1: Canonical units

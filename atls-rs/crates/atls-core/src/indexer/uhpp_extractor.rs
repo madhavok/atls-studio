@@ -9,7 +9,7 @@ use std::sync::OnceLock;
 
 use regex::Regex;
 
-use crate::symbol::{ParsedSymbol, SymbolKind, SymbolMetadata};
+use crate::symbol::{ParsedSymbol, SymbolKind, SymbolMetadata, SymbolParameter};
 
 // ---------------------------------------------------------------------------
 // UHPP symbol kind patterns — single source of truth
@@ -436,6 +436,120 @@ fn try_go_type_lines(lines: &[&str], total: usize) -> Vec<(String, usize, &'stat
 // Core extraction function
 // ---------------------------------------------------------------------------
 
+/// Best-effort `return_type` / `parameters` from a single declaration line (explicit types).
+fn enrich_metadata_from_signature(lang: &str, sig: Option<&String>, md: &mut SymbolMetadata) {
+    let Some(s) = sig else {
+        return;
+    };
+    let t = s.trim();
+    if t.is_empty() {
+        return;
+    }
+    let l = lang.to_lowercase();
+
+    if let Some(open) = t.find('(') {
+        if let Some(rel_close) = t[open + 1..].find(')') {
+            let close = open + 1 + rel_close;
+            let inside = t[open + 1..close].trim();
+            if !inside.is_empty() && inside != "self" && inside != "mut self" {
+                if l == "rust"
+                    || l.is_empty() && t.contains("fn ")
+                    || matches!(l.as_str(), "typescript" | "javascript" | "ts" | "js")
+                {
+                    let mut params: Vec<SymbolParameter> = Vec::new();
+                    for part in split_top_level_commas(inside) {
+                        let part = part.trim();
+                        if part.is_empty() {
+                            continue;
+                        }
+                        if let Some(c) = part.rfind(':') {
+                            let name = part[..c]
+                                .trim()
+                                .trim_start_matches('&')
+                                .trim_start_matches("mut ")
+                                .trim()
+                                .to_string();
+                            let ty = part[c + 1..].trim().to_string();
+                            if !name.is_empty() && !ty.is_empty() {
+                                params.push(SymbolParameter {
+                                    name,
+                                    param_type: Some(ty),
+                                    optional: None,
+                                    default_value: None,
+                                });
+                            }
+                        }
+                    }
+                    if !params.is_empty() {
+                        md.parameters = Some(params);
+                    }
+                }
+            }
+        }
+    }
+
+    if l == "rust" || (l.is_empty() && t.contains("fn ")) {
+        if let Some(pos) = t.rfind("->") {
+            let mut rt = t[pos + 2..].trim().to_string();
+            if let Some(b) = rt.find('{') {
+                rt = rt[..b].trim().to_string();
+            }
+            if !rt.is_empty() {
+                md.return_type = Some(rt);
+            }
+        }
+    } else if matches!(
+        l.as_str(),
+        "typescript" | "javascript" | "ts" | "js"
+    ) || (l.is_empty() && (t.contains("function") || t.contains("=>")))
+    {
+        if let Some(pos) = t.rfind("):") {
+            let after = t[pos + 2..].trim();
+            let mut rt = after                .split('{')
+                .next()
+                .unwrap_or(after)
+                .split("=>")
+                .next()
+                .unwrap_or(after)
+                .trim()
+                .to_string();
+            if rt.ends_with(';') {
+                rt.pop();
+                rt = rt.trim().to_string();
+            }
+            if !rt.is_empty() && !rt.starts_with('(') {
+                md.return_type = Some(rt);
+            }
+        }
+    }
+}
+
+/// Split on commas not inside nested `(...)`, `[...]`, `{...}` (best-effort).
+fn split_top_level_commas(s: &str) -> Vec<&str> {
+    let mut out = Vec::new();
+    let mut start = 0usize;
+    let mut depth = 0i32;
+    let mut bracket = 0i32;
+    let mut brace = 0i32;
+    for (i, ch) in s.char_indices() {
+        match ch {
+            '(' => depth += 1,
+            ')' => depth -= 1,
+            '[' => bracket += 1,
+            ']' => bracket -= 1,
+            '{' => brace += 1,
+            '}' => brace -= 1,
+            ',' if depth == 0 && bracket == 0 && brace == 0 => {
+                out.push(&s[start..i]);
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    out.push(&s[start..]);
+    out
+}
+
 /// Extract all symbols from source content using UHPP regex patterns.
 ///
 /// This replaces `SymbolExtractor::extract_symbols` (tree-sitter based).
@@ -535,7 +649,19 @@ pub fn uhpp_extract_symbols(content: &str, lang: Option<&str>) -> Vec<ParsedSymb
     }
 
     // --- Scoped kinds: enum_member inside enum blocks, field inside class/struct ---
-    extract_scoped_members(&lines, total, &seen, &mut seen.clone());
+    let primary_snapshot = seen.clone();
+    extract_scoped_members(&lines, total, &primary_snapshot, &mut seen);
+
+    // Enclosing scopes (innermost parent wins): class/struct/enum/impl/mod/etc. blocks
+    let mut containers: Vec<(u32, u32, String)> = Vec::new();
+    for ((line_idx, name), (kind, attr_start)) in &seen {
+        if is_scope_container_kind(kind) {
+            let end = find_block_end(&lines, *line_idx, total);
+            let start_1 = *attr_start as u32 + 1;
+            let end_1 = end as u32 + 1;
+            containers.push((start_1, end_1, name.clone()));
+        }
+    }
 
     // --- Build ParsedSymbol records ---
     let mut symbols: Vec<ParsedSymbol> = Vec::with_capacity(seen.len());
@@ -543,25 +669,30 @@ pub fn uhpp_extract_symbols(content: &str, lang: Option<&str>) -> Vec<ParsedSymb
         let end_line = find_block_end(&lines, *line_idx, total);
         let signature = lines.get(*line_idx).map(|l| l.trim().to_string());
         let body_preview = build_body_preview(&lines, *line_idx, end_line);
+        let sym_line = *attr_start as u32 + 1;
+        let parent_symbol = innermost_parent_for_line(sym_line, name, &containers);
+
+        let mut metadata = SymbolMetadata {
+            parameters: None,
+            return_type: None,
+            visibility: None,
+            modifiers: None,
+            parent_symbol,
+            extends: None,
+            implements: None,
+        };
+        enrich_metadata_from_signature(lang_str, signature.as_ref(), &mut metadata);
 
         symbols.push(ParsedSymbol {
             name: name.clone(),
             kind: SymbolKind::from_uhpp_kind(kind),
-            line: *attr_start as u32 + 1, // 1-based
+            line: sym_line, // 1-based
             end_line: Some(end_line as u32 + 1),
             scope_id: None,
             signature,
             complexity: None,
             body_preview: Some(body_preview),
-            metadata: SymbolMetadata {
-                parameters: None,
-                return_type: None,
-                visibility: None,
-                modifiers: None,
-                parent_symbol: None,
-                extends: None,
-                implements: None,
-            },
+            metadata,
         });
     }
 
@@ -573,11 +704,40 @@ pub fn uhpp_extract_symbols(content: &str, lang: Option<&str>) -> Vec<ParsedSymb
 // Scoped member extraction (enum_member, field)
 // ---------------------------------------------------------------------------
 
+fn is_scope_container_kind(kind: &str) -> bool {
+    matches!(
+        kind,
+        "cls" | "struct" | "interface" | "trait" | "enum" | "impl" | "mod" | "protocol"
+            | "record" | "actor" | "object" | "extension" | "mixin" | "union"
+    )
+}
+
+/// Smallest enclosing container for this 1-based line (by declaration line).
+fn innermost_parent_for_line(
+    line_1based: u32,
+    symbol_name: &str,
+    containers: &[(u32, u32, String)],
+) -> Option<String> {
+    let mut best: Option<(u32, String)> = None;
+    for (start, end, pname) in containers {
+        if *start <= line_1based && line_1based <= *end && pname.as_str() != symbol_name {
+            let replace = match &best {
+                None => true,
+                Some((best_start, _)) => *start > *best_start,
+            };
+            if replace {
+                best = Some((*start, pname.clone()));
+            }
+        }
+    }
+    best.map(|(_, n)| n)
+}
+
 fn extract_scoped_members(
     lines: &[&str],
     total: usize,
     primary: &HashMap<(usize, String), (&str, usize)>,
-    out: &mut HashMap<(usize, String), (&'static str, usize)>,
+    out: &mut HashMap<(usize, String), (&str, usize)>,
 ) {
     let compiled = compiled_patterns();
 
@@ -709,6 +869,12 @@ trait Drawable {
         assert!(names.contains(&"hello"), "missing fn hello: {:?}", names);
         assert!(names.contains(&"Point"), "missing struct Point: {:?}", names);
         assert!(names.contains(&"distance"), "missing fn distance: {:?}", names);
+        let distance = symbols.iter().find(|s| s.name == "distance").expect("distance symbol");
+        assert_eq!(
+            distance.metadata.parent_symbol.as_deref(),
+            Some("Point"),
+            "method should record enclosing type as parent_symbol"
+        );
         assert!(names.contains(&"Color"), "missing enum Color: {:?}", names);
         assert!(names.contains(&"Drawable"), "missing trait Drawable: {:?}", names);
         assert!(names.contains(&"draw"), "missing fn draw: {:?}", names);

@@ -4,8 +4,8 @@
     "languages": ["scala"],
     "category": "Security",
     "severity": "high",
-    "title": "eval / toolbox usage",
-    "description": "Runtime code evaluation can execute arbitrary code. Prefer type-safe alternatives.",
+    "title": "eval-style call",
+    "description": "Runtime evaluation can execute arbitrary code.",
     "tags": ["scala", "security"],
     "sources": [],
     "structuralHints": {
@@ -17,12 +17,181 @@
     "languages": ["scala"],
     "category": "ErrorHandling",
     "severity": "medium",
-    "title": "Empty catch block",
-    "description": "Catch block with no body swallows exceptions. Log or rethrow.",
+    "title": "catch case",
+    "description": "Review catch cases for swallowed exceptions.",
     "tags": ["scala", "catch"],
     "sources": [],
     "structuralHints": {
-      "treeSitterQuery": "(catch_case (block) @offender (#eq? @offender \"{}\"))"
+      "treeSitterQuery": "(catch_clause) @offender"
+    }
+  },
+  {
+    "id": "SC_TRY_EXPRESSION",
+    "languages": ["scala"],
+    "category": "ErrorHandling",
+    "severity": "info",
+    "title": "try expression",
+    "description": "Review try/finally and non-total recovery.",
+    "tags": ["scala"],
+    "sources": [],
+    "structuralHints": {
+      "treeSitterQuery": "(try_expression) @offender"
+    }
+  },
+  {
+    "id": "SC_THROW_EXPRESSION",
+    "languages": ["scala"],
+    "category": "ErrorHandling",
+    "severity": "info",
+    "title": "throw expression",
+    "description": "Prefer typed errors and meaningful messages.",
+    "tags": ["scala"],
+    "sources": [],
+    "structuralHints": {
+      "treeSitterQuery": "(throw_expression) @offender"
+    }
+  },
+  {
+    "id": "SC_FUNCTION_DEFINITION",
+    "languages": ["scala"],
+    "category": "Maintainability",
+    "severity": "info",
+    "title": "function definition",
+    "description": "Hook for complexity checks.",
+    "tags": ["scala"],
+    "sources": [],
+    "structuralHints": {
+      "treeSitterQuery": "(function_definition) @offender"
+    }
+  },
+  {
+    "id": "SC_CLASS_DEFINITION",
+    "languages": ["scala"],
+    "category": "DesignSmell",
+    "severity": "info",
+    "title": "class definition",
+    "description": "Structural anchor for inheritance review.",
+    "tags": ["scala"],
+    "sources": [],
+    "structuralHints": {
+      "treeSitterQuery": "(class_definition) @offender"
+    }
+  },
+  {
+    "id": "SC_OBJECT_DEFINITION",
+    "languages": ["scala"],
+    "category": "DesignSmell",
+    "severity": "info",
+    "title": "object definition",
+    "description": "Singleton objects and companions.",
+    "tags": ["scala"],
+    "sources": [],
+    "structuralHints": {
+      "treeSitterQuery": "(object_definition) @offender"
+    }
+  },
+  {
+    "id": "SC_IMPORT_DECLARATION",
+    "languages": ["scala"],
+    "category": "Maintainability",
+    "severity": "info",
+    "title": "import declaration",
+    "description": "Review wildcard imports and unused imports.",
+    "tags": ["scala"],
+    "sources": [],
+    "structuralHints": {
+      "treeSitterQuery": "(import_declaration) @offender"
+    }
+  },
+  {
+    "id": "SC_IF_EXPRESSION",
+    "languages": ["scala"],
+    "category": "Maintainability",
+    "severity": "info",
+    "title": "if expression",
+    "description": "Deeply nested if/else reduces readability.",
+    "tags": ["scala"],
+    "sources": [],
+    "structuralHints": {
+      "treeSitterQuery": "(if_expression) @offender"
+    }
+  },
+  {
+    "id": "SC_MATCH_EXPRESSION",
+    "languages": ["scala"],
+    "category": "Correctness",
+    "severity": "info",
+    "title": "match expression",
+    "description": "Ensure matches are exhaustive where required.",
+    "tags": ["scala"],
+    "sources": [],
+    "structuralHints": {
+      "treeSitterQuery": "(match_expression) @offender"
+    }
+  },
+  {
+    "id": "SC_FOR_EXPRESSION",
+    "languages": ["scala"],
+    "category": "Performance",
+    "severity": "info",
+    "title": "for comprehension",
+    "description": "Review for/yield chains for clarity and performance.",
+    "tags": ["scala"],
+    "sources": [],
+    "structuralHints": {
+      "treeSitterQuery": "(for_expression) @offender"
+    }
+  },
+  {
+    "id": "SC_COMMENT_TODO",
+    "languages": ["scala"],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "TODO in comment",
+    "description": "Track TODO/FIXME items.",
+    "tags": ["scala"],
+    "sources": [],
+    "structuralHints": {
+      "treeSitterQuery": "(comment) @c (#match? @c \"TODO|FIXME\")"
+    }
+  },
+  {
+    "id": "SC_ASINSTANCEOF",
+    "languages": ["scala"],
+    "category": "Correctness",
+    "severity": "low",
+    "title": "asInstanceOf cast",
+    "description": "Unsafe casts bypass the type system; prefer pattern matching.",
+    "tags": ["scala"],
+    "sources": [],
+    "structuralHints": {
+      "treeSitterQuery": "(call_expression function: (field_expression field: (identifier) @f (#eq? @f \"asInstanceOf\"))) @offender"
+    }
+  },
+  {
+    "id": "SC_NULL_LITERAL",
+    "languages": ["scala"],
+    "category": "Correctness",
+    "severity": "low",
+    "title": "null literal",
+    "description": "Prefer Option/Absent over null in Scala codebases.",
+    "tags": ["scala", "null"],
+    "sources": [],
+    "structuralHints": {
+      "treeSitterQuery": "(null_literal) @offender"
+    }
+  },
+  {
+    "id": "SC_RETURN_EXPRESSION",
+    "languages": ["scala"],
+    "category": "Style",
+    "severity": "info",
+    "title": "return expression",
+    "description": "Non-local returns can be surprising; prefer pure expressions.",
+    "tags": ["scala"],
+    "sources": [],
+    "structuralHints": {
+      "treeSitterQuery": "(return_expression) @offender"
     }
   }
 ]

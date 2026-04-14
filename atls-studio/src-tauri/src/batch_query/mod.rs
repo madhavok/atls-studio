@@ -134,7 +134,7 @@ pub async fn atls_batch_query(
             "help" => {
                 Ok(serde_json::json!({
                     "operations": [
-                        "context", "code_search", "find_symbol", "symbol_usage", "call_hierarchy", "symbol_dep_graph",
+                        "context", "code_search", "find_symbol", "symbol_usage", "call_hierarchy", "symbol_graph", "symbol_dep_graph",
                         "dependencies", "find_similar", "edit", "refactor", "extract_plan", "split_module",
                         "impact_analysis", "refactor_rollback",
                         "ast_query", "detect_patterns", "find_issues", "verify", "git", "workspaces", "help"
@@ -146,6 +146,7 @@ pub async fn atls_batch_query(
                         "find_symbol": "Symbol lookup (query:str, limit:20)",
                         "symbol_usage": "Find definitions and references (symbol_names:[], filter:str?, limit:15)",
                         "call_hierarchy": "Call graph analysis (symbol_names:[], depth:2, filter:str?, limit:10)",
+                        "symbol_graph": "Transitive symbol call graph (symbol_names:[], mode:callees|callers|subgraph, depth?:3, symbols?:[]) - recursive CTE over symbol_relations CALLS edges",
                         "symbol_dep_graph": "Intra-file symbol dependency graph (file_paths:[], kinds?:[], hub_threshold?:N, exclude_hubs?:true) â€” symbols + edges + hub detection (IQR outlier) + hub-excluded clusters",
                         "extract_plan": "Propose extraction plan (file_path or file_paths:[], strategy:'by_cluster'|'by_prefix'|'by_kind', min_lines?, min_complexity?) â€” hub-aware clustering, multi-segment prefix grouping, cohesion/risk metrics + ready-to-execute params",
                         "split_module": "Split monolithic file into directory module (source_file, target_dir, plan:[{module,symbols:[]}], dry_run?:true, mod_style?:'mod_rs') -- creates mod.rs + child modules with pub use re-exports",
@@ -153,7 +154,7 @@ pub async fn atls_batch_query(
                         "find_similar": "Similarity search (type: code|function|concept|pattern, + type-specific params)",
                         "edit": "Modify code (edits|creates|deletes|line_edits|revise|undo). Auto-lints and auto-writes (lint reports but never blocks).",
                         "refactor": "Structural changes (action: inventory|rename|move|extract|impact_analysis|execute|rewire_consumers|plan|rollback)",
-                        "ast_query": "Structural patterns (query: 'function where complexity > 10', 'fn where name contains X and params > 2'). syntax:'raw' for SQL WHERE.",
+                        "ast_query": "Structural patterns (query: 'function where complexity > 10'). syntax:'raw' SQL WHERE; syntax:'treesitter' + language + treesitter_query (optional; defaults to query).",
                         "detect_patterns": "Find anti-patterns (file_paths:[], patterns:[])",
                         "find_issues": "Find code issues (file_paths:[], severity:high|medium|low)",
                         "verify": "Run checks (type: test|build|typecheck|lint, workspace:'name' for monorepos)",
@@ -483,10 +484,23 @@ pub async fn atls_batch_query(
                             }
                         }
                     } else {
-                        match project.query().search_code_full(search_query, limit, Some(file_cache), context_lines) {
+                        let search_result = if let Some(ref fps) = file_paths {
+                            if fps.len() == 1 {
+                                project.query().search_code_full_scoped(search_query, limit, Some(file_cache), context_lines, &fps[0])
+                            } else {
+                                project.query().search_code_full(search_query, limit, Some(file_cache), context_lines)
+                            }
+                        } else {
+                            project.query().search_code_full(search_query, limit, Some(file_cache), context_lines)
+                        };
+                        match search_result {
                             Ok(raw_results) => {
                                 let search_results = if let Some(ref fps) = file_paths {
-                                    raw_results.into_iter().filter(|r| fps.iter().any(|f| r.file == *f || r.file.starts_with(f.as_str()) || r.file.ends_with(f.as_str()))).collect::<Vec<_>>()
+                                    if fps.len() > 1 {
+                                        raw_results.into_iter().filter(|r| fps.iter().any(|f| r.file == *f || r.file.starts_with(f.as_str()) || r.file.ends_with(f.as_str()))).collect::<Vec<_>>()
+                                    } else {
+                                        raw_results
+                                    }
                                 } else {
                                     raw_results
                                 };
@@ -1445,6 +1459,113 @@ pub async fn atls_batch_query(
                     }
                 }
                 
+                Ok(serde_json::json!({ "results": results }))
+            }
+            "symbol_graph" => {
+                let mode = params
+                    .get("mode")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("callees");
+                let symbol_names: Vec<String> = params
+                    .get("symbol_names")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                    .unwrap_or_default();
+                let file_hint: Option<&str> = params
+                    .get("file_paths")
+                    .and_then(|v| v.as_array())
+                    .and_then(|arr| arr.first())
+                    .and_then(|v| v.as_str());
+                let symbols_param: Vec<String> = params
+                    .get("symbols")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                    .unwrap_or_default();
+                let all_names: Vec<&str> = symbol_names.iter().map(|s| s.as_str())
+                    .chain(symbols_param.iter().map(|s| s.as_str()))
+                    .collect();
+                if all_names.is_empty() {
+                    return Err("symbol_names required for symbol_graph operation".to_string());
+                }
+                let depth: u32 = params
+                    .get("depth")
+                    .and_then(|v| v.as_u64())
+                    .map(|v| v as u32)
+                    .unwrap_or(3);
+                let qe = project.query();
+                let mut results = Vec::new();
+                match mode {
+                    "callees" | "symbol_callees" => {
+                        for name in &all_names {
+                            match qe.resolve_symbol_id(name, file_hint) {
+                                Ok(Some(sid)) => {
+                                    match qe.graph_symbol_callees(sid, depth) {
+                                        Ok(nodes) => results.push(serde_json::json!({
+                                            "symbol": name, "mode": "callees", "results": nodes
+                                        })),
+                                        Err(e) => results.push(serde_json::json!({
+                                            "symbol": name, "error": e.to_string()
+                                        })),
+                                    }
+                                }
+                                Ok(None) => results.push(serde_json::json!({
+                                    "symbol": name, "reason": "symbol_not_found"
+                                })),
+                                Err(e) => results.push(serde_json::json!({
+                                    "symbol": name, "error": e.to_string()
+                                })),
+                            }
+                        }
+                    }
+                    "callers" | "symbol_callers" => {
+                        for name in &all_names {
+                            match qe.resolve_symbol_id(name, file_hint) {
+                                Ok(Some(sid)) => {
+                                    match qe.graph_symbol_callers(sid, depth) {
+                                        Ok(nodes) => results.push(serde_json::json!({
+                                            "symbol": name, "mode": "callers", "results": nodes
+                                        })),
+                                        Err(e) => results.push(serde_json::json!({
+                                            "symbol": name, "error": e.to_string()
+                                        })),
+                                    }
+                                }
+                                Ok(None) => results.push(serde_json::json!({
+                                    "symbol": name, "reason": "symbol_not_found"
+                                })),
+                                Err(e) => results.push(serde_json::json!({
+                                    "symbol": name, "error": e.to_string()
+                                })),
+                            }
+                        }
+                    }
+                    "subgraph" | "symbol_subgraph" => {
+                        let mut seed_ids = Vec::new();
+                        let mut missing = Vec::new();
+                        for name in &all_names {
+                            match qe.resolve_symbol_id(name, file_hint) {
+                                Ok(Some(sid)) => seed_ids.push(sid),
+                                _ => missing.push(name.to_string()),
+                            }
+                        }
+                        if seed_ids.is_empty() {
+                            return Err(format!("none of the symbols found: {:?}", all_names));
+                        }
+                        match qe.graph_symbol_subgraph(&seed_ids, depth) {
+                            Ok((nodes, edges)) => {
+                                let mut out = serde_json::json!({
+                                    "mode": "subgraph", "nodes": nodes, "edges": edges
+                                });
+                                if !missing.is_empty() {
+                                    out["missing"] = serde_json::json!(missing);
+                                }
+                                results.push(out);
+                            }
+                            Err(e) => return Err(e.to_string()),
+                        }
+                    }
+                    other => return Err(format!("unknown symbol_graph mode: {}. Use: callees, callers, subgraph", other)),
+                }
                 Ok(serde_json::json!({ "results": results }))
             }
             "symbol_dep_graph" => {
@@ -5769,6 +5890,31 @@ pub async fn atls_batch_query(
                 } else {
                     "1=1".to_string()
                 };
+
+                if syntax == "treesitter" {
+                    let lang = params
+                        .get("language")
+                        .and_then(|v| v.as_str())
+                        .ok_or_else(|| "ast_query syntax:treesitter requires language (e.g. rust, typescript)".to_string())?;
+                    let ts_q = params
+                        .get("treesitter_query")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or(query);
+                    let conn = project.query().db().conn();
+                    let mut v = crate::ast_query::ast_query_treesitter_matches(
+                        &project_root_owned,
+                        &conn,
+                        &file_filter,
+                        lang,
+                        ts_q,
+                        (limit * 20).min(500),
+                        limit,
+                    )?;
+                    if let Some(o) = v.as_object_mut() {
+                        o.insert("query".to_string(), serde_json::json!(query));
+                    }
+                    return Ok(v);
+                }
                 
                 let (kind_sql_owned, condition_sql) = if syntax == "raw" {
                     // Raw mode: reject DDL/DML keywords for safety

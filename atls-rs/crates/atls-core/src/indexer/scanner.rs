@@ -16,6 +16,14 @@ use tracing::{debug, error, info, warn};
 use sha2::{Digest, Sha256};
 use std::fs;
 use rusqlite::{params, OptionalExtension};
+use regex::Regex;
+use std::sync::LazyLock;
+
+use crate::query::hybrid::{self, EMBEDDING_DIM, EMBEDDING_MODEL_ID};
+
+static IDENT_PLACEHOLDER_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"\b[A-Za-z_][A-Za-z0-9_]*\b").expect("ident placeholder regex")
+});
 
 /// Result of processing a single file (CPU-bound work, no DB access)
 struct FileProcessResult {
@@ -1416,9 +1424,24 @@ impl Indexer {
                     let symbol_id = conn.last_insert_rowid();
                     let normalized = Self::normalize_signature(sig);
                     let hash = Self::compute_signature_hash(&normalized);
+                    let body_prev = symbol.body_preview.as_deref().unwrap_or("");
+                    let norm_body = Self::normalize_body_identifiers(body_prev);
+                    let norm_body_hash = if norm_body.len() >= 12 {
+                        Self::compute_signature_hash(&norm_body)
+                    } else {
+                        String::new()
+                    };
                     conn.execute(
-                        "INSERT INTO code_signatures (symbol_id, normalized_signature, hash) VALUES (?1, ?2, ?3)",
-                        params![symbol_id, normalized, hash],
+                        "INSERT INTO code_signatures (symbol_id, normalized_signature, hash, normalized_body_hash) VALUES (?1, ?2, ?3, ?4)",
+                        params![symbol_id, normalized, hash, norm_body_hash],
+                    )?;
+
+                    let embed_text = format!("{}\n{}\n{}", symbol.name, sig.as_str(), body_prev);
+                    let emb = hybrid::deterministic_embed(&embed_text);
+                    let blob = hybrid::vec_to_blob(&emb);
+                    conn.execute(
+                        "INSERT INTO symbol_embeddings (symbol_id, dim, model, vec) VALUES (?1, ?2, ?3, ?4)",
+                        params![symbol_id, EMBEDDING_DIM as i64, EMBEDDING_MODEL_ID, blob],
                     )?;
                 }
             }
@@ -1537,6 +1560,11 @@ impl Indexer {
     /// Normalize a function signature for similarity comparison.
     /// Strips parameter names, normalizes whitespace, and lowercases type names
     /// so that structurally equivalent signatures produce the same string.
+    /// Replace identifiers so renamed clones share a hash (Type-2 structural clone).
+    fn normalize_body_identifiers(body: &str) -> String {
+        IDENT_PLACEHOLDER_RE.replace_all(body, "id").to_string()
+    }
+
     fn normalize_signature(sig: &str) -> String {
         sig.chars()
             // Collapse all whitespace runs to a single space

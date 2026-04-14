@@ -2,7 +2,7 @@ use rusqlite::Connection;
 use thiserror::Error;
 
 // Database configuration constants
-const DB_BUSY_TIMEOUT_MS: u32 = 5000; // Wait up to 5 seconds if database is locked
+const DB_BUSY_TIMEOUT_MS: u32 = 30000; // Wait up to 30 seconds if database is locked by indexer
 const DB_WAL_AUTOCHECKPOINT_PAGES: u32 = 1000; // Auto-checkpoint WAL every 1000 pages
 
 #[derive(Error, Debug)]
@@ -70,6 +70,7 @@ impl<'a> DatabaseSchema<'a> {
                 kind TEXT NOT NULL,
                 line INTEGER NOT NULL,
                 end_line INTEGER,
+                -- Deprecated: unused at insert; parent scope lives in metadata.parent_symbol (JSON).
                 scope_id INTEGER,
                 rank REAL DEFAULT 0.0,
                 signature TEXT,
@@ -150,11 +151,27 @@ impl<'a> DatabaseSchema<'a> {
                 symbol_id INTEGER,
                 normalized_signature TEXT,
                 hash TEXT,
+                normalized_body_hash TEXT,
                 FOREIGN KEY(symbol_id) REFERENCES symbols(id) ON DELETE CASCADE
             );
 
             CREATE INDEX IF NOT EXISTS idx_code_signatures_hash ON code_signatures(hash);
+            CREATE INDEX IF NOT EXISTS idx_code_signatures_body_hash ON code_signatures(normalized_body_hash);
             CREATE INDEX IF NOT EXISTS idx_code_signatures_symbol ON code_signatures(symbol_id);
+
+            CREATE TABLE IF NOT EXISTS symbol_embeddings (
+                symbol_id INTEGER PRIMARY KEY,
+                dim INTEGER NOT NULL,
+                model TEXT NOT NULL DEFAULT 'deterministic-v1',
+                vec BLOB NOT NULL,
+                FOREIGN KEY(symbol_id) REFERENCES symbols(id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS symbol_search_boost (
+                symbol_id INTEGER PRIMARY KEY,
+                boost REAL NOT NULL DEFAULT 0,
+                updated_at INTEGER DEFAULT (unixepoch())
+            );
 
             CREATE VIRTUAL TABLE IF NOT EXISTS symbols_fts USING fts5(
                 name,

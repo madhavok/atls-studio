@@ -171,6 +171,15 @@ pub struct SymbolMetadata {
     pub implements: Option<Vec<String>>, // Interfaces this implements
 }
 
+/// Display name including enclosing scope when `parent_symbol` is known (e.g. `UserService.validateEmail`).
+#[must_use]
+pub fn format_qualified_symbol_name(symbol: &str, parent_symbol: Option<&str>) -> String {
+    match parent_symbol {
+        Some(p) if !p.trim().is_empty() => format!("{}.{}", p.trim(), symbol),
+        _ => symbol.to_string(),
+    }
+}
+
 /// Parsed symbol from AST
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ParsedSymbol {

@@ -447,6 +447,29 @@ export const handleAnalyzeCalls: OpHandler = async (params, ctx) => {
 };
 
 // ---------------------------------------------------------------------------
+// analyze.graph (symbol call graph: callees, callers, subgraph)
+// ---------------------------------------------------------------------------
+
+export const handleAnalyzeGraph: OpHandler = async (params, ctx) => {
+  try {
+    const result = await ctx.atlsBatchQuery('symbol_graph', params);
+    const resultStr = formatResult(result);
+    const retained = checkRetention('analyze.graph', params, resultStr, true, 'analysis', 'symbol_graph');
+    if (retained.reused) return retained.output;
+    const hash = ctx.store().addChunk(resultStr, 'analysis', 'symbol_graph');
+    const tk = countTokensSync(resultStr);
+    return {
+      kind: 'analysis', ok: true,
+      refs: [`h:${hash}`],
+      summary: `symbol_graph → h:${hash} (${(tk / 1000).toFixed(1)}k tk)`,
+      tokens: tk,
+    };
+  } catch (graphErr) {
+    return err('symbol_graph', graphErr instanceof Error ? graphErr.message : String(graphErr));
+  }
+};
+
+// ---------------------------------------------------------------------------
 // analyze.structure
 // ---------------------------------------------------------------------------
 

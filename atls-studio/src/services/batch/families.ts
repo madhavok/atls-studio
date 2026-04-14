@@ -56,6 +56,7 @@ export const OPERATION_FAMILIES = {
       { op: 'analyze.impact' },
       { op: 'analyze.blast_radius' },
       { op: 'analyze.extract_plan' },
+      { op: 'analyze.graph' },
     ],
   },
   change: {

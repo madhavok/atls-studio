@@ -1,4 +1,5 @@
 use crate::project::ProjectManager;
+use rusqlite::OptionalExtension;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -312,6 +313,203 @@ pub async fn handle_batch_query(
                 Err(e) => Err(format!("Symbol search failed: {}", e)),
             }
         }
+        "graph_query" => {
+            let op = args
+                .get("suboperation")
+                .or_else(|| args.get("mode"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("depends_on");
+            let path = args
+                .get("path")
+                .or_else(|| args.get("file_path"))
+                .and_then(|v| v.as_str());
+            let symbol = args
+                .get("symbol")
+                .or_else(|| args.get("symbol_name"))
+                .and_then(|v| v.as_str());
+            let depth: u32 = args
+                .get("depth")
+                .and_then(|v| v.as_u64())
+                .map(|v| v as u32)
+                .unwrap_or(5);
+
+            let out = match op {
+                // --- File-level graph (require `path`) ---
+                "depends_on" | "imports" | "transitive_imports" => {
+                    let p = path.ok_or_else(|| "path required for graph_query imports".to_string())?;
+                    serde_json::json!(query_engine
+                        .graph_transitive_imports(p, depth)
+                        .map_err(|e| e.to_string())?)
+                }
+                "dependents" | "imported_by" => {
+                    let p = path.ok_or_else(|| "path required for graph_query dependents".to_string())?;
+                    serde_json::json!(query_engine
+                        .graph_transitive_dependents(p, depth)
+                        .map_err(|e| e.to_string())?)
+                }
+                "neighbors" | "edges" => {
+                    let p = path.ok_or_else(|| "path required for graph_query neighbors".to_string())?;
+                    serde_json::json!(query_engine
+                        .graph_file_neighbors(p)
+                        .map_err(|e| e.to_string())?)
+                }
+                "path" | "shortest_path" => {
+                    let p = path.ok_or_else(|| "path required for graph_query path".to_string())?;
+                    let to = args
+                        .get("to")
+                        .or_else(|| args.get("target"))
+                        .and_then(|v| v.as_str())
+                        .ok_or_else(|| "to/target required for graph_query path".to_string())?;
+                    serde_json::json!(query_engine
+                        .graph_shortest_import_path(p, to)
+                        .map_err(|e| e.to_string())?)
+                }
+                "centrality" => {
+                    let p = path.ok_or_else(|| "path required for graph_query centrality".to_string())?;
+                    let conn = query_engine.db().conn();
+                    let norm = p.replace('\\', "/");
+                    let score: Option<f64> = conn
+                        .query_row(
+                            r#"SELECT fi.importance_score FROM file_importance fi
+                               JOIN files f ON f.id = fi.file_id
+                               WHERE REPLACE(f.path, CHAR(92), '/') = ?1 COLLATE NOCASE"#,
+                            [norm.as_str()],
+                            |row| row.get(0),
+                        )
+                        .optional()
+                        .map_err(|e| e.to_string())?;
+                    serde_json::json!({ "path": p, "importance_score": score })
+                }
+
+                // --- Symbol-level call graph (require `symbol`) ---
+                "callees" | "symbol_callees" => {
+                    let sym = symbol.ok_or_else(|| "symbol required for graph_query callees".to_string())?;
+                    let sid = query_engine
+                        .resolve_symbol_id(sym, path)
+                        .map_err(|e| e.to_string())?
+                        .ok_or_else(|| format!("symbol not found: {}", sym))?;
+                    serde_json::json!(query_engine
+                        .graph_symbol_callees(sid, depth)
+                        .map_err(|e| e.to_string())?)
+                }
+                "callers" | "symbol_callers" => {
+                    let sym = symbol.ok_or_else(|| "symbol required for graph_query callers".to_string())?;
+                    let sid = query_engine
+                        .resolve_symbol_id(sym, path)
+                        .map_err(|e| e.to_string())?
+                        .ok_or_else(|| format!("symbol not found: {}", sym))?;
+                    serde_json::json!(query_engine
+                        .graph_symbol_callers(sid, depth)
+                        .map_err(|e| e.to_string())?)
+                }
+                "subgraph" | "symbol_subgraph" => {
+                    let sym_names: Vec<&str> = args
+                        .get("symbols")
+                        .and_then(|v| v.as_array())
+                        .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect())
+                        .or_else(|| symbol.map(|s| vec![s]))
+                        .ok_or_else(|| "symbol or symbols[] required for subgraph".to_string())?;
+                    let mut seed_ids = Vec::new();
+                    for name in &sym_names {
+                        if let Some(sid) = query_engine
+                            .resolve_symbol_id(name, path)
+                            .map_err(|e| e.to_string())?
+                        {
+                            seed_ids.push(sid);
+                        }
+                    }
+                    if seed_ids.is_empty() {
+                        return Err(format!("none of the symbols found: {:?}", sym_names));
+                    }
+                    let (nodes, edges) = query_engine
+                        .graph_symbol_subgraph(&seed_ids, depth)
+                        .map_err(|e| e.to_string())?;
+                    serde_json::json!({ "nodes": nodes, "edges": edges })
+                }
+
+                other => {
+                    return Err(format!("unknown graph_query suboperation: {}", other));
+                }
+            };
+            Ok(serde_json::json!({ "graph": out, "suboperation": op }))
+        }
+        "find_similar_functions" => {
+            let names: Vec<String> = args
+                .get("function_names")
+                .or_else(|| args.get("functions"))
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|x| x.as_str().map(String::from))
+                        .collect()
+                })
+                .unwrap_or_default();
+            if names.is_empty() {
+                return Err("function_names required".to_string());
+            }
+            let threshold = args
+                .get("threshold")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(0.65);
+            let limit = args
+                .get("limit")
+                .and_then(|v| v.as_u64())
+                .map(|v| v as usize)
+                .unwrap_or(20);
+            let m = query_engine
+                .find_similar_functions(&names, threshold, limit)
+                .map_err(|e| e.to_string())?;
+            Ok(serde_json::json!({ "matches": m }))
+        }
+        "federated_code_search" => {
+            let dbs: Vec<(String, std::path::PathBuf)> = args
+                .get("db_paths")
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| {
+                            let o = v.as_object()?;
+                            let label = o.get("label")?.as_str()?.to_string();
+                            let p = o.get("path")?.as_str()?.to_string();
+                            Some((label, std::path::PathBuf::from(p)))
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            if dbs.is_empty() {
+                return Err("db_paths:[{label, path}] required".to_string());
+            }
+            let q = args
+                .get("query")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| "query required".to_string())?;
+            let per = args
+                .get("per_db_limit")
+                .and_then(|v| v.as_u64())
+                .map(|v| v as usize)
+                .unwrap_or(15);
+            let total = args
+                .get("limit")
+                .and_then(|v| v.as_u64())
+                .map(|v| v as usize)
+                .unwrap_or(30);
+            let r = atls_core::query::QueryEngine::search_code_federated(&dbs, q, per, total)
+                .map_err(|e| e.to_string())?;
+            Ok(serde_json::json!({ "query": q, "results": r }))
+        }
+        "record_search_feedback" => {
+            let symbol_id = args
+                .get("symbol_id")
+                .and_then(|v| v.as_i64())
+                .ok_or_else(|| "symbol_id required".to_string())?;
+            let delta = args
+                .get("boost_delta")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(1.0);
+            atls_core::query::feedback::record_symbol_selection(query_engine.db(), symbol_id, delta)
+                .map_err(|e| e.to_string())?;
+            Ok(serde_json::json!({ "ok": true, "symbol_id": symbol_id }))
+        }
         "inventory" => {
             let file_paths: Vec<String> = args
                 .get("file_paths")
@@ -383,6 +581,7 @@ fn op_kind_to_batch_op(use_val: &str) -> Option<&'static str> {
         "analyze.deps" => Some("dependencies"),
         "analyze.calls" => Some("call_hierarchy"),
         "analyze.structure" => Some("symbol_dep_graph"),
+        "analyze.graph" => Some("graph_query"),
         "analyze.impact" => Some("change_impact"),
         "analyze.blast_radius" => Some("impact_analysis"),
         // change.edit needs sub-routing (draft/batch_edits/undo); best-effort: draft

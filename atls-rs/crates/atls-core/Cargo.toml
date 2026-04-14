@@ -35,6 +35,8 @@ tempfile = { version = "3", optional = true }
 regex = "1"
 num_cpus = "1.16"
 lru = "0.12"
+pest = { workspace = true }
+pest_derive = { workspace = true }
 
 [dev-dependencies]
 tempfile = "3"

@@ -34,6 +34,7 @@ import {
   handleSearchSimilar, handleSearchIssues, handleSearchPatterns,
   handleSearchMemory,
   handleAnalyzeDeps, handleAnalyzeCalls, handleAnalyzeStructure,
+  handleAnalyzeGraph,
   handleAnalyzeImpact, handleAnalyzeBlastRadius, handleAnalyzeExtractPlan,
 } from './handlers/query';
 
@@ -79,6 +80,7 @@ const OP_MAP: ReadonlyMap<OperationKind, OpHandler> = new Map<OperationKind, OpH
   ['analyze.impact', handleAnalyzeImpact],
   ['analyze.blast_radius', handleAnalyzeBlastRadius],
   ['analyze.extract_plan', handleAnalyzeExtractPlan],
+  ['analyze.graph', handleAnalyzeGraph],
 
   // change
   ['change.edit', handleEdit],

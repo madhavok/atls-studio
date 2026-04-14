@@ -1,15 +1,197 @@
 [
   {
-    "id": "DART_EMPTY_CATCH",
+    "id": "DART_TRY_STATEMENT",
+    "languages": ["dart"],
+    "category": "ErrorHandling",
+    "severity": "info",
+    "title": "try/catch region",
+    "description": "Review error handling in try blocks.",
+    "tags": ["dart"],
+    "sources": [],
+    "structuralHints": {
+      "treeSitterQuery": "(try_statement) @offender"
+    }
+  },
+  {
+    "id": "DART_CATCH_CLAUSE",
     "languages": ["dart"],
     "category": "ErrorHandling",
     "severity": "medium",
-    "title": "Empty catch block",
-    "description": "Catch block with no body swallows exceptions. Log or rethrow.",
+    "title": "catch clause",
+    "description": "Ensure catch clauses log or rethrow; avoid empty handlers.",
     "tags": ["dart", "catch"],
     "sources": [],
     "structuralHints": {
-      "treeSitterQuery": "(catch_clause (block) @offender)"
+      "treeSitterQuery": "(catch_clause) @offender"
+    }
+  },
+  {
+    "id": "DART_FINALLY_CLAUSE",
+    "languages": ["dart"],
+    "category": "ErrorHandling",
+    "severity": "low",
+    "title": "finally clause",
+    "description": "Review finally for masking exceptions or heavy work.",
+    "tags": ["dart"],
+    "sources": [],
+    "structuralHints": {
+      "treeSitterQuery": "(finally_clause) @offender"
+    }
+  },
+  {
+    "id": "DART_FUNCTION_DECLARATION",
+    "languages": ["dart"],
+    "category": "Maintainability",
+    "severity": "info",
+    "title": "top-level function",
+    "description": "Hook for complexity/length policies on functions.",
+    "tags": ["dart"],
+    "sources": [],
+    "structuralHints": {
+      "treeSitterQuery": "(function_declaration) @offender"
+    }
+  },
+  {
+    "id": "DART_METHOD_DECLARATION",
+    "languages": ["dart"],
+    "category": "Maintainability",
+    "severity": "info",
+    "title": "class method",
+    "description": "Hook for method-level checks.",
+    "tags": ["dart"],
+    "sources": [],
+    "structuralHints": {
+      "treeSitterQuery": "(method_declaration) @offender"
+    }
+  },
+  {
+    "id": "DART_CLASS_DECLARATION",
+    "languages": ["dart"],
+    "category": "DesignSmell",
+    "severity": "info",
+    "title": "class declaration",
+    "description": "Structural anchor for class-level analysis.",
+    "tags": ["dart"],
+    "sources": [],
+    "structuralHints": {
+      "treeSitterQuery": "(class_declaration) @offender"
+    }
+  },
+  {
+    "id": "DART_IMPORT_DIRECTIVE",
+    "languages": ["dart"],
+    "category": "Maintainability",
+    "severity": "info",
+    "title": "import directive",
+    "description": "Review imports for unused or deprecated APIs.",
+    "tags": ["dart"],
+    "sources": [],
+    "structuralHints": {
+      "treeSitterQuery": "(import_directive) @offender"
+    }
+  },
+  {
+    "id": "DART_ASSERT_STATEMENT",
+    "languages": ["dart"],
+    "category": "Correctness",
+    "severity": "low",
+    "title": "assert statement",
+    "description": "Asserts are stripped in release mode; use for debug-only invariants.",
+    "tags": ["dart"],
+    "sources": [],
+    "structuralHints": {
+      "treeSitterQuery": "(assert_statement) @offender"
+    }
+  },
+  {
+    "id": "DART_MARKED_COMMENT",
+    "languages": ["dart"],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "TODO/FIXME comment",
+    "description": "Track outstanding work in issue tracker.",
+    "tags": ["dart", "todo"],
+    "sources": [],
+    "structuralHints": {
+      "treeSitterQuery": "(comment) @c (#match? @c \"TODO|FIXME\")"
+    }
+  },
+  {
+    "id": "DART_THROW_EXPRESSION",
+    "languages": ["dart"],
+    "category": "ErrorHandling",
+    "severity": "info",
+    "title": "throw expression",
+    "description": "Ensure throws use meaningful types and messages.",
+    "tags": ["dart"],
+    "sources": [],
+    "structuralHints": {
+      "treeSitterQuery": "(throw_expression) @offender"
+    }
+  },
+  {
+    "id": "DART_AWAIT_EXPRESSION",
+    "languages": ["dart"],
+    "category": "Performance",
+    "severity": "info",
+    "title": "await expression",
+    "description": "Review await in hot paths and loops.",
+    "tags": ["dart", "async"],
+    "sources": [],
+    "structuralHints": {
+      "treeSitterQuery": "(await_expression) @offender"
+    }
+  },
+  {
+    "id": "DART_FOR_STATEMENT",
+    "languages": ["dart"],
+    "category": "Performance",
+    "severity": "info",
+    "title": "for statement",
+    "description": "Review for-loop bodies with awaits or heavy work.",
+    "tags": ["dart"],
+    "sources": [],
+    "structuralHints": {
+      "treeSitterQuery": "(for_statement) @offender"
+    }
+  },
+  {
+    "id": "DART_WHILE_STATEMENT",
+    "languages": ["dart"],
+    "category": "Correctness",
+    "severity": "info",
+    "title": "while statement",
+    "description": "Verify loop termination and side effects.",
+    "tags": ["dart"],
+    "sources": [],
+    "structuralHints": {
+      "treeSitterQuery": "(while_statement) @offender"
+    }
+  },
+  {
+    "id": "DART_IF_STATEMENT",
+    "languages": ["dart"],
+    "category": "Maintainability",
+    "severity": "info",
+    "title": "if statement",
+    "description": "Deeply nested conditionals warrant refactoring.",
+    "tags": ["dart"],
+    "sources": [],
+    "structuralHints": {
+      "treeSitterQuery": "(if_statement) @offender"
+    }
+  },
+  {
+    "id": "DART_STRING_LITERAL",
+    "languages": ["dart"],
+    "category": "Security",
+    "severity": "info",
+    "title": "string literal",
+    "description": "Review interpolated strings for injection or secrets.",
+    "tags": ["dart"],
+    "sources": [],
+    "structuralHints": {
+      "treeSitterQuery": "(string_literal) @offender"
     }
   }
 ]

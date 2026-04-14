@@ -87,6 +87,25 @@ export function buildRetentionFingerprint(
     case 'system.help':
       return null;
 
+    case 'analyze.graph': {
+      const syms = Array.isArray(params.symbol_names) ? params.symbol_names : [];
+      const mode = typeof params.mode === 'string' ? params.mode : 'callees';
+      const depth = typeof params.depth === 'number' ? params.depth : 3;
+      const targetSymbols = syms.filter((s): s is string => typeof s === 'string');
+      return {
+        fingerprint: `analyze.graph:${mode}:${depth}:${sortedJoin(syms)}`,
+        semanticSignature: { opKind: use, targetFiles: [], targetSymbols },
+      };
+    }
+    case 'analyze.calls': {
+      const syms = Array.isArray(params.symbol_names) ? params.symbol_names : [];
+      const depth = typeof params.depth === 'number' ? params.depth : 2;
+      const targetSymbols = syms.filter((s): s is string => typeof s === 'string');
+      return {
+        fingerprint: `analyze.calls:${depth}:${sortedJoin(syms)}`,
+        semanticSignature: { opKind: use, targetFiles: [], targetSymbols },
+      };
+    }
     default: {
       if (use.startsWith('analyze.')) {
         const fps = Array.isArray(params.file_paths) ? params.file_paths : [];
@@ -94,7 +113,6 @@ export function buildRetentionFingerprint(
           typeof params.file_path === 'string' && params.file_path.trim().length > 0
             ? params.file_path.trim()
             : '';
-        // extract_plan and similar use singular file_path (f); file_paths stays empty — must not collapse all files into one fingerprint.
         const pathsForKey = fps.length > 0 ? fps : singular ? [singular] : [];
         const targetFiles = pathsForKey.filter((f): f is string => typeof f === 'string');
         return {

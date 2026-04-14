@@ -5,7 +5,7 @@
     "category": "Security",
     "severity": "high",
     "title": "eval() usage",
-    "description": "eval executes arbitrary code and is a security risk. Use safer alternatives like JSON.parse or YAML.load with restricted classes.",
+    "description": "eval executes arbitrary code and is a security risk. Use safer alternatives.",
     "tags": ["ruby", "security"],
     "sources": [],
     "structuralHints": {
@@ -17,12 +17,194 @@
     "languages": ["ruby"],
     "category": "ErrorHandling",
     "severity": "medium",
-    "title": "Empty rescue block",
-    "description": "Rescue block with no body swallows exceptions. At minimum log the error or re-raise.",
+    "title": "rescue modifier or clause",
+    "description": "Review rescue paths; avoid swallowing errors without logging.",
     "tags": ["ruby", "rescue"],
     "sources": [],
     "structuralHints": {
-      "treeSitterQuery": "(rescue (exception_list)? (_)? (_)?) @offender"
+      "treeSitterQuery": "(rescue) @offender"
+    }
+  },
+  {
+    "id": "RB_CLASS_DECLARATION",
+    "languages": ["ruby"],
+    "category": "Maintainability",
+    "severity": "info",
+    "title": "class declaration",
+    "description": "Structural anchor for class-level checks.",
+    "tags": ["ruby"],
+    "sources": [],
+    "structuralHints": {
+      "treeSitterQuery": "(class) @offender"
+    }
+  },
+  {
+    "id": "RB_MODULE_DECLARATION",
+    "languages": ["ruby"],
+    "category": "Maintainability",
+    "severity": "info",
+    "title": "module declaration",
+    "description": "Namespace boundary for constants and mixins.",
+    "tags": ["ruby"],
+    "sources": [],
+    "structuralHints": {
+      "treeSitterQuery": "(module) @offender"
+    }
+  },
+  {
+    "id": "RB_METHOD_DEFINITION",
+    "languages": ["ruby"],
+    "category": "Maintainability",
+    "severity": "info",
+    "title": "method definition",
+    "description": "Hook for complexity and arity checks.",
+    "tags": ["ruby"],
+    "sources": [],
+    "structuralHints": {
+      "treeSitterQuery": "(method) @offender"
+    }
+  },
+  {
+    "id": "RB_BEGIN_BLOCK",
+    "languages": ["ruby"],
+    "category": "ErrorHandling",
+    "severity": "info",
+    "title": "begin/rescue/ensure",
+    "description": "Review exception handling in begin blocks.",
+    "tags": ["ruby"],
+    "sources": [],
+    "structuralHints": {
+      "treeSitterQuery": "(begin) @offender"
+    }
+  },
+  {
+    "id": "RB_IF_STATEMENT",
+    "languages": ["ruby"],
+    "category": "Maintainability",
+    "severity": "info",
+    "title": "if statement",
+    "description": "Deep nesting may hurt readability.",
+    "tags": ["ruby"],
+    "sources": [],
+    "structuralHints": {
+      "treeSitterQuery": "(if) @offender"
+    }
+  },
+  {
+    "id": "RB_WHILE_STATEMENT",
+    "languages": ["ruby"],
+    "category": "Correctness",
+    "severity": "info",
+    "title": "while loop",
+    "description": "Verify termination conditions.",
+    "tags": ["ruby"],
+    "sources": [],
+    "structuralHints": {
+      "treeSitterQuery": "(while) @offender"
+    }
+  },
+  {
+    "id": "RB_UNTIL_STATEMENT",
+    "languages": ["ruby"],
+    "category": "Correctness",
+    "severity": "info",
+    "title": "until loop",
+    "description": "Verify termination conditions.",
+    "tags": ["ruby"],
+    "sources": [],
+    "structuralHints": {
+      "treeSitterQuery": "(until) @offender"
+    }
+  },
+  {
+    "id": "RB_REQUIRE_CALL",
+    "languages": ["ruby"],
+    "category": "Security",
+    "severity": "low",
+    "title": "require/load call",
+    "description": "Dynamic requires can load unexpected code; audit paths.",
+    "tags": ["ruby"],
+    "sources": [],
+    "structuralHints": {
+      "treeSitterQuery": "(call method: (identifier) @m (#match? @m \"^(require|load|require_relative)$\")) @offender"
+    }
+  },
+  {
+    "id": "RB_SEND_CALL",
+    "languages": ["ruby"],
+    "category": "Security",
+    "severity": "medium",
+    "title": "send/public_send",
+    "description": "Metaprogramming can bypass visibility; review for unsafe input.",
+    "tags": ["ruby"],
+    "sources": [],
+    "structuralHints": {
+      "treeSitterQuery": "(call method: (identifier) @m (#match? @m \"^(send|public_send|__send__)$\")) @offender"
+    }
+  },
+  {
+    "id": "RB_CLASS_EVAL",
+    "languages": ["ruby"],
+    "category": "Security",
+    "severity": "high",
+    "title": "class_eval / module_eval",
+    "description": "Evaluating strings in class context is risky.",
+    "tags": ["ruby"],
+    "sources": [],
+    "structuralHints": {
+      "treeSitterQuery": "(call method: (identifier) @m (#match? @m \"^(class_eval|module_eval|instance_eval)$\")) @offender"
+    }
+  },
+  {
+    "id": "RB_YIELD",
+    "languages": ["ruby"],
+    "category": "DesignSmell",
+    "severity": "info",
+    "title": "yield",
+    "description": "Document block contracts for methods that yield.",
+    "tags": ["ruby"],
+    "sources": [],
+    "structuralHints": {
+      "treeSitterQuery": "(yield) @offender"
+    }
+  },
+  {
+    "id": "RB_RAISE_CALL",
+    "languages": ["ruby"],
+    "category": "ErrorHandling",
+    "severity": "info",
+    "title": "raise / fail",
+    "description": "Ensure raised errors carry context.",
+    "tags": ["ruby"],
+    "sources": [],
+    "structuralHints": {
+      "treeSitterQuery": "(call method: (identifier) @m (#match? @m \"^(raise|fail)$\")) @offender"
+    }
+  },
+  {
+    "id": "RB_ENSURE",
+    "languages": ["ruby"],
+    "category": "ErrorHandling",
+    "severity": "info",
+    "title": "ensure clause",
+    "description": "Ensure blocks run on all paths; avoid raising there.",
+    "tags": ["ruby"],
+    "sources": [],
+    "structuralHints": {
+      "treeSitterQuery": "(ensure) @offender"
+    }
+  },
+  {
+    "id": "RB_COMMENT_TODO",
+    "languages": ["ruby"],
+    "category": "Maintainability",
+    "severity": "low",
+    "title": "TODO in comment",
+    "description": "Track TODO/FIXME items.",
+    "tags": ["ruby"],
+    "sources": [],
+    "structuralHints": {
+      "treeSitterQuery": "(comment) @c (#match? @c \"TODO|FIXME\")"
     }
   }
 ]

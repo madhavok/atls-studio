@@ -56,6 +56,7 @@ sm query:text regions?:active,archived,bb max_results?:N
 ad|at|ai ps:path1 filter?:pattern limit?:N
 ab sn:name1 ps:path1 action?:move
 ac sn:name1,name2 depth?:N filter?:pattern limit?:N
+ag sn:name1 mode?:callees|callers|subgraph depth?:N ps?:path1 symbols?:name1,name2
 ax f:path strategy?:by_cluster|by_prefix|by_kind min_lines?:N min_complexity?:N
 ce f:h:XXXX:L-M le:[{content:"new code"}]
   Hash-ref editing: f carries hash identity + line range. content is the only required field per le entry.

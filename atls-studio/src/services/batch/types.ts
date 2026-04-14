@@ -32,7 +32,8 @@ export type UnderstandOp =
   | 'analyze.structure'
   | 'analyze.impact'
   | 'analyze.blast_radius'
-  | 'analyze.extract_plan';
+  | 'analyze.extract_plan'
+  | 'analyze.graph';
 
 export type ChangeOp =
   | 'change.edit'
