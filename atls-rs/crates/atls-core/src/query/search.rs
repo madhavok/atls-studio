@@ -309,10 +309,29 @@ fn is_test_path(file: &str) -> bool {
     p.contains("/tests/") || p.contains("/__tests__/")
         || p.contains("_test.") || p.contains(".test.")
         || p.contains(".spec.")
+        || p.contains("/fixtures/") || p.contains("/mocks/")
+        || p.contains("/testdata/") || p.contains("_mock.")
+        || p.contains(".mock.")
 }
 
 fn is_test_symbol(name: &str) -> bool {
     name.starts_with("test_") || name.ends_with("_test") || name.starts_with("Test")
+}
+
+/// Hard-cap test results so they don't dominate broad queries.
+/// Allows at most `max(2, limit / 5)` test hits; excess are removed and
+/// production results backfill.
+fn cap_test_results(results: &mut Vec<CodeSearchResult>, limit: usize) {
+    let max_test = 2usize.max(limit / 5);
+    let mut test_count = 0usize;
+    results.retain(|r| {
+        if is_test_path(&r.file) || is_test_symbol(&r.symbol) {
+            test_count += 1;
+            test_count <= max_test
+        } else {
+            true
+        }
+    });
 }
 
 /// Apply heuristic reranking adjustments to normalised relevance scores.
@@ -365,7 +384,7 @@ pub(crate) fn apply_heuristic_rerank(results: &mut [CodeSearchResult], query: &s
 
         // Demote test files/functions so production code surfaces first
         if is_test_path(&r.file) || is_test_symbol(&r.symbol) {
-            multiplier *= 0.3;
+            multiplier *= 0.1;
         }
 
         r.relevance = (r.relevance * multiplier).min(1.0);
@@ -430,7 +449,7 @@ fn extract_snippet_from_body_preview(
 // Frequency-based auto-penalties (Phase 3.4)
 // ---------------------------------------------------------------------------
 
-fn compute_auto_penalties(conn: &rusqlite::Connection) -> HashMap<String, f64> {
+pub(crate) fn compute_auto_penalties(conn: &rusqlite::Connection) -> HashMap<String, f64> {
     let mut penalties = HashMap::new();
 
     let query = "SELECT LOWER(name) as lname, COUNT(*) as cnt \
@@ -472,13 +491,15 @@ fn compute_auto_penalties(conn: &rusqlite::Connection) -> HashMap<String, f64> {
 const FTS5_RESERVED: &[&str] = &["AND", "OR", "NOT", "NEAR"];
 
 /// Strip characters that break FTS5 MATCH syntax. Keeps alphanumeric, underscore,
-/// and hyphen (hyphen is handled downstream by quoting). Collapses runs of stripped
-/// chars into a single space so `foo::bar` becomes `foo bar` rather than `foobar`.
+/// hyphen, dot, and colon. Collapses runs of other chars into a single space.
+/// Dots/colons are preserved so identifiers like `search.code` or `foo::bar`
+/// survive as tokens (FTS5 will further split on them, but phrase matching
+/// in `build_fts_query` can leverage the preserved form).
 fn sanitize_fts_input(raw: &str) -> String {
     let mut out = String::with_capacity(raw.len());
     let mut prev_was_stripped = false;
     for ch in raw.chars() {
-        if ch.is_alphanumeric() || ch == '_' || ch == '-' {
+        if ch.is_alphanumeric() || ch == '_' || ch == '-' || ch == '.' || ch == ':' {
             prev_was_stripped = false;
             out.push(ch);
         } else if !prev_was_stripped && !out.is_empty() {
@@ -487,6 +508,16 @@ fn sanitize_fts_input(raw: &str) -> String {
         }
     }
     out.trim().to_string()
+}
+
+/// Split a sanitized token on dots/colons into sub-tokens for FTS5, which
+/// doesn't natively index these as word separators.
+fn split_dotted_token(token: &str) -> Vec<String> {
+    token
+        .split(|c: char| c == '.' || c == ':')
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+        .collect()
 }
 
 /// Escape a term for safe use in FTS5 MATCH. Quotes reserved words to avoid
@@ -504,27 +535,61 @@ fn escape_fts_term(t: &str) -> String {
 
 fn build_fts_query(query: &str) -> String {
     let sanitized = sanitize_fts_input(query);
-    let tokens: Vec<String> = sanitized
-        .split_whitespace()
-        .map(|s| escape_fts_term(s))
-        .filter(|s| !s.is_empty())
-        .collect();
-    if tokens.is_empty() {
+    let raw_tokens: Vec<&str> = sanitized.split_whitespace().collect();
+
+    // Expand dotted/coloned tokens into sub-tokens for FTS5, which splits
+    // on punctuation. Keep both the phrase form and the split form.
+    let mut fts_tokens: Vec<String> = Vec::new();
+    let mut phrase_clauses: Vec<String> = Vec::new();
+    for raw in &raw_tokens {
+        if raw.contains('.') || raw.contains(':') {
+            let subs = split_dotted_token(raw);
+            if subs.len() > 1 {
+                let escaped_subs: Vec<String> = subs.iter().map(|s| escape_fts_term(s)).collect();
+                let phrase = format!("\"{}\"", escaped_subs.join(" "));
+                phrase_clauses.push(format!("(name:{} OR signature:{} OR body_preview:{})", phrase, phrase, phrase));
+                for sub in escaped_subs {
+                    if !sub.is_empty() {
+                        fts_tokens.push(sub);
+                    }
+                }
+            } else if let Some(s) = subs.into_iter().next() {
+                let escaped = escape_fts_term(&s);
+                if !escaped.is_empty() {
+                    fts_tokens.push(escaped);
+                }
+            }
+        } else {
+            let escaped = escape_fts_term(raw);
+            if !escaped.is_empty() {
+                fts_tokens.push(escaped);
+            }
+        }
+    }
+
+    if fts_tokens.is_empty() && phrase_clauses.is_empty() {
         return "name:''".to_string();
     }
-    if tokens.len() > 1 {
-        let joined = tokens.join(" ");
-        let near_clause = format!("NEAR({}, 3)", joined);
-        let phrase = format!("\"{}\"", sanitized.replace('"', "\"\""));
-        let or_terms: Vec<String> = tokens
-            .iter()
-            .map(|t| format!("(name:{} OR signature:{} OR body_preview:{})", t, t, t))
-            .collect();
-        format!("{} OR {} OR {}", near_clause, phrase, or_terms.join(" OR "))
-    } else {
-        let t = &tokens[0];
-        format!("name:{} OR signature:{} OR body_preview:{}", t, t, t)
+
+    let mut parts: Vec<String> = Vec::new();
+
+    if fts_tokens.len() > 1 {
+        let joined = fts_tokens.join(" ");
+        parts.push(format!("NEAR({}, 3)", joined));
+        let all_subs = raw_tokens.iter()
+            .flat_map(|t| split_dotted_token(t))
+            .collect::<Vec<_>>()
+            .join(" ");
+        parts.push(format!("\"{}\"", all_subs.replace('"', "\"\"")));
     }
+
+    for t in &fts_tokens {
+        parts.push(format!("(name:{} OR signature:{} OR body_preview:{})", t, t, t));
+    }
+
+    parts.extend(phrase_clauses);
+
+    parts.join(" OR ")
 }
 
 // ---------------------------------------------------------------------------
@@ -728,9 +793,26 @@ impl QueryEngine {
             }
         }
 
-        // Hybrid RRF: merge FTS order with deterministic vector ranking when embeddings exist.
+        // Cross-file dedup: collapse identical (name, signature) pairs that appear
+        // across many files (e.g. `constructor` / `new()` in every test module).
+        // First occurrence (best-ranked) wins; skip for symbols without signatures.
+        {
+            let mut sig_seen: HashSet<(String, String)> = HashSet::new();
+            raw_hits.retain(|h| {
+                match &h.signature {
+                    Some(sig) if !sig.is_empty() => {
+                        let key = (h.symbol.clone(), sig.clone());
+                        sig_seen.insert(key)
+                    }
+                    _ => true,
+                }
+            });
+        }
+
+        // Hybrid RRF: merge FTS order with embedding vector ranking when embeddings exist.
+        let embed_provider = hybrid::default_provider();
         if query_trimmed.len() >= 3 {
-            if let Ok(vec_ids) = Self::search_embedding_ids_with_conn(&conn, query_trimmed, fetch_count) {
+            if let Ok(vec_ids) = self.search_embedding_ids_cached(&conn, query_trimmed, fetch_count, embed_provider.as_ref()) {
                 if !vec_ids.is_empty() && !raw_hits.is_empty() {
                     let fts_ids: Vec<i64> = raw_hits.iter().filter_map(|h| h.symbol_id).collect();
                     if !fts_ids.is_empty() {
@@ -768,31 +850,40 @@ impl QueryEngine {
             raw_hits[0].relevance = 1.0;
         }
 
-        // Absolute quality floor: if the best raw BM25 score is very weak,
-        // cap all normalized relevances. BM25 is negative (lower = better).
-        // Best score close to 0 means even the top match barely matched.
-        let best_raw = raw_hits.iter()
+        // Adaptive quality floor: use the median BM25 score of the result set
+        // instead of a hardcoded threshold so the floor scales with corpus size.
+        let mut fts_scores: Vec<f64> = raw_hits.iter()
             .filter(|h| h.raw_bm25 < f64::MAX)
             .map(|h| h.raw_bm25)
-            .fold(f64::INFINITY, f64::min);
-        // If the best FTS match has a raw BM25 score worse than -2.0,
-        // the query had very weak signal — cap relevance at 0.5 for all results.
-        // For individual hits much worse than the best, further cap at 0.3.
-        if best_raw > -2.0 && best_raw < f64::INFINITY {
-            for h in &mut raw_hits {
-                h.relevance = (h.relevance * 0.5).min(0.5);
-            }
-        } else if best_raw < f64::INFINITY {
-            // Good top match exists — still cap hits that are 5x worse than the best
-            for h in &mut raw_hits {
-                if h.raw_bm25 < f64::MAX && h.raw_bm25 > best_raw * 0.2 {
-                    h.relevance = h.relevance.min(0.3);
+            .collect();
+        fts_scores.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+
+        let best_raw = fts_scores.first().copied().unwrap_or(f64::INFINITY);
+        let median_raw = if fts_scores.len() >= 2 {
+            fts_scores[fts_scores.len() / 2]
+        } else {
+            best_raw
+        };
+
+        if best_raw < f64::INFINITY {
+            // Weak signal: best match barely better than the median → cap everything
+            if fts_scores.len() < 2 || best_raw > median_raw * 0.3 {
+                for h in &mut raw_hits {
+                    h.relevance = (h.relevance * 0.5).min(0.5);
+                }
+            } else {
+                // Good top match exists — cap individual hits much worse than the best
+                let tail_threshold = median_raw * 0.5;
+                for h in &mut raw_hits {
+                    if h.raw_bm25 < f64::MAX && h.raw_bm25 > tail_threshold {
+                        h.relevance = h.relevance.min(0.3);
+                    }
                 }
             }
         }
 
-        // Phase 3.4: frequency-based auto-penalties
-        let auto_penalties = compute_auto_penalties(&conn);
+        // Phase 3.4: frequency-based auto-penalties (TTL-cached)
+        let auto_penalties = self.get_auto_penalties(&conn);
 
         // Convert to CodeSearchResult (without snippets yet)
         let mut results: Vec<CodeSearchResult> = raw_hits
@@ -835,6 +926,8 @@ impl QueryEngine {
                 }
             }
         }
+
+        cap_test_results(&mut results, fetch_limit);
 
         // Trim to requested limit
         results.truncate(fetch_limit);
@@ -1089,35 +1182,11 @@ impl QueryEngine {
         })
     }
 
-    /// Rank symbol IDs by cosine similarity of deterministic embeddings (empty if table unused).
+    /// Rank symbol IDs by cosine similarity of embeddings (empty if table unused).
     pub fn search_symbol_ids_by_embedding(&self, query: &str, limit: usize) -> Result<Vec<i64>, QueryError> {
         let conn = self.conn();
-        Self::search_embedding_ids_with_conn(&conn, query, limit)
-    }
-
-    fn search_embedding_ids_with_conn(conn: &rusqlite::Connection, query: &str, limit: usize) -> Result<Vec<i64>, QueryError> {
-        let n: i64 = conn.query_row("SELECT COUNT(*) FROM symbol_embeddings", [], |r| r.get(0))?;
-        if n == 0 {
-            return Ok(Vec::new());
-        }
-        let qv = hybrid::deterministic_embed(query);
-        let cap = limit.min(200).max(1);
-        let mut stmt = conn.prepare("SELECT symbol_id, vec FROM symbol_embeddings")?;
-        let rows = stmt.query_map([], |row| {
-            Ok((row.get::<_, i64>(0)?, row.get::<_, Vec<u8>>(1)?))
-        })?;
-        let mut scored: Vec<(i64, f32)> = Vec::new();
-        for row in rows {
-            let (id, blob) = row?;
-            let v = hybrid::blob_to_vec(&blob);
-            if v.len() != hybrid::EMBEDDING_DIM {
-                continue;
-            }
-            let s = hybrid::cosine_similarity(&qv, &v);
-            scored.push((id, s));
-        }
-        scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-        Ok(scored.into_iter().take(cap).map(|(id, _)| id).collect())
+        let provider = hybrid::default_provider();
+        self.search_embedding_ids_cached(&conn, query, limit, provider.as_ref())
     }
 
     /// Multi-DB search: merge by relevance (read-only connections; label → `source_workspace`).
@@ -1392,6 +1461,43 @@ impl QueryEngine {
 }
 
 // ---------------------------------------------------------------------------
+// Standalone embedding search (brute-force fallback)
+// ---------------------------------------------------------------------------
+
+/// Brute-force full-table scan for embedding similarity (used when corpus
+/// is small or as fallback when the in-memory vector index is unavailable).
+pub(crate) fn search_embedding_ids_brute_force(
+    conn: &rusqlite::Connection,
+    query: &str,
+    limit: usize,
+    provider: &dyn hybrid::EmbeddingProvider,
+) -> Result<Vec<i64>, QueryError> {
+    let n: i64 = conn.query_row("SELECT COUNT(*) FROM symbol_embeddings", [], |r| r.get(0))?;
+    if n == 0 {
+        return Ok(Vec::new());
+    }
+    let qv = provider.embed(query);
+    let expected_dim = provider.dim();
+    let cap = limit.min(200).max(1);
+    let mut stmt = conn.prepare("SELECT symbol_id, vec FROM symbol_embeddings")?;
+    let rows = stmt.query_map([], |row| {
+        Ok((row.get::<_, i64>(0)?, row.get::<_, Vec<u8>>(1)?))
+    })?;
+    let mut scored: Vec<(i64, f32)> = Vec::new();
+    for row in rows {
+        let (id, blob) = row?;
+        let v = hybrid::blob_to_vec(&blob);
+        if v.len() != expected_dim {
+            continue;
+        }
+        let s = hybrid::cosine_similarity(&qv, &v);
+        scored.push((id, s));
+    }
+    scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+    Ok(scored.into_iter().take(cap).map(|(id, _)| id).collect())
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -1571,8 +1677,8 @@ mod tests {
 
     #[test]
     fn test_sanitize_fts_colons() {
-        assert_eq!(sanitize_fts_input("foo::bar"), "foo bar");
-        assert_eq!(sanitize_fts_input("std::collections::HashMap"), "std collections HashMap");
+        assert_eq!(sanitize_fts_input("foo::bar"), "foo::bar");
+        assert_eq!(sanitize_fts_input("std::collections::HashMap"), "std::collections::HashMap");
     }
 
     #[test]
@@ -1591,14 +1697,14 @@ mod tests {
 
     #[test]
     fn test_sanitize_fts_mixed_special_chars() {
-        assert_eq!(sanitize_fts_input("@Component({selector: 'app'})"), "Component selector app");
-        assert_eq!(sanitize_fts_input("#include <stdio.h>"), "include stdio h");
+        assert_eq!(sanitize_fts_input("@Component({selector: 'app'})"), "Component selector: app");
+        assert_eq!(sanitize_fts_input("#include <stdio.h>"), "include stdio.h");
     }
 
     #[test]
     fn test_sanitize_fts_empty_after_strip() {
         assert_eq!(sanitize_fts_input("<>"), "");
-        assert_eq!(sanitize_fts_input("::"), "");
+        assert_eq!(sanitize_fts_input("::"), "::");
         assert_eq!(sanitize_fts_input(""), "");
     }
 

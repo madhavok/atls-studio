@@ -19,7 +19,7 @@ use rusqlite::{params, OptionalExtension};
 use regex::Regex;
 use std::sync::LazyLock;
 
-use crate::query::hybrid::{self, EMBEDDING_DIM, EMBEDDING_MODEL_ID};
+use crate::query::hybrid::{self, EmbeddingProvider};
 
 static IDENT_PLACEHOLDER_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"\b[A-Za-z_][A-Za-z0-9_]*\b").expect("ident placeholder regex")
@@ -110,6 +110,7 @@ pub struct Indexer {
     ts_path_aliases: TsConfigPaths,
     /// Go module path prefix from go.mod (e.g., "github.com/go-chi/chi/v5")
     go_module_prefix: Option<String>,
+    embedding_provider: Box<dyn EmbeddingProvider>,
 }
 
 impl Indexer {
@@ -201,9 +202,71 @@ impl Indexer {
             progress_callback: None,
             ts_path_aliases,
             go_module_prefix,
+            embedding_provider: hybrid::default_provider(),
         })
     }
     
+    /// Replace the embedding provider (e.g., swap deterministic for ONNX neural).
+    pub fn set_embedding_provider(&mut self, provider: Box<dyn EmbeddingProvider>) {
+        self.embedding_provider = provider;
+    }
+
+    /// Re-embed symbols whose stored `model` doesn't match the current provider.
+    /// Processes `batch_size` rows per call; returns the number updated.
+    /// Call repeatedly (e.g. during idle) until it returns 0.
+    pub fn reembed_stale(&self, batch_size: usize) -> Result<usize, IndexerError> {
+        let conn = self.db.conn();
+        let model = self.embedding_provider.model_id();
+        let dim = self.embedding_provider.dim();
+        let limit = batch_size.min(500).max(1) as i64;
+
+        let mut stmt = conn.prepare(
+            "SELECT se.symbol_id, s.name, s.signature, json_extract(s.metadata, '$.body_preview')
+             FROM symbol_embeddings se
+             JOIN symbols s ON s.id = se.symbol_id
+             WHERE se.model != ?1
+             LIMIT ?2"
+        )?;
+
+        let rows: Vec<(i64, String, Option<String>, Option<String>)> = stmt
+            .query_map(params![model, limit], |row| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+            })?
+            .filter_map(|r| r.ok())
+            .collect();
+
+        if rows.is_empty() {
+            return Ok(0);
+        }
+
+        let count = rows.len();
+        for (symbol_id, name, sig, body) in &rows {
+            let sig_str = sig.as_deref().unwrap_or("");
+            let body_str = body.as_deref().unwrap_or("");
+            let embed_text = format!("{}\n{}\n{}", name, sig_str, body_str);
+            let emb = self.embedding_provider.embed(&embed_text);
+            let blob = hybrid::vec_to_blob(&emb);
+            conn.execute(
+                "UPDATE symbol_embeddings SET vec = ?1, dim = ?2, model = ?3 WHERE symbol_id = ?4",
+                params![blob, dim as i64, model, symbol_id],
+            )?;
+        }
+
+        Ok(count)
+    }
+
+    /// Count symbols with embeddings from a different model than the current provider.
+    pub fn stale_embedding_count(&self) -> Result<usize, IndexerError> {
+        let conn = self.db.conn();
+        let model = self.embedding_provider.model_id();
+        let n: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM symbol_embeddings WHERE model != ?1",
+            params![model],
+            |r| r.get(0),
+        )?;
+        Ok(n as usize)
+    }
+
     /// Parse tsconfig.json / jsconfig.json for path aliases.
     /// Handles `compilerOptions.paths` like `{"@/*": ["src/*"]}`.
     fn load_tsconfig_paths(root_path: &Path) -> TsConfigPaths {
@@ -1437,11 +1500,11 @@ impl Indexer {
                     )?;
 
                     let embed_text = format!("{}\n{}\n{}", symbol.name, sig.as_str(), body_prev);
-                    let emb = hybrid::deterministic_embed(&embed_text);
+                    let emb = self.embedding_provider.embed(&embed_text);
                     let blob = hybrid::vec_to_blob(&emb);
                     conn.execute(
                         "INSERT INTO symbol_embeddings (symbol_id, dim, model, vec) VALUES (?1, ?2, ?3, ?4)",
-                        params![symbol_id, EMBEDDING_DIM as i64, EMBEDDING_MODEL_ID, blob],
+                        params![symbol_id, self.embedding_provider.dim() as i64, self.embedding_provider.model_id(), blob],
                     )?;
                 }
             }
