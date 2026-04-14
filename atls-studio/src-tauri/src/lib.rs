@@ -1800,7 +1800,7 @@ pub(crate) fn resolve_line_edits_symbols_for_file(
                 "body_start" => {
                     let resolved_path = resolve_project_path(project_root, file_path);
                     let fc = std::fs::read_to_string(&resolved_path)
-                        .map(|c| normalize_line_endings(&c))
+                        .map(|c| normalize_line_endings(&c).into_owned())
                         .unwrap_or_default();
                     let flines: Vec<&str> = fc.lines().collect();
                     let s = (range.start_line as usize).saturating_sub(1);
@@ -1815,7 +1815,7 @@ pub(crate) fn resolve_line_edits_symbols_for_file(
                 "body_end" => {
                     let resolved_path = resolve_project_path(project_root, file_path);
                     let fc = std::fs::read_to_string(&resolved_path)
-                        .map(|c| normalize_line_endings(&c))
+                        .map(|c| normalize_line_endings(&c).into_owned())
                         .unwrap_or_default();
                     let flines: Vec<&str> = fc.lines().collect();
                     let s = (range.start_line as usize).saturating_sub(1);
@@ -4035,6 +4035,7 @@ function alsoStay() {
             lang: Some("typescript".to_string()),
             line_count: source_content.lines().count(),
             symbol_count: None,
+            spilled: false,
         });
 
         // Step 1: Create new file (extract lines 7-11)
@@ -5785,6 +5786,7 @@ export function extractMe() {
             lang: Some("typescript".to_string()),
             line_count: 1,
             symbol_count: None,
+            spilled: false,
         });
 
         let (content_v2, ..) = apply_line_edits(content_v1, &[le(1, "replace", Some("function foo() { return 2; }"), None)]).unwrap();
@@ -5796,6 +5798,7 @@ export function extractMe() {
             lang: Some("typescript".to_string()),
             line_count: 1,
             symbol_count: None,
+            spilled: false,
         });
 
         // Both versions should be retrievable

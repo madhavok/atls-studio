@@ -57,7 +57,7 @@ fn maybe_format_go_after_write(resolved_path: &Path) -> Option<String> {
 
     std::fs::read_to_string(resolved_path)
         .ok()
-        .map(|content| normalize_line_endings(&content))
+        .map(|content| normalize_line_endings(&content).into_owned())
 }
 
 // ---------------------------------------------------------------------------
@@ -179,13 +179,17 @@ pub enum HashModifier {
     },
 }
 
+/// Content above this byte size is spilled: stored as an empty string with
+/// `spilled = true`, resolved lazily from the `source` path on demand.
+pub const HASH_ENTRY_SPILL_THRESHOLD: usize = 512 * 1024; // 512 KiB
+
 /// A single entry in the hash registry.
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
 pub struct HashEntry {
     /// Source file path (if this hash came from a file read / edit).
     pub source: Option<String>,
-    /// Full content at the time of hashing.
+    /// Full content at the time of hashing. Empty when `spilled` is true.
     pub content: String,
     /// Estimated token count.
     pub tokens: usize,
@@ -195,6 +199,28 @@ pub struct HashEntry {
     pub line_count: usize,
     /// Number of top-level symbols (if known from indexer).
     pub symbol_count: Option<usize>,
+    /// When true, `content` was too large to keep in memory. Resolve from `source` path.
+    #[allow(dead_code)]
+    pub spilled: bool,
+}
+
+impl HashEntry {
+    /// Resolve content, re-reading from source path if spilled.
+    /// `project_root` is needed to resolve relative source paths.
+    pub fn resolve_content(&self, project_root: Option<&std::path::Path>) -> Option<String> {
+        if !self.spilled {
+            return Some(self.content.clone());
+        }
+        let source = self.source.as_deref()?;
+        let resolved = if let Some(root) = project_root {
+            resolve_project_path(root, source)
+        } else {
+            std::path::PathBuf::from(source)
+        };
+        std::fs::read_to_string(&resolved)
+            .ok()
+            .map(|c| normalize_line_endings(&c).into_owned())
+    }
 }
 
 /// Canonical short hash length. 6 hex chars = ~16M unique refs per session.
@@ -1024,7 +1050,7 @@ fn try_resolve_file_symbol_ref(
     };
     let content = content.or_else(|| {
         let resolved = resolve_project_path(project_root, &file_path);
-        std::fs::read_to_string(&resolved).ok().map(|c| normalize_line_endings(&c))
+        std::fs::read_to_string(&resolved).ok().map(|c| normalize_line_endings(&c).into_owned())
     });
     let content = content.ok_or(())?;
 
@@ -1748,7 +1774,7 @@ pub fn peek(
         // Cache hit returned no content — read from disk
         let resolved_path = crate::path_utils::resolve_project_path(project_root, &source);
         normalize_line_endings(&std::fs::read_to_string(&resolved_path)
-            .map_err(|e| format!("Failed to read {}: {}", source, e))?)
+            .map_err(|e| format!("Failed to read {}: {}", source, e))?).into_owned()
     } else {
         snap.content.clone()
     };
@@ -1949,6 +1975,7 @@ pub fn batch_edits(
                 lang,
                 line_count: final_content.lines().count(),
                 symbol_count: None,
+                spilled: false,
             },
         );
 
@@ -2101,6 +2128,7 @@ mod tests {
                 lang: Some("ts".to_string()),
                 line_count: 1,
                 symbol_count: None,
+                spilled: false,
             },
         );
 
@@ -2288,6 +2316,7 @@ mod tests {
             lang: detect_lang(Some(source)),
             line_count: content.lines().count(),
             symbol_count: None,
+            spilled: false,
         }
     }
 
@@ -2946,6 +2975,7 @@ mod tests {
             lang: None,
             line_count: 1,
             symbol_count: None,
+            spilled: false,
         };
         reg.register("aabb1122".to_string(), entry);
 
@@ -2964,11 +2994,91 @@ mod tests {
             lang: None,
             line_count: 1,
             symbol_count: None,
+            spilled: false,
         };
         reg.register("ccdd3344".to_string(), entry);
 
         let stored = reg.get("ccdd3344").unwrap();
         assert_eq!(stored.source.as_deref(), Some("src/components/App.tsx"),
             "backslashes should be normalized to forward slashes on registration");
+    }
+
+    // ── Spill tests ──
+
+    #[test]
+    fn spilled_entry_has_empty_content() {
+        let mut reg = HashRegistry::new();
+        reg.register("spill001".to_string(), HashEntry {
+            source: Some("big_file.ts".to_string()),
+            content: String::new(),
+            tokens: 200_000,
+            lang: Some("typescript".to_string()),
+            line_count: 10_000,
+            symbol_count: None,
+            spilled: true,
+        });
+
+        let entry = reg.get("spill0").unwrap();
+        assert!(entry.spilled);
+        assert!(entry.content.is_empty());
+        assert_eq!(entry.tokens, 200_000);
+    }
+
+    #[test]
+    fn spilled_entry_resolve_content_from_disk() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("large.ts");
+        std::fs::write(&file, "export const x = 1;\n").unwrap();
+
+        let entry = HashEntry {
+            source: Some(file.to_string_lossy().to_string()),
+            content: String::new(),
+            tokens: 5,
+            lang: Some("typescript".to_string()),
+            line_count: 1,
+            symbol_count: None,
+            spilled: true,
+        };
+
+        let resolved = entry.resolve_content(None);
+        assert!(resolved.is_some());
+        assert_eq!(resolved.unwrap(), "export const x = 1;\n");
+    }
+
+    #[test]
+    fn spilled_entry_resolve_content_returns_none_for_missing_file() {
+        let entry = HashEntry {
+            source: Some("/nonexistent/path/file.ts".to_string()),
+            content: String::new(),
+            tokens: 5,
+            lang: None,
+            line_count: 1,
+            symbol_count: None,
+            spilled: true,
+        };
+
+        let resolved = entry.resolve_content(None);
+        assert!(resolved.is_none());
+    }
+
+    #[test]
+    fn non_spilled_entry_resolve_content_returns_inline() {
+        let entry = HashEntry {
+            source: Some("small.ts".to_string()),
+            content: "const y = 2;\n".to_string(),
+            tokens: 3,
+            lang: None,
+            line_count: 1,
+            symbol_count: None,
+            spilled: false,
+        };
+
+        let resolved = entry.resolve_content(None);
+        assert_eq!(resolved, Some("const y = 2;\n".to_string()));
+    }
+
+    #[test]
+    fn spill_threshold_constant() {
+        assert_eq!(HASH_ENTRY_SPILL_THRESHOLD, 512 * 1024);
     }
 }

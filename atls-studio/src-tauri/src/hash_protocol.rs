@@ -434,6 +434,7 @@ mod tests {
                 lang: detect_lang(Some("src/auth.ts")),
                 line_count: content.lines().count(),
                 symbol_count: None,
+                spilled: false,
             },
         );
         reg

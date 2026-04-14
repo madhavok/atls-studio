@@ -57,6 +57,7 @@ pub async fn register_hash_content(
         lang: detected_lang,
         line_count,
         symbol_count: None,
+        spilled: false,
     });
     let current_revision_for_source = if source_clone.as_ref().map_or(false, |s| {
         s.contains('/') || s.contains('\\')
@@ -323,11 +324,12 @@ pub async fn resolve_temporal_ref(
                     let line_count = normalized.lines().count();
                     registry.register(hash.clone(), hash_resolver::HashEntry {
                         source: Some(format!("{}@{}", path, git_ref)),
-                        content: normalized.clone(),
+                        content: normalized.to_string(),
                         tokens: content.len() / 4,
                         lang,
                         line_count,
                         symbol_count: None,
+                        spilled: false,
                     });
                 }
 
@@ -335,10 +337,10 @@ pub async fn resolve_temporal_ref(
                     let registry = hr_state.registry.lock().await;
                     match hash_resolver::apply_shape_to_content(&normalized, shape_str, &registry, &hash) {
                         Ok(shaped) => shaped,
-                        Err(_) => normalized.clone(),
+                        Err(_) => normalized.to_string(),
                     }
                 } else {
-                    normalized.clone()
+                    normalized.to_string()
                 };
 
                 return Ok(serde_json::json!({
@@ -850,7 +852,7 @@ pub async fn resolve_search_selector(
             };
 
             let content = match std::fs::read_to_string(&full_path) {
-                Ok(c) => normalize_line_endings(&c),
+                Ok(c) => normalize_line_endings(&c).into_owned(),
                 Err(_) => continue,
             };
 
@@ -866,6 +868,7 @@ pub async fn resolve_search_selector(
                     lang,
                     line_count,
                     symbol_count: None,
+                    spilled: false,
                 });
             }
 
@@ -901,6 +904,7 @@ mod temporal_ref_tests {
                 lang: Some("ts".to_string()),
                 line_count: 3,
                 symbol_count: None,
+                spilled: false,
             },
         );
 

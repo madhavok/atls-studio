@@ -1,6 +1,6 @@
 use super::*;
 use crate::path_utils::{
-    detect_format, normalize_line_endings, read_file_with_format, serialize_with_format, to_relative_path,
+    detect_format, detect_format_from_file, normalize_line_endings, serialize_with_format, to_relative_path,
 };
 
 fn path_modified_ns(metadata: &std::fs::Metadata) -> u128 {
@@ -42,13 +42,15 @@ async fn register_written_file(
     let mut registry = hr_state.registry.lock().await;
     let previous_revision = registry.get_current_revision(source_path);
     let lang = crate::hash_resolver::detect_lang(Some(source_path));
+    let spilled = content.len() > crate::hash_resolver::HASH_ENTRY_SPILL_THRESHOLD;
     registry.register(revision.clone(), crate::hash_resolver::HashEntry {
         source: Some(source_path.to_string()),
-        content: content.to_string(),
+        content: if spilled { String::new() } else { content.to_string() },
         tokens: content.len() / 4,
         lang,
         line_count: content.lines().count(),
         symbol_count: None,
+        spilled,
     });
     drop(registry);
 
@@ -380,19 +382,32 @@ pub async fn write_file_contents(
     app: tauri::AppHandle,
 ) -> Result<(), String> {
     use crate::error::IoResultExt;
-    let normalized = normalize_line_endings(&contents);
+    let normalized = normalize_line_endings(&contents).into_owned();
+
+    // Resolve the path up-front so we can probe the snapshot cache before spawn_blocking.
+    let resolved_path_pre = if let Some(ref root) = project_root {
+        resolve_project_path(std::path::Path::new(root), &path)
+    } else {
+        PathBuf::from(&path)
+    };
+
+    // Try to get FileFormat from SnapshotService cache (avoids full re-read of existing file).
+    let cached_fmt = {
+        let ss_state = app.state::<crate::snapshot::SnapshotServiceState>();
+        let svc = ss_state.service.lock().await;
+        svc.get_cached_format(&resolved_path_pre)
+    };
+
     let root_opt = project_root.clone();
     let path_for_emit = path.clone();
     let normalized_for_spawn = normalized.clone();
+    let resolved_for_spawn = resolved_path_pre.clone();
     tokio::task::spawn_blocking(move || {
-        let resolved_path = if let Some(ref root) = project_root {
-            resolve_project_path(std::path::Path::new(root), &path)
-        } else {
-            PathBuf::from(&path)
-        };
-        let bytes: Vec<u8> = if resolved_path.exists() {
-            read_file_with_format(&resolved_path)
-                .map(|(_, fmt)| serialize_with_format(&normalized_for_spawn, &fmt))
+        let bytes: Vec<u8> = if let Some(fmt) = cached_fmt {
+            serialize_with_format(&normalized_for_spawn, &fmt)
+        } else if resolved_for_spawn.exists() {
+            detect_format_from_file(&resolved_for_spawn)
+                .map(|fmt| serialize_with_format(&normalized_for_spawn, &fmt))
                 .unwrap_or_else(|_| {
                     let fmt = detect_format(normalized_for_spawn.as_bytes());
                     serialize_with_format(&normalized_for_spawn, &fmt)
@@ -401,8 +416,8 @@ pub async fn write_file_contents(
             let fmt = detect_format(normalized_for_spawn.as_bytes());
             serialize_with_format(&normalized_for_spawn, &fmt)
         };
-        std::fs::write(&resolved_path, bytes)
-            .with_path(resolved_path.display().to_string())
+        std::fs::write(&resolved_for_spawn, bytes)
+            .with_path(resolved_for_spawn.display().to_string())
     })
     .await
     .map_err(|e| format!("Task join error: {}", e))?

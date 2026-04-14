@@ -101,6 +101,13 @@ impl SnapshotService {
         Self::default()
     }
 
+    /// Return the cached `FileFormat` for a path without reading disk.
+    /// Used by the write path to avoid a full file re-read just for CRLF detection.
+    pub fn get_cached_format(&self, resolved_path: &Path) -> Option<FileFormat> {
+        let key = normalize_cache_key(&resolved_path.to_string_lossy());
+        self.cache.get(&key).map(|entry| entry.file_format)
+    }
+
     /// Read a file from disk (or use cache if mtime+size match) and return its snapshot.
     /// The `project_root` is used to resolve relative paths. The `source_path` is the
     /// caller-facing path (possibly relative).
@@ -498,5 +505,44 @@ mod tests {
         // h1 should now forward directly to h3 (collapsed)
         assert_eq!(svc.resolve_forward(&h1), Some(h3.as_str()));
         assert_eq!(svc.resolve_forward(&h2), Some(h3.as_str()));
+    }
+
+    // ── get_cached_format tests ──
+
+    #[test]
+    fn get_cached_format_returns_none_for_unknown_file() {
+        let svc = SnapshotService::new();
+        let result = svc.get_cached_format(std::path::Path::new("/nonexistent/file.txt"));
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn get_cached_format_returns_format_after_read() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("test.txt");
+        fs::write(&file, b"line1\r\nline2\r\n").unwrap();
+
+        let mut svc = SnapshotService::new();
+        svc.get_resolved(&file, "test.txt").unwrap();
+
+        let fmt = svc.get_cached_format(&file);
+        assert!(fmt.is_some());
+        let fmt = fmt.unwrap();
+        assert_eq!(fmt.newline, crate::path_utils::NewlineMode::CrLf);
+        assert!(fmt.trailing_newline);
+    }
+
+    #[test]
+    fn get_cached_format_returns_format_after_record_write() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("test.txt");
+        fs::write(&file, b"original\n").unwrap();
+
+        let mut svc = SnapshotService::new();
+        svc.record_write(&file, "test.txt", "new content\n", None);
+
+        let fmt = svc.get_cached_format(&file);
+        assert!(fmt.is_some());
+        assert_eq!(fmt.unwrap().newline, crate::path_utils::NewlineMode::Lf);
     }
 }

@@ -300,6 +300,7 @@ mod tests {
             lang: detect_lang(Some(source)),
             line_count: content.lines().count(),
             symbol_count: None,
+            spilled: false,
         }
     }
 

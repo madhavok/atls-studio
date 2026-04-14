@@ -415,11 +415,11 @@ pub(crate) fn load_draft_base_content(project_root: &std::path::Path, file: &str
     }
     let resolved_path = resolve_project_path(project_root, trimmed);
     if let Ok(content) = std::fs::read_to_string(&resolved_path) {
-        return Ok((normalize_line_endings(&content), trimmed.to_string()));
+        return Ok((normalize_line_endings(&content).into_owned(), trimmed.to_string()));
     }
     if let Some((fallback_path, effective_rel)) = crate::path_utils::resolve_source_file_with_fallback(project_root, trimmed) {
         return std::fs::read_to_string(&fallback_path)
-            .map(|content| (normalize_line_endings(&content), effective_rel))
+            .map(|content| (normalize_line_endings(&content).into_owned(), effective_rel))
             .map_err(|err| format!("Failed to read edit target {}: {}", trimmed, err));
     }
     Err(format!("Edit target file not found: {}", file))
@@ -446,7 +446,7 @@ pub(crate) async fn maybe_format_go_after_write(
     match run_shell_cmd_async(cmd, working_dir, 10).await {
         Ok(output) if output.status.success() => std::fs::read_to_string(resolved_path)
             .ok()
-            .map(|content| normalize_line_endings(&content)),
+            .map(|content| normalize_line_endings(&content).into_owned()),
         _ => None,
     }
 }

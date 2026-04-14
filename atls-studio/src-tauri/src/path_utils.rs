@@ -457,9 +457,14 @@ pub(crate) fn expected_manifest_for_command(cmd: &str) -> Option<&'static str> {
     }
 }
 
-/// Normalize line endings to LF (\n) for consistent matching across platforms
-pub(crate) fn normalize_line_endings(s: &str) -> String {
-    s.replace("\r\n", "\n").replace('\r', "\n")
+/// Normalize line endings to LF (\n) for consistent matching across platforms.
+/// Returns `Cow::Borrowed` when the input has no `\r` (zero allocation fast path).
+pub(crate) fn normalize_line_endings(s: &str) -> std::borrow::Cow<'_, str> {
+    if !s.as_bytes().contains(&b'\r') {
+        std::borrow::Cow::Borrowed(s)
+    } else {
+        std::borrow::Cow::Owned(s.replace("\r\n", "\n").replace('\r', "\n"))
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -524,6 +529,53 @@ pub(crate) fn detect_format(raw: &[u8]) -> FileFormat {
     }
 }
 
+/// Detect file format from a small prefix + tail read. Never reads the full file.
+/// Used by the write path to preserve CRLF/LF without re-reading the entire old file.
+pub(crate) fn detect_format_from_file(path: &std::path::Path) -> Result<FileFormat, String> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut file = std::fs::File::open(path)
+        .map_err(|e| format!("Failed to open {}: {}", path.display(), e))?;
+    let meta = file.metadata()
+        .map_err(|e| format!("Failed to stat {}: {}", path.display(), e))?;
+    let file_len = meta.len();
+
+    if file_len == 0 {
+        return Ok(FileFormat { newline: NewlineMode::Lf, trailing_newline: false });
+    }
+
+    let prefix_len = std::cmp::min(file_len, 4096) as usize;
+    let mut prefix = vec![0u8; prefix_len];
+    file.read_exact(&mut prefix)
+        .map_err(|e| format!("Failed to read prefix of {}: {}", path.display(), e))?;
+
+    let mut newline = NewlineMode::Lf;
+    for i in 0..prefix.len() {
+        if prefix[i] == b'\r' {
+            newline = if i + 1 < prefix.len() && prefix[i + 1] == b'\n' {
+                NewlineMode::CrLf
+            } else {
+                NewlineMode::Cr
+            };
+            break;
+        }
+        if prefix[i] == b'\n' {
+            break;
+        }
+    }
+
+    let trailing_newline = if file_len <= prefix_len as u64 {
+        prefix.last().map_or(false, |&b| b == b'\n' || b == b'\r')
+    } else {
+        let mut tail = [0u8; 1];
+        file.seek(SeekFrom::End(-1))
+            .and_then(|_| file.read_exact(&mut tail))
+            .map(|_| tail[0] == b'\n' || tail[0] == b'\r')
+            .unwrap_or(false)
+    };
+
+    Ok(FileFormat { newline, trailing_newline })
+}
+
 /// Read a file and return (normalized content, format). Use when you need to
 /// preserve format on write (e.g. undo, edit flush).
 pub(crate) fn read_file_with_format(path: &std::path::Path) -> Result<(String, FileFormat), String> {
@@ -531,28 +583,45 @@ pub(crate) fn read_file_with_format(path: &std::path::Path) -> Result<(String, F
     let format = detect_format(&raw);
     let s = String::from_utf8(raw).map_err(|e| format!("File {} is not valid UTF-8: {}", path.display(), e))?;
     let normalized = normalize_line_endings(&s);
-    Ok((normalized, format))
+    Ok((normalized.into_owned(), format))
 }
 
 /// Serialize normalized content (LF-only) back to bytes using the given format.
 /// The normalized string's structure (incl. trailing `\n`) is preserved; only
 /// line separators are converted to the target newline mode.
+///
+/// LF fast path: returns the input bytes directly (zero copy via `Cow`).
+/// CRLF/CR path: streams newline insertion without collecting into `Vec<&str>`.
 pub(crate) fn serialize_with_format(normalized: &str, fmt: &FileFormat) -> Vec<u8> {
-    let nl: &[u8] = match fmt.newline {
-        NewlineMode::Lf => b"\n",
-        NewlineMode::CrLf => b"\r\n",
-        NewlineMode::Cr => b"\r",
-    };
-
-    let mut out = Vec::new();
-    let lines: Vec<&str> = normalized.split('\n').collect();
-    for (i, line) in lines.iter().enumerate() {
-        out.extend_from_slice(line.as_bytes());
-        if i < lines.len() - 1 {
-            out.extend_from_slice(nl);
+    match fmt.newline {
+        NewlineMode::Lf => {
+            return normalized.as_bytes().to_vec();
+        }
+        NewlineMode::CrLf => {
+            let src = normalized.as_bytes();
+            let newline_count = src.iter().filter(|&&b| b == b'\n').count();
+            let mut out = Vec::with_capacity(src.len() + newline_count);
+            for &b in src {
+                if b == b'\n' {
+                    out.push(b'\r');
+                }
+                out.push(b);
+            }
+            out
+        }
+        NewlineMode::Cr => {
+            let src = normalized.as_bytes();
+            let mut out = Vec::with_capacity(src.len());
+            for &b in src {
+                if b == b'\n' {
+                    out.push(b'\r');
+                } else {
+                    out.push(b);
+                }
+            }
+            out
         }
     }
-    out
 }
 
 #[cfg(test)]
@@ -687,5 +756,131 @@ mod tests {
         assert!(found.is_some());
         let (_kind, path) = found.unwrap();
         assert_eq!(path, pkg, "should find package in packages/foo, not root");
+    }
+
+    // ── Cow normalize tests ──
+
+    #[test]
+    fn normalize_line_endings_lf_only_borrows() {
+        let input = "hello\nworld\n";
+        let result = normalize_line_endings(input);
+        assert!(matches!(result, std::borrow::Cow::Borrowed(_)), "LF-only should borrow");
+        assert_eq!(&*result, input);
+    }
+
+    #[test]
+    fn normalize_line_endings_crlf_allocates() {
+        let input = "hello\r\nworld\r\n";
+        let result = normalize_line_endings(input);
+        assert!(matches!(result, std::borrow::Cow::Owned(_)), "CRLF should allocate");
+        assert_eq!(&*result, "hello\nworld\n");
+    }
+
+    #[test]
+    fn normalize_line_endings_bare_cr() {
+        let result = normalize_line_endings("a\rb\r");
+        assert_eq!(&*result, "a\nb\n");
+    }
+
+    #[test]
+    fn normalize_line_endings_empty_borrows() {
+        let result = normalize_line_endings("");
+        assert!(matches!(result, std::borrow::Cow::Borrowed(_)));
+        assert_eq!(&*result, "");
+    }
+
+    // ── detect_format_from_file tests ──
+
+    #[test]
+    fn detect_format_from_file_lf() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("lf.txt");
+        std::fs::write(&p, b"line1\nline2\n").unwrap();
+        let fmt = detect_format_from_file(&p).unwrap();
+        assert_eq!(fmt.newline, NewlineMode::Lf);
+        assert!(fmt.trailing_newline);
+    }
+
+    #[test]
+    fn detect_format_from_file_crlf() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("crlf.txt");
+        std::fs::write(&p, b"line1\r\nline2\r\n").unwrap();
+        let fmt = detect_format_from_file(&p).unwrap();
+        assert_eq!(fmt.newline, NewlineMode::CrLf);
+        assert!(fmt.trailing_newline);
+    }
+
+    #[test]
+    fn detect_format_from_file_no_trailing() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("notrail.txt");
+        std::fs::write(&p, b"line1\nline2").unwrap();
+        let fmt = detect_format_from_file(&p).unwrap();
+        assert_eq!(fmt.newline, NewlineMode::Lf);
+        assert!(!fmt.trailing_newline);
+    }
+
+    #[test]
+    fn detect_format_from_file_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("empty.txt");
+        std::fs::write(&p, b"").unwrap();
+        let fmt = detect_format_from_file(&p).unwrap();
+        assert_eq!(fmt.newline, NewlineMode::Lf);
+        assert!(!fmt.trailing_newline);
+    }
+
+    #[test]
+    fn detect_format_from_file_large_crlf() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("large.txt");
+        let mut content = Vec::with_capacity(8192);
+        for i in 0..200 {
+            content.extend_from_slice(format!("line {}\r\n", i).as_bytes());
+        }
+        std::fs::write(&p, &content).unwrap();
+        let fmt = detect_format_from_file(&p).unwrap();
+        assert_eq!(fmt.newline, NewlineMode::CrLf);
+        assert!(fmt.trailing_newline);
+    }
+
+    // ── Streaming serialize tests ──
+
+    #[test]
+    fn serialize_lf_fast_path_identity() {
+        let input = "fn main() {\n    println!(\"hello\");\n}\n";
+        let fmt = FileFormat { newline: NewlineMode::Lf, trailing_newline: true };
+        let out = serialize_with_format(input, &fmt);
+        assert_eq!(out, input.as_bytes());
+    }
+
+    #[test]
+    fn serialize_crlf_streaming() {
+        let input = "a\nb\nc\n";
+        let fmt = FileFormat { newline: NewlineMode::CrLf, trailing_newline: true };
+        let out = serialize_with_format(input, &fmt);
+        assert_eq!(out, b"a\r\nb\r\nc\r\n");
+    }
+
+    #[test]
+    fn serialize_cr_streaming() {
+        let input = "x\ny\n";
+        let fmt = FileFormat { newline: NewlineMode::Cr, trailing_newline: true };
+        let out = serialize_with_format(input, &fmt);
+        assert_eq!(out, b"x\ry\r");
+    }
+
+    #[test]
+    fn serialize_roundtrip_crlf_large() {
+        let mut input = String::new();
+        for i in 0..1000 {
+            input.push_str(&format!("line {} with some content\n", i));
+        }
+        let fmt = FileFormat { newline: NewlineMode::CrLf, trailing_newline: true };
+        let serialized = serialize_with_format(&input, &fmt);
+        let back = String::from_utf8(serialized).unwrap();
+        let renormalized = normalize_line_endings(&back);
+        assert_eq!(&*renormalized, input);
     }
 }

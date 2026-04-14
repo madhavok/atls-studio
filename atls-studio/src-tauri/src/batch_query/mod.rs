@@ -635,7 +635,7 @@ pub async fn atls_batch_query(
                             Ok(snap) => {
                                 let fhash = snap.snapshot_hash.clone();
                                 let content_for_registry = if snap.content.is_empty() {
-                                    std::fs::read_to_string(&effective_resolved).ok().map(|c| normalize_line_endings(&c))
+                                    std::fs::read_to_string(&effective_resolved).ok().map(|c| normalize_line_endings(&c).into_owned())
                                 } else {
                                     Some(snap.content.clone())
                                 };
@@ -652,6 +652,7 @@ pub async fn atls_batch_query(
                                         lang,
                                         line_count,
                                         symbol_count: None,
+                                        spilled: false,
                                     });
                                     if effective_fp.contains('/') || effective_fp.contains('\\') {
                                         let _ = app.emit("canonical_revision_changed", serde_json::json!({
@@ -854,6 +855,7 @@ pub async fn atls_batch_query(
                                             lang,
                                             line_count,
                                             symbol_count: None,
+                                            spilled: false,
                                         });
                                         if effective_file_path.contains('/') || effective_file_path.contains('\\') {
                                             let _ = app.emit("canonical_revision_changed", serde_json::json!({
@@ -897,6 +899,7 @@ pub async fn atls_batch_query(
                                                 lang: hash_resolver::detect_lang(Some(&effective_file_path)),
                                                 line_count: display_content.lines().count(),
                                                 symbol_count: None,
+                                                spilled: false,
                                             });
                                         }
                                     }
@@ -1753,7 +1756,7 @@ pub async fn atls_batch_query(
                     });
 
                     let resolved_path = resolve_project_path(project_root, &file_key);
-                    let file_content = match std::fs::read_to_string(&resolved_path).map(|c| normalize_line_endings(&c)) {
+                    let file_content = match std::fs::read_to_string(&resolved_path).map(|c| normalize_line_endings(&c).into_owned()) {
                         Ok(c) => c,
                         Err(e) => {
                             for &idx in &edit_indices {
@@ -10503,11 +10506,11 @@ pub async fn atls_batch_query(
                     // Validate edits
                     for (file, old, _new) in &ce_edits {
                         let resolved = resolve_project_path(project_root, file);
-                        match std::fs::read_to_string(&resolved).map(|c| normalize_line_endings(&c)) {
+                        match std::fs::read_to_string(&resolved).map(|c| normalize_line_endings(&c).into_owned()) {
                             Ok(content) => {
                                 let old_normalized = normalize_line_endings(old);
                                 #[allow(deprecated)] // Read-only check, not a write path
-                                if content.contains(&old_normalized) || flexible_replacen(&content, &old_normalized, "").is_some() {
+                                if content.contains(&*old_normalized) || flexible_replacen(&content, &old_normalized, "").is_some() {
                                     edited_files.push(file.clone());
                                 } else {
                                     errors.push(serde_json::json!({
@@ -10581,7 +10584,7 @@ pub async fn atls_batch_query(
                     let resolved = resolve_project_path(project_root, file);
                     
                     // Normalize line endings for consistent matching
-                    let content = match std::fs::read_to_string(&resolved).map(|c| normalize_line_endings(&c)) {
+                    let content = match std::fs::read_to_string(&resolved).map(|c| normalize_line_endings(&c).into_owned()) {
                         Ok(c) => c,
                         Err(e) => {
                             errors.push(serde_json::json!({
@@ -10879,6 +10882,7 @@ pub async fn atls_batch_query(
                         lang,
                         line_count,
                         symbol_count: None,
+                        spilled: false,
                     });
                 }
                 let _ = app.emit(
@@ -10999,7 +11003,7 @@ pub async fn atls_batch_query(
                             let to_insert = if is_js_ts_path(path) && normalized_content.contains("export ") {
                                 dedupe_barrel_exports(&normalized_content)
                             } else {
-                                normalized_content
+                                normalized_content.into_owned()
                             };
                             file_map.insert(path.to_string(), to_insert);
                         }
@@ -11332,7 +11336,7 @@ pub async fn atls_batch_query(
                             Ok(Some(range)) => {
                                 let file_content = file_map.get(&file).cloned().unwrap_or_else(|| {
                                     std::fs::read_to_string(&resolved_path)
-                                        .map(|c| normalize_line_endings(&c))
+                                        .map(|c| normalize_line_endings(&c).into_owned())
                                         .unwrap_or_default()
                                 });
                                 let lines: Vec<&str> = file_content.lines().collect();
@@ -11705,6 +11709,7 @@ pub async fn atls_batch_query(
                             lang,
                             line_count,
                             symbol_count: None,
+                            spilled: false,
                         });
                         if file_path.contains('/') || file_path.contains('\\') {
                             let _ = app.emit("canonical_revision_changed", serde_json::json!({
@@ -11764,7 +11769,7 @@ pub async fn atls_batch_query(
                     for (file_path, content) in &files {
                         let resolved_path = resolve_project_path(project_root, file_path);
                         if strict_validation {
-                            if let Ok(old_content) = std::fs::read_to_string(&resolved_path).map(|c| normalize_line_endings(&c)) {
+                            if let Ok(old_content) = std::fs::read_to_string(&resolved_path).map(|c| normalize_line_endings(&c).into_owned()) {
                                 if let Some(warn) = check_behavior_change_heuristic(&old_content, content) {
                                     behavior_warnings.push(format!("{}: {}", file_path, warn));
                                 }
@@ -11814,6 +11819,7 @@ pub async fn atls_batch_query(
                                 lang,
                                 line_count: formatted_content.lines().count(),
                                 symbol_count: None,
+                                spilled: false,
                             });
                         }
                     }
@@ -12082,6 +12088,7 @@ pub async fn atls_batch_query(
                             lang,
                             line_count,
                             symbol_count: None,
+                            spilled: false,
                         });
                         if file_path.contains('/') || file_path.contains('\\') {
                             let _ = app.emit("canonical_revision_changed", serde_json::json!({
@@ -12295,7 +12302,7 @@ pub async fn atls_batch_query(
                             continue;
                         }
                         let resolved_path = resolve_project_path(project_root, file);
-                        if let Ok(content) = std::fs::read_to_string(&resolved_path).map(|c| normalize_line_endings(&c)) {
+                        if let Ok(content) = std::fs::read_to_string(&resolved_path).map(|c| normalize_line_endings(&c).into_owned()) {
                             let lang = hash_resolver::detect_lang(Some(file));
                             registry.register(resolved_hash.to_string(), hash_resolver::HashEntry {
                                 source: Some(file.to_string()),
@@ -12304,6 +12311,7 @@ pub async fn atls_batch_query(
                                 lang,
                                 line_count: content.lines().count(),
                                 symbol_count: None,
+                                spilled: false,
                             });
                             let previous_revision = item.get("parent_hash").and_then(|v| v.as_str());
                             if file.contains('/') || file.contains('\\') {
@@ -12438,6 +12446,7 @@ pub async fn atls_batch_query(
                                             lang,
                                             line_count: prev.lines().count(),
                                             symbol_count: None,
+                                            spilled: false,
                                         });
                                         if file_path.contains('/') || file_path.contains('\\') {
                                             let _ = app.emit("canonical_revision_changed", serde_json::json!({
@@ -12520,6 +12529,7 @@ pub async fn atls_batch_query(
                                                     lang,
                                                     line_count: content.lines().count(),
                                                     symbol_count: None,
+                                                    spilled: false,
                                                 });
                                                 if file_path.contains('/') || file_path.contains('\\') {
                                                     let _ = app.emit("canonical_revision_changed", serde_json::json!({
@@ -12636,7 +12646,7 @@ pub async fn atls_batch_query(
                     Some((file_path, entry)) => {
                         let resolved_path = resolve_project_path(project_root, &file_path);
                         let disk_content = std::fs::read_to_string(&resolved_path)
-                            .map(|c| normalize_line_endings(&c))
+                            .map(|c| normalize_line_endings(&c).into_owned())
                             .unwrap_or_default();
 
                         let buf_lines: Vec<&str> = entry.content.lines().collect();
@@ -12759,7 +12769,7 @@ pub async fn atls_batch_query(
                     
                     // Read file and normalize line endings for consistent cross-platform matching
                     let content = match std::fs::read_to_string(&resolved_path) {
-                        Ok(c) => normalize_line_endings(&c),
+                        Ok(c) => normalize_line_endings(&c).into_owned(),
                         Err(e) => {
                             results.push(serde_json::json!({
                                 "file": file_path,
@@ -12771,11 +12781,11 @@ pub async fn atls_batch_query(
                             continue;
                         }
                     };
-                    let old_text = normalize_line_endings(&old_text);
-                    let new_text = normalize_line_endings(&new_text);
+                    let old_text = normalize_line_endings(&old_text).into_owned();
+                    let new_text = normalize_line_endings(&new_text).into_owned();
                     
                     // Count occurrences (exact match)
-                    let exact_count = content.matches(&old_text).count();
+                    let exact_count = content.matches(old_text.as_str()).count();
                     
                     let pattern_preview = if old_text.len() > 100 {
                         format!("{}...", &old_text[..100])
@@ -14401,7 +14411,7 @@ pub async fn atls_batch_query(
                     let snapshot_file = |snapshots: &mut Vec<Snapshot>, root: &std::path::Path, file_path: &str| {
                         if snapshots.iter().any(|s| s.file == file_path) { return; }
                         let resolved = resolve_project_path(root, file_path);
-                        if let Ok(content) = std::fs::read_to_string(&resolved).map(|c| normalize_line_endings(&c)) {
+                        if let Ok(content) = std::fs::read_to_string(&resolved).map(|c| normalize_line_endings(&c).into_owned()) {
                             snapshots.push(Snapshot { file: file_path.to_string(), content });
                         }
                     };
@@ -14456,6 +14466,7 @@ pub async fn atls_batch_query(
                             lang: hash_resolver::detect_lang(Some(snap.file.as_str())),
                             line_count: snap.content.lines().count(),
                             symbol_count: None,
+                            spilled: false,
                         });
                         if snap.file.contains('/') || snap.file.contains('\\') {
                             let _ = app.emit("canonical_revision_changed", serde_json::json!({
@@ -14609,7 +14620,7 @@ pub async fn atls_batch_query(
                                 if let Some(sp) = src_path {
                                     let src_content = source_content_map.get(&sp).cloned().or_else(|| {
                                         std::fs::read_to_string(&resolve_project_path(&project_root_owned, &sp))
-                                            .ok().map(|c| normalize_line_endings(&c))
+                                            .ok().map(|c| normalize_line_endings(&c).into_owned())
                                     });
                                     if let Some(src_content) = src_content {
                                         let src_lang = hash_resolver::detect_lang(Some(sp.as_str()));
@@ -14668,7 +14679,7 @@ pub async fn atls_batch_query(
                             };
                             let src_content = source_content_map.get(&source_file_path).cloned()
                                 .or_else(|| std::fs::read_to_string(&resolve_project_path(&project_root_owned, &source_file_path))
-                                    .ok().map(|c| normalize_line_endings(&c)))
+                                    .ok().map(|c| normalize_line_endings(&c).into_owned()))
                                 .ok_or_else(|| format!("extract: cannot read source '{}'", source_file_path))?;
 
                             // Resolve symbol to content + line range
@@ -15015,6 +15026,7 @@ pub async fn atls_batch_query(
                                     lang: hash_resolver::detect_lang(Some(path)),
                                     line_count: content.lines().count(),
                                     symbol_count: None,
+                                    spilled: false,
                                 });
                                 if path_str.contains('/') || path_str.contains('\\') {
                                     let _ = app.emit("canonical_revision_changed", serde_json::json!({
@@ -15043,7 +15055,7 @@ pub async fn atls_batch_query(
                                 let resolved = resolve_project_path(&project_root_owned, sp);
                                 let current = source_content_map.get(sp).cloned()
                                     .or_else(|| std::fs::read_to_string(&resolved)
-                                        .ok().map(|c| normalize_line_endings(&c)))
+                                        .ok().map(|c| normalize_line_endings(&c).into_owned()))
                                     .ok_or_else(|| format!("Failed to read source {} (not in snapshot and file missing)", sp))?;
                                 let old_hash = content_hash(&current);
 
@@ -15310,6 +15322,7 @@ pub async fn atls_batch_query(
                                             lang: hash_resolver::detect_lang(Some(sp.as_str())),
                                             line_count: 0,
                                             symbol_count: None,
+                                            spilled: false,
                                         });
                                         if sp.contains('/') || sp.contains('\\') {
                                             let _ = app.emit("canonical_revision_changed", serde_json::json!({
@@ -15372,7 +15385,7 @@ pub async fn atls_batch_query(
                         for (file_path, edits) in &updates_by_file {
                             let resolved = resolve_project_path(&project_root_owned, file_path);
                             let current = source_content_map.get(file_path).cloned()
-                                .or_else(|| std::fs::read_to_string(&resolved).ok().map(|c| normalize_line_endings(&c)))
+                                .or_else(|| std::fs::read_to_string(&resolved).ok().map(|c| normalize_line_endings(&c).into_owned()))
                                 .ok_or_else(|| format!("Failed to read {} (not in snapshot and file missing)", file_path))?;
                             let old_hash = content_hash(&current);
 
@@ -15466,6 +15479,7 @@ pub async fn atls_batch_query(
                                     lang: hash_resolver::detect_lang(Some(file_path.as_str())),
                                     line_count: 0,
                                     symbol_count: None,
+                                    spilled: false,
                                 });
                                 if file_path.contains('/') || file_path.contains('\\') {
                                     let _ = app.emit("canonical_revision_changed", serde_json::json!({
@@ -15590,6 +15604,7 @@ pub async fn atls_batch_query(
                                     lang: hash_resolver::detect_lang(Some(cpath.as_str())),
                                     line_count: ccontent.lines().count(),
                                     symbol_count: Some(0),
+                                    spilled: false,
                                 };
                                 let hr_state = app.state::<hash_resolver::HashRegistryState>();
                                 let mut reg = hr_state.registry.lock().await;
@@ -15723,6 +15738,7 @@ pub async fn atls_batch_query(
                             lang: hash_resolver::detect_lang(Some(path.as_str())),
                             line_count: content.lines().count(),
                             symbol_count: None,
+                            spilled: false,
                         });
                     }
 
