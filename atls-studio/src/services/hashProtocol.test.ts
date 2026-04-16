@@ -405,5 +405,37 @@ describe('hashProtocol', () => {
       expect(v1.getTurn()).toBe(3);
       expect(v2.getTurn()).toBe(0);
     });
+
+    it('touchedHashes records refs resolved via getRef', () => {
+      materialize('touch0001', 'file', 'src/touched-via-getref.ts', 100, 10, '');
+      const view = createScopedView();
+      expect(view.touchedHashes().size).toBe(0);
+
+      view.getRef('touch0001');
+      expect(view.touchedHashes().has('touch0001')).toBe(true);
+    });
+
+    it('touchedHashes records refs materialized through the scoped view', () => {
+      const view = createScopedView();
+      view.materialize('touch0002', 'file', 'src/touched-via-materialize.ts', 80, 8, '');
+      expect(view.touchedHashes().has('touch0002')).toBe(true);
+    });
+
+    it('touchedHashes is isolated between scoped views', () => {
+      materialize('touch0003', 'file', 'src/iso.ts', 60, 6, '');
+      const v1 = createScopedView();
+      const v2 = createScopedView();
+
+      v1.getRef('touch0003');
+      expect(v1.touchedHashes().has('touch0003')).toBe(true);
+      expect(v2.touchedHashes().has('touch0003')).toBe(false);
+    });
+
+    it('getRef on an unknown hash does not record it', () => {
+      const view = createScopedView();
+      const ref = view.getRef('nonexistent-ffff');
+      expect(ref).toBeUndefined();
+      expect(view.touchedHashes().has('nonexistent-ffff')).toBe(false);
+    });
   });
 });

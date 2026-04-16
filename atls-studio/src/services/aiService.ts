@@ -241,7 +241,7 @@ import {
   extractSteeringBlocks, extractHashRefs,
   recordReadDiversity,
 } from './spinDiagnostics';
-import { diagnoseSpinning } from './spinDetector';
+import { evaluateSpin, resetSpinCircuitBreaker } from './spinCircuitBreaker';
 
 /** Content block types for multimodal messages */
 export type TextContentBlock = { type: 'text'; text: string };
@@ -1493,6 +1493,9 @@ function createChatSession(isSwarm: boolean): ChatSessionContext {
   }
   resetMainAgentTerminal();
   invalidateHistoryCache();
+  // Spin circuit-breaker state is per-session: reset so a fresh chat doesn't
+  // inherit the previous session's escalation streak.
+  resetSpinCircuitBreaker();
 
   const controller = new AbortController();
   const session: ChatSessionContext = {
@@ -1848,6 +1851,21 @@ async function streamChatViaTauri(
       });
       const reliefAction = roundContext.reliefAction;
 
+      // -----------------------------------------------------------------
+      // SPIN CIRCUIT BREAKER — auto-escalating intervention (GAP 1)
+      // -----------------------------------------------------------------
+      // Runs independently of the (optional) haltEnabled gate so nudge/strong
+      // tiers always fire. Halt only triggers when the feature flag is on
+      // AND we're in a non-ask/non-retriever mode with enough round history.
+      let cbEvaluation: ReturnType<typeof evaluateSpin> | undefined;
+      if (mode !== 'ask' && mode !== 'retriever' && round >= 2) {
+        const snapshots = useRoundHistoryStore.getState().snapshots;
+        if (snapshots.length >= 3) {
+          const haltEnabled = useAppStore.getState().settings.spinCircuitBreakerHaltEnabled === true;
+          cbEvaluation = evaluateSpin(snapshots, { haltEnabled });
+        }
+      }
+
       // Publish tool-loop counters so buildDynamicContextBlock can emit
       // conditional steering sections in the non-durable state preamble.
       useAppStore.getState().setToolLoopSteering({
@@ -1861,7 +1879,28 @@ async function streamChatViaTauri(
         activeSubtaskId: lastActiveSubtaskId,
         completionBlocked: runtimeCompletionBlocker != null,
         completionBlocker: runtimeCompletionBlocker,
+        spinCircuitBreaker: cbEvaluation && cbEvaluation.tier !== 'none' && cbEvaluation.message
+          ? {
+              tier: cbEvaluation.tier as 'nudge' | 'strong' | 'halt',
+              mode: cbEvaluation.diagnosis.mode,
+              confidence: cbEvaluation.diagnosis.confidence,
+              message: cbEvaluation.message,
+              consecutiveSameMode: cbEvaluation.consecutiveSameMode,
+            }
+          : null,
       });
+
+      // Hard halt: abort the session so the outer tool loop exits cleanly.
+      // The next `abortSignal.aborted` check terminates the round and the
+      // UI receives the same done/abort flow as a user-initiated stop.
+      if (cbEvaluation?.shouldHalt && !abortSignal.aborted) {
+        console.warn(
+          `[spin-circuit-breaker] HALT — mode=${cbEvaluation.diagnosis.mode} `
+          + `confidence=${cbEvaluation.diagnosis.confidence.toFixed(2)} `
+          + `consecutive=${cbEvaluation.consecutiveSameMode}`,
+        );
+        session.abortController.abort();
+      }
 
       const dynamicContextBlock = buildDynamicContextBlock(
         dynamicContextInput?.workspaceContext,
@@ -3811,25 +3850,14 @@ function buildDynamicContextBlock(
   }
 
   // -------------------------------------------------------------------------
-  // SPIN EARLY WARNING — mode-specific intervention from spin detector
+  // SPIN CIRCUIT BREAKER — auto-escalating intervention (GAP 1)
+  // Consumes the tier + message already computed in the tool loop before
+  // this block was built, so diagnosis runs once per round (not twice) and
+  // escalation state stays consistent between the loop's abort decision and
+  // the prompt injection.
   // -------------------------------------------------------------------------
-  if (tls && tls.mode !== 'ask' && tls.mode !== 'retriever' && tls.round >= 2) {
-    const snapshots = useRoundHistoryStore.getState().snapshots;
-    if (snapshots.length >= 3) {
-      const diagnosis = diagnoseSpinning(snapshots);
-      if (diagnosis.spinning && diagnosis.confidence >= 0.7) {
-        const steeringByMode: Record<string, string> = {
-          context_loss: '<<SYSTEM: SPIN — context loss. You are re-examining files you already processed. Check BB for existing findings. Use rec(h:XXXX) to restore evicted context.>>',
-          goal_drift: '<<SYSTEM: SPIN — goal drift. Recent actions diverge from the task plan. Review BB status and refocus on the original goal.>>',
-          stuck_in_phase: `<<SYSTEM: SPIN — stuck in phase. You've spent ${tls.consecutiveReadOnlyRounds} rounds reading without producing findings or edits. Write BB findings for what you know, then act.>>`,
-          tool_confusion: `<<SYSTEM: SPIN — tool confusion. Last ${Math.min(5, tls.round)} rounds used nearly identical tool calls. Declare a specific blocker or try a fundamentally different approach.>>`,
-          volatile_unpinned: '<<SYSTEM: CRITICAL — YOU ARE NOT PINNING. Reads/searches returned VOLATILE h:refs but you did NOT pin them in the SAME batch. They are NOW GONE. You MUST add pi in:rN.refs (or pi hashes:h:XXXX) in the SAME batch call as your reads. Do NOT defer pinning to the next round — refs expire after ONE round.>>',
-          completion_gate: `<<SYSTEM: SPIN — completion blocked by: ${tls.completionBlocker ?? 'unknown'}. Address this specific requirement or call task_complete with an honest summary.>>`,
-        };
-        const msg = steeringByMode[diagnosis.mode];
-        if (msg) parts.push(msg);
-      }
-    }
+  if (tls?.spinCircuitBreaker && tls.spinCircuitBreaker.message) {
+    parts.push(tls.spinCircuitBreaker.message);
   }
 
   // -------------------------------------------------------------------------

@@ -8,7 +8,7 @@
  * - suspect (external_file_change, watcher_event, unknown) → hard-stop, require re-read
  */
 
-import type { FreshnessCause } from './batch/types';
+import type { FreshnessCause, OperationKind } from './batch/types';
 import { useContextStore } from '../stores/contextStore';
 import {
   getFreshnessJournal,
@@ -18,6 +18,16 @@ import {
   type RebindOutcome,
 } from './freshnessJournal';
 import { resolveSymbolToLines } from '../utils/symbolResolver';
+
+/**
+ * Structural mirror of {@link import('./batch/opMap').isMutatingOp}. Inlined
+ * to avoid a module-load cycle (opMap pulls in every batch handler, several of
+ * which import back into this file). Unit-tested for parity in
+ * `freshnessPreflight.test.ts` so drift is caught at CI time.
+ */
+function isCanonicalMutatingOp(op: OperationKind): boolean {
+  return op.startsWith('change.') || op === 'system.exec';
+}
 
 export type RefClassification = 'fresh' | 'rebaseable' | 'suspect';
 export interface PreflightDecision extends RebindOutcome {
@@ -204,14 +214,56 @@ export function getPreflightAutomationDecision(result: Pick<PreflightResult, 'bl
   return { action: 'proceed', reason: 'verified_or_fresh' };
 }
 
-/** Operations that consume file-backed refs and need preflight */
-const PREFLIGHT_OPS = new Set([
+/**
+ * Legacy shorthand operation names that consume file-backed refs and need preflight.
+ * Canonical (dotted) {@link OperationKind} names are handled structurally by
+ * {@link needsPreflight} via {@link isMutatingOp} + a read-side family allowlist,
+ * so new `change.*` / `read.*` / `search.*` / `analyze.*` / `verify.*` ops get
+ * freshness validation automatically. Exported for test-time enumeration.
+ */
+export const LEGACY_PREFLIGHT_OPS: ReadonlySet<string> = new Set([
   'draft', 'batch_edits', 'edit', 'read_lines', 'context', 'create_files', 'delete_files',
   'refactor', 'split_module',
   'code_search', 'find_symbol', 'symbol_usage', 'find_issues', 'detect_patterns',
   'dependencies', 'call_hierarchy', 'symbol_dep_graph', 'change_impact', 'impact_analysis',
   'extract_plan', 'verify', 'git', 'workspaces', 'ast_query',
 ]);
+
+/** Dotted OperationKind prefixes whose ops consume file-backed refs (read side). */
+const PREFLIGHT_CANONICAL_READ_PREFIXES: ReadonlyArray<string> = [
+  'search.', 'read.', 'analyze.', 'verify.',
+];
+
+/** Exact canonical ops (non-prefix) that consume refs beyond the mutating + read set. */
+const PREFLIGHT_CANONICAL_EXACT: ReadonlySet<string> = new Set<string>([
+  'system.git',
+  'system.workspaces',
+]);
+
+/**
+ * Structural predicate: does this op consume file-backed refs and therefore
+ * need a freshness preflight? Accepts both canonical {@link OperationKind}
+ * (dotted, e.g. `change.edit`) and legacy shorthand (e.g. `edit`, `draft`).
+ *
+ * For canonical ops this is derived from {@link isMutatingOp} plus a small
+ * read-side family allowlist — when new mutating ops are added to the op map
+ * they are automatically covered. For legacy shorthand a maintained allowlist
+ * is consulted for backward compatibility with non-batch call sites (e.g.
+ * `toolHelpers.atlsBatchQuery` and `batch/handlers/change.ts` that pass
+ * resolved legacy names like `draft`).
+ */
+export function needsPreflight(operation: string): boolean {
+  if (!operation) return false;
+  if (operation.includes('.')) {
+    const op = operation as OperationKind;
+    if (isCanonicalMutatingOp(op)) return true;
+    for (const prefix of PREFLIGHT_CANONICAL_READ_PREFIXES) {
+      if (operation.startsWith(prefix)) return true;
+    }
+    return PREFLIGHT_CANONICAL_EXACT.has(operation);
+  }
+  return LEGACY_PREFLIGHT_OPS.has(operation);
+}
 
 function isRebaseableCause(cause: FreshnessCause): boolean {
   return cause === 'same_file_prior_edit' || cause === 'hash_forward';
@@ -288,7 +340,7 @@ export async function runFreshnessPreflight(
   },
 ): Promise<PreflightResult> {
   const warnings: string[] = [];
-  if (!PREFLIGHT_OPS.has(operation)) {
+  if (!needsPreflight(operation)) {
     return { params, warnings, blocked: false, confidence: 'high', strategy: 'fresh', decisions: [] };
   }
 

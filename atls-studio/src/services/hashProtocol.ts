@@ -677,6 +677,18 @@ export interface ScopedHppView {
   getRef(hash: string): ChunkRef | undefined;
   shouldMaterialize(ref: ChunkRef): boolean;
   getActiveRefs(): ChunkRef[];
+  /**
+   * Materialize a chunk through the scoped view. Delegates to the global
+   * `materialize` and records the hash in `touchedHashes()` so downstream
+   * cleanup can dematerialize exactly the refs the subagent affected.
+   */
+  materialize: typeof materialize;
+  /**
+   * Snapshot of every hash the scoped view has resolved or materialized.
+   * Returned as a read-only view so callers cannot mutate the internal set
+   * (G-rule-3: bounded, owned state).
+   */
+  touchedHashes(): ReadonlySet<string>;
 }
 
 /**
@@ -684,17 +696,32 @@ export interface ScopedHppView {
  * refs Map but tracks a local turn counter that does not mutate global state.
  * advanceTurn() only increments the local counter — no dematerialization,
  * no round-refresh hooks, no global side effects.
+ *
+ * The view also records every hash it resolves via `getRef` or materializes
+ * via `materialize`. Callers (e.g. subagent runner cleanup) use
+ * `touchedHashes()` as the authoritative set of refs the subagent touched,
+ * eliminating reliance on external heuristics that can miss nested tool-call
+ * refs.
  */
 export function createScopedView(): ScopedHppView {
   let localTurn = 0;
   const startTurn = currentTurn;
+  const touched = new Set<string>();
+
+  const record = (hash: string | undefined | null): void => {
+    if (typeof hash === 'string' && hash.length > 0) touched.add(hash);
+  };
 
   return {
     getTurn: () => localTurn,
 
     advanceTurn: () => ++localTurn,
 
-    getRef: (hash: string) => getRef(hash),
+    getRef: (hash: string) => {
+      const ref = getRef(hash);
+      if (ref) record(ref.hash);
+      return ref;
+    },
 
     shouldMaterialize: (ref: ChunkRef) => {
       if (ref.visibility === 'archived' || ref.visibility === 'evicted') return false;
@@ -705,5 +732,13 @@ export function createScopedView(): ScopedHppView {
     },
 
     getActiveRefs: () => getActiveRefs(),
+
+    materialize: (...args) => {
+      const ref = materialize(...args);
+      record(ref.hash);
+      return ref;
+    },
+
+    touchedHashes: () => touched,
   };
 }

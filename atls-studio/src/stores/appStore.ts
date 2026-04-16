@@ -494,6 +494,13 @@ export interface Settings {
   subagentThinking?: 'off' | 'low' | 'medium' | 'high';
   /** Override entry manifest depth for subagent system prompt; omit to use entryManifestDepth */
   subagentEntryManifestDepth?: 'off' | 'paths' | 'sigs' | 'paths_sigs';
+  /**
+   * When true, the spin circuit-breaker may escalate from `strong` to `halt`
+   * (hard abort of the tool loop on three consecutive same-mode detections).
+   * Defaults to false so the behavior can ship behind a flag; the `nudge` and
+   * `strong` tiers still fire regardless of this setting.
+   */
+  spinCircuitBreakerHaltEnabled?: boolean;
 }
 
 /** Per-category severity enables. Key = category, value = enabled severities */
@@ -539,6 +546,20 @@ export interface ToolLoopSteering {
   activeSubtaskId: string | null;
   completionBlocked: boolean;
   completionBlocker: string | null;
+  /**
+   * Current {@link import('../services/spinCircuitBreaker').CircuitBreakerTier}
+   * from the auto-spin detector. Populated by the chat loop each round when
+   * a high-confidence spin is detected; null otherwise. UI can read this to
+   * show a circuit-breaker badge, and prompt builders can inject the
+   * pre-computed steering message instead of re-running diagnosis.
+   */
+  spinCircuitBreaker?: {
+    tier: 'nudge' | 'strong' | 'halt';
+    mode: string;
+    confidence: number;
+    message: string;
+    consecutiveSameMode: number;
+  } | null;
 }
 
 interface AppState {

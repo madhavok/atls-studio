@@ -112,6 +112,18 @@ export type PromptReliefAction =
   | 'compact_wm'
   | 'evict_wm';
 
+/**
+ * Planned pressure-relief action, derived from cross-layer budget reconciliation.
+ * Distinct from {@link PromptReliefAction} (which records what the middleware
+ * chain actually did) so the planner and the recorder can evolve independently.
+ */
+export type PlannedPressureAction =
+  | 'compact_history'
+  | 'prune_staged'
+  | 'prune_workspace'
+  | 'prune_bb'
+  | 'compact_wm';
+
 export interface PromptLayerBudgets {
   contextWindowTokens: number;
   staticSystemBudgetTokens: number;
@@ -153,6 +165,131 @@ export function createPromptLayerBudgets(
     blackboardBudgetTokens: BLACKBOARD_BUDGET_TOKENS,
     totalSoftPressureTokens: Math.floor(contextWindowTokens * TOTAL_SOFT_PRESSURE_PCT),
     totalHardPressureTokens: Math.floor(contextWindowTokens * TOTAL_HARD_PRESSURE_PCT),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Unified budget reconciler (GAP 3)
+// ---------------------------------------------------------------------------
+
+export interface ReconcileBudgetsInput {
+  /** Full model context window in tokens. */
+  contextWindowTokens: number;
+  /** System prompt + tool refs + shell guide + context control tokens. */
+  staticSystemTokens: number;
+  /** BP2 tool definition tokens (from provider or native tool spec). */
+  toolDefTokens: number;
+  currentHistoryTokens: number;
+  currentStagedTokens: number;
+  currentWorkspaceContextTokens: number;
+  currentBlackboardTokens: number;
+  currentWmTokens: number;
+}
+
+export interface ReconciledBudgets extends PromptLayerBudgets {
+  /** contextWindow - staticSystem - toolDefs: the space for dynamic layers. */
+  availableTokens: number;
+  /**
+   * Cross-layer pressure plan: layers whose current usage exceeds their
+   * reconciled allocation, ordered by overage ratio (most-over first).
+   * Emitted so the middleware chain can act on the highest-pressure layers
+   * without each middleware recomputing its own threshold.
+   */
+  plannedPressureActions: PlannedPressureAction[];
+  /** Per-layer overage (current - allocation) — negative when under budget. */
+  layerOverages: Record<PlannedPressureAction, number>;
+}
+
+/**
+ * Produce a single coordinated allocation across the five dynamic prompt
+ * layers (history, staged, WM, workspace context, blackboard) given the
+ * actual context window and static/tool-def consumption.
+ *
+ * Step 1: `availableTokens = contextWindow - staticSystem - toolDefs`.
+ * Step 2: Start from the five default constants.
+ * Step 3: If the sum of defaults exceeds `available * TOTAL_SOFT_PRESSURE_PCT`,
+ *         scale every default down proportionally to fit that soft envelope.
+ *         If it still exceeds `available * TOTAL_HARD_PRESSURE_PCT` (which
+ *         cannot happen via scaling alone unless `available <= 0`), clamp the
+ *         per-layer budgets to zero and mark every layer for relief.
+ * Step 4: For each layer whose current tokens exceed the reconciled
+ *         allocation, emit a {@link PlannedPressureAction}. Actions are sorted
+ *         by overage ratio (most-over first) so the middleware chain drives
+ *         the worst layer first even when several are under pressure at once.
+ *
+ * Pure function: no store reads, no side-effects, deterministic for the same
+ * input. Safe to call on every round.
+ */
+export function reconcileBudgets(input: ReconcileBudgetsInput): ReconciledBudgets {
+  const {
+    contextWindowTokens,
+    staticSystemTokens,
+    toolDefTokens,
+    currentHistoryTokens,
+    currentStagedTokens,
+    currentWorkspaceContextTokens,
+    currentBlackboardTokens,
+    currentWmTokens,
+  } = input;
+
+  const availableTokens = Math.max(0, contextWindowTokens - staticSystemTokens - toolDefTokens);
+
+  // Start from defaults.
+  const defaults = {
+    history: CONVERSATION_HISTORY_BUDGET_TOKENS,
+    staged: STAGED_BUDGET_TOKENS,
+    wm: WM_BUDGET_TOKENS,
+    workspace: WORKSPACE_CONTEXT_BUDGET_TOKENS,
+    blackboard: BLACKBOARD_BUDGET_TOKENS,
+  };
+  const defaultsSum = defaults.history + defaults.staged + defaults.wm + defaults.workspace + defaults.blackboard;
+
+  const softEnvelope = Math.floor(availableTokens * TOTAL_SOFT_PRESSURE_PCT);
+  const hardEnvelope = Math.floor(availableTokens * TOTAL_HARD_PRESSURE_PCT);
+
+  // Scale proportionally when defaults overflow the soft envelope.
+  const scale = defaultsSum > softEnvelope && defaultsSum > 0
+    ? softEnvelope / defaultsSum
+    : 1;
+
+  const scaled = {
+    history: Math.max(0, Math.floor(defaults.history * scale)),
+    staged: Math.max(0, Math.floor(defaults.staged * scale)),
+    wm: Math.max(0, Math.floor(defaults.wm * scale)),
+    workspace: Math.max(0, Math.floor(defaults.workspace * scale)),
+    blackboard: Math.max(0, Math.floor(defaults.blackboard * scale)),
+  };
+  const stagedAnchor = Math.max(0, Math.floor(STAGED_ANCHOR_BUDGET_TOKENS * scale));
+
+  const layerOverages: Record<PlannedPressureAction, number> = {
+    compact_history: currentHistoryTokens - scaled.history,
+    prune_staged: currentStagedTokens - scaled.staged,
+    prune_workspace: currentWorkspaceContextTokens - scaled.workspace,
+    prune_bb: currentBlackboardTokens - scaled.blackboard,
+    compact_wm: currentWmTokens - scaled.wm,
+  };
+
+  const plannedPressureActions: PlannedPressureAction[] = (
+    Object.entries(layerOverages) as Array<[PlannedPressureAction, number]>
+  )
+    .filter(([, over]) => over > 0)
+    .sort((a, b) => b[1] - a[1])
+    .map(([action]) => action);
+
+  return {
+    contextWindowTokens,
+    staticSystemBudgetTokens: staticSystemTokens,
+    conversationHistoryBudgetTokens: scaled.history,
+    stagedBudgetTokens: scaled.staged,
+    stagedAnchorBudgetTokens: stagedAnchor,
+    wmBudgetTokens: scaled.wm,
+    workspaceContextBudgetTokens: scaled.workspace,
+    blackboardBudgetTokens: scaled.blackboard,
+    totalSoftPressureTokens: softEnvelope,
+    totalHardPressureTokens: hardEnvelope,
+    availableTokens,
+    plannedPressureActions,
+    layerOverages,
   };
 }
 

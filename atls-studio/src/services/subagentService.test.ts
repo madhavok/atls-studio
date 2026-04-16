@@ -4,9 +4,16 @@
  * Tests role allowlists, SubAgentResult shape, provider message
  * safety, and budget constants without requiring Tauri runtime.
  */
-import { describe, it, expect } from 'vitest';
-import { ROLE_ALLOWED_OPS, SUBAGENT_MAX_FILE_PATHS, foldSubagentUsageMetrics } from './subagentService';
+import { describe, it, expect, beforeEach } from 'vitest';
+import {
+  ROLE_ALLOWED_OPS,
+  SUBAGENT_MAX_FILE_PATHS,
+  foldSubagentUsageMetrics,
+  dematerializeSubagentChunks,
+} from './subagentService';
 import type { SubAgentRef, SubAgentResult, SubagentType } from './subagentService';
+import { createScopedView, materialize, getRef, resetProtocol } from './hashProtocol';
+import { useContextStore } from '../stores/contextStore';
 import {
   SUBAGENT_MAX_ROUNDS,
   SUBAGENT_MAX_ROUNDS_BY_ROLE,
@@ -257,6 +264,52 @@ describe('subagentService', () => {
       const capped = paths.slice(0, SUBAGENT_MAX_FILE_PATHS);
       expect(capped).toHaveLength(SUBAGENT_MAX_FILE_PATHS);
       expect(capped[0]).toBe('src/file0.ts');
+    });
+  });
+
+  describe('dematerializeSubagentChunks with ScopedHppView (GAP 7)', () => {
+    beforeEach(() => {
+      resetProtocol();
+      useContextStore.getState().resetSession();
+    });
+
+    it('cleans up refs that the heuristic pass would miss but the scoped view touched via getRef', () => {
+      // Simulate a parent chunk that already exists before the subagent runs.
+      const preExistingHashes = new Set<string>();
+      const preExistingSources = new Set<string>();
+
+      // A nested-tool-call ref the heuristic pass would miss: it's materialized
+      // (not dormant in the context store), has no source matching any chunk,
+      // but was resolved by the subagent through the scoped view.
+      const hiddenHash = 'hiddenref000001';
+      materialize(hiddenHash, 'result', undefined, 120, 0, '');
+
+      const view = createScopedView();
+      // Subagent resolves the ref through the scoped view (e.g. via a nested
+      // tool call that calls getRef). This is the information the heuristic
+      // pass lacks.
+      view.getRef(hiddenHash);
+
+      expect(getRef(hiddenHash)?.visibility).toBe('materialized');
+
+      dematerializeSubagentChunks(preExistingHashes, preExistingSources, view);
+
+      // The scoped view's touchedHashes drove cleanup even though the chunk
+      // store had no record of this hash. `dematerialize` transitions
+      // materialized → referenced in the HPP state machine.
+      expect(getRef(hiddenHash)?.visibility).toBe('referenced');
+    });
+
+    it('respects preExistingHashes even when the scoped view touched them', () => {
+      const hash = 'preexisting0001';
+      materialize(hash, 'file', 'src/pre.ts', 100, 10, '');
+      const preExistingHashes = new Set([hash]);
+
+      const view = createScopedView();
+      view.getRef(hash);
+
+      dematerializeSubagentChunks(preExistingHashes, new Set(), view);
+      expect(getRef(hash)?.visibility).toBe('materialized');
     });
   });
 

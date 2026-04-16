@@ -1,7 +1,16 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { hashContentSync } from '../utils/contextHash';
 import { useContextStore } from '../stores/contextStore';
-import { classifyRefFreshness, getFreshnessHintForRefs, getPreflightAutomationDecision, runFreshnessPreflight } from './freshnessPreflight';
+import {
+  classifyRefFreshness,
+  getFreshnessHintForRefs,
+  getPreflightAutomationDecision,
+  runFreshnessPreflight,
+  needsPreflight,
+  LEGACY_PREFLIGHT_OPS,
+} from './freshnessPreflight';
+import { isMutatingOp } from './batch/opMap';
+import type { OperationKind } from './batch/types';
 import { clearFreshnessJournal, getFreshnessJournal, recordFreshnessJournal } from './freshnessJournal';
 
 function resetStore() {
@@ -544,5 +553,97 @@ describe('classifyRefFreshness', () => {
 
   it('is fresh when revisions align and not suspect', () => {
     expect(classifyRefFreshness('src/a.ts', 'r1', 'r1', undefined, undefined, targets)).toBe('fresh');
+  });
+});
+
+describe('needsPreflight (GAP 4 structural derivation)', () => {
+  it('recognizes every legacy shorthand in the allowlist', () => {
+    for (const op of LEGACY_PREFLIGHT_OPS) {
+      expect(needsPreflight(op)).toBe(true);
+    }
+  });
+
+  it('recognizes all canonical change.* ops via isMutatingOp', () => {
+    const canonicalMutating: OperationKind[] = [
+      'change.edit',
+      'change.create',
+      'change.delete',
+      'change.refactor',
+      'change.rollback',
+      'change.split_module',
+    ];
+    for (const op of canonicalMutating) {
+      expect(isMutatingOp(op)).toBe(true);
+      expect(needsPreflight(op)).toBe(true);
+    }
+  });
+
+  it('recognizes canonical read.*, search.*, analyze.*, verify.* families', () => {
+    const canonicalReads: OperationKind[] = [
+      'read.lines', 'read.context', 'read.file', 'read.shaped',
+      'search.code', 'search.symbol', 'search.usage', 'search.similar',
+      'search.issues', 'search.patterns', 'search.memory',
+      'analyze.deps', 'analyze.calls', 'analyze.impact', 'analyze.blast_radius',
+      'verify.build', 'verify.test', 'verify.lint', 'verify.typecheck',
+    ];
+    for (const op of canonicalReads) {
+      expect(needsPreflight(op)).toBe(true);
+    }
+  });
+
+  it('recognizes canonical system.exec (mutating) and system.git/workspaces (ref-consuming)', () => {
+    expect(needsPreflight('system.exec')).toBe(true);
+    expect(needsPreflight('system.git')).toBe(true);
+    expect(needsPreflight('system.workspaces')).toBe(true);
+  });
+
+  it('returns false for session.* ops that do not consume file-backed refs', () => {
+    expect(needsPreflight('session.bb.write')).toBe(false);
+    expect(needsPreflight('session.stats')).toBe(false);
+    expect(needsPreflight('session.diagnose')).toBe(false);
+  });
+
+  it('returns false for empty / unknown shorthand', () => {
+    expect(needsPreflight('')).toBe(false);
+    expect(needsPreflight('totally_unknown_op')).toBe(false);
+  });
+
+  it('guard: any OperationKind with isMutatingOp===true is preflight-gated', () => {
+    // G4: future mutating ops must NOT be able to skip preflight silently.
+    // Enumerate the canonical mutating surface we ship today and assert each
+    // one routes through needsPreflight. Adding a new change.* op will either
+    // be auto-covered (prefix) or fail this test (requiring an explicit
+    // needsPreflight update) — both outcomes satisfy the structural guarantee.
+    const candidates: OperationKind[] = [
+      'change.edit', 'change.create', 'change.delete', 'change.refactor',
+      'change.rollback', 'change.split_module', 'system.exec',
+    ];
+    for (const op of candidates) {
+      if (isMutatingOp(op)) expect(needsPreflight(op)).toBe(true);
+    }
+  });
+
+  it('parity: needsPreflight agrees with isMutatingOp for every canonical non-mutating op', () => {
+    // Rules out drift between the inlined predicate in freshnessPreflight.ts
+    // and the real opMap.isMutatingOp (imported in tests only to avoid the
+    // runtime import cycle noted in freshnessPreflight.ts).
+    const nonMutating: OperationKind[] = [
+      'search.code', 'read.context', 'analyze.deps', 'verify.build',
+      'session.bb.write', 'session.stats', 'annotate.note',
+    ];
+    for (const op of nonMutating) {
+      expect(isMutatingOp(op)).toBe(false);
+      // Non-mutating reads still preflight; session/annotate do not.
+      const expected = op.startsWith('search.') || op.startsWith('read.')
+        || op.startsWith('analyze.') || op.startsWith('verify.');
+      expect(needsPreflight(op)).toBe(expected);
+    }
+  });
+
+  it('runFreshnessPreflight short-circuits non-ref-consuming ops to fresh', async () => {
+    const result = await runFreshnessPreflight('session.bb.write', {});
+    expect(result.blocked).toBe(false);
+    expect(result.strategy).toBe('fresh');
+    expect(result.confidence).toBe('high');
   });
 });

@@ -21,7 +21,7 @@ import { buildSubagentPrompt, type SubagentRole } from '../prompts/subagentPromp
 import { coerceBatchSteps } from './batch/coerceBatchSteps';
 import { formatBatchToolUseStubSummary } from './historyCompressor';
 import { expandBatchQ } from '../utils/toon';
-import { dematerialize, getRef } from './hashProtocol';
+import { dematerialize, getRef, type ScopedHppView } from './hashProtocol';
 import {
   SUBAGENT_MAX_ROUNDS,
   SUBAGENT_MAX_ROUNDS_BY_ROLE,
@@ -720,13 +720,21 @@ function extractSubagentRefs(
  *
  * Pinned chunks are left materialized — the parent needs them, and HPP's
  * shouldMaterialize already exempts pinned refs.
+ *
+ * When a {@link ScopedHppView} is supplied, its `touchedHashes()` is merged
+ * with the heuristic discovery pass as the authoritative set of refs the
+ * subagent touched. This closes the "nested tool-call refs leak into the
+ * global refs Map" window: the heuristic pass can miss hashes the subagent
+ * only resolved via `getRef`, whereas the scoped view records every resolve
+ * and materialize it brokered.
  */
-function dematerializeSubagentChunks(
+export function dematerializeSubagentChunks(
   preExistingHashes: Set<string>,
   preExistingSources: Set<string>,
+  scopedView?: ScopedHppView,
 ): void {
   const ctx = useContextStore.getState();
-  const toDematerialize: string[] = [];
+  const toDematerialize = new Set<string>();
 
   for (const [hash, chunk] of ctx.chunks.entries()) {
     if (preExistingHashes.has(hash)) continue;
@@ -734,7 +742,20 @@ function dematerializeSubagentChunks(
     if (preExistingSources.has(chunk.source || '')) continue;
     const ref = getRef(hash);
     if (ref && ref.visibility === 'materialized') {
-      toDematerialize.push(hash);
+      toDematerialize.add(hash);
+    }
+  }
+
+  if (scopedView) {
+    for (const hash of scopedView.touchedHashes()) {
+      if (preExistingHashes.has(hash)) continue;
+      const chunk = ctx.chunks.get(hash);
+      if (chunk?.pinned) continue;
+      if (chunk?.source && preExistingSources.has(chunk.source)) continue;
+      const ref = getRef(hash);
+      if (ref && ref.visibility === 'materialized') {
+        toDematerialize.add(hash);
+      }
     }
   }
 
@@ -742,9 +763,9 @@ function dematerializeSubagentChunks(
     dematerialize(hash);
   }
 
-  if (toDematerialize.length > 0) {
+  if (toDematerialize.size > 0) {
     ctx.compactDormantChunks();
-    console.log(`[subagent] Dematerialized ${toDematerialize.length} chunks, compacted dormant`);
+    console.log(`[subagent] Dematerialized ${toDematerialize.size} chunks, compacted dormant`);
   }
 }
 

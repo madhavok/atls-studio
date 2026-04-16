@@ -19,7 +19,9 @@ import {
   COMPACT_HISTORY_TURN_THRESHOLD,
   COMPACT_HISTORY_TOKEN_THRESHOLD,
   PROTECTED_RECENT_ROUNDS,
+  reconcileBudgets,
   type PromptReliefAction,
+  type ReconciledBudgets,
 } from './promptMemory';
 import type { StreamCallbacks, AIConfig, ChatMode } from './aiService';
 
@@ -38,6 +40,13 @@ export interface RoundContext {
   isSessionValid: () => boolean;
   /** When true, conversationHistory was reused from end-of-turn cache — skip round 0 compression. */
   historyReusedFromCache?: boolean;
+  /**
+   * Reconciled per-round budgets + planned pressure actions, populated by the
+   * budget reconciler before the middleware chain runs. Middlewares can
+   * consult this to see cross-layer pressure without recomputing thresholds.
+   * Optional for tests and call sites that pre-date the reconciler.
+   */
+  budgets?: ReconciledBudgets;
 }
 
 /** Middleware that runs before each tool loop round. Can mutate context. */
@@ -213,12 +222,53 @@ const DEFAULT_BEFORE_ROUND_MIDDLEWARES: BeforeRoundMiddleware[] = [
   promptBudgetMiddleware,
 ];
 
+/**
+ * Populate `ctx.budgets` with a reconciled, cross-layer allocation. Reads
+ * live bucket sizes from app + context store so the planner sees the round's
+ * actual pressure. Safe to skip (returns ctx unchanged) when the app store
+ * does not yet expose PromptMetrics — e.g. in unit tests that mock the store.
+ */
+export function reconcileRoundBudgets(ctx: RoundContext): RoundContext {
+  try {
+    const appState = useAppStore.getState() as unknown as {
+      promptMetrics?: {
+        bp2ToolDefTokens?: number;
+        staticSystemTokens?: number;
+        conversationHistoryTokens?: number;
+        stagedTokens?: number;
+        workspaceContextTokens?: number;
+        blackboardTokens?: number;
+        wmTokens?: number;
+      };
+      settings?: { contextWindowTokens?: number };
+    };
+    const metrics = appState.promptMetrics ?? {};
+    const contextWindowTokens = appState.settings?.contextWindowTokens ?? 0;
+    if (contextWindowTokens <= 0) return ctx;
+
+    ctx.budgets = reconcileBudgets({
+      contextWindowTokens,
+      staticSystemTokens: metrics.staticSystemTokens ?? 0,
+      toolDefTokens: metrics.bp2ToolDefTokens ?? 0,
+      currentHistoryTokens: metrics.conversationHistoryTokens ?? 0,
+      currentStagedTokens: metrics.stagedTokens ?? 0,
+      currentWorkspaceContextTokens: metrics.workspaceContextTokens ?? 0,
+      currentBlackboardTokens: metrics.blackboardTokens ?? 0,
+      currentWmTokens: metrics.wmTokens ?? 0,
+    });
+  } catch (e) {
+    // G32: reconciliation is advisory; swallow so the round still proceeds.
+    console.warn('[middleware] reconcileRoundBudgets failed:', e);
+  }
+  return ctx;
+}
+
 /** Run before-round middlewares in sequence. Mutates ctx. */
 export async function runBeforeRoundMiddlewares(
   ctx: RoundContext,
   middlewares: BeforeRoundMiddleware[] = DEFAULT_BEFORE_ROUND_MIDDLEWARES,
 ): Promise<RoundContext> {
-  let result = ctx;
+  let result = reconcileRoundBudgets(ctx);
   for (const mw of middlewares) {
     result = await mw(result);
     if (result.abortSignal?.aborted) break;

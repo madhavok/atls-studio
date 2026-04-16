@@ -150,6 +150,66 @@ describe('runBeforeRoundMiddlewares', () => {
     expect(out.round).toBe(1);
     expect(out.reliefAction).toBe('none');
   });
+
+  it('reconciles budgets before the chain when the app store exposes a context window (GAP 3)', async () => {
+    vi.spyOn(useAppStore, 'getState').mockReturnValue({
+      ...mockAppState(),
+      settings: {
+        selectedProvider: 'anthropic',
+        selectedModel: 'claude-3-5-sonnet-20241022',
+        contextWindowTokens: 200_000,
+      },
+      promptMetrics: {
+        roundCount: 0,
+        bp2ToolDefTokens: 5_000,
+        staticSystemTokens: 3_000,
+        conversationHistoryTokens: 40_000,
+        stagedTokens: 20_000,
+        workspaceContextTokens: 0,
+        blackboardTokens: 0,
+        wmTokens: 0,
+      },
+    } as any);
+
+    const ctx = {
+      conversationHistory: [{ role: 'user', content: 'hi' }],
+      round: 1,
+      priorTurnBoundary: 0,
+      config: {} as any,
+      mode: 'chat' as any,
+      reliefAction: 'none' as any,
+      abortSignal: new AbortController().signal,
+      isSessionValid: () => true,
+    };
+    const out = await runBeforeRoundMiddlewares(ctx, []);
+    expect(out.budgets).toBeDefined();
+    expect(out.budgets!.availableTokens).toBe(200_000 - 3_000 - 5_000);
+    // History + staged are both heavy → both actions planned, staged first
+    // because its overage ratio is higher against the smaller allocation.
+    expect(out.budgets!.plannedPressureActions).toContain('compact_history');
+    expect(out.budgets!.plannedPressureActions).toContain('prune_staged');
+  });
+
+  it('skips reconciliation gracefully when context window is unknown', async () => {
+    vi.spyOn(useAppStore, 'getState').mockReturnValue({
+      ...mockAppState(),
+      // No contextWindowTokens in settings
+      promptMetrics: { roundCount: 0 },
+    } as any);
+
+    const ctx = {
+      conversationHistory: [{ role: 'user', content: 'hi' }],
+      round: 1,
+      priorTurnBoundary: 0,
+      config: {} as any,
+      mode: 'chat' as any,
+      reliefAction: 'none' as any,
+      abortSignal: new AbortController().signal,
+      isSessionValid: () => true,
+    };
+    const out = await runBeforeRoundMiddlewares(ctx, []);
+    expect(out.budgets).toBeUndefined();
+  });
 });
 
 describe('contextHygieneMiddleware', () => {
