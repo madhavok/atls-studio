@@ -97,6 +97,8 @@ const PRICING: Record<string, Array<{ prefix: string; input: number; output: num
     // Claude 4.6 series (Feb 2026) - current flagship
     { prefix: 'claude-sonnet-4-6', input: 300, output: 1500 },    // $3/$15
     { prefix: 'claude-sonnet-4.6', input: 300, output: 1500 },
+    { prefix: 'claude-opus-4-7', input: 500, output: 2500 },      // $5/$25 (same as 4.6; must precede claude-opus-4)
+    { prefix: 'claude-opus-4.7', input: 500, output: 2500 },
     { prefix: 'claude-opus-4-6', input: 500, output: 2500 },      // $5/$25
     { prefix: 'claude-opus-4.6', input: 500, output: 2500 },
     // Claude 4.5 series (Nov 2025)

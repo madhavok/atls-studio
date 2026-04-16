@@ -76,6 +76,13 @@ describe('calculateCost', () => {
     expect(calculateCost('openai', 'gpt-4o', -1, 10)).toBe(0);
     expect(calculateCost('openai', 'gpt-4o', 10, -1)).toBe(0);
   });
+
+  it('prices Claude Opus 4.7 at $5/MTok input (not legacy claude-opus-4 $15)', () => {
+    const oneM = 1_000_000;
+    expect(calculateCost('anthropic', 'claude-opus-4-7', oneM, 0)).toBe(500);
+    expect(calculateCost('anthropic', 'claude-opus-4-7-20260115', oneM, 0)).toBe(500);
+    expect(calculateCost('anthropic', 'claude-opus-4', oneM, 0)).toBe(1500);
+  });
 });
 
 const sampleSubAgentUsage = (): SubAgentUsage => ({
