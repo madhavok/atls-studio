@@ -61,6 +61,10 @@ let lastTurnDelta = { dematerialized: 0, newMaterialized: 0 };
 
 /** Bound refs Map size in long sessions with heavy read/evict churn (evicted rows are GC'd lazily). */
 const HPP_REFS_MAX_ENTRIES = 8000;
+/** Hard cap on evicted heap array to prevent unbounded stale entry accumulation. */
+const EVICTED_HEAP_MAX = 4000;
+/** Consecutive stale pops before triggering an inline heap rebuild. */
+const STALE_POP_REBUILD_THRESHOLD = 10;
 
 /**
  * Min-heap of evicted refs ordered by (seenAtTurn, hash). Pushed in {@link evict}; stale entries
@@ -134,13 +138,20 @@ function evictedHeapPopRaw(): { hash: string; seenAtTurn: number } {
   return root;
 }
 
-/** Drop stale roots until we find a ref that is still evicted with matching seenAtTurn, or heap empty. */
+/** Drop stale roots until we find a ref that is still evicted with matching seenAtTurn, or heap empty.
+ *  Triggers a full rebuild after STALE_POP_REBUILD_THRESHOLD consecutive stale pops to avoid O(n) linear scan. */
 function popValidEvictedOldest(): { hash: string; ref: ChunkRef } | undefined {
+  let consecutiveStale = 0;
   while (evictedMinHeap.length > 0) {
     const top = evictedMinHeap[0];
     const r = refs.get(top.hash);
     if (!r || r.visibility !== 'evicted' || r.seenAtTurn !== top.seenAtTurn) {
       evictedHeapPopRaw();
+      consecutiveStale++;
+      if (consecutiveStale >= STALE_POP_REBUILD_THRESHOLD) {
+        rebuildEvictedHeapFromRefs();
+        consecutiveStale = 0;
+      }
       continue;
     }
     evictedHeapPopRaw();
@@ -183,7 +194,7 @@ function pruneRefsMapIfNeeded(): void {
 function pruneEvictedRefsIfBurden(): void {
   const active = refsActiveCount;
   const evicted = refsEvictedCount;
-  if (active === 0 || evicted / active < 1.5) return;
+  if (active === 0 || evicted / active < 1.3) return;
   const activeCount = active;
   let e = evicted;
   while (activeCount > 0 && e / activeCount >= 1.2) {
@@ -408,6 +419,9 @@ export function evict(hash: string): void {
     refsEvictedCount++;
     ref.visibility = 'evicted';
     evictedHeapPush({ hash: ref.hash, seenAtTurn: ref.seenAtTurn });
+    if (evictedMinHeap.length > EVICTED_HEAP_MAX) {
+      rebuildEvictedHeapFromRefs();
+    }
   }
 }
 

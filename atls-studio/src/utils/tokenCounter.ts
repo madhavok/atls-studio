@@ -11,7 +11,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { useAppStore } from '../stores/appStore';
 import { getPricingProviderForModel } from './pricingProvider';
-import { estimateTokens, hashContentSync } from './contextHash';
+import { estimateTokens, hashContentSync, registerDriftCorrectionProvider } from './contextHash';
 
 // ---------------------------------------------------------------------------
 // LRU Cache (keyed by provider:model:contentHash)
@@ -210,25 +210,32 @@ const heuristicCache = new LRUCache(512);
 // Drift telemetry: track when heuristic diverges from real BPE counts
 let _driftSamples = 0;
 let _driftSumAbsPct = 0;
+let _driftSumSignedPct = 0;
 let _driftWindowSum = 0;
 let _driftMaxAbsPct = 0;
 let _driftOverThreshold = 0;
 const DRIFT_THRESHOLD_PCT = 10;
 const DRIFT_LOG_INTERVAL = 50;
+const MIN_DRIFT_CORRECTION_SAMPLES = 30;
+const DRIFT_CORRECTION_MIN = 0.85;
+const DRIFT_CORRECTION_MAX = 1.25;
 
 function recordDrift(heuristic: number, real: number): void {
   if (heuristic === 0 || real === 0) return;
   const pct = Math.abs(((heuristic - real) / real) * 100);
+  const signedPct = ((heuristic - real) / real) * 100;
   _driftSamples++;
   _driftSumAbsPct += pct;
+  _driftSumSignedPct += signedPct;
   _driftWindowSum += pct;
   if (pct > _driftMaxAbsPct) _driftMaxAbsPct = pct;
   if (pct > DRIFT_THRESHOLD_PCT) _driftOverThreshold++;
   if (_driftSamples % DRIFT_LOG_INTERVAL === 0) {
     const avg = (_driftWindowSum / DRIFT_LOG_INTERVAL).toFixed(1);
+    const signedAvg = (_driftSumSignedPct / _driftSamples).toFixed(1);
     _driftWindowSum = 0;
     console.log(
-      `[tokenizer] heuristic drift: ${_driftSamples} samples, window_avg=${avg}%, max=${_driftMaxAbsPct.toFixed(1)}%, >${DRIFT_THRESHOLD_PCT}%=${_driftOverThreshold}`,
+      `[tokenizer] heuristic drift: ${_driftSamples} samples, window_avg=${avg}%, signed_avg=${signedAvg}%, max=${_driftMaxAbsPct.toFixed(1)}%, >${DRIFT_THRESHOLD_PCT}%=${_driftOverThreshold}`,
     );
   }
 }
@@ -239,14 +246,33 @@ function recordDrift(heuristic: number, real: number): void {
  * The two intentionally diverge — lifetime avg is stable for dashboards,
  * window avg is sensitive for detecting recent regressions.
  */
-export function getDriftStats(): { samples: number; avgPct: number; maxPct: number; overThreshold: number } {
+export function getDriftStats(): { samples: number; avgPct: number; signedAvgPct: number; maxPct: number; overThreshold: number } {
   return {
     samples: _driftSamples,
     avgPct: _driftSamples > 0 ? _driftSumAbsPct / _driftSamples : 0,
+    signedAvgPct: _driftSamples > 0 ? _driftSumSignedPct / _driftSamples : 0,
     maxPct: _driftMaxAbsPct,
     overThreshold: _driftOverThreshold,
   };
 }
+
+/**
+ * Session-local correction factor derived from observed signed drift.
+ * After MIN_DRIFT_CORRECTION_SAMPLES real vs heuristic comparisons,
+ * returns a multiplier that compensates for systematic over/under-estimation.
+ * Clamped to [0.85, 1.25] to prevent runaway correction.
+ */
+export function getDriftCorrectionFactor(): number {
+  if (_driftSamples < MIN_DRIFT_CORRECTION_SAMPLES) return 1.0;
+  const signedAvg = _driftSumSignedPct / _driftSamples;
+  // signedAvg > 0 means heuristic over-estimates → we want to shrink
+  // signedAvg < 0 means heuristic under-estimates → we want to grow
+  const raw = 1 / (1 + signedAvg / 100);
+  return Math.min(DRIFT_CORRECTION_MAX, Math.max(DRIFT_CORRECTION_MIN, raw));
+}
+
+// Wire up drift correction so estimateTokens can self-correct without circular imports.
+registerDriftCorrectionProvider(getDriftCorrectionFactor);
 
 /**
  * Synchronous token count — returns real BPE count from cache when available,

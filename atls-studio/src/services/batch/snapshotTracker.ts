@@ -30,6 +30,9 @@ export interface LineRegion {
 export interface SnapshotIdentity {
   filePath: string;
   snapshotHash: string;
+  /** Hash recorded during a true canonical read. Preserved across non-canonical updates
+   *  so edit gates can verify canonical provenance even after snapshotHash advances. */
+  canonicalHash?: string;
   readAt: number;
   readKind: ReadKind;
   readRegions?: LineRegion[];
@@ -127,8 +130,13 @@ export class SnapshotTracker {
       readKind,
     };
 
+    if (readKind === 'canonical') {
+      identity.canonicalHash = bare;
+    } else if (existing?.canonicalHash) {
+      identity.canonicalHash = existing.canonicalHash;
+    }
+
     if (existing) {
-      // Carry forward existing readRegions and shapeHash
       identity.readRegions = existing.readRegions ? [...existing.readRegions] : undefined;
       identity.shapeHash = existing.shapeHash;
       identity.fullFileLineCount = existing.fullFileLineCount;
@@ -200,10 +208,12 @@ export class SnapshotTracker {
    */
   invalidateAndRerecord(filePath: string, newHash: string): void {
     const key = normalizePathKey(filePath);
+    const bare = canonicalizeSnapshotHash(newHash);
     this.snapshots.delete(key);
     this.snapshots.set(key, {
       filePath,
-      snapshotHash: canonicalizeSnapshotHash(newHash),
+      snapshotHash: bare,
+      canonicalHash: bare,
       readAt: Date.now(),
       readKind: 'canonical',
     });
@@ -223,7 +233,7 @@ export class SnapshotTracker {
   getAwarenessLevel(filePath: string, editRegion?: LineRegion): AwarenessLevel {
     const identity = this.snapshots.get(normalizePathKey(filePath));
     if (!identity) return AwarenessLevel.NONE;
-    if (identity.readKind === 'canonical') return AwarenessLevel.CANONICAL;
+    if (identity.canonicalHash != null) return AwarenessLevel.CANONICAL;
     if (editRegion && identity.readRegions && identity.readRegions.length > 0) {
       if (regionsCover(identity.readRegions, editRegion)) return AwarenessLevel.TARGETED;
     }
@@ -248,13 +258,14 @@ export class SnapshotTracker {
   }
 
   /**
-   * Gate for mutation: true for full canonical read, or read.lines whose merged
-   * regions cover the entire file (1..fullFileLineCount) with matching snapshot hash.
+   * Gate for mutation: true when a verified canonical hash exists (from a true
+   * canonical read or full-span line read). Uses the dedicated canonicalHash
+   * field so that non-canonical hash updates don't satisfy the gate.
    */
   hasCanonicalRead(filePath: string): boolean {
     const identity = this.snapshots.get(normalizePathKey(filePath));
     if (!identity) return false;
-    if (identity.readKind === 'canonical') return true;
+    if (identity.canonicalHash != null) return true;
     if (identity.readKind !== 'lines') return false;
     const n = identity.fullFileLineCount;
     if (n == null || n < 1 || !identity.readRegions?.length) return false;
@@ -295,8 +306,13 @@ export class SnapshotTracker {
    * - `results` array (read.context, read.lines)
    * - `drafts` / `batch` arrays (change.edit output)
    * - Single top-level file + hash entry
+   *
+   * Uses stage-then-commit: all entries are validated first, then applied
+   * atomically so partial extraction failures don't leave inconsistent state.
    */
   recordFromResponse(response: Record<string, unknown>, readKind: ReadKind = 'canonical'): void {
+    const staged: Array<{ fp: string; sh: string; opts?: RecordOpts }> = [];
+
     const arr = response.results ?? response.drafts ?? response.batch;
     if (Array.isArray(arr)) {
       for (const entry of arr) {
@@ -304,17 +320,24 @@ export class SnapshotTracker {
           const rec = entry as Record<string, unknown>;
           const fp = SnapshotTracker.extractFilePath(rec);
           const sh = SnapshotTracker.extractHash(rec);
+          if (!fp || !sh) continue;
           const lineCount = typeof rec.lines === 'number' ? rec.lines : undefined;
           const opts = lineCount != null ? { fullFileLineCount: lineCount } : undefined;
-          if (fp && sh) this.record(fp, sh, readKind, opts);
+          staged.push({ fp, sh, opts });
         }
       }
     } else {
       const fp = SnapshotTracker.extractFilePath(response);
       const sh = SnapshotTracker.extractHash(response);
-      const lineCount = typeof response.lines === 'number' ? response.lines : undefined;
-      const opts = lineCount != null ? { fullFileLineCount: lineCount } : undefined;
-      if (fp && sh) this.record(fp, sh, readKind, opts);
+      if (fp && sh) {
+        const lineCount = typeof response.lines === 'number' ? response.lines : undefined;
+        const opts = lineCount != null ? { fullFileLineCount: lineCount } : undefined;
+        staged.push({ fp, sh, opts });
+      }
+    }
+
+    for (const { fp, sh, opts } of staged) {
+      this.record(fp, sh, readKind, opts);
     }
   }
 }

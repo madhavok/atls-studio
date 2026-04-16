@@ -225,9 +225,8 @@ export function classifyStageSnippet(
     };
   }
 
-  if (tokens <= MAX_PERSISTENT_STAGE_ENTRY_TOKENS) {
-    return { admissionClass: 'transientAnchor', persistencePolicy: 'persistAsDemoted' };
-  }
+  // Non-anchor keys: single threshold (the two original size bands were identical —
+  // placeholder for finer-grained admission that was never differentiated).
   if (tokens <= MAX_TRANSIENT_STAGE_ENTRY_TOKENS) {
     return { admissionClass: 'transientAnchor', persistencePolicy: 'persistAsDemoted' };
   }

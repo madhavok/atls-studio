@@ -12,6 +12,13 @@
  *  Backend uses adaptive 6-8 on collision; frontend defaults to 6. */
 export const SHORT_HASH_LEN = 6;
 
+// Drift correction factor — injected by tokenCounter.ts to avoid circular import.
+// Returns 1.0 until registered (no correction applied before tokenCounter loads).
+let _getDriftCorrectionFactor: () => number = () => 1.0;
+export function registerDriftCorrectionProvider(fn: () => number): void {
+  _getDriftCorrectionFactor = fn;
+}
+
 // Chunk types for granular context management
 export type ChunkType = 
   | 'msg:user'   // User message
@@ -89,6 +96,9 @@ export function hashContentSync(content: string): string {
  *   - Normal code: ~3.5 chars/token
  *   - Prose / comments (high whitespace): ~4.5 chars/token
  *   - Whitespace-heavy (padding, blank lines): ~5 chars/token
+ *
+ * After enough async BPE comparisons accumulate, applies a session-local
+ * drift correction factor to compensate for systematic bias.
  */
 export function estimateTokens(content: string): number {
   if (!content || content.length === 0) return 0;
@@ -107,7 +117,6 @@ export function estimateTokens(content: string): number {
     } else if (c === 123 || c === 125 || c === 91 || c === 93 || c === 40 || c === 41 || c === 59) {
       codeLikeCount++;
     } else if (c >= 0x3000) {
-      // CJK Unified Ideographs + common CJK ranges (already know c >= 0x3000)
       if ((c >= 0x4E00 && c <= 0x9FFF) || (c >= 0x3400 && c <= 0x4DBF) || c <= 0x303F) {
         cjkCount++;
       }
@@ -117,7 +126,6 @@ export function estimateTokens(content: string): number {
   const lineCount = newlineCount + 1;
   const charsPerLine = len / lineCount;
   const wsRatio = wsCount / len;
-  // Code-like: need local density (sparse `{}` in a huge JSON blob must not flip the whole string).
   const density = len > 0 ? codeLikeCount / len : 0;
   const hasCode =
     (codeLikeCount >= 3 && density >= 0.006) || density >= 0.015;
@@ -137,11 +145,10 @@ export function estimateTokens(content: string): number {
     charsPerToken = 3.8;
   }
 
-  // CJK characters typically tokenize to ~1.5 tokens each (not 3-4 chars/token)
-  // Adjust: subtract CJK chars from general pool, add their token estimate separately
   const nonCjkLen = len - cjkCount;
   const cjkTokens = Math.ceil(cjkCount * 1.5);
-  return Math.max(1, Math.ceil(nonCjkLen / charsPerToken) + cjkTokens);
+  const base = Math.ceil(nonCjkLen / charsPerToken) + cjkTokens;
+  return Math.max(1, Math.ceil(base * _getDriftCorrectionFactor()));
 }
 
 /**

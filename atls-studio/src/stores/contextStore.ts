@@ -303,6 +303,9 @@ export interface ContextChunk {
   readSpan?: ReadSpan;
   /** Optional per-file revisions when `source` is comma-joined; avoids full evict if only unrelated paths drifted. */
   compositeSourceRevisions?: Record<string, string>;
+  /** Files this chunk semantically depends on (call graphs, analyses, summaries).
+   *  1-hop invalidation: when a derivedFromSource changes, this chunk becomes suspect. */
+  derivedFromSources?: string[];
 }
 
 export interface ReadSpan {
@@ -880,7 +883,7 @@ interface ContextStoreState {
   task: TaskPlan | null;
   
   // Actions
-  addChunk: (content: string, type: ChunkType, source?: string, symbols?: DigestSymbol[], summary?: string, backendHash?: string, opts?: { subtaskIds?: string[]; boundDuringPlanning?: boolean; fullHash?: string; sourceRevision?: string; viewKind?: EngramViewKind; editSessionId?: string; origin?: EngramOrigin; readSpan?: ReadSpan; ttl?: number; compositeSourceRevisions?: Record<string, string> }) => string;
+  addChunk: (content: string, type: ChunkType, source?: string, symbols?: DigestSymbol[], summary?: string, backendHash?: string, opts?: { subtaskIds?: string[]; boundDuringPlanning?: boolean; fullHash?: string; sourceRevision?: string; viewKind?: EngramViewKind; editSessionId?: string; origin?: EngramOrigin; readSpan?: ReadSpan; ttl?: number; compositeSourceRevisions?: Record<string, string>; derivedFromSources?: string[] }) => string;
   findReusableRead: (span: ReadSpan) => string | null;
   touchChunk: (hash: string) => void;
   compactChunks: (hashes: string[], opts?: { confirmWildcard?: boolean; tier?: 'pointer' | 'sig'; sigContentByRef?: Map<string, string> }) => { compacted: number; freedTokens: number };
@@ -1173,6 +1176,28 @@ function reconcileChunkForSourceRevision(
   isSameFilePriorEdit: boolean,
   batch: ReconcileSourceRevisionBatch,
 ): void {
+  // 1-hop transitive invalidation: if this chunk depends on the changed path
+  // (but isn't directly sourced from it), mark it suspect so stale analysis
+  // results don't persist silently after their input files change.
+  if (!sourceTouchesPath(chunk.source, path) && chunk.derivedFromSources?.length) {
+    const pathNorm = normalizeSourcePath(path);
+    const isDerived = chunk.derivedFromSources.some(d => normalizeSourcePath(d) === pathNorm);
+    if (isDerived && chunk.freshness !== 'suspect') {
+      batch.stats.total++;
+      const suspect: ContextChunk = {
+        ...chunk,
+        observedRevision: currentRevision,
+        freshness: 'suspect',
+        freshnessCause: effectiveCause,
+        suspectSince: chunk.suspectSince ?? Date.now(),
+        suspectKind: 'content',
+      };
+      if (surface === 'working') newChunks.set(key, suspect);
+      else newArchived.set(key, suspect);
+      batch.stats.updated++;
+      return;
+    }
+  }
   if (!sourceTouchesPath(chunk.source, path)) return;
   batch.stats.total++;
   if (!isExactSourcePathMatch(chunk.source, path)) {
@@ -1816,19 +1841,40 @@ const BB_TEMPLATES: ReadonlyArray<readonly [string, string]> = [
 ] as const;
 
 /**
- * Evict archived chunks by LRU (least recently used via lastAccessed) until total archived tokens <= ARCHIVE_MAX_TOKENS.
+ * Value-weighted archive eviction score. Lower score = evicted first.
+ * Combines recency, edit involvement, reference density, and token cost
+ * so high-signal chunks survive longer than stale bulk results.
+ */
+function archiveEvictionWeight(chunk: ContextChunk, now: number): number {
+  // Recency base: 0-1 range over a 30-minute window
+  const recencyMs = Math.max(0, now - chunk.lastAccessed);
+  const recency = Math.max(0, 1 - recencyMs / (30 * 60 * 1000));
+
+  let bonus = 0;
+  if (chunk.origin === 'edit' || chunk.origin === 'edit-refresh') bonus += 2.0;
+  if ((chunk.editCount ?? 0) > 0) bonus += 1.5;
+  if (chunk.type === 'issues' || chunk.type === 'exec:out') bonus += 1.0;
+  if (chunk.pinned) bonus += 1.0;
+  const refs = (chunk.referenceCount ?? 0) + (chunk.readCount ?? 0);
+  if (refs > 0) bonus += Math.min(1.5, refs * 0.3);
+
+  // Cost-normalize: prefer keeping small high-value chunks over large low-value ones
+  const tokens = Math.max(1, chunk.tokens);
+  return (recency + bonus) / tokens;
+}
+
+/**
+ * Evict archived chunks by value weight until total archived tokens <= ARCHIVE_MAX_TOKENS.
  * Returns the (potentially trimmed) archive map. Call after any operation that adds to archive.
  */
 function evictArchiveIfNeeded(archive: Map<string, ContextChunk>): Map<string, ContextChunk> {
-  // BUG1 FIX: Snapshot entries before eviction to avoid TOCTOU race on lastAccessed.
-  // We sort a frozen snapshot so concurrent accesses between sort and delete don't
-  // cause the most-recently-used chunk to be incorrectly evicted.
   const snapshot = Array.from(archive.entries());
   let totalTokens = 0;
   for (const [, c] of snapshot) totalTokens += c.tokens;
   if (totalTokens <= ARCHIVE_MAX_TOKENS) return archive;
 
-  const sorted = snapshot.sort(([, a], [, b]) => a.lastAccessed - b.lastAccessed);
+  const now = Date.now();
+  const sorted = snapshot.sort(([, a], [, b]) => archiveEvictionWeight(a, now) - archiveEvictionWeight(b, now));
   const out = new Map(archive);
 
   for (const [key, chunk] of sorted) {
@@ -2001,7 +2047,7 @@ export const useContextStore = create<ContextStoreState>()(
    * Tags chunk with current activeSubtaskId.
    * Returns the shortHash for display/reference.
    */
-  addChunk: (content: string, type: ChunkType, source?: string, symbols?: DigestSymbol[], summary?: string, backendHash?: string, opts?: { subtaskIds?: string[]; boundDuringPlanning?: boolean; fullHash?: string; sourceRevision?: string; viewKind?: EngramViewKind; editSessionId?: string; origin?: EngramOrigin; readSpan?: ReadSpan; ttl?: number; compositeSourceRevisions?: Record<string, string> }) => {
+  addChunk: (content: string, type: ChunkType, source?: string, symbols?: DigestSymbol[], summary?: string, backendHash?: string, opts?: { subtaskIds?: string[]; boundDuringPlanning?: boolean; fullHash?: string; sourceRevision?: string; viewKind?: EngramViewKind; editSessionId?: string; origin?: EngramOrigin; readSpan?: ReadSpan; ttl?: number; compositeSourceRevisions?: Record<string, string>; derivedFromSources?: string[] }) => {
     const hash = backendHash || hashContentSync(content);
     const shortHash = hash.slice(0, SHORT_HASH_LEN);
     const tokens = countTokensSync(content);
@@ -2046,6 +2092,7 @@ export const useContextStore = create<ContextStoreState>()(
       freshness: 'fresh',
       readSpan: opts?.readSpan,
       ...(opts?.compositeSourceRevisions ? { compositeSourceRevisions: { ...opts.compositeSourceRevisions } } : {}),
+      ...(opts?.derivedFromSources?.length ? { derivedFromSources: [...opts.derivedFromSources] } : {}),
       ttl: opts?.ttl ?? (type === 'result' ? 3 : type === 'search' ? 5 : undefined),
     };
 
@@ -2056,9 +2103,16 @@ export const useContextStore = create<ContextStoreState>()(
       const newChunks = new Map(state.chunks);
       let newArchive: Map<string, ContextChunk> | undefined;
       
-      // Check for hash collision with different content (rare but possible)
-      const existing = newChunks.get(hash);
-      if (existing && existing.content !== content) {
+      // Check for hash collision with different content across all collections
+      const existingActive = newChunks.get(hash);
+      const existingArchived = state.archivedChunks.get(hash);
+      const existingStaged = state.stagedSnippets.get(hash);
+      const collisionContent =
+        (existingActive && existingActive.content !== content) ? existingActive.content :
+        (existingArchived && existingArchived.content !== content) ? existingArchived.content :
+        (existingStaged && existingStaged.content !== content) ? existingStaged.content :
+        undefined;
+      if (collisionContent !== undefined) {
         const suffix = (++_collisionCounter).toString(36);
         const disambiguated = hash + '_' + suffix;
         const disambiguatedShort = hashContentSync(disambiguated).slice(0, SHORT_HASH_LEN);
@@ -3396,6 +3450,7 @@ export const useContextStore = create<ContextStoreState>()(
       }
     }
 
+    const invalidatedPaths: string[] = [];
     for (const path of paths) {
       const rev = revByPath.get(path) ?? null;
       if (rev == null) {
@@ -3407,6 +3462,27 @@ export const useContextStore = create<ContextStoreState>()(
       updated += stats.updated;
       invalidated += stats.invalidated;
       preserved += stats.preserved;
+      if (stats.invalidated > 0) invalidatedPaths.push(path);
+    }
+
+    // Re-validate paths that had invalidations — a file may have changed between the
+    // bulk revision fetch and our reconciliation pass. Re-resolving narrows the TOCTOU
+    // window; any residual race is caught by the next round's refresh.
+    if (invalidatedPaths.length > 0 && perPathResolver) {
+      const reResolved = await Promise.all(
+        invalidatedPaths.map(async (p) => [p, await perPathResolver(p)] as const),
+      );
+      for (const [rePath, reRev] of reResolved) {
+        if (reRev == null) continue;
+        const priorRev = revByPath.get(rePath);
+        if (priorRev != null && reRev !== priorRev) {
+          const stats = get().reconcileSourceRevision(rePath, reRev);
+          total += stats.total;
+          updated += stats.updated;
+          invalidated += stats.invalidated;
+          preserved += stats.preserved;
+        }
+      }
     }
 
     if (unresolvablePaths.length > 0) {
