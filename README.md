@@ -54,7 +54,7 @@ See [Architecture Document](ARCHITECTURE.md) for the full technical description,
 
 | Document | Description |
 |----------|-------------|
-| [Architecture Overview](ARCHITECTURE.md) | Complete technical architecture (start here) |
+| [Architecture Overview](atls-studio/docs/ARCHITECTURE.md) | Complete technical architecture (start here) |
 | [Engrams & Memory](docs/engrams.md) | Hash-addressed knowledge units, activation states, memory regions |
 | [Batch Executor](docs/batch-executor.md) | Unified tool surface, operation families, dataflow, intents, error recovery |
 | [Subagents](docs/subagents.md) | Delegate models: four roles, snapshot loop, scoped HPP, budgets, `delegate.*` batch ops |
