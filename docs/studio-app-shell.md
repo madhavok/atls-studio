@@ -16,7 +16,7 @@ The runtime docs describe how ATLS manages memory, freshness, and prompt assembl
 - Manage shell-level UI state such as active files, panel sizes, theme, quick actions, search, and window controls.
 - Route user actions into hooks and services that talk to the Tauri backend.
 - Host session selection and swarm-specific views without embedding backend logic directly in the UI.
-- Surface prompt metrics in chat (including **rolling** token savings and distilled-round counts when the rolling history window is active); see [history-compression.md](./history-compression.md).
+- Surface prompt metrics in chat (including **rolling** token savings and distilled-round counts when the rolling history window is active); see [history-compression.md](./history-compression.md). Compression is driven by [`historyCompressor.ts`](../atls-studio/src/services/historyCompressor.ts) (deflation + stubbing) and [`historyDistiller.ts`](../atls-studio/src/services/historyDistiller.ts) (rolling summary) — the shell only displays their outputs.
 - Offer **Copy context window (last API payload)** in the chat UI ([`AiChat/index.tsx`](../atls-studio/src/components/AiChat/index.tsx)): copies the most recently assembled provider payload JSON for debugging, regression reports, or comparing what the model actually received versus the on-screen transcript.
 
 ## Key Code Locations
@@ -37,6 +37,20 @@ The app shell centers around a persistent workspace layout:
 - Right: AI chat, with a collapsible mode during swarm workflows.
 
 This separation matters because the shell keeps UI composition independent from the runtime subsystems underneath it. The same chat and memory runtime can be surfaced through different views without changing the underlying storage or orchestration model.
+
+### ATLS Panel tabs
+
+The ATLS panel ([`AtlsPanel/index.tsx`](../atls-studio/src/components/AtlsPanel/index.tsx)) exposes a set of tabs over the runtime state, each driven from the relevant Zustand store or Tauri command:
+
+| Tab | Content |
+|-----|---------|
+| **Issues** | Detector findings for the active workspace (from `search.issues` / `find_issues`) |
+| **File** (intel) | Per-file intelligence: symbols, imports, dependents, diagnostics |
+| **Patterns** | Loaded detector patterns and categories (`get_patterns`) |
+| **Overview** | Codebase overview stats and subsystem map (`get_codebase_overview`) |
+| **Health** | Project health, scan progress, and index state |
+
+The panel also splits with a terminal pane for `system.exec` output when agent runs need visible shell activity.
 
 ## How It Connects To Other Subsystems
 
@@ -61,8 +75,9 @@ The app shell should own presentation, interaction, and local UI state. It shoul
 
 ## Related Documents
 
-- `ARCHITECTURE.md`
-- `docs/session-persistence.md`
-- `docs/swarm-orchestration.md`
-- `docs/tauri-backend.md`
-- `docs/engrams.md`
+- [`atls-studio/docs/ARCHITECTURE.md`](../atls-studio/docs/ARCHITECTURE.md)
+- [`docs/session-persistence.md`](./session-persistence.md)
+- [`docs/swarm-orchestration.md`](./swarm-orchestration.md)
+- [`docs/tauri-backend.md`](./tauri-backend.md)
+- [`docs/engrams.md`](./engrams.md)
+- [`docs/history-compression.md`](./history-compression.md)

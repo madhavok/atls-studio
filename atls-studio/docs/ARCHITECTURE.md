@@ -39,7 +39,7 @@ This document describes every major subsystem and the nested responsibilities in
 ├──────────────────────────────────────────────────────────────────┤
 │ Managed memory runtime                                           │
 │ contextStore · hashProtocol · hashManifest · freshnessTelemetry  │
-│ historyDistiller · roundHistoryStore                             │
+│ historyCompressor · historyDistiller · roundHistoryStore         │
 ├──────────────────────────────────────────────────────────────────┤
 │ Prompt and tool runtime                                          │
 │ contextHash · promptMemory · tokenCounter · contextFormatter     │
@@ -57,7 +57,7 @@ This document describes every major subsystem and the nested responsibilities in
 | UI and application shell | `src/components/*`, `src/stores/appStore.ts` | chat/session model, workspace model, agent control plane, prompt metrics view |
 | AI service layer | `src/services/aiService.ts`, `src/services/geminiCache.ts`, `src/services/swarmChat.ts`, `src/services/modelFetcher.ts`, `src/services/uhppExpansion.ts`, `src/services/toolHelpers.ts` | provider adapters, Tauri proxy, Gemini rolling cache, HPP hydration, UHPP expansion, tool-call helpers |
 | Swarm orchestrator | `src/services/orchestrator.ts`, `src/stores/swarmStore.ts` | task decomposition, file claims, agent coordination, research digest, synthesis |
-| Managed memory runtime | `src/stores/contextStore.ts`, `src/services/hashProtocol.ts`, `src/services/hashManifest.ts`, `src/services/freshnessTelemetry.ts`, `src/services/historyDistiller.ts` | engram registry, staging, blackboard, task planning, freshness/reconcile, auto-management, hash forwarding, rolling summaries |
+| Managed memory runtime | `src/stores/contextStore.ts`, `src/services/hashProtocol.ts`, `src/services/hashManifest.ts`, `src/services/freshnessTelemetry.ts`, `src/services/historyCompressor.ts`, `src/services/historyDistiller.ts` | engram registry, staging, blackboard, task planning, freshness/reconcile, auto-management, hash forwarding, history deflation + tool_use stubbing, rolling summaries |
 | Prompt construction | `src/utils/contextHash.ts`, `src/services/promptMemory.ts`, `src/utils/tokenCounter.ts`, `src/services/contextFormatter.ts` | digests and ref formatting, prompt-budget policy, provider-aware token counting, WM formatting |
 | Batch and tool execution | `src/utils/toon.ts`, `src/services/batch/executor.ts`, `src/services/batch/opMap.ts`, `src/services/batch/intents.ts`, `src/services/batch/snapshotTracker.ts`, `src/services/batch/policy.ts`, `src/services/batch/paramNorm.ts`, `src/services/batch/resultFormatter.ts`, `src/services/batch/validateBatchSteps.ts` | TOON serialization, step dispatch, policy enforcement, intent expansion, read-range awareness, line rebasing |
 | History and verification telemetry | `src/stores/roundHistoryStore.ts` | round snapshots, verification confidence, cost summaries |
@@ -781,7 +781,7 @@ The parser subsystem wraps tree-sitter for multi-language code parsing and expos
 
 Primary module: `atls-rs/crates/atls-core/src/query/mod.rs`
 
-`QueryEngine` (`pub struct QueryEngine`) is the stateful engine for executing structured code queries against a parsed codebase. Its `impl` block (~113 lines) exposes the public query API used by the frontend via Tauri IPC.
+`QueryEngine` (`pub struct QueryEngine`) is the stateful engine for executing structured code queries against a parsed codebase. The core `impl` block in `query/mod.rs` is small; the public query API is spread across `query/*.rs` submodules (`search.rs`, `symbols.rs`, `context.rs`, `files.rs`, `issues.rs`, `graph.rs`, `hybrid.rs`, `feedback.rs`, `grammar.rs`, `structured.rs`, `llm_query.rs`) and exposed to the frontend via Tauri IPC.
 
 `QueryError` variants:
 - malformed query input
@@ -817,9 +817,9 @@ Primary module: `atls-rs/crates/atls-core/src/detector/mod.rs`
 
 The detector subsystem provides reusable pattern-matching over parsed codebases using tree-sitter queries.
 
-`PatternLoader` (`loader` sub-module) — loads pattern definitions from TOML or JSON configuration files and validates them against registered languages.
+`PatternLoader` (`loader` sub-module) — loads pattern definitions from JSON catalog files (`core.json`, `all.json`, per-language `{lang}.json`) and validates them against registered languages.
 
-`DetectorRegistry` (`registry` sub-module) — holds the active set of loaded patterns and exposes them keyed by language and pattern name. Also owns `FocusMatrix: Record<string, string[]>` — a map from workspace or file-glob patterns to the pattern names that should run against them, enabling per-project detection configuration.
+`DetectorRegistry` (`registry` sub-module) — holds the active set of loaded patterns and exposes them keyed by language and pattern name. Also owns `FocusMatrix: HashMap<String, HashSet<String>>` — a map from workspace or file-glob patterns to the pattern names that should run against them, enabling per-project detection configuration.
 
 `TreeSitterDetector` (`treesitter` sub-module) — executes a single tree-sitter query pattern against a parsed source tree; returns `QueryMatch[]` results.
 

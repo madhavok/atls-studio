@@ -395,7 +395,6 @@ export function compressToolLoopHistory(
 ): number {
   // G21: use a getter so chunk lookups always see post-addChunk state
   const getCtx = () => useContextStore.getState();
-  const contextStore = getCtx();
   let compressedCount = 0;
   let totalSavedTokens = 0;
   const startIdx = priorTurnBoundary ?? 0;
@@ -428,13 +427,13 @@ export function compressToolLoopHistory(
 
   const recordReplacement = (content: string, role: string, description: string): string => {
     const tokens = countTokensSync(content);
-    const existingByDesc = findExistingChunkBySource(contextStore, description);
+    const existingByDesc = findExistingChunkBySource(getCtx(), description);
     if (existingByDesc) {
       dematerialize(existingByDesc.hash);
       return formatChunkRef(existingByDesc.shortHash, tokens, undefined, description, existingByDesc.digest);
     }
     const chunkType = role === 'assistant' ? 'msg:asst' : 'msg:user';
-    const hash = contextStore.addChunk(content, chunkType, description, undefined, `history: ${description}`);
+    const hash = getCtx().addChunk(content, chunkType, description, undefined, `history: ${description}`);
     const shortHash = hash.slice(0, SHORT_HASH_LEN);
     const chunk = getCtx().chunks.get(hash);
     dematerialize(hash);
@@ -495,7 +494,7 @@ export function compressToolLoopHistory(
           shortHash = existing.shortHash;
           chunkDigest = existing.digest;
         } else {
-          hash = contextStore.addChunk(tr.content, 'result', description, undefined, `result: ${description}`);
+          hash = getCtx().addChunk(tr.content, 'result', description, undefined, `result: ${description}`);
           shortHash = hash.slice(0, SHORT_HASH_LEN);
           chunkDigest = getCtx().chunks.get(hash)?.digest;
         }
@@ -521,7 +520,7 @@ export function compressToolLoopHistory(
         if (inputTokens <= COMPRESSION_THRESHOLD_TOKENS) continue;
 
         const description = extractToolDescription(block.name || 'tool_use', block.input);
-        const hash = contextStore.addChunk(inputStr, 'call', description, undefined, `call: ${description}`);
+        const hash = getCtx().addChunk(inputStr, 'call', description, undefined, `call: ${description}`);
         const shortHash = hash.slice(0, SHORT_HASH_LEN);
         const chunk = getCtx().chunks.get(hash);
         const ref = formatChunkRef(shortHash, inputTokens, undefined, description, chunk?.digest);

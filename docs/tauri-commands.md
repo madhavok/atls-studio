@@ -63,4 +63,4 @@ IPC command names registered in [`atls-studio/src-tauri/src/lib.rs`](../atls-stu
 
 When adding commands, update this file and the `generate_handler` block together.
 
-**Maintenance:** The authoritative list is `tauri::generate_handler![...]` in [`lib.rs`](../atls-studio/src-tauri/src/lib.rs). After editing Rust, diff that block against this file (search for `invoke_handler` in `lib.rs`).
+**Maintenance:** The authoritative list is the `tauri::generate_handler![...]` macro invocation inside `.invoke_handler(...)` in [`lib.rs`](../atls-studio/src-tauri/src/lib.rs) (currently ~3289-3452). After editing Rust, diff the **contents of `generate_handler!`** against this file — searching for `invoke_handler` alone only finds the wrapper call; the command list lives inside the macro.

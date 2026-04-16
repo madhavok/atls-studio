@@ -9,17 +9,21 @@ This document tracks **remaining** test priorities for ATLS (Vitest frontend, Pl
 | Layer | Command | Location |
 | ----- | ------- | -------- |
 | Vitest | `npm run test` / `npm run test:coverage` | [`atls-studio`](../atls-studio) |
+| Vitest + gap report | `npm run test:coverage:report` (runs coverage then `list-coverage-gaps.ts`) | [`atls-studio`](../atls-studio) |
+| Gap-only report | `npm run test:coverage:gaps` | [`atls-studio`](../atls-studio) |
 | Playwright | `npm run test:e2e` | [`atls-studio/e2e`](../atls-studio/e2e) |
 | Tauri backend | `cargo test` or `cargo llvm-cov` | [`atls-studio/src-tauri`](../atls-studio/src-tauri) |
-| atls-rs | `cargo test` | [`atls-rs`](../atls-rs) |
+| Validation-fix subset (Rust) | `npm run test:validation-fixes` | [`atls-studio/src-tauri`](../atls-studio/src-tauri) |
+| atls-rs | `npm run test:atls-rs` (alias for `cargo test`) | [`atls-rs`](../atls-rs) |
+| Full stack | `npm run test:all` — Vitest then `src-tauri` then `atls-rs` cargo tests | repo-wide |
 
-CI: [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) runs typecheck, Vitest + coverage, Playwright, `cargo llvm-cov` on `src-tauri`, and `cargo test` in `atls-rs`.
+CI: [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) runs typecheck, Vitest + coverage, Playwright, and `cargo llvm-cov --workspace` over the `atls-rs` workspace (coverage-enabled Rust run — equivalent to `cargo test` plus instrumentation).
 
 ---
 
 ## 1. Central client state (Zustand) — mostly covered
 
-Dedicated test files exist for **swarmStore**, **attachmentStore**, **refactorStore**, **projectHistory**, and partial **appStore** (message parts / helpers). See `atls-studio/src/stores/*.test.ts`.
+Dedicated test files exist for **swarmStore**, **attachmentStore**, **refactorStore**, **projectHistory**, partial **appStore** (message parts / helpers), plus newer additions: **bbFreshness**, **contextHelpers**, **costStoreTotals**, **retentionStore**, **terminalStore** (multiple specs), **usePanelResize.clamp**, and **useAtls.buildIssueFilters**. See `atls-studio/src/stores/*.test.ts` and `atls-studio/src/hooks/*.test.ts`.
 
 **Remaining:** deeper **appStore** action coverage without full Tauri (streaming lifecycle, session edges) where practical; mock `invoke` for persistence paths.
 
@@ -65,7 +69,7 @@ Most modules embed `#[cfg(test)]` tests, including: `ai_execute`, `ai_models`, `
 
 ## 6. End-to-end (Playwright)
 
-**Implemented:** [`e2e/dev-server-smoke.spec.ts`](../atls-studio/e2e/dev-server-smoke.spec.ts) (Vite webServer), plus additional specs for layout/landmarks where `data-testid` hooks exist.
+**Implemented:** [`e2e/dev-server-smoke.spec.ts`](../atls-studio/e2e/dev-server-smoke.spec.ts) (Vite webServer), [`e2e/app-layout.spec.ts`](../atls-studio/e2e/app-layout.spec.ts), and [`e2e/chat-session-reload.spec.ts`](../atls-studio/e2e/chat-session-reload.spec.ts).
 
 **Remaining:** optional deeper flows (navigation, settings) without API keys; Tauri-native WebDriver remains optional and costly.
 
@@ -74,5 +78,7 @@ Most modules embed `#[cfg(test)]` tests, including: `ai_execute`, `ai_models`, `
 ## 7. Related priorities
 
 For **`aiService`**, orchestrator, **`swarmChat`**, and **`chatDb` / `geminiCache` / `modelFetcher`**, see service-level `*.test.ts` under [`atls-studio/src/services`](../atls-studio/src/services) and [`docs/swarm-orchestration.md`](swarm-orchestration.md).
+
+**History pipeline coverage (implemented):** [`historyCompressor.test.ts`](../atls-studio/src/services/historyCompressor.test.ts), [`historyDistiller.test.ts`](../atls-studio/src/services/historyDistiller.test.ts), [`historySerializationTokens.test.ts`](../atls-studio/src/services/historySerializationTokens.test.ts) — covers deflation, rolling summary distillation, and tool_use stub token accounting.
 
 Batch intent logic: [`intents.test.ts`](../atls-studio/src/services/batch/intents.test.ts). Barrel-only modules may stay untested directly.

@@ -59,7 +59,15 @@ Serialized memory state uses a `version` field on [`PersistedMemorySnapshot`](..
 | **2–3** | Earlier snapshot layouts; still loadable. Core fields: chunks, archive, staged, blackboard, task plan, hash stacks, etc. |
 | **4** | Adds session-scoped UI/runtime extras: optional `promptMetrics`, `cacheMetrics`, `roundHistorySnapshots`, `costChat` (see `applyV4SessionExtras` in [`useChatPersistence.ts`](../atls-studio/src/hooks/useChatPersistence.ts)). |
 | **5** | Everything in v4 plus optional **`rollingSummary`** — the distilled **rolling history** facts used for the API-only `[Rolling Summary]` message ([history-compression.md](./history-compression.md)). |
-| **6** | Current write format. Everything in v5 plus `verifyArtifacts`, `awarenessCache`, `cumulativeCoveragePaths`, `fileReadSpinByPath`, `fileReadSpinRanges`, and `freshnessJournal`. All optional — older snapshots load cleanly with empty defaults. |
+| **6** | Current write format. Everything in v5 plus `verifyArtifacts`, `awarenessCache`, `cumulativeCoveragePaths`, `fileReadSpinByPath`, `fileReadSpinRanges`, `freshnessJournal`, `spinDiagnosisSummary`, `batchMetrics.hadSubstantiveBbWrite`, and an optional `geminiCache` snapshot. Most fields are rehydrated to stores on load; see asymmetries below. |
+
+### v6 rehydration asymmetries
+
+Not every v6 field round-trips symmetrically through `loadSession`. Known gaps:
+
+- **`spinDiagnosisSummary`** is serialized on write but currently not re-read into any store on load — the field is retained on disk for debugging and forward-compat but doesn't feed spin detection until the next round builds a fresh summary.
+- **`batchMetrics.hadSubstantiveBbWrite`** is normalized on load but requires the batch-metrics store to be present; missing metrics default to `false`.
+- **`geminiCache`**: when present, is re-applied after `applyHashFirstFreshness` so the Gemini static-prefix cache state survives restore.
 
 If a snapshot has no `rollingSummary` (older save) or is below v5, restore clears rolling summary to empty; v4+ extras still apply when `version` is 4, 5, or 6.
 
@@ -85,7 +93,7 @@ This fallback path matters because it lets the system recover gracefully from ol
 
 After **any** session load (memory snapshot v2–6 **or** legacy partial restore), `loadSession` runs a single pipeline:
 
-1. **`applyHashFirstFreshness`** ([`useChatPersistence.ts`](../atls-studio/src/hooks/useChatPersistence.ts)) — bulk-compares persisted `sourceRevision` to on-disk hashes for working memory, archive, and staged paths. Matching pairs are **preserved** (no unnecessary “amnesia”); mismatches are labeled **`freshness: suspect`** / **`session_restore`** or staged **`stageState: stale`**. If the bulk revision resolver is not yet available, the store falls back to **blanket suspect** (working + file-backed archived + staged) and **clears the awareness cache** so the batch snapshot tracker does not trust stale hashes.
+1. **`applyHashFirstFreshness`** ([`useChatPersistence.ts`](../atls-studio/src/hooks/useChatPersistence.ts)) — bulk-compares persisted `sourceRevision` to on-disk hashes for working memory, archive, and staged paths. Matching pairs are **preserved** (no unnecessary "amnesia"); mismatches are labeled **`freshness: suspect`** / **`session_restore`** or staged **`stageState: stale`**. If the bulk revision resolver is not yet available (cold-start before `useAtls` mounts), the store falls back via `applyRestoredSessionBlanketSuspect` to **blanket suspect** (working + file-backed archived + staged); that path also invalidates all awareness-cache entries so the batch snapshot tracker does not trust stale hashes. When the resolver later registers, the deferred `reconcileRestoredSession` reruns and re-classifies per-path with real disk hashes.
 
 2. **`reconcileRestoredSession`** ([`contextStore.ts`](../atls-studio/src/stores/contextStore.ts)) — walks file-backed engrams and calls `reconcileSourceRevision` per path with cause `session_restore`. When body content still hashes to the on-disk revision, metadata is aligned; when the file changed on disk but the engram body does not match, **suspect** is retained (metadata is not upgraded to the new hash without a matching body).
 
@@ -128,7 +136,7 @@ That project scoping is important because memory, hashes, and chat history are o
 
 ## Related Documents
 
-- `ARCHITECTURE.md`
+- [`atls-studio/docs/ARCHITECTURE.md`](../atls-studio/docs/ARCHITECTURE.md)
 - [history-compression.md](./history-compression.md) — rolling window, distilled summary, snapshot format v5
 - [freshness.md](./freshness.md) — round-end reconciliation, preflight, timing vs restore
 - `docs/studio-app-shell.md`

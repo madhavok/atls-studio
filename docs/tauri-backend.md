@@ -29,7 +29,7 @@ Tauri gives the app a desktop-native boundary while still letting the UI be writ
 
 ## Key Code Locations
 
-- `atls-studio/src-tauri/src/lib.rs`: module root and Tauri command registration.
+- `atls-studio/src-tauri/src/lib.rs`: module root and Tauri command registration (see `generate_handler!` invocation at ~3289-3452).
 - `atls-studio/src-tauri/src/file_ops.rs`: file reads, writes, and related file operations.
 - `atls-studio/src-tauri/src/file_watcher.rs`: file-change watching and event emission.
 - `atls-studio/src-tauri/src/atls_ops.rs`: ATLS project operations backed by Rust code intelligence.
@@ -37,10 +37,23 @@ Tauri gives the app a desktop-native boundary while still letting the UI be writ
 - `atls-studio/src-tauri/src/search_exec.rs`: search execution.
 - `atls-studio/src-tauri/src/refactor_engine.rs`: refactor and edit-oriented backend behavior.
 - `atls-studio/src-tauri/src/pty.rs`: terminal and process integration (PTY used with `system.exec` / shell capture paths coordinated from the TypeScript `system` handler).
-- `atls-studio/src-tauri/src/ai_execute.rs` and `atls-studio/src-tauri/src/ai_streaming.rs`: provider-facing AI execution and streaming.
-- `atls-studio/src-tauri/src/tokenizer.rs`: BPE token counting (`count_tokens`, `count_tokens_batch`, `count_tool_def_tokens`).
-- `atls-studio/src-tauri/src/chat_db_commands.rs` and `atls-studio/src-tauri/src/chat_db.rs`: session persistence and SQLite-backed chat storage.
-- `atls-studio/src-tauri/src/hash_commands.rs`: hash and UHPP-related backend commands.
+- `atls-studio/src-tauri/src/ai_execute.rs` and `atls-studio/src-tauri/src/ai_streaming.rs`: provider-facing AI execution and streaming; also owns cache breakpoint placement on the Anthropic tool block.
+- `atls-studio/src-tauri/src/gemini_cache.rs`: Gemini / Vertex static-prefix cache create/update/reset and cache-scoped `stream_chat_*` handlers.
+- `atls-studio/src-tauri/src/tokenizer.rs`: BPE token counting (`count_tokens`, `count_tokens_batch`, `count_tool_def_tokens`); under `cfg(test)` includes `tokenizer_shorthand_audit.rs` for shorthand-vs-canonical comparisons.
+- `atls-studio/src-tauri/src/chat_db_commands.rs` and `atls-studio/src-tauri/src/chat_db.rs`: session persistence and SQLite-backed chat storage (shadow versions, memory snapshots, swarm tasks).
+- `atls-studio/src-tauri/src/hash_commands.rs`: hash and UHPP-related backend commands (content registration, revisions, Rust-side hash lookups).
+- `atls-studio/src-tauri/src/hash_resolver.rs`: **central `h:` parameter resolver** — expands file-path, content, shape, slice, and diff refs in batch step params before execution so payloads can stay pointer-sized in transcripts while backends see materialized content.
+- `atls-studio/src-tauri/src/hash_protocol.rs`: Rust-side HPP types shared with the TypeScript layer.
+- `atls-studio/src-tauri/src/edit_session.rs`: edit session state, apply/rollback transactions, preimage verification.
+- `atls-studio/src-tauri/src/diff_engine.rs`: unified diff generation used by `h:OLD..h:NEW` refs.
+- `atls-studio/src-tauri/src/ast_query.rs`: structured AST queries over the active project's parser registry.
+- `atls-studio/src-tauri/src/stream_protocol.rs`: streaming envelope + chunk protocol between provider adapters and the TS layer.
+- `atls-studio/src-tauri/src/snapshot.rs`: file/workspace snapshot helpers used by the freshness pipeline.
+- `atls-studio/src-tauri/src/shape_ops.rs`: UHPP shape operations (`:sig`, `:fold`, `:dedent`, `:grep`, `:head`/`:tail`, etc.).
+- `atls-studio/src-tauri/src/linter.rs`: lint and typecheck runner invocations behind `verify.lint` / `verify.typecheck`.
+- `atls-studio/src-tauri/src/git_ops.rs`: git commands (status, diff, history) used by `system.git` and temporal refs (`HEAD~N:path`).
+- `atls-studio/src-tauri/src/workspace_run.rs`: workspace script runner wired to `atls_get_workspace_scripts`.
+- `atls-studio/src-tauri/src/line_remap.rs`: line-offset helpers (cfg(test)-heavy) supporting cross-step rebase.
 
 ## Backend Module Map
 
@@ -76,10 +89,10 @@ The Tauri backend is not the core engine itself. It is the desktop host and inte
 
 ## Related Documents
 
-- `ARCHITECTURE.md`
-- [`docs/tauri-commands.md`](./tauri-commands.md) — enumerated `invoke` command names (kept in sync with `lib.rs` `generate_handler`)
-- `docs/studio-app-shell.md`
-- `docs/session-persistence.md`
-- `docs/atls-engine.md`
-- `docs/hash-protocol.md`
-- `docs/freshness.md`
+- [`atls-studio/docs/ARCHITECTURE.md`](../atls-studio/docs/ARCHITECTURE.md)
+- [`docs/tauri-commands.md`](./tauri-commands.md) — enumerated `invoke` command names (kept in sync with `lib.rs` `generate_handler!`)
+- [`docs/studio-app-shell.md`](./studio-app-shell.md)
+- [`docs/session-persistence.md`](./session-persistence.md)
+- [`docs/atls-engine.md`](./atls-engine.md)
+- [`docs/hash-protocol.md`](./hash-protocol.md)
+- [`docs/freshness.md`](./freshness.md)

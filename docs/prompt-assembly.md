@@ -13,25 +13,24 @@ ATLS constructs the LLM prompt by cleanly separating **chat** (the event log) fr
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│ CACHED: Static system block (5min TTL)           BP1+BP2   │
+│ CACHED: Static system block (5min TTL)         BP-static   │
 │   Mode prompt · Project line · Shell guide ·                │
 │   Tool reference · Entry manifest · Context control ·       │
 │   HPP spec · Provider reinforcement                         │
 │                                     cache_control ──┤       │
 ├─────────────────────────────────────────────────────────────┤
-│ STATE PREAMBLE (non-durable, rebuilt every round)           │
-│   1. Rolling summary (distilled chat facts)                 │
-│   2. Staged snippets                                        │
-│   3. Dynamic context (task, stats, BB, steering, TOON)      │
-│   4. Working memory (active engrams, metadata)              │
-├─────────────────────────────────────────────────────────────┤
 │ CACHED: Conversation history (append-only, clean)    BP3    │
+│   [Rolling Summary] (if present; unshift-ed onto history)   │
 │   All prior user / assistant / tool_result turns            │
 │   (no state embedded — just what happened)                  │
 │                            PRIOR_TURN_BOUNDARY ──┤          │
 ├─────────────────────────────────────────────────────────────┤
-│ UNCACHED: Last user message (clean)                         │
-│   User text and/or tool results — no state injected         │
+│ UNCACHED: Last user message (state injected here)           │
+│   State block prepended via prependStateToContent:          │
+│     1. Staged snippets                                      │
+│     2. Dynamic context (task, stats, BB, steering, TOON)    │
+│     3. Working memory (active engrams, metadata)            │
+│   Followed by the real user text and/or tool results        │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -41,16 +40,28 @@ Anthropic allows up to 4 cache breakpoints. ATLS uses 2:
 
 | Breakpoint | Placement | Content | Stability |
 |-----------|-----------|---------|-----------|
-| **BP1+BP2** | `cache_control` on last tool definition | System prompt + all tool schemas | Static per session (5min TTL) |
+| **BP-static** | `cache_control` on last tool definition | System prompt + all tool schemas | Static per session (5min TTL) — a single breakpoint covering both the prompt and the tool block |
 | **BP3** | `<<PRIOR_TURN_BOUNDARY>>` marker on last prior turn | All conversation history before the current (last) user message | Append-only within a tool loop |
 
-### State preamble (non-durable)
+The older "BP1+BP2" split referred to two notional cache layers over the static prefix; in practice Anthropic exposes a single breakpoint on the last tool and the system prompt + tools are cached together. The Rust streaming layer ([`src-tauri/src/ai_streaming.rs`](../atls-studio/src-tauri/src/ai_streaming.rs)) emits exactly that one breakpoint.
 
-Session state — task/plan, blackboard, staged snippets, working memory, steering signals, workspace context — is assembled fresh each round by `buildStateBlock()` and placed in a **non-durable** position in the API payload. For non-Gemini providers, it is merged into a synthetic first user message (the "state preamble") that also includes the rolling summary. For Gemini, it goes via the `dynamicContext` parameter to the Rust backend. The state preamble is **never stored** in `conversationHistory`.
+### State placement (non-durable)
+
+Session state — task/plan, blackboard, staged snippets, working memory, steering signals, workspace context — is assembled fresh each round by `buildStateBlock()` and injected into the **last user message** of the assembled payload by `prependStateToContent` in [`aiService.ts`](../atls-studio/src/services/aiService.ts) ~1141-1202. This places state **after** the BP3 boundary in the uncached tail, so mutating state never invalidates the cached history prefix. For Gemini/Vertex, the state block flows through a separate `dynamicContext` parameter to the Rust streaming function instead of being embedded in message content.
+
+The state block is **never stored** in `conversationHistory` — it's rebuilt fresh every round and never retained.
 
 ### Rolling summary
 
-When the context store holds distilled facts from the [rolling history window](./history-compression.md), the rolling summary is included as part of the state preamble (merged into the first user message). It is **not** stored as a normal chat row. BP3 hashes and cache behavior are modeled by [`logicalCacheMetrics.ts`](../atls-studio/src/services/logicalCacheMetrics.ts).
+When the context store holds distilled facts from the [rolling history window](./history-compression.md), `aiService.ts` ~1758-1763 calls `conversationHistory.unshift(formatSummaryMessage(trimmed))` — the summary message lands at the **front of the history array** (inside BP3), not merged with the state block. Non-Gemini paths include it in the cached prefix; Gemini skips boundary markers entirely. BP3 hashes and cache behavior are modeled by [`logicalCacheMetrics.ts`](../atls-studio/src/services/logicalCacheMetrics.ts).
+
+### `priorTurnBoundary` within the main chat path
+
+The current main chat tool loop uses `priorTurnBoundary = 0` ([`aiService.ts`](../atls-studio/src/services/aiService.ts) ~1766). History compression middleware is free to rewrite any turn; in practice it runs only at round 0 (between user turns), and within a single tool loop the history array is append-only — so BP3 remains byte-stable mid-loop even with the permissive boundary.
+
+### History reused from cache (middleware bypass)
+
+When the assembled payload contains a `historyReusedFromCache` marker, `chatMiddleware.ts` ~104-106 skips round-0 compression entirely for that request. This preserves cache continuity when the runtime can prove the history hasn't changed since the last successful assembly.
 
 ### Clean history: why it matters for caching
 
@@ -173,14 +184,17 @@ Built by `formatWorkingMemory()` via the context formatter:
 ### Chunk Ordering in ACTIVE ENGRAMS
 
 ```typescript
+// contextFormatter.ts ~298-306
 sortedChunks.sort((a, b) => {
   if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;      // Pinned first
   const aFile = FILE_TYPES.has(a.type);
   const bFile = FILE_TYPES.has(b.type);
   if (aFile !== bFile) return aFile ? -1 : 1;                // Files before artifacts
-  return b.lastAccessed - a.lastAccessed;                     // Most recent first
+  return b.lastAccessed - a.lastAccessed;                     // Most recent first (LRU)
 });
 ```
+
+Note this differs from `sortRefs` in [`hashProtocol.ts`](../atls-studio/src/services/hashProtocol.ts), which sorts by `seenAtTurn` for manifest/diagnostic purposes. Prompt ordering follows `lastAccessed`; see [`hash-protocol.md#sorting`](./hash-protocol.md).
 
 ## Stats Line
 

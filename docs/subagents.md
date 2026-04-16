@@ -28,9 +28,9 @@ Each role may only emit **batch** steps whose `use` string appears in its allowl
 | coder | `coder:report` | `change.*`, `verify.*` (not `verify.test` in allowlist), `system.exec` |
 | tester | `tester:results` | `verify.test`, smaller edit surface, `system.exec` |
 
-**Coder** and **tester** runs attach tool execution to the subagent’s swarm terminal where applicable so build/test output stays isolated.
+**Coder** and **tester** runs attach tool execution to a **dedicated agent terminal** created via `terminalStore.createTerminal(..., { isAgent: true, name: "Subagent: {role}-..." })` so build/test output stays isolated from the main chat terminal.
 
-Exact allowlists are defined in `ROLE_ALLOWED_OPS` in `subagentService.ts` (source of truth).
+Exact allowlists are defined in `ROLE_ALLOWED_OPS` in [`subagentService.ts`](../atls-studio/src/services/subagentService.ts) (source of truth). Blackboard visibility is also scoped per role: `ROLE_BB_PREFIXES` ([`subagentService.ts`](../atls-studio/src/services/subagentService.ts) ~186) restricts each role to writing only keys with matching prefixes, so a retriever can't scribble on the coder's findings and vice versa.
 
 ## Snapshot loop and scoped HPP
 
@@ -44,13 +44,24 @@ Configured in [`promptMemory.ts`](../atls-studio/src/services/promptMemory.ts):
 | Constant | Role |
 |----------|------|
 | `SUBAGENT_MAX_ROUNDS` | Safety ceiling on tool rounds (100) |
-| `SUBAGENT_MAX_ROUNDS_BY_ROLE` | Per-role caps (e.g. retriever 5, design 8, coder 15) — real limiter below the ceiling |
-| `SUBAGENT_TOKEN_BUDGET_BY_ROLE` | Total input+output tokens before forced stop (e.g. retriever 80k) |
+| `SUBAGENT_MAX_ROUNDS_BY_ROLE` | Per-role caps (retriever 5, design 8, coder 15, tester 12) — real limiter below the ceiling |
+| `SUBAGENT_TOKEN_BUDGET_BY_ROLE` | Total input+output tokens before forced stop (retriever 80k, design 100k, coder 200k, tester 150k) |
 | `SUBAGENT_TOKEN_BUDGET_DEFAULT` | Fallback token budget when a role has no override (200k) |
+| `SUBAGENT_MAX_OUTPUT_TOKENS_BY_ROLE` | **Per-round model output ceiling** (retriever 2048, design 2048, coder 8192, tester 4096). Read-only roles get tighter caps because they shouldn't need to emit long narrations. |
 | `SUBAGENT_PIN_BUDGET_CAP` | Cap for pin-budget derivation (64k) |
 | `SUBAGENT_STAGED_PATHS_CAP` | Cap on staged paths surfaced in the snapshot (60) |
 
-Stopping combines **token budget**, **per-role round caps**, **pin budget**, **consecutive idle rounds** (read-only rounds without pins/BB/etc.), and the **no-tool-call** exit (model returns a natural-language-only turn). Retriever runs treat successful `read.*` / `search.*` / `intent.*` batch steps as progress so exploration rounds are not misclassified as idle.
+### Stopping conditions
+
+`checkStopConditions` in [`subagentService.ts`](../atls-studio/src/services/subagentService.ts) ~780-822 combines:
+
+- **Per-role round cap** (`SUBAGENT_MAX_ROUNDS_BY_ROLE`)
+- **Total token budget** (`SUBAGENT_TOKEN_BUDGET_*`)
+- **`no_tool_calls`** — the model returned a natural-language-only turn
+- **Pin-budget saturation** (retriever / design roles)
+- **`task_complete`** signal in the batch result (coder / tester)
+
+An "idle rounds" concept exists as helpers in [`subagentProgress.ts`](../atls-studio/src/services/subagentProgress.ts) (`subagentToolResultIndicatesProgress`, `subagentToolResultIndicatesExploration`) and has test coverage, but those helpers are **not currently wired into `checkStopConditions`** — the stopping surface is the five conditions above. Treat idle-round classification as future infrastructure.
 
 ## Step output (delegate handlers)
 
@@ -71,4 +82,4 @@ The **retriever** row in [prompt-assembly.md](./prompt-assembly.md) describes a 
 
 - [Batch executor](./batch-executor.md) — step loop and delegate family
 - [Hash protocol](./hash-protocol.md) — `h:` refs and HPP behavior
-- [ARCHITECTURE.md](../ARCHITECTURE.md) — batch executor overview
+- [ARCHITECTURE.md](../atls-studio/docs/ARCHITECTURE.md) — batch executor overview

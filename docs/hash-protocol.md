@@ -15,7 +15,7 @@ type ChunkVisibility = 'materialized' | 'referenced' | 'archived' | 'evicted';
 | State | In Prompt? | Content Shown | Recallable |
 |-------|-----------|---------------|------------|
 | **materialized** | Yes | Full content in ACTIVE ENGRAMS | — |
-| **referenced** | Counted only | "N dormant engrams" | Yes |
+| **referenced** | Header-counted + per-row in `## HASH MANIFEST` | Each ref appears as a compact `demat` row (hash, source, tokens, total lines); header tracks aggregate counts | Yes |
 | **archived** | No | Not shown | Yes |
 | **evicted** | No | Not shown | Must re-read |
 
@@ -50,6 +50,10 @@ On each turn:
 4. **`archive(hash)`** transitions to `archived`. Excluded from working memory formatting.
 5. **`evict(hash)`** transitions to `evicted`. Fully removed from prompt.
 
+### Scoped views
+
+`createScopedView()` returns a `ScopedHppView` with an isolated `advanceTurn` that only increments a **local** turn counter. It does **not** dematerialize refs, and it does **not** run the main `roundRefreshHook` (the hook that triggers `refreshRoundEnd` on the global context store). See [`hashProtocol.ts`](../atls-studio/src/services/hashProtocol.ts). Used by subagents and test harnesses that need turn-local accounting without disturbing the main protocol state or reconciliation pipeline.
+
 ### Materialization Decision
 
 ```typescript
@@ -65,15 +69,19 @@ Only engrams materialized this turn (or pinned) get their full content in the pr
 ### Sorting
 
 ```typescript
+// hashProtocol.ts utility — used by manifest and diagnostics
 function sortRefs(a: ChunkRef, b: ChunkRef): number {
   const aFile = FILE_TYPES.has(a.type);
   const bFile = FILE_TYPES.has(b.type);
   if (aFile !== bFile) return aFile ? -1 : 1;
-  return b.seenAtTurn - a.seenAtTurn;
+  return a.seenAtTurn - b.seenAtTurn;   // ascending: oldest-first within the file/artifact group
 }
 ```
 
-File-backed engrams before artifacts, then by turn (most recent first).
+This is the **protocol-level** sort utility. The **prompt's** working-memory ordering is different — [`contextFormatter.ts`](../atls-studio/src/services/contextFormatter.ts) ~298-306 sorts by `b.lastAccessed - a.lastAccessed` (LRU, most-recent first) within the pinned → file-backed → artifact bands. In other words:
+
+- `sortRefs` in `hashProtocol.ts` is a utility used by manifest construction and test code.
+- Prompt rendering of ACTIVE ENGRAMS follows **LRU on `lastAccessed`**, not `seenAtTurn`. See [`engrams.md`](./engrams.md#working-memory-chunks) and [`prompt-assembly.md`](./prompt-assembly.md).
 
 ---
 
@@ -221,19 +229,26 @@ Dynamically select groups of engrams:
 
 ```
 h:@all                    → All active refs
-h:@edited                 → All result-type refs
+h:@edited                 → Refs produced by an edit (origin === 'edit' OR editSessionId != null)
 h:@pinned                 → All pinned refs
 h:@dormant                → All dormant (compacted) refs
-h:@stale                  → All stale refs
+h:@dematerialized         → Refs dematerialized in the last round (demat rows in the manifest)
+h:@stale                  → Uncompacted, unpinned chunks with lastAccessed older than 5 min (LRU age — NOT the same as freshness 'suspect')
 h:@latest                 → Most recent N refs
 h:@latest:5               → Most recent 5 refs
 h:@file=*.ts              → Glob pattern on source path
 h:@type=search            → Filter by chunk type
 h:@sub:subtask1           → Bound to subtask
 h:@ws:frontend            → Workspace filter
-h:@search(auth)           → Dynamic search selector
+h:@search(auth)           → Dynamic search selector (async; resolved by resolveSearchRefs)
 h:@search(auth,limit=5,tier=high) → Parameterized search
 ```
+
+**Semantic precision:**
+
+- **`h:@edited`** — [`contextStore.ts`](../atls-studio/src/stores/contextStore.ts) ~5906-5908 filters on `origin === 'edit' || editSessionId != null`, not on chunk type. A read ref derived from an edit's output qualifies; a vanilla `search` result does not.
+- **`h:@stale`** — [`contextStore.ts`](../atls-studio/src/stores/contextStore.ts) ~5920-5924 uses `lastAccessed < now - 5*60_000` over uncompacted, unpinned chunks. This is **LRU age**, not freshness state. An engram marked `freshness: 'suspect'` is surfaced to the model via the `[STALE: re-read before edit]` label (see [`freshness.md`](./freshness.md)), and is a separate concept.
+- **`h:@search(...)`** — sync `queryBySetSelector` errors on this selector (it's documented to require async resolution via `resolveSearchRefs` in [`toolHelpers.ts`](../atls-studio/src/services/toolHelpers.ts)). Use only in contexts that run async ref expansion.
 
 ### Set Operations
 
@@ -291,7 +306,7 @@ For edits, ref content is treated as discovery material — the system ensures e
 
 ## Batch-Level Hash Resolution
 
-When the batch executor dispatches a step to the Rust backend, all `h:` references in the parameters are resolved inline by `resolve_hash_refs`:
+When the batch executor dispatches a step to the Rust backend, all `h:` references in the parameters are resolved inline by the Tauri command **`batch_resolve_hash_refs`** (see [`hash_resolver.rs`](../atls-studio/src-tauri/src/hash_resolver.rs) and handler wiring in [`handlers/change.ts`](../atls-studio/src/services/batch/handlers/change.ts) ~788):
 
 1. **`file` / `file_path` fields**: `h:XXXX` resolves to the source path (not content)
 2. **`content` / `content_hash` fields**: `h:XXXX` resolves to content (with modifiers applied)
@@ -309,10 +324,12 @@ Unresolved refs are left as literal strings with a warning — resolution is len
 When edits create new file versions, the previous content is preserved as a shadow version in the chat database:
 
 ```
-insert_shadow_version(session_id, source_path, hash, content, replaced_by)
-list_shadow_versions(session_id, source_path) → version history
-get_shadow_version(session_id, hash) → specific prior content
+chat_db_insert_shadow_version(session_id, source_path, hash, content, replaced_by)
+chat_db_list_shadow_versions(session_id, source_path) → version history
+chat_db_get_shadow_version(session_id, hash) → specific prior content
 ```
+
+These are the Tauri command names as registered in [`src-tauri/src/lib.rs`](../atls-studio/src-tauri/src/lib.rs) `generate_handler!` — the internal Rust handlers live in [`chat_db_commands.rs`](../atls-studio/src-tauri/src/chat_db_commands.rs).
 
 Shadow versions enable:
 - **Rollback**: `change.rollback` with `restore:[{file, hash}]` retrieves content from shadow versions

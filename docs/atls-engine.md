@@ -60,13 +60,14 @@ atls-core/src/
 │   └── queries.rs      # low-level insert/get helpers
 ├── indexer/
 │   ├── scanner.rs      # file walk, incremental scan, progress
-│   ├── symbols.rs      # symbol query surface (2.3k lines)
+│   ├── symbols.rs      # DEPRECATED tree-sitter SymbolExtractor (replaced by uhpp_extractor)
 │   ├── relations.rs    # import/call extraction per language
 │   ├── fallback_extractor.rs  # regex fallback for unsupported langs
-│   └── uhpp_extractor.rs      # UHPP artifact extraction
+│   └── uhpp_extractor.rs      # UHPP artifact + symbol extraction
 ├── query/
-│   ├── search.rs       # code search, FTS, reranking (2k lines)
-│   ├── symbols.rs      # symbol lookup, usage, call hierarchy
+│   ├── mod.rs          # QueryEngine struct + shared helpers
+│   ├── search.rs       # code search, FTS, reranking (~2k lines)
+│   ├── symbols.rs      # symbol lookup, usage, call hierarchy (~2.3k lines)
 │   ├── context.rs      # smart/module/component context assembly
 │   ├── files.rs        # file graph, subsystems, change impact
 │   ├── issues.rs       # issue filtering, grouping, noise marking
@@ -77,7 +78,7 @@ atls-core/src/
 │   ├── structured.rs   # structured query parsing
 │   └── llm_query.rs    # LLM-based query interpretation stub
 ├── detector/
-│   ├── loader.rs       # load patterns from TOML files
+│   ├── loader.rs       # load patterns from JSON catalog files
 │   ├── registry.rs     # DetectorRegistry + FocusMatrix
 │   ├── runner.rs       # DetectionRunner orchestration
 │   └── treesitter.rs   # TreeSitterDetector — pattern → issue
@@ -98,28 +99,34 @@ atls-core/src/
     └── uhpp.rs         # UHPP protocol types (~2.5k lines)
 ```
 
+### Optional Cargo features
+
+`atls-core` exposes a `neural-embeddings` feature in [`atls-rs/crates/atls-core/Cargo.toml`](../atls-rs/crates/atls-core/Cargo.toml) that enables the `ort` (ONNX Runtime) + `ndarray` dependencies. With the feature off (the default), the hybrid search path uses the `DeterministicProvider` (hash-based embeddings) and skips the ONNX model loading path. This keeps binary size and startup cost down for hosts that don't need neural retrieval.
+
 ## Module Details
 
 ### `project` — AtlsProject
 
-`AtlsProject` is the compositional entry point. It owns the project root, database handle, indexer, query engine, detector registry, and parser registry. On `open()`, it:
-
-1. Creates a `.atls/` directory under the project root.
-2. Opens (or creates) the SQLite database inside `.atls/`.
-3. Runs all schema migrations.
-4. Initializes `Indexer`, `QueryEngine`, `DetectorRegistry`, and `ParserRegistry`.
-5. Loads detector patterns from the patterns directory.
+`AtlsProject` is the compositional entry point. Its fields are **private**; all access goes through accessor methods. The real struct in [`atls-rs/crates/atls-core/src/project.rs`](../atls-rs/crates/atls-core/src/project.rs) ~27-34:
 
 ```rust
 pub struct AtlsProject {
-    pub root: PathBuf,
-    pub db: Database,
-    pub indexer: Indexer,
-    pub query_engine: QueryEngine,
-    pub detector_registry: DetectorRegistry,
-    pub parser_registry: ParserRegistry,
+    root_path: PathBuf,
+    db: Arc<Database>,
+    indexer: Arc<Mutex<Indexer>>,
+    query: Arc<QueryEngine>,
+    detector: Arc<Mutex<DetectorRegistry>>,
+    parser_registry: Arc<ParserRegistry>,
 }
 ```
+
+On `open()` (or `open_with_patterns_fallback()`), it:
+
+1. Canonicalizes the root path and creates the `.atls/` directory.
+2. Opens (or creates) the SQLite database at `.atls/atls.db` in WAL mode.
+3. Searches a list of candidate patterns directories in order: `patterns/`, `atls-rs/patterns/`, `patterns/catalog/`, `.atls/patterns/`, then the optional bundled fallback path.
+4. Initializes `ParserRegistry`, `Indexer` (wired to the discovered patterns directory), `QueryEngine`, and `DetectorRegistry`.
+5. Loads detector patterns from the same discovered directory.
 
 This root-scoped project abstraction is what lets different hosts reuse the same engine behavior against the same codebase.
 
@@ -162,25 +169,27 @@ The indexer is the write-side of the engine — it populates the database from s
 - Per-language call extraction with scope tracking.
 - Regex-based fallbacks for languages where tree-sitter queries aren't available.
 
-**`symbols.rs`** contains the `QueryEngine` extensions for symbol operations (not the extraction itself, which lives in the parser layer). It handles symbol lookup, usage tracking, call hierarchy construction, method inventory, similar-function matching, and symbol diagnostics.
+**`symbols.rs`** (in `indexer/`) is a **deprecated** tree-sitter `SymbolExtractor`. Its header explicitly notes it has been replaced by `uhpp_extractor::uhpp_extract_symbols`. The modern symbol **query** surface lives in [`query/symbols.rs`](../atls-rs/crates/atls-core/src/query/symbols.rs), not here — that file handles symbol lookup, usage tracking, call hierarchy construction, method inventory, similar-function matching, and symbol diagnostics.
 
 **`fallback_extractor.rs`** provides regex-based symbol and import extraction for languages without tree-sitter support (currently Kotlin).
 
-**`uhpp_extractor.rs`** extracts UHPP (Universal Hash Pointer Protocol) artifacts from indexed content using compiled regex patterns.
+**`uhpp_extractor.rs`** is the current UHPP artifact and symbol extractor, replacing the legacy `indexer/symbols.rs`.
 
 ### `query` — Read-Side Query Engine
 
 The query module is the read-side counterpart to the indexer — it answers questions about the indexed codebase.
 
-**`QueryEngine`** (declared in `mod.rs`) holds a `Database` reference and provides all query surfaces through impl blocks spread across the submodules:
+**`QueryEngine`** (declared in [`query/mod.rs`](../atls-rs/crates/atls-core/src/query/mod.rs) ~42-46) holds a `Database` plus two time-bounded caches for hot recomputations. Fields are private; submodules access them through `impl QueryEngine` blocks spread across `query/search.rs`, `query/symbols.rs`, `query/context.rs`, etc.:
 
 ```rust
 pub struct QueryEngine {
-    pub db: Database,
-    pub file_cache: FileCache,
-    pub root: PathBuf,
+    db: Database,
+    auto_penalty_cache: Mutex<Option<(Instant, HashMap<String, f64>)>>,
+    vector_index_cache: Mutex<Option<(Instant, hybrid::VectorIndex)>>,
 }
 ```
+
+TTLs are `AUTO_PENALTY_TTL_SECS = 60` and `VECTOR_INDEX_TTL_SECS = 120`. Both caches have `invalidate_*` methods that the indexer calls after rescans so query results don't drift from on-disk state. The total query API surface lives across the `query/*.rs` submodules, not in a single ~113-line `impl` block.
 
 **`search.rs`** (~2000 lines) — the largest query module:
 
@@ -239,7 +248,7 @@ This allows queries like `kind:function lang:rust auth` to combine filters with 
 
 The detector subsystem loads pattern definitions and runs them against parsed code to find issues.
 
-**`PatternLoader`** reads TOML pattern files from a directory. Each pattern defines a tree-sitter query, severity, category, description, and optional fix templates.
+**`PatternLoader`** reads **JSON** catalog files from a directory ([`atls-rs/crates/atls-core/src/detector/loader.rs`](../atls-rs/crates/atls-core/src/detector/loader.rs)). It always tries `core.json` and `all.json` first, then loads language-specific catalogs (`{lang}.json`) lazily for the languages the indexer actually uses. Each pattern defines a tree-sitter query, severity, category, description, and optional fix templates.
 
 **`DetectorRegistry`** manages loaded patterns and exposes a `FocusMatrix` — a mapping from file paths to relevant pattern sets based on language and category.
 
@@ -349,13 +358,13 @@ The MCP server (`atls-rs/crates/atls-mcp`) exposes engine operations as [Model C
 |---|---|---|
 | `scan_project` | `handle_scan_project` | Index a project root |
 | `batch_query` | `handle_batch_query` | Multi-operation query batch |
-| `unified_batch` | `handle_unified_batch` | Extended batch with step normalization |
+| `batch` | `handle_unified_batch` | Unified batch with step composition + dataflow + policy |
 | `find_issues` | `handle_find_issues` | Query detected issues |
 | `get_patterns` | `handle_get_patterns` | List loaded detector patterns |
 | `get_codebase_overview` | `handle_get_codebase_overview` | Project stats and structure |
-| `export` | `handle_export` | Export issues/data as JSON/CSV |
+| `export` | `handle_export` | Export issues to SARIF or JSON |
 
-The batch handler (`handlers/batch.rs`, ~1000 lines) is the most complex — it normalizes step parameters, maps shorthand operation names to engine calls, and remaps parameters between the MCP tool schema and internal engine APIs.
+The batch handler ([`atls-rs/crates/atls-mcp/src/handlers/batch.rs`](../atls-rs/crates/atls-mcp/src/handlers/batch.rs), ~1000 lines) is the most complex — it normalizes step parameters, maps shorthand operation names to engine calls, and remaps parameters between the MCP tool schema and internal engine APIs. The tool exposed to external clients is named **`batch`**, not `unified_batch` — the latter is just the internal handler symbol (`handle_unified_batch`).
 
 Unknown tool names trigger a Levenshtein-distance suggestion ("did you mean…?").
 
@@ -458,7 +467,7 @@ The `Language` enum defines support tiers:
 
 ## Related Documents
 
-- `ARCHITECTURE.md`
-- `docs/tauri-backend.md`
-- `docs/mcp-integration.md`
-- `docs/batch-executor.md`
+- [`atls-studio/docs/ARCHITECTURE.md`](../atls-studio/docs/ARCHITECTURE.md)
+- [`docs/tauri-backend.md`](./tauri-backend.md)
+- [`docs/mcp-integration.md`](./mcp-integration.md)
+- [`docs/batch-executor.md`](./batch-executor.md)

@@ -59,7 +59,7 @@ Canonical union: [`ChunkType` in `contextHash.ts`](../atls-studio/src/utils/cont
 
 ### Content Hashing
 
-Hashes are computed via dual FNV-1a 32-bit with different seeds, producing a 16-character hex string. The first 6 characters serve as the `shortHash` for display and human reference. The backend uses adaptive 6-8 characters on collision detection.
+Hashes are computed by two 32-bit FNV-style mixing streams initialized with distinct primes, concatenated into a 16-character hex string (see [`contextHash.ts`](../atls-studio/src/utils/contextHash.ts) ~63-89). The first 6 characters serve as the `shortHash` for display and human reference. The backend uses adaptive 6-8 characters on collision detection.
 
 Token estimation adjusts characters-per-token (~2.5-5.0) based on content density: minified code at ~2.5, normal code at ~3.5, prose at ~4.5, whitespace-heavy at ~5.0.
 
@@ -119,9 +119,9 @@ The context store maintains four concurrent regions:
 
 ### Working Memory (`chunks`)
 
-The model's primary workspace. Active and dormant engrams live here. Budget: ~32k tokens.
+The model's primary workspace. Active and dormant engrams live here. Budget: **`WM_BUDGET_TOKENS = 38000`** ([`promptMemory.ts`](../atls-studio/src/services/promptMemory.ts) ~28).
 
-Sorted for prompt inclusion: pinned first, then file-backed types before artifacts, then LRU (most recently accessed first).
+Sorted for prompt inclusion by [`contextFormatter.ts`](../atls-studio/src/services/contextFormatter.ts) ~298-306: pinned first, then file-backed types (the `FILE_TYPES` set) before artifacts, then **LRU on `lastAccessed` (most recent first)**. Note that `analysis` chunks are **not** in `FILE_TYPES`, so they sort alongside artifacts rather than with file-backed engrams.
 
 ### Archive (`archivedChunks`)
 
@@ -129,7 +129,7 @@ Full-content backup for recall. LRU-capped at 50k tokens. Engrams move here via 
 
 ### Staged Snippets (`stagedSnippets`)
 
-Pre-cached context. Budget: ~4k tokens with 12 persistent anchor entries. Staged entries appear in the prompt's staged block. Used for Anthropic prompt caching when content is stable across rounds.
+Pre-cached context. Budget: **`STAGED_BUDGET_TOKENS = 4500`** (planning target) with a hard cap of **`STAGED_TOTAL_HARD_CAP_TOKENS = 65536`** enforced at prune time by `pruneStagedSnippetsToBudget`. Anchor tier is bounded separately by **`STAGED_ANCHOR_BUDGET_TOKENS = 1400`** tokens and **`MAX_PERSISTENT_STAGE_ENTRIES = 12`** entries — all constants from [`promptMemory.ts`](../atls-studio/src/services/promptMemory.ts) ~20-27, ~94. Staged entries appear in the prompt's staged block. Used for Anthropic prompt caching when content is stable across rounds.
 
 Classification:
 - **Persistent anchor**: Small entries (≤300 tokens), survive pruning
@@ -138,7 +138,7 @@ Classification:
 
 ### Blackboard (`blackboardEntries`)
 
-Persistent session knowledge — plans, analysis results, decisions, extracted patterns. Budget: ~4k tokens. Survives across turns and subtask transitions. The model writes via `bb_write` and reads via `bb_read`.
+Persistent session knowledge — plans, analysis results, decisions, extracted patterns. Budget: **`BLACKBOARD_BUDGET_TOKENS = 4800`** ([`promptMemory.ts`](../atls-studio/src/services/promptMemory.ts) ~30). Survives across turns and subtask transitions. The model writes via `session.bb.write` (shorthand `bw`) and reads via `session.bb.read` (shorthand `br`).
 
 Blackboard entries are referenced as `h:bb:key` and appear in the dynamic block of the prompt, separate from working memory.
 

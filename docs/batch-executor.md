@@ -11,7 +11,7 @@ All model-initiated actions flow through a single tool: `batch()`. This collapse
   "steps": [
     {"id": "r1", "use": "read.context", "with": {"type": "smart", "file_paths": ["src/auth.ts"]}},
     {"id": "e1", "use": "change.edit", "with": {"file_path": "src/auth.ts", "line_edits": [...]}, "if": {"step_ok": "r1"}},
-    {"id": "v1", "use": "verify.typecheck", "if": {"step_ok": "e1"}}
+    {"id": "v1", "use": "verify.build", "if": {"step_ok": "e1"}}
   ],
   "refs": [{"name": "$auth_hash", "ref": "h:abc123"}],
   "policy": {"verify_after_change": true, "max_steps": 10}
@@ -39,7 +39,7 @@ Models may emit **short codes** for `use` and for a small set of high-frequency 
 | Concern | Behavior |
 |--------|----------|
 | **Where it applies** | Line-per-step `q` text (second field per line is the operation), and JSON `steps[]` before execution (`coerceBatchSteps`). |
-| **Operations** | Map short codes → `OperationKind` via `normalizeOperationUse` in [`opShorthand.ts`](../atls-studio/src/services/batch/opShorthand.ts) (`SHORT_TO_OP` / `OP_TO_SHORT`). Examples: `sc` → `search.code`, `ce` → `change.edit`, `vk` → `verify.typecheck`. |
+| **Operations** | Map short codes → `OperationKind` via `normalizeOperationUse` in [`opShorthand.ts`](../atls-studio/src/services/batch/opShorthand.ts) (`SHORT_TO_OP` / `OP_TO_SHORT`). Examples: `sc` → `search.code`, `ce` → `change.edit`, `vb` → `verify.build`, `vk` → `verify.typecheck`. |
 | **Parameters** | Aliases like `ps` → `file_paths`, `le` → `line_edits`, `sl`/`el` → `start_line` / `end_line` are merged with existing aliases in [`paramNorm.ts`](../atls-studio/src/services/batch/paramNorm.ts) (`GLOBAL_ALIASES`). The same v1 set is listed as `PARAM_SHORT` in `opShorthand.ts` for the prompt legend. |
 | **After normalization** | Handlers, subagent allowlists, UI summaries, and spin detection all see **canonical** `use` strings and param keys. |
 | **System prompt** | [`toolRef.ts`](../atls-studio/src/prompts/toolRef.ts) embeds `generateShorthandLegend()` into `BATCH_TOOL_REF` so the model has a compact `code=canonical` key. |
@@ -100,16 +100,18 @@ The batch request envelope accepts `refs: RefRegistryHint[]` — named hash refe
 
 ### Conditions
 
-Six condition forms, composable:
+Six condition forms, composable. Canonical names from [`types.ts`](../atls-studio/src/services/batch/types.ts) `ConditionExpr` and evaluator in [`policy.ts`](../atls-studio/src/services/batch/policy.ts) `evaluateCondition`:
 
 ```json
 {"if": {"step_ok": "s1"}}              // s1 succeeded
 {"if": {"step_has_refs": "s1"}}        // s1 produced non-empty refs
-{"if": {"step_has_content": "s1"}}     // s1 output has content
+{"if": {"ref_exists": "h:abc123"}}     // a hash ref is present in any prior step's refs
 {"if": {"not": {"step_ok": "s1"}}}     // s1 FAILED (retry logic)
-{"if": {"all": [{"step_ok": "s1"}, {"step_has_refs": "r1"}]}} // conjunction
-{"if": {"any": [{"step_ok": "s1"}, {"step_ok": "s2"}]}}       // disjunction
+{"if": {"all_steps_ok": ["s1", "r1"]}} // conjunction over named steps
+{"if": {"or": [{"step_ok": "s1"}, {"step_ok": "s2"}]}} // disjunction
 ```
+
+String shorthand (`if:e1.ok`, `if:e1.refs`, `if:!e1.ok`) is expanded by `expandBatchIfShorthand` in [`toon.ts`](../atls-studio/src/utils/toon.ts). The same expansion runs on JSON batch steps when `if` is a string — see [`coerceBatchSteps.ts`](../atls-studio/src/services/batch/coerceBatchSteps.ts) ~30-33.
 
 ### `session.plan` and `session.advance`
 
@@ -134,19 +136,19 @@ The optional `policy` field on the batch request controls execution behavior:
 
 ```typescript
 interface ExecutionPolicy {
-  verify_after_change?: boolean;                // Auto-inject verify.typecheck after change.* steps
-  stop_on_verify_failure?: boolean;             // Halt batch on verify failure
-  rollback_on_failure?: boolean;                // Auto-rollback on change.* failure
-  auto_stage_refs?: boolean;                    // Auto-stage refs from results
-  max_steps?: number;                           // Hard cap on user-authored steps
-  compact_context_on_verify_success?: boolean;  // Compact after passing verify
-  allowed_families?: string[];                  // Whitelist of operation families
-  blocked_ops?: string[];                       // Blacklist of specific operations
-  mode?: string;                                // Execution mode hint
+  mode?: 'readonly' | 'mutable' | 'safe-mutable';  // Gating mode; normalized by chat-layer policy
+  verify_after_change?: boolean;                   // Auto-inject verify.build after change.* steps
+  auto_stage_refs?: boolean;                       // Auto-stage refs from results
+  rollback_on_failure?: boolean;                   // Auto-rollback on change.* failure
+  max_steps?: number;                              // Hard cap on steps (ceiling MAX_BATCH_POLICY_STEPS=100)
+  stop_on_verify_failure?: boolean;                // Halt batch on verify failure
+  refactor_validation_mode?: 'strict';             // Flags edits adding extends/implements/#include/using
+  auto_reread_after_mutation?: boolean;            // Re-record snapshot hashes after change steps (default true)
+  compact_context_on_verify_success?: boolean;     // Compact non-pinned context after passing static verify
 }
 ```
 
-`allowed_families` and `blocked_ops` are enforced by `isStepAllowed` before each step. Blocked steps are skipped (non-fatal) unless `on_error: 'stop'` escalates.
+`mode` is enforced by `isStepAllowed` in [`policy.ts`](../atls-studio/src/services/batch/policy.ts): `readonly` blocks all mutating ops; `mutable` (default) and `safe-mutable` allow them. The chat layer's `normalizeBatchPolicyForExecution` forces `readonly` in ask mode and `mutable` elsewhere — the model-supplied `mode` is advisory. `max_steps` is clamped to `[1, MAX_BATCH_POLICY_STEPS=100]`.
 
 ## Execution Flow
 
@@ -169,8 +171,8 @@ A fresh `SnapshotTracker` is initialized and seeded from the persistent awarenes
 | Gate | Condition | Effect |
 |------|-----------|--------|
 | **`max_steps`** | `policy.max_steps` exceeded | Halt batch |
-| **Swarm restriction** | `isBlockedForSwarm(step.use)` | Skip (lifecycle/session ops blocked for swarm sub-agents) |
-| **Policy mode** | `isStepAllowed` vs `allowed_families` / `blocked_ops` | Skip |
+| **Swarm restriction** | `isBlockedForSwarm(step.use)` — blocks `session.plan`/`session.advance` for swarm sub-agents | Skip |
+| **Policy mode** | `isStepAllowed` — blocks mutating ops when `mode === 'readonly'` | Skip |
 | **File claims** | `change.*` targeting file outside agent's `fileClaims` | Reject (`file_claim_violation`) |
 
 **b. Condition evaluation** — `evaluateCondition(step.if, stepOutputs)`:
@@ -179,10 +181,10 @@ A fresh `SnapshotTracker` is initialized and seeded from the persistent awarenes
 |------|-----------|
 | `step_ok` | Prior step succeeded |
 | `step_has_refs` | Prior step produced non-empty refs |
-| `step_has_content` | Prior step output has content |
+| `ref_exists` | A given `h:` hash prefix appears in any prior step's refs |
 | `not` | Negation of inner expression |
-| `all` | Conjunction (all must be true) |
-| `any` | Disjunction (any must be true) |
+| `all_steps_ok` | Conjunction over a named list of step IDs |
+| `or` | Disjunction over a list of condition expressions |
 
 **c. Binding resolution** — `resolveInBindings` resolves `in` references from prior step outputs and named bindings, then merges with `with` params.
 
@@ -208,6 +210,7 @@ The Rust backend verifies each hash — stale files are rejected with `stale_has
 | **Cross-step rebase** | `rebaseSubsequentSteps` adjusts line numbers in all later steps targeting the same file by the net line delta. |
 | **Context refresh** | `refreshContextAfterEdit` re-reads edited files, installs fresh engrams, and triggers hash forwarding (old engram compacted, new one pinned). |
 | **Impact auto-stage** | `runImpactAutoStage` identifies affected symbols and stages impacted file ranges for the model's next turn. |
+| **Auto-stage on repeat reads** | After ≥2 reads of the same file in one batch, the executor injects a `${stepId}__auto_stage_repeat` step to stage the file for the next round — even when `policy.auto_stage_refs` is false (see [`executor.ts`](../atls-studio/src/services/batch/executor.ts) ~1849). |
 | **Verify artifacts** | `buildVerifyArtifact` collects all edited files and current hashes for verify handlers. |
 | **Workspace inference** | `inferWorkspaceFromPaths` derives workspace for `verify.*` steps without an explicit workspace. |
 | **Spin detection** | Dry-run preview counting, `spinBreaker` pattern tracking. |
@@ -232,9 +235,22 @@ All `line_edits` entries use **snapshot coordinates** — the line numbers from 
 ### Spans, responses, and reads
 
 - **Inclusive 1-based spans**: `line` and `end_line` are inclusive. Single-line: `end_line` equals `line`. `replace_body` resolves brace-delimited bodies (Rust) and reports in `edits_resolved`.
+- **`replace_body` intra-step caveat**: because `replace_body` resolves at apply time on the backend, the executor cannot pre-compute its line delta for `rebaseIntraStepSnapshotLineEdits`. Use `replace_body` as the **sole `le` entry** in its step — mixing it with other numeric edits in the same step can produce incorrect downstream line shifts (see [`executor.ts`](../atls-studio/src/services/batch/executor.ts) ~184-192).
 - **Chaining**: Successful edits return **`edits_resolved`** (per edit: resolved line, action, lines affected). Use these values for subsequent steps — not manual arithmetic.
 - **Failures**: When exact apply fails but a fuzzy candidate exists, the response includes **`suggestion`** (line, confidence, tier, preview).
 - **Reads**: **`read.lines`** requires **`start_line`** and **`end_line` together** for explicit line ranges (not `lines` / hash slice). See [`context.ts`](../atls-studio/src/services/batch/handlers/context.ts).
+
+### `q` line directives
+
+The line-per-step `q` parser in [`toon.ts`](../atls-studio/src/utils/toon.ts) `parseBatchLines` recognizes a few non-step directives:
+
+| Prefix | Meaning |
+|--------|---------|
+| `#` | Comment; ignored |
+| `--` | Comment; ignored |
+| `@policy ` | Policy directive; currently skipped (reserved for future inline policy override) |
+
+All other lines are tokenized as steps.
 
 ## Intent System
 
@@ -254,7 +270,7 @@ Expands to:
 2. `change.edit` (the actual edit)
 3. `read.lines` (conditional: only if edit fails — retry read)
 4. `change.edit` (conditional: retry with fresh content)
-5. `verify.typecheck` (optional, if `verify: true`)
+5. `verify.build` (optional, if `verify: true`)
 
 The retry pair uses conditions:
 

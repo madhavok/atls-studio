@@ -78,7 +78,7 @@ The current MCP project wrapper opens its database at `.atls/db.sqlite`, while `
 
 ## Related Documents
 
-- `ARCHITECTURE.md`
-- `docs/atls-engine.md`
-- `docs/tauri-backend.md`
-- `docs/batch-executor.md`
+- [`atls-studio/docs/ARCHITECTURE.md`](../atls-studio/docs/ARCHITECTURE.md)
+- [`docs/atls-engine.md`](./atls-engine.md)
+- [`docs/tauri-backend.md`](./tauri-backend.md)
+- [`docs/batch-executor.md`](./batch-executor.md)

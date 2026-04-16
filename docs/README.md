@@ -20,22 +20,23 @@ Related:
 
 | Doc | Topics |
 |-----|--------|
-| [atls-engine.md](./atls-engine.md) | ATLS engine integration |
-| [history-compression.md](./history-compression.md) | Hash deflation, rolling verbatim window, `[Rolling Summary]` API-only message, distiller, ties to **snapshot format v5** (`rollingSummary`) |
-| [prompt-assembly.md](./prompt-assembly.md) | **State vs chat separation**, cache layers, state preamble, entry manifest depth (`paths` / `sigs` / `paths_sigs`), tool-loop steering signals (research budget, verify gate, convergence) |
-| [session-persistence.md](./session-persistence.md) | Session save/restore, auto-resume, memory snapshot versions (v5 `rollingSummary`, v6 verify/awareness/coverage/spin), freshness-after-restore timing, Tauri close flush |
-| [api-economics.md](./api-economics.md) | Token / API considerations |
-| [studio-app-shell.md](./studio-app-shell.md) | UI shell, copy last API payload (debug) |
-| [tauri-backend.md](./tauri-backend.md) | Rust / Tauri layer |
-| [tauri-commands.md](./tauri-commands.md) | Enumerated Tauri `invoke` command names (`lib.rs`) |
-| [mcp-integration.md](./mcp-integration.md) | MCP |
-| [swarm-orchestration.md](./swarm-orchestration.md) | Multi-agent orchestration |
-| [subagents.md](./subagents.md) | Delegate subagents: four roles, snapshot loop, scoped HPP, batch ops |
-| [test-coverage-backlog.md](./test-coverage-backlog.md) | Remaining test gaps (stores, `useAtls`, Rust without `cfg(test)`, E2E); quick-win tests implemented |
+| [atls-engine.md](./atls-engine.md) | `atls-core` Rust engine: `AtlsProject`, `QueryEngine`, JSON pattern catalogs, `neural-embeddings` feature, MCP tool surface |
+| [history-compression.md](./history-compression.md) | Hash deflation (threshold 100/200), `deflateToolResults` chunk creation, **`stubBatchToolUseInputs`** (assistant side), rolling verbatim window + distilled `[Rolling Summary]`, substantive round counting, snapshot format v5/v6 |
+| [prompt-assembly.md](./prompt-assembly.md) | **State vs chat separation**, BP-static + BP3 cache layers, state block **prepended into last user message** via `prependStateToContent`, entry manifest depth, tool-loop steering signals |
+| [api-economics.md](./api-economics.md) | Input-side caching story, pricing mismatch, mitigations table |
+| **[output-compression.md](./output-compression.md)** | **Cross-cutting output-token compression inventory** across six axes (lexical / semantic / temporal / spatial / computational / transcript) — the single doc that explains why ATLS emits ~75% fewer tokens per round than a naive tool-calling agent |
+| [session-persistence.md](./session-persistence.md) | Session save/restore, auto-resume, memory snapshot versions (v5 `rollingSummary`, v6 verify/awareness/coverage/spin/journal), freshness-after-restore timing, Tauri close flush |
+| [studio-app-shell.md](./studio-app-shell.md) | UI shell, AtlsPanel tabs (Issues/File/Patterns/Overview/Health), copy last API payload (debug) |
+| [tauri-backend.md](./tauri-backend.md) | Rust / Tauri layer: `hash_resolver`, `edit_session`, `diff_engine`, `ast_query`, `shape_ops`, `git_ops`, etc. |
+| [tauri-commands.md](./tauri-commands.md) | Enumerated Tauri `invoke` command names (`generate_handler!` in `lib.rs`) |
+| [mcp-integration.md](./mcp-integration.md) | MCP server surface (`batch`, `batch_query`, `find_issues`, `scan_project`, `get_codebase_overview`, `get_patterns`, `export`) |
+| [swarm-orchestration.md](./swarm-orchestration.md) | Multi-agent orchestration, rehydration, per-store rate limiting |
+| [subagents.md](./subagents.md) | Delegate subagents: four roles, snapshot loop, scoped HPP, `ROLE_BB_PREFIXES`, per-role output caps |
+| [test-coverage-backlog.md](./test-coverage-backlog.md) | Remaining test gaps, implemented store/hook/history coverage, E2E specs |
 
 ## Repo layout
 
 - **Audit log** ([`DOCUMENTATION_AUDIT.md`](./DOCUMENTATION_AUDIT.md)): what each doc is for and last accuracy pass.
-- **Repository root** (contains this `docs/` folder): clone root; [`ARCHITECTURE.md`](../ARCHITECTURE.md) lives here.
+- **Repository root** (contains this `docs/` folder): clone root; the architecture overview lives at [`atls-studio/docs/ARCHITECTURE.md`](../atls-studio/docs/ARCHITECTURE.md).
 - **App package** (npm scripts, `src/`, `src-tauri/`): [`../atls-studio/README.md`](../atls-studio/README.md) — run `npm install` and `npm run tauri:dev` from `atls-studio/` inside the clone.
 - Optional Cursor rule (local only; `.cursor/` is gitignored): if present, `.cursor/rules/edit-freshness.mdc` — not required for builds.

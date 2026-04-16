@@ -206,6 +206,42 @@ describe('compressToolLoopHistory orphaned compressed rolling summaries', () => 
 describe('compressToolLoopHistory dedup', () => {
   beforeEach(() => resetStore());
 
+  it('dedupes recordReplacement across a single compression pass (no stale snapshot)', () => {
+    // GAP 6 regression: Two string-content messages with the same description
+    // in the same compression pass must share a chunk. Prior behavior captured
+    // contextStore at function entry, so findExistingChunkBySource could miss
+    // chunks added earlier in the same pass, leading to duplicate registrations.
+    const rawA = 'shared narrative block '.repeat(500);
+    const rawB = rawA + '\n(minor suffix that keeps description identical)';
+    // Both messages truncate to the same 60-char description slice.
+    const sharedPrefix = 'shared narrative block '.repeat(5);
+    const history: Array<{ role: string; content: unknown }> = [
+      { role: 'user', content: 'go' },
+      { role: 'assistant', content: sharedPrefix + rawA },
+      { role: 'user', content: 'ok' },
+      { role: 'assistant', content: sharedPrefix + rawB },
+      { role: 'user', content: 'ok' },
+      { role: 'assistant', content: 'r3' },
+      { role: 'user', content: 'ok' },
+      { role: 'assistant', content: 'r4' },
+      { role: 'user', content: 'ok' },
+      { role: 'assistant', content: 'r5' },
+      { role: 'user', content: 'ok' },
+      { role: 'assistant', content: 'r6' },
+      { role: 'user', content: 'ok' },
+    ];
+
+    const chunkCountBefore = useContextStore.getState().chunks.size;
+    const count = compressToolLoopHistory(history, 8, 0);
+    const chunkCountAfter = useContextStore.getState().chunks.size;
+
+    expect(count).toBeGreaterThan(0);
+    // Exactly one new chunk should exist for the two identical-description messages.
+    expect(chunkCountAfter - chunkCountBefore).toBe(1);
+    expect(String(history[1].content)).toContain('[h:');
+    expect(String(history[3].content)).toContain('[h:');
+  });
+
   it('reuses an existing chunk by content hash instead of creating a duplicate', () => {
     const bigContent = 'export const data = ' + 'x'.repeat(5000) + ';\n';
     useContextStore.getState().addChunk(bigContent, 'smart', 'src/data.ts');

@@ -115,13 +115,28 @@ ATLS implements several strategies to minimize uncached costs within current API
 | **Static system prompt** | All mutable content isolated in the dynamic block — BP-static never invalidated | ~6k cached at 0.1× vs 1× |
 | **Append-only history** | Compression deferred to round 0; within tool loops the prefix is byte-identical for BP3 reads | ~12-24k cached at 0.1× vs 1× |
 | **Staged content dedup** | Active engrams replace staged file content with `[content in active engram]` pointers | Avoids double-counting overlapping content |
-| **Batch shorthands** | Operation codes (`ce`, `rl`, `sc`) and parameter aliases (`ps`, `sn`, `qs`) reduce tool-call output tokens | ~20-40% reduction per batch step |
-| **Token budgets per region** | WM ~38k, BB ~4.8k, staged ~4.5k, history ~24k, workspace ~7k | Caps worst-case dynamic block at ~80k |
-| **Rolling summary** | History beyond budget distilled into a ~1.7k token summary prepended to the message list | Bounds history growth across long sessions |
+| **Batch shorthands** | Operation codes (`ce`, `rl`, `sc`) and parameter aliases (`ps`, `sn`, `qs`) reduce tool-call output tokens | Estimate: ~20-40% reduction per batch step (not measured against baseline) |
+| **Token budgets per region** | WM 38k, BB 4.8k, staged 4.5k (hard cap 64k), history 24k, workspace 7k — see [`promptMemory.ts`](../atls-studio/src/services/promptMemory.ts) | Caps worst-case dynamic block |
+| **Rolling summary** | History beyond budget distilled into a 1.65k-token summary (`ROLLING_SUMMARY_MAX_TOKENS`) unshifted onto the message list | Bounds history growth across long sessions |
+| **Assistant-side tool_use stubbing** | `stubBatchToolUseInputs` replaces past batch tool_use inputs > 80 tokens with a compact `_stubbed` summary | Shrinks the assistant transcript the next round re-reads; see [history-compression.md](./history-compression.md) |
 | **Model-directed WM management** | Prompted to drop/compact/unpin proactively; runtime steering nudges on spin detection | Keeps dynamic block within budget |
-| **Reasoning recap** | Last ~1.5k chars of recent assistant reasoning injected after history compression | Maintains coherence without retaining full history |
+| **Reasoning recap** (infrastructure only, not wired) | `_extractRecentReasoning` / `REASONING_RECAP_MAX_CHARS=1500` in [`aiService.ts`](../atls-studio/src/services/aiService.ts) | Would inject trailing ~1500 chars of assistant reasoning after history compression. Currently has no call sites; listed for completeness. |
 
 These are mitigations, not solutions. The structural problem remains: living memory costs 10× what static memory costs, and living memory is what makes the architecture work.
+
+## Output-side compression
+
+The table above addresses **input** pricing. Output tokens on Claude pricing are **5×** input, and the batch surface, UHPP reference system, and history pipeline are fundamentally an output-token compressor — the model emits shorthand op codes, recency refs, set selectors, content-as-ref substitutions, and macro intents rather than verbatim JSON tool calls with narration and repeated content.
+
+A full inventory across six axes (lexical, semantic, temporal, spatial, computational, transcript) lives in the dedicated [output-compression.md](./output-compression.md) doc. Key examples:
+
+- **Line-per-step `q` form** with op/param shorthands: ~70-80% fewer emitted tokens per tool call vs equivalent JSON.
+- **Intent macros** (`intent.edit`, `intent.investigate`): model emits one line; client expands to 3-5 primitives.
+- **Content-as-ref** (`"content": "h:XXXX:fn(name):dedent"`): model references code via UHPP instead of copying it verbatim in `change.create` / `change.refactor`.
+- **Cross-step line rebase**: model writes multi-step edits in pre-batch coordinates; executor computes deltas. No "wait, L50 is now L53" reasoning text ever gets serialized.
+- **Auto-inject + auto-infer**: `verify.build`, workspace names, pin migrations, impact staging are all injected by the executor, not emitted by the model.
+
+The design principle: **every token the model emits should express intent the runtime cannot infer.** Names, paths, coordinates, narration, and repetitions are the runtime's job.
 
 ---
 

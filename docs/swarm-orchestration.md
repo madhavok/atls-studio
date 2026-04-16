@@ -113,27 +113,38 @@ flowchart TD
 `swarmChat.ts` adapts the normal streaming model to swarm execution:
 
 - Resolves hash references in outgoing messages before the provider sees them.
-- Runs a **loop** up to `maxIterations` (e.g. 15 for worker agents): each round streams assistant output, executes tool calls, appends `tool_use` / `tool_result` turns, repeats until no tools, `task_complete`, blocking result, or limit.
+- Runs a **loop** up to `maxIterations`: each round streams assistant output, executes tool calls, appends `tool_use` / `tool_result` turns, repeats until no tools, `task_complete`, blocking result, or limit.
 - Honors **`maxAutoContinues`**: if the model ends without tools and without `task_complete`, a short user nudge can continue the run (bounded).
 - Treats **`task_complete`** as the explicit completion signal; records summary from args.
 - Treats preview / paused / confirmation-style tool results as **blocking** (`awaiting_input` vs incomplete).
 
-Planner runs typically use `enableTools: false` and do not need multi-round tool loops.
+**`maxIterations` defaults**: [`swarmChat.ts`](../atls-studio/src/services/swarmChat.ts) ~518-519 defaults `maxIterations` to **2** and `maxAutoContinues` to **0** when callers omit them. The orchestrator explicitly overrides with `maxIterations: 15, maxAutoContinues: 3` for worker agents ([`orchestrator.ts`](../atls-studio/src/services/orchestrator.ts) ~1734-1737). Planner runs use `enableTools: false` and do not need multi-round tool loops.
+
+## Session restore and rehydration
+
+Swarm state survives restarts via `chatDb`. On `useChatPersistence.loadSession`, if the persisted session has tasks, the hook calls `useSwarmStore.getState().rehydrateTasks(...)` to reconstruct in-memory `PlannedTask` + `AgentExecution` records from DB rows so the swarm panel shows resumed progress rather than an empty state.
+
+## Rate limiting
+
+Two rate limiters coexist and serve different roles:
+
+- **`swarmStore.rateLimiter`** — in-store queue per provider; gates agent dispatch at the orchestrator layer so concurrent agents don't burst past provider ceilings.
+- **`services/rateLimiter.ts`** — used by the main chat path; the orchestrator does not route through it.
 
 ## How It Connects To Other Subsystems
 
 - **Studio App Shell**: the shell exposes the swarm panel and session controls.
-- **Session Persistence**: swarm state survives restarts by storing sessions, tasks, results, and stats.
+- **Session Persistence**: swarm state survives restarts by storing sessions, tasks, results, and stats — see rehydration above.
 - **Tauri Backend**: research and execution use Tauri-backed code search, file reads, AI streaming, and terminals.
 - **Cognitive Runtime**: agents still use ATLS memory, hash refs, and batch tools while working inside the swarm; hydration reduces redundant `read.context` for files already fetched in research.
 - **UHPP / context hashes**: research stores chunks with short hashes; degraded hydration paths still cite `h:…` for on-demand resolution.
 
 ## Related Documents
 
-- `ARCHITECTURE.md`
-- `docs/studio-app-shell.md`
-- `docs/session-persistence.md`
-- `docs/tauri-backend.md`
-- `docs/batch-executor.md`
-- `docs/prompt-assembly.md`
+- [`atls-studio/docs/ARCHITECTURE.md`](../atls-studio/docs/ARCHITECTURE.md)
+- [`docs/studio-app-shell.md`](./studio-app-shell.md)
+- [`docs/session-persistence.md`](./session-persistence.md)
+- [`docs/tauri-backend.md`](./tauri-backend.md)
+- [`docs/batch-executor.md`](./batch-executor.md)
+- [`docs/prompt-assembly.md`](./prompt-assembly.md)
 - `docs/hash-protocol.md`

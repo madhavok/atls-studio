@@ -16,12 +16,12 @@ ATLS addresses this at three levels:
 
 Across blackboard entries, staged snippets, retention traces, task directives, and working-memory engrams, the runtime enforces one **execution authority** invariant:
 
-> Only artifacts that are **active** (not superseded, historical, duplicate, or distilled where those axes apply) and **current** (staged `stageState` is not stale/superseded; engram `freshness` is not `suspect` or `changed`) may **steer** the next mutation or be treated as authoritative “what to do next” context.
+> Artifacts may **steer** the next mutation only if none of their state axes are disqualifying. An artifact is disqualified when: `state` is `historical | superseded | duplicate | distilled`, OR `stageState` is `stale | superseded`, OR `traceState` is `duplicate | distilled`, OR engram `freshness` is `suspect | changed`.
 
 Implementation lives in [`universalFreshness.ts`](../atls-studio/src/services/universalFreshness.ts):
 
-- **`canSteerExecution(...)`** — Single gate used when assembling prompts, building intent context, and extracting subagent pins. Returns false for non-authoritative `state`, bad `stageState` / `traceState`, or bad engram `freshness`.
-- **`UniversalState`** — `active` | `historical` | `superseded` | `duplicate` | `distilled` (blackboard and related artifacts).
+- **`canSteerExecution(...)`** — Single gate used when assembling prompts, building intent context, and extracting subagent pins. Returns `true` when *all four axes* pass (omitted / unknown axes are treated as passing). Returns `false` for any disqualifying value listed above.
+- **`UniversalState`** — `active` | `historical` | `superseded` | `duplicate` | `distilled` (blackboard and related artifacts). Only `state === 'active'` is truly *execution-authoritative*, checked separately by `isExecutionAuthoritative`.
 - **`validateSourceIdentity(path)`** — Rejects bogus or placeholder paths before identities enter the snapshot tracker, awareness, blackboard, or normalized batch params (keeps `derived_from` and file paths trustworthy).
 
 **Staged snippets** carry **`stageState`**: `current` | `stale` | `superseded`. `reconcileSourceRevision` sets `stale` when the source file revision no longer matches. Stale lines are labeled **`[STALE]`** in staged blocks; **`buildIntentContext`** and subagent pin extraction skip stale or suspect staged rows.
@@ -40,10 +40,12 @@ During batch execution, the `SnapshotTracker` records the content hash of every 
 interface SnapshotIdentity {
   filePath: string;
   snapshotHash: string;
+  canonicalHash?: string;       // promoted by full-span read.lines to authorize canonical edits
   readAt: number;
   readKind: 'canonical' | 'shaped' | 'lines' | 'cached';
   readRegions?: LineRegion[];
   shapeHash?: string;
+  fullFileLineCount?: number;   // used to detect full-span read.lines that earn canonical authority
 }
 ```
 
@@ -78,14 +80,14 @@ Each engram carries a freshness classification:
 
 ### Model-facing surface (two-state projection)
 
-The engine maintains the full five-state taxonomy for preflight classification and internal diagnostics. The **model** sees a simplified two-state projection:
+The engine maintains the full five-state taxonomy for preflight classification and internal diagnostics. The **model** sees a simplified two-state projection, produced by `formatSuspectHint` in [`contextFormatter.ts`](../atls-studio/src/services/contextFormatter.ts) ~107-116:
 
-| Engine states | Model label | Action |
-|---------------|-------------|--------|
-| `fresh`, `forwarded`, `shifted` | *(no label)* | Use freely |
-| `suspect`, `changed` | `[STALE: re-read before edit]` | Re-read before editing |
+| Engine condition | Model label | Action |
+|------------------|-------------|--------|
+| `freshness ∈ {fresh, forwarded, shifted}` and `suspectSince` is unset | *(no label)* | Use freely |
+| `suspectSince != null` **or** `freshness ∈ {suspect, changed}` | `[STALE: re-read before edit]` | Re-read before editing |
 
-This applies uniformly across engram headers (working memory), dormant engram digest, staged snippet headers, and tool output. Rebind metadata, strategy, confidence, and relocation summaries are **not** included in model-visible context.
+Note the trigger is `suspectSince || freshness` — an engram with a recorded suspect timestamp is labeled stale even if its latest `freshness` classification hasn't been updated. This applies uniformly across engram headers (working memory), dormant engram digest, staged snippet headers, and tool output. Rebind metadata, strategy, confidence, and relocation summaries are **not** included in model-visible context.
 
 ### Freshness Causes
 
@@ -138,13 +140,20 @@ You already read this file earlier in the thread. I edited and saved it on disk 
 
 ## Freshness Preflight
 
-Before any mutation operation, the preflight system classifies every target. For file-backed targets it first runs a **batched** `context` request with `{ type: 'full', file_paths }` so the backend returns current content and hashes for those paths. It then calls **`refreshRoundEnd`** for the same file set (with per-path revisions derived from that result) so the context store’s `sourceRevision` metadata matches disk before relocation and gating run. Classification then proceeds:
+Before any mutation operation, the preflight system classifies every target. For file-backed targets it first runs a **batched** `context` request with `{ type: 'full', file_paths }` so the backend returns current content and hashes for those paths. It then calls **`refreshRoundEnd`** for the same file set (with per-path revisions derived from that result) so the context store's `sourceRevision` metadata matches disk before relocation and gating run. Classification then feeds `getPreflightAutomationDecision` in [`freshnessPreflight.ts`](../atls-studio/src/services/freshnessPreflight.ts) ~194-205:
 
 ```
-Fresh          → PROCEED (no action needed)
-Rebaseable     → ATTEMPT RELOCATION → if success: PROCEED, if fail: BLOCK
-Suspect        → BLOCK (require re-read)
+Fresh / high confidence          → proceed
+Rebaseable, medium confidence    → proceed_with_note (relocation summary attached)
+Rebaseable, low confidence       → review_required
+Suspect / blocked / none         → block (require re-read)
 ```
+
+So the decision model is **four-way**, not three-way: `proceed | proceed_with_note | review_required | block`. The model sees the `[STALE: re-read before edit]` label on block; the `proceed_with_note` and `review_required` surfaces are internal (Internals UI / rebind evidence).
+
+### Healing preflight for reads
+
+Reads are allowed to *heal* stale context rather than blocking on it. When preflight runs against `operation === 'context'` or `operation === 'read_lines'`, the `healingReadOps` branch in [`freshnessPreflight.ts`](../atls-studio/src/services/freshnessPreflight.ts) ~461-462 skips the hard block even on suspect refs — the read itself will reconcile the source revision in the same pass. Mutation ops (edits, creates, refactors) still block on suspect.
 
 ### Rebase Strategy Cascade
 
@@ -173,6 +182,7 @@ interface RebindOutcome {
   linesAfter?: string;
   sourceRevision?: string;
   observedRevision?: string;
+  at: number;                   // timestamp of the rebind attempt
 }
 ```
 
@@ -205,7 +215,9 @@ When files change, `reconcileSourceRevision` sweeps all memory regions:
 
 ### Round-end revision sweep (`refreshRoundEnd`)
 
-`refreshRoundEnd` gathers normalized source paths from every **latest** file-backed engram in working memory and **archived** chunks, plus **staged snippet** sources (skipping `viewKind: 'snapshot'`). It resolves **current** content hashes for those paths in bulk via the Tauri command **`get_current_revisions`** (registered at app startup from [`useAtls.ts`](../atls-studio/src/hooks/useAtls.ts) as `setBulkRevisionResolver` — one IPC round-trip for the whole path set). For each path it calls **`reconcileSourceRevision`**. Paths that cannot be resolved are passed to **`markEngramsSuspect`**.
+`refreshRoundEnd` gathers normalized source paths from every **latest** file-backed engram in working memory and **archived** chunks, plus **staged snippet** sources (skipping `viewKind: 'snapshot'`). Before the revision sweep it **decrements `ttl` on unpinned chunks**; when `ttl` reaches 0 the chunk is **archived with `freshnessCause: 'ttl_expired'`** (recallable, not evicted outright — see [`contextStore.ts`](../atls-studio/src/stores/contextStore.ts) ~3335-3358).
+
+It then resolves **current** content hashes for those paths in bulk via the Tauri command **`get_current_revisions`** (registered at app startup from [`useAtls.ts`](../atls-studio/src/hooks/useAtls.ts) as `setBulkRevisionResolver` — one IPC round-trip for the whole path set). For each path it calls **`reconcileSourceRevision`**. Paths that cannot be resolved are passed to **`markEngramsSuspect`** with `external_file_change`; directory-like keys are skipped (`suspectSkippedDirKeys`).
 
 The hash-protocol **`advanceTurn`** hook invokes `refreshRoundEnd` (via [`aiService.ts`](../atls-studio/src/services/aiService.ts) `setRoundRefreshHook`). In the main chat tool loop, **`advanceTurn` runs only when `round > 0`**, so the **first** round of a user turn does **not** run this sweep before the model step; reconciliation for restored sessions is therefore **deferred** until the next round boundary, preflight, or other triggers (see [session-persistence.md](./session-persistence.md)).
 
