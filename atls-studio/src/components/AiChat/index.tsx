@@ -194,7 +194,7 @@ const StreamWireLogModal = memo(function StreamWireLogModal({ onClose }: { onClo
         <div>
           <h3 className="text-xs font-semibold text-studio-title uppercase tracking-wide">Stream wire log</h3>
           <p className="text-[10px] text-studio-muted mt-0.5 max-w-md">
-            Last {lines.length} line{lines.length === 1 ? '' : 's'} (cap 500). Long text, reasoning, and tool JSON deltas are truncated in the log.
+            Last {lines.length} line{lines.length === 1 ? '' : 's'} (cap 500). Per-chunk tool argument streaming is omitted so the buffer is not flooded; use tool_input_start and tool_input_available. Other payloads may be truncated.
           </p>
         </div>
         <div className="flex items-center gap-1 shrink-0">
@@ -3717,7 +3717,7 @@ export function AiChat() {
             type="button"
             onClick={() => setShowStreamWireLog(true)}
             className={`p-1 transition-colors ${showStreamWireLog ? 'text-studio-accent' : 'text-studio-muted hover:text-violet-400'}`}
-            title="View last 500 backend stream chunk lines (truncated deltas; Copy in panel)"
+            title="View last 500 stream lines (tool arg deltas omitted; Copy in panel)"
           >
             <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <path d="M4 6h16M4 12h10M4 18h14" strokeLinecap="round" />

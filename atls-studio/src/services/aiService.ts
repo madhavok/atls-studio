@@ -1662,6 +1662,9 @@ function streamChunkToLogPayload(chunk: StreamChunk): Record<string, unknown> {
 }
 
 function appendStreamWireLogLine(round: number, streamId: string, chunk: StreamChunk): void {
+  // Omit per-token tool JSON streaming — it can emit hundreds of lines per call and evicts the ring buffer.
+  // tool_input_start (name + id) and tool_input_available (truncated full args) stay in the log.
+  if (chunk.type === 'tool_input_delta') return;
   const payload = streamChunkToLogPayload(chunk);
   const line = `${new Date().toISOString()}\tR${round}\t${streamId.slice(0, 8)}\t${JSON.stringify(payload)}`;
   useAppStore.getState().pushStreamWireLogLine(line);
