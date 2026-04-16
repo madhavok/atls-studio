@@ -1328,6 +1328,8 @@ export async function executeUnifiedBatch(
       };
       stepOutputs.set(step.id, output);
       recordStepResult(step.id, step.use, output, 0);
+      // G23: honor on_error:'stop' for blocked steps
+      if (step.on_error === 'stop') { batchOk = false; break; }
       continue;
     }
 
@@ -1341,7 +1343,26 @@ export async function executeUnifiedBatch(
       };
       stepOutputs.set(step.id, output);
       recordStepResult(step.id, step.use, output, 0);
+      if (step.on_error === 'stop') { batchOk = false; break; }
       continue;
+    }
+
+    // G19: file claims enforcement — reject change ops targeting files outside claims
+    if (ctx.fileClaims && ctx.fileClaims.length > 0 && step.use.startsWith('change.')) {
+      const targetFile = (step.with?.file ?? step.with?.file_path) as string | undefined;
+      const claimNorm = new Set(ctx.fileClaims.map(f => f.replace(/\\/g, '/').toLowerCase()));
+      if (targetFile && !targetFile.startsWith('h:') && !claimNorm.has(targetFile.replace(/\\/g, '/').toLowerCase())) {
+        const output: StepOutput = {
+          kind: 'raw', ok: false, refs: [],
+          summary: `${step.id}: BLOCKED — file ${targetFile} is outside swarm file claims [${ctx.fileClaims.join(', ')}]`,
+          error: 'file_claim_violation',
+        };
+        stepOutputs.set(step.id, output);
+        recordStepResult(step.id, step.use, output, 0);
+        batchOk = false;
+        if (step.on_error === 'stop') break;
+        continue;
+      }
     }
 
     // Conditional execution
@@ -1571,6 +1592,17 @@ export async function executeUnifiedBatch(
       continue;
     }
 
+    // G22: pre-register own writes before handler invocation to close the watcher TOCTOU gap
+    if (step.use.startsWith('change.')) {
+      const preTargetFile = extractEditTargetFile(mergedParams);
+      if (preTargetFile) registerOwnWrite([preTargetFile]);
+      if (Array.isArray(mergedParams.edits)) {
+        const preTargets = (mergedParams.edits as Array<Record<string, unknown>>)
+          .map(e => extractEditTargetFile(e)).filter((f): f is string => !!f);
+        if (preTargets.length > 0) registerOwnWrite(preTargets);
+      }
+    }
+
     let output: StepOutput;
     try {
       output = await handler(mergedParams, ctx, step.id);
@@ -1594,6 +1626,12 @@ export async function executeUnifiedBatch(
       if (step.use === 'change.edit') {
         backfillResolvedBodySpans(mergedParams, output);
         rebaseSubsequentSteps(mergedParams, stepsToRun, i + 1);
+        // G3: rebase staged snippet line ranges as fallback before re-resolve
+        const deltaMap = buildPerFileDeltaMap(mergedParams);
+        for (const [normPath, deltas] of deltaMap) {
+          const netDelta = deltas.reduce((sum, d) => sum + d.delta, 0);
+          if (netDelta !== 0) ctx.store().rebaseStagedLineNumbers(normPath, netDelta);
+        }
       }
       // Track edited file paths for auto-workspace inference and own-write registration.
       // Must cover all array shapes the backend may return (results, drafts, batch, written)
@@ -1613,6 +1651,19 @@ export async function executeUnifiedBatch(
         if (Array.isArray(written)) {
           for (const w of written) {
             if (typeof w === 'string') batchEditedPaths.add(w);
+          }
+        }
+        // G30: scan created/created_files arrays from create operations
+        for (const createdKey of ['created', 'created_files'] as const) {
+          const created = art[createdKey];
+          if (Array.isArray(created)) {
+            for (const c of created) {
+              if (typeof c === 'string') batchEditedPaths.add(c);
+              else if (c && typeof c === 'object') {
+                const f = SnapshotTracker.extractFilePath(c as Record<string, unknown>);
+                if (f) batchEditedPaths.add(f);
+              }
+            }
           }
         }
         const topFile = SnapshotTracker.extractFilePath(art);
@@ -1801,6 +1852,7 @@ export async function executeUnifiedBatch(
 
     // Verify failure stop check
     if (output.kind === 'verify_result' && !output.ok && request.policy?.stop_on_verify_failure) {
+      batchOk = false;
       break;
     }
   }

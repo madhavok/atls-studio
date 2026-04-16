@@ -43,6 +43,12 @@ export interface RoundContext {
 /** Middleware that runs before each tool loop round. Can mutate context. */
 export type BeforeRoundMiddleware = (ctx: RoundContext) => Promise<RoundContext> | RoundContext;
 
+/** G25: accumulate multiple relief actions instead of last-writer-wins */
+function appendReliefAction(current: PromptReliefAction, next: PromptReliefAction): PromptReliefAction {
+  if (current === 'none' || current === next) return next;
+  return `${current}+${next}` as PromptReliefAction;
+}
+
 // ---------------------------------------------------------------------------
 // Guardrail: Session validity + abort propagation
 // ---------------------------------------------------------------------------
@@ -104,13 +110,18 @@ export const historyCompressionMiddleware: BeforeRoundMiddleware = async (ctx) =
   if (historyTokensBefore <= CONVERSATION_HISTORY_BUDGET_TOKENS) {
     return ctx;
   }
-  const compressed = compressToolLoopHistory(
-    ctx.conversationHistory,
-    undefined,
-    ctx.priorTurnBoundary,
-  );
-  if (compressed > 0) {
-    ctx.reliefAction = 'compact_history';
+  try {
+    const compressed = compressToolLoopHistory(
+      ctx.conversationHistory,
+      undefined,
+      ctx.priorTurnBoundary,
+    );
+    if (compressed > 0) {
+      ctx.reliefAction = appendReliefAction(ctx.reliefAction, 'compact_history');
+    }
+  } catch (e) {
+    // G32: catch compression failures so the round can still proceed
+    console.warn('[middleware] historyCompression failed:', e);
   }
   return ctx;
 };
@@ -123,7 +134,7 @@ export const historyCompressionMiddleware: BeforeRoundMiddleware = async (ctx) =
 export const promptBudgetMiddleware: BeforeRoundMiddleware = (ctx) => {
   const stagedRelief = useContextStore.getState().pruneStagedSnippets('overBudget');
   if (stagedRelief.removed > 0) {
-    ctx.reliefAction = stagedRelief.reliefAction;
+    ctx.reliefAction = appendReliefAction(ctx.reliefAction, stagedRelief.reliefAction);
   }
   return ctx;
 };
@@ -176,13 +187,18 @@ export const contextHygieneMiddleware: BeforeRoundMiddleware = async (ctx) => {
   const historyTokens = await estimateHistoryTokensAsync(ctx.conversationHistory);
   if (historyTokens <= COMPACT_HISTORY_TOKEN_THRESHOLD) return ctx;
 
-  const compressed = compressToolLoopHistory(
-    ctx.conversationHistory,
-    undefined,
-    ctx.priorTurnBoundary,
-  );
-  if (compressed > 0) {
-    ctx.reliefAction = 'compact_history';
+  try {
+    const compressed = compressToolLoopHistory(
+      ctx.conversationHistory,
+      undefined,
+      ctx.priorTurnBoundary,
+    );
+    if (compressed > 0) {
+      ctx.reliefAction = appendReliefAction(ctx.reliefAction, 'compact_history');
+    }
+  } catch (e) {
+    // G32: catch compression failures so the round can still proceed
+    console.warn('[middleware] contextHygiene compression failed:', e);
   }
   return ctx;
 };

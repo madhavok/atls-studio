@@ -104,7 +104,7 @@ export const resolveEdit: IntentResolver = (
     steps.push({
       id: verifyId,
       use: 'verify.build',
-      if: { step_ok: editId },
+      if: { or: [{ step_ok: editId }, { step_ok: retryEditId }] },
     });
   }
 

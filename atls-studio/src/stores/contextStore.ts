@@ -2695,7 +2695,29 @@ export const useContextStore = create<ContextStoreState>()(
     for (const h of droppedHashes) {
       hppEvict(h);
     }
-    
+
+    // G9: GC orphaned derivedFrom refs on BB entries pointing to dropped hashes
+    if (droppedHashes.length > 0) {
+      const droppedShort = new Set(droppedHashes.map(h => h.slice(0, SHORT_HASH_LEN)));
+      set(state => {
+        const newBb = new Map(state.blackboardEntries);
+        let bbChanged = false;
+        for (const [key, entry] of state.blackboardEntries) {
+          if (!entry.derivedFrom?.length) continue;
+          const filtered = entry.derivedFrom.filter((d) => {
+            const dBare = d.startsWith('h:') ? d.slice(2) : d;
+            return !droppedShort.has(dBare.slice(0, SHORT_HASH_LEN));
+          });
+          if (filtered.length !== entry.derivedFrom.length) {
+            const filteredRevs = entry.derivedRevisions?.slice(0, filtered.length);
+            newBb.set(key, { ...entry, derivedFrom: filtered.length > 0 ? filtered : undefined, derivedRevisions: filteredRevs });
+            bbChanged = true;
+          }
+        }
+        return bbChanged ? { blackboardEntries: newBb } : {};
+      });
+    }
+
     return { dropped, freedTokens };
   },
   
@@ -2852,6 +2874,7 @@ export const useContextStore = create<ContextStoreState>()(
         viewKind: 'derived',
         content: `[edit result] h:${shortHash} → ${source}`,
         tokens: 5,
+        ttl: 3,
         origin: 'edit' as EngramOrigin,
         editSessionId,
         createdAt: new Date(),
@@ -3492,23 +3515,47 @@ export const useContextStore = create<ContextStoreState>()(
       const newArchived = new Map(state.archivedChunks);
       const newStaged = new Map(state.stagedSnippets);
 
+      // G12: helper — only overwrite cause when it's a severity upgrade (rebaseable → suspect-class, not the reverse)
+      const REBASEABLE_CAUSES = new Set(['same_file_prior_edit', 'hash_forward']);
+      const shouldUpdateCause = (existing: string | undefined) => {
+        if (!existing || existing === effectiveCause) return false;
+        // Don't downgrade: if existing is rebaseable and new is not, keep existing
+        if (REBASEABLE_CAUSES.has(existing) && !REBASEABLE_CAUSES.has(effectiveCause)) return false;
+        return true;
+      };
+
       for (const [key, chunk] of state.chunks) {
         const chunkViewKind = chunk.viewKind ?? defaultViewKindForChunk(chunk.type);
-        if (!isFileBackedType(chunk.type) || chunkViewKind !== 'latest' || !sourceMatchesTargets(chunk.source, targets) || chunk.suspectSince != null) continue;
-        newChunks.set(key, { ...chunk, suspectSince: now, freshness: 'suspect', freshnessCause: effectiveCause, suspectKind: effectiveSuspectKind });
+        if (!isFileBackedType(chunk.type) || chunkViewKind !== 'latest' || !sourceMatchesTargets(chunk.source, targets)) continue;
+        if (chunk.suspectSince != null) {
+          if (!shouldUpdateCause(chunk.freshnessCause)) continue;
+          newChunks.set(key, { ...chunk, freshnessCause: effectiveCause, suspectKind: effectiveSuspectKind });
+        } else {
+          newChunks.set(key, { ...chunk, suspectSince: now, freshness: 'suspect', freshnessCause: effectiveCause, suspectKind: effectiveSuspectKind });
+        }
         result.marked++;
       }
       for (const [key, snippet] of state.stagedSnippets) {
         if (snippet.viewKind === 'snapshot') continue;
         if (snippet.viewKind != null && snippet.viewKind !== 'latest') continue;
-        if (!sourceMatchesTargets(snippet.source, targets) || snippet.suspectSince != null) continue;
-        newStaged.set(key, { ...snippet, suspectSince: now, freshness: 'suspect', freshnessCause: effectiveCause, suspectKind: effectiveSuspectKind });
+        if (!sourceMatchesTargets(snippet.source, targets)) continue;
+        if (snippet.suspectSince != null) {
+          if (!shouldUpdateCause(snippet.freshnessCause)) continue;
+          newStaged.set(key, { ...snippet, freshnessCause: effectiveCause, suspectKind: effectiveSuspectKind });
+        } else {
+          newStaged.set(key, { ...snippet, suspectSince: now, freshness: 'suspect', freshnessCause: effectiveCause, suspectKind: effectiveSuspectKind });
+        }
         result.marked++;
       }
       for (const [key, chunk] of state.archivedChunks) {
         const chunkViewKind = chunk.viewKind ?? defaultViewKindForChunk(chunk.type);
-        if (!isFileBackedType(chunk.type) || chunkViewKind !== 'latest' || !sourceMatchesTargets(chunk.source, targets) || chunk.suspectSince != null) continue;
-        newArchived.set(key, { ...chunk, suspectSince: now, freshness: 'suspect', freshnessCause: effectiveCause, suspectKind: effectiveSuspectKind });
+        if (!isFileBackedType(chunk.type) || chunkViewKind !== 'latest' || !sourceMatchesTargets(chunk.source, targets)) continue;
+        if (chunk.suspectSince != null) {
+          if (!shouldUpdateCause(chunk.freshnessCause)) continue;
+          newArchived.set(key, { ...chunk, freshnessCause: effectiveCause, suspectKind: effectiveSuspectKind });
+        } else {
+          newArchived.set(key, { ...chunk, suspectSince: now, freshness: 'suspect', freshnessCause: effectiveCause, suspectKind: effectiveSuspectKind });
+        }
         result.marked++;
       }
 
@@ -3999,12 +4046,16 @@ export const useContextStore = create<ContextStoreState>()(
   supersedeBlackboardForPath: (path: string, newRevision: string) => {
     const pathNorm = normalizeSourcePath(path);
     let count = 0;
+    const supersededKeys: Array<{ key: string; content: string; filePath?: string }> = [];
     set(state => {
       const newBb = new Map(state.blackboardEntries);
       let changed = false;
       for (const [key, entry] of state.blackboardEntries) {
         if (entry.state !== 'active') continue;
-        if (!BB_SHADOWABLE_KINDS.has(entry.kind)) continue;
+        // G7: supersede file-bound `general` entries too, not just BB_SHADOWABLE_KINDS
+        const isShadowable = BB_SHADOWABLE_KINDS.has(entry.kind)
+          || (entry.kind === 'general' && (entry.filePath || entry.derivedFrom?.length));
+        if (!isShadowable) continue;
 
         const filePathMatch = entry.filePath && normalizeSourcePath(entry.filePath) === pathNorm;
         const derivedMatch = !entry.filePath && entry.derivedFrom?.some((d, i) => {
@@ -4021,11 +4072,26 @@ export const useContextStore = create<ContextStoreState>()(
           supersededAt: Date.now(),
           supersededBy: newRevision,
         });
+        supersededKeys.push({ key, content: entry.content, filePath: entry.filePath });
         changed = true;
         count++;
       }
       return changed ? { blackboardEntries: newBb } : {};
     });
+    // G1: persist supersede state to DB so it survives session reload
+    if (supersededKeys.length > 0) {
+      const sessionId = typeof localStorage !== 'undefined'
+        ? localStorage.getItem('current_session_id') : null;
+      if (sessionId) {
+        import('../services/chatDb').then(({ chatDb }) => {
+          if (!chatDb.isInitialized()) return;
+          for (const { key, content, filePath } of supersededKeys) {
+            chatDb.setBlackboardNote(sessionId, key, content, 'superseded', filePath ?? undefined)
+              .catch(e => console.warn('[bb] Failed to persist supersede state:', e));
+          }
+        }).catch(() => {});
+      }
+    }
     return count;
   },
 
@@ -4604,7 +4670,16 @@ export const useContextStore = create<ContextStoreState>()(
       state.stagedSnippets.forEach((snippet, key) => {
         const sNorm = snippet.source?.replace(/\\/g, '/').toLowerCase();
         if (sNorm && sNorm === pathNorm && snippet.sourceRevision && snippet.sourceRevision !== newRevision) {
-          nextStaged.set(key, { ...snippet, sourceRevision: newRevision, observedRevision: newRevision });
+          // G2: clear suspect fields — revision is now authoritative
+          nextStaged.set(key, {
+            ...snippet,
+            sourceRevision: newRevision,
+            observedRevision: newRevision,
+            suspectSince: undefined,
+            freshness: undefined,
+            freshnessCause: undefined,
+            suspectKind: undefined,
+          });
           updated++;
           changed = true;
         } else {
@@ -4615,7 +4690,16 @@ export const useContextStore = create<ContextStoreState>()(
       state.chunks.forEach((chunk, hash) => {
         const cNorm = chunk.source?.replace(/\\/g, '/').toLowerCase();
         if (cNorm && cNorm === pathNorm && chunk.sourceRevision && chunk.sourceRevision !== newRevision) {
-          nextChunks.set(hash, { ...chunk, sourceRevision: newRevision, observedRevision: newRevision });
+          // G2: clear suspect fields — revision is now authoritative
+          nextChunks.set(hash, {
+            ...chunk,
+            sourceRevision: newRevision,
+            observedRevision: newRevision,
+            suspectSince: undefined,
+            freshness: undefined,
+            freshnessCause: undefined,
+            suspectKind: undefined,
+          });
           updated++;
           changed = true;
         }

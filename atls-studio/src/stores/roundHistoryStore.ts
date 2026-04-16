@@ -106,6 +106,8 @@ export interface RoundSnapshot {
   volatileRefsSuggested?: boolean;
   /** Batch included a successful session.pin step. */
   hadSessionPinStep?: boolean;
+  /** User turn boundary — snapshots with the same turnId belong to one user instruction. */
+  turnId?: number;
   /** Successful `read.*` steps this round (from batch fingerprints). */
   readFileStepCount?: number;
   /** Distinct paths read this round. */

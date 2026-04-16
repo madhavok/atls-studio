@@ -61,6 +61,7 @@ function makeCtx() {
       resetFileReadSpin: () => {},
       getPriorReadRanges: () => [],
       forwardStagedHash: () => 0,
+      rebaseStagedLineNumbers: () => 0,
       addVerifyArtifact: () => {},
       getCurrentRev: () => 0,
       recordMemoryEvent: () => {},

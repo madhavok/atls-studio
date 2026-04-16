@@ -2416,6 +2416,7 @@ async function streamChatViaTauri(
           newCoverage: ctxState.roundNewCoverage,
           coveragePlateau: ctxState.coveragePlateauStreak >= 2,
           substantiveBbWrites: bm.hadSubstantiveBbWrite ? 1 : 0,
+          turnId: sessionId,
           ...getRoundFingerprint(),
         });
       };
@@ -3326,6 +3327,7 @@ async function executeToolCallDetailed(
         Object.assign(args, resolved);
 
         const ctx = createHandlerContext({ swarmTerminalId: options?.swarmTerminalId, onSubagentProgress: options?.onSubagentProgress });
+        if (options?.fileClaims?.length) ctx.fileClaims = options.fileClaims;
         const request = args as unknown as UnifiedBatchRequest;
         if (!request.version) (request as unknown as Record<string, unknown>).version = '1.0';
         if (!request.steps) return { displayText: 'batch: ERROR missing steps array' };

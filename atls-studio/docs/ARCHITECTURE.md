@@ -375,7 +375,7 @@ ATLS groups tool operations into consistent families so the UI, docs, and batch 
 | Annotate | `engram`, `note`, `link`, `split`, `merge` | Enrich memory objects |
 | Delegate | `retrieve`, `design`, `code`, `test` | Use specialized subagents |
 | System | `exec`, `git`, `workspaces`, `help` | System-level integration |
-| Intent | `understand`, `edit`, `diagnose`, `survey`, `extract` | High-level macros over primitive steps |
+| Intent | `understand`, `edit`, `edit_multi`, `investigate`, `diagnose`, `survey`, `refactor`, `create`, `test`, `search_replace`, `extract` | High-level macros over primitive steps |
 
 ## History and Verification Telemetry
 
@@ -467,37 +467,6 @@ This layer is responsible for reusable pattern/detection logic over parsed codeb
 3. Memory pressure may compact or unload raw chunks while BB state remains.
 4. Later rounds recover the reasoning path from BB plus hash refs.
 
-## Where to Extend the System
-
-| If you need to change... | Start here |
-|---|---|
-| Chat/session UI behavior | `src/stores/appStore.ts` and relevant React components |
-| Memory lifecycle, BB behavior, staging, reconcile | `src/stores/contextStore.ts` |
-| Ref visibility or turn-based lifecycle | `src/services/hashProtocol.ts` |
-| Digest formatting or hash/ref presentation | `src/utils/contextHash.ts` |
-| Prompt budgets and stage-admission policy | `src/services/promptMemory.ts` |
-| Real token counting and token cache behavior | `src/utils/tokenCounter.ts` |
-| Batch syntax or TOON transport | `src/utils/toon.ts` |
-| Intent-to-step expansion | `src/services/batch/intents.ts` |
-| Read coverage and snapshot safety | `src/services/batch/snapshotTracker.ts` |
-| Verification history and trust labeling | `src/stores/roundHistoryStore.ts` |
-| Core parsing/query/index/detection capabilities | `atls-rs/crates/atls-core/src/*` |
-
-## Summary
-
-ATLS is not a single orchestrator module; it is a layered cognitive runtime made from several cooperating subsystem trees:
-
-- the **application shell** that manages user-visible sessions and agent state
-- the **managed memory runtime** that owns engrams, staging, BB artifacts, and freshness
-- the **prompt subsystem** that formats, budgets, and measures context
-- the **batch runtime** that parses, expands, and safely executes tool steps
-- the **history subsystem** that tracks verification trust over time
-- the **Rust analysis core** that parses, indexes, queries, and detects structure in code
-
-Understanding ATLS means understanding those subsystem boundaries and the contracts between them. This document should be the starting map for that work.
-| **System** | exec, git, workspaces, help | xe, xg, xw, xh |
-| **Intent** | understand, edit, edit_multi, investigate, diagnose, survey, refactor, create, test, search_replace, extract | iu, ie, im, iv, id, srv, ifr, ic, it, is, ix |
-
 ## Chat Modes
 
 | Mode | Purpose |
@@ -548,3 +517,32 @@ Understanding ATLS means understanding those subsystem boundaries and the contra
 - Auto-eviction at 90% memory pressure
 - History compression reduces tool outputs to hash references
 - Rolling summaries for older interactions
+
+## Where to Extend the System
+
+| If you need to change... | Start here |
+|---|---|
+| Chat/session UI behavior | `src/stores/appStore.ts` and relevant React components |
+| Memory lifecycle, BB behavior, staging, reconcile | `src/stores/contextStore.ts` |
+| Ref visibility or turn-based lifecycle | `src/services/hashProtocol.ts` |
+| Digest formatting or hash/ref presentation | `src/utils/contextHash.ts` |
+| Prompt budgets and stage-admission policy | `src/services/promptMemory.ts` |
+| Real token counting and token cache behavior | `src/utils/tokenCounter.ts` |
+| Batch syntax or TOON transport | `src/utils/toon.ts` |
+| Intent-to-step expansion | `src/services/batch/intents.ts` |
+| Read coverage and snapshot safety | `src/services/batch/snapshotTracker.ts` |
+| Verification history and trust labeling | `src/stores/roundHistoryStore.ts` |
+| Core parsing/query/index/detection capabilities | `atls-rs/crates/atls-core/src/*` |
+
+## Summary
+
+ATLS is not a single orchestrator module; it is a layered cognitive runtime made from several cooperating subsystem trees:
+
+- the **application shell** that manages user-visible sessions and agent state
+- the **managed memory runtime** that owns engrams, staging, BB artifacts, and freshness
+- the **prompt subsystem** that formats, budgets, and measures context
+- the **batch runtime** that parses, expands, and safely executes tool steps
+- the **history subsystem** that tracks verification trust over time
+- the **Rust analysis core** that parses, indexes, queries, and detects structure in code
+
+Understanding ATLS means understanding those subsystem boundaries and the contracts between them. This document should be the starting map for that work.

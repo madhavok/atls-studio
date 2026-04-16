@@ -128,6 +128,10 @@ export function evaluateCondition(
     const ids = (cond as { all_steps_ok: string[] }).all_steps_ok;
     return ids.every(id => stepOutputs.get(id)?.ok === true);
   }
+  if ('or' in cond) {
+    const alternatives = (cond as { or: ConditionExpr[] }).or;
+    return Array.isArray(alternatives) && alternatives.some(alt => evaluateCondition(alt, stepOutputs));
+  }
   if ('not' in cond) {
     return !evaluateCondition(cond.not, stepOutputs);
   }

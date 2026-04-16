@@ -22,7 +22,7 @@ The original content remains in working memory (as an engram) or archive. The mo
 | Content Type | Threshold | Compressed When |
 |-------------|-----------|-----------------|
 | Tool results | 800 tokens | Content exceeds threshold |
-| Exec/verify/git results | 800 tokens | Higher threshold for structured output |
+| Exec/verify/git results | 800 tokens | Content exceeds threshold |
 | Tool use inputs (JSON) | 800 tokens | Large tool call parameters |
 | Long text messages | 600 tokens | Non-tool text blocks |
 
@@ -37,7 +37,7 @@ Runs via the history compression middleware on round 0 (between user turns). Thi
 - Never touches messages before `priorTurnBoundary` (preserves BP3 cache prefix)
 - Each compressed block is registered in working memory via `addChunk`
 - HPP `dematerialize()` is called for compressed chunks (transitions materialized → referenced)
-**Budget-driven compression**: If history exceeds `CONVERSATION_HISTORY_BUDGET_TOKENS` (20k), the oldest non-reference messages are compressed until under budget.
+**Budget-driven compression**: If history exceeds `CONVERSATION_HISTORY_BUDGET_TOKENS` (24k), the oldest non-reference messages are compressed until under budget.
 
 ### 2. `deflateToolResults` (Immediately After Tools)
 
@@ -50,13 +50,13 @@ Runs right after tool execution completes, before the next round. This is a ligh
 - Prevents duplicate content between history and working memory
 ## Rolling history window
 
-Beyond hash deflation, the compressor maintains a **verbatim window** of the most recent tool-loop rounds in history. Constants live in [`promptMemory.ts`](../atls-studio/src/services/promptMemory.ts): `ROLLING_WINDOW_ROUNDS` (20) and `ROLLING_SUMMARY_MAX_TOKENS` (1500).
+Beyond hash deflation, the compressor maintains a **verbatim window** of the most recent tool-loop rounds in history. Constants live in [`promptMemory.ts`](../atls-studio/src/services/promptMemory.ts): `ROLLING_WINDOW_ROUNDS` (20) and `ROLLING_SUMMARY_MAX_TOKENS` (1650).
 
 When the number of **rounds** in history exceeds the window, the **oldest** round is removed from the verbatim transcript and **distilled** into structured facts by [`historyDistiller.ts`](../atls-studio/src/services/historyDistiller.ts). The distiller fills a [`RollingSummary`](../atls-studio/src/services/historyDistiller.ts) in the context store (`decisions`, `filesChanged`, `userPreferences`, `workDone`, `findings`, `errors`).
 
 ### Rolling summary in the state preamble
 
-The distilled summary is **not** appended as a normal chat UI message. When building the provider request, [`aiService.ts`](../atls-studio/src/services/aiService.ts) includes the rolling summary as part of the **state preamble** — a synthetic first user message in the assembled payload that also carries session state (task/plan, BB, WM, steering signals). The summary is merged into this preamble via `conversationHistory.unshift(formatSummaryMessage(...))` and then combined with the state block by `assembleProviderMessages()`. The visible transcript stays append-only for user/assistant turns; BP3 still treats the history prefix as stable for caching **within** a tool loop (see [Prompt Assembly](./prompt-assembly.md)).
+The distilled summary is **not** appended as a normal chat UI message. When building the provider request, [`aiService.ts`](../atls-studio/src/services/aiService.ts) includes the rolling summary as part of the **state preamble** — a synthetic first user message in the assembled payload that also carries session state (task/plan, BB, WM, steering signals). The summary is merged into this preamble via `conversationHistory.unshift(formatSummaryMessage(...))` and then combined with the state block by `assembleProviderMessages()`. The visible transcript stays append-only for user/assistant turns; BP3 still treats the history prefix as stable for caching **within** a tool loop (see [`prompt-assembly.md`](prompt-assembly.md)).
 
 ### Interaction with compression
 
@@ -76,7 +76,7 @@ flowchart LR
   rsStore --> persist
 ```
 
-Distilled state is persisted with the memory snapshot as **snapshot format v5** (`rollingSummary` on [`PersistedMemorySnapshot`](../atls-studio/src/services/chatDb.ts)); see [session-persistence.md](./session-persistence.md).
+Distilled state is persisted with the memory snapshot as **snapshot format v5** (`rollingSummary` on [`PersistedMemorySnapshot`](../atls-studio/src/services/chatDb.ts)).
 
 ## Digest Format
 
@@ -98,7 +98,7 @@ The digest provides structural context — function names, line ranges, class de
 
 History compression is deliberately deferred to round 0 to maintain cache stability:
 
-- **Within a tool loop** (rounds 1, 2, 3...): The **saved chat transcript** is strictly append-only. No compression, no mutation of prior messages. This ensures the BP3 cache prefix stays byte-identical for that transcript, giving cache reads at 0.1x cost. The API may still **prepend** the synthetic `[Rolling Summary]` message (see above); logical BP3 hit/miss is modeled in [`logicalCacheMetrics.ts`](../atls-studio/src/services/logicalCacheMetrics.ts) — see [prompt-assembly.md](./prompt-assembly.md).
+- **Within a tool loop** (rounds 1, 2, 3...): The **saved chat transcript** is strictly append-only. No compression, no mutation of prior messages. This ensures the BP3 cache prefix stays byte-identical for that transcript, giving cache reads at 0.1x cost. The API may still **prepend** the synthetic `[Rolling Summary]` message (see above); logical BP3 hit/miss is modeled in [`logicalCacheMetrics.ts`](../atls-studio/src/services/logicalCacheMetrics.ts) — see [`prompt-assembly.md`](prompt-assembly.md).
 - **Between user turns** (round 0): Compression runs, potentially modifying old messages. This invalidates the BP3 cache, but a new cache write happens at the start of the next tool loop.
 
 ## Context Hygiene Middleware

@@ -209,6 +209,7 @@ export function serializeMemorySnapshot(
       currentGoal: ctxState.rollingSummary.currentGoal || '',
       nextSteps: [...(ctxState.rollingSummary.nextSteps ?? [])],
       blockers: [...(ctxState.rollingSummary.blockers ?? [])],
+      distilledAt: ctxState.rollingSummary.distilledAt,
     },
     verifyArtifacts: Array.from(ctxState.verifyArtifacts.entries()),
     awarenessCache: Array.from(ctxState.awarenessCache.entries()),
@@ -596,9 +597,14 @@ export function useChatPersistence() {
           newSessions = [updatedSession, ...currentSessions];
         }
 
+        // G18: only update currentSessionId if the user hasn't switched away during save
+        const stateAfterSave = useAppStore.getState();
+        const sessionStillCurrent = stateAfterSave.currentSessionId === sessionId
+          || stateAfterSave.currentSessionId === pendingSessionIdRef.current
+          || !stateAfterSave.currentSessionId;
         useAppStore.setState({
           chatSessions: newSessions,
-          currentSessionId: sessionId,
+          ...(sessionStillCurrent ? { currentSessionId: sessionId } : {}),
         });
         pendingSessionIdRef.current = null;
         const pp = useAppStore.getState().projectPath;
@@ -654,8 +660,14 @@ export function useChatPersistence() {
   const loadSession = useCallback(async (sessionId: string): Promise<boolean> => {
     if (!chatDb.isInitialized()) return false;
 
-    // Flush any pending debounced save before switching sessions
+    // G17: invalidate any in-flight generation before switching sessions
+    // incrementChatSession makes isSessionValid() return false for the old loop
     const outgoing = useAppStore.getState();
+    if (outgoing.currentSessionId && outgoing.currentSessionId !== sessionId) {
+      useAppStore.getState().incrementChatSession();
+    }
+
+    // Flush any pending debounced save before switching sessions
     if (outgoing.currentSessionId && outgoing.currentSessionId !== sessionId && outgoing.messages.length > 0) {
       try { await flushPendingSave(); } catch { /* best effort */ }
     }

@@ -166,6 +166,7 @@ export type ConditionExpr =
   | { step_has_refs: string }
   | { ref_exists: string }
   | { all_steps_ok: string[] }
+  | { or: ConditionExpr[] }
   | { not: ConditionExpr };
 
 // ---------------------------------------------------------------------------
@@ -343,6 +344,8 @@ export interface HandlerContext {
   forEachStepOutput?: (fn: (stepId: string, output: StepOutput) => void) => void;
   /** Callback for subagent progress (delegate.* steps) */
   onSubagentProgress?: (stepId: string, progress: SubAgentProgressEvent) => void;
+  /** File ownership claims for swarm agents — change ops targeting files outside this set are rejected when present. */
+  fileClaims?: string[];
 }
 
 export type ExpandedFilePath =

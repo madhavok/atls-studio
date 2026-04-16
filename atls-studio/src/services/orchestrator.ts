@@ -1750,12 +1750,26 @@ Synthesize the swarm outcome.`;
         Math.round(sessionCostCents),
       );
       
-      // Post-completion freshness: bump workspace rev and reconcile owned files
+      // Post-completion freshness: bump workspace rev and reconcile owned files against disk
       useContextStore.getState().bumpWorkspaceRev();
-      for (const file of task.fileClaims || []) {
-        const awareness = useContextStore.getState().getAwareness(file);
-        if (awareness) {
-          useContextStore.getState().reconcileSourceRevision(file, awareness.snapshotHash);
+      const claimedFiles = task.fileClaims || [];
+      if (claimedFiles.length > 0) {
+        try {
+          const diskRevisions = await invoke<Record<string, string | null>>('get_current_revisions', { paths: claimedFiles });
+          for (const file of claimedFiles) {
+            const diskHash = diskRevisions[file];
+            if (diskHash) {
+              useContextStore.getState().reconcileSourceRevision(file, diskHash);
+            }
+          }
+        } catch (e) {
+          console.warn('[orchestrator] disk revision lookup failed, falling back to awareness:', e);
+          for (const file of claimedFiles) {
+            const awareness = useContextStore.getState().getAwareness(file);
+            if (awareness) {
+              useContextStore.getState().reconcileSourceRevision(file, awareness.snapshotHash);
+            }
+          }
         }
       }
       this.dispatchRevs.delete(task.id);

@@ -476,7 +476,14 @@ export function diagnoseSpinning(
     return { spinning: false, mode: 'none', confidence: 0, evidence: [], triggerRound: 0, suggestedAction: '' };
   }
 
-  const window = mainRounds.slice(-windowSize).map(toFingerprint);
+  // G26: scope to current user turn to avoid cross-turn false positives
+  const latestTurnId = mainRounds[mainRounds.length - 1]?.turnId;
+  const turnScoped = latestTurnId != null
+    ? mainRounds.filter(s => s.turnId === latestTurnId)
+    : mainRounds;
+  const effectiveRounds = turnScoped.length >= MIN_WINDOW ? turnScoped : mainRounds;
+
+  const window = effectiveRounds.slice(-windowSize).map(toFingerprint);
 
   const detectors = [
     detectContextLoss,

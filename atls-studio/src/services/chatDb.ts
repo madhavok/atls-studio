@@ -808,14 +808,21 @@ class ChatDbService {
       }
     }
 
-    // Save blackboard entries
+    // Sync blackboard entries: insert new, prune stale rows no longer in WM
     const existingEntries = await this.getBlackboardEntries(sessionId);
     const existingHashes = new Set(existingEntries.map(e => e.short_hash));
+    const currentHashes = new Set(blackboard.map(c => c.shortHash));
     
     for (const chunk of blackboard) {
       if (!existingHashes.has(chunk.shortHash)) {
         await this.addBlackboardEntry(sessionId, chunk);
       }
+    }
+    const staleHashes = existingEntries
+      .filter(e => !currentHashes.has(e.short_hash))
+      .map(e => e.short_hash);
+    if (staleHashes.length > 0) {
+      await this.removeBlackboardEntries(sessionId, staleHashes);
     }
 
     // Update context usage

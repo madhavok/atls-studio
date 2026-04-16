@@ -393,7 +393,9 @@ export function compressToolLoopHistory(
   priorTurnBoundary?: number,
   opts?: { emergency?: boolean },
 ): number {
-  const contextStore = useContextStore.getState();
+  // G21: use a getter so chunk lookups always see post-addChunk state
+  const getCtx = () => useContextStore.getState();
+  const contextStore = getCtx();
   let compressedCount = 0;
   let totalSavedTokens = 0;
   const startIdx = priorTurnBoundary ?? 0;
@@ -434,7 +436,7 @@ export function compressToolLoopHistory(
     const chunkType = role === 'assistant' ? 'msg:asst' : 'msg:user';
     const hash = contextStore.addChunk(content, chunkType, description, undefined, `history: ${description}`);
     const shortHash = hash.slice(0, SHORT_HASH_LEN);
-    const chunk = contextStore.chunks.get(hash);
+    const chunk = getCtx().chunks.get(hash);
     dematerialize(hash);
     return formatChunkRef(shortHash, tokens, undefined, description, chunk?.digest);
   };
@@ -458,7 +460,7 @@ export function compressToolLoopHistory(
         // Preserve inline history for pinned content so the model retains
         // full conversational context around its most important engrams.
         const pinnedCheckHash = hashContentSync(tr.content);
-        const pinnedChunk = contextStore.chunks.get(pinnedCheckHash);
+        const pinnedChunk = getCtx().chunks.get(pinnedCheckHash);
         if (pinnedChunk?.pinned) continue;
 
         const tokens = countTokensSync(tr.content);
@@ -481,10 +483,10 @@ export function compressToolLoopHistory(
         // Phase 2: source-string match across all chunk types (covers batch
         //   handlers that store as 'smart'/'raw' with a different source string).
         const contentHash = hashContentSync(tr.content);
-        const byHash = contextStore.chunks.get(contentHash);
+        const byHash = getCtx().chunks.get(contentHash);
         const existing = byHash
           ? { hash: byHash.hash, shortHash: byHash.shortHash, digest: byHash.digest }
-          : findExistingChunkBySource(contextStore, description);
+          : findExistingChunkBySource(getCtx(), description);
         let hash: string;
         let shortHash: string;
         let chunkDigest: string | undefined;
@@ -495,7 +497,7 @@ export function compressToolLoopHistory(
         } else {
           hash = contextStore.addChunk(tr.content, 'result', description, undefined, `result: ${description}`);
           shortHash = hash.slice(0, SHORT_HASH_LEN);
-          chunkDigest = contextStore.chunks.get(hash)?.digest;
+          chunkDigest = getCtx().chunks.get(hash)?.digest;
         }
         const ref = formatChunkRef(shortHash, tokens, undefined, description, chunkDigest);
         totalSavedTokens += tokens - countTokensSync(ref);
@@ -521,7 +523,7 @@ export function compressToolLoopHistory(
         const description = extractToolDescription(block.name || 'tool_use', block.input);
         const hash = contextStore.addChunk(inputStr, 'call', description, undefined, `call: ${description}`);
         const shortHash = hash.slice(0, SHORT_HASH_LEN);
-        const chunk = contextStore.chunks.get(hash);
+        const chunk = getCtx().chunks.get(hash);
         const ref = formatChunkRef(shortHash, inputTokens, undefined, description, chunk?.digest);
         totalSavedTokens += inputTokens - countTokensSync(ref);
         block.input = { _compressed: ref } as any;

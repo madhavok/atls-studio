@@ -44,8 +44,17 @@ export interface RecordOpts {
   fullFileLineCount?: number;
 }
 
+/**
+ * Map path strings to a single tracker key. The model often prefixes repo-relative
+ * paths with `atls-studio/` while read.lines results use workspace-relative paths
+ * without it (e.g. `docs/foo` vs `atls-studio/docs/foo`). Merge those aliases so
+ * read coverage and content_hash injection see the same file.
+ */
 function normalizePathKey(p: string): string {
-  return p.replace(/\\/g, '/').toLowerCase();
+  let key = p.replace(/\\/g, '/').trim().toLowerCase();
+  const mono = 'atls-studio/';
+  if (key.startsWith(mono)) key = key.slice(mono.length);
+  return key;
 }
 
 /**

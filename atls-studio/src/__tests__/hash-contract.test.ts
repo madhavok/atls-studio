@@ -102,6 +102,15 @@ describe('SnapshotTracker', () => {
     expect(tracker.getHash('src/foo.ts')).toBe('abc123def456');
   });
 
+  it('merges atls-studio/ path prefix with workspace-relative paths', () => {
+    const tracker = new SnapshotTracker();
+    tracker.record('docs/foo.ts', 'abc123', 'lines', { readRegion: { start: 1, end: 20 } });
+    expect(tracker.hasReadCoverage('atls-studio/docs/foo.ts', 5, 5)).toBe(true);
+    expect(tracker.getHash('atls-studio/docs/foo.ts')).toBe('abc123');
+    tracker.record('atls-studio/src/bar.ts', 'def456');
+    expect(tracker.getHash('src/bar.ts')).toBe('def456');
+  });
+
   it('detects stale hashes', () => {
     const tracker = new SnapshotTracker();
     tracker.record('src/foo.ts', 'abc123def456');

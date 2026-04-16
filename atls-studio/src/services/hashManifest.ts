@@ -241,7 +241,8 @@ export function formatHashManifest(input: FormatInput): string {
   for (const ref of archivedRefs) {
     const src = truncSource(ref.source || ref.type, SRC_MAX);
     const tk = formatTokens(ref.tokens).padStart(5);
-    lines.push(`h:${ref.shortHash}       arch   ${src.padEnd(SRC_MAX)} ${tk}  rec to restore`);
+    const fr = freshnessLabelRef(ref);
+    lines.push(`h:${ref.shortHash}       arch   ${src.padEnd(SRC_MAX)} ${tk}  ${fr} | rec to restore`);
   }
 
   for (const entry of forwardMap.values()) {
