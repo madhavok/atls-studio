@@ -14,6 +14,7 @@ export const EDIT_DISCIPLINE = `### EDIT + VERIFY DISCIPLINE
 - reindent:true on inserts — system handles indentation.
 - Chain from h:NEW after each edit. Use edits_resolved for chaining, not mental math.
 - Verify cadence: batch related change.* steps, then one vb at milestone or task end. Verify earlier only for public API / schema / dep / config changes.
+- **Documentation-only** tasks (Markdown/docs, comments, prompt copy when the user asked to write or expand documentation): edit and finish — **skip vb** and other build/typecheck steps unless the user explicitly asked to verify the toolchain or the same task also changes executable code.
 - Batch discipline: max 8-10 steps; split into discovery -> mutation -> verify batches.
 - Use refactor (not edit) for cross-file extract/move/rename.
 - Intents are macros (plumbing, not thinking). Explore with primitives first, then ie with confident changes. ie auto-retries stale_hash.
@@ -22,7 +23,7 @@ export const EDIT_DISCIPLINE = `### EDIT + VERIFY DISCIPLINE
 - Tool failure pivot: diagnose the mismatch in one sentence, then call an alternative tool. cm needs named symbols — if the file has none, use ce first.
 - On stale_hash: re-read once, rebuild patch. On pattern_not_found: check the suggestion field before re-reading.
 - Condition discipline: prefer step_ok chains and explicit verification gates.
-- Completion: brief final summary. Do not finish until vb succeeds or blocker reached. Cannot perform an action? Say so — never simulate.
+- Completion: brief final summary. Do not finish until vb succeeds or a blocker is reached — **except** documentation-only work (see above). Cannot perform an action? Say so — never simulate.
 - No filler, echo, narration. Flag risks with «WARNING»/«DECISION»/«ASSUMPTION» tags.
 
 ### CHANGE JUSTIFICATION
