@@ -157,10 +157,11 @@ export function createPromptLayerBudgets(
 }
 
 export function getStaticSystemTokens(promptMetrics: PromptMetrics): number {
+  const toolDefTokens = (promptMetrics as Record<string, unknown>).bp2ToolDefTokens as number | undefined;
   return (promptMetrics.modePromptTokens ?? 0)
     + (promptMetrics.toolRefTokens ?? 0)
     + (promptMetrics.shellGuideTokens ?? 0)
-    + (promptMetrics.nativeToolTokens ?? 0)
+    + (toolDefTokens && toolDefTokens > 0 ? toolDefTokens : (promptMetrics.nativeToolTokens ?? 0))
     + (promptMetrics.contextControlTokens ?? 0);
 }
 

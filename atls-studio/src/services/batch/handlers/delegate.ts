@@ -194,6 +194,7 @@ async function runDelegate(
       focus_file_context: focusFileContext,
       max_tokens: typeof params.max_tokens === 'number' ? params.max_tokens as number : undefined,
       token_budget: typeof params.token_budget === 'number' ? params.token_budget as number : undefined,
+      fileClaims: ctx?.fileClaims,
     }, onProgress);
 
     const pinnedHashes = result.refs

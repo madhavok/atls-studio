@@ -888,7 +888,9 @@ function repairToolPairing(messages: ApiMessage[], provider?: string): ApiMessag
         : (msg.content as Record<string, unknown>[]);
       const nonToolUse = stripped.filter((b: Record<string, unknown>) => (b as { type?: string }).type !== 'tool_use');
       const toolUse = stripped.filter((b: Record<string, unknown>) => (b as { type?: string }).type === 'tool_use');
-      const cleanedContent = toolUse.length > 0 && nonToolUse.length > 0 ? [...nonToolUse, ...toolUse] : stripped;
+      const cleanedContent = isAnthropic && toolUse.length > 0 && nonToolUse.length > 0
+        ? [...nonToolUse, ...toolUse]
+        : stripped;
       const cleanedMsg = { ...msg, content: cleanedContent };
 
       const toolUseIds = collectToolUseIdsFromBlocks(cleanedContent);
@@ -1936,6 +1938,7 @@ async function streamChatViaTauri(
       let roundCacheReadTokens = 0;
       let roundCacheWriteTokens = 0;
       let stopReason: string | null = null;
+      let streamErrorOccurred = false;
       let toolCallCounter = 0;
 
       const tauriMessagesRaw = assembledRound.messages.map(m => ({ role: m.role, content: m.content }));
@@ -2173,6 +2176,7 @@ async function streamChatViaTauri(
             safeCallbacks.onStatus?.(chunk.message);
             break;
           case 'error':
+            streamErrorOccurred = true;
             safeCallbacks.onStreamError?.(chunk.error_text);
             safeCallbacks.onError(new Error(chunk.error_text));
             break;
@@ -2196,6 +2200,12 @@ async function streamChatViaTauri(
       if (abortSignal.aborted || !isSessionValid()) {
         if (abortSignal.aborted) console.log('[aiService] Aborted during streaming round', round + 1);
         if (isSessionValid()) useAppStore.getState().setAgentProgress({ status: 'stopped', stoppedReason: 'aborted' });
+        break;
+      }
+
+      // G36: abort tool loop when stream error occurred and no tool calls were parsed
+      if (streamErrorOccurred && !needsToolResults) {
+        console.warn('[aiService] Stream error with no tool calls — breaking tool loop');
         break;
       }
 

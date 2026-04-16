@@ -61,6 +61,8 @@ export interface SubAgentParams {
   focus_file_context?: string;
   max_tokens?: number;
   token_budget?: number;
+  /** File ownership claims from parent swarm worker — enforced on change ops. */
+  fileClaims?: string[];
 }
 
 export interface SubAgentRef {
@@ -392,7 +394,16 @@ async function runSubagentRound(
     throw new Error(`Subagent streaming not supported for provider: ${provider}`);
   }
 
-  await donePromise;
+  const SUBAGENT_ROUND_TIMEOUT_MS = 5 * 60 * 1000;
+  const timeoutPromise = new Promise<'timeout'>((resolve) =>
+    setTimeout(() => resolve('timeout'), SUBAGENT_ROUND_TIMEOUT_MS),
+  );
+  const raceResult = await Promise.race([donePromise.then(() => 'done' as const), timeoutPromise]);
+  if (raceResult === 'timeout') {
+    unlisten();
+    streamError = `Subagent round timed out after ${SUBAGENT_ROUND_TIMEOUT_MS / 1000}s`;
+    console.error(`[subagent] ${streamError}`);
+  }
 
   if (streamError) {
     throw new Error(`Subagent stream failed (${provider}/${model}): ${streamError}`);
@@ -455,7 +466,7 @@ async function executeSubagentToolCall(
   role: SubagentType,
   name: string,
   args: Record<string, unknown>,
-  options?: { swarmTerminalId?: string },
+  options?: { swarmTerminalId?: string; fileClaims?: string[] },
 ): Promise<string> {
   const allowed = ROLE_ALLOWED_OPS[role];
   if (!allowed) {
@@ -593,6 +604,7 @@ function buildSnapshotMetrics(
 
   for (const [hash, chunk] of ctx.chunks.entries()) {
     if (preExistingHashes.has(hash)) continue;
+    if (chunk.suspectSince != null || chunk.freshness === 'suspect') continue;
     if (chunk.pinned && chunk.content) {
       pinTokens += chunk.tokens;
     }
@@ -1137,7 +1149,10 @@ export async function executeSubagent(
         try {
           const toolResult = await executeSubagentToolCall(
             role, tc.name, tc.args,
-            terminalId ? { swarmTerminalId: terminalId } : undefined,
+            {
+              ...(terminalId ? { swarmTerminalId: terminalId } : {}),
+              ...(params.fileClaims?.length ? { fileClaims: params.fileClaims } : {}),
+            },
           );
           console.log(`[subagent:${role}] Tool ${toolName} result: ${toolResult.length} chars`);
           toolResults.push({ type: 'tool_result', tool_use_id: tc.id, name: tc.name, content: toolResult });
@@ -1242,6 +1257,18 @@ export async function executeSubagent(
     // Restore parent's spin state so subagent reads don't leak back
     useContextStore.setState({ fileReadSpinByPath: savedSpinState, fileReadSpinRanges: savedSpinRanges });
 
+    // G37: dematerialize/unstage in finally so cleanup happens even on error
+    try {
+      dematerializeSubagentChunks(preExistingHashes, preExistingSources);
+      const stagedRefKeysForCleanup = new Set(
+        extractSubagentRefs(preExistingHashes, preExistingSources)
+          .filter(r => r.type === 'staged').map(r => r.hash),
+      );
+      unstageSubagentAdded(preExistingStagedKeys, stagedRefKeysForCleanup);
+    } catch (cleanupErr) {
+      console.warn(`[subagent:${role}] Cleanup error (dematerialize/unstage):`, cleanupErr);
+    }
+
     // Clean up terminal
     if (terminalId) {
       try {
@@ -1252,28 +1279,24 @@ export async function executeSubagent(
     }
   }
 
-  // Extract engram refs BEFORE dematerializing (needs full chunk data)
+  // Extract engram refs (dematerialization already happened in finally, but
+  // extraction reads pinned state which is preserved)
   const refs = extractSubagentRefs(preExistingHashes, preExistingSources);
   const pinCount = refs.filter(r => r.pinned || r.type === 'staged').length;
   const pinTokens = refs.reduce((sum, r) => sum + r.tokens, 0);
 
   console.log(`[subagent:${role}] Extraction: ${refs.length} refs, ${pinCount} pinned, ${(pinTokens / 1000).toFixed(1)}k tokens`);
 
-  // Dematerialize subagent-created chunks so the parent model doesn't see full
-  // file bodies in its next prompt. Without this, every chunk the subagent read
-  // stays materialized (seenAtTurn === global turn) and gets emitted as full
-  // content in formatWorkingMemory, inflating the parent's context by megabytes.
-  // Pinned chunks are left alone — HPP exempts them from shouldMaterialize checks
-  // and the parent will see them as compact ref lines.
-  dematerializeSubagentChunks(preExistingHashes, preExistingSources);
-  const stagedRefKeys = new Set(refs.filter(r => r.type === 'staged').map(r => r.hash));
-  unstageSubagentAdded(preExistingStagedKeys, stagedRefKeys);
-
-  // Collect BB keys written by this subagent
+  // Collect all BB keys written by this subagent (scan role prefixes, not just canonical key)
   const bbKeys: string[] = [];
-  const roleBbKey = ROLE_BB_KEYS[role];
-  if (useContextStore.getState().getBlackboardEntry(roleBbKey)) {
-    bbKeys.push(roleBbKey);
+  const rolePrefixes = ROLE_BB_PREFIXES[role] ?? [];
+  const bbEntries = useContextStore.getState().blackboardEntries;
+  if (bbEntries) {
+    for (const key of bbEntries.keys()) {
+      if (rolePrefixes.some(p => key.startsWith(p))) {
+        bbKeys.push(key);
+      }
+    }
   }
 
   const summary = `${role}: ${refs.length} refs (${(pinTokens / 1000).toFixed(1)}k tk), ${totalRounds} rounds, ${totalToolCalls} tool calls`;

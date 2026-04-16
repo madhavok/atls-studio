@@ -1382,6 +1382,23 @@ pub async fn stream_chat_anthropic(
                             if data == "[DONE]" {
                                 text_batcher.close(&app_clone, &stream_id_clone);
                                 reasoning_batcher.close(&app_clone, &stream_id_clone);
+                                // G51: flush any partial tool_use that wasn't finalized
+                                if let (Some(id), Some(name)) = (pending_tool_id.take(), pending_tool_name.take()) {
+                                    if !pending_tool_args.trim().is_empty() {
+                                        let input = parse_tool_args_or_warn(&app_clone, &stream_id_clone, &name, &pending_tool_args);
+                                        emit_chunk(&app_clone, &stream_id_clone, StreamChunk::ToolInputAvailable {
+                                            tool_call_id: id,
+                                            tool_name: name,
+                                            input,
+                                            thought_signature: None,
+                                        });
+                                    } else {
+                                        emit_chunk(&app_clone, &stream_id_clone, StreamChunk::Status {
+                                            message: format!("Tool `{name}` stream ended before arguments arrived"),
+                                        });
+                                    }
+                                    pending_tool_args.clear();
+                                }
                                 emit_chunk(&app_clone, &stream_id_clone, StreamChunk::Done);
                                 return;
                             }
@@ -1464,8 +1481,7 @@ pub async fn stream_chat_anthropic(
                                                 match bt.as_str() {
                                                     "tool_use" => {
                                                         if let (Some(id), Some(name)) = (pending_tool_id.take(), pending_tool_name.take()) {
-                                                            let input = serde_json::from_str::<serde_json::Value>(&pending_tool_args)
-                                                                .unwrap_or(serde_json::json!({}));
+                                                            let input = parse_tool_args_or_warn(&app_clone, &stream_id_clone, &name, &pending_tool_args);
                                                             emit_chunk(&app_clone, &stream_id_clone, StreamChunk::ToolInputAvailable {
                                                                 tool_call_id: id,
                                                                 tool_name: name,
@@ -1532,6 +1548,23 @@ pub async fn stream_chat_anthropic(
                                         "message_stop" => {
                                             text_batcher.close(&app_clone, &stream_id_clone);
                                             reasoning_batcher.close(&app_clone, &stream_id_clone);
+                                            // G51: flush partial tool_use on message_stop
+                                            if let (Some(id), Some(name)) = (pending_tool_id.take(), pending_tool_name.take()) {
+                                                if !pending_tool_args.trim().is_empty() {
+                                                    let input = parse_tool_args_or_warn(&app_clone, &stream_id_clone, &name, &pending_tool_args);
+                                                    emit_chunk(&app_clone, &stream_id_clone, StreamChunk::ToolInputAvailable {
+                                                        tool_call_id: id,
+                                                        tool_name: name,
+                                                        input,
+                                                        thought_signature: None,
+                                                    });
+                                                } else {
+                                                    emit_chunk(&app_clone, &stream_id_clone, StreamChunk::Status {
+                                                        message: format!("Tool `{name}` stream ended before arguments arrived"),
+                                                    });
+                                                }
+                                                pending_tool_args.clear();
+                                            }
                                             emit_chunk(&app_clone, &stream_id_clone, StreamChunk::Done);
                                             return;
                                         }
@@ -1554,6 +1587,22 @@ pub async fn stream_chat_anthropic(
         
         text_batcher.close(&app_clone, &stream_id_clone);
         reasoning_batcher.close(&app_clone, &stream_id_clone);
+        // G51: flush any partial tool_use left when stream ends without message_stop/[DONE]
+        if let (Some(id), Some(name)) = (pending_tool_id.take(), pending_tool_name.take()) {
+            if !pending_tool_args.trim().is_empty() {
+                let input = parse_tool_args_or_warn(&app_clone, &stream_id_clone, &name, &pending_tool_args);
+                emit_chunk(&app_clone, &stream_id_clone, StreamChunk::ToolInputAvailable {
+                    tool_call_id: id,
+                    tool_name: name,
+                    input,
+                    thought_signature: None,
+                });
+            } else {
+                emit_chunk(&app_clone, &stream_id_clone, StreamChunk::Status {
+                    message: format!("Tool `{name}` stream ended before arguments arrived"),
+                });
+            }
+        }
         emit_chunk(&app_clone, &stream_id_clone, StreamChunk::Done);
     });
     
@@ -1651,6 +1700,30 @@ fn hydrate_pending_tool_args_from_completed_response(
             }
         }
         break;
+    }
+}
+
+/// Parse tool args JSON, emitting a Status warning on malformed input before falling back to `{}`.
+fn parse_tool_args_or_warn(
+    app: &AppHandle,
+    stream_id: &str,
+    tool_name: &str,
+    raw: &str,
+) -> serde_json::Value {
+    use crate::stream_protocol::{emit_chunk, StreamChunk};
+
+    match serde_json::from_str::<serde_json::Value>(raw) {
+        Ok(v) => v,
+        Err(_) => {
+            let truncated = if raw.len() > 200 { &raw[..200] } else { raw };
+            emit_chunk(app, stream_id, StreamChunk::Status {
+                message: format!(
+                    "Malformed tool args for `{tool_name}` ({}ch) — falling back to {{}}. Preview: {truncated}",
+                    raw.len(),
+                ),
+            });
+            serde_json::json!({})
+        }
     }
 }
 
@@ -1861,8 +1934,7 @@ pub(crate) async fn stream_responses_openai_inner(
                                         } else {
                                             pending_args
                                         };
-                                        let input = serde_json::from_str::<serde_json::Value>(&arg_str)
-                                            .unwrap_or(serde_json::json!({}));
+                                        let input = parse_tool_args_or_warn(&app_clone, &stream_id_clone, &resolved_name, &arg_str);
                                         emit_chunk(&app_clone, &stream_id_clone, StreamChunk::ToolInputAvailable {
                                             tool_call_id: id,
                                             tool_name: resolved_name,
@@ -1875,6 +1947,12 @@ pub(crate) async fn stream_responses_openai_inner(
                                             if item.get("type").and_then(|t| t.as_str()) == Some("function_call") {
                                                 text_batcher.close(&app_clone, &stream_id_clone);
                                                 reasoning_batcher.close(&app_clone, &stream_id_clone);
+                                                // G34: flush any existing pending tool before overwriting
+                                                flush_responses_api_pending_tool_call(
+                                                    &app_clone,
+                                                    &stream_id_clone,
+                                                    &mut pending_tool_call,
+                                                );
                                                 let id = item.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
                                                 let name = item.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
                                                 emit_chunk(&app_clone, &stream_id_clone, StreamChunk::ToolInputStart {
@@ -2015,6 +2093,12 @@ pub(crate) async fn stream_responses_openai_inner(
                     }
                 }
                 Err(e) => {
+                    // G35: flush pending tool before emitting error
+                    flush_responses_api_pending_tool_call(
+                        &app_clone,
+                        &stream_id_clone,
+                        &mut pending_tool_call,
+                    );
                     emit_chunk(&app_clone, &stream_id_clone, StreamChunk::Error {
                         error_text: e.to_string(),
                     });
@@ -2189,7 +2273,7 @@ pub async fn stream_chat_openai(
                                 // Flush any remaining accumulated tool calls
                                 for (_, (id, name, args, _)) in pending_tc.drain() {
                                     if !name.is_empty() {
-                                        let input = serde_json::from_str::<serde_json::Value>(&args).unwrap_or(serde_json::json!({}));
+                                        let input = parse_tool_args_or_warn(&app_clone, &stream_id_clone, &name, &args);
                                         emit_chunk(&app_clone, &stream_id_clone, StreamChunk::ToolInputAvailable {
                                             tool_call_id: id,
                                             tool_name: name,
@@ -2315,7 +2399,7 @@ pub async fn stream_chat_openai(
         reasoning_batcher.close(&app_clone, &stream_id_clone);
         for (_, (id, name, args, _)) in pending_tc.drain() {
             if !name.is_empty() {
-                let input = serde_json::from_str::<serde_json::Value>(&args).unwrap_or(serde_json::json!({}));
+                let input = parse_tool_args_or_warn(&app_clone, &stream_id_clone, &name, &args);
                 emit_chunk(&app_clone, &stream_id_clone, StreamChunk::ToolInputAvailable {
                     tool_call_id: id,
                     tool_name: name,
@@ -2453,7 +2537,7 @@ pub async fn stream_chat_lmstudio(
                                 reasoning_batcher.close(&app_clone, &stream_id_clone);
                                 for (_, (id, name, args, _)) in pending_tc.drain() {
                                     if !name.is_empty() {
-                                        let input = serde_json::from_str::<serde_json::Value>(&args).unwrap_or(serde_json::json!({}));
+                                        let input = parse_tool_args_or_warn(&app_clone, &stream_id_clone, &name, &args);
                                         emit_chunk(&app_clone, &stream_id_clone, StreamChunk::ToolInputAvailable {
                                             tool_call_id: id, tool_name: name, input,
                                             thought_signature: None,
@@ -2564,7 +2648,7 @@ pub async fn stream_chat_lmstudio(
         reasoning_batcher.close(&app_clone, &stream_id_clone);
         for (_, (id, name, args, _)) in pending_tc.drain() {
             if !name.is_empty() {
-                let input = serde_json::from_str::<serde_json::Value>(&args).unwrap_or(serde_json::json!({}));
+                let input = parse_tool_args_or_warn(&app_clone, &stream_id_clone, &name, &args);
                 emit_chunk(&app_clone, &stream_id_clone, StreamChunk::ToolInputAvailable {
                     tool_call_id: id,
                     tool_name: name,
@@ -2888,6 +2972,7 @@ pub async fn stream_chat_google(
                                             last_stop_reason = Some(match finish_reason {
                                                 "STOP" | "END_TURN" => "end_turn".to_string(),
                                                 "MAX_TOKENS" => "max_tokens".to_string(),
+                                                "FUNCTION_CALL" | "TOOL_CALLS" => "tool_use".to_string(),
                                                 other => other.to_lowercase(),
                                             });
                                             // Only break immediately for STOP/MAX_TOKENS; END_TURN can arrive
