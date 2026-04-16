@@ -2,225 +2,499 @@
 
 ## Overview
 
-ATLS Studio is a Tauri-based desktop application that provides an AI-powered cognitive development environment with managed working memory. It combines a Rust backend for core operations with a TypeScript/React frontend for orchestration and UI.
+ATLS Studio is a Tauri desktop application that wraps the ATLS cognitive runtime in a React/TypeScript UI and a Rust analysis backend. The system is organized around managed working memory: reads, searches, edits, verification results, and chat/tool artifacts are all represented as hash-addressed references that can be pinned, staged, compacted, archived, recalled, and verified across turns.
 
-## Technology Stack
+This document describes the major ATLS subsystems and the subsystems inside those subsystems so contributors can quickly identify where a behavior lives and which layer should own a change.
 
-| Layer | Technology | Purpose |
-|-------|-----------|----------|
-| Desktop Shell | Tauri 2.x | Native window, IPC, file system access |
-| Backend | Rust | Line edits, content hashing, workspace scanning, PTY, linting |
-| Frontend | TypeScript + React | Orchestration, AI integration, state management |
-| AI Providers | Anthropic, OpenAI, Google, Vertex, LM Studio | Multi-provider LLM integration |
-| Parsing | Tree-sitter | Multi-language symbol extraction and code navigation |
-| Linting | SWC | JavaScript/TypeScript syntax analysis and fix suggestions |
-| Hashing | FNV-1a (32-bit) | Deterministic content identity for all file operations |
+## System Boundaries
 
-## Core Concepts
+| Boundary | Primary implementation | Responsibility |
+|---|---|---|
+| Desktop shell | Tauri | Native windowing, IPC, filesystem and process access |
+| Frontend runtime | `atls-studio/src` | UI, orchestration, memory management, prompt assembly, tool loops |
+| Backend core | `atls-rs/crates/atls-core` | Parsing, queries, indexing, detector execution |
+| AI provider edge | provider adapters configured in Studio settings | Model selection, streaming, token accounting, tool-call exchange |
 
-### Engrams
+## Core Architectural Principles
 
-Engrams are hash-addressed units of knowledge — the fundamental building blocks of ATLS working memory. Each engram tracks:
+1. **Hash-addressed memory first** — content is tracked by stable `h:XXXX` references rather than by temporary UI state.
+2. **Managed working memory** — active context is intentionally bounded; pinning, staging, compaction, archival, and recall are first-class operations.
+3. **Turn-based freshness** — reads and edits are tracked against revisions and turns so the runtime can detect stale context.
+4. **Batch-oriented execution** — the UI submits structured tool steps, while the runtime tracks read coverage, edit safety, and verification results.
+5. **Durable reasoning artifacts** — blackboard entries, task plans, and verification artifacts survive far longer than the transient prompt window.
 
-- **Content hash** — deterministic identity via FNV-1a
-- **Source** — file path, tool output, or derived origin
-- **Type** — file, search, tool-result, chat, staged, etc.
-- **Lifecycle state** — active → dormant → archived → evicted
-- **Annotations** — user-defined metadata and notes
-- **Synapses** — typed links between engrams
+## Top-Level Layer Map
 
-**Lifecycle States:**
-
-| State | Content | Visibility | Recovery |
-|-------|---------|-----------|----------|
-| Active | Full content in context | Current turn | Automatic |
-| Dormant | Digest only (~60 tokens) | Hash reference | `recall(h:XXXX)` |
-| Archived | Recallable by hash | Not visible | `recall(h:XXXX)` |
-| Evicted | Manifest entry only | Not visible | Re-read from disk |
-
-Pinning keeps an engram active across turns. Unpinned engrams deflate to dormant after one round. Edits inherit pin status from their source.
-
-### Universal Hash Pointer Protocol (UHPP)
-
-UHPP provides a unified syntax for referencing content by hash. All reads, edits, searches, and tool results return `h:XXXX` references.
-
-**Reference Types:**
-
-| Syntax | Purpose | Example |
-|--------|---------|----------|
-| `h:XXXX` | Basic hash reference | `h:cab239` |
-| `h:XXXX:15-22` | Line range | `` |
-| `h:XXXX:fn(name)` | Symbol reference | `h:cab239:fn(auth)` |
-| `h:XXXX:sig` | Signature shape | `{file:atls-studio/docs/ARCHITECTURE.md,imports:[],issues:[],related_files:[],symbols:[]}` |
-| `h:XXXX:fold` | Folded view | `{file:atls-studio/docs/ARCHITECTURE.md,imports:[],issues:[],related_files:[],symbols:[]}` |
-| `h:XXXX:imports` | Import section | `{file:atls-studio/docs/ARCHITECTURE.md,imports:[],issues:[],related_files:[],symbols:[]}` |
-| `h:XXXX:exports` | Export section | `{file:atls-studio/docs/ARCHITECTURE.md,imports:[],issues:[],related_files:[],symbols:[]}` |
-| `h:OLD..h:NEW` | Diff between versions | `h:abc..h:def` |
-| `h:$last` | Most recent hash | `h:$last` |
-| `h:@selector` | Set reference | `h:@head(src/api.ts)` |
-
-**Composition:** Modifiers can be chained — `h:XXXX:15-30:dedent`, `h:XXXX:fn(name):sig`
-
-### Hash Protocol (HPP)
-
-The Hash Protocol tracks chunk visibility and materialization state across turns:
-
-| Visibility | Description | Transition |
-|-----------|-------------|------------|
-| Materialized | Full content visible to model | On read/edit |
-| Referenced | Digest only, hash pointer | After turn ends |
-| Archived | Stored, recallable by hash | On unload |
-| Evicted | Manifest only, must re-read | On drop |
-
-### Blackboard
-
-A durable key-value store that persists across compaction, eviction, and session boundaries. Stores:
-
-- **Task plans** — goal, subtasks, progress
-- **Findings** — per-file/symbol analysis results (clear/bug/inconclusive)
-- **Edit records** — change history with rationale
-- **Cognitive rules** — user-defined reasoning constraints
-- **Status tracking** — examination progress and remaining work
-
-Artifact kinds: `plan`, `bug`, `repair`, `status`, `err`, `fix`, `edit`, `general`, `summary`, `fixplan`
-
-## Architecture Layers
-
-```
-┌─────────────────────────────────────────────┐
-│                  UI (React)                  │
-├─────────────────────────────────────────────┤
-│              Orchestrator                    │
-│  (task decomposition, multi-agent coord)     │
-├──────────┬──────────┬───────────────────────┤
-│ AI Service│ Subagent │   Batch Executor       │
-│ (providers│ Service  │ (positional rebase,    │
-│  streams) │ (4 types)│  snapshots, hashing)   │
-├──────────┴──────────┴───────────────────────┤
-│          Context Store + App Store           │
-│  (engrams, staging, BB, awareness cache)     │
-├─────────────────────────────────────────────┤
-│         Rust Backend (Tauri IPC)             │
-│  (line edits, batch query, workspace, PTY)   │
-└─────────────────────────────────────────────┘
+```text
+┌──────────────────────────────────────────────────────────┐
+│ React UI surface                                         │
+│ AiChat · CodeViewer · FileExplorer · AtlsPanel · Internals │
+├──────────────────────────────────────────────────────────┤
+│ Application orchestration                                │
+│ appStore: sessions, settings, workspaces, agent state    │
+├──────────────────────────────────────────────────────────┤
+│ Managed memory runtime                                   │
+│ contextStore + hashProtocol + round history              │
+├──────────────────────────────────────────────────────────┤
+│ Prompt and tool runtime                                  │
+│ contextHash + promptMemory + tokenCounter + batch tools  │
+├──────────────────────────────────────────────────────────┤
+│ Rust analysis core                                       │
+│ parser + query + indexer + detector                      │
+└──────────────────────────────────────────────────────────┘
 ```
 
-### Rust Backend (`src-tauri/src/`)
+## Subsystem Map
 
-**Line Edit Engine** (`lib.rs`):
-- Multi-action edits: `replace`, `insert_before`, `insert_after`, `delete`, `move`, `replace_body`
-- Automatic positional rebasing across sequential edits
-- Content hashing via FNV-1a for deterministic identity
-- Shadow editing with drift tolerance (finds content even when line numbers shift)
-- Body bounds detection: brace-based for JS/TS/Java/etc, indent-based for Python
-- Syntax validation with bracket balance hints after edits
-- Undo system with per-file snapshot stacks
+| Subsystem | Primary files | Nested subsystems |
+|---|---|---|
+| UI and application shell | `src/components/*`, `src/stores/appStore.ts` | chat/session model, workspace model, agent control plane, prompt metrics view |
+| Managed memory runtime | `src/stores/contextStore.ts`, `src/services/hashProtocol.ts` | engram registry, staging, blackboard, task planning, freshness/reconcile, auto-management |
+| Prompt construction | `src/utils/contextHash.ts`, `src/services/promptMemory.ts`, `src/utils/tokenCounter.ts` | digests and ref formatting, prompt-budget policy, provider-aware token counting |
+| Batch and tool execution | `src/utils/toon.ts`, `src/services/batch/intents.ts`, `src/services/batch/snapshotTracker.ts` | TOON serialization, line-per-step parsing, intent expansion, read-range awareness |
+| History and verification telemetry | `src/stores/roundHistoryStore.ts` | round snapshots, verification confidence, cost summaries |
+| Rust analysis core | `atls-rs/crates/atls-core/src/*` | parser, query engine, indexer, detector pipeline |
 
-**Batch Query Engine** (`batch_query/mod.rs`):
-- Central dispatcher for all async operations (~15k lines)
-- File I/O with hashing and undo history
-- Edit operations in draft (validate-only) and write modes with stale-hash protection
-- Refactoring: rename with consumer rewiring, move with import updates, extract with target creation
-- Code search via tree-sitter index and pattern matching
-- Verification: build/test command execution, SWC-based linting
-- Git operations: status, diff, stage, commit, push, log, reset, restore
-- Workspace scanning with framework detection and language statistics
+## Frontend Runtime
 
-**Additional Modules:**
-- `linter.rs` — SWC-powered JavaScript/TypeScript linting with fix suggestions
-- Workspace scanner — framework detection, `.atlsignore` support, language stats
-- PTY management — cross-platform pseudo-terminal for shell execution
+### 1. Application Shell and Orchestration Subsystem
 
-### TypeScript Services (`src/services/`)
+Primary module: `atls-studio/src/stores/appStore.ts`
 
-**Orchestrator** (`orchestrator.ts`):
-- Task decomposition into subtasks with dependency tracking
-- Multi-agent coordination with context transfer
-- File digests and research digests for inter-agent communication
+`appStore` is the top-level UI orchestration store. It is the place where the user-visible application state is assembled into a single runtime model.
 
-**AI Service** (`aiService.ts`):
-- Provider-agnostic integration (Anthropic, OpenAI, Google, Vertex, LM Studio)
-- Streaming responses with tool execution loops
-- Prompt assembly with context formatting
-- Batch step expansion for UI display
+#### Nested subsystems inside `appStore`
 
-**Batch Executor** (`batch/executor.ts`):
-- Positional rebasing: adjusts line numbers across sequential edits
-- Snapshot tracking with file content hashing
-- Context refresh after edits (hash forwarding, auto-stage)
-- Interruption detection (dry-run previews, confirmation gates, error pauses)
-- Impact auto-staging of related code
+| Nested subsystem | Key types | Responsibility |
+|---|---|---|
+| Chat/session model | `Message`, `MessagePart`, `MessageSegment`, `ChatSession` | Stores chat history, streamed assistant output, and tool-call presentation state |
+| Tool-call UI model | `MessageToolCall`, `ToolCall`, `ToolCallStatus`, `StreamChunk`, `StreamPart` | Tracks streaming tool inputs/outputs and how they appear in the chat surface |
+| Workspace/project model | `WorkspaceEntry`, `ProjectProfile`, `EntryManifestEntry`, `RootFileTree`, `FileNode`, `ScanStatus` | Represents open workspaces, project summaries, and explorer state |
+| Agent control plane | `Agent`, `ChatMode`, `AgentProgress`, `AgentPendingActionState`, `ToolLoopSteering` | Tracks active agent mode, progress, pending actions, and steering metadata |
+| Prompt/accounting view | `ContextUsage`, `PromptMetrics`, `CacheMetrics`, `LogicalCacheState`, `PromptSnapshot` | Exposes prompt-size and cache telemetry to the UI |
+| User settings | `Settings`, `AIProvider`, `ModelInfo`, `FocusProfile` | Stores provider choices, model configuration, and focus metadata |
 
-**Subagent Service** (`subagentService.ts`):
-- Four specialized agent types with different permission levels:
-  - **Retriever** — read-only search and analysis
-  - **Designer** — architecture research with blackboard write access
-  - **Coder** — full edit permissions with verification
-  - **Tester** — test writing and execution with iteration
-- Each receives compressed state snapshot (not growing chat history)
-- Isolated memory with dematerialization on completion
+#### What belongs here
 
-**History Compressor** (`historyCompressor.ts`):
-- Tool result deflation: replaces large outputs with hash references
-- Rolling summary: maintains compressed history of older interactions
-- Batch input stubbing: summarizes tool call parameters
-- Token estimation for budget management
+- Session lifecycle and title generation
+- Open-file and file-tree state
+- User settings and provider configuration
+- Agent progress and pending-action UI
+- Prompt metrics shown to the user
 
-**Hash Protocol** (`hashProtocol.ts`):
-- Chunk visibility lifecycle management
-- Turn-based materialization tracking
-- Scoped views for subagent isolation
-- Ref queries by source, type, recency, and custom selectors
+#### What does not belong here
 
-### State Management (`src/stores/`)
+- Chunk lifecycle and archival logic
+- Blackboard persistence rules
+- Prompt-budget admission policies
+- Batch step parsing or snapshot coverage logic
 
-**Context Store** (`contextStore.ts`, ~5000 lines):
-- Working memory: engram CRUD with lifecycle transitions
-- Staging area: pre-computed snippets with budget management (≤20k tokens)
-- Blackboard: persistent key-value store with artifact classification
-- Awareness cache: file content tracking for auto-staging related code
-- Task plans: subtask lifecycle with active tracking
-- Cognitive rules: user-defined reasoning constraints (session-scoped)
-- Auto-management: pressure-based eviction at 90% capacity
-- Memory events: audit trail for all operations
+Those responsibilities belong to the subsystems below.
 
-**App Store** (`appStore.ts`):
-- Chat sessions with message history and streaming state
-- Provider settings (API keys, model selection, temperature)
-- Project workspace configuration with framework detection
-- File tree structure and navigation state
-- Agent tracking with progress and pending actions
-- Context metrics (token counts, cache performance)
+### 2. UI Component Subsystem
 
-### Utilities (`src/utils/`)
+Primary entry points include:
 
-**UHPP Canonical Types** (`uhppCanonical.ts`):
-- Full type system for artifacts, slices, symbols, neighborhoods
-- Edit targets with eligible operations and safety constraints
-- Change sets with verification requirements
-- Hash identity with stratification (content, semantic, structural)
-- Shorthand operation types for batch compilation
+- `src/components/AiChat/index.tsx`
+- `src/components/CodeViewer/index.tsx`
+- `src/components/FileExplorer/index.tsx`
+- `src/components/AtlsPanel/index.tsx`
+- `src/components/AtlsInternals/index.tsx`
 
-**Hash Resolver** (`hashResolver.ts`):
-- Resolves `h:XXXX` references to content
-- Set references (`h:@selector`) for multi-hash operations
-- Recency refs (`h:$last`, `h:$last-N`) for intra-batch chaining
-- Modifier resolution: line ranges, shapes, symbols, patterns
-- Inline ref resolution in tool parameters
+These components are the rendering layer over the stores and services. They do not define the memory model; they consume it.
 
-## Operation Families
+Typical responsibilities:
 
-All operations are organized into 9 families with short codes for efficient routing:
+- `AiChat` renders streamed chat and tool loops
+- `CodeViewer` renders file content and hash-addressed slices
+- `FileExplorer` renders workspace structure and navigation state
+- `AtlsPanel` assembles the working surfaces into the ATLS shell
+- `AtlsInternals` exposes internal runtime state for inspection/debugging
 
-| Family | Operations | Short Codes |
-|--------|-----------|-------------|
-| **Discover** | search.code, search.symbol, search.usage, search.similar, search.issues, search.patterns, search.memory | sc, sy, su, sv, si, sp, sm |
-| **Understand** | read.context, read.shaped, read.lines, read.file, analyze.deps, analyze.calls, analyze.structure, analyze.impact, analyze.blast_radius, analyze.extract_plan | rc, rs, rl, rf, ad, ac, at, ai, ab, ax |
-| **Change** | change.edit, change.create, change.delete, change.refactor, change.rollback, change.split_module | ce, cc, cd, cf, cb, cm |
-| **Verify** | verify.build, verify.test, verify.lint, verify.typecheck | vb, vt, vl, vk |
-| **Session** | plan, advance, status, pin, unpin, stage, unstage, compact, unload, drop, recall, stats, debug, diagnose, bb.write, bb.read, bb.delete, bb.list, rule, emit, shape, load, compact_history | spl, sa, ss, pi, pu, sg, ust, pc, ulo, dro, rec, st, db, dg, bw, br, bd, bl, ru, em, sh, ld, ch |
-| **Annotation** | engram, note, link, retype, split, merge, design | eng, nn, nk, nr, ns, nm, nd |
-| **Delegate** | retrieve, design, code, test | dr, dd, dc, dt |
+## Managed Memory Runtime
+
+### 3. Context Store Subsystem
+
+Primary module: `atls-studio/src/stores/contextStore.ts`
+
+`contextStore` is the heart of ATLS working memory. It owns the live chunk graph, the archived/dropped state, staging, blackboard artifacts, task plans, awareness data, and memory telemetry.
+
+#### Nested subsystems inside `contextStore`
+
+| Nested subsystem | Key types/functions | Responsibility |
+|---|---|---|
+| Engram registry | `ContextChunk`, `findChunkByRef`, `findOrPromoteEngram` | Stores active memory objects and resolves hash references |
+| Stage manager | `StagedSnippet`, `findStagedByRef`, stage priority helpers | Holds prepared snippets that are cheaper than full chunks but more concrete than BB notes |
+| Blackboard | `BlackboardEntry`, `parseBbKey`, `inferBbFilePath` | Persists findings, plans, status, and other durable reasoning artifacts |
+| Task planner | `TaskDirective`, `SubTask`, `TaskPlan`, `session.advance` state transitions | Tracks subtask progress and context manifests for multi-step work |
+| Awareness and read coverage | `ReadSpan`, `AwarenessCacheEntry` | Remembers which files and ranges have already been examined |
+| Freshness/reconcile engine | revision resolvers, `reconcile*` helpers, `refreshRoundEnd` | Revalidates active/staged/archived state against current disk revisions |
+| Auto-management and retention | compaction/drop heuristics, archive eviction, relief passes | Keeps working memory inside token and retention budgets |
+| Telemetry and diagnostics | `MemoryEvent`, `MemoryTelemetrySummary`, read-spin tracking, verify artifacts | Explains what the memory system did and why |
+
+#### 3.1 Engram registry
+
+An engram is the primary unit of remembered content. In the store it is represented by `ContextChunk`, which tracks at least:
+
+- content hash and short hash
+- source path or derived source
+- chunk type and view kind
+- token count and compaction state
+- freshness/revision metadata
+- annotations and synaptic links
+- last-accessed/created timestamps
+
+The registry is broader than just active memory. `contextStore` also manages:
+
+- active chunks currently in working memory
+- archived chunks that remain recallable
+- staged snippets prepared for prompt inclusion
+- dropped manifest entries that preserve minimal recall metadata after full eviction
+
+#### 3.2 Stage subsystem
+
+Staging is a subsystem of memory, not just a UI convenience. `StagedSnippet` entries let the runtime keep precise slices, shapes, or snippets available without materializing entire files.
+
+Stage management includes:
+
+- short-hash lookup for staged items
+- persistent anchor vs transient payload handling
+- budget pruning and deduplication
+- restoration checks against disk revisions
+- promotion from stage into full chunks when richer memory is needed
+
+#### 3.3 Blackboard subsystem
+
+The blackboard is ATLS's durable reasoning layer. Whereas chunks and staged snippets are prompt-facing memory objects, BB entries are long-lived artifacts such as:
+
+- findings per file/symbol
+- task plans and progress summaries
+- repair or fix records
+- high-value status notes
+- derived dependency knowledge tied back to sources
+
+This is why investigations, reviews, and multi-step tasks can survive compaction and session transitions better than raw prompt context.
+
+#### 3.4 Task and subtask subsystem
+
+Task planning is embedded directly into the context runtime. `TaskDirective` and `SubTask` allow the runtime to track:
+
+- the active subtask
+- completed subtasks and summaries
+- context manifests tied to a subtask
+- automatic unload/archive behavior as work progresses
+
+This is the mechanism that turns a single chat request into a managed workflow instead of an unstructured conversation.
+
+#### 3.5 Freshness and reconciliation subsystem
+
+A large part of `contextStore` exists to prevent stale memory from being mistaken for current truth. The reconcile pipeline:
+
+- compares stored revisions with current revisions
+- invalidates derived shapes when the source file changes
+- marks content as suspect when safety cannot be guaranteed
+- reconciles active chunks, archived chunks, and staged snippets separately
+- refreshes round state at the end of a tool batch
+
+This subsystem is what makes hash-addressed memory safe enough to reuse across edits and turns.
+
+#### 3.6 Auto-management subsystem
+
+ATLS does not assume context can grow forever. The store continuously manages pressure through:
+
+- chunk compaction
+- low-value chunk dropping
+- archive eviction
+- staged-snippet pruning
+- protected-chat heuristics
+- telemetry about freed tokens and retention decisions
+
+This subsystem is essential to the project's cognitive-runtime model.
+
+### 4. Hash Protocol Subsystem
+
+Primary module: `atls-studio/src/services/hashProtocol.ts`
+
+`hashProtocol` is the lifecycle tracker for hash references. If `contextStore` is the memory database, `hashProtocol` is the visibility and recency protocol that explains what each reference currently means.
+
+#### Nested subsystems inside `hashProtocol`
+
+| Nested subsystem | Key APIs/types | Responsibility |
+|---|---|---|
+| Visibility model | `ChunkVisibility`, `materialize`, `dematerialize`, `archive`, `evict` | Tracks whether content is fully visible, digest-only, archived, or gone |
+| Turn accounting | `getTurn`, `advanceTurn`, `getTurnDelta` | Tracks recency and turn-based lifecycle changes |
+| Ref indexes | short-hash index helpers, `getRef`, `getLatestRefs` | Resolves stable refs to the latest known object |
+| Selector queries | `queryRefs`, `collectRefsWhere`, `getRefsBySource`, `getRefsByType` | Supports ref retrieval by scope rather than only by exact hash |
+| Scoped views | `ScopedHppView`, `createScopedView` | Supports isolated or filtered visibility for subagents/tools |
+
+#### Visibility states
+
+| State | Meaning |
+|---|---|
+| `materialized` | Full content is visible to the model/runtime |
+| `referenced` | Only digest/reference-level presence is kept in working memory |
+| `archived` | Not in active working memory, but recallable |
+| `evicted` | No working-memory content remains; only minimal recovery paths exist |
+
+### 5. UHPP and Reference Semantics
+
+ATLS exposes memory through hash-pointer syntax rather than through opaque internal IDs. In practice that means contributors will see references such as:
+
+- `h:XXXX` for a content object
+- `h:XXXX:15-30` for a line slice
+- `h:XXXX:sig` for a shaped signature view
+- `h:XXXX:fn(name)` for a symbol-oriented slice
+- `h:OLD..h:NEW` for a change/diff relationship
+
+The reference surface is implemented collaboratively:
+
+- `contextHash.ts` formats ref strings and digest views
+- `contextStore.ts` resolves refs back to chunks or staged snippets
+- `hashProtocol.ts` tracks the lifecycle/freshness of those refs
+
+## Prompt Construction and Token Budgeting
+
+### 6. Digest and Ref Formatting Subsystem
+
+Primary module: `atls-studio/src/utils/contextHash.ts`
+
+`contextHash.ts` is the formatting and digest layer that converts large runtime objects into compact prompt-ready views.
+
+#### Nested responsibilities
+
+- deterministic 16-hex content hashing with 6-char display hashes
+- chunk-tag and chunk-ref formatting/parsing
+- symbol and code digest generation
+- edit-ready digest generation
+- search/symbol/dependency summary extraction
+- line slicing with optional raw vs numbered output
+- diff and shape-ref formatting
+
+This module is why the rest of the runtime can speak in short, stable ref strings instead of repeating large bodies of content.
+
+### 7. Prompt-Budget Policy Subsystem
+
+Primary module: `atls-studio/src/services/promptMemory.ts`
+
+`promptMemory.ts` defines how staged/context items are classified for prompt admission.
+
+#### Nested responsibilities
+
+- persistent-anchor detection
+- stage admission classes (`persistentAnchor`, `transientAnchor`, `transientPayload`)
+- persistence policies (`persist`, `doNotPersist`, `persistAsDemoted`)
+- eviction reasons (`stale`, `duplicated`, `overBudget`, `demoted`, `manual`, `migration`)
+- prompt-pressure bucket accounting
+- layer-budget creation and total-prompt estimation
+
+This subsystem gives the runtime policy language for deciding what survives into the next prompt.
+
+### 8. Token Counting Subsystem
+
+Primary module: `atls-studio/src/utils/tokenCounter.ts`
+
+`tokenCounter.ts` is the expensive-counting counterpart to the cheaper heuristics in `contextHash.ts`.
+
+#### Nested responsibilities
+
+- async and batch token counting
+- provider/model-sensitive caching via an LRU cache
+- automatic cache invalidation when provider/model changes
+- tool-definition token counting
+- heuristic-vs-real drift recording and reporting
+- synchronous fallback counting for hot paths
+
+Together, `contextHash.ts`, `promptMemory.ts`, and `tokenCounter.ts` form the prompt subsystem-of-subsystems: formatting, policy, and measurement.
+
+## Batch and Tool Execution Runtime
+
+### 9. TOON Serialization and Batch Parsing Subsystem
+
+Primary module: `atls-studio/src/utils/toon.ts`
+
+TOON is the compact transport format used by the frontend/runtime for large structured values and batch results.
+
+#### Nested responsibilities
+
+- serializing arbitrary runtime values to TOON
+- compacting repeated file-based entries by file grouping
+- formatting results for display/token estimation
+- converting relaxed JS-like objects to JSON
+- tokenizing line-per-step batch syntax
+- parsing parameter values and dataflow shorthands
+- expanding `q` batch text into normalized step objects
+- serializing message content for token estimation
+
+This subsystem is the textual protocol bridge between human-friendly batch syntax and structured execution objects.
+
+### 10. Intent Expansion Subsystem
+
+Primary module: `atls-studio/src/services/batch/intents.ts`
+
+The intent layer lets higher-level operations expand into concrete primitive tool steps.
+
+#### Nested responsibilities
+
+- intent registration and lookup
+- building an execution context from pinned/staged/BB memory
+- resolving intent ops into primitive steps
+- estimating intent step counts
+- pressure-aware behavior when memory is tight
+- computing next likely target files from awareness, staging, and dependency BB data
+- checking whether a file is already staged or pinned before requesting more reads
+
+This is the part of the batch runtime that makes macros like understand, investigate, or edit-aware flows possible without hardcoding them in the UI.
+
+### 11. Snapshot and Read-Coverage Subsystem
+
+Primary module: `atls-studio/src/services/batch/snapshotTracker.ts`
+
+`SnapshotTracker` is a guardrail subsystem for file-aware operations.
+
+#### Nested responsibilities
+
+- canonical snapshot hash normalization
+- awareness-level tracking
+- range merging and coverage checks
+- read-kind tracking (`canonical`, `shaped`, `cached`, `lines`)
+- determining whether an edit is inside previously read coverage
+
+This subsystem protects the edit loop from mutating regions the agent has not actually examined.
+
+### 12. Operation Families
+
+ATLS groups tool operations into consistent families so the UI, docs, and batch runtime can reason about them uniformly.
+
+| Family | Examples | Purpose |
+|---|---|---|
+| Discover | `search.code`, `search.symbol`, `search.issues` | Find targets |
+| Understand | `read.context`, `read.shaped`, `read.lines`, `analyze.*` | Load or summarize code |
+| Change | `change.edit`, `change.refactor`, `change.create` | Mutate files |
+| Verify | `verify.build`, `verify.test`, `verify.lint`, `verify.typecheck` | Confirm validity |
+| Session | `plan`, `advance`, `pin`, `stage`, `bb.write`, `recall` | Manage memory and workflow |
+| Annotate | `engram`, `note`, `link`, `split`, `merge` | Enrich memory objects |
+| Delegate | `retrieve`, `design`, `code`, `test` | Use specialized subagents |
+| System | `exec`, `git`, `workspaces`, `help` | System-level integration |
+| Intent | `understand`, `edit`, `diagnose`, `survey`, `extract` | High-level macros over primitive steps |
+
+## History and Verification Telemetry
+
+### 13. Round History Subsystem
+
+Primary module: `atls-studio/src/stores/roundHistoryStore.ts`
+
+Round history is the audit and replay layer for multi-turn execution.
+
+#### Nested responsibilities
+
+- `RoundSnapshot` persistence
+- verification-confidence labeling (`fresh`, `cached`, `stale-suspect`, `obsolete`)
+- main-chat round filtering
+- cost statistics over prior rounds
+- bounded snapshot retention
+
+This subsystem matters because ATLS is not just a stateless chat UI; it tracks whether previous verification results are still trustworthy.
+
+## Rust Analysis Core
+
+### 14. Parser Subsystem
+
+Primary module: `atls-rs/crates/atls-core/src/parser/mod.rs`
+
+The parser subsystem exports the language/runtime pieces needed to parse and capture code structure:
+
+- language loading and support checks
+- parser creation
+- registry management
+- query compilation/execution helpers
+- capture extraction utilities
+
+### 15. Query Subsystem
+
+Primary module: `atls-rs/crates/atls-core/src/query/mod.rs`
+
+The query subsystem exposes the `QueryEngine` and `QueryError` types used to execute structured code queries against parsed sources.
+
+### 16. Indexer Subsystem
+
+Primary module: `atls-rs/crates/atls-core/src/indexer/mod.rs`
+
+The indexer subsystem provides the typed outputs that higher layers rely on for static structure:
+
+- `ParseResult`
+- `ImportInfo`
+- `CallInfo`
+
+This is the analysis layer that turns raw parsing into import/call metadata.
+
+### 17. Detector Subsystem
+
+Primary module: `atls-rs/crates/atls-core/src/detector/mod.rs`
+
+The detector subsystem exports:
+
+- `PatternLoader`
+- `DetectorRegistry`
+- `FocusMatrix`
+- `TreeSitterDetector`
+- `DetectionRunner`
+
+This layer is responsible for reusable pattern/detection logic over parsed codebases.
+
+## Cross-Subsystem Flows
+
+### Read and Understand Flow
+
+1. The UI requests a read/search through the batch runtime.
+2. Batch parsing and intent expansion normalize the request.
+3. Snapshot tracking records what file/range has been examined.
+4. `contextStore` materializes chunks or staged snippets.
+5. `hashProtocol` updates reference visibility and recency.
+6. `contextHash` formats compact refs/digests for prompt reuse.
+
+### Edit and Verify Flow
+
+1. A change request is expanded into concrete tool steps.
+2. Snapshot coverage ensures the target region was actually read.
+3. The mutation produces fresh hashes for changed content.
+4. `contextStore` reconciles old and new derived state.
+5. Verification artifacts and round history record whether the result is still trustworthy.
+
+### Plan and Investigate Flow
+
+1. A task plan enters the blackboard/task subsystem.
+2. Findings are written as durable BB artifacts rather than only as chat text.
+3. Memory pressure may compact or unload raw chunks while BB state remains.
+4. Later rounds recover the reasoning path from BB plus hash refs.
+
+## Where to Extend the System
+
+| If you need to change... | Start here |
+|---|---|
+| Chat/session UI behavior | `src/stores/appStore.ts` and relevant React components |
+| Memory lifecycle, BB behavior, staging, reconcile | `src/stores/contextStore.ts` |
+| Ref visibility or turn-based lifecycle | `src/services/hashProtocol.ts` |
+| Digest formatting or hash/ref presentation | `src/utils/contextHash.ts` |
+| Prompt budgets and stage-admission policy | `src/services/promptMemory.ts` |
+| Real token counting and token cache behavior | `src/utils/tokenCounter.ts` |
+| Batch syntax or TOON transport | `src/utils/toon.ts` |
+| Intent-to-step expansion | `src/services/batch/intents.ts` |
+| Read coverage and snapshot safety | `src/services/batch/snapshotTracker.ts` |
+| Verification history and trust labeling | `src/stores/roundHistoryStore.ts` |
+| Core parsing/query/index/detection capabilities | `atls-rs/crates/atls-core/src/*` |
+
+## Summary
+
+ATLS is not a single orchestrator module; it is a layered cognitive runtime made from several cooperating subsystem trees:
+
+- the **application shell** that manages user-visible sessions and agent state
+- the **managed memory runtime** that owns engrams, staging, BB artifacts, and freshness
+- the **prompt subsystem** that formats, budgets, and measures context
+- the **batch runtime** that parses, expands, and safely executes tool steps
+- the **history subsystem** that tracks verification trust over time
+- the **Rust analysis core** that parses, indexes, queries, and detects structure in code
+
+Understanding ATLS means understanding those subsystem boundaries and the contracts between them. This document should be the starting map for that work.
 | **System** | exec, git, workspaces, help | xe, xg, xw, xh |
 | **Intent** | understand, edit, edit_multi, investigate, diagnose, survey, refactor, create, test, search_replace, extract | iu, ie, im, iv, id, srv, ifr, ic, it, is, ix |
 
