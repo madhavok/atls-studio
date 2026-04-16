@@ -1595,6 +1595,78 @@ export function isChatRunning(): boolean {
   return currentAbortController !== null;
 }
 
+const WIRE_LOG_DELTA_MAX = 160;
+const WIRE_LOG_TOOL_INPUT_MAX = 2400;
+
+function truncateForWireLog(s: string, max: number): string {
+  if (s.length <= max) return s;
+  return `${s.slice(0, max)}…[+${s.length - max} chars]`;
+}
+
+/** Compact stream chunk for debug log (avoid multi-megabyte lines from deltas). */
+function streamChunkToLogPayload(chunk: StreamChunk): Record<string, unknown> {
+  switch (chunk.type) {
+    case 'text_delta':
+      return { type: chunk.type, id: chunk.id, delta: truncateForWireLog(chunk.delta, WIRE_LOG_DELTA_MAX), deltaLen: chunk.delta.length };
+    case 'reasoning_delta':
+      return { type: chunk.type, id: chunk.id, delta: truncateForWireLog(chunk.delta, WIRE_LOG_DELTA_MAX), deltaLen: chunk.delta.length };
+    case 'tool_input_delta':
+      return {
+        type: chunk.type,
+        tool_call_id: chunk.tool_call_id,
+        preview: truncateForWireLog(chunk.input_text_delta, 200),
+        len: chunk.input_text_delta.length,
+      };
+    case 'tool_input_available': {
+      const raw = JSON.stringify(chunk.input);
+      return {
+        type: chunk.type,
+        tool_call_id: chunk.tool_call_id,
+        tool_name: chunk.tool_name,
+        input: truncateForWireLog(raw, WIRE_LOG_TOOL_INPUT_MAX),
+        inputLen: raw.length,
+      };
+    }
+    case 'usage':
+      return {
+        type: chunk.type,
+        input_tokens: chunk.input_tokens,
+        output_tokens: chunk.output_tokens,
+        cache_creation_input_tokens: chunk.cache_creation_input_tokens,
+        cache_read_input_tokens: chunk.cache_read_input_tokens,
+        openai_cached_tokens: chunk.openai_cached_tokens,
+        cached_content_tokens: chunk.cached_content_tokens,
+      };
+    case 'stop_reason':
+      return { type: chunk.type, reason: chunk.reason };
+    case 'status':
+      return { type: chunk.type, message: chunk.message };
+    case 'error':
+      return { type: chunk.type, error_text: truncateForWireLog(chunk.error_text, 500) };
+    case 'text_start':
+    case 'text_end':
+    case 'reasoning_start':
+    case 'reasoning_end':
+      return { type: chunk.type, id: chunk.id };
+    case 'tool_input_start':
+      return { type: chunk.type, tool_call_id: chunk.tool_call_id, tool_name: chunk.tool_name };
+    case 'start_step':
+    case 'finish_step':
+    case 'done':
+      return { type: chunk.type };
+    default: {
+      const u = chunk as { type?: string };
+      return { type: u.type ?? 'unknown' };
+    }
+  }
+}
+
+function appendStreamWireLogLine(round: number, streamId: string, chunk: StreamChunk): void {
+  const payload = streamChunkToLogPayload(chunk);
+  const line = `${new Date().toISOString()}\tR${round}\t${streamId.slice(0, 8)}\t${JSON.stringify(payload)}`;
+  useAppStore.getState().pushStreamWireLogLine(line);
+}
+
 /**
  * Stream chat via Tauri backend - handles all providers
  * Implements full tool loop: AI → tools → AI → tools → ... → done
@@ -1975,6 +2047,7 @@ async function streamChatViaTauri(
           const { value: chunk, done } = await reader.read();
           if (done) break;
           if (!chunk) continue;
+          appendStreamWireLogLine(round, streamId, chunk);
           switch (chunk.type) {
           case 'text_start':
             safeCallbacks.onTextStart?.(chunk.id);

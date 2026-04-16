@@ -162,6 +162,71 @@ const ContextPanel = memo(function ContextPanel() {
   );
 });
 
+/** Last backend stream chunks (ring buffer); payloads may be truncated for size. */
+const StreamWireLogModal = memo(function StreamWireLogModal({ onClose }: { onClose: () => void }) {
+  const lines = useAppStore((s) => s.streamWireLogLines);
+  const [copied, setCopied] = useState(false);
+  const copiedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const text = useMemo(() => lines.join('\n'), [lines]);
+
+  const handleCopy = useCallback(() => {
+    navigator.clipboard.writeText(text).catch((e) => console.warn('[StreamWireLog] Clipboard write failed:', e));
+    setCopied(true);
+    if (copiedTimerRef.current) clearTimeout(copiedTimerRef.current);
+    copiedTimerRef.current = setTimeout(() => setCopied(false), 1500);
+  }, [text]);
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [onClose]);
+
+  useEffect(() => () => {
+    if (copiedTimerRef.current) clearTimeout(copiedTimerRef.current);
+  }, []);
+
+  return (
+    <div className="absolute inset-0 z-[21] bg-studio-bg/95 backdrop-blur-sm flex flex-col">
+      <div className="flex items-start justify-between gap-2 px-3 py-2 border-b border-studio-border shrink-0">
+        <div>
+          <h3 className="text-xs font-semibold text-studio-title uppercase tracking-wide">Stream wire log</h3>
+          <p className="text-[10px] text-studio-muted mt-0.5 max-w-md">
+            Last {lines.length} line{lines.length === 1 ? '' : 's'} (cap 500). Long text, reasoning, and tool JSON deltas are truncated in the log.
+          </p>
+        </div>
+        <div className="flex items-center gap-1 shrink-0">
+          <button
+            type="button"
+            onClick={handleCopy}
+            className="px-1.5 py-0.5 text-[10px] text-studio-muted hover:text-studio-text transition-colors"
+            title="Copy full log text"
+          >
+            {copied ? 'Copied' : 'Copy'}
+          </button>
+          <button
+            type="button"
+            onClick={onClose}
+            className="p-1 text-studio-muted hover:text-studio-text transition-colors"
+            title="Close"
+          >
+            <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M18 6L6 18M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+      </div>
+      <pre className="flex-1 min-h-0 overflow-auto px-3 py-2 text-[10px] font-mono text-studio-text-secondary whitespace-pre-wrap break-all">
+        {lines.length === 0
+          ? 'No stream chunks recorded yet. Send a message (wire log clears on each new send; Continue appends).'
+          : text}
+      </pre>
+    </div>
+  );
+});
+
 // Agent Status Card - fixed at top of chat, shows progress
 const AgentStatusCard = memo(function AgentStatusCard() {
   const progress = useAppStore((s) => s.agentProgress);
@@ -2219,6 +2284,7 @@ export function AiChat() {
   const [showHistory, setShowHistory] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showTokenMetrics, setShowTokenMetrics] = useState(false);
+  const [showStreamWireLog, setShowStreamWireLog] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const userScrolledUpRef = useRef(false);
@@ -2910,6 +2976,8 @@ export function AiChat() {
         pendingToolCallsRef.current.clear();
         lastToolCallUpdateRef.current = Date.now();
       };
+
+      useAppStore.getState().clearStreamWireLog();
       
       await streamChat(getAIConfig(), chatMessages, {
         onToken: (token) => {
@@ -3646,6 +3714,16 @@ export function AiChat() {
             </svg>
           </button>
           <button
+            type="button"
+            onClick={() => setShowStreamWireLog(true)}
+            className={`p-1 transition-colors ${showStreamWireLog ? 'text-studio-accent' : 'text-studio-muted hover:text-violet-400'}`}
+            title="View last 500 backend stream chunk lines (truncated deltas; Copy in panel)"
+          >
+            <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M4 6h16M4 12h10M4 18h14" strokeLinecap="round" />
+            </svg>
+          </button>
+          <button
             onClick={() => setShowTokenMetrics(!showTokenMetrics)}
             className={`p-1 transition-colors ${showTokenMetrics ? 'text-studio-accent' : 'text-studio-muted hover:text-cyan-400'}`}
             title="Tool token metrics"
@@ -3982,6 +4060,10 @@ export function AiChat() {
       {/* Tool Token Metrics Modal */}
       {showTokenMetrics && (
         <ToolTokenMetrics onClose={() => setShowTokenMetrics(false)} />
+      )}
+
+      {showStreamWireLog && (
+        <StreamWireLogModal onClose={() => setShowStreamWireLog(false)} />
       )}
 
       {/* Settings Modal */}

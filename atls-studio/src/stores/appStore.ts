@@ -655,6 +655,10 @@ interface AppState {
   resetCacheMetrics: () => void;
   lastPromptSnapshot: PromptSnapshot | null;
   setLastPromptSnapshot: (snapshot: PromptSnapshot) => void;
+  /** Last N lines of raw provider stream chunks (debug). */
+  streamWireLogLines: string[];
+  pushStreamWireLogLine: (line: string) => void;
+  clearStreamWireLog: () => void;
   logicalCache: LogicalCacheState;
   updateLogicalCache: (state: Partial<LogicalCacheState>) => void;
   resetLogicalCache: () => void;
@@ -895,7 +899,7 @@ export const useAppStore = create<AppState>((set) => ({
     return { messages: newMessages };
   }),
   
-  clearMessages: () => set({ messages: [] }),
+  clearMessages: () => set({ messages: [], streamWireLogLines: [] }),
   
   newChat: () => set((state) => {
     // Just clear state - database persistence handled by useChatPersistence
@@ -927,6 +931,7 @@ export const useAppStore = create<AppState>((set) => ({
         lastRequestCachedTokens: undefined,
       },
       lastPromptSnapshot: null,
+      streamWireLogLines: [],
     };
   }),
   
@@ -968,6 +973,7 @@ export const useAppStore = create<AppState>((set) => ({
           lastRequestCachedTokens: undefined,
         },
         lastPromptSnapshot: null,
+        streamWireLogLines: [],
       };
     }
     return { chatSessions: newSessions };
@@ -1264,6 +1270,11 @@ export const useAppStore = create<AppState>((set) => ({
 
   lastPromptSnapshot: null,
   setLastPromptSnapshot: (snapshot) => set({ lastPromptSnapshot: snapshot }),
+  streamWireLogLines: [],
+  pushStreamWireLogLine: (line) => set((s) => ({
+    streamWireLogLines: [...s.streamWireLogLines, line].slice(-500),
+  })),
+  clearStreamWireLog: () => set({ streamWireLogLines: [] }),
 
   logicalCache: {
     staticHit: null, bp3Hit: null,
