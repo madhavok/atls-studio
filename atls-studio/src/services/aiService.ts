@@ -1880,6 +1880,8 @@ async function streamChatViaTauri(
       });
 
       const invokeFn = async () => {
+        // Clear transient stream banners (e.g. output-cap notice, prior rate-limit line) before a new request.
+        safeCallbacks.onStatus?.('');
         if (config.provider === 'anthropic') {
           await invoke('stream_chat_anthropic', {
             apiKey: config.apiKey,
@@ -2087,6 +2089,9 @@ async function streamChatViaTauri(
           }
           case 'stop_reason':
             stopReason = chunk.reason;
+            if (chunk.reason === 'max_tokens') {
+              safeCallbacks.onStatus?.('Output token limit reached — continuing…');
+            }
             break;
           case 'status':
             safeCallbacks.onStatus?.(chunk.message);
@@ -2490,6 +2495,11 @@ async function streamChatViaTauri(
 
         // Exhausted auto-continues — stop and enable manual continue
         console.log('[aiService] Continuation logic exhausted, enabling manual continue');
+        if (stopReason === 'max_tokens') {
+          safeCallbacks.onStatus?.(
+            'Output token limit reached — auto-continue exhausted. Raise Max Tokens or Max Iterations, or use Continue.',
+          );
+        }
         useAppStore.getState().setAgentProgress({
           status: 'stopped',
           stoppedReason: `Auto-continue limit (${maxAutoContinues}) reached`,

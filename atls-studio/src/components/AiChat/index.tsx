@@ -1884,7 +1884,8 @@ const ToolSegmentBubble = memo(function ToolSegmentBubble({ toolCall }: { toolCa
         {getStatusIcon()}
         <span className="font-medium text-sm">{friendly}</span>
         {getStatusLabel() && <span className="text-xs text-studio-muted italic">{getStatusLabel()}</span>}
-        {detail && !getStatusLabel() && <span className="text-xs text-studio-muted truncate max-w-[200px]" title={detail}>{truncate(detail)}</span>}
+        {/* Always show detail when present — hiding it on failed/pending hid batch step hints (only "ATLS" + Failed). */}
+        {detail && <span className="text-xs text-studio-muted truncate max-w-[200px]" title={detail}>{truncate(detail)}</span>}
         {hasDetails && (
           <svg 
             className={`w-3 h-3 ml-auto transition-transform ${expanded ? 'rotate-180' : ''}`}
