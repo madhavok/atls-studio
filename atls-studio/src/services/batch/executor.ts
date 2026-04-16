@@ -184,7 +184,12 @@ function computeSingleEditNetDelta(e: Record<string, unknown>): number {
   if (action === 'replace_body') {
     const bodySpan = typeof e._resolved_body_span === 'number' ? e._resolved_body_span : 0;
     if (bodySpan > 0) return contentLines - bodySpan;
-    return 0; // body span unknown pre-apply; P2 supplies _resolved_body_span from Rust response
+    // Body span unknown during intra-step rebase (pre-apply). _resolved_body_span is
+    // backfilled from Rust's edits_resolved AFTER the handler runs, so it only helps
+    // inter-step rebase. Limitation: if replace_body changes line count and another le
+    // entry in the same step targets lines below it, the shift will be wrong.
+    // Mitigation: replace_body should be the sole le entry in its step.
+    return 0;
   }
   return 0;
 }

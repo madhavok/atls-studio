@@ -17,6 +17,30 @@ function ok(summary: string, refs: string[] = [], content?: unknown): StepOutput
   return { kind: 'edit_result', ok: true, refs, summary, content };
 }
 
+function formatEditsResolvedCompact(result: unknown): string {
+  if (!result || typeof result !== 'object') return '';
+  const obj = result as Record<string, unknown>;
+  const resolved = obj.edits_resolved ?? (obj as { drafts?: unknown[] }).drafts;
+  let entries: unknown[] | undefined;
+  if (Array.isArray(resolved)) {
+    entries = resolved;
+  } else if (Array.isArray((obj as { drafts?: unknown[] }).drafts)) {
+    for (const d of (obj as { drafts?: unknown[] }).drafts!) {
+      if (d && typeof d === 'object' && Array.isArray((d as Record<string, unknown>).edits_resolved)) {
+        entries = (entries ?? []).concat((d as Record<string, unknown>).edits_resolved as unknown[]);
+      }
+    }
+  }
+  if (!entries || entries.length === 0) return '';
+  const parts = entries.map((e) => {
+    if (!e || typeof e !== 'object') return '';
+    const r = e as Record<string, unknown>;
+    return `L${r.resolved_line} ${r.action}${r.lines_affected ? ` ${r.lines_affected}L` : ''}`;
+  }).filter(Boolean);
+  if (parts.length === 0) return '';
+  return `edits_resolved:[${parts.join(',')}]`;
+}
+
 function err(summary: string): StepOutput {
   return { kind: 'edit_result', ok: false, refs: [], summary, error: summary };
 }
@@ -416,10 +440,23 @@ async function recordEditSummary(result: unknown, params: Record<string, unknown
         } catch { /* diff resolution is best-effort */ }
       }
 
+      let resolvedInfo = '';
+      const entryResolved = entry.edits_resolved as unknown[] | undefined;
+      const topResolved = !entryResolved ? (r.edits_resolved as unknown[] | undefined) : undefined;
+      const resolutions = entryResolved ?? topResolved;
+      if (Array.isArray(resolutions) && resolutions.length > 0) {
+        const compact = resolutions.map((re) => {
+          if (!re || typeof re !== 'object') return '';
+          const rv = re as Record<string, unknown>;
+          return `L${rv.resolved_line} ${rv.action}${rv.lines_affected ? ` ${rv.lines_affected}L` : ''}`;
+        }).filter(Boolean);
+        if (compact.length > 0) resolvedInfo = ` resolved:[${compact.join(',')}]`;
+      }
+
       const awareness = store.getAwareness(file);
       store.setBlackboardEntry(
         `edit:${basename}`,
-        `${shortHash}${lineInfo}${deltaInfo}${diffRef} @${Date.now()}${diffPreview}`,
+        `${shortHash}${lineInfo}${deltaInfo}${diffRef}${resolvedInfo} @${Date.now()}${diffPreview}`,
         { filePath: file, snapshotHash: awareness?.snapshotHash },
       );
     }
@@ -1786,7 +1823,8 @@ export const handleEdit: OpHandler = async (params, ctx) => {
       return errWithContent(formatEditErrorSummary(enrichedErrorPayload), enrichedErrorPayload);
     }
     const refs = extractRefs(result);
-    let summary = formatResult(result);
+    const resolvedLine = formatEditsResolvedCompact(result);
+    let summary = resolvedLine ? `${resolvedLine}\n${formatResult(result)}` : formatResult(result);
     if (isMutating && hasLintErrorsInResult(result)) {
       const hint = formatLintErrorHint(result);
       summary = `[LINT ERRORS] ${hint} — see lints.top_issues\n${summary}`;

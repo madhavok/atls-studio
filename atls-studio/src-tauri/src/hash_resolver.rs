@@ -1938,7 +1938,7 @@ pub fn batch_edits(
             None
         };
 
-        let (new_content, warnings, _resolutions) = crate::apply_line_edits_with_shadow(
+        let (new_content, warnings, resolutions) = crate::apply_line_edits_with_shadow(
             &entry.line_edits,
             &content,
             shadow_for_batch.as_deref(),
@@ -1998,6 +1998,9 @@ pub fn batch_edits(
         });
         if !warnings.is_empty() {
             result_entry["line_edit_notices"] = serde_json::json!(warnings);
+        }
+        if let Some(ref res) = resolutions {
+            result_entry["edits_resolved"] = serde_json::to_value(res).unwrap_or_else(|_| serde_json::json!([]));
         }
         results.push(result_entry);
     }

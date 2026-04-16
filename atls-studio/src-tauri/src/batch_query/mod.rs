@@ -12135,7 +12135,7 @@ pub async fn atls_batch_query(
                     found.ok_or_else(|| format!("Hash '{}' not found in undo store. Use draft to create content first. Pass only the hash (e.g. h:6169ed), not the full '[edit result] h:X â†’ path' string.", hash_ref_raw))?
                 };
 
-                let (new_content, _warnings, _resolutions) = apply_line_edits(&old_content, &edits)?;
+                let (new_content, _warnings, revise_resolutions) = apply_line_edits(&old_content, &edits)?;
                 let mut written_content = new_content.clone();
                 let mut new_hash = content_hash(&written_content);
                 let file_path = entry_file_path.clone();
@@ -12274,6 +12274,7 @@ pub async fn atls_batch_query(
                             "Disk write failed — see write_errors"
                         }
                     });
+                    revise_obj["edits_resolved"] = serde_json::to_value(&revise_resolutions).unwrap_or_else(|_| serde_json::json!([]));
                     if !write_ok {
                         if let Some(ref err) = write_err_msg {
                             revise_obj["error"] = serde_json::json!(format!("Failed to write {}: {}", file_path, err));
@@ -12314,7 +12315,7 @@ pub async fn atls_batch_query(
                 let old_short = format!("h:{}", &old_hash[..std::cmp::min(8, old_hash.len())]);
                 let diff_ref = format!("{}..{}", old_short, new_short);
 
-                Ok(serde_json::json!({
+                let mut revise_buf_obj = serde_json::json!({
                     "mode": "revise",
                     "hash": new_hash.clone(),
                     "parent_hash": old_hash.clone(),
@@ -12327,7 +12328,9 @@ pub async fn atls_batch_query(
                     "diff_ref": diff_ref,
                     "lints": lint_summary,
                     "_next": next_hint
-                }))
+                });
+                revise_buf_obj["edits_resolved"] = serde_json::to_value(&revise_resolutions).unwrap_or_else(|_| serde_json::json!([]));
+                Ok(revise_buf_obj)
             }
             "flush" => {
                 let hash_list: Vec<String> = params.get("flush")

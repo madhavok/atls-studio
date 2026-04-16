@@ -1243,14 +1243,30 @@ fn apply_edit_op_to_working_hinted(working: &mut String, preimage: &str, replace
 }
 
 
+/// Build synthetic `EditResolution` entries from original edit metadata.
+/// Used when the shadow (content-anchored) path succeeds and no positional resolution
+/// metadata is available. Provides best-effort coordinates for downstream rebase.
+fn synthesize_resolutions_from_edits(edits: &[LineEdit]) -> Vec<EditResolution> {
+    edits.iter().map(|e| {
+        let resolved_line = match &e.line {
+            LineCoordinate::Abs(n) => *n as usize,
+            _ => 0,
+        };
+        let action = if e.action.is_empty() { "replace".to_string() } else { e.action.clone() };
+        let end_line = e.end_line.unwrap_or(resolved_line as u32) as usize;
+        let lines_affected = if end_line >= resolved_line { end_line - resolved_line + 1 } else { 1 };
+        EditResolution { resolved_line, action, lines_affected }
+    }).collect()
+}
+
 /// Unified entry point for applying line edits with optional shadow-based content anchoring.
 ///
 /// When `shadow` is `Some`, tries content-anchored ExactReplace via `line_edits_to_edit_ops`.
 /// Falls back to positional `apply_line_edits` when shadow is `None`, shadow extraction fails,
 /// or all ops fail to find their preimage.
 ///
-/// Returns `(new_content, warnings, resolutions)`. `resolutions` is `None` when the shadow
-/// path succeeded (no positional resolution metadata), `Some` when the positional path ran.
+/// Returns `(new_content, warnings, resolutions)`. `resolutions` is `Some` for both the shadow
+/// path (synthetic from original edit metadata) and the positional path (from `apply_line_edits`).
 pub(crate) fn apply_line_edits_with_shadow(
     edits: &[LineEdit],
     base: &str,
@@ -1277,7 +1293,8 @@ pub(crate) fn apply_line_edits_with_shadow(
                             ));
                         }
                     }
-                    return Ok((working, warnings, None));
+                    let synthetic_resolutions = synthesize_resolutions_from_edits(edits);
+                    return Ok((working, warnings, Some(synthetic_resolutions)));
                 }
                 warnings.push(
                     "shadow_conversion_empty: all edits failed preimage extraction, falling back to positional apply_line_edits".to_string()

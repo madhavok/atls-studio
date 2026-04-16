@@ -67,7 +67,7 @@ ce f:h:XXXX:L-M le:[{content:"new code"}]
   action: defaults to replace when omitted. Other actions: insert_before, insert_after, delete, move, replace_body.
   All actions that change line counts (insert_before, insert_after, delete, move, replace with different length) produce positional shifts — auto-rebased across le entries within the same ce step and across ce steps in the same batch.
   move: additionally requires destination:N (1-based).
-  replace_body: replaces function/class body (Rust: brace-delimited; Python: def/class/async def blocks by indent). Reported in edits_resolved.
+  replace_body: replaces function/class body (Rust: brace-delimited; Python: def/class/async def blocks by indent). Reported in edits_resolved. Use as the sole le entry in its step — intra-step rebase cannot pre-compute its line delta.
   Intra-step coords: ALL le entries use snapshot-style coordinates (relative to file BEFORE any edit in this step). The executor rebases automatically. Do NOT manually compute shifted line numbers.
   Response: edits_resolved:[{resolved_line,action,lines_affected}] — use for chaining, not mental math. On failure: suggestion:{line,confidence,tier,preview} when fuzzy match found.
   also: creates:[{path:p,content:c}] | revise:hash | undo:h:$last_edit | deletes:path1,path2
