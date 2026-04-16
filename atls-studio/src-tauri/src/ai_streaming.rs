@@ -1144,6 +1144,35 @@ pub async fn cancel_all_chat_streams(
     Ok(())
 }
 
+/// Return true if `model` requires (or prefers) `thinking.type: "adaptive"`
+/// with `output_config.effort` instead of the legacy `thinking.type: "enabled"`
+/// + `budget_tokens` shape.
+///
+/// - Opus 4.7: adaptive is the ONLY supported thinking mode.
+/// - Opus 4.6 / Sonnet 4.6: adaptive is the recommended mode.
+/// - Mythos Preview: adaptive is the default.
+fn model_uses_adaptive_thinking(model: &str) -> bool {
+    let id = model.to_ascii_lowercase();
+    id.contains("opus-4-7") || id.contains("opus-4.7")
+        || id.contains("opus-4-6") || id.contains("opus-4.6")
+        || id.contains("sonnet-4-6") || id.contains("sonnet-4.6")
+        || id.contains("mythos")
+}
+
+/// Sanitize an `output_config.effort` string. Accepts the documented Anthropic
+/// values and falls back to `None` for anything else (caller will omit the
+/// field entirely rather than send a 400-triggering value).
+fn sanitize_effort(raw: &str) -> Option<&'static str> {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "low" => Some("low"),
+        "medium" => Some("medium"),
+        "high" => Some("high"),
+        "xhigh" => Some("xhigh"),
+        "max" => Some("max"),
+        _ => None,
+    }
+}
+
 /// Stream chat response from Anthropic Claude
 #[tauri::command]
 pub async fn stream_chat_anthropic(
@@ -1158,6 +1187,7 @@ pub async fn stream_chat_anthropic(
     enable_tools: Option<bool>,
     anthropic_beta: Option<Vec<String>>,
     thinking_budget: Option<u32>,
+    effort: Option<String>,
 ) -> Result<(), String> {
     let stream_state = app.state::<ChatStreamState>();
     let client = reqwest::Client::new();
@@ -1289,18 +1319,47 @@ pub async fn stream_chat_anthropic(
     });
 
     // Anthropic thinking is incompatible with temperature/top_k modifications.
-    // When thinking is active, omit temperature so the API uses its default;
-    // otherwise pass the user's manual temperature value through.
-    let thinking_active = thinking_budget
-        .filter(|&b| b >= 1024 && b < max_tokens)
-        .is_some();
+    // When thinking is active (either legacy enabled-with-budget, or adaptive),
+    // omit temperature so the API uses its default; otherwise pass the user's
+    // manual temperature value through.
+    let adaptive_model = model_uses_adaptive_thinking(&model);
+    let sanitized_effort = effort.as_deref().and_then(sanitize_effort);
 
-    if thinking_active {
-        body["thinking"] = serde_json::json!({
-            "type": "enabled",
-            "budget_tokens": thinking_budget.unwrap()
-        });
+    // Branch 1: adaptive-thinking models (Opus 4.7 / 4.6, Sonnet 4.6, Mythos).
+    //   Opus 4.7 REJECTS `thinking.type: "enabled"` with HTTP 400, so never
+    //   emit the legacy shape for these models even if a budget slipped in.
+    // Branch 2: legacy models (Sonnet 4.5, Opus 4.5, Haiku 4.5, 3.7, ...).
+    //   Keep the existing `thinking.type: "enabled" + budget_tokens` behavior.
+    let thinking_active = if adaptive_model {
+        if let Some(eff) = sanitized_effort {
+            body["thinking"] = serde_json::json!({ "type": "adaptive" });
+            body["output_config"] = serde_json::json!({ "effort": eff });
+            true
+        } else {
+            // No effort configured → no thinking. On Opus 4.7 thinking is off
+            // by default; on Opus 4.6 / Sonnet 4.6 this matches the "off" UI preset.
+            false
+        }
     } else {
+        // Legacy path: `thinking.type: "enabled"` with budget_tokens.
+        let legacy_active = thinking_budget
+            .filter(|&b| b >= 1024 && b < max_tokens)
+            .is_some();
+        if legacy_active {
+            body["thinking"] = serde_json::json!({
+                "type": "enabled",
+                "budget_tokens": thinking_budget.unwrap()
+            });
+            // Opus 4.5 (and only Opus 4.5 in the legacy set) also accepts
+            // `output_config.effort`; forward it when present.
+            if let Some(eff) = sanitized_effort {
+                body["output_config"] = serde_json::json!({ "effort": eff });
+            }
+        }
+        legacy_active
+    };
+
+    if !thinking_active {
         body["temperature"] = serde_json::json!(temperature);
     }
     

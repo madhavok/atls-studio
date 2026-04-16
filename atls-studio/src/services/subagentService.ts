@@ -358,6 +358,7 @@ async function runSubagentRound(
       apiKey,
       anthropicBeta: streamOpts.anthropicBeta ?? null,
       thinkingBudget: streamOpts.thinkingBudget ?? null,
+      effort: streamOpts.reasoningEffort ?? null,
     });
   } else if (provider === 'openai') {
     await invoke('stream_chat_openai', {

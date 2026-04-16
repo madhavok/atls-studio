@@ -1302,9 +1302,19 @@ export interface AIConfig {
   anthropicBeta?: string[];
   /** OpenAI GPT-5 family: sent as `text.verbosity` on Responses API; Chat Completions unchanged */
   outputVerbosity?: 'low' | 'medium' | 'high';
-  /** OpenAI: `reasoning.effort` (Responses) or `reasoning_effort` (Chat Completions) */
+  /**
+   * Reasoning effort string.
+   * - OpenAI: `reasoning.effort` (Responses) or `reasoning_effort` (Chat Completions)
+   * - Anthropic adaptive-thinking models (Opus 4.7, Opus 4.6, Sonnet 4.6, Mythos):
+   *   sent as `output_config.effort` together with `thinking.type: "adaptive"`
+   */
   reasoningEffort?: string;
-  /** Anthropic thinking budget_tokens or Gemini thinkingBudget; null = disabled */
+  /**
+   * Anthropic (legacy models: Sonnet 4.5, Opus 4.5, Haiku 4.5, 3.7, ...) thinking
+   * budget_tokens; or Gemini `thinkingConfig.thinkingBudget`.
+   * null = disabled. Ignored on Anthropic adaptive-thinking models — use
+   * `reasoningEffort` instead.
+   */
   thinkingBudget?: number | null;
 }
 
@@ -2011,6 +2021,7 @@ async function streamChatViaTauri(
             enableTools: toolsEnabled,
             anthropicBeta: config.anthropicBeta ?? null,
             thinkingBudget: config.thinkingBudget ?? null,
+            effort: config.reasoningEffort ?? null,
           });
         } else if (config.provider === 'openai') {
           await invoke('stream_chat_openai', {

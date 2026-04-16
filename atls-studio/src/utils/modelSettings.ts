@@ -31,17 +31,41 @@ export function supportsVerbosity(modelId: string): boolean {
   return id.startsWith('gpt-5');
 }
 
+/**
+ * Anthropic models that require (or prefer) `thinking.type: "adaptive"` together
+ * with `output_config.effort` instead of the legacy
+ * `thinking.type: "enabled" + budget_tokens` shape.
+ *
+ * - Opus 4.7: adaptive is the ONLY supported thinking mode; `enabled` is rejected with 400.
+ * - Opus 4.6 / Sonnet 4.6: adaptive is the recommended mode; `enabled` is deprecated.
+ * - Mythos Preview: adaptive is the default.
+ *
+ * Older models (Opus 4.5, Sonnet 4.5, Haiku 4.5, 3.7, ...) stay on the legacy path.
+ */
+export function supportsAdaptiveThinking(modelId: string, provider: AIProvider): boolean {
+  if (provider !== 'anthropic') return false;
+  const id = modelId.toLowerCase();
+  return (
+    id.includes('opus-4-7') || id.includes('opus-4.7') ||
+    id.includes('opus-4-6') || id.includes('opus-4.6') ||
+    id.includes('sonnet-4-6') || id.includes('sonnet-4.6') ||
+    id.includes('mythos')
+  );
+}
+
 /** Models that support reasoning/thinking configuration. */
 export function supportsThinking(modelId: string, provider: AIProvider): boolean {
   const id = modelId.toLowerCase();
   switch (provider) {
     case 'anthropic':
       return (
+        id.includes('4-7') || id.includes('4.7') ||
         id.includes('4-6') || id.includes('4.6') ||
         id.includes('4-5') || id.includes('4.5') ||
         id.includes('4-1') || id.includes('4.1') ||
         id.includes('opus-4') || id.includes('sonnet-4') || id.includes('haiku-4') ||
-        id.includes('3-7') || id.includes('3.7')
+        id.includes('3-7') || id.includes('3.7') ||
+        id.includes('mythos')
       );
     case 'openai':
       return (
@@ -97,6 +121,25 @@ export function thinkingToOpenAIEffort(level: ThinkingLevel): string | null {
   return OPENAI_EFFORT[level];
 }
 
+/**
+ * Map UI thinking preset → Anthropic `output_config.effort` value for
+ * adaptive-thinking models (Opus 4.7, Opus 4.6, Sonnet 4.6, Mythos).
+ *
+ * `off` returns null: callers should omit `thinking` and `output_config` so
+ * the model falls back to its default non-thinking behavior. (On Opus 4.7,
+ * thinking is off unless `thinking.type: "adaptive"` is set explicitly.)
+ */
+const ANTHROPIC_EFFORT: Record<ThinkingLevel, string | null> = {
+  off: null,
+  low: 'low',
+  medium: 'medium',
+  high: 'high',
+};
+
+export function thinkingToAnthropicEffort(level: ThinkingLevel): string | null {
+  return ANTHROPIC_EFFORT[level];
+}
+
 export function speedToOpenAIVerbosity(level: OutputSpeedLevel): string {
   return level;
 }
@@ -127,6 +170,16 @@ export function resolveModelSettings(
 
   switch (provider) {
     case 'anthropic': {
+      if (supportsAdaptiveThinking(modelId, provider)) {
+        // Adaptive-thinking models: use output_config.effort + thinking.type=adaptive.
+        // budget_tokens is rejected (Opus 4.7) or deprecated (Opus 4.6, Sonnet 4.6).
+        const effort = thinkingToAnthropicEffort(thinking);
+        if (effort != null) result.reasoningEffort = effort;
+        // Signal explicitly that no budget is in play so Rust doesn't try to
+        // attach the legacy thinking block.
+        result.thinkingBudget = null;
+        break;
+      }
       let budget = thinkingToAnthropicBudget(thinking);
       if (budget != null) {
         if (budget < 1024) budget = 1024;

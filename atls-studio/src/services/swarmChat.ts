@@ -346,6 +346,7 @@ async function runStreamRound(
         enableTools,
         anthropicBeta: config.anthropicBeta ?? null,
         thinkingBudget: config.thinkingBudget ?? null,
+        effort: config.reasoningEffort ?? null,
       });
     } else if (provider === 'openai') {
       await invoke('stream_chat_openai', {

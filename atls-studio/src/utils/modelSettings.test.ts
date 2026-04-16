@@ -2,7 +2,9 @@ import { describe, it, expect } from 'vitest';
 import {
   supportsVerbosity,
   supportsThinking,
+  supportsAdaptiveThinking,
   thinkingToAnthropicBudget,
+  thinkingToAnthropicEffort,
   thinkingToGeminiBudget,
   thinkingToOpenAIEffort,
   speedToOpenAIVerbosity,
@@ -104,6 +106,38 @@ describe('thinkingToOpenAIEffort', () => {
   });
 });
 
+describe('thinkingToAnthropicEffort', () => {
+  it('maps levels for adaptive-thinking models', () => {
+    expect(thinkingToAnthropicEffort('off')).toBeNull();
+    expect(thinkingToAnthropicEffort('low')).toBe('low');
+    expect(thinkingToAnthropicEffort('medium')).toBe('medium');
+    expect(thinkingToAnthropicEffort('high')).toBe('high');
+  });
+});
+
+describe('supportsAdaptiveThinking', () => {
+  it('returns true for adaptive-capable Anthropic models', () => {
+    expect(supportsAdaptiveThinking('claude-opus-4-7', 'anthropic')).toBe(true);
+    expect(supportsAdaptiveThinking('claude-opus-4-7-20260115', 'anthropic')).toBe(true);
+    expect(supportsAdaptiveThinking('claude-opus-4-6', 'anthropic')).toBe(true);
+    expect(supportsAdaptiveThinking('claude-sonnet-4-6', 'anthropic')).toBe(true);
+    expect(supportsAdaptiveThinking('claude-mythos-preview', 'anthropic')).toBe(true);
+  });
+
+  it('returns false for legacy Anthropic models', () => {
+    expect(supportsAdaptiveThinking('claude-sonnet-4-5', 'anthropic')).toBe(false);
+    expect(supportsAdaptiveThinking('claude-opus-4-5', 'anthropic')).toBe(false);
+    expect(supportsAdaptiveThinking('claude-haiku-4-5', 'anthropic')).toBe(false);
+    expect(supportsAdaptiveThinking('claude-3-7-sonnet', 'anthropic')).toBe(false);
+  });
+
+  it('returns false for non-Anthropic providers', () => {
+    expect(supportsAdaptiveThinking('gpt-5', 'openai')).toBe(false);
+    expect(supportsAdaptiveThinking('gemini-2.5-pro', 'google')).toBe(false);
+    expect(supportsAdaptiveThinking('gemini-3-pro', 'vertex')).toBe(false);
+  });
+});
+
 describe('speedToOpenAIVerbosity', () => {
   it('passes through level as-is', () => {
     expect(speedToOpenAIVerbosity('low')).toBe('low');
@@ -154,6 +188,30 @@ describe('resolveModelSettings', () => {
   it('nulls Anthropic budget when clamped below 1024', () => {
     const r = resolveModelSettings('medium', 'low', 'claude-sonnet-4-5', 'anthropic', 1024);
     expect(r.thinkingBudget).toBeNull();
+  });
+
+  it('uses adaptive effort for Opus 4.7 (never budget_tokens)', () => {
+    const r = resolveModelSettings('medium', 'high', 'claude-opus-4-7', 'anthropic', 16384);
+    expect(r.thinkingBudget).toBeNull();
+    expect(r.reasoningEffort).toBe('high');
+  });
+
+  it('uses adaptive effort for Opus 4.6', () => {
+    const r = resolveModelSettings('medium', 'medium', 'claude-opus-4-6', 'anthropic', 16384);
+    expect(r.thinkingBudget).toBeNull();
+    expect(r.reasoningEffort).toBe('medium');
+  });
+
+  it('uses adaptive effort for Sonnet 4.6', () => {
+    const r = resolveModelSettings('medium', 'low', 'claude-sonnet-4-6', 'anthropic', 16384);
+    expect(r.thinkingBudget).toBeNull();
+    expect(r.reasoningEffort).toBe('low');
+  });
+
+  it('omits effort for adaptive-thinking models when thinking is off', () => {
+    const r = resolveModelSettings('medium', 'off', 'claude-opus-4-7', 'anthropic', 16384);
+    expect(r.thinkingBudget).toBeNull();
+    expect(r.reasoningEffort).toBeUndefined();
   });
 
   it('sets thinkingBudget for Google', () => {
