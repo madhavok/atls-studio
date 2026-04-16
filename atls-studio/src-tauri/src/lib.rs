@@ -3838,7 +3838,10 @@ mod apply_with_shadow_tests {
         let edits = vec![le(2, "replace", Some("BBB"), None)];
         let (result, warnings, resolutions) =
             apply_line_edits_with_shadow(&edits, current, Some(shadow)).unwrap();
-        assert!(resolutions.is_none(), "shadow path should return None resolutions");
+        let res = resolutions.expect("shadow path should return synthetic resolutions");
+        assert_eq!(res.len(), 1);
+        assert_eq!(res[0].resolved_line, 2);
+        assert_eq!(res[0].action, "replace");
         assert!(result.contains("BBB"));
         assert!(!result.contains("bbb"));
         assert!(warnings.is_empty(), "warnings: {:?}", warnings);
@@ -3874,7 +3877,9 @@ mod apply_with_shadow_tests {
         let (result, _warnings, resolutions) =
             apply_line_edits_with_shadow(&edits, current, Some(shadow)).unwrap();
         // Shadow extracts "target_line" from line 2 of shadow, finds it in current (now at line 3)
-        assert!(resolutions.is_none(), "shadow path should have handled this");
+        let res = resolutions.expect("shadow path should return synthetic resolutions");
+        assert_eq!(res.len(), 1);
+        assert_eq!(res[0].action, "replace");
         assert!(result.contains("replaced_line"));
         assert!(!result.contains("target_line"));
         assert!(result.contains("inserted"));
@@ -7583,8 +7588,11 @@ const horror = (x: number) =>
             "unified path must succeed for bracketMaze replace_body");
         assert!(!result.contains("switch (typeof input)"),
             "old bracketMaze body should be replaced");
-        assert!(resolutions.is_none(),
-            "shadow path should succeed, not fall back to positional. Warnings: {:?}", warnings);
+        let res = resolutions.expect("shadow path should return synthetic resolutions, not fall back to positional");
+        assert_eq!(res.len(), 1);
+        assert_eq!(res[0].action, "replace_body");
+        assert!(!warnings.iter().any(|w| w.contains("falling back to positional")),
+            "unexpected positional fallback. Warnings: {:?}", warnings);
     }
 
     // ── EXACT AGENT REPRO: apply Round 1 edits first, THEN replace_body ──
@@ -7687,9 +7695,11 @@ const horror = (x: number) =>
             "replace_body via unified path after Round 1 must succeed");
         assert!(!result.contains("switch (typeof input)"),
             "old bracketMaze body should be gone");
-        assert!(resolutions.is_none(),
-            "Shadow path should handle it, not fall through to positional. \
-             Warnings: {:?}", warnings);
+        let res = resolutions.expect("shadow path should return synthetic resolutions");
+        assert_eq!(res.len(), 1);
+        assert_eq!(res[0].action, "replace_body");
+        assert!(!warnings.iter().any(|w| w.contains("falling back to positional")),
+            "unexpected positional fallback. Warnings: {:?}", warnings);
     }
 
     // ── LIVE APP REPRO: embedded fixture — same shapes the agent exercised in-app ──
