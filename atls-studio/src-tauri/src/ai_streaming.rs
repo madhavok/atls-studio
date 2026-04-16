@@ -1609,6 +1609,72 @@ pub(crate) fn get_atls_tools_responses() -> serde_json::Value {
     }).collect::<Vec<_>>())
 }
 
+/// Result of flushing an in-progress function call when the Responses stream ends or completes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ResponsesPendingToolFlush {
+    /// No `function_call` was pending.
+    None,
+    /// Emitted `ToolInputAvailable` with valid JSON.
+    EmittedAvailable,
+    /// Arguments missing or JSON incomplete (e.g. `max_output_tokens` mid–tool-call).
+    Truncated,
+}
+
+/// Flush `pending_tool_call` from the Responses API stream. Does not emit `StopReason` — caller emits one
+/// after usage so ordering matches chat completions. Emits `Status` when truncated so the UI explains the cut-off.
+fn flush_responses_api_pending_tool_call(
+    app: &AppHandle,
+    stream_id: &str,
+    pending_tool_call: &mut Option<(String, String, String)>,
+) -> ResponsesPendingToolFlush {
+    use crate::stream_protocol::{emit_chunk, StreamChunk};
+
+    let Some((id, name, args)) = pending_tool_call.take() else {
+        return ResponsesPendingToolFlush::None;
+    };
+    let trimmed = args.trim();
+    if trimmed.is_empty() {
+        emit_chunk(
+            app,
+            stream_id,
+            StreamChunk::Status {
+                message: format!(
+                    "Tool `{name}` was cut off before arguments finished (output token limit). Continuing automatically…"
+                ),
+            },
+        );
+        return ResponsesPendingToolFlush::Truncated;
+    }
+    match serde_json::from_str::<serde_json::Value>(trimmed) {
+        Ok(input) => {
+            emit_chunk(
+                app,
+                stream_id,
+                StreamChunk::ToolInputAvailable {
+                    tool_call_id: id,
+                    tool_name: name,
+                    input,
+                    thought_signature: None,
+                },
+            );
+            ResponsesPendingToolFlush::EmittedAvailable
+        }
+        Err(_) => {
+            emit_chunk(
+                app,
+                stream_id,
+                StreamChunk::Status {
+                    message: format!(
+                        "Tool `{name}` arguments truncated (incomplete JSON, {} chars). Raise max output tokens or split the batch. Continuing automatically…",
+                        trimmed.len()
+                    ),
+                },
+            );
+            ResponsesPendingToolFlush::Truncated
+        }
+    }
+}
+
 /// Stream response from OpenAI Responses API (v1/responses). Used for Responses-only models.
 pub(crate) async fn stream_responses_openai_inner(
     app: AppHandle,
@@ -1782,17 +1848,12 @@ pub(crate) async fn stream_responses_openai_inner(
                                     "response.completed" => {
                                         text_batcher.close(&app_clone, &stream_id_clone);
                                         reasoning_batcher.close(&app_clone, &stream_id_clone);
-                                        // Flush any pending tool call that never got function_call_arguments.done
-                                        // (avoids tools stuck on "Preparing" when API event order differs)
-                                        if let Some((id, name, args)) = pending_tool_call.take() {
-                                            let input = serde_json::from_str::<serde_json::Value>(&args).unwrap_or(serde_json::json!({}));
-                                            emit_chunk(&app_clone, &stream_id_clone, StreamChunk::ToolInputAvailable {
-                                                tool_call_id: id,
-                                                tool_name: name,
-                                                input,
-                                                thought_signature: None,
-                                            });
-                                        }
+                                        let pending_flush =
+                                            flush_responses_api_pending_tool_call(
+                                                &app_clone,
+                                                &stream_id_clone,
+                                                &mut pending_tool_call,
+                                            );
                                         let mut has_function_calls = false;
                                         if let Some(resp) = data.get("response") {
                                             let usage = resp.get("usage");
@@ -1826,7 +1887,17 @@ pub(crate) async fn stream_responses_openai_inner(
                                                     item.get("type").and_then(|t| t.as_str()) == Some("function_call"));
                                             }
                                         }
-                                        let reason = if has_function_calls { "tool_use" } else { "end_turn" };
+                                        let reason = match pending_flush {
+                                            ResponsesPendingToolFlush::Truncated => "max_tokens",
+                                            ResponsesPendingToolFlush::EmittedAvailable => "tool_use",
+                                            ResponsesPendingToolFlush::None => {
+                                                if has_function_calls {
+                                                    "tool_use"
+                                                } else {
+                                                    "end_turn"
+                                                }
+                                            }
+                                        };
                                         emit_chunk(&app_clone, &stream_id_clone, StreamChunk::StopReason {
                                             reason: reason.to_string(),
                                         });
@@ -1840,15 +1911,11 @@ pub(crate) async fn stream_responses_openai_inner(
                                     "response.failed" => {
                                         text_batcher.close(&app_clone, &stream_id_clone);
                                         reasoning_batcher.close(&app_clone, &stream_id_clone);
-                                        if let Some((id, name, args)) = pending_tool_call.take() {
-                                            let input = serde_json::from_str::<serde_json::Value>(&args).unwrap_or(serde_json::json!({}));
-                                            emit_chunk(&app_clone, &stream_id_clone, StreamChunk::ToolInputAvailable {
-                                                tool_call_id: id,
-                                                tool_name: name,
-                                                input,
-                                                thought_signature: None,
-                                            });
-                                        }
+                                        let _ = flush_responses_api_pending_tool_call(
+                                            &app_clone,
+                                            &stream_id_clone,
+                                            &mut pending_tool_call,
+                                        );
                                         let err_msg = data.get("response").and_then(|r| r.get("error"))
                                             .and_then(|e| e.get("message").and_then(|m| m.as_str()))
                                             .unwrap_or("Unknown error");
@@ -1912,6 +1979,20 @@ pub(crate) async fn stream_responses_openai_inner(
         }
         text_batcher.close(&app_clone, &stream_id_clone);
         reasoning_batcher.close(&app_clone, &stream_id_clone);
+        let tail_flush = flush_responses_api_pending_tool_call(
+            &app_clone,
+            &stream_id_clone,
+            &mut pending_tool_call,
+        );
+        if tail_flush == ResponsesPendingToolFlush::EmittedAvailable {
+            emit_chunk(&app_clone, &stream_id_clone, StreamChunk::StopReason {
+                reason: "tool_use".to_string(),
+            });
+        } else if tail_flush == ResponsesPendingToolFlush::Truncated {
+            emit_chunk(&app_clone, &stream_id_clone, StreamChunk::StopReason {
+                reason: "max_tokens".to_string(),
+            });
+        }
         if !usage_emitted {
             eprintln!("[atls] Responses API: stream ended without usage — cost/ATLS internals may show flat (no response.completed with usage)");
         }
