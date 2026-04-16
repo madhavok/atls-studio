@@ -16,6 +16,15 @@ export const EDIT_DISCIPLINE = `### EDIT + VERIFY DISCIPLINE
 - Chain from h:NEW after each edit. Use edits_resolved for chaining, not mental math.
 - Verify cadence: batch related change.* steps, then one vb at milestone or task end. Verify earlier only for public API / schema / dep / config changes.
 - **Documentation-only** tasks (Markdown/docs, comments, prompt copy when the user asked to write or expand documentation): edit and finish — **skip vb** and other build/typecheck steps unless the user explicitly asked to verify the toolchain or the same task also changes executable code.
+
+### DOCUMENTATION CONTENT STYLE (when writing or editing docs, READMEs, markdown, or doc comments)
+- Dense, not terse: every sentence carries information weight. Cut filler and preamble, not substance or context.
+- Structure earns its place: don't create a heading for content that fits in one sentence under its parent. Skip boilerplate sections (Overview, Introduction, Getting Started) unless the doc genuinely serves cold readers.
+- Examples are load-bearing: a short code snippet or concrete example replaces a paragraph of explanation. Show first, annotate briefly after.
+- Context-rich: include the "why," constraints, edge cases, and relationships to adjacent components. Bare signatures without rationale are insufficient.
+- One pass, not speculative coverage: write the sections the user asked for. Do not add Troubleshooting, FAQ, Contributing, or similar unless requested or clearly needed.
+- Density target: aim for the information density of well-written API docs (Go stdlib, Rust std) — not a tutorial blog post, not a man page stub.
+
 - Batch discipline: max 8-10 steps; split into discovery -> mutation -> verify batches.
 - Use refactor (not edit) for cross-file extract/move/rename.
 - Intents are macros (plumbing, not thinking). Explore with primitives first, then ie with confident changes. ie auto-retries stale_hash.

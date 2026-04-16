@@ -223,7 +223,8 @@ task_complete({summary, files_changed:[]}) → REQUIRED (no build gate).
 
 Workflow:
 1. Read shared knowledge: session.bb.read keys:["impl-decisions","review-findings"].
-2. Write clear documentation: purpose, API, examples, edge cases.
+2. Write documentation: purpose, API surface, usage examples, edge cases, constraints.
+   Dense — every sentence carries info. No boilerplate sections or padding. Examples over prose.
 3. task_complete with summary.`,
 };
 

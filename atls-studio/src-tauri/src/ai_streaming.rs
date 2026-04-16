@@ -1703,6 +1703,29 @@ fn hydrate_pending_tool_args_from_completed_response(
     }
 }
 
+/// Heuristic: unbalanced `{` / `[` suggests the stream ended mid-JSON (e.g. max output tokens).
+/// Simple char scan (not string-aware); sufficient for a UI hint.
+fn tool_args_looks_incomplete_json(raw: &str) -> bool {
+    let t = raw.trim();
+    if t.starts_with('{') {
+        let depth = t.chars().fold(0i32, |acc, c| match c {
+            '{' => acc + 1,
+            '}' => acc.saturating_sub(1),
+            _ => acc,
+        });
+        return depth != 0;
+    }
+    if t.starts_with('[') {
+        let depth = t.chars().fold(0i32, |acc, c| match c {
+            '[' => acc + 1,
+            ']' => acc.saturating_sub(1),
+            _ => acc,
+        });
+        return depth != 0;
+    }
+    false
+}
+
 /// Parse tool args JSON, emitting a Status warning on malformed input before falling back to `{}`.
 fn parse_tool_args_or_warn(
     app: &AppHandle,
@@ -1716,9 +1739,14 @@ fn parse_tool_args_or_warn(
         Ok(v) => v,
         Err(_) => {
             let truncated = if raw.len() > 200 { &raw[..200] } else { raw };
+            let incomplete_hint = if tool_args_looks_incomplete_json(raw) {
+                " Likely output was cut off mid-JSON — raise max output tokens or use a smaller batch."
+            } else {
+                ""
+            };
             emit_chunk(app, stream_id, StreamChunk::Status {
                 message: format!(
-                    "Malformed tool args for `{tool_name}` ({}ch) — falling back to {{}}. Preview: {truncated}",
+                    "Malformed tool args for `{tool_name}` ({}ch) — falling back to {{}}.{incomplete_hint} Preview: {truncated}",
                     raw.len(),
                 ),
             });
