@@ -1620,6 +1620,40 @@ enum ResponsesPendingToolFlush {
     Truncated,
 }
 
+/// When argument deltas never arrived but `response.completed` includes the final `output` items, copy the
+/// function_call `arguments` into the pending buffer so we do not false-flag truncation.
+fn hydrate_pending_tool_args_from_completed_response(
+    resp: &serde_json::Value,
+    pending_tool_call: &mut Option<(String, String, String)>,
+) {
+    let Some((id, _name, args)) = pending_tool_call.as_mut() else {
+        return;
+    };
+    if !args.trim().is_empty() {
+        return;
+    }
+    let Some(output) = resp.get("output").and_then(|o| o.as_array()) else {
+        return;
+    };
+    for item in output {
+        if item.get("type").and_then(|t| t.as_str()) != Some("function_call") {
+            continue;
+        }
+        let item_id = item.get("id").and_then(|v| v.as_str()).unwrap_or("");
+        if item_id != id.as_str() {
+            continue;
+        }
+        if let Some(s) = item.get("arguments").and_then(|v| v.as_str()) {
+            *args = s.to_string();
+        } else if let Some(v) = item.get("arguments") {
+            if let Ok(s) = serde_json::to_string(v) {
+                *args = s;
+            }
+        }
+        break;
+    }
+}
+
 /// Flush `pending_tool_call` from the Responses API stream. Does not emit `StopReason` — caller emits one
 /// after usage so ordering matches chat completions. Emits `Status` when truncated so the UI explains the cut-off.
 fn flush_responses_api_pending_tool_call(
@@ -1819,10 +1853,16 @@ pub(crate) async fn stream_responses_openai_inner(
                                         let item_id = data.get("item_id").and_then(|v| v.as_str()).unwrap_or("");
                                         let event_name = data.get("name").and_then(|v| v.as_str()).unwrap_or("");
                                         let arguments = data.get("arguments").and_then(|v| v.as_str()).unwrap_or("");
-                                        let (id, pending_name, _) = pending_tool_call.take()
+                                        let (id, pending_name, pending_args) = pending_tool_call.take()
                                             .unwrap_or((item_id.to_string(), event_name.to_string(), arguments.to_string()));
                                         let resolved_name = if pending_name.is_empty() { event_name.to_string() } else { pending_name };
-                                        let input = serde_json::from_str::<serde_json::Value>(arguments).unwrap_or(serde_json::json!({}));
+                                        let arg_str = if !arguments.trim().is_empty() {
+                                            arguments.to_string()
+                                        } else {
+                                            pending_args
+                                        };
+                                        let input = serde_json::from_str::<serde_json::Value>(&arg_str)
+                                            .unwrap_or(serde_json::json!({}));
                                         emit_chunk(&app_clone, &stream_id_clone, StreamChunk::ToolInputAvailable {
                                             tool_call_id: id,
                                             tool_name: resolved_name,
@@ -1848,6 +1888,12 @@ pub(crate) async fn stream_responses_openai_inner(
                                     "response.completed" => {
                                         text_batcher.close(&app_clone, &stream_id_clone);
                                         reasoning_batcher.close(&app_clone, &stream_id_clone);
+                                        if let Some(resp) = data.get("response") {
+                                            hydrate_pending_tool_args_from_completed_response(
+                                                resp,
+                                                &mut pending_tool_call,
+                                            );
+                                        }
                                         let pending_flush =
                                             flush_responses_api_pending_tool_call(
                                                 &app_clone,
