@@ -426,5 +426,26 @@ describe('subagentService', () => {
       expect(m.cacheReadTokens).toBe(40_000);
       expect(m.cacheWriteTokens).toBe(2_000);
     });
+
+    it('updates input when final Anthropic message_delta includes cumulative input (e.g. server tools)', () => {
+      let m = foldSubagentUsageMetrics(zero, {
+        input_tokens: 2_679,
+        output_tokens: 3,
+        cache_read_input_tokens: 0,
+        cache_creation_input_tokens: 0,
+      });
+      m = foldSubagentUsageMetrics(m, {
+        input_tokens: 0,
+        output_tokens: 200,
+      });
+      m = foldSubagentUsageMetrics(m, {
+        input_tokens: 10_682,
+        output_tokens: 510,
+        cache_read_input_tokens: 0,
+        cache_creation_input_tokens: 0,
+      });
+      expect(m.inputTokens).toBe(10_682);
+      expect(m.outputTokens).toBe(510);
+    });
   });
 });

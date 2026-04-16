@@ -230,8 +230,10 @@ type StreamUsageChunkFields = Pick<
 
 /**
  * Merge streaming `usage` chunks into per-round totals.
- * Anthropic sends prompt tokens on message_start and output tokens on message_delta; later chunks
- * often repeat input_tokens: 0 — overwriting would zero out cost for the round (bug).
+ * Anthropic sends preliminary usage on message_start; message_delta usage is cumulative. Partial
+ * deltas often include only output_tokens (input_tokens: 0) — we must not overwrite prompt tokens
+ * with 0. The final message_delta may repeat full input_tokens after server tools (web_search, etc.);
+ * those values must win for billing.
  */
 export function foldSubagentUsageMetrics(
   prev: SubagentUsageMetrics,

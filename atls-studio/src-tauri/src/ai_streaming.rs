@@ -1579,13 +1579,21 @@ pub async fn stream_chat_anthropic(
                                             }
                                         }
                                         "message_delta" => {
+                                            // Anthropic: `usage` on message_delta is cumulative (see streaming docs).
+                                            // The final message_delta often carries the authoritative input/output
+                                            // totals — e.g. after server tools (web_search) grow billed input.
+                                            // We must forward input + cache fields when present, not only output_tokens;
+                                            // otherwise we keep message_start's preliminary input and cost is wrong.
                                             if let Some(usage) = event.get("usage") {
+                                                let input_tok = usage.get("input_tokens").and_then(|v| v.as_i64()).unwrap_or(0);
                                                 let output_tok = usage.get("output_tokens").and_then(|v| v.as_i64()).unwrap_or(0);
+                                                let cache_creation = usage.get("cache_creation_input_tokens").and_then(|v| v.as_i64());
+                                                let cache_read = usage.get("cache_read_input_tokens").and_then(|v| v.as_i64());
                                                 emit_chunk(&app_clone, &stream_id_clone, StreamChunk::Usage {
-                                                    input_tokens: 0,
+                                                    input_tokens: input_tok,
                                                     output_tokens: output_tok,
-                                                    cache_creation_input_tokens: None,
-                                                    cache_read_input_tokens: None,
+                                                    cache_creation_input_tokens: cache_creation,
+                                                    cache_read_input_tokens: cache_read,
                                                     openai_cached_tokens: None,
                                                     cached_content_tokens: None,
                                                 });
