@@ -65,9 +65,10 @@ ce f:h:XXXX:L-M le:[{content:"new code"}]
   Path minimal: f:.gitignore:1 le:[{content:"..."}] or f:.gitignore:1-1 — trailing :L or :L-M on a real path is split to path + range (same idea as hash :L-M).
   line + end_line: 1-based inclusive span. Auto-injected from hash ref range when omitted. end | -1 | symbol:fn(name) resolve to concrete bounds.
   action: defaults to replace when omitted. Other actions: insert_before, insert_after, delete, move, replace_body.
-  move: requires destination:N (1-based). Produces positional shifts at both source and destination — auto-rebased in multi-step batches.
+  All actions that change line counts (insert_before, insert_after, delete, move, replace with different length) produce positional shifts — auto-rebased across le entries within the same ce step and across ce steps in the same batch.
+  move: additionally requires destination:N (1-based).
   replace_body: replaces function/class body (Rust: brace-delimited; Python: def/class/async def blocks by indent). Reported in edits_resolved.
-  Intra-step coords: snapshot-style (relative to file before any edit in step); executor rebases.
+  Intra-step coords: ALL le entries use snapshot-style coordinates (relative to file BEFORE any edit in this step). The executor rebases automatically. Do NOT manually compute shifted line numbers.
   Response: edits_resolved:[{resolved_line,action,lines_affected}] — use for chaining, not mental math. On failure: suggestion:{line,confidence,tier,preview} when fuzzy match found.
   also: creates:[{path:p,content:c}] | revise:hash | undo:h:$last_edit | deletes:path1,path2
 cc creates:[{path:p,content:c}]
@@ -130,6 +131,10 @@ p2 pi hashes:h:abc123,h:def456
 u1 iu ps:src/api.ts
 e3 ie f:h:abc123:10-10 le:[{content:"const x = 1;"}]
 
+-- multi-region edit in one step: use ORIGINAL line numbers for all le entries (executor rebases)
+e4 ce f:h:abc123 le:[{line:10,end_line:12,action:insert_after,content:"// inserted"},{line:50,end_line:55,content:"replaced block"}]
+-- line 50 is the ORIGINAL line, not 50+inserted_lines. The executor handles the shift.
+
 Path discipline: if a filename is ambiguous (exists in multiple dirs), use sy or the project tree to confirm the directory before rl. Wrong paths waste rounds and fragment spin tracking.
 
 ### Field Reference (canonical names — short aliases auto-resolved, response uses canonical)
@@ -164,7 +169,7 @@ Review: rs(sig) -> pi sigs -> rc (unpinned) -> rl changed fns + pi slices -> bw 
 - **SKIPPED (file_path not bound)** / **file_paths must resolve**: Fix **in:** bindings or add **ps** / **file_paths** where required (rc, rs, ab, ad, at, ai, etc.).
 - **pin: no matching chunks**: **hashes** must list real **h:**… from tool output, or use step dataflow \`pi in:r1.refs\`. Never put the text \`in:r1.refs\` inside the **hashes** field.
 - **change.edit** "file not found": **f** / **file_path** must be a real workspace path or **h:…** (optional :line span). Invalid: \`in:c1.refs[0]:2-4\` as **f**. After **cc**, use the **path** you created or **h:** from the create result.
-- **edit_outside_read_range**: The edit targets lines not covered by a prior \`rl\` / \`read.lines\`. Read the target region first (same batch is ideal), then retry. When planning multi-region edits on the same file, read ALL target regions upfront before the edit step.
+- **edit_outside_read_range**: The edit targets lines not covered by a prior \`rl\` / \`read.lines\`. Read the target region first (same batch is ideal), then retry. When planning multi-region edits on the same file, read ALL target regions upfront before the edit step. Common mistake: manually computing post-insertion line numbers instead of using original coordinates — this produces targets beyond the file's actual length.
 - **annotate.design** (\`nd\`): **Designer mode only** — in agent mode it always errors; skip family tests there.
 - **VOLATILE / WILL BE LOST**: Result has h:refs that EXPIRE after ONE round. You MUST \`pi\` in the SAME batch or \`bw\` to persist. If you see this warning and did not pin, your content is already scheduled for deletion.
 - **status:preview / dry_run** (cm, cd, cf): Preview only — no files written. If validation_issues is empty, re-submit the same plan with dry_run:false. Repeating the same preview may add a \`<<WARN:\` in the batch summary — prefer applying or changing the plan instead of redundant previews.
