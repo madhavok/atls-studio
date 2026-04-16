@@ -696,6 +696,100 @@ export const handleReadLines: OpHandler = async (params, ctx) => {
 };
 
 // ---------------------------------------------------------------------------
+// read_shaped — directory expansion
+// ---------------------------------------------------------------------------
+
+/** Heuristic: paths without a file extension or with a trailing slash are likely directories. */
+function looksLikeDirectory(p: string): boolean {
+  if (p.endsWith('/') || p.endsWith('\\')) return true;
+  const last = p.split(/[/\\]/).pop() ?? '';
+  return !last.includes('.');
+}
+
+interface TreeResult {
+  root?: string;
+  file_paths?: string[];
+  file_paths_truncated?: boolean;
+  error?: string;
+}
+
+/**
+ * Expand directory paths into their constituent files using tree context.
+ * Non-directory paths pass through unchanged.
+ */
+async function expandDirectoryPaths(
+  items: ExpandedFilePath[],
+  ctx: HandlerContext,
+  maxFiles: number | undefined,
+): Promise<{ expanded: ExpandedFilePath[]; notes: string[] }> {
+  const notes: string[] = [];
+  const expanded: ExpandedFilePath[] = [];
+
+  const dirCandidates: Array<{ index: number; path: string }> = [];
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i];
+    if (item.kind === 'path' && looksLikeDirectory(item.path)) {
+      dirCandidates.push({ index: i, path: item.path });
+    }
+  }
+
+  if (dirCandidates.length === 0) return { expanded: items, notes };
+
+  const treeResults = await Promise.all(
+    dirCandidates.map(async ({ path }) => {
+      try {
+        const raw = await ctx.atlsBatchQuery('context', {
+          type: 'tree',
+          file_paths: [path],
+          depth: 3,
+          line_counts: false,
+        }) as Record<string, unknown>;
+        const results = Array.isArray(raw.results) ? raw.results as TreeResult[] : [];
+        return results[0] ?? null;
+      } catch {
+        return null;
+      }
+    }),
+  );
+
+  const dirExpansionMap = new Map<number, ExpandedFilePath[]>();
+  for (let j = 0; j < dirCandidates.length; j++) {
+    const { index, path: dirPath } = dirCandidates[j];
+    const result = treeResults[j];
+    if (!result || result.error) {
+      // Not a directory — keep the original path unchanged
+      continue;
+    }
+    const filePaths = result.file_paths ?? [];
+    if (filePaths.length === 0) {
+      notes.push(`${dirPath} -> 0 files (empty directory)`);
+      dirExpansionMap.set(index, []);
+      continue;
+    }
+    const expandedFiles: ExpandedFilePath[] = filePaths.map(fp => ({ kind: 'path' as const, path: fp }));
+    dirExpansionMap.set(index, expandedFiles);
+    const truncNote = result.file_paths_truncated ? ' (truncated)' : '';
+    notes.push(`${dirPath} -> ${filePaths.length} files (directory expansion${truncNote})`);
+  }
+
+  for (let i = 0; i < items.length; i++) {
+    const override = dirExpansionMap.get(i);
+    if (override !== undefined) {
+      expanded.push(...override);
+    } else {
+      expanded.push(items[i]);
+    }
+  }
+
+  if (typeof maxFiles === 'number' && maxFiles > 0 && expanded.length > maxFiles) {
+    notes.push(`directory expansion: capped from ${expanded.length} to ${maxFiles} files (max_files)`);
+    return { expanded: expanded.slice(0, maxFiles), notes };
+  }
+
+  return { expanded, notes };
+}
+
+// ---------------------------------------------------------------------------
 // read_shaped
 // ---------------------------------------------------------------------------
 
@@ -715,7 +809,8 @@ export const handleReadShaped: OpHandler = async (params, ctx) => {
     if (pathErr) return err(pathErr);
   }
 
-  const { items: shapedItems, notes: shapedNotes } = await ctx.expandFilePathRefs(pathsForShaped);
+  const { items: rawItems, notes: shapedNotes } = await ctx.expandFilePathRefs(pathsForShaped);
+  const { expanded: shapedItems, notes: dirNotes } = await expandDirectoryPaths(rawItems, ctx, maxFiles);
   const lines: string[] = [];
   const allRefs: string[] = [];
   const shapedResults: Array<Record<string, unknown>> = [];
@@ -729,6 +824,7 @@ export const handleReadShaped: OpHandler = async (params, ctx) => {
     lines.push(`read_shaped: NOTE file_paths capped to ${maxFiles} (max_files)`);
   }
   for (const note of shapedNotes) lines.push(`read_shaped: ${note}`);
+  for (const note of dirNotes) lines.push(`read_shaped: ${note}`);
 
   let chunkLoadErrors = 0;
   try {

@@ -322,7 +322,7 @@ pub async fn read_file_contents(
         };
         if resolved_path.is_dir() {
             return Err(format!(
-                "Path is a directory: {}. read_shaped/read expects file paths. Use h:@file=*.ts or list files first.",
+                "Path is a directory: {}. Backend expects file paths; directory expansion should happen at the batch layer (read.shaped accepts directories directly).",
                 resolved_path.display()
             ));
         }
