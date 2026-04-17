@@ -164,7 +164,7 @@ h:XXXX:fn(name#2)         → Second overload of a function
 | `test()` | test | Test function |
 | `sym()` | *(any)* | Generic — matches any symbol kind |
 
-The Rust backend resolves symbols via tree-sitter, so extraction works across languages. Symbols are used in extraction, refactoring, and navigation: `refactor(extract:"fn(name)", from:"h:XXXX", to:"target.ts")`.
+Symbol anchors resolve through the **symbol resolver** — tiered regex prefixes plus a string/comment-aware block-end finder — with TypeScript (`symbolResolver.ts`) and Rust (`shape_ops.rs`) kept in parity. The Rust wrapper `resolve_symbol_anchor_lines_lang` may optionally use **tree-sitter** when a grammar is registered, then fall back to the same regex path; the hot renderer path is regex-only. See [symbol-resolver.md](./symbol-resolver.md). Symbols are used in extraction, refactoring, and navigation: `refactor(extract:"fn(name)", from:"h:XXXX", to:"target.ts")`.
 
 ### Exclusions and Highlights
 
