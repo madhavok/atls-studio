@@ -122,10 +122,10 @@ function extractEditRange(lineEdits: unknown[]): { start: number; end: number } 
     if (typeof edit !== 'object' || edit == null) continue;
     const e = edit as Record<string, unknown>;
     const line = typeof e.line === 'number' ? e.line : null;
-    const count = typeof e.count === 'number' ? e.count : 1;
+    const endLine = typeof e.end_line === 'number' ? e.end_line : line;
     if (line != null) {
       if (line < min) min = line;
-      if (line + count - 1 > max) max = line + count - 1;
+      if ((endLine ?? line) > max) max = endLine ?? line;
     }
   }
   if (min === Infinity || max === -Infinity) return null;

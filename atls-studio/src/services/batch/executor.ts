@@ -364,7 +364,7 @@ function rebaseIntraStepSnapshotLineEdits(lineEdits: unknown[]): void {
   indices.sort((a, b) => {
     if (a.snap === 0 && b.snap === 0) return a.idx - b.idx;
     if (a.snap === 0) return 1;
-    if (b.snap === 0) return 1;
+    if (b.snap === 0) return -1;
     return a.snap !== b.snap ? a.snap - b.snap : a.idx - b.idx;
   });
   const sorted: unknown[] = indices.map(e => lineEdits[e.idx]);

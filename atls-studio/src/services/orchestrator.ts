@@ -1476,7 +1476,7 @@ Synthesize the swarm outcome.`;
       try {
         const ctxStore = useContextStore.getState();
         const synthHash = ctxStore.addChunk(synthesis, 'result', 'orchestrator:synthesis');
-        const synthChunk = ctxStore.getAllChunks().find(c => c.shortHash === synthHash);
+        const synthChunk = ctxStore.getAllChunks().find(c => c.hash === synthHash);
         if (synthChunk) {
           await chatDb.addBlackboardEntry(sessionId, synthChunk);
         }
@@ -1817,7 +1817,7 @@ Synthesize the swarm outcome.`;
         rateLimiter.recordRateLimitError(task.assignedProvider);
         
         const retryMaxRetries = task.maxRetries ?? 10;
-        if (task.retryCount < retryMaxRetries) {
+        if ((task.retryCount || 0) < retryMaxRetries - 1) {
           const currentRetryCount = task.retryCount || 0;
           const baseDelay = 5000;
           const maxDelay = 60000;

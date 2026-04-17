@@ -191,7 +191,7 @@ export interface ReconciledBudgets extends PromptLayerBudgets {
   availableTokens: number;
   /**
    * Cross-layer pressure plan: layers whose current usage exceeds their
-   * reconciled allocation, ordered by overage ratio (most-over first).
+   *   reconciled allocation, ordered by absolute overage (most-over first).
    * Emitted so the middleware chain can act on the highest-pressure layers
    * without each middleware recomputing its own threshold.
    */
@@ -214,7 +214,7 @@ export interface ReconciledBudgets extends PromptLayerBudgets {
  *         per-layer budgets to zero and mark every layer for relief.
  * Step 4: For each layer whose current tokens exceed the reconciled
  *         allocation, emit a {@link PlannedPressureAction}. Actions are sorted
- *         by overage ratio (most-over first) so the middleware chain drives
+ *         by absolute overage (most-over first) so the middleware chain drives
  *         the worst layer first even when several are under pressure at once.
  *
  * Pure function: no store reads, no side-effects, deterministic for the same
@@ -269,11 +269,23 @@ export function reconcileBudgets(input: ReconcileBudgetsInput): ReconciledBudget
     compact_wm: currentWmTokens - scaled.wm,
   };
 
+  const layerAllocations: Record<PlannedPressureAction, number> = {
+    compact_history: scaled.history,
+    prune_staged: scaled.staged,
+    prune_workspace: scaled.workspace,
+    prune_bb: scaled.blackboard,
+    compact_wm: scaled.wm,
+  };
+
   const plannedPressureActions: PlannedPressureAction[] = (
     Object.entries(layerOverages) as Array<[PlannedPressureAction, number]>
   )
     .filter(([, over]) => over > 0)
-    .sort((a, b) => b[1] - a[1])
+    .sort(([actionA, overA], [actionB, overB]) => {
+      const ratioA = overA / Math.max(1, layerAllocations[actionA]);
+      const ratioB = overB / Math.max(1, layerAllocations[actionB]);
+      return ratioB - ratioA;
+    })
     .map(([action]) => action);
 
   return {
