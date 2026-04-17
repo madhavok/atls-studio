@@ -133,6 +133,7 @@ import { countTokensSync, countTokens as countTokensAsync } from '../utils/token
 import { BATCH_TOOL_REF, DESIGNER_TOOL_REF, SUBAGENT_TOOL_REF, NATIVE_TOOL_TOKENS_ESTIMATE } from '../prompts/toolRef';
 import { CONTEXT_CONTROL, CONTEXT_CONTROL_DESIGNER } from '../prompts/cognitiveCore';
 import { EDIT_DISCIPLINE } from '../prompts/editDiscipline';
+import { OUTPUT_STYLE } from '../prompts/outputStyle';
 import { HASH_PROTOCOL_CORE } from '../prompts/hashProtocol';
 import { getModePrompt } from '../prompts/modePrompts';
 import { getShellGuide } from '../prompts/shellGuide';
@@ -4060,7 +4061,12 @@ q: exec system.exec cmd:"..." → write cmd to temp .ps1 and run in agent shell`
     ? `\n${EDIT_DISCIPLINE}`
     : '';
 
-  // Designer: read-only context hints. All other non-retriever tool modes share COGNITIVE_CORE + EDIT_DISCIPLINE.
+  // Output style — density/structure rules for explanatory text. Same gate as edit discipline.
+  const outputStyleSection = (atlsReady && mode !== 'designer')
+    ? `\n${OUTPUT_STYLE}`
+    : '';
+
+  // Designer: read-only context hints. All other non-retriever tool modes share COGNITIVE_CORE + EDIT_DISCIPLINE + OUTPUT_STYLE.
   const contextControl = mode === 'designer'
     ? `\n${CONTEXT_CONTROL_DESIGNER}\n## Output: 1 sentence between tool calls. End with a concise final summary.`
     : `\n${CONTEXT_CONTROL}`;
@@ -4077,7 +4083,7 @@ q: exec system.exec cmd:"..." → write cmd to temp .ps1 and run in agent shell`
     toolRefTokens: countTokensSync(toolRef),
     shellGuideTokens: countTokensSync(shellGuide),
     nativeToolTokens: NATIVE_TOOL_TOKENS_ESTIMATE,
-    contextControlTokens: countTokensSync(editDisciplineSection + contextControl + hppSection + providerReinforcement),
+    contextControlTokens: countTokensSync(editDisciplineSection + outputStyleSection + contextControl + hppSection + providerReinforcement),
     entryManifestTokens: countTokensSync(entryManifestSection),
   };
   useAppStore.getState().setPromptMetrics(metricsSnapshot);
@@ -4086,7 +4092,7 @@ q: exec system.exec cmd:"..." → write cmd to temp .ps1 and run in agent shell`
 
 ${toolRef}${entryManifestSection}
 
-${modeRules}${refactorConfig}${editDisciplineSection}${contextControl}${hppSection}${providerReinforcement}`;
+${modeRules}${refactorConfig}${editDisciplineSection}${outputStyleSection}${contextControl}${hppSection}${providerReinforcement}`;
 
   _cachedStaticPrompt = { key: cacheKey, prompt: result, metrics: metricsSnapshot };
   return result;

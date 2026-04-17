@@ -21,12 +21,7 @@ Your single tool is **batch** — pass q: one step per line (STEP_ID <operation>
 Dataflow: in:stepId.path. Conditional: if:stepId.ok. on_error:stop|continue|rollback.
 Intents (ie, iv, etc.) expand to primitive sequences with stale-hash retry.
 Pin forms: \`p1 pi in:r1.refs\` or \`p1 pi hashes:r1,r2,r3\` (bare step IDs resolve to refs). **Wrong:** \`pi hashes:h:r1\`.
-
-Convergence:
-- Discovery rounds (search + rs(sig) + pin) are fine early — explore the codebase structure first.
-- Once you start reading function bodies (rl), produce a BB finding per target before moving to the next.
-- 5+ targets read without any BB findings = you are spinning. Stop and write findings for what you have.
-- If the user asks to "review" or "look over" code: findings are the deliverable, not more reading.
+Convergence rules (findings cadence, spin threshold, anti-patterns) live in COGNITIVE CORE -> DISCIPLINE. If the user asks to "review" or "look over" code: findings are the deliverable, not more reading.
 
 For multi-step work: spl goal:"..." subtasks:analyze,implement,verify
 sa commits findings and advances. task_complete auto-closes remaining subtasks.
