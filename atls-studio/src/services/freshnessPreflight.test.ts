@@ -439,6 +439,233 @@ describe('runFreshnessPreflight', () => {
   });
 });
 
+describe('suspect content verification', () => {
+  beforeEach(() => resetStore());
+
+  it('promotes suspect chunk when content is found at same lines', async () => {
+    const sectionContent = 'function hello() {\n  return "world";\n}';
+    const store = useContextStore.getState();
+    store.addChunk(sectionContent, 'smart', 'src/app.ts', undefined, undefined, 'rev-old', {
+      sourceRevision: 'rev-old',
+      viewKind: 'latest',
+    });
+    useContextStore.setState((state) => ({
+      chunks: new Map([...state.chunks].map(([key, chunk]) => [
+        key,
+        chunk.source === 'src/app.ts'
+          ? { ...chunk, suspectSince: Date.now(), freshnessCause: 'external_file_change' as const }
+          : chunk,
+      ])),
+    }));
+
+    const fileContent = `import x from "y";\n${sectionContent}\nexport default hello;\n`;
+    const result = await runFreshnessPreflight('draft', {
+      edits: [{ file: 'src/app.ts', old: 'hello', new: 'goodbye' }],
+    }, {
+      contentByPath: new Map([['src/app.ts', fileContent]]),
+    });
+
+    expect(result.blocked).toBe(false);
+    expect(result.warnings.some(w => w.includes('content-verified'))).toBe(true);
+    const promoted = result.decisions.find(d => d.factors?.includes('suspect_content_verified'));
+    expect(promoted).toBeDefined();
+    expect(promoted?.classification).toBe('rebaseable');
+    expect(promoted?.strategy).toBe('content_match');
+    expect(promoted?.confidence).toBe('medium');
+  });
+
+  it('promotes suspect staged snippet with lines and relocates when shifted', async () => {
+    const snippetContent = 'const target = 42;';
+    const store = useContextStore.getState();
+    store.stageSnippet('stage:suspect', snippetContent, 'src/app.ts', '2-2', 'rev-old', undefined, 'latest');
+    useContextStore.setState((state) => ({
+      stagedSnippets: new Map([...state.stagedSnippets].map(([key, snippet]) => [
+        key,
+        key === 'stage:suspect'
+          ? { ...snippet, suspectSince: Date.now(), freshnessCause: 'external_file_change' as const }
+          : snippet,
+      ])),
+    }));
+
+    const fileContent = 'const added = true;\nconst also_added = false;\nconst target = 42;\nexport {};\n';
+    const result = await runFreshnessPreflight('draft', {
+      file: 'src/app.ts',
+      lines: '2-2',
+    }, {
+      contentByPath: new Map([['src/app.ts', fileContent]]),
+    });
+
+    expect(result.blocked).toBe(false);
+    const promoted = result.decisions.find(d => d.factors?.includes('suspect_content_verified'));
+    expect(promoted).toBeDefined();
+    expect(promoted?.classification).toBe('rebaseable');
+    // After promotion, the relocation cascade runs and finds the snippet at line 3.
+    const relocated = result.decisions.find(d => d.linesAfter != null);
+    expect(relocated).toBeDefined();
+    expect(relocated?.linesAfter).toBe('3-3');
+  });
+
+  it('still blocks when suspect chunk content is not found in current file', async () => {
+    const store = useContextStore.getState();
+    store.addChunk('function oldCode() { return 1; }', 'smart', 'src/app.ts', undefined, undefined, 'rev-old', {
+      sourceRevision: 'rev-old',
+      viewKind: 'latest',
+    });
+    useContextStore.setState((state) => ({
+      chunks: new Map([...state.chunks].map(([key, chunk]) => [
+        key,
+        chunk.source === 'src/app.ts'
+          ? { ...chunk, suspectSince: Date.now(), freshnessCause: 'external_file_change' as const }
+          : chunk,
+      ])),
+    }));
+
+    const fileContent = 'function newCode() { return 2; }\nexport default newCode;\n';
+    const result = await runFreshnessPreflight('draft', {
+      edits: [{ file: 'src/app.ts', old: 'x', new: 'y' }],
+    }, {
+      contentByPath: new Map([['src/app.ts', fileContent]]),
+    });
+
+    expect(result.blocked).toBe(true);
+    expect(result.error).toMatch(/Blocked/);
+  });
+
+  it('blocks when some suspect refs verify but others do not (conservative)', async () => {
+    const store = useContextStore.getState();
+    store.addChunk('const kept = true;', 'smart', 'src/app.ts', undefined, undefined, 'rev-old', {
+      sourceRevision: 'rev-old',
+      viewKind: 'latest',
+    });
+    store.addChunk('const gone = false;', 'smart', 'src/app.ts', undefined, undefined, 'rev-old', {
+      sourceRevision: 'rev-old',
+      viewKind: 'latest',
+    });
+    useContextStore.setState((state) => ({
+      chunks: new Map([...state.chunks].map(([key, chunk]) => [
+        key,
+        chunk.source === 'src/app.ts'
+          ? { ...chunk, suspectSince: Date.now(), freshnessCause: 'external_file_change' as const }
+          : chunk,
+      ])),
+    }));
+
+    const fileContent = 'const kept = true;\nconst replacement = 99;\n';
+    const result = await runFreshnessPreflight('draft', {
+      edits: [{ file: 'src/app.ts', old: 'a', new: 'b' }],
+    }, {
+      contentByPath: new Map([['src/app.ts', fileContent]]),
+    });
+
+    expect(result.blocked).toBe(true);
+  });
+
+  it('promotes compacted chunk when all non-compacted siblings are verified', async () => {
+    const store = useContextStore.getState();
+    const activeHash = store.addChunk('const active = 1;', 'smart', 'src/app.ts', undefined, undefined, 'rev-old', {
+      sourceRevision: 'rev-old',
+      viewKind: 'latest',
+    });
+    const compactedHash = store.addChunk('const compacted = 2;', 'smart', 'src/app.ts', undefined, undefined, 'rev-old', {
+      sourceRevision: 'rev-old',
+      viewKind: 'latest',
+    });
+
+    useContextStore.setState((state) => ({
+      chunks: new Map([...state.chunks].map(([key, chunk]) => [
+        key,
+        chunk.source === 'src/app.ts'
+          ? {
+            ...chunk,
+            suspectSince: Date.now(),
+            freshnessCause: 'external_file_change' as const,
+            ...(chunk.shortHash === compactedHash ? { compacted: true, content: '[compacted digest]' } : {}),
+          }
+          : chunk,
+      ])),
+    }));
+
+    const fileContent = '// header comment added\nconst active = 1;\nconst compacted = 2;\n';
+    const result = await runFreshnessPreflight('draft', {
+      edits: [{ file: 'src/app.ts', old: 'a', new: 'b' }],
+    }, {
+      contentByPath: new Map([['src/app.ts', fileContent]]),
+    });
+
+    expect(result.blocked).toBe(false);
+    const compactedDecision = result.decisions.find(d => d.factors?.includes('suspect_promoted'));
+    expect(compactedDecision).toBeDefined();
+    expect(compactedDecision?.classification).toBe('rebaseable');
+  });
+
+  it('blocks full-file suspect chunk when file content actually changed', async () => {
+    const fullFileContent = 'line1\nline2\nline3\n';
+    const store = useContextStore.getState();
+    store.addChunk(fullFileContent, 'smart', 'src/app.ts', undefined, undefined, 'rev-old', {
+      sourceRevision: 'rev-old',
+      viewKind: 'latest',
+    });
+    useContextStore.setState((state) => ({
+      chunks: new Map([...state.chunks].map(([key, chunk]) => [
+        key,
+        chunk.source === 'src/app.ts'
+          ? { ...chunk, suspectSince: Date.now(), freshnessCause: 'external_file_change' as const }
+          : chunk,
+      ])),
+    }));
+
+    const newContent = 'line1\nline2_modified\nline3\nnew_line4\n';
+    const result = await runFreshnessPreflight('draft', {
+      edits: [{ file: 'src/app.ts', old: 'a', new: 'b' }],
+    }, {
+      contentByPath: new Map([['src/app.ts', newContent]]),
+    });
+
+    expect(result.blocked).toBe(true);
+  });
+
+  it('promotes via context result when contentByPath not provided', async () => {
+    const sectionContent = 'export function unique_fn_xyz() {}';
+    const store = useContextStore.getState();
+    store.addChunk(sectionContent, 'smart', 'src/app.ts', undefined, undefined, 'rev-old', {
+      sourceRevision: 'rev-old',
+      viewKind: 'latest',
+    });
+    useContextStore.setState((state) => ({
+      chunks: new Map([...state.chunks].map(([key, chunk]) => [
+        key,
+        chunk.source === 'src/app.ts'
+          ? { ...chunk, suspectSince: Date.now(), freshnessCause: 'external_file_change' as const }
+          : chunk,
+      ])),
+    }));
+
+    const fileContent = `// new header\n${sectionContent}\n`;
+    const result = await runFreshnessPreflight('draft', {
+      edits: [{ file: 'src/app.ts', old: 'a', new: 'b' }],
+    }, {
+      atlsBatchQuery: async () => ({
+        results: [{ file: 'src/app.ts', content: fileContent, content_hash: 'rev-new' }],
+      }),
+      skipRefreshAfterContext: true,
+    });
+
+    expect(result.blocked).toBe(false);
+    expect(result.decisions.some(d => d.factors?.includes('suspect_content_verified'))).toBe(true);
+  });
+
+  it('maps promoted content_match to proceed_with_note via automation decision', () => {
+    expect(getPreflightAutomationDecision({
+      blocked: false,
+      confidence: 'medium',
+      strategy: 'content_match',
+    })).toEqual({
+      action: 'proceed_with_note',
+      reason: 'medium_confidence_rebind',
+    });
+  });
+});
+
 describe('getFreshnessHintForRefs', () => {
   const warn = 'WARNING: some refs may be stale (file changed externally); re-read before editing';
 

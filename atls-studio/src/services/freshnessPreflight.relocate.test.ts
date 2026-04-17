@@ -32,4 +32,14 @@ describe('relocateLineRanges', () => {
     const content = 'x\ny\n';
     expect(relocateLineRanges(content, [[10, 10]])).toBeNull();
   });
+
+  it('returns original range when valid single-range content is present', () => {
+    const content = 'line1\nline2\nline3\nline4\nline5\n';
+    const r = relocateLineRanges(content, [[3, 4]]);
+    expect(r).toEqual([[3, 4]]);
+  });
+
+  it('returns null for empty file', () => {
+    expect(relocateLineRanges('', [[1, 1]])).toBeNull();
+  });
 });

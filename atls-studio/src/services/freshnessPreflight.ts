@@ -5,7 +5,7 @@
  * Rule:
  * - fresh → proceed
  * - rebaseable (same_file_prior_edit, hash_forward) → relocate and proceed
- * - suspect (external_file_change, watcher_event, unknown) → hard-stop, require re-read
+ * - suspect (external_file_change, watcher_event, unknown) → content-verify, then relocate or hard-stop
  */
 
 import type { FreshnessCause, OperationKind } from './batch/types';
@@ -393,7 +393,17 @@ export async function runFreshnessPreflight(
   }
 
   const store = useContextStore.getState();
-  const suspectRefs: string[] = [];
+  interface SuspectRefDetail {
+    ref: string;
+    source: string;
+    content?: string;
+    lines?: string;
+    sourceRevision?: string;
+    snippetContent?: string;
+    symbolSpec?: { kind?: string; name: string } | null;
+    compacted?: boolean;
+  }
+  const suspectDetails: SuspectRefDetail[] = [];
   const decisions: PreflightResult['decisions'] = [];
   const rebaseableRefs: Array<{ ref: string; source: string; lines?: string; sourceRevision?: string; snippetContent?: string; symbolSpec?: { kind?: string; name: string } | null }> = [];
 
@@ -410,7 +420,13 @@ export async function runFreshnessPreflight(
     );
     const ref = `h:${chunk.shortHash} ${chunk.source ?? chunk.type}`;
     if (classification === 'suspect') {
-      suspectRefs.push(ref);
+      suspectDetails.push({
+        ref,
+        source: chunk.source!,
+        content: chunk.compacted ? undefined : chunk.content,
+        sourceRevision: chunk.sourceRevision,
+        compacted: chunk.compacted,
+      });
       decisions.push({ ref, source: chunk.source, classification, confidence: 'none', strategy: 'blocked', factors: ['identity_lost'], at: Date.now() });
     } else if (classification === 'rebaseable' && chunk.source) {
       rebaseableRefs.push({ ref, source: chunk.source, sourceRevision: chunk.sourceRevision });
@@ -440,7 +456,13 @@ export async function runFreshnessPreflight(
     );
     const ref = `h:${chunk.shortHash} ${chunk.source ?? chunk.type}`;
     if (classification === 'suspect') {
-      suspectRefs.push(ref);
+      suspectDetails.push({
+        ref,
+        source: chunk.source!,
+        content: chunk.compacted ? undefined : chunk.content,
+        sourceRevision: chunk.sourceRevision,
+        compacted: chunk.compacted,
+      });
       decisions.push({ ref, source: chunk.source, classification, confidence: 'none', strategy: 'blocked', factors: ['identity_lost'], at: Date.now() });
     } else if (classification === 'rebaseable' && chunk.source) {
       rebaseableRefs.push({ ref, source: chunk.source, sourceRevision: chunk.sourceRevision });
@@ -470,7 +492,15 @@ export async function runFreshnessPreflight(
     );
     const ref = `${snippet.source}`;
     if (classification === 'suspect') {
-      suspectRefs.push(ref);
+      suspectDetails.push({
+        ref,
+        source: snippet.source,
+        content: snippet.content,
+        lines: snippet.lines,
+        sourceRevision: snippet.sourceRevision,
+        snippetContent: snippet.content,
+        symbolSpec: parseSymbolShapeSpec(snippet.shapeSpec),
+      });
       decisions.push({
         ref,
         source: snippet.source,
@@ -508,7 +538,7 @@ export async function runFreshnessPreflight(
     }
   }
 
-  if (suspectRefs.length > 0) {
+  if (suspectDetails.length > 0) {
     /** Allow context/read_lines to reach handlers that clear suspect + reconcile (see context.ts handleRead). */
     const healingReadOps = operation === 'context' || operation === 'read_lines';
     if (healingReadOps) {
@@ -529,16 +559,113 @@ export async function runFreshnessPreflight(
           : 'Freshness: suspect engrams NOT reconciled — content may still be stale; re-read to clear.',
       );
     } else {
-      return {
-        params,
-        warnings,
-        blocked: true,
-        error: `Blocked: file(s) changed externally — re-read required before editing. Suspect: ${suspectRefs.slice(0, 3).join(', ')}${suspectRefs.length > 3 ? ` +${suspectRefs.length - 3} more` : ''}. Run rc/rl on the affected file(s) to clear.`,
-        confidence: 'none',
-        strategy: 'blocked',
-        decisions,
-        refreshedHashes,
-      };
+      // Content verification: attempt to promote suspect refs before hard-blocking.
+      // Populate contentByPath from context result if not already provided.
+      const verifyContentByPath = opts?.contentByPath ?? new Map<string, string>();
+      if (verifyContentByPath.size === 0 && contextResult && Array.isArray(contextResult.results)) {
+        for (const entry of contextResult.results) {
+          if (entry && typeof entry === 'object') {
+            const p = entry as Record<string, unknown>;
+            const file = p.file ?? p.path;
+            const content = p.content;
+            if (typeof file === 'string' && typeof content === 'string') {
+              verifyContentByPath.set(normalizePathKey(file), content);
+            }
+          }
+        }
+      }
+
+      const remainingSuspects: string[] = [];
+      const promotedRefs: Set<string> = new Set();
+      for (const detail of suspectDetails) {
+        if (detail.compacted || !detail.content || !detail.source) {
+          // Compacted chunks deferred — may be promoted if all siblings verify.
+          if (!detail.compacted) remainingSuspects.push(detail.ref);
+          continue;
+        }
+        const pathKey = normalizePathKey(detail.source);
+        const currentContent = verifyContentByPath.get(pathKey);
+        if (!currentContent) {
+          remainingSuspects.push(detail.ref);
+          continue;
+        }
+
+        // Use the same relocation strategies as rebaseable refs:
+        // fingerprint match on the chunk/snippet content, then line relocation if lines are available.
+        let verified = false;
+        const located = locateSnippetFingerprint(currentContent, detail.content);
+        if (located && located.length > 0) {
+          verified = true;
+        } else if (detail.lines) {
+          const ranges = parseLineRanges(detail.lines);
+          if (ranges) {
+            const relocated = relocateLineRanges(currentContent, ranges);
+            if (relocated && relocated.length > 0) verified = true;
+          }
+        }
+
+        if (verified) {
+          promotedRefs.add(detail.ref);
+          // Promote into rebaseableRefs so the existing cascade handles relocation.
+          rebaseableRefs.push({
+            ref: detail.ref,
+            source: detail.source,
+            lines: detail.lines,
+            sourceRevision: detail.sourceRevision,
+            snippetContent: detail.snippetContent ?? detail.content,
+            symbolSpec: detail.symbolSpec,
+          });
+          const decision = decisions.find(d => d.ref === detail.ref && d.classification === 'suspect');
+          if (decision) {
+            decision.classification = 'rebaseable';
+            decision.strategy = 'content_match';
+            decision.confidence = 'medium';
+            decision.factors = ['suspect_content_verified'];
+          }
+        } else {
+          remainingSuspects.push(detail.ref);
+        }
+      }
+
+      // Compacted chunks: auto-promote when all non-compacted suspects for the
+      // same file are verified (their digest doesn't steer execution anyway).
+      const compactedSuspects = suspectDetails.filter(d => d.compacted);
+      for (const detail of compactedSuspects) {
+        const pathKey = normalizePathKey(detail.source);
+        const hasUnverifiedSibling = remainingSuspects.some(ref => {
+          const sibling = suspectDetails.find(d => d.ref === ref);
+          return sibling && normalizePathKey(sibling.source) === pathKey;
+        });
+        if (hasUnverifiedSibling) {
+          remainingSuspects.push(detail.ref);
+        } else {
+          promotedRefs.add(detail.ref);
+          const decision = decisions.find(d => d.ref === detail.ref && d.classification === 'suspect');
+          if (decision) {
+            decision.classification = 'rebaseable';
+            decision.strategy = 'content_match';
+            decision.confidence = 'medium';
+            decision.factors = ['suspect_promoted'];
+          }
+        }
+      }
+
+      if (remainingSuspects.length > 0) {
+        return {
+          params,
+          warnings,
+          blocked: true,
+          error: `Blocked: file(s) changed externally — re-read required before editing. Suspect: ${remainingSuspects.slice(0, 3).join(', ')}${remainingSuspects.length > 3 ? ` +${remainingSuspects.length - 3} more` : ''}. Run rc/rl on the affected file(s) to clear.`,
+          confidence: 'none',
+          strategy: 'blocked',
+          decisions,
+          refreshedHashes,
+        };
+      }
+
+      if (promotedRefs.size > 0) {
+        warnings.push(`Freshness: ${promotedRefs.size} suspect ref(s) content-verified and promoted to rebaseable.`);
+      }
     }
   }
 
@@ -676,19 +803,21 @@ export async function runFreshnessPreflight(
         }
         const decision = decisions.find((item) => item.ref === ref && item.linesBefore === lines);
         if (decision) {
+          const suspectProvenance = decision.factors?.filter(f => f === 'suspect_content_verified' || f === 'suspect_promoted') ?? [];
           decision.linesAfter = newLines;
           decision.confidence = confidence;
           decision.strategy = strategy;
-          decision.factors = factors;
+          decision.factors = [...suspectProvenance, ...factors];
           decision.at = Date.now();
         }
       } else {
         identityLostRefs.push(ref);
         const decision = decisions.find((item) => item.ref === ref && item.linesBefore === lines);
         if (decision) {
+          const suspectProvenance = decision.factors?.filter(f => f === 'suspect_content_verified' || f === 'suspect_promoted') ?? [];
           decision.confidence = confidence;
           decision.strategy = strategy;
-          decision.factors = factors;
+          decision.factors = [...suspectProvenance, ...factors];
           decision.at = Date.now();
         }
       }

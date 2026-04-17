@@ -95,9 +95,9 @@ Note the trigger is `suspectSince || freshness` — an engram with a recorded su
 |-------|---------------|----------|
 | `hash_forward` | Rebaseable | Relocate lines via edit journal |
 | `same_file_prior_edit` | Rebaseable | Relocate via journal/shape/symbol |
-| `external_file_change` | Suspect | Hard stop, re-read required |
-| `watcher_event` | Suspect | Hard stop, re-read required |
-| `unknown` | Suspect | Hard stop, re-read required |
+| `external_file_change` | Suspect | Content-verify then relocate, or hard stop |
+| `watcher_event` | Suspect | Content-verify then relocate, or hard stop |
+| `unknown` | Suspect | Content-verify then relocate, or hard stop |
 
 ## Testing freshness changes
 
@@ -153,16 +153,32 @@ So the decision model is **four-way**, not three-way: `proceed | proceed_with_no
 
 ### Healing preflight for reads
 
-Reads are allowed to *heal* stale context rather than blocking on it. When preflight runs against `operation === 'context'` or `operation === 'read_lines'`, the `healingReadOps` branch in [`freshnessPreflight.ts`](../atls-studio/src/services/freshnessPreflight.ts) ~461-462 skips the hard block even on suspect refs — the read itself will reconcile the source revision in the same pass. Mutation ops (edits, creates, refactors) still block on suspect.
+Reads are allowed to *heal* stale context rather than blocking on it. When preflight runs against `operation === 'context'` or `operation === 'read_lines'`, the `healingReadOps` branch in [`freshnessPreflight.ts`](../atls-studio/src/services/freshnessPreflight.ts) ~461-462 skips the hard block even on suspect refs — the read itself will reconcile the source revision in the same pass. Mutation ops (edits, creates, refactors) go through content verification first.
+
+### Suspect Content Verification
+
+Before hard-blocking on suspect refs, the preflight system attempts **content verification** — checking whether each suspect engram's content still exists verbatim in the current file. This handles the common case where an external edit (formatter, another tool, git operation) shifts lines without altering the model's specific section.
+
+**How it works:**
+
+1. For each non-compacted suspect ref with stored content, the preflight fetches the current file content (already available from the batched `context` call).
+2. `locateSnippetFingerprint` searches for the suspect's content in the current file. If found uniquely, the ref is promoted to `rebaseable` with `strategy: 'content_match'` and `confidence: 'medium'`.
+3. If fingerprint matching fails and the ref has line coordinates, `relocateLineRanges` is tried as a fallback.
+4. Promoted refs enter the standard rebase cascade for line relocation.
+5. **Compacted chunks** (content replaced with digest) cannot be content-verified directly. They are auto-promoted when all non-compacted suspect refs for the same file are successfully verified.
+6. If any suspect ref cannot be verified, the operation is still blocked.
+
+**Confidence cap:** Promoted suspect refs are capped at `medium` confidence (no lineage information from external edits), which maps to `proceed_with_note` via `getPreflightAutomationDecision`. The model never sees rebind metadata — only the absence of the `[STALE]` label when content is verified.
 
 ### Rebase Strategy Cascade
 
-When an engram is rebaseable (from own prior edit or hash forward), the system attempts recovery through progressively less confident strategies:
+When an engram is rebaseable (from own prior edit, hash forward, or content-verified suspect), the system attempts recovery through progressively less confident strategies:
 
 | Strategy | Confidence | Method |
 |----------|-----------|--------|
 | **edit_journal** | High | Use recorded `lineDelta` from prior edits to shift line references |
 | **shape_match** | High | Compare structural hash — if identical, content is equivalent |
+| **content_match** | Medium | Suspect ref content found unchanged in current file |
 | **symbol_identity** | Medium | Resolve symbol name to its current line range |
 | **fingerprint_match** | Medium | Locate content snippet by fuzzy matching |
 | **line_relocation** | Medium/High | Search for content in a window around expected position |
@@ -186,7 +202,9 @@ interface RebindOutcome {
 }
 ```
 
-Evidence factors include: `revision_match`, `journal_line_delta`, `shape_hash_match`, `shape_hash_mismatch`, `symbol_identity`, `fingerprint_unique`, `content_window_match`, `exact_line_match`, `missing_content`, `identity_lost`.
+Evidence factors include: `revision_match`, `journal_line_delta`, `shape_hash_match`, `shape_hash_mismatch`, `symbol_identity`, `fingerprint_unique`, `content_window_match`, `exact_line_match`, `missing_content`, `identity_lost`, `suspect_content_verified`, `suspect_promoted`.
+
+The `suspect_content_verified` factor indicates a suspect ref was promoted via content verification. `suspect_promoted` indicates a compacted chunk was auto-promoted because all non-compacted siblings for the same file were verified.
 
 This data is stored on the engram for internal diagnostics (Internals UI) but is **not** surfaced in the model's prompt context.
 

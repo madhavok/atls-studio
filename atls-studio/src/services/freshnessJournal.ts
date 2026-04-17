@@ -4,6 +4,7 @@ export type RebaseStrategy =
   | 'symbol_identity'
   | 'fingerprint_match'
   | 'line_relocation'
+  | 'content_match'
   | 'fresh'
   | 'blocked';
 export type RebaseConfidence = 'high' | 'medium' | 'low' | 'none';
@@ -18,7 +19,9 @@ export type RebaseEvidence =
   | 'content_window_match'
   | 'exact_line_match'
   | 'missing_content'
-  | 'identity_lost';
+  | 'identity_lost'
+  | 'suspect_content_verified'
+  | 'suspect_promoted';
 
 export interface RebindOutcome {
   classification: RebaseClassification;
