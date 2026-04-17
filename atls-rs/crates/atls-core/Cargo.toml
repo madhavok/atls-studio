@@ -37,8 +37,8 @@ num_cpus = "1.16"
 lru = "0.12"
 pest = { workspace = true }
 pest_derive = { workspace = true }
-ort = { version = "2.0.0-rc.12", optional = true, default-features = false, features = ["std", "download-binaries"] }
-ndarray = { version = "0.16", optional = true }
+ort = { version = "2.0.0-rc.12", optional = true, default-features = false, features = ["std", "ndarray", "download-binaries", "tls-rustls"] }
+ndarray = { version = "0.17", optional = true }
 
 [features]
 default = []

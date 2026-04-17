@@ -192,11 +192,14 @@ pub fn should_use_vector_index(count: usize) -> bool {
 #[cfg(feature = "neural-embeddings")]
 pub mod onnx {
     use super::EmbeddingProvider;
+    use ort::session::builder::GraphOptimizationLevel;
+    use ort::session::Session;
+    use ort::value::TensorRef;
     use std::path::PathBuf;
     use std::sync::Mutex;
 
     pub struct OnnxEmbeddingProvider {
-        session: Mutex<ort::Session>,
+        session: Mutex<Session>,
         dim: usize,
         model_id: String,
     }
@@ -206,8 +209,8 @@ pub mod onnx {
         /// The model must accept `input_ids` and `attention_mask` (int64)
         /// and produce a pooled embedding output.
         pub fn new(model_path: PathBuf, dim: usize, model_id: &str) -> Result<Self, Box<dyn std::error::Error>> {
-            let session = ort::Session::builder()?
-                .with_optimization_level(ort::GraphOptimizationLevel::Level3)?
+            let session = Session::builder()?
+                .with_optimization_level(GraphOptimizationLevel::Level3)?
                 .with_intra_threads(1)?
                 .commit_from_file(&model_path)?;
             Ok(Self {
@@ -238,21 +241,28 @@ pub mod onnx {
             let mask_array = ndarray::Array2::from_shape_vec((1, len), attention_mask)
                 .expect("attention_mask shape");
 
-            let session = self.session.lock().expect("onnx session lock");
-            let outputs = match session.run(ort::inputs![ids_array, mask_array]) {
+            let Ok(ids_ref) = TensorRef::from_array_view(ids_array.view()) else {
+                return vec![0.0; self.dim];
+            };
+            let Ok(mask_ref) = TensorRef::from_array_view(mask_array.view()) else {
+                return vec![0.0; self.dim];
+            };
+
+            let mut session = self.session.lock().expect("onnx session lock");
+            let outputs = match session.run(ort::inputs![ids_ref, mask_ref]) {
                 Ok(o) => o,
                 Err(_) => return vec![0.0; self.dim],
             };
 
-            let Some(output) = outputs.first() else {
+            if outputs.len() == 0 {
                 return vec![0.0; self.dim];
-            };
-            let Ok(tensor) = output.1.try_extract_tensor::<f32>() else {
+            }
+            let output = &outputs[0];
+            let Ok((_shape, data)) = output.try_extract_tensor::<f32>() else {
                 return vec![0.0; self.dim];
             };
 
-            let view = tensor.view();
-            let flat: Vec<f32> = view.iter().copied().collect();
+            let flat: Vec<f32> = data.iter().copied().collect();
             if flat.len() >= self.dim {
                 let mut v = flat[..self.dim].to_vec();
                 let norm: f32 = v.iter().map(|x| x * x).sum::<f32>().sqrt();
