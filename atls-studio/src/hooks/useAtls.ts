@@ -139,7 +139,7 @@ async function refreshIntelligenceForRoot(rootPath: string) {
   if (stats.pathsProcessed > 0) {
     parts.push(`engrams: ${stats.updated} reconciled, ${stats.invalidated} invalidated, ${stats.preserved} preserved`);
   }
-  contextStore.setBlackboardEntry('fix:useAtls.ts', `[${ts}] Intelligence refreshed for ${rootName}; ${parts.join('; ')}.`);
+  contextStore.setBlackboardEntry('intel:refresh', `[${ts}] Intelligence refreshed for ${rootName}; ${parts.join('; ')}.`);
 }
 
 /** Drain the scan queue one job at a time. Module-level singleton. */

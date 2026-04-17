@@ -655,7 +655,7 @@ export const handleStats: OpHandler = async (_params, ctx) => {
   const freedK = (stats.freedTokens / 1000).toFixed(1);
   const pinnedCount = ctx.store().getPinnedCount();
   const bbK = (stats.bbTokens / 1000).toFixed(1);
-  let header = `Context: ${usedK}k/${maxK}k tokens | ${stats.chunkCount} chunks`;
+  let header = `Context: ${usedK}k/${maxK}k tokens`;
   if (pinnedCount > 0) header += ` | ${pinnedCount} pinned`;
   if (stats.bbCount > 0) header += ` | bb:${bbK}k (${stats.bbCount} entries)`;
   header += ` | freed:${freedK}k`;
@@ -692,12 +692,12 @@ export const handleSessionDebug: OpHandler = async (_params, ctx) => {
   const chunkSummary = chunkCount > 0
     ? `\nChunks (${chunkCount}): ${Array.from(state.chunks?.values() ?? [])
         .slice(0, 5)
-        .map((c: { shortHash: string; tokens: number; source?: string }) =>
-          `h:${c.shortHash} ${c.tokens}tk ${c.source?.split(/[/\\]/).pop() ?? '?'}`)
+        .map((c: { shortHash: string; tokens: number; source?: string; type?: string }) =>
+          `h:${c.shortHash} ${c.tokens}tk ${c.source?.split(/[/\\]/).pop() ?? c.type ?? '?'}`)
         .join(', ')}${chunkCount > 5 ? ` ... +${chunkCount - 5} more` : ''}`
     : '';
   return ok(
-    `debug: ${stats.usedTokens / 1000}k tk | ${chunkCount} chunks | ${archiveCount} archived | staged:${stagedK}k${planLine}${chunkSummary}`,
+    `debug: ${stats.usedTokens / 1000}k tk | ${archiveCount} archived | staged:${stagedK}k${planLine}${chunkSummary}`,
   );
 };
 
