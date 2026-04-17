@@ -1372,6 +1372,7 @@ pub(crate) fn remove_symbol_from_import_line(
     let mut result = Vec::new();
     for line in &lines {
         let trimmed = line.trim();
+        let indent = &line[..line.len() - line.trim_start().len()];
         let is_relevant_import = match language {
             atls_core::Language::TypeScript | atls_core::Language::JavaScript => {
                 trimmed.contains("import") && trimmed.contains(source_module) && trimmed.contains(symbol)
@@ -1403,8 +1404,7 @@ pub(crate) fn remove_symbol_from_import_line(
                         // Was the only import — drop the line
                         continue;
                     }
-                    let new_inner = parts.join(", ");
-                    let new_line = format!("{}{{ {} }}{}", &trimmed[..open], new_inner, &trimmed[close + 1..]);
+                    let new_line = format!("{}{}{{ {} }}{}", indent, &trimmed[..open], parts.join(", "), &trimmed[close + 1..]);
                     result.push(new_line);
                 } else {
                     continue; // default import of just this symbol — drop
@@ -1420,8 +1420,7 @@ pub(crate) fn remove_symbol_from_import_line(
                     if parts.is_empty() {
                         continue;
                     }
-                    let new_inner = parts.join(", ");
-                    let new_line = format!("{}{{{}}};", &trimmed[..open], new_inner);
+                    let new_line = format!("{}{}{{{}}};" , indent, &trimmed[..open], parts.join(", "));
                     result.push(new_line);
                 } else if trimmed.ends_with(&format!("{}::{};", source_module, symbol))
                        || trimmed.ends_with(&format!("::{};", symbol)) {
@@ -1447,12 +1446,10 @@ pub(crate) fn remove_symbol_from_import_line(
                     let prefix = trimmed.splitn(2, "import").next().unwrap_or("");
                     let was_parenthesized = import_part.trim().starts_with('(');
                     if was_parenthesized {
-                        result.push(format!("{}import ({})", prefix, parts.join(", ")));
+                        result.push(format!("{}{}import ({})", indent, prefix, parts.join(", ")));
                     } else {
-                        result.push(format!("{}import {}", prefix, parts.join(", ")));
+                        result.push(format!("{}{}import {}", indent, prefix, parts.join(", ")));
                     }
-                } else {
-                    result.push(line.to_string());
                 }
             }
             _ => { result.push(line.to_string()); }
