@@ -1,94 +1,144 @@
 # ATLS Studio
 
-Managed working memory for agentic LLMs. A cognitive runtime that gives language models hash-addressed external memory with freshness guarantees, turning prompt construction from a flat transcript into structured, selectable, referenceable knowledge.
+An **output-compression-first** desktop coding agent. ~200k LOC across TypeScript and Rust.
 
-**Built with** TypeScript + Rust (Tauri) | **Validated on** Claude Opus (Anthropic API)
+**Built with** TypeScript + React + Rust (Tauri) | **Providers** Anthropic · OpenAI · Google (Gemini/Vertex) · LM Studio
 
 ---
 
-## What This Is
+## The Thesis
 
-ATLS Studio is a desktop application that wraps LLM interactions in a structured working-memory layer. Instead of relying only on a growing conversation transcript, the model works with **engrams** — content-addressed knowledge units that can be pinned, compacted, archived, recalled, and evicted.
+Contemporary LLM coding agents optimize the **context window** — fitting more into the prompt. ATLS optimizes **model emission** — minimizing what the model writes. Under current pricing (output tokens cost 5x input; cached input costs 0.1x uncached), emission dominates cost. A system that lets the model reference code instead of copying it, chain operations instead of narrating them, and trust the runtime instead of re-verifying assumptions can compress output by **20-50x** versus naive tool-calling agents.
 
-Through the ATLS runtime, the model gets structured control over its active working set. The system tracks freshness, and stale content can be detected, blocked, or recovered automatically. The result is an agent workflow designed to maintain coherent working memory across many tool-loop rounds.
+Measured result on a self-audit workload: **97.6% cost reduction** from the batch primitive alone. **$9.23 main-agent cost** for a 46-round audit that found and fixed 5 real bugs across 18 cognitive-subsystem files.
+
+See the **[whitepaper](docs/whitepaper.md)** for the full technical treatment.
+
+## Core Protocols
+
+### UHPP -- Universal Hash Pointer Protocol
+
+A reference calculus for LLM working memory. One expression addresses, slices, shapes, and composes content:
+
+```
+h:a1b2c3                       direct reference
+h:a1b2c3:15-50                 line slice
+h:a1b2c3:fn(init):sig          function signature only
+h:a1b2c3:fn(init):sig:dedent   shaped + stripped
+h:@edited&h:@file=*.ts         set intersection
+h:$last_edit                   recency ref
+HEAD~1:src/auth.ts:sig         temporal ref (git history)
+"content": "h:XXXX:fn(name)"   content-as-ref (inline resolution)
+```
+
+Symbol anchors resolve through a **tiered regex + block-end scanner** (not tree-sitter in the hot path) with TypeScript/Rust parity -- sync, pure, no IPC. See [symbol-resolver.md](docs/symbol-resolver.md).
+
+### HPP -- Hash Presence Protocol
+
+A round-scoped visibility state machine over content-addressed engrams:
+
+```
+materialized -> referenced -> archived -> evicted
+```
+
+Tracks what the model can currently "see." Scoped views let subagents participate without disturbing global presence state. Pinned engrams survive turn boundaries; unpinned refs dematerialize automatically.
 
 ## Key Capabilities
 
-- **Hash-addressed engrams** with four activation states (active, dormant, archived, evicted) and model-controlled lifecycle transitions
-- **Freshness tracking** — per-engram five-state taxonomy, **universal execution authority** (`canSteerExecution` across blackboard, staged snippets, WM, pins), and a cascade of recovery strategies (edit journal, shape match, symbol identity, fingerprint, line relocation)
-- **Unified batch executor** — one tool surface (`batch()`) with 76 `OperationKind` steps (primitives + `intent.*` macros), step-to-step dataflow, intent macros, and multi-level error recovery
-- **Universal Hash Pointer Protocol (UHPP)** — rich reference syntax with shapes, line ranges, set selectors, diffs, and boolean operations
-- **History compression** via hash-reference deflation, a **rolling verbatim window**, and a **distilled rolling summary** (`[Rolling Summary]`) for API assembly — large tool results replaced with hash pointers, older rounds summarized into structured facts, recallable on demand
-- **Prompt cache optimization** — append-only history within tool loops, mutable content isolated to the uncached dynamic block
-- **Blackboard architecture** for persistent session knowledge (plans, analysis results, decisions)
-- **Cognitive rules** — the model writes rules that shape its own reasoning across turns
-- **Task planning** with subtask-scoped memory lifecycle and transition bridges
+- **Single batch tool** -- 76 operations across 9 families (discover, understand, change, verify, session, annotate, delegate, intent, system), step-to-step dataflow, conditional execution, intent macros that expand to primitive sequences
+- **Six axes of emission compression** -- lexical (shorthands, TOON), semantic (intent macros, named bindings), temporal (recency refs), spatial (set selectors, shapes, content-as-ref), computational (line rebase, auto-verify, snapshot injection), transcript (hash deflation, rolling summary, batch stubbing)
+- **Freshness as epistemic integrity** -- five-state taxonomy (fresh/forwarded/shifted/changed/suspect), preflight gating before every mutation, round-end reconciliation, universal filter on steering signals, own-write suppression
+- **Managed working memory** -- content-addressed engrams with HPP visibility, tiered eviction, staging, blackboard, task plans with subtask-scoped lifecycle
+- **Multi-agent orchestration** -- research digest with dependency graphs, task hydration with token-budget degradation, file-claim enforcement, engram-first delegate subagents (retriever/design/coder/tester) with scoped HPP views
+- **History compression** -- hash-reference deflation (100-token threshold), assistant-side batch stubbing, rolling verbatim window (20 rounds) + distilled summary (1.65k tokens), emergency compression under pressure
+- **Cache-optimized prompt assembly** -- state/chat separation (state assembled fresh, never in transcript), two cache breakpoints (static system + append-only history), 9 layered prompt modules (~20k chars of behavioral control)
+- **Code intelligence engine** -- tree-sitter indexing, incremental scanning, FTS + optional neural embeddings, pattern-based issue detection, reusable across Tauri host and MCP server
+- **First-party telemetry** -- batch efficiency, tool-token distribution, cache composition, cost I/O, spin detection, round snapshots (200-snapshot ring buffer)
 
 ## Architecture
 
 ```
-  Cognitive Core (prompt)     Batch Executor (tools)     Prompt Assembly (per-round)
-         │                          │                            │
-         └──────────────────────────┴────────────────────────────┘
-                                    │
-                          Context Store (Zustand)
-              ┌──────────┬───────────┬──────────┬───────────┐
-              │ Working  │ Archived  │  Staged  │ Blackboard│
-              │ Memory   │ Chunks    │ Snippets │ Entries   │
-              └──────────┴───────────┴──────────┴───────────┘
-                                    │
-                    Freshness & Hash Protocol Layer
-              ┌──────────┬───────────┬──────────┬──────────┐
-              │   HPP    │ Snapshot  │Freshness │ History  │
-              │(visibility)│ Tracker │ Preflight│ Compress │
-              └──────────┴───────────┴──────────┴──────────┘
-                                    │
-                          Tauri / Rust Backend
-           File I/O · Code Search · Edit Session · Dep Graph
-           Build/Verify · AST Query · Snapshot Service · PTY
+  Prompt System (9 modules)    Batch Executor (76 ops)    Prompt Assembly (per-round)
+         |                          |                            |
+         +--------------------------+----------------------------+
+                                    |
+                    +---------------+---------------+
+                    |        Context Store           |
+                    |  (WM . Archive . Staged . BB)  |
+                    +---------------+---------------+
+                                    |
+        +-----------+-----------+---+---+-----------+------------+
+        |    HPP    | Snapshot  |Fresh- | History   |   Spin     |
+        |(visibility)| Tracker  |ness   | Compress  | Detection  |
+        +-----------+-----------+-------+-----------+------------+
+                                    |
+        +-----------+-----------+---+---+-----------+------------+
+        |   UHPP    |  Symbol   | Edit  |    AI     |  Session   |
+        | Resolver  | Resolver  |Session| Streaming |Persistence |
+        +-----------+-----------+-------+-----------+------------+
+                                    |
+                    +---------------+---------------+
+                    |     atls-core (Rust engine)    |
+                    |  Indexer . Query . Detectors   |
+                    |  Tree-sitter . FTS . SQLite    |
+                    +-------------------------------+
 ```
 
-See [Architecture Document](ARCHITECTURE.md) for the full technical description, or browse the [docs/](docs/) directory for focused deep-dives on each subsystem.
+See [Architecture Document](atls-studio/docs/ARCHITECTURE.md) for the full technical description, or browse the [docs/](docs/) directory for 19 focused deep-dives on each subsystem.
 
 ## Documentation
 
 | Document | Description |
 |----------|-------------|
-| [Architecture Overview](atls-studio/docs/ARCHITECTURE.md) | Complete technical architecture (start here) |
-| [Engrams & Memory](docs/engrams.md) | Hash-addressed knowledge units, activation states, memory regions |
-| [Batch Executor](docs/batch-executor.md) | Unified tool surface, operation families, dataflow, intents, error recovery |
-| [Subagents](docs/subagents.md) | Delegate models: four roles, snapshot loop, scoped HPP, budgets, `delegate.*` batch ops |
-| [Freshness System](docs/freshness.md) | Universal freshness (`canSteerExecution`, staged `stageState`), staleness detection, snapshot tracking, preflight (`context` full + store refresh), round-end sweep of chunks/archive/**staged** via bulk `get_current_revisions`, rebase strategies |
-| [Hash Protocol](docs/hash-protocol.md) | HPP visibility tracking and UHPP reference syntax |
-| [Prompt Assembly](docs/prompt-assembly.md) | Cache-aware prompt construction and middleware pipeline |
-| [History Compression](docs/history-compression.md) | Hash-reference deflation, rolling window, distilled summary, snapshot format v5 persistence |
-| [API Economics](docs/api-economics.md) | The caching problem and what would fix it |
-| [Studio App Shell](docs/studio-app-shell.md) | Desktop UI structure, panel layout, and shell-level responsibilities |
-| [Tauri Backend](docs/tauri-backend.md) | Native Rust service layer, command groups, and backend boundaries |
-| [Tauri command list](docs/tauri-commands.md) | All `invoke` names registered in `src-tauri` (IPC inventory) |
-| [Session Persistence](docs/session-persistence.md) | Per-project chat DB, auto-resume last session, cold restore vs deferred freshness reconcile, Tauri close flush, memory snapshots, swarm persistence |
-| [Swarm And Orchestration](docs/swarm-orchestration.md) | Multi-agent research, planning, execution, and task coordination |
-| [ATLS Engine](docs/atls-engine.md) | Shared Rust engine for indexing, parsing, queries, and project state |
-| [MCP Integration](docs/mcp-integration.md) | External MCP server surface and how it differs from the Studio host |
+| **[Whitepaper](docs/whitepaper.md)** | **Full technical paper**: output-compression-first thesis, UHPP grammar, HPP state machine, six compression axes, architecture, evaluation |
+| [Architecture Overview](atls-studio/docs/ARCHITECTURE.md) | Complete technical architecture (start here for code orientation) |
+| [Hash Protocol](docs/hash-protocol.md) | UHPP v6 reference syntax + HPP visibility tracking |
+| [Output Compression](docs/output-compression.md) | Six-axis emission compression inventory with per-mechanism source links |
+| [Batch Executor](docs/batch-executor.md) | `batch()` tool surface, operation families, dataflow, intents, line rebase, error recovery |
+| [Symbol Resolver](docs/symbol-resolver.md) | Tiered regex resolver, `findBlockEnd`, TS/Rust parity |
+| [Freshness System](docs/freshness.md) | Epistemic integrity: five-state taxonomy, preflight gating, round-end reconciliation |
+| [Engrams & Memory](docs/engrams.md) | Content-addressed knowledge units, activation states, memory regions |
+| [Prompt Assembly](docs/prompt-assembly.md) | State/chat separation, cache breakpoints, dynamic block composition |
+| [History Compression](docs/history-compression.md) | Hash deflation, rolling window, distilled summary |
+| [API Economics](docs/api-economics.md) | The input/output cost asymmetry and what would fix it |
+| [Swarm Orchestration](docs/swarm-orchestration.md) | Multi-agent research, planning, task hydration, execution |
+| [Subagents](docs/subagents.md) | Delegate subagents: four roles, scoped HPP, BB handoff |
+| [ATLS Engine](docs/atls-engine.md) | `atls-core` Rust engine: indexer, query, detectors |
+| [Tauri Backend](docs/tauri-backend.md) | Native Rust host: hash resolver, shape ops, edit session, AI streaming |
+| [Tauri Commands](docs/tauri-commands.md) | All `invoke` names registered in `src-tauri` |
+| [MCP Integration](docs/mcp-integration.md) | External MCP server (7 tools, literal paths, no UHPP) |
+| [Session Persistence](docs/session-persistence.md) | Snapshot format v2-v6, auto-resume, freshness-after-restore |
+| [Studio App Shell](docs/studio-app-shell.md) | Desktop UI, Internals dashboard, panel layout |
+| [Test Coverage](docs/test-coverage-backlog.md) | 148 TS tests, 36/38 Rust `#[cfg(test)]`, Playwright E2E |
 
 ## Tech Stack
 
-- **Frontend**: TypeScript, React, Zustand (state management), Vite
-- **Backend**: Rust, Tauri v2
-- **Code Intelligence**: Custom ATLS engine (semantic search, symbol resolution, dependency graphs)
-- **Supported Providers**: Anthropic (Claude), OpenAI, Google (Gemini/Vertex), LM Studio
+- **Frontend**: TypeScript, React, Zustand, Vite (~100k LOC including 148 test files)
+- **Backend**: Rust, Tauri v2 (38 modules, ~40k LOC in `src-tauri`)
+- **Engine**: `atls-core` -- tree-sitter indexing, FTS + optional neural embeddings, pattern detectors (~20k LOC)
+- **Providers**: Anthropic (Claude), OpenAI, Google (Gemini/Vertex), LM Studio
 
-## Repository layout
+## Repository Layout
 
-Paths below are from the **Git repository root** (the folder that contains `ARCHITECTURE.md` and `docs/`).
-
-| Path | Contents |
-|------|----------|
-| **`docs/`** | Subsystem markdown (freshness, batch executor, Tauri, etc.) |
-| **`atls-rs/`** | Rust ATLS engine (`atls-core`) and MCP crate |
-| **`atls-studio/`** | Desktop app package — **run all npm scripts from here** |
-
-The Tauri app’s frontend and `src-tauri/` live under the **`atls-studio/`** app package directory at the repository root (same level as `docs/` and `atls-rs/`). Do not confuse with a top-level `src-tauri/` at repo root (that path is gitignored if present).
+```
+docs/                         19 subsystem docs + whitepaper
+atls-rs/                      Reusable Rust engine
+  crates/
+    atls-core/                  Indexer, query engine, detectors, DB (~55 .rs files)
+    atls-mcp/                   External MCP server (7 tools, stdio JSON-RPC)
+atls-studio/                  Desktop app -- run npm scripts from here
+  src/                          TypeScript frontend
+    components/                   React UI (AiChat, AtlsPanel, SwarmPanel, CodeViewer, Internals)
+    hooks/                        useAtls, useChatPersistence
+    prompts/                      Cognitive core, tool ref, mode prompts, edit discipline
+    services/                     aiService, hashProtocol, freshness, orchestrator
+      batch/                        Executor, 10 handler files, intents, policy
+    stores/                       contextStore, appStore, costStore, roundHistory, swarm, terminal
+    utils/                        symbolResolver, toon, contextHash, uhpp*, tokenCounter
+  src-tauri/src/                Rust backend (38 modules)
+  e2e/                          Playwright E2E tests
+REVIEWED_CLEAN.md             Audit status: reviewed files, bugs found/fixed
+```
 
 ## Setup
 
@@ -112,32 +162,16 @@ npm run tauri:dev
 npm run tauri:build
 ```
 
-## Project Structure (app package)
+### Test
 
-From **`atls-studio/`** (the nested app directory):
-
+```bash
+cd atls-studio
+npm run test                    # Vitest (148 test files)
+npm run test:coverage:report    # Coverage + gap analysis
+npm run test:e2e                # Playwright
+npm run test:all                # Vitest + cargo test (src-tauri + atls-rs)
 ```
-atls-studio/                 # app package — cd here for npm run …
-├── src/                     # TypeScript frontend
-│   ├── components/          # React UI components
-│   ├── hooks/               # React hooks (chat persistence, etc.)
-│   ├── prompts/             # Cognitive Core, tool reference, mode prompts
-│   ├── services/            # Core services
-│   │   ├── aiService.ts     # Prompt assembly, streaming, round loop
-│   │   ├── contextFormatter.ts
-│   │   ├── hashProtocol.ts
-│   │   ├── historyCompressor.ts
-│   │   ├── freshnessPreflight.ts
-│   │   ├── promptMemory.ts
-│   │   └── batch/           # Batch executor (handlers, intents, executor)
-│   ├── stores/
-│   └── utils/
-├── src-tauri/src/           # Rust backend (many modules; see docs/tauri-commands.md)
-└── package.json
-```
-
-Repo-level **`docs/`** (next to the `atls-studio/` app folder) holds the architecture deep-dives linked from the table above.
 
 ## License
 
-[Business Source License 1.1](LICENSE) — Free for non-commercial use, research, evaluation, and personal projects. Commercial use requires a separate license. Converts to Apache 2.0 on March 18, 2030.
+[Business Source License 1.1](LICENSE) -- Free for non-commercial use, research, evaluation, and personal projects. Commercial use requires a separate license. Converts to Apache 2.0 on March 18, 2030.
