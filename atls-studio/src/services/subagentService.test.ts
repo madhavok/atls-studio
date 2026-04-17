@@ -158,10 +158,12 @@ describe('subagentService', () => {
   describe('subagent prompt cognitive cores', () => {
     const roles: SubagentRole[] = ['retriever', 'design', 'coder', 'tester', 'semantic'];
 
-    it('all roles include tool syntax section', () => {
+    it('all roles embed canonical BATCH_TOOL_REF under TOOL SYNTAX', () => {
       for (const role of roles) {
         const prompt = buildSubagentPrompt(role);
         expect(prompt).toContain('## TOOL SYNTAX');
+        expect(prompt).toContain('## Batch Tool — line-per-step');
+        expect(prompt).toContain('### Operation Families');
         expect(prompt).toContain('sc qs:');
         expect(prompt).toContain('pi hashes:');
       }
@@ -190,28 +192,20 @@ describe('subagentService', () => {
       }
     });
 
-    it('coder/tester prompts include ce edit syntax', () => {
-      for (const role of ['coder', 'tester'] as SubagentRole[]) {
+    it('shared BATCH_TOOL_REF documents edit, verify, and exec (all roles)', () => {
+      for (const role of roles) {
         const prompt = buildSubagentPrompt(role);
-        expect(prompt).toContain('ce f:h:XXXX:L-M le:[{content:');
+        expect(prompt).toContain('ce f:h:XXXX');
         expect(prompt).toContain('cc creates:');
-      }
-    });
-
-    it('retriever/design do NOT include edit syntax', () => {
-      for (const role of ['retriever', 'design'] as SubagentRole[]) {
-        const prompt = buildSubagentPrompt(role);
-        expect(prompt).not.toContain('ce f:h:XXXX');
-        expect(prompt).not.toContain('cc creates:');
-      }
-    });
-
-    it('coder/tester include verify and exec syntax', () => {
-      for (const role of ['coder', 'tester'] as SubagentRole[]) {
-        const prompt = buildSubagentPrompt(role);
         expect(prompt).toContain('vb|vt|vl|vk');
         expect(prompt).toContain('xe cmd:');
       }
+    });
+
+    it('subagent prompt stays tied to generated shorthand legend (drift guard)', () => {
+      const prompt = buildSubagentPrompt('coder');
+      expect(prompt).toContain('### Short codes');
+      expect(prompt).toContain('sc=search.code');
     });
 
     it('focusFileContext is preferred over focusFiles when both provided', () => {
