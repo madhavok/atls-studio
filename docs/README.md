@@ -29,6 +29,7 @@ Related:
 | [studio-app-shell.md](./studio-app-shell.md) | UI shell, AtlsPanel tabs (Issues/File/Patterns/Overview/Health), copy last API payload (debug) |
 | [tauri-backend.md](./tauri-backend.md) | Rust / Tauri layer: `hash_resolver`, `edit_session`, `diff_engine`, `ast_query`, `shape_ops`, `git_ops`, etc. |
 | [tauri-commands.md](./tauri-commands.md) | Enumerated Tauri `invoke` command names (`generate_handler!` in `lib.rs`) |
+| [symbol-resolver.md](./symbol-resolver.md) | Frontend TS parser (`symbolResolver.ts`): tiered regex resolver for `fn()`/`cls()`/`sym()` anchors, string/comment-aware block-end finder, parity with Rust `shape_ops.rs`, consumers (`hashResolver`, `freshnessPreflight`) |
 | [mcp-integration.md](./mcp-integration.md) | MCP server surface (`batch`, `batch_query`, `find_issues`, `scan_project`, `get_codebase_overview`, `get_patterns`, `export`) |
 | [swarm-orchestration.md](./swarm-orchestration.md) | Multi-agent orchestration, rehydration, per-store rate limiting |
 | [subagents.md](./subagents.md) | Delegate subagents: four roles, snapshot loop, scoped HPP, `ROLE_BB_PREFIXES`, per-role output caps |
