@@ -6,12 +6,55 @@
 use std::os::windows::process::CommandExt;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::atomic::{AtomicU64, Ordering};
 use tree_sitter::{Parser, Language};
 
 /// Windows CREATE_NO_WINDOW flag (0x08000000) - prevents console window flash when spawning subprocesses.
 const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+/// Per-invocation npm cache for `npx` so parallel `cargo test` / concurrent lints do not race on
+/// `~/.npm/_npx` (ENOTEMPTY on rename).
+static LINT_NPM_CACHE_SEQ: AtomicU64 = AtomicU64::new(0);
+
+fn isolated_npm_cache_dir_for_npx() -> PathBuf {
+    std::env::temp_dir().join("atls-lint-npm-cache").join(format!(
+        "{}-{}",
+        std::process::id(),
+        LINT_NPM_CACHE_SEQ.fetch_add(1, Ordering::Relaxed)
+    ))
+}
+
+/// `node_modules/typescript/lib/tsc.js` next to the running binary (dev checkout or packaged app).
+fn find_typescript_tsc_js_near_exe() -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    let exe_dir = exe.parent()?;
+    for ancestor in exe_dir.ancestors().take(8) {
+        let direct = ancestor
+            .join("node_modules")
+            .join("typescript")
+            .join("lib")
+            .join("tsc.js");
+        if direct.is_file() {
+            return Some(direct);
+        }
+        if let Ok(siblings) = std::fs::read_dir(ancestor) {
+            for sib in siblings.flatten() {
+                let sp = sib.path();
+                let candidate = sp
+                    .join("node_modules")
+                    .join("typescript")
+                    .join("lib")
+                    .join("tsc.js");
+                if candidate.is_file() {
+                    return Some(candidate);
+                }
+            }
+        }
+    }
+    None
+}
 
 /// Get the null device path for the current platform
 #[cfg(windows)]
@@ -512,39 +555,11 @@ fn lint_typescript_tsc(path: &str, content: &str, options: &LintOptions, max_err
                 }
             }
         }
-        // Also check near the running executable (the atls-studio app dir
-        // may have node_modules/typescript even when the indexed project doesn't).
-        if !has_local_ts {
-            if let Ok(exe) = std::env::current_exe() {
-                if let Some(exe_dir) = exe.parent() {
-                    // Walk up from e.g. src-tauri/target/debug/ to the app root
-                    for ancestor in exe_dir.ancestors().take(5) {
-                        if ancestor.join("node_modules").join("typescript").exists() {
-                            tsc_cwd = ancestor.to_path_buf();
-                            has_local_ts = true;
-                            break;
-                        }
-                        // Check immediate children (e.g. the frontend dir next to src-tauri)
-                        if let Ok(siblings) = std::fs::read_dir(ancestor) {
-                            for sib in siblings.flatten() {
-                                let sp = sib.path();
-                                if sp.is_dir() && sp.join("node_modules").join("typescript").exists() {
-                                    tsc_cwd = sp;
-                                    has_local_ts = true;
-                                    break;
-                                }
-                            }
-                        }
-                        if has_local_ts { break; }
-                    }
-                }
-            }
-        }
-        if !has_local_ts {
-            eprintln!("[Linter] no local node_modules/typescript found; will try npx --yes tsc");
-        }
-    } else if syntax_only && !has_local_ts {
-        eprintln!("[Linter] syntax_only: using project root for tsc (npx --yes if needed)");
+    }
+    if syntax_only && !has_local_ts {
+        eprintln!("[Linter] syntax_only: using project root for tsc (bundled tsc.js or npx if needed)");
+    } else if !has_local_ts {
+        eprintln!("[Linter] no local node_modules/typescript in project tree; will try bundled tsc.js or npx");
     }
 
     // Place the temp file INSIDE tsc_cwd so we can pass just the filename
@@ -562,31 +577,74 @@ fn lint_typescript_tsc(path: &str, content: &str, options: &LintOptions, max_err
     // When syntax_only: skip --strict/--isolatedModules to avoid rejecting valid JS (e.g. CommonJS)
     // that strict mode flags — we only need parse/syntax errors for pre-write gate.
     let allow_js = matches!(ext, "js" | "jsx" | "mjs" | "cjs");
-    let tsc_flags = if allow_js {
+    let tsc_args: Vec<String> = if allow_js {
         if syntax_only {
-            format!(
-                "--noEmit --pretty false --allowJs --esModuleInterop --module nodenext --moduleResolution nodenext --target es2020 --skipLibCheck {}",
-                temp_filename
-            )
+            vec![
+                "--noEmit".to_string(),
+                "--pretty".to_string(),
+                "false".to_string(),
+                "--allowJs".to_string(),
+                "--esModuleInterop".to_string(),
+                "--module".to_string(),
+                "nodenext".to_string(),
+                "--moduleResolution".to_string(),
+                "nodenext".to_string(),
+                "--target".to_string(),
+                "es2020".to_string(),
+                "--skipLibCheck".to_string(),
+                temp_filename.clone(),
+            ]
         } else {
-            format!(
-                "--noEmit --pretty false --allowJs --strict --isolatedModules --esModuleInterop --module nodenext --moduleResolution nodenext --target es2020 {}",
-                temp_filename
-            )
+            vec![
+                "--noEmit".to_string(),
+                "--pretty".to_string(),
+                "false".to_string(),
+                "--allowJs".to_string(),
+                "--strict".to_string(),
+                "--isolatedModules".to_string(),
+                "--esModuleInterop".to_string(),
+                "--module".to_string(),
+                "nodenext".to_string(),
+                "--moduleResolution".to_string(),
+                "nodenext".to_string(),
+                "--target".to_string(),
+                "es2020".to_string(),
+                temp_filename.clone(),
+            ]
         }
+    } else if syntax_only {
+        vec![
+            "--noEmit".to_string(),
+            "--pretty".to_string(),
+            "false".to_string(),
+            "--esModuleInterop".to_string(),
+            "--module".to_string(),
+            "nodenext".to_string(),
+            "--moduleResolution".to_string(),
+            "nodenext".to_string(),
+            "--target".to_string(),
+            "es2020".to_string(),
+            "--skipLibCheck".to_string(),
+            temp_filename.clone(),
+        ]
     } else {
-        if syntax_only {
-            format!(
-                "--noEmit --pretty false --esModuleInterop --module nodenext --moduleResolution nodenext --target es2020 --skipLibCheck {}",
-                temp_filename
-            )
-        } else {
-            format!(
-                "--noEmit --pretty false --strict --isolatedModules --esModuleInterop --module nodenext --moduleResolution nodenext --target es2020 {}",
-                temp_filename
-            )
-        }
+        vec![
+            "--noEmit".to_string(),
+            "--pretty".to_string(),
+            "false".to_string(),
+            "--strict".to_string(),
+            "--isolatedModules".to_string(),
+            "--esModuleInterop".to_string(),
+            "--module".to_string(),
+            "nodenext".to_string(),
+            "--moduleResolution".to_string(),
+            "nodenext".to_string(),
+            "--target".to_string(),
+            "es2020".to_string(),
+            temp_filename.clone(),
+        ]
     };
+    let tsc_flags = tsc_args.join(" ");
 
     let (shell, shell_arg) = crate::resolve_shell();
 
@@ -597,40 +655,117 @@ fn lint_typescript_tsc(path: &str, content: &str, options: &LintOptions, max_err
         format!("tsc {}", tsc_flags),
     ];
 
+    let npm_cache = isolated_npm_cache_dir_for_npx();
+    let _ = std::fs::create_dir_all(&npm_cache);
+
     let mut output = None;
-    for cmd_str in &commands_to_try {
-        eprintln!("[Linter] trying: {} {} {} (cwd={:?})", shell, shell_arg, &cmd_str[..cmd_str.len().min(120)], tsc_cwd);
-        let mut tsc_cmd = Command::new(shell);
-        tsc_cmd.arg(shell_arg).arg(cmd_str).current_dir(&tsc_cwd)
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped());
-        #[cfg(windows)]
-        tsc_cmd.creation_flags(CREATE_NO_WINDOW);
-        match tsc_cmd.output()
-        {
-            Ok(o) => {
-                let code = o.status.code().unwrap_or(-1);
-                let stdout_str = String::from_utf8_lossy(&o.stdout);
-                let stderr_str = String::from_utf8_lossy(&o.stderr);
-                eprintln!("[Linter] tsc exit={}, stdout_len={}, stderr_len={}", code, stdout_str.len(), stderr_str.len());
-                if !stdout_str.is_empty() {
-                    eprintln!("[Linter] tsc stdout preview: {}", &stdout_str[..stdout_str.len().min(200)]);
+
+    if !has_local_ts {
+        if let Some(ref tsc_js) = find_typescript_tsc_js_near_exe() {
+            eprintln!(
+                "[Linter] trying: node {:?} ... (cwd={:?})",
+                tsc_js, tsc_cwd
+            );
+            let mut tsc_cmd = Command::new("node");
+            tsc_cmd
+                .arg(tsc_js)
+                .args(&tsc_args)
+                .current_dir(&tsc_cwd)
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped());
+            #[cfg(windows)]
+            tsc_cmd.creation_flags(CREATE_NO_WINDOW);
+            match tsc_cmd.output() {
+                Ok(o) => {
+                    let code = o.status.code().unwrap_or(-1);
+                    let stdout_str = String::from_utf8_lossy(&o.stdout);
+                    let stderr_str = String::from_utf8_lossy(&o.stderr);
+                    eprintln!(
+                        "[Linter] tsc exit={}, stdout_len={}, stderr_len={}",
+                        code,
+                        stdout_str.len(),
+                        stderr_str.len()
+                    );
+                    if !stdout_str.is_empty() {
+                        eprintln!(
+                            "[Linter] tsc stdout preview: {}",
+                            &stdout_str[..stdout_str.len().min(200)]
+                        );
+                    }
+                    if !stderr_str.is_empty() {
+                        eprintln!(
+                            "[Linter] tsc stderr preview: {}",
+                            &stderr_str[..stderr_str.len().min(200)]
+                        );
+                    }
+                    let is_not_found = code == 127 || code == 9009
+                        || stderr_str.contains("not found")
+                        || stderr_str.contains("not recognized")
+                        || stderr_str.contains("is not recognized as");
+                    if !is_not_found {
+                        output = Some(o);
+                    }
                 }
-                if !stderr_str.is_empty() {
-                    eprintln!("[Linter] tsc stderr preview: {}", &stderr_str[..stderr_str.len().min(200)]);
-                }
-                let is_not_found = code == 127 || code == 9009
-                    || stderr_str.contains("not found")
-                    || stderr_str.contains("not recognized")
-                    || stderr_str.contains("is not recognized as");
-                if !is_not_found {
-                    output = Some(o);
-                    break;
-                }
+                Err(e) => eprintln!("[Linter] node/tsc spawn error: {}", e),
             }
-            Err(e) => {
-                eprintln!("[Linter] tsc spawn error: {}", e);
-                continue;
+        }
+    }
+
+    if output.is_none() {
+        for cmd_str in &commands_to_try {
+            eprintln!(
+                "[Linter] trying: {} {} {} (cwd={:?})",
+                shell,
+                shell_arg,
+                &cmd_str[..cmd_str.len().min(120)],
+                tsc_cwd
+            );
+            let mut tsc_cmd = Command::new(shell);
+            tsc_cmd
+                .arg(shell_arg)
+                .arg(cmd_str)
+                .current_dir(&tsc_cwd)
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .env("npm_config_cache", &npm_cache);
+            #[cfg(windows)]
+            tsc_cmd.creation_flags(CREATE_NO_WINDOW);
+            match tsc_cmd.output() {
+                Ok(o) => {
+                    let code = o.status.code().unwrap_or(-1);
+                    let stdout_str = String::from_utf8_lossy(&o.stdout);
+                    let stderr_str = String::from_utf8_lossy(&o.stderr);
+                    eprintln!(
+                        "[Linter] tsc exit={}, stdout_len={}, stderr_len={}",
+                        code,
+                        stdout_str.len(),
+                        stderr_str.len()
+                    );
+                    if !stdout_str.is_empty() {
+                        eprintln!(
+                            "[Linter] tsc stdout preview: {}",
+                            &stdout_str[..stdout_str.len().min(200)]
+                        );
+                    }
+                    if !stderr_str.is_empty() {
+                        eprintln!(
+                            "[Linter] tsc stderr preview: {}",
+                            &stderr_str[..stderr_str.len().min(200)]
+                        );
+                    }
+                    let is_not_found = code == 127 || code == 9009
+                        || stderr_str.contains("not found")
+                        || stderr_str.contains("not recognized")
+                        || stderr_str.contains("is not recognized as");
+                    if !is_not_found {
+                        output = Some(o);
+                        break;
+                    }
+                }
+                Err(e) => {
+                    eprintln!("[Linter] tsc spawn error: {}", e);
+                    continue;
+                }
             }
         }
     }
