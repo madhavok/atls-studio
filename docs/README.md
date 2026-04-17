@@ -1,43 +1,86 @@
 # ATLS Studio — Documentation Index
 
-Subsystem docs for the Studio app and batch runtime. Start here for orientation.
+**ATLS** (Augmented Thinking and Language System) is an output-compression-first desktop coding agent — approximately **200k LOC** across TypeScript and Rust — built around two novel protocols:
 
-## Freshness & edits (read this first)
+- **UHPP (Universal Hash Pointer Protocol)** — a reference calculus for addressing, slicing, shaping, and composing LLM working memory (`h:SHORT:slice:shape:op` with temporal refs, set selectors, symbol extraction, and content-as-ref resolution).
+- **HPP (Hash Presence Protocol)** — a round-scoped visibility state machine (`materialized → referenced → archived → evicted`) over content-addressed engrams with scoped views for multi-agent coordination.
 
-| Doc | Topics |
-|-----|--------|
-| **[freshness.md](./freshness.md)** | **Universal freshness** (`canSteerExecution`, `UniversalState`, `validateSourceIdentity`), staged **`stageState`**, snapshot tracker, awareness levels, hash injection, freshness states, preflight (`context` full + `refreshRoundEnd`), **round-end bulk revisions** (`get_current_revisions`, staged + WM + archive), reconciliation, retention/trace distillation vs workspace rev, **sequential `line_edits`**, **cross-step line rebase**, **post-edit context refresh**, **own-write suppression**, freshness telemetry |
+The core thesis: **every token the model emits should express intent the runtime cannot infer**. Names, paths, coordinates, narration, and repetitions are the runtime's job. Measured result: **97.6% cost reduction** from the batch primitive alone on a representative self-audit workload; **20–50× output compression** across all six axes versus naive tool-calling agents.
 
-Related:
+For the full technical treatment, see the **[whitepaper](./whitepaper.md)**.
 
-| Doc | Topics |
-|-----|--------|
-| [batch-executor.md](./batch-executor.md) | `batch()` tool, step loop, snapshot injection, intents, `line_edits` spans / `edits_resolved`, discover-step `content` (`file_paths`, `lines`, `end_lines`), **op/param shorthands** (`opShorthand.ts`, `paramNorm.ts`, prompt legend) |
-| [hash-protocol.md](./hash-protocol.md) | `h:` refs, modifiers, resolution rules |
-| [engrams.md](./engrams.md) | Working memory chunks and lifecycle |
+---
 
-## Other docs
+## Quick start
 
-| Doc | Topics |
-|-----|--------|
-| [atls-engine.md](./atls-engine.md) | `atls-core` Rust engine: `AtlsProject`, `QueryEngine`, JSON pattern catalogs, `neural-embeddings` feature, MCP tool surface |
-| [history-compression.md](./history-compression.md) | Hash deflation (threshold 100/200), `deflateToolResults` chunk creation, **`stubBatchToolUseInputs`** (assistant side), rolling verbatim window + distilled `[Rolling Summary]`, substantive round counting, snapshot format v5/v6 |
-| [prompt-assembly.md](./prompt-assembly.md) | **State vs chat separation**, BP-static + BP3 cache layers, state block **prepended into last user message** via `prependStateToContent`, entry manifest depth, tool-loop steering signals |
-| [api-economics.md](./api-economics.md) | Input-side caching story, pricing mismatch, mitigations table |
-| **[output-compression.md](./output-compression.md)** | **Cross-cutting output-token compression inventory** across six axes (lexical / semantic / temporal / spatial / computational / transcript) — the single doc that explains why ATLS emits ~75% fewer tokens per round than a naive tool-calling agent |
-| [session-persistence.md](./session-persistence.md) | Session save/restore, auto-resume, memory snapshot versions (v5 `rollingSummary`, v6 verify/awareness/coverage/spin/journal), freshness-after-restore timing, Tauri close flush |
-| [studio-app-shell.md](./studio-app-shell.md) | UI shell, AtlsPanel tabs (Issues/File/Patterns/Overview/Health), copy last API payload (debug) |
-| [tauri-backend.md](./tauri-backend.md) | Rust / Tauri layer: `hash_resolver`, `edit_session`, `diff_engine`, `ast_query`, `shape_ops`, `git_ops`, etc. |
+```bash
+cd atls-studio
+npm install
+npm run tauri:dev
+```
+
+Architecture overview: [`atls-studio/docs/ARCHITECTURE.md`](../atls-studio/docs/ARCHITECTURE.md)
+
+---
+
+## Core protocols
+
+| Doc | What it covers |
+|-----|----------------|
+| **[whitepaper.md](./whitepaper.md)** | **Full technical paper**: output-compression-first thesis, UHPP grammar + semantics, HPP state machine, six compression axes, ~200k LOC system architecture, freshness as epistemic integrity, self-audit evaluation (97.6% batch savings, 0.23 bugs/KLOC), EBNF grammar, cost model |
+| **[hash-protocol.md](./hash-protocol.md)** | UHPP reference syntax (v6): `h:` refs, line ranges, shapes, symbols, selectors, set algebra, temporal refs, recency refs, blackboard refs, diff refs, content-as-ref, batch-level resolution |
+| **[output-compression.md](./output-compression.md)** | Cross-cutting output-token compression inventory across six axes (lexical / semantic / temporal / spatial / computational / transcript) with per-mechanism source links |
+| **[engrams.md](./engrams.md)** | Working memory chunks: data model, activation states, memory regions, lifecycle |
+
+## Freshness & edits
+
+| Doc | What it covers |
+|-----|----------------|
+| **[freshness.md](./freshness.md)** | Universal freshness (`canSteerExecution`, `UniversalState`), staged `stageState`, snapshot tracker, awareness levels, hash injection, freshness states (fresh/forwarded/shifted/changed/suspect), preflight gating, round-end bulk revisions, reconciliation, own-write suppression, freshness telemetry |
+| [batch-executor.md](./batch-executor.md) | `batch()` tool surface, step loop, snapshot injection, intent expansion, `line_edits` coordinate model (intra-step + cross-step rebase), `edits_resolved` chaining, op/param shorthands, execution policy, error recovery |
+| [symbol-resolver.md](./symbol-resolver.md) | Tiered regex resolver for `fn()`/`cls()`/`sym()` anchors, string/comment-aware `findBlockEnd` (8 block-end strategies), TS/Rust deterministic parity, consumers (`hashResolver`, `freshnessPreflight`) |
+
+## Prompt & memory
+
+| Doc | What it covers |
+|-----|----------------|
+| [prompt-assembly.md](./prompt-assembly.md) | State vs chat separation, BP-static + BP3 cache layers, state block prepended into last user message, entry manifest depth, tool-loop steering signals, cognitive core, working memory block |
+| [history-compression.md](./history-compression.md) | Hash deflation (threshold 100/200 tokens), `deflateToolResults` chunk creation, `stubBatchToolUseInputs` (assistant side), rolling verbatim window (20 rounds) + distilled summary (1.65k tokens), substantive round counting |
+| [api-economics.md](./api-economics.md) | Input/output cost asymmetry, cache breakpoint architecture, pricing mismatch analysis, mitigation strategies |
+| [session-persistence.md](./session-persistence.md) | Session save/restore, auto-resume, memory snapshot format v2–v6, freshness-after-restore timing, Tauri close flush |
+
+## Multi-agent
+
+| Doc | What it covers |
+|-----|----------------|
+| [swarm-orchestration.md](./swarm-orchestration.md) | Multi-agent orchestration, research digest (symbols, dependency graph, edit targets), task hydration with token-budget degradation, dependency-aware scheduling, file-claim enforcement |
+| [subagents.md](./subagents.md) | Delegate subagents (retriever/design/coder/tester), engram-first snapshot loop, scoped HPP views, role allowlists, BB-prefixed write scoping, per-role output caps |
+
+## Infrastructure
+
+| Doc | What it covers |
+|-----|----------------|
+| [atls-engine.md](./atls-engine.md) | `atls-core` Rust engine: `AtlsProject`, `ParserRegistry` (tree-sitter), `Indexer` (incremental + hash-based), `QueryEngine` (FTS + optional neural embeddings), `DetectorRegistry` (pattern-based issue detection), SQLite WAL persistence |
+| [tauri-backend.md](./tauri-backend.md) | Native Rust host: `hash_resolver` (UHPP resolution, ~3k LOC), `shape_ops` (shapes + symbol resolver, ~5.7k LOC), `edit_session` (preimage verification), AI streaming, PTY terminals, git ops |
 | [tauri-commands.md](./tauri-commands.md) | Enumerated Tauri `invoke` command names (`generate_handler!` in `lib.rs`) |
-| [symbol-resolver.md](./symbol-resolver.md) | Frontend TS parser (`symbolResolver.ts`): tiered regex resolver for `fn()`/`cls()`/`sym()` anchors, string/comment-aware block-end finder, parity with Rust `shape_ops.rs`, consumers (`hashResolver`, `freshnessPreflight`) |
-| [mcp-integration.md](./mcp-integration.md) | MCP server surface (`batch`, `batch_query`, `find_issues`, `scan_project`, `get_codebase_overview`, `get_patterns`, `export`) |
-| [swarm-orchestration.md](./swarm-orchestration.md) | Multi-agent orchestration, rehydration, per-store rate limiting |
-| [subagents.md](./subagents.md) | Delegate subagents: four roles, snapshot loop, scoped HPP, `ROLE_BB_PREFIXES`, per-role output caps |
-| [test-coverage-backlog.md](./test-coverage-backlog.md) | Remaining test gaps, implemented store/hook/history coverage, E2E specs |
+| [mcp-integration.md](./mcp-integration.md) | External MCP server: 7 tools over stdio JSON-RPC, per-root project caching, literal paths only (no UHPP) |
+| [studio-app-shell.md](./studio-app-shell.md) | React/Vite UI: multi-panel workspace, AtlsPanel tabs (Issues/File/Patterns/Overview/Health), Internals dashboard (batch efficiency, tool tokens, cache composition, cost I/O, spin trace), copy last API payload |
+| [test-coverage-backlog.md](./test-coverage-backlog.md) | Test strategy: 148 TS test files, `#[cfg(test)]` in 36/38 Rust modules, Playwright E2E, coverage gap tracking |
 
 ## Repo layout
 
-- **Audit log** ([`DOCUMENTATION_AUDIT.md`](./DOCUMENTATION_AUDIT.md)): what each doc is for and last accuracy pass.
-- **Repository root** (contains this `docs/` folder): clone root; the architecture overview lives at [`atls-studio/docs/ARCHITECTURE.md`](../atls-studio/docs/ARCHITECTURE.md).
-- **App package** (npm scripts, `src/`, `src-tauri/`): [`../atls-studio/README.md`](../atls-studio/README.md) — run `npm install` and `npm run tauri:dev` from `atls-studio/` inside the clone.
-- Optional Cursor rule (local only; `.cursor/` is gitignored): if present, `.cursor/rules/edit-freshness.mdc` — not required for builds.
+```
+atls-studio/          # Tauri desktop app (React + Rust)
+  src/                #   TypeScript: cognitive runtime, batch handlers, prompt system, stores, UI
+  src-tauri/          #   Rust backend: 38 modules (hash resolver, shape ops, edit session, AI streaming, persistence)
+  e2e/                #   Playwright E2E tests
+atls-rs/              # Reusable Rust engine
+  crates/atls-core/   #   Code intelligence: indexer, query engine, detectors, DB
+  crates/atls-mcp/    #   MCP server
+docs/                 # This folder: 19 subsystem docs + whitepaper
+REVIEWED_CLEAN.md     # Audit status: reviewed files, bugs found/fixed
+```
+
+- **Architecture overview**: [`atls-studio/docs/ARCHITECTURE.md`](../atls-studio/docs/ARCHITECTURE.md)
+- **App README** (npm scripts, dev/build): [`atls-studio/README.md`](../atls-studio/README.md)
+- **Audit log**: [`DOCUMENTATION_AUDIT.md`](./DOCUMENTATION_AUDIT.md) — what each doc is for and last accuracy pass.
