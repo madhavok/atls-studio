@@ -19,8 +19,6 @@ We introduce two protocols that operationalize this thesis:
 
 We describe **ATLS**, a reference implementation combining UHPP, HPP, a managed memory runtime, a single batch-tool execution surface, a freshness subsystem with first-class epistemic-integrity primitives, and a history-compression pipeline. ATLS is embodied as a Tauri desktop coding environment totaling approximately **200k LOC** across TypeScript (cognitive runtime, batch handlers, prompt system, managed stores, React UI, 148 test files) and Rust (code intelligence engine with tree-sitter indexing, UHPP shape/symbol resolution with dual-implementation parity, edit application with preimage verification, AI streaming, and SQLite persistence across 38 backend modules with `#[cfg(test)]` blocks in 36 of them).
 
-We evaluate ATLS on a self-audit workload in which the system audited its own cognitive subsystems. The audit traversed 18 files across the critical path, found and fixed 5 real bugs (including a sort-comparator sign error, a full-vs-short hash lookup mismatch, a retry-count off-by-one, and a multi-line edit range miscalculation replicated across two files), and verified typecheck and build clean — at a total cost of **\$91.28** across 92 rounds (46 main-agent rounds; the remainder in subagents), with a measured **97.6% cost reduction** attributable to the batch primitive alone against a naive per-step dispatch baseline.
-
 We argue that the combination of (a) a protocol for referencing content without copying it, (b) a visibility calculus over that content, and (c) a system-wide discipline of minimizing model emission, together constitute a transferable architectural primitive for agent tooling that can and should be adopted beyond the reference implementation.
 
 ---
