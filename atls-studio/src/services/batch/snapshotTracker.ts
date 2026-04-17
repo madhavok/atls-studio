@@ -234,6 +234,14 @@ export class SnapshotTracker {
     const identity = this.snapshots.get(normalizePathKey(filePath));
     if (!identity) return AwarenessLevel.NONE;
     if (identity.canonicalHash != null) return AwarenessLevel.CANONICAL;
+    // Promote full-span lines reads to CANONICAL (mirrors hasCanonicalRead)
+    if (identity.readKind === 'lines') {
+      const n = identity.fullFileLineCount;
+      if (n != null && n >= 1 && identity.readRegions?.length
+          && regionsCover(identity.readRegions, { start: 1, end: n })) {
+        return AwarenessLevel.CANONICAL;
+      }
+    }
     if (editRegion && identity.readRegions && identity.readRegions.length > 0) {
       if (regionsCover(identity.readRegions, editRegion)) return AwarenessLevel.TARGETED;
     }
