@@ -13,7 +13,7 @@ export const EDIT_DISCIPLINE = `### EDIT + VERIFY DISCIPLINE
 - Multi-region edits in a SINGLE ce step: ALL le entries use original (snapshot) coordinates — the executor auto-rebases. Read ALL target regions before the edit step.
 - Multi-region edits across SEPARATE ce steps on the same file: use edits_resolved coordinates from the prior step's response for the next step's line targets.
 - reindent:true on inserts — system handles indentation.
-- Chain from h:NEW after each edit. Use edits_resolved for chaining, not mental math.
+- Chain from h:NEW after each edit. After a successful ce, the file identity is h:NEW from the [FRESH] response — use it as content_hash or f:h:NEW for all following edits on that file. Using the original h:OLD causes stale_hash blocks or duplicate-line corruption. Use edits_resolved for line chaining, not mental math.
 - Verify cadence: batch related change.* steps, then one vb at milestone or task end. Verify earlier only for public API / schema / dep / config changes.
 - **Documentation-only** tasks (Markdown/docs, comments, prompt copy when the user asked to write or expand documentation): edit and finish — **skip vb** and other build/typecheck steps unless the user explicitly asked to verify the toolchain or the same task also changes executable code.
 - Batch discipline: max 8-10 steps; split into discovery -> mutation -> verify batches.

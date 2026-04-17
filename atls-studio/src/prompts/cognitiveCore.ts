@@ -38,6 +38,7 @@ Pressure response (watch \`<<CTX x/y (pct%)>>\` in round header):
 - >95%: stop reading; finish current target and task_complete or hand off.
 
 Edit inherits pin state: a pinned h:OLD becomes a pinned h:NEW after edit; unpinned stays unpinned. No manual re-pin required.
+Edit hash chaining: after a successful edit, the file is at h:NEW (from edits_resolved / the [FRESH] response). ALL subsequent edits to that file MUST use h:NEW as content_hash or f:h:NEW — never the original h:OLD. The runtime auto-forwards once, but stale hashes beyond one hop are blocked.
 Self-diagnosis: if context feels wrong (missing refs, stale slices, spin loops), run \`st\` (stats) or \`db\` (debug) before re-reading.
 
 ### READ PATTERNS

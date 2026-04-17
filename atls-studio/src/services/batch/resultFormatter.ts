@@ -207,7 +207,7 @@ export function formatBatchResult(result: UnifiedBatchResult): string {
     const suffix = step.use.startsWith('verify.') ? verifyArtifactSuffix(step) : '';
     const durationTag = step.duration_ms > 0 ? ` (${step.duration_ms}ms)` : '';
     const staleSuffix = step.use.startsWith('verify.') && step.ok && staleVerifyStepIds.has(step.id)
-      ? ' [STALE: cached verification result — rerun canonical command]'
+      ? ' [cached — result may not reflect latest edits; rerun with vb to refresh]'
       : '';
     const primary = (typeof step.summary === 'string' ? step.summary.trim() : '')
       || (typeof step.error === 'string' ? step.error.trim() : '')

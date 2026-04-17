@@ -533,7 +533,7 @@ export async function runFreshnessPreflight(
         params,
         warnings,
         blocked: true,
-        error: `File changed externally since pinned; re-read required. Stale refs: ${suspectRefs.slice(0, 3).join(', ')}${suspectRefs.length > 3 ? ` +${suspectRefs.length - 3} more` : ''}`,
+        error: `Blocked: file(s) changed externally — re-read required before editing. Suspect: ${suspectRefs.slice(0, 3).join(', ')}${suspectRefs.length > 3 ? ` +${suspectRefs.length - 3} more` : ''}. Run rc/rl on the affected file(s) to clear.`,
         confidence: 'none',
         strategy: 'blocked',
         decisions,

@@ -1622,7 +1622,10 @@ export const handleEdit: OpHandler = async (params, ctx) => {
           strategy: preflight.strategy,
           factors: preflight.decisions.flatMap((decision) => decision.factors),
         });
-        return errWithContent(preflight.error ?? 'File changed externally; re-read required', payload);
+        return errWithContent(
+          preflight.error ?? `File changed (${identityLost ? 'identity lost' : 'stale hash'}); re-read with current content_hash from prior edit response`,
+          payload,
+        );
       }
       if (automation.action === 'review_required') {
         store.recordMemoryEvent({
