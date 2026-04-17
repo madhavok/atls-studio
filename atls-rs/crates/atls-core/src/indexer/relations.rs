@@ -953,10 +953,34 @@ pub fn extract_imports_regex(content: &str, language: Language) -> Vec<ImportInf
     }
 }
 
+/// Split a comma-separated import group on commas that are not inside
+/// nested `{...}`. Used to extract named imports from Rust `use`/JS `import`
+/// forms like `{a, b::{c, d}, e}`.
+fn split_top_level_commas_bytes(s: &str) -> Vec<&str> {
+    let mut out = Vec::new();
+    let mut start = 0usize;
+    let mut depth = 0i32;
+    for (i, ch) in s.char_indices() {
+        match ch {
+            '{' => depth += 1,
+            '}' => depth -= 1,
+            ',' if depth == 0 => {
+                out.push(&s[start..i]);
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    out.push(&s[start..]);
+    out
+}
+
 fn extract_imports_rust_regex(content: &str) -> Vec<ImportInfo> {
+    // `(?ms)` makes `.` match newlines so `.+?;` can span lines for
+    // multi-line brace groups like `use crate::{\n  foo,\n  bar,\n};`.
     static USE_RE: OnceLock<Regex> = OnceLock::new();
     let use_re = USE_RE.get_or_init(|| {
-        Regex::new(r"(?m)^(\s*(?:pub(?:\([^)]*\))?\s+)?use\s+.+?;)").unwrap()
+        Regex::new(r"(?ms)^(\s*(?:pub(?:\([^)]*\))?\s+)?use\s+.+?;)").unwrap()
     });
     static MOD_RE: OnceLock<Regex> = OnceLock::new();
     let mod_re = MOD_RE.get_or_init(|| {
@@ -966,7 +990,11 @@ fn extract_imports_rust_regex(content: &str) -> Vec<ImportInfo> {
     let mut imports = Vec::new();
 
     for caps in use_re.captures_iter(content) {
-        let full = caps.get(1).unwrap().as_str().trim();
+        // Collapse intra-statement whitespace/newlines so the brace/comma
+        // parser below works uniformly for single- and multi-line forms.
+        let full_raw = caps.get(1).unwrap().as_str();
+        let full_flat: String = full_raw.split_whitespace().collect::<Vec<_>>().join(" ");
+        let full = full_flat.trim();
         let is_pub = full.starts_with("pub");
         let mut text = full;
         if text.starts_with("pub") {
@@ -984,12 +1012,27 @@ fn extract_imports_rust_regex(content: &str) -> Vec<ImportInfo> {
         let mut symbols = Vec::new();
         let module = if let Some(brace_start) = trimmed.find('{') {
             let prefix = trimmed[..brace_start].trim_end_matches("::").trim().to_string();
-            if let Some(brace_end) = trimmed.find('}') {
-                for sym in trimmed[brace_start + 1..brace_end].split(',') {
+            // Walk balanced braces so nested groups (`{Foo, Bar::{Baz}}`) do
+            // not terminate on the first `}`.
+            let bytes = trimmed.as_bytes();
+            let mut depth = 0i32;
+            let mut brace_end = brace_start;
+            for (i, &b) in bytes.iter().enumerate().skip(brace_start) {
+                if b == b'{' { depth += 1; }
+                else if b == b'}' {
+                    depth -= 1;
+                    if depth == 0 { brace_end = i; break; }
+                }
+            }
+            if brace_end > brace_start {
+                for sym in split_top_level_commas_bytes(&trimmed[brace_start + 1..brace_end]) {
                     let sym = sym.trim();
-                    if !sym.is_empty() {
-                        let name = sym.split_whitespace().next().unwrap_or(sym);
-                        symbols.push(name.to_string());
+                    if sym.is_empty() { continue; }
+                    let name = sym.split_whitespace().next().unwrap_or(sym);
+                    // Strip any nested group suffix (e.g. `Bar::{Baz}` -> `Bar::`).
+                    let head = name.split("::").next().unwrap_or(name);
+                    if !head.is_empty() {
+                        symbols.push(head.to_string());
                     }
                 }
             }
@@ -1328,6 +1371,34 @@ mod tests {
     use crate::types::Language;
 
     // ── Import extraction ──────────────────────────────────────────────
+
+    #[test]
+    fn test_rust_regex_captures_multiline_use() {
+        // Smart-shape import truncation repro: multi-line `use` block was
+        // dropped by the regex path because `.+?;` could not cross newlines.
+        let source = r#"use std::path::Path;
+
+use crate::{
+    foo::Bar,
+    baz::{Qux, Quux},
+    plain,
+};
+"#;
+        let imports = extract_imports_regex(source, Language::Rust);
+        let modules: Vec<&str> = imports.iter().map(|i| i.module.as_str()).collect();
+        assert!(modules.iter().any(|m| m.contains("std::path")),
+            "missing std::path: {:?}", modules);
+        assert!(modules.iter().any(|m| *m == "crate"),
+            "multi-line `use crate::{{...}}` should resolve to module `crate`: {:?}", modules);
+
+        // Named symbols from the brace group — including the nested
+        // `baz::{Qux, Quux}` head `baz` — must be captured.
+        let crate_import = imports.iter().find(|i| i.module == "crate").expect("missing crate import");
+        let syms: Vec<&str> = crate_import.symbols.iter().map(|s| s.as_str()).collect();
+        assert!(syms.contains(&"foo"), "expected `foo` in symbols: {:?}", syms);
+        assert!(syms.contains(&"baz"), "expected `baz` (nested group head) in symbols: {:?}", syms);
+        assert!(syms.contains(&"plain"), "expected `plain` in symbols: {:?}", syms);
+    }
 
     #[test]
     fn test_extract_imports_typescript() {

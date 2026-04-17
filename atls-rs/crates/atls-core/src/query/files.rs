@@ -108,9 +108,40 @@ pub fn parse_imports_from_content(content: &str, max_lines: usize) -> Vec<String
     let mut seen = std::collections::HashSet::new();
     let mut modules = Vec::new();
     let mut in_go_import_block = false;
+    // Rust `use path::{…};` that opens `{` on one line and closes on another:
+    // collect all lines until the matching `}` (with `;`), then parse once.
+    let mut rust_use_buf: Option<String> = None;
+    let mut rust_use_depth: i32 = 0;
 
     for line in content.lines().take(max_lines) {
         let trimmed = line.trim();
+
+        // Continuation of a multi-line Rust `use`: accumulate until braces balance.
+        if let Some(buf) = rust_use_buf.as_mut() {
+            buf.push(' ');
+            buf.push_str(trimmed);
+            for c in trimmed.chars() {
+                match c {
+                    '{' => rust_use_depth += 1,
+                    '}' => rust_use_depth -= 1,
+                    _ => {}
+                }
+            }
+            if rust_use_depth <= 0 && trimmed.ends_with(';') {
+                let full = rust_use_buf.take().unwrap_or_default();
+                rust_use_depth = 0;
+                let body = full.trim().trim_start_matches("use").trim().trim_end_matches(';').trim();
+                let module_str = if let Some(open) = body.find('{') {
+                    body[..open].trim_end_matches("::").trim().to_string()
+                } else {
+                    body.to_string()
+                };
+                if !module_str.is_empty() && seen.insert(module_str.clone()) {
+                    modules.push(module_str);
+                }
+            }
+            continue;
+        }
 
         // Track Go multi-line import blocks: import ( ... )
         if in_go_import_block {
@@ -131,6 +162,18 @@ pub fn parse_imports_from_content(content: &str, max_lines: usize) -> Vec<String
         if trimmed == "import (" {
             in_go_import_block = true;
             continue;
+        }
+
+        // Rust: open a multi-line `use` buffer when the statement starts here
+        // but `{` does not close on this line (no matching `}` with `;`).
+        if trimmed.starts_with("use ") && !trimmed.starts_with("use strict") {
+            let opens = trimmed.chars().filter(|&c| c == '{').count() as i32;
+            let closes = trimmed.chars().filter(|&c| c == '}').count() as i32;
+            if opens > closes || (opens > 0 && !trimmed.ends_with(';')) {
+                rust_use_buf = Some(trimmed.to_string());
+                rust_use_depth = opens - closes;
+                continue;
+            }
         }
 
         let module = if (trimmed.starts_with("import ") || trimmed.starts_with("import{")) && trimmed.contains("from ") {
@@ -748,5 +791,27 @@ import (
         let src = "import { a } from 'dup'\nimport { b } from 'dup'\nimport { c } from 'other'\n";
         let m = parse_imports_from_content(src, 3);
         assert_eq!(m, vec!["dup", "other"]);
+    }
+
+    #[test]
+    fn rust_multiline_use_block_not_truncated() {
+        // Smart-shape import truncation repro: pre-fix, the single-line parser
+        // would see only `use crate::{` and drop the import entirely.
+        let src = r#"
+use std::path::Path;
+use crate::{
+    foo::Bar,
+    baz::{Qux, Quux},
+    plain,
+};
+use other;
+"#;
+        let m = parse_imports_from_content(src, 50);
+        assert!(m.iter().any(|s| s.contains("std::path")),
+            "missing std::path: {:?}", m);
+        assert!(m.iter().any(|s| s == "crate"),
+            "multi-line `use crate::{{...}}` should surface the `crate` prefix: {:?}", m);
+        assert!(m.iter().any(|s| s == "other"),
+            "subsequent single-line `use other;` should still be captured: {:?}", m);
     }
 }

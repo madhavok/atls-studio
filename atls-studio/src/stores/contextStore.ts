@@ -306,6 +306,22 @@ export interface ContextChunk {
   /** Files this chunk semantically depends on (call graphs, analyses, summaries).
    *  1-hop invalidation: when a derivedFromSource changes, this chunk becomes suspect. */
   derivedFromSources?: string[];
+  /**
+   * Optional marker indicating this full-file engram has been replaced by
+   * narrower views (line-range slices or shaped sub-engrams). Populated when
+   * follow-up `read_lines` / `read_shaped` slices cover the same source so
+   * the hash manifest can hint the old hash is no longer the canonical view.
+   *
+   * Rendering-only metadata; see {@link HashManifest.formatHashManifest}.
+   * Persisted as part of the chunk — old snapshots without this field
+   * deserialize with `supersededBy === undefined` (no migration required).
+   */
+  supersededBy?: {
+    /** Short hashes of the replacement slices (up to a small cap). */
+    hashes: string[];
+    /** Free-form note, e.g. "slices" or "sig+fold". */
+    note: string;
+  };
 }
 
 export interface ReadSpan {
@@ -548,6 +564,16 @@ export interface StagedSnippet {
 export const STAGE_SOFT_CEILING = 25000;
 const MAX_MEMORY_EVENTS = 100;
 
+/**
+ * Prompt-visible cost for a staged entry whose body is omitted because an
+ * active engram already covers the same source. The emitted lines are just
+ * the header (`[hash] source:view (Ntk)`) and the "content omitted" marker —
+ * roughly 20 tokens — so we charge that against prompt budgets instead of the
+ * full `snippet.tokens`. Keeps header totals, CTX lines, and `reconcileBudgets`
+ * aligned with what the model actually sees.
+ */
+export const STAGED_OMITTED_POINTER_TOKENS = 20;
+
 function shouldAutoCompactChunk(chunk: ContextChunk): boolean {
   if (chunk.compacted) return false;
   if (chunk.pinned) return false;
@@ -655,6 +681,37 @@ function getStagePriority(key: string, snippet: StagedSnippet): number {
 
 function getStageRecency(snippet: StagedSnippet): number {
   return snippet.lastUsedAt ?? 0;
+}
+
+/**
+ * Returns the set of staged sources that are also covered by an active
+ * (materialized, non-compacted) engram — those entries will render as a
+ * pointer rather than full content in `getStagedBlock`.
+ */
+function computeActiveEngramSources(state: ContextStoreState): Set<string> {
+  const stagedSources = new Set<string>();
+  for (const [, snippet] of state.stagedSnippets) {
+    if (snippet.source) stagedSources.add(snippet.source.replace(/\\/g, '/').toLowerCase());
+  }
+  const activeEngramSources = new Set<string>();
+  if (stagedSources.size === 0) return activeEngramSources;
+  for (const [, chunk] of state.chunks) {
+    if (chunk.compacted || !chunk.source) continue;
+    const chunkSourceNorm = chunk.source.replace(/\\/g, '/').toLowerCase();
+    if (!stagedSources.has(chunkSourceNorm)) continue;
+    const ref = hppGetRef(chunk.hash);
+    if (!ref || hppShouldMaterialize(ref)) {
+      activeEngramSources.add(chunk.source);
+    }
+  }
+  return activeEngramSources;
+}
+
+function emittedTokensForSnippet(snippet: StagedSnippet, activeEngramSources: Set<string>): number {
+  if (snippet.source != null && activeEngramSources.has(snippet.source)) {
+    return STAGED_OMITTED_POINTER_TOKENS;
+  }
+  return snippet.tokens;
 }
 
 function getPersistentAnchorMetrics(staged: Map<string, StagedSnippet>): { tokens: number; count: number } {
@@ -797,7 +854,11 @@ function getEstimatedPromptPressureTokens(
     + (promptMetrics.nativeToolTokens ?? 0)
     + promptMetrics.contextControlTokens;
   const bp3Tokens = (promptMetrics.bp3PriorTurnsTokens ?? 0);
-  const stagedTokens = state.getStagedTokenCount();
+  // Use emitted (prompt-visible) staged tokens here — pressure math compares
+  // against the actual prompt, which only contains pointer stubs for entries
+  // covered by an active engram. `getStagedTokenCount` remains the logical
+  // admission quota used by `pruneStagedSnippetsToBudget`.
+  const stagedTokens = state.getStagedEmittedTokens();
   return staticSystemTokens
     + bp3Tokens
     + stagedTokens
@@ -956,6 +1017,15 @@ interface ContextStoreState {
   unstageSnippet: (key: string) => { freed: number };
   getStagedBlock: () => string;
   getStagedTokenCount: () => number;
+  /**
+   * Tokens actually emitted by `getStagedBlock` into the prompt. Entries whose
+   * body is omitted because an active engram already covers the source are
+   * charged a small fixed pointer cost (see `STAGED_OMITTED_POINTER_TOKENS`)
+   * rather than their full `snippet.tokens`. Use this for prompt-budget math
+   * and header totals so they match what the model actually sees. Use
+   * `getStagedTokenCount` for logical admission/eviction quotas.
+   */
+  getStagedEmittedTokens: () => number;
   markStagedSnippetsUsed: () => void;
   pruneStagedSnippets: (reason?: StageEvictionReason) => { freed: number; removed: number; reliefAction: PromptReliefAction };
   /** Return staged snippets matching a source path, with fields needed for post-edit content refresh. */
@@ -4648,36 +4718,23 @@ export const useContextStore = create<ContextStoreState>()(
   getStagedBlock: () => {
     const state = get();
     if (state.stagedSnippets.size === 0) return '';
-    let totalTokens = 0;
-    state.stagedSnippets.forEach(s => totalTokens += s.tokens);
-    const lines: string[] = [];
-    lines.push(`## STAGED (cached @ 10% cost, ${(totalTokens / 1000).toFixed(1)}k tokens)`);
+    const activeEngramSources = computeActiveEngramSources(state);
 
-    // Build a set of sources that have active (materialized, non-compacted) engrams
-    // Optimized: skip chunks that are compacted or have no source early,
-    // and avoid hppGetRef/hppShouldMaterialize for chunks that can't match any staged source.
-    const stagedSources = new Set<string>();
-    for (const [, snippet] of state.stagedSnippets) {
-      if (snippet.source) stagedSources.add(snippet.source.replace(/\\/g, '/').toLowerCase());
-    }
-    const activeEngramSources = new Set<string>();
-    if (stagedSources.size > 0) {
-      for (const [, chunk] of state.chunks) {
-        if (chunk.compacted || !chunk.source) continue;
-        const chunkSourceNorm = chunk.source.replace(/\\/g, '/').toLowerCase();
-        if (!stagedSources.has(chunkSourceNorm)) continue;
-        const ref = hppGetRef(chunk.hash);
-        if (!ref || hppShouldMaterialize(ref)) {
-          activeEngramSources.add(chunk.source);
-        }
-      }
-    }
+    let emittedTokens = 0;
+    state.stagedSnippets.forEach(snippet => {
+      emittedTokens += emittedTokensForSnippet(snippet, activeEngramSources);
+    });
+
+    const lines: string[] = [];
+    lines.push(`## STAGED (cached @ 10% cost, ${(emittedTokens / 1000).toFixed(1)}k tokens)`);
 
     state.stagedSnippets.forEach((snippet, key) => {
       const shortHash = key.slice(0, SHORT_HASH_LEN);
       const stalePrefix = (snippet.stageState === 'stale' || snippet.suspectSince != null) ? '[STALE] ' : '';
-      lines.push(`${stalePrefix}[${shortHash}] ${snippet.source ?? 'unknown'}${snippet.viewKind ? ':' + snippet.viewKind : ''} (${snippet.tokens}tk)`);
-      if (snippet.source && activeEngramSources.has(snippet.source)) {
+      const omitted = snippet.source != null && activeEngramSources.has(snippet.source);
+      const displayTokens = omitted ? STAGED_OMITTED_POINTER_TOKENS : snippet.tokens;
+      lines.push(`${stalePrefix}[${shortHash}] ${snippet.source ?? 'unknown'}${snippet.viewKind ? ':' + snippet.viewKind : ''} (${displayTokens}tk)`);
+      if (omitted) {
         lines.push(`  (active engram exists — content omitted from staged block)`);
       } else {
         lines.push(snippet.content);
@@ -4690,6 +4747,17 @@ export const useContextStore = create<ContextStoreState>()(
   getStagedTokenCount: () => {
     let total = 0;
     get().stagedSnippets.forEach(s => total += s.tokens);
+    return total;
+  },
+
+  getStagedEmittedTokens: () => {
+    const state = get();
+    if (state.stagedSnippets.size === 0) return 0;
+    const activeEngramSources = computeActiveEngramSources(state);
+    let total = 0;
+    state.stagedSnippets.forEach(snippet => {
+      total += emittedTokensForSnippet(snippet, activeEngramSources);
+    });
     return total;
   },
 
@@ -5315,7 +5383,7 @@ export const useContextStore = create<ContextStoreState>()(
     return formatStatsLine(
       usedTokens, state.maxTokens, state.chunks.size,
       state.getPinnedCount(), state.getBlackboardTokenCount(), state.freedTokens,
-      undefined, state.batchMetrics, state.getStagedTokenCount(), latestRound?.conversationHistoryTokens, latestRound?.historyBreakdownLabel,
+      undefined, state.batchMetrics, state.getStagedEmittedTokens(), latestRound?.conversationHistoryTokens, latestRound?.historyBreakdownLabel,
       state.chunks,
       roundCount,
     );

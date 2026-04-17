@@ -406,6 +406,32 @@ describe('parseBatchLines', () => {
     expect(result.steps).toHaveLength(1);
     expect(result.steps[0].with).toEqual({ hashes: ['h:deadbeef:10-20'] });
   });
+
+  it('rewrites `hashes:in:STEP.refs` to proper `in:` dataflow and warns', () => {
+    // AI sometimes conflates the two pin forms: `hashes:in:r1.refs` is
+    // neither a hash list nor a dataflow ref. Parser should auto-correct to
+    // `in:r1.refs` (so the step works) and surface a warning.
+    const result = parseBatchLines('p1 session.pin hashes:in:r1.refs');
+    expect(result.steps).toHaveLength(1);
+    const step = result.steps[0];
+    expect(step.in).toEqual({ hashes: { from_step: 'r1', path: 'refs' } });
+    expect(step.with).toBeUndefined();
+    const warnings = step._parseWarnings as string[] | undefined;
+    expect(warnings).toBeDefined();
+    expect(warnings!.length).toBeGreaterThan(0);
+    expect(warnings![0]).toMatch(/hashes:in:r1\.refs/);
+    expect(warnings![0]).toMatch(/in:STEP\.refs/);
+  });
+
+  it('does not auto-correct legitimate `hashes:in:...` when value has nested colons', () => {
+    // A value like `hashes:in:key:val` is not a recognizable dataflow
+    // shorthand and should pass through as a raw param (or fail downstream)
+    // rather than silently being rewritten.
+    const result = parseBatchLines('p1 session.pin hashes:in:not-a-step.hash:foo');
+    const step = result.steps[0];
+    expect(step.in).toBeUndefined();
+    expect(step._parseWarnings).toBeUndefined();
+  });
 });
 
 describe('expandBatchQ', () => {

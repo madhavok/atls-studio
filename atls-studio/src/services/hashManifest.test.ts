@@ -142,6 +142,45 @@ describe('hashManifest', () => {
       expect(output).toContain('rec to restore');
     });
 
+    it('renders superseded-by-slices marker when chunk carries supersededBy', () => {
+      const output = formatHashManifest({
+        activeChunks: [
+          { shortHash: 'abc123', type: 'file', source: 'src/big.ts', tokens: 4200, pinned: false, freshness: 'fresh',
+            supersededBy: { hashes: ['aaa111', 'bbb222'], note: 'slices' } },
+        ],
+        dematRefs: [],
+        archivedRefs: [],
+        turn: 7,
+      });
+      expect(output).toContain('h:abc123');
+      expect(output).toContain('| superseded by slices: h:aaa111, h:bbb222');
+    });
+
+    it('caps supersededBy hash list with a `+N more` overflow marker', () => {
+      const output = formatHashManifest({
+        activeChunks: [
+          { shortHash: 'abc123', type: 'file', source: 'src/big.ts', tokens: 4200, freshness: 'fresh',
+            supersededBy: { hashes: ['h1', 'h2', 'h3', 'h4', 'h5'], note: 'slices' } },
+        ],
+        dematRefs: [],
+        archivedRefs: [],
+        turn: 7,
+      });
+      expect(output).toContain('h:h1, h:h2, h:h3 +2 more');
+    });
+
+    it('omits marker when supersededBy is undefined (forward-compat with old snapshots)', () => {
+      const output = formatHashManifest({
+        activeChunks: [
+          { shortHash: 'abc123', type: 'file', source: 'src/big.ts', tokens: 4200, freshness: 'fresh' },
+        ],
+        dematRefs: [],
+        archivedRefs: [],
+        turn: 7,
+      });
+      expect(output).not.toContain('superseded by');
+    });
+
     it('renders forward and eviction rows', () => {
       recordForwarding('old111', 'new222', 'src/edited.ts', 'edit-refresh', 4);
       recordEviction('gone33', 'src/deleted.ts', 'reconcile', 3);

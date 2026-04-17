@@ -457,6 +457,25 @@ export function parseBatchLines(q: string): { version: '1.0'; steps: Record<stri
         continue;
       }
 
+      // Catch a recurring AI parser mistake: `hashes:in:r1.refs`. The AI is
+      // trying to express "pin the refs produced by step r1" but packaged the
+      // dataflow shorthand inside a `hashes:` value. Treat it as if they had
+      // written `in:r1.refs`, promote to `step.in`, and surface a warning so
+      // handlers can return a targeted hint instead of an opaque "bad hashes"
+      // failure.
+      if (key === 'hashes' && rawVal.startsWith('in:')) {
+        const dataflow = rawVal.slice(3);
+        if (/\.(refs|ok)$/.test(dataflow) || !dataflow.includes(':')) {
+          step.in = expandDataflow(dataflow);
+          const warnings = (step._parseWarnings as string[] | undefined) ?? [];
+          warnings.push(
+            `malformed \`hashes:in:${dataflow}\` rewritten to \`in:${dataflow}\` — use \`in:STEP.refs\` for dataflow, \`hashes:[h:...]\` for literal hashes`,
+          );
+          step._parseWarnings = warnings;
+          continue;
+        }
+      }
+
       if (key === 'in') {
         step.in = expandDataflow(rawVal);
       } else if (key === 'if') {

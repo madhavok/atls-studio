@@ -234,9 +234,14 @@ pub fn find_block_end(lines: &[&str], start: usize, total: usize) -> usize {
 }
 
 /// Walk backward from `match_line` to include contiguous attribute/decorator lines.
+///
+/// Also absorbs a preceding `/** ... */` JSDoc block when present — the block
+/// closes with `*/` on some line `start - 1`, and everything from the matching
+/// `/**` opener is considered part of the symbol's attribution.
 pub fn expand_to_attributes(lines: &[&str], match_line: usize) -> usize {
     let mut start = match_line;
-    while start > 0 {
+    loop {
+        if start == 0 { break; }
         let prev = lines[start - 1].trim();
         if prev.starts_with('@')
             || prev.starts_with("#[")
@@ -249,9 +254,84 @@ pub fn expand_to_attributes(lines: &[&str], match_line: usize) -> usize {
             start -= 1;
             continue;
         }
+        // TS/JS / Java / C-family block-comment doc: walk back over `/** ... */`
+        // (or plain `/* ... */`) so the docblock belongs to the symbol.
+        if prev.ends_with("*/") {
+            let mut j = start.saturating_sub(1);
+            let mut found_open = false;
+            loop {
+                let t = lines[j].trim_start();
+                if t.starts_with("/*") {
+                    found_open = true;
+                    break;
+                }
+                if j == 0 { break; }
+                j -= 1;
+            }
+            if found_open {
+                start = j;
+                continue;
+            }
+        }
         break;
     }
     start
+}
+
+/// Returns a per-line mask where `mask[i]` is true when line `i` sits inside
+/// a `/* ... */` block comment (including `/**` JSDoc variants) — used to
+/// filter out spurious symbol matches that land inside doc text like
+/// `* this function popValidEvictedOldest does X`.
+fn compute_block_comment_mask(lines: &[&str]) -> Vec<bool> {
+    let mut mask = vec![false; lines.len()];
+    let mut in_block = false;
+    for (i, line) in lines.iter().enumerate() {
+        // Walk the line char-by-char; a match inside a block comment taints
+        // this line even if the block closes mid-line.
+        let line_was_in_block_at_start = in_block;
+        let bytes = line.as_bytes();
+        let mut j = 0;
+        let mut touched_code = !line_was_in_block_at_start;
+        while j < bytes.len() {
+            if in_block {
+                if j + 1 < bytes.len() && bytes[j] == b'*' && bytes[j + 1] == b'/' {
+                    in_block = false;
+                    j += 2;
+                    continue;
+                }
+                j += 1;
+            } else {
+                if j + 1 < bytes.len() && bytes[j] == b'/' && bytes[j + 1] == b'*' {
+                    in_block = true;
+                    j += 2;
+                    touched_code = false;
+                    continue;
+                }
+                // `//` line comment: rest of line is comment but does not
+                // carry state; break out.
+                if j + 1 < bytes.len() && bytes[j] == b'/' && bytes[j + 1] == b'/' {
+                    break;
+                }
+                j += 1;
+            }
+        }
+        // Line is "comment-only" when it started inside a block AND never
+        // transitioned to code, OR the whole line was consumed by a block
+        // comment (it opened and never closed cleanly before EOL).
+        if line_was_in_block_at_start && !touched_code {
+            mask[i] = true;
+        } else if in_block && !line_was_in_block_at_start {
+            // Opened a block this line; check if any code precedes the `/*`.
+            // Conservative: only mark if the line's trimmed prefix starts
+            // with `/*` — otherwise the line has real code followed by a
+            // trailing block comment, which we do want to scan.
+            let trimmed = line.trim_start();
+            if trimmed.starts_with("/*") {
+                mask[i] = true;
+            }
+        }
+    }
+    mask
 }
 
 // ---------------------------------------------------------------------------
@@ -566,6 +646,9 @@ pub fn uhpp_extract_symbols(content: &str, lang: Option<&str>) -> Vec<ParsedSymb
     let mut seen: HashMap<(usize, String), (&str, usize)> = HashMap::new();
     let compiled = compiled_patterns();
     let lang_str = lang.unwrap_or("");
+    // Pre-compute block-comment mask so all tiers skip matches inside
+    // `/* ... */` / JSDoc blocks (e.g. `* this function popValidEvictedOldest …`).
+    let comment_mask = compute_block_comment_mask(&lines);
 
     // --- Tier 1: keyword regex scan ---
     for (kind, re) in &compiled.patterns {
@@ -573,6 +656,7 @@ pub fn uhpp_extract_symbols(content: &str, lang: Option<&str>) -> Vec<ParsedSymb
         if SCOPED_KINDS.contains(kind) { continue; }
 
         for (i, line) in lines.iter().enumerate() {
+            if comment_mask[i] { continue; }
             if let Some(caps) = re.captures(line) {
                 let name = if *kind == "ctor" {
                     "constructor".to_string()
@@ -596,6 +680,7 @@ pub fn uhpp_extract_symbols(content: &str, lang: Option<&str>) -> Vec<ParsedSymb
     // --- Tier 1.5a: JS/TS class method shorthand ---
     if matches!(lang_str, "typescript" | "javascript" | "ts" | "js" | "") {
         for (name, line_idx) in try_class_method_lines(&lines, total) {
+            if comment_mask[line_idx] { continue; }
             let key = (line_idx, name);
             seen.entry(key).or_insert_with_key(|_| {
                 let attr_start = expand_to_attributes(&lines, line_idx);
@@ -607,6 +692,7 @@ pub fn uhpp_extract_symbols(content: &str, lang: Option<&str>) -> Vec<ParsedSymb
     // --- Tier 1.5b: variable-bound functions (arrow/assigned) ---
     if matches!(lang_str, "typescript" | "javascript" | "ts" | "js" | "") {
         for (name, line_idx) in try_variable_bound_fn_lines(&lines, total) {
+            if comment_mask[line_idx] { continue; }
             let key = (line_idx, name);
             seen.entry(key).or_insert_with_key(|_| {
                 let attr_start = expand_to_attributes(&lines, line_idx);
@@ -618,6 +704,7 @@ pub fn uhpp_extract_symbols(content: &str, lang: Option<&str>) -> Vec<ParsedSymb
     // --- Tier 1.5c: object literal method shorthand ---
     if matches!(lang_str, "typescript" | "javascript" | "ts" | "js" | "") {
         for (name, line_idx) in try_object_method_lines(&lines, total) {
+            if comment_mask[line_idx] { continue; }
             let key = (line_idx, name);
             seen.entry(key).or_insert_with_key(|_| {
                 let attr_start = expand_to_attributes(&lines, line_idx);
@@ -629,6 +716,7 @@ pub fn uhpp_extract_symbols(content: &str, lang: Option<&str>) -> Vec<ParsedSymb
     // --- Tier 2: C-family return-type ---
     if is_cfamily_lang(lang_str) || lang_str.is_empty() {
         for (name, line_idx) in try_cfamily_fn_lines(&lines, total) {
+            if comment_mask[line_idx] { continue; }
             let key = (line_idx, name);
             seen.entry(key).or_insert_with_key(|_| {
                 let attr_start = expand_to_attributes(&lines, line_idx);
@@ -640,6 +728,7 @@ pub fn uhpp_extract_symbols(content: &str, lang: Option<&str>) -> Vec<ParsedSymb
     // --- Tier 2+: Go type declarations ---
     if matches!(lang_str, "go" | "golang" | "") {
         for (name, line_idx, go_kind) in try_go_type_lines(&lines, total) {
+            if comment_mask[line_idx] { continue; }
             let key = (line_idx, name);
             seen.entry(key).or_insert_with_key(|_| {
                 let attr_start = expand_to_attributes(&lines, line_idx);
@@ -1020,6 +1109,62 @@ public class UserService {
         let symbols = uhpp_extract_symbols(content, Some("rust"));
         let sym = symbols.iter().find(|s| s.name == "Foo").expect("missing Foo");
         assert_eq!(sym.line, 1, "should expand to include #[derive] attr at line 1");
+    }
+
+    #[test]
+    fn test_jsdoc_no_duplicate_symbol() {
+        // Repro of smart-shape duplicate line bug: a function name that
+        // also appears in its JSDoc comment text must not produce two
+        // `ParsedSymbol` entries.
+        let content = r#"
+/**
+ * Pop the oldest valid evicted entry. This function popValidEvictedOldest
+ * drains the eviction queue while preserving insertion order.
+ * @returns {Entry | null}
+ */
+export async function popValidEvictedOldest(): Promise<Entry | null> {
+    return null;
+}
+"#;
+        let symbols = uhpp_extract_symbols(content, Some("typescript"));
+        let count = symbols.iter().filter(|s| s.name == "popValidEvictedOldest").count();
+        assert_eq!(
+            count, 1,
+            "JSDoc block must not yield a second symbol for popValidEvictedOldest: got {:?}",
+            symbols.iter().map(|s| (s.name.clone(), s.line)).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn test_jsdoc_absorbed_into_attribution_line() {
+        // The JSDoc block above the function belongs to the symbol, so the
+        // reported `line` should point at the `/**` opener, not the
+        // `export async function …` signature line.
+        let content = r#"/**
+ * Docblock for foo.
+ */
+export function foo(): void {}
+"#;
+        let symbols = uhpp_extract_symbols(content, Some("typescript"));
+        let sym = symbols.iter().find(|s| s.name == "foo").expect("missing foo");
+        assert_eq!(sym.line, 1, "attribution should start at JSDoc opener (line 1)");
+    }
+
+    #[test]
+    fn test_block_comment_does_not_yield_phantom_symbols() {
+        // `/* ... */` block comment containing `class` / `function` keywords
+        // must not produce symbols.
+        let content = r#"
+/*
+ * See also: class OldThing, function legacyImpl.
+ */
+export class RealThing {}
+"#;
+        let symbols = uhpp_extract_symbols(content, Some("typescript"));
+        let names: Vec<&str> = symbols.iter().map(|s| s.name.as_str()).collect();
+        assert!(names.contains(&"RealThing"), "missing RealThing: {:?}", names);
+        assert!(!names.contains(&"OldThing"), "block comment text leaked as symbol: {:?}", names);
+        assert!(!names.contains(&"legacyImpl"), "block comment text leaked as symbol: {:?}", names);
     }
 
     #[test]

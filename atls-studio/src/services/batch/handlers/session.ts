@@ -595,7 +595,10 @@ export const handlePin: OpHandler = async (params, ctx) => {
     }
   }
   if (notes.length > 0) line += ` | ${notes.join('; ')}`;
-  return ok(line);
+  // Emit resolved hashes on refs so formatters can suppress the volatile-pin nudge
+  // for refs pinned in this same batch. session.pin is not in READ_SEARCH_OPS, so these
+  // refs do NOT get re-aggregated into volatileRefs.
+  return ok(line, resolved);
 };
 
 export const handleUnpin: OpHandler = async (params, ctx) => {

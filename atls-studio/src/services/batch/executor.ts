@@ -1619,6 +1619,21 @@ export async function executeUnifiedBatch(
       };
     }
 
+    // Surface parser-level warnings attached by parseBatchLines (e.g. the
+    // `hashes:in:STEP.refs` auto-correct) so the model sees the hint even
+    // when the handler still succeeded via the rewritten params.
+    const parseWarnings = (step as { _parseWarnings?: unknown })._parseWarnings;
+    if (Array.isArray(parseWarnings) && parseWarnings.length > 0) {
+      const note = parseWarnings
+        .filter((w): w is string => typeof w === 'string')
+        .join(' | ');
+      if (note) {
+        output.summary = output.summary
+          ? `${output.summary} | parse-warning: ${note}`
+          : `${step.id}: parse-warning: ${note}`;
+      }
+    }
+
     // Store outputs
     stepOutputs.set(step.id, output);
 

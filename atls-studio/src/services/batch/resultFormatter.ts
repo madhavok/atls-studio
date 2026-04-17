@@ -241,7 +241,20 @@ export function formatBatchResult(result: UnifiedBatchResult): string {
     lines.push(`[ATLS] BATCH INTERRUPTED at ${result.interruption.step_id}: ${result.interruption.summary}${reason}`);
   }
 
-  // Volatile nudge: aggregate refs from read/search/analysis steps
+  // Collect base hashes pinned in this batch so we don't nudge the agent to re-pin
+  // refs it already pinned. session.pin emits its resolved hashes on step.refs.
+  const pinnedBaseHashes = new Set<string>();
+  for (const step of result.step_results) {
+    if (step.ok && step.use === 'session.pin' && step.refs?.length) {
+      for (const ref of step.refs) {
+        const base = ref.replace(/^h:/, '').split(':')[0];
+        if (base) pinnedBaseHashes.add(base);
+      }
+    }
+  }
+
+  // Volatile nudge: aggregate refs from read/search/analysis steps, minus anything
+  // already pinned in this batch.
   const READ_SEARCH_OPS = new Set([
     'read.context', 'read.shaped', 'read.lines', 'read.file',
     'search.code', 'search.symbol', 'search.usage', 'search.similar',
@@ -253,9 +266,10 @@ export function formatBatchResult(result: UnifiedBatchResult): string {
   for (const step of result.step_results) {
     if (step.ok && step.refs?.length && READ_SEARCH_OPS.has(step.use)) {
       for (const ref of step.refs) {
-        if (ref.startsWith('h:') && !volatileRefs.includes(ref)) {
-          volatileRefs.push(ref);
-        }
+        if (!ref.startsWith('h:') || volatileRefs.includes(ref)) continue;
+        const base = ref.replace(/^h:/, '').split(':')[0];
+        if (base && pinnedBaseHashes.has(base)) continue;
+        volatileRefs.push(ref);
       }
     }
   }

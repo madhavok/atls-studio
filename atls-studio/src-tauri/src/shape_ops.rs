@@ -1141,12 +1141,43 @@ fn capture_full_signature(lines: &[&str], start_line: usize) -> String {
         sig.push_str("(...)");
     }
 
-    // Truncate multi-line type alias bodies: `type X = A | B | ...` -> `type X = ...`
-    let type_alias_re = regex::Regex::new(r"^(\s*(?:export\s+)?type\s+\w+(?:<[^>]*>)?\s*=\s*)").unwrap();
+    // Truncate multi-line type alias bodies.
+    // - TS/JS union/intersection: `type X = A | B | ...` -> `type X = ...`
+    // - Rust trait-bound aliases / dyn / long generics: `type X = Box<dyn A + B + …>` -> `type X = ...`
+    // Triggers: union-y operators (`|`, `&`, `+`), `dyn`, or overly long RHS.
+    let type_alias_re = regex::Regex::new(r"^(\s*(?:pub(?:\([^)]*\))?\s+)?(?:export\s+)?type\s+\w+(?:<[^>]*>)?\s*=\s*)").unwrap();
     if let Some(m) = type_alias_re.find(&sig) {
         let after_eq = &sig[m.end()..];
-        if after_eq.contains('|') || after_eq.contains('&') || after_eq.len() > 80 {
+        let has_union_op = after_eq.contains('|')
+            || after_eq.contains('&')
+            || contains_trait_plus(after_eq)
+            || after_eq.contains("dyn ");
+        if has_union_op || after_eq.len() > 80 {
             sig = format!("{}...", &sig[..m.end()]);
+        }
+    }
+
+    // Rust function signatures with heavy return-type bounds or `where` clauses
+    // collapse the tail. Match signatures ending after the closing `)` with
+    // either `-> …` containing `+` trait bounds / `dyn`, or a `where` clause.
+    // Must run before the `{` truncation so the folded tail is preserved.
+    if sig.contains(" fn ") || sig.trim_start().starts_with("fn ")
+        || sig.contains("pub fn ") || sig.contains("async fn ")
+        || sig.contains("unsafe fn ") || sig.contains("const fn ")
+    {
+        if let Some(tail_start) = find_rust_return_tail(&sig) {
+            let tail = &sig[tail_start..];
+            // Strip any trailing body opener so length/flag checks reflect the
+            // declared type only.
+            let tail_cut = tail.find('{').map(|b| &tail[..b]).unwrap_or(tail);
+            let has_trait_union = contains_trait_plus(tail_cut)
+                || tail_cut.contains("dyn ")
+                || tail_cut.contains(" where ")
+                || tail_cut.starts_with("where ")
+                || tail_cut.contains('\n');
+            if has_trait_union || tail_cut.len() > 80 {
+                sig = format!("{} ...", sig[..tail_start].trim_end());
+            }
         }
     }
 
@@ -1155,6 +1186,52 @@ fn capture_full_signature(lines: &[&str], start_line: usize) -> String {
         sig.truncate(brace_pos);
     }
     sig.trim_end().to_string()
+}
+
+/// True when a type expression uses `+` as a trait-bound combinator (e.g.
+/// `Send + Sync`, `Box<dyn Iterator<Item=T> + 'static>`). Ignores `+` inside
+/// strings or arithmetic-looking contexts by requiring whitespace on at least
+/// one side.
+fn contains_trait_plus(s: &str) -> bool {
+    let bytes = s.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'+' {
+            let prev_ws = i > 0 && (bytes[i - 1] == b' ' || bytes[i - 1] == b'\t');
+            let next_ws = i + 1 < bytes.len() && (bytes[i + 1] == b' ' || bytes[i + 1] == b'\t');
+            if prev_ws || next_ws {
+                return true;
+            }
+        }
+        i += 1;
+    }
+    false
+}
+
+/// For a Rust function signature, return the byte offset of the return-type
+/// tail — either `->` or a free-standing `where`. Returns `None` for
+/// signatures that don't declare a return type and have no where clause.
+fn find_rust_return_tail(sig: &str) -> Option<usize> {
+    // Find matching `)` that closes the parameter list (depth-aware).
+    let bytes = sig.as_bytes();
+    let mut depth = 0i32;
+    let mut close_paren: Option<usize> = None;
+    for (i, &b) in bytes.iter().enumerate() {
+        if b == b'(' { depth += 1; }
+        else if b == b')' {
+            depth -= 1;
+            if depth == 0 { close_paren = Some(i); break; }
+        }
+    }
+    let start = close_paren.map(|p| p + 1).unwrap_or(0);
+    let rest = &sig[start..];
+    if let Some(off) = rest.find("->") {
+        return Some(start + off);
+    }
+    if let Some(off) = rest.find(" where ") {
+        return Some(start + off + 1);
+    }
+    None
 }
 
 /// Extract function/class/struct signatures, collapsing bodies to `{ ... }`.
@@ -1224,8 +1301,10 @@ fn extract_signatures(content: &str) -> String {
     for (line_num_0, sig, end_of_block) in &entries {
         let line_num = line_num_0 + 1;
         let span = end_of_block.saturating_sub(*line_num_0) + 1;
-        if span <= 2 {
-            // Short block (1-2 lines): emit inline verbatim instead of sig + fold
+        let sig_folded = sig.contains(" ...") || sig.ends_with("...");
+        if span <= 2 && !sig_folded {
+            // Short block (1-2 lines) that didn't trigger sig folding: emit
+            // inline verbatim so tiny functions/type aliases keep their body.
             for j in *line_num_0..=(*end_of_block).min(total - 1) {
                 output.push(format!("{:>4}|{}", j + 1, lines[j]));
             }
@@ -3644,6 +3723,46 @@ class KVParseStrategy(ParseStrategy):
         let content = "pub fn process(\n    input: &str,\n    config: &Config,\n) -> Result<Output, Error> {\n    todo!()\n}";
         let sigs = extract_signatures(content);
         assert!(sigs.contains("process"), "sig should capture multi-line fn");
+    }
+
+    #[test]
+    fn test_sig_folds_rust_trait_bound_return() {
+        // Rust union-like trait bounds (`Send + Sync + 'static`) in the
+        // return type should collapse to `-> ...` instead of bloating the sig.
+        let content = "pub fn make_iter<T>() -> impl Iterator<Item = T> + Send + Sync + 'static {\n    std::iter::empty()\n}";
+        let sigs = extract_signatures(content);
+        assert!(sigs.contains("make_iter"), "sig should include function name: {}", sigs);
+        assert!(sigs.contains("..."), "union-heavy return type should fold: {}", sigs);
+        assert!(!sigs.contains("'static"), "tail should not leak into folded sig: {}", sigs);
+    }
+
+    #[test]
+    fn test_sig_folds_rust_where_clause() {
+        let content = "pub fn process<T>(value: T) -> Result<T, Error>\n    where T: Debug + Clone + Send\n{\n    Ok(value)\n}";
+        let sigs = extract_signatures(content);
+        assert!(sigs.contains("process"), "sig should include function name: {}", sigs);
+        assert!(sigs.contains("..."), "where-clause tail should fold: {}", sigs);
+    }
+
+    #[test]
+    fn test_sig_folds_rust_type_alias_with_trait_bounds() {
+        // `pub type Handler = Box<dyn Fn() + Send + Sync>;` should render as
+        // `pub type Handler = ...` instead of spelling out every bound.
+        let content = "pub type Handler = Box<dyn Fn() -> Result<()> + Send + Sync + 'static>;\n";
+        let sigs = extract_signatures(content);
+        assert!(sigs.contains("type Handler"), "sig should include type alias: {}", sigs);
+        assert!(sigs.contains("..."), "trait-bound type alias should fold: {}", sigs);
+        assert!(!sigs.contains("'static"), "tail should not leak: {}", sigs);
+    }
+
+    #[test]
+    fn test_sig_preserves_plain_rust_return() {
+        // Short, non-union return types should NOT be folded.
+        let content = "pub fn add(a: i32, b: i32) -> i32 {\n    a + b\n}";
+        let sigs = extract_signatures(content);
+        assert!(sigs.contains("add"), "sig should include function name: {}", sigs);
+        assert!(sigs.contains("-> i32"), "simple return type should survive: {}", sigs);
+        assert!(!sigs.contains("-> ..."), "simple return should not be folded: {}", sigs);
     }
 
     // -----------------------------------------------------------------------

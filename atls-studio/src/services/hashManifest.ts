@@ -44,6 +44,20 @@ export interface ManifestRow {
   source: string;
   tokens: string;
   freshness: string;
+  /**
+   * Optional: when the full-file engram pointed to by `shortHash` has been
+   * replaced by narrower slices (line ranges / shaped sub-engrams), this
+   * carries a human-readable marker plus the short hashes of the replacement
+   * engrams. Absent (undefined) when the row is still the canonical view.
+   *
+   * Persisted consumers should treat this as a forward-compatible optional
+   * field — older snapshots deserialize with `supersededBy === undefined`
+   * and rendering degrades gracefully.
+   */
+  supersededBy?: {
+    hashes: string[];
+    note: string;
+  };
 }
 
 export interface ManifestMetrics {
@@ -149,6 +163,12 @@ interface ChunkLike {
   freshness?: string;
   freshnessCause?: string;
   suspectSince?: number;
+  /** When set, this full-file engram has been replaced by narrower slices
+   *  (see `ContextChunk.supersededBy`); rendered as a trailing marker. */
+  supersededBy?: {
+    hashes: string[];
+    note: string;
+  };
 }
 
 interface FormatInput {
@@ -193,6 +213,25 @@ function freshnessLabelRef(ref: ChunkRef): string {
   return 'fresh';
 }
 
+/**
+ * Render the trailing `| superseded by X: h:aaa, h:bbb` marker for a chunk
+ * whose full-file view has been replaced by narrower slices. Returns an
+ * empty string when no supersession is recorded.
+ *
+ * Output is capped at a small number of replacement hashes (plus `+N more`)
+ * so the manifest row stays within the usual line budget.
+ */
+const SUPERSEDED_MAX_HASHES = 3;
+function formatSupersededMarker(sup?: { hashes: string[]; note: string }): string {
+  if (!sup || sup.hashes.length === 0) return '';
+  const shown = sup.hashes.slice(0, SUPERSEDED_MAX_HASHES).map(h => `h:${h}`);
+  const overflow = sup.hashes.length > SUPERSEDED_MAX_HASHES
+    ? ` +${sup.hashes.length - SUPERSEDED_MAX_HASHES} more`
+    : '';
+  const noteLabel = sup.note?.trim() || 'slices';
+  return ` | superseded by ${noteLabel}: ${shown.join(', ')}${overflow}`;
+}
+
 function truncSource(source: string, maxLen: number): string {
   if (source.length <= maxLen) return source;
   const parts = source.replace(/\\/g, '/').split('/');
@@ -227,7 +266,8 @@ export function formatHashManifest(input: FormatInput): string {
     const pin = pinFlag(chunk);
     const tk = formatTokens(chunk.tokens).padStart(5);
     const fr = freshnessLabel(chunk);
-    lines.push(`h:${chunk.shortHash} ${pin} ${typ} ${src.padEnd(SRC_MAX)} ${tk}  ${fr}`);
+    const sup = formatSupersededMarker(chunk.supersededBy);
+    lines.push(`h:${chunk.shortHash} ${pin} ${typ} ${src.padEnd(SRC_MAX)} ${tk}  ${fr}${sup}`);
   }
 
   for (const ref of dematRefs) {

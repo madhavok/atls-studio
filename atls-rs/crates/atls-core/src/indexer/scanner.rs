@@ -776,14 +776,21 @@ impl Indexer {
             info!("Import resolution complete: {}/{} files, {} total file_relations created", resolved_count, import_work.len(), total_relations);
         }
         
-        // Phase 4: Refresh file_importance scores from resolved relations + entry point detection
+        // Phase 4: Refresh file_importance scores from resolved relations + entry point detection.
+        //
+        // Re-export-only modules (`mod.rs` / barrel `index.ts` that contain only
+        // `pub use` / `mod foo;` / `export { X } from './x'`) used to dominate
+        // `importance_score` by inherited import_count even though they hold no
+        // logic. We detect them by "file has no symbols other than `mod` /
+        // `namespace`" and both drop the `is_entry_point` flag and collapse the
+        // score to a minimum floor so real modules surface first.
         {
             let conn = self.db.conn();
             if let Err(e) = conn.execute_batch(
                 r#"
                 DELETE FROM file_importance;
                 INSERT INTO file_importance (file_id, import_count, is_entry_point, importance_score)
-                SELECT 
+                SELECT
                     f.id,
                     COALESCE(ic.cnt, 0),
                     CASE WHEN (
@@ -796,8 +803,18 @@ impl Indexer {
                         f.path LIKE '%/App.jsx' OR f.path LIKE '%/App.js' OR
                         f.path LIKE '%/lib.rs' OR f.path LIKE '%/__main__.py' OR
                         f.path LIKE '%/app.py'
+                    ) AND EXISTS (
+                        SELECT 1 FROM symbols s
+                        WHERE s.file_id = f.id
+                          AND s.kind NOT IN ('mod', 'ns', 'namespace', 'module')
                     ) THEN 1 ELSE 0 END,
-                    1.0 + (COALESCE(ic.cnt, 0) * 0.1)
+                    CASE WHEN NOT EXISTS (
+                        SELECT 1 FROM symbols s
+                        WHERE s.file_id = f.id
+                          AND s.kind NOT IN ('mod', 'ns', 'namespace', 'module')
+                    ) THEN 0.1
+                    ELSE 1.0 + (COALESCE(ic.cnt, 0) * 0.1)
+                    END
                 FROM files f
                 LEFT JOIN (
                     SELECT to_file_id, COUNT(*) as cnt
@@ -809,7 +826,7 @@ impl Indexer {
             ) {
                 tracing::warn!("Failed to refresh file_importance: {}", e);
             } else {
-                info!("File importance scores refreshed (with entry point detection)");
+                info!("File importance scores refreshed (with entry point + reexport-stub detection)");
             }
         }
 

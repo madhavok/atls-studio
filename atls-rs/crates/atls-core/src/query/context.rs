@@ -85,6 +85,61 @@ const MAX_TOTAL_IMPORTS: usize = 1000;
 const MAX_IMPORTS_PER_LEVEL: i64 = 200;
 const DEFAULT_MODULE_DEPTH: u32 = 5;
 
+/// True when a file is essentially a re-export scaffold — every non-comment
+/// line is `pub use`, `mod`, `pub mod`, `use`, `export { … } from …`,
+/// `export *`, or similar. These files accumulate high import counts in the
+/// importance scorer but hold no logic, crowding out real modules when
+/// ranking siblings / entry points. Used as a cheap content-level predicate
+/// when a symbol-table check is not available.
+pub fn is_reexport_only_module(content: &str) -> bool {
+    let mut saw_reexport = false;
+    let mut in_block_comment = false;
+    for raw in content.lines() {
+        let mut line = raw.trim();
+        if line.is_empty() { continue; }
+        // Strip trailing `// …` line comments so `pub use X; // note` still passes.
+        if let Some(pos) = line.find("//") {
+            line = line[..pos].trim_end();
+            if line.is_empty() { continue; }
+        }
+        if in_block_comment {
+            if line.contains("*/") { in_block_comment = false; }
+            continue;
+        }
+        if line.starts_with("/*") {
+            if !line.contains("*/") { in_block_comment = true; }
+            continue;
+        }
+        if line.starts_with("///") || line.starts_with("//!") || line.starts_with('#') {
+            // Doc comments and preprocessor-ish directives — ignore.
+            continue;
+        }
+        // Absorb attributes like `#[path = "…"]` that precede `mod` declarations.
+        if line.starts_with("#[") || line.starts_with("#![") { continue; }
+
+        let is_reexport_like = line.starts_with("pub use ")
+            || line.starts_with("pub(crate) use ")
+            || line.starts_with("pub(super) use ")
+            || line.starts_with("use ")
+            || line.starts_with("pub mod ")
+            || line.starts_with("pub(crate) mod ")
+            || line.starts_with("pub(super) mod ")
+            || line.starts_with("mod ")
+            || line.starts_with("export * ")
+            || line.starts_with("export *;")
+            || line.starts_with("export {")
+            || line.starts_with("export type {")
+            || (line.starts_with("export ") && line.contains(" from "))
+            || line == "};"
+            || line == "}";
+        if !is_reexport_like {
+            return false;
+        }
+        saw_reexport = true;
+    }
+    saw_reexport
+}
+
 impl QueryEngine {
     /// Get module context (file + imports + exports + tests + related)
     pub fn get_module_context(
@@ -842,11 +897,132 @@ const DEFAULT_RELATED_FILES_LIMIT: usize = 10;
 
 #[cfg(test)]
 mod tests {
+    use super::is_reexport_only_module;
     use crate::db::queries::Queries;
     use crate::db::Database;
     use crate::query::QueryEngine;
     use crate::types::{Language, ParsedSymbol, SymbolKind, SymbolMetadata};
     use std::path::PathBuf;
+
+    #[test]
+    fn reexport_only_module_detects_rust_mod_rs_stub() {
+        let content = r#"
+// Re-exports for foo subsystem.
+pub mod foo;
+pub mod bar;
+
+pub use foo::Thing;
+pub use bar::{Other, Another};
+"#;
+        assert!(is_reexport_only_module(content));
+    }
+
+    #[test]
+    fn reexport_only_module_detects_index_ts_barrel() {
+        let content = r#"
+// Barrel file for the `utils` directory.
+export { helper } from './helper';
+export type { Config } from './config';
+export * from './constants';
+"#;
+        assert!(is_reexport_only_module(content));
+    }
+
+    #[test]
+    fn reexport_only_module_rejects_real_module() {
+        let content = r#"
+pub mod foo;
+
+pub fn real_work() -> i32 { 42 }
+"#;
+        assert!(!is_reexport_only_module(content));
+    }
+
+    #[test]
+    fn reexport_only_module_rejects_empty_file() {
+        // Empty files carry no signal — treat as non-stub so we do not
+        // silently downrank genuinely new / unwritten modules.
+        assert!(!is_reexport_only_module(""));
+        assert!(!is_reexport_only_module("\n\n// just a comment\n"));
+    }
+
+    #[test]
+    fn importance_scorer_downweights_mod_rs_stub() {
+        // mod.rs stub: only `mod` symbols → low importance + not entry point.
+        let db = Database::open_in_memory().unwrap();
+        let conn = db.conn();
+        let stub_id = Queries::insert_file(&conn, &PathBuf::from("src/foo/mod.rs"), "h1", &Language::Rust, None).unwrap();
+        let real_id = Queries::insert_file(&conn, &PathBuf::from("src/foo/logic.rs"), "h2", &Language::Rust, None).unwrap();
+        let lib_id = Queries::insert_file(&conn, &PathBuf::from("src/lib.rs"), "h3", &Language::Rust, None).unwrap();
+
+        // Stub: only `mod` symbol declarations.
+        for name in ["bar", "baz"] {
+            let sym = ParsedSymbol {
+                name: name.into(), kind: SymbolKind::Module, line: 1, end_line: None,
+                scope_id: None, signature: None, complexity: None, body_preview: None,
+                metadata: SymbolMetadata { parameters: None, return_type: None, visibility: None, modifiers: None, parent_symbol: None, extends: None, implements: None },
+            };
+            Queries::insert_symbol(&conn, stub_id, &sym).unwrap();
+        }
+        // Real module: a real fn.
+        let real_sym = ParsedSymbol {
+            name: "compute".into(), kind: SymbolKind::Function, line: 1, end_line: Some(5),
+            scope_id: None, signature: Some("fn compute() -> i32".into()), complexity: None, body_preview: None,
+            metadata: SymbolMetadata { parameters: None, return_type: None, visibility: None, modifiers: None, parent_symbol: None, extends: None, implements: None },
+        };
+        Queries::insert_symbol(&conn, real_id, &real_sym).unwrap();
+        // lib.rs is also a real module (has fns, not just mods).
+        let lib_sym = ParsedSymbol {
+            name: "run".into(), kind: SymbolKind::Function, line: 1, end_line: Some(5),
+            scope_id: None, signature: Some("fn run()".into()), complexity: None, body_preview: None,
+            metadata: SymbolMetadata { parameters: None, return_type: None, visibility: None, modifiers: None, parent_symbol: None, extends: None, implements: None },
+        };
+        Queries::insert_symbol(&conn, lib_id, &lib_sym).unwrap();
+
+        // Run the same Phase-4-style refresh as the scanner.
+        conn.execute_batch(r#"
+            DELETE FROM file_importance;
+            INSERT INTO file_importance (file_id, import_count, is_entry_point, importance_score)
+            SELECT
+                f.id,
+                0,
+                CASE WHEN (
+                    f.path LIKE '%/main.rs' OR f.path LIKE '%/lib.rs' OR f.path LIKE '%/main.ts'
+                    OR f.path LIKE '%/index.ts' OR f.path LIKE '%/App.ts'
+                ) AND EXISTS (
+                    SELECT 1 FROM symbols s
+                    WHERE s.file_id = f.id
+                      AND s.kind NOT IN ('mod', 'ns', 'namespace', 'module')
+                ) THEN 1 ELSE 0 END,
+                CASE WHEN NOT EXISTS (
+                    SELECT 1 FROM symbols s
+                    WHERE s.file_id = f.id
+                      AND s.kind NOT IN ('mod', 'ns', 'namespace', 'module')
+                ) THEN 0.1
+                ELSE 1.0
+                END
+            FROM files f;
+        "#).unwrap();
+
+        let (stub_entry, stub_score): (i64, f64) = conn.query_row(
+            "SELECT is_entry_point, importance_score FROM file_importance WHERE file_id = ?",
+            [stub_id], |r| Ok((r.get(0)?, r.get(1)?))
+        ).unwrap();
+        let (real_entry, real_score): (i64, f64) = conn.query_row(
+            "SELECT is_entry_point, importance_score FROM file_importance WHERE file_id = ?",
+            [real_id], |r| Ok((r.get(0)?, r.get(1)?))
+        ).unwrap();
+        let (lib_entry, lib_score): (i64, f64) = conn.query_row(
+            "SELECT is_entry_point, importance_score FROM file_importance WHERE file_id = ?",
+            [lib_id], |r| Ok((r.get(0)?, r.get(1)?))
+        ).unwrap();
+
+        assert_eq!(stub_entry, 0, "stub mod.rs must not be marked entry_point");
+        assert_eq!(lib_entry, 1, "lib.rs with real fns stays entry_point");
+        assert_eq!(real_entry, 0, "logic.rs is not a conventional entry");
+        assert!(stub_score < real_score, "stub {} should rank below real {}", stub_score, real_score);
+        assert!(stub_score < lib_score, "stub {} should rank below lib {}", stub_score, lib_score);
+    }
 
     #[test]
     fn get_database_stats_zeros_on_empty() {

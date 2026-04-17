@@ -2375,7 +2375,10 @@ async function streamChatViaTauri(
         const wmTokens = ctxState.getPromptTokens();
         const wmStoreTokens = ctxState.getStoreTokens();
         const bbTokens = ctxState.getBlackboardTokenCount();
-        const stagedTokens = ctxState.getStagedTokenCount();
+        // Emitted staged tokens = what the model actually sees in `## STAGED`
+        // (pointer stubs for entries covered by active engrams). This drives
+        // reconcileBudgets via middleware, CTX lines, and internals displays.
+        const stagedTokens = ctxState.getStagedEmittedTokens();
         let archivedTokens = 0;
         ctxState.archivedChunks.forEach(c => archivedTokens += c.tokens);
         const overheadTokens = appState.promptMetrics.totalOverheadTokens;
@@ -3767,7 +3770,7 @@ function buildDynamicContextBlock(
     pruneStaleEntries(currentTurn, 5);
     const ctxState = useContextStore.getState();
     const allRefs = getAllRefs();
-    const activeChunks: Array<{ shortHash: string; type: string; source?: string; tokens: number; pinned?: boolean; pinnedShape?: string; compacted?: boolean; freshness?: string; freshnessCause?: string; suspectSince?: number }> = [];
+    const activeChunks: Array<{ shortHash: string; type: string; source?: string; tokens: number; pinned?: boolean; pinnedShape?: string; compacted?: boolean; freshness?: string; freshnessCause?: string; suspectSince?: number; supersededBy?: { hashes: string[]; note: string } }> = [];
     const dematRefs: typeof allRefs = [];
     for (const ref of allRefs) {
       if (ref.visibility === 'materialized') {
@@ -3778,6 +3781,7 @@ function buildDynamicContextBlock(
             tokens: chunk.tokens, pinned: chunk.pinned, pinnedShape: chunk.pinnedShape,
             compacted: chunk.compacted, freshness: chunk.freshness as string | undefined,
             freshnessCause: chunk.freshnessCause as string | undefined, suspectSince: chunk.suspectSince,
+            supersededBy: chunk.supersededBy,
           });
         }
       } else if (ref.visibility === 'referenced') {

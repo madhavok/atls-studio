@@ -9,7 +9,7 @@
  */
 
 import type { ContextChunk, BlackboardEntry, CognitiveRule, EngramAnnotation, Synapse, ManifestEntry, TaskPlan, StagedSnippet, TransitionBridge, MemoryEvent, ReconcileStats, MemoryTelemetrySummary } from '../stores/contextStore';
-import { STAGE_SOFT_CEILING } from '../stores/contextStore';
+import { STAGE_SOFT_CEILING, STAGED_OMITTED_POINTER_TOKENS } from '../stores/contextStore';
 import { HYGIENE_CHECK_INTERVAL_ROUNDS } from './promptMemory';
 import { formatChunkTag } from '../utils/contextHash';
 import {
@@ -104,6 +104,33 @@ function formatEngramMeta(chunk: ContextChunk): string[] {
   return meta;
 }
 
+/**
+ * Mirrors `computeActiveEngramSources` in `contextStore.ts`: returns staged
+ * source paths that are also covered by an active (materialized, non-compacted)
+ * engram. Kept here (not imported from the store) to avoid a circular dep.
+ */
+function computeActiveEngramStagedSources(
+  chunks: Map<string, ContextChunk>,
+  stagedSnippets: Map<string, StagedSnippet>,
+): Set<string> {
+  const stagedSources = new Set<string>();
+  for (const [, snippet] of stagedSnippets) {
+    if (snippet.source) stagedSources.add(snippet.source.replace(/\\/g, '/').toLowerCase());
+  }
+  const activeEngramSources = new Set<string>();
+  if (stagedSources.size === 0) return activeEngramSources;
+  for (const [, chunk] of chunks) {
+    if (chunk.compacted || !chunk.source) continue;
+    const chunkSourceNorm = chunk.source.replace(/\\/g, '/').toLowerCase();
+    if (!stagedSources.has(chunkSourceNorm)) continue;
+    const ref = getRef(chunk.hash);
+    if (!ref || shouldMaterialize(ref)) {
+      activeEngramSources.add(chunk.source);
+    }
+  }
+  return activeEngramSources;
+}
+
 export function formatSuspectHint(
   suspectSince?: number,
   freshness?: string,
@@ -138,8 +165,20 @@ export function formatWorkingMemory(input: FormatterInput): string {
   const lines: string[] = [];
 
   const currentTurn = getTurn();
+  // Emitted staged tokens: entries whose body is omitted because an active
+  // engram covers the source pay only a small pointer cost. Matches
+  // `getStagedBlock` so CTX / MEMORY TELEMETRY totals line up with the prompt.
+  const activeEngramStagedSources = stagedSnippets && stagedSnippets.size > 0
+    ? computeActiveEngramStagedSources(chunks, stagedSnippets)
+    : null;
   let stagedTokens = 0;
-  if (stagedSnippets) stagedSnippets.forEach(s => stagedTokens += s.tokens);
+  if (stagedSnippets) {
+    stagedSnippets.forEach(s => {
+      stagedTokens += (activeEngramStagedSources && s.source != null && activeEngramStagedSources.has(s.source))
+        ? STAGED_OMITTED_POINTER_TOKENS
+        : s.tokens;
+    });
+  }
   lines.push(`<!-- WM:turn:${currentTurn} -->`);
   lines.push('## WORKING MEMORY');
 
@@ -245,9 +284,7 @@ export function formatWorkingMemory(input: FormatterInput): string {
   // getStagedBlock(). Only emit a summary line here so the model sees total cost
   // without duplicating the staged content in the prompt.
   if (stagedSnippets && stagedSnippets.size > 0) {
-    let stagedTotal = 0;
-    stagedSnippets.forEach(s => stagedTotal += s.tokens);
-    lines.push(`Staged: ${stagedSnippets.size} snippets, ${(stagedTotal / 1000).toFixed(1)}k tk (bodies in ## STAGED block above)`);
+    lines.push(`Staged: ${stagedSnippets.size} snippets, ${(stagedTokens / 1000).toFixed(1)}k tk (bodies in ## STAGED block above)`);
     lines.push('');
   }
 

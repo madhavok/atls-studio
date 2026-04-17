@@ -1167,6 +1167,47 @@ describe('getStagedBlock active engram dedup', () => {
     expect(block).toContain('export const z = 3');
     expect(block).not.toContain('active engram exists');
   });
+
+  it('header and getStagedEmittedTokens match prompt reality when bodies are omitted', () => {
+    const store = useContextStore.getState();
+    // Create a large file so `snippet.tokens` is clearly >> the pointer cost.
+    const large = 'export const x = 1;\n'.repeat(2000);
+
+    store.addChunk(large, 'smart', 'src/big.ts');
+    store.stageSnippet('big', large, 'src/big.ts');
+
+    const block = store.getStagedBlock();
+    expect(block).toContain('active engram exists');
+
+    const logical = store.getStagedTokenCount();
+    const emitted = store.getStagedEmittedTokens();
+
+    // Logical tokens reflect the admission quota (full snippet cost).
+    expect(logical).toBeGreaterThan(100);
+    // Emitted tokens reflect what the prompt actually carries for an omitted
+    // body — just the fixed pointer cost per entry.
+    expect(emitted).toBeLessThan(logical);
+    expect(emitted).toBeLessThanOrEqual(50);
+
+    // Header total must match emitted, not logical — previously the header
+    // reported `snippet.tokens` even when bodies were omitted, inflating
+    // prompt-visible numbers.
+    const headerLine = block.split('\n')[0];
+    const match = headerLine.match(/([\d.]+)k tokens/);
+    expect(match).not.toBeNull();
+    const headerK = parseFloat(match![1]);
+    const emittedK = +(emitted / 1000).toFixed(1);
+    expect(headerK).toBeCloseTo(emittedK, 1);
+  });
+
+  it('getStagedEmittedTokens equals getStagedTokenCount when no active engrams cover the source', () => {
+    const store = useContextStore.getState();
+    const body = 'export const z = 3;\n'.repeat(1000);
+
+    store.stageSnippet('solo', body, 'src/solo.ts');
+
+    expect(store.getStagedEmittedTokens()).toBe(store.getStagedTokenCount());
+  });
 });
 
 // ---------------------------------------------------------------------------
