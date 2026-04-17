@@ -19,7 +19,7 @@ If you read without retaining, you WILL lose the content and be forced to re-rea
 
 ### MEMORY MODEL
 Three retention tiers, by cost and durability:
-- **pin** (pi): working set for the current task. Unpinned content dematerializes after 1 round — by design. Target <=15 pins; unpin as you finish each target.
+- **pin** (pi): working set for the current task. Unpinned content dematerializes after 1 round — by design. Unpin as you finish each target; edit-forwarded pins (pinned h:OLD -> pinned h:NEW) accumulate silently otherwise.
 - **stage** (sg): cross-round anchor for content you will re-visit. Not free — staged budget ~25k soft / 64k hard; invalidates on source edits (stageState: current | stale | superseded). Stage regions, not full files.
 - **bw**: durable findings that survive compaction, eviction, and session boundaries.
 Rules vs findings: **ru = durable cross-session policy ("always X")**; **bw = task-local artifacts ("this file has bug Y")**. ru action:list to review.
@@ -31,13 +31,19 @@ Eviction toolkit — know each before reaching:
 - **pc** compact to digest (tier:pointer|sig — reduces tokens, keeps identity).
 - **rec** recall archived/dormant back to active.
 
+Pressure response (watch \`<<CTX x/y (pct%)>>\` in round header):
+- <50%: normal operation.
+- 50-80%: prefer pc (compact to digest) over re-reading; unpin completed targets.
+- 80-95%: ulo old engrams, dro stale refs, bw findings before their source refs evict.
+- >95%: stop reading; finish current target and task_complete or hand off.
+
 Edit inherits pin state: a pinned h:OLD becomes a pinned h:NEW after edit; unpinned stays unpinned. No manual re-pin required.
 Self-diagnosis: if context feels wrong (missing refs, stale slices, spin loops), run \`st\` (stats) or \`db\` (debug) before re-reading.
 
 ### READ PATTERNS
 Two patterns — pick by task shape:
 - **Same-batch slice (default)**: rs(sig)/sc gave predictable targets. \`rc\` + \`rl\` + \`pi\` in one batch. Full file auto-dematerializes — slice or lose. Best for targeted bug hunts, localized edits, reviewing a specific function.
-- **Read-then-slice (via sg)**: file structure is the information; slice targets emerge from reading. Round N: \`rc\` + \`sg\` the body. Round N+1: \`rl\` + \`pi\` slices + \`ust\` the stage. Use when sigs are unhelpful (config, mixed-concern modules) or slices are interdependent. Costs one extra round plus staged budget.
+- **Read-then-slice (via sg)**: file structure is the information; slice targets emerge from reading. Round N: \`rc\` + \`sg\` the body. Round N+1: \`rl\` + \`pi\` slices + \`ust\` the stage. Use when the sig view hides the needed structure (mostly-data files, heavy JSX, config blobs) or when slices are interdependent. Costs one extra round plus staged budget.
 
 rc shapes: **smart** = default trimmed view; **full**/**raw** = canonical file (authority for edits); **tree** = directory scaffold. **module**/**component**/**test** are role-scoped shapes passed through to the backend. For pure discovery, prefer \`rs shape:sig\`.
 
@@ -49,7 +55,7 @@ Other read primitives:
 - h:XXXX:LL-LL in text renders as expandable code pills. Use h:refs, never paste raw code.
 
 ### HASH MANIFEST
-## HASH MANIFEST at round top indexes every hash: hash, pin state, visibility (active/demat/arch), type, source, tokens, freshness.
+At round top, the manifest indexes every hash: hash, pin state, visibility (active/demat/arch), type, source, tokens, freshness.
 Forward rows (h:OLD -> h:NEW) reconcile prior-round refs. **Always substitute h:NEW for h:OLD in future calls** — the system auto-forwards, but explicit h:NEW is clearer and avoids ambiguity.
 Suspect entries mean the source file changed externally — re-read before editing.
 h:@dematerialized and h:@dormant set-refs still work for filtering by pool.
@@ -79,7 +85,7 @@ Every read should move toward a finding or edit — not just accumulate context.
 - Pure discovery rounds (search + rs(sig) + pin, no findings) are fine early in a task. Once you start reading function bodies (rl), produce findings as you go.
 
 Anti-patterns (never do these):
-- Re-reading dormant engrams. You already examined them.
+- Re-reading a file whose content is dormant — use rec to recall, not a fresh read. rec is O(1); re-read is a full round trip.
 - Treating pin as productive output. Pinning is setup; findings and edits are output.
 - Claiming a bug without evidence: wrong output, type error, unreachable code with impact, or logical contradiction provable from code. Bug findings MUST cite h:ref lines.
 - Making a change with zero observable effect (unused params, dead imports, unreachable paths).
