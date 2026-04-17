@@ -10,8 +10,6 @@ An **output-compression-first** desktop coding agent. ~200k LOC across TypeScrip
 
 Contemporary LLM coding agents optimize the **context window** — fitting more into the prompt. ATLS optimizes **model emission** — minimizing what the model writes. Under current pricing (output tokens cost 5x input; cached input costs 0.1x uncached), emission dominates cost. A system that lets the model reference code instead of copying it, chain operations instead of narrating them, and trust the runtime instead of re-verifying assumptions can compress output by **20-50x** versus naive tool-calling agents.
 
-Measured result on a self-audit workload: **97.6% cost reduction** from the batch primitive alone. **$9.23 main-agent cost** for a 46-round audit that found and fixed 5 real bugs across 18 cognitive-subsystem files.
-
 See the **[whitepaper](docs/whitepaper.md)** for the full technical treatment.
 
 ## Core Protocols
