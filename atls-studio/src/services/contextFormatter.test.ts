@@ -84,6 +84,38 @@ describe('syncHppPinsWithStore (via formatWorkingMemory)', () => {
     dematerialize(chunk.hash);
     expect(getRef(chunk.hash)?.visibility).toBe('referenced');
   });
+
+  it('user-message boundary: unpinned chunks dematerialize on stream-start advanceTurn, pinned stay materialized', async () => {
+    const store = useContextStore.getState();
+    const unpinnedHash = store.addChunk('search hit A line1\nsearch hit A line2', 'search', 'src/a.ts');
+    const pinnedHash = store.addChunk('search hit B line1\nsearch hit B line2', 'search', 'src/b.ts');
+    store.pinChunks([pinnedHash]);
+
+    formatWorkingMemory(wmInput());
+
+    const unpinnedRefBefore = getRef(unpinnedHash);
+    const pinnedRefBefore = getRef(pinnedHash);
+    expect(unpinnedRefBefore?.visibility).toBe('materialized');
+    expect(unpinnedRefBefore?.pinned).toBeFalsy();
+    expect(pinnedRefBefore?.visibility).toBe('materialized');
+    expect(pinnedRefBefore?.pinned).toBe(true);
+    expect(shouldMaterialize(unpinnedRefBefore!)).toBe(true);
+    expect(shouldMaterialize(pinnedRefBefore!)).toBe(true);
+
+    await advanceTurn();
+
+    const unpinnedRefAfter = getRef(unpinnedHash);
+    const pinnedRefAfter = getRef(pinnedHash);
+    expect(unpinnedRefAfter?.visibility).toBe('referenced');
+    expect(shouldMaterialize(unpinnedRefAfter!)).toBe(false);
+    expect(pinnedRefAfter?.visibility).toBe('materialized');
+    expect(pinnedRefAfter?.pinned).toBe(true);
+    expect(shouldMaterialize(pinnedRefAfter!)).toBe(true);
+
+    const wmAfter = formatWorkingMemory(wmInput());
+    expect(wmAfter).toContain('src/b.ts');
+    expect(wmAfter).not.toContain('search hit A line1\nsearch hit A line2');
+  });
 });
 
 describe('formatSuspectHint / formatTaskLine (golden)', () => {

@@ -1826,6 +1826,23 @@ async function streamChatViaTauri(
     })(),
   });
   
+  // User-message boundary = next autonomous round: advance HPP turn so
+  // unpinned refs materialized by the prior stream dematerialize to
+  // `referenced` before round 0's WM/state block is built. Mirrors the
+  // per-round `round > 0` preamble below so "user sent text" behaves like
+  // "model continued" for context-statefulness purposes. Safe on the very
+  // first stream (turn 0 -> 1, refs map empty, maintenance is no-op).
+  try {
+    await advanceTurn();
+    const ctxStoreAtBoundary = useContextStore.getState();
+    ctxStoreAtBoundary.compactDormantChunks();
+    ctxStoreAtBoundary.evictStaleDormantChunks();
+    ctxStoreAtBoundary.clearStaleReconcileStats();
+    ctxStoreAtBoundary.pruneHashStacks();
+  } catch (e) {
+    console.warn('[aiService] Stream-start HPP advance failed:', e);
+  }
+
   try {
     for (let round = 0; round < maxRounds; round++) {
       _roundHadMutations = false;
