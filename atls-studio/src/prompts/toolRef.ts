@@ -41,6 +41,7 @@ ${generateShorthandLegend()}
 
 ### Common Params (short codes in Key above; full names always accepted)
 sa subtask?:name summary:required
+spl goal:"required" subtasks:id1:Title1,id2:Title2 — comma-separated id:title lines, or JSON [{id,title},…]; h: prefixes are labels, not UHPP expansion targets
 rc type:full|tree ps:path1,path2 depth?:N glob?:pattern line_range?:start-end max_lines?:N
   type:full = whole-file body. type:tree = directory listing (not file content).
   Any read populates the live FileView for that file — see "## Working Memory — FileView" below.

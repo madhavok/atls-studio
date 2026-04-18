@@ -456,6 +456,37 @@ describe('resolveHashRefsInParams', () => {
     );
     expect((result as Record<string, unknown>).edit_target_ref).toBe('h:abc12345:10-12');
   });
+
+  it('passes batch goal through unchanged when it looks like an h: ref (task text, not UHPP)', async () => {
+    const result = await resolveHashRefsInParams(
+      { goal: 'h:abc12345:10-12 inspect handler' },
+      lookup,
+    );
+    expect((result as Record<string, unknown>).goal).toBe('h:abc12345:10-12 inspect handler');
+  });
+
+  it('does not expand session.plan subtasks strings that start with h: (id:title syntax)', async () => {
+    const result = await resolveHashRefsInParams(
+      {
+        steps: [
+          {
+            id: 'p1',
+            use: 'session.plan',
+            with: {
+              goal: 'refactor',
+              subtasks: ['h:a1b2c3d4e5f6a7b8: Phase one', { id: 'x', title: 'h:abc12345: optional title' }],
+            },
+          },
+        ],
+      },
+      lookup,
+    );
+    const steps = (result as { steps: Array<{ with: Record<string, unknown> }> }).steps;
+    expect(steps[0].with.subtasks).toEqual([
+      'h:a1b2c3d4e5f6a7b8: Phase one',
+      { id: 'x', title: 'h:abc12345: optional title' },
+    ]);
+  });
 });
 
 // ── Null content guard ──

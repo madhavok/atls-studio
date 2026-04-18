@@ -52,13 +52,29 @@ function parseSubtaskString(raw: string): { id: string; title: string } {
   return { id, title };
 }
 
+/** Models often send a single subtask label as a string; JSON must be an array to `.map`. */
+function normalizePlanSubtasksInput(
+  raw: unknown,
+): Array<string | { id: string; title: string }> {
+  if (raw === undefined || raw === null) return [];
+  if (Array.isArray(raw)) return raw as Array<string | { id: string; title: string }>;
+  if (typeof raw === 'string') {
+    const t = raw.trim();
+    return t ? [t] : [];
+  }
+  if (typeof raw === 'object' && raw !== null && 'id' in raw && 'title' in raw) {
+    return [raw as { id: string; title: string }];
+  }
+  return [];
+}
+
 export const handleTaskPlan: OpHandler = async (params, ctx) => {
   const goal = params.goal as string;
   if (!goal) return err('task_plan: ERROR missing goal');
 
-  const rawSubtasks = params.subtasks as Array<string | { id: string; title: string }> | undefined;
+  const rawSubtasks = normalizePlanSubtasksInput(params.subtasks);
   type SubStatus = 'pending' | 'active' | 'done' | 'blocked';
-  const subtasks = (rawSubtasks || []).map((s, i) => {
+  const subtasks = rawSubtasks.map((s, i) => {
     const st: SubStatus = i === 0 ? 'active' : 'pending';
     if (typeof s === 'string') {
       const { id, title } = parseSubtaskString(s);

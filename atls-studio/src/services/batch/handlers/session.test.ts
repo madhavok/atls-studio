@@ -484,6 +484,14 @@ describe('handleTaskPlan', () => {
     const p = useContextStore.getState().taskPlan;
     expect(p?.subtasks[0]).toMatchObject({ id: 'x1', title: 'T1', status: 'active' });
   });
+
+  it('accepts scalar string subtasks (OpenAI-style single label)', async () => {
+    const r = await handleTaskPlan({ goal: 'g', subtasks: 'analyze' }, createMockCtx() as any);
+    expect(r.ok).toBe(true);
+    const p = useContextStore.getState().taskPlan;
+    expect(p?.subtasks).toHaveLength(1);
+    expect(p?.subtasks[0]).toMatchObject({ id: 'analyze', title: 'analyze', status: 'active' });
+  });
 });
 
 describe('handleTaskStatus', () => {

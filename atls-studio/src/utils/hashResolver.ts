@@ -140,8 +140,10 @@ function isFilePathField(lowerField: string): boolean {
 const HASH_FIELDS = ['hash', 'content_hash', 'old_hash', 'new_hash', 'undo', 'hashes', 'refs', 'to', 'edit_target_hash'];
 const SYMBOL_FIELDS = ['symbol', 'symbol_name', 'name'];
 /** Ref strings that must not be expanded to file content by resolveHashRefsInParams.
- * `ref` is used by read.lines as h:HASH:lines — expanding to content breaks line extraction. */
-const PASSTHROUGH_REF_FIELDS = new Set(['edit_target_ref', 'ref']);
+ * `ref` is used by read.lines as h:HASH:lines — expanding to content breaks line extraction.
+ * `goal` is human/task text (batch envelope + session.plan); models cite h:… in prose — must stay literal.
+ */
+const PASSTHROUGH_REF_FIELDS = new Set(['edit_target_ref', 'ref', 'goal']);
 
 /** Fields where inline h:ref replacement within larger strings is allowed. */
 const INLINE_RESOLVE_FIELDS = new Set([
@@ -578,7 +580,7 @@ export async function resolveHashRefsInParams(
 ): Promise<unknown> {
   const expansions = _expansions ?? [];
   const warnings = _warnings ?? [];
-  const result = await _resolveInner(params, lookup, parentKey, setLookup, expansions, false, warnings);
+  const result = await _resolveInner(params, lookup, parentKey, setLookup, expansions, false, warnings, 0, false);
   return result;
 }
 
@@ -593,7 +595,7 @@ export async function resolveHashRefsWithMeta(
 ): Promise<ResolveResult> {
   const expansions: SetRefExpansion[] = [];
   const warnings: string[] = [];
-  const resolved = await _resolveInner(params, lookup, parentKey, setLookup, expansions, false, warnings);
+  const resolved = await _resolveInner(params, lookup, parentKey, setLookup, expansions, false, warnings, 0, false);
   return { params: resolved, setRefExpansions: expansions, warnings };
 }
 
@@ -608,6 +610,8 @@ async function _resolveInner(
   skipInline: boolean,
   warnings: string[] = [],
   _depth = 0,
+  /** session.plan subtasks may use id:title lines whose id looks like h:… — must not resolve to chunk text. */
+  passthroughLiteral = false,
 ): Promise<unknown> {
   // BUG9 FIX: Guard against unbounded recursion from circular or deeply nested h:refs.
   if (_depth > MAX_RESOLVE_DEPTH) {
@@ -616,6 +620,7 @@ async function _resolveInner(
   }
   if (params === null || params === undefined) return params;
   if (typeof params === 'string') {
+    if (passthroughLiteral) return params;
     // HPP v4: resolve recency refs (h:$last-N) before any other parsing
     const resolved = resolveRecencyInString(params);
     if (parentKey && PASSTHROUGH_REF_FIELDS.has(parentKey)) return resolved;
@@ -668,9 +673,10 @@ async function _resolveInner(
 
   if (Array.isArray(params)) {
     const fieldName = parentKey;
+    const childLiteral = passthroughLiteral || fieldName === 'subtasks';
     const expanded: unknown[] = [];
     for (const item of params) {
-      if (typeof item === 'string' && setLookup) {
+      if (typeof item === 'string' && setLookup && !childLiteral) {
         const setExpr = parseSetExpression(item);
         if (setExpr) {
           const { values, expansion } = 'left' in setExpr
@@ -681,7 +687,7 @@ async function _resolveInner(
           continue;
         }
       }
-      expanded.push(await _resolveInner(item, lookup, fieldName, setLookup, expansions, skipInline, warnings, _depth + 1));
+      expanded.push(await _resolveInner(item, lookup, fieldName, setLookup, expansions, skipInline, warnings, _depth + 1, childLiteral));
     }
     return expanded;
   }
@@ -725,7 +731,7 @@ async function _resolveInner(
         result[key] = resolvedVal;
       }
     } else if (val !== null && typeof val === 'object') {
-      result[key] = await _resolveInner(val, lookup, key, setLookup, expansions, childSkipInline, warnings, _depth + 1);
+      result[key] = await _resolveInner(val, lookup, key, setLookup, expansions, childSkipInline, warnings, _depth + 1, passthroughLiteral);
     } else {
       // Preserve numbers/booleans/null — otherwise line_edits.line, read.lines start_line/end_line,
       // count, destination, etc. are dropped and validators see "missing line".
