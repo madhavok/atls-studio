@@ -477,6 +477,11 @@ const ContextMeter = memo(function ContextMeter() {
     `Input: ${sessionInputTokens.toLocaleString()} | Output: ${sessionOutputTokens.toLocaleString()}`,
   ].join('\n');
 
+  const sessionOutputTitle = [
+    'Cumulative provider output tokens since app launch: sum of completion tokens per recorded API call (same call count as input).',
+    `Output: ${sessionOutputTokens.toLocaleString()} (~${formatTokens(sessionOutputTokens)}).`,
+  ].join('\n');
+
   const hoverBreakdown = [
     'Context window budget:',
     `• Working memory: ${chunkCount} chunks → ${formatTokens(wmTokens)} (prompt WM)`,
@@ -490,49 +495,80 @@ const ContextMeter = memo(function ContextMeter() {
     `• Total: ${formatTokens(usedTokens)} / ${formatTokens(maxTokens)}`,
   ].join('\n');
 
+  const chunkCountTitle = `Working-memory chunks: ${chunkCount.toLocaleString()}. See “chunks” line tooltip for full budget breakdown.`;
+  const overheadSuffixTitle = `Prompt overhead (instructions, tool refs, guides, etc.): ${(pm.totalOverheadTokens ?? 0).toLocaleString()} tokens (~${formatTokens(pm.totalOverheadTokens || 0)}).`;
+  const barTrackTitle = hoverBreakdown;
+  const barFillTitle = `${percentage.toFixed(1)}% of model window — estimated used ${usedTokens.toLocaleString()} / max ${maxTokens.toLocaleString()} tokens.`;
+  const usedMaxTitle = [
+    latestSnapshot
+      ? 'Latest round snapshot: estimated total prompt tokens.'
+      : 'No snapshot yet: WM token estimate + overhead.',
+    `Used: ${usedTokens.toLocaleString()} (~${formatTokens(usedTokens)})`,
+    `Max: ${maxTokens.toLocaleString()} (~${formatTokens(maxTokens)})`,
+  ].join('\n');
+  const wmSavedTitle = `Cumulative working-memory savings (freed / compacted): ${freedTokens.toLocaleString()} tokens (~${formatTokens(freedTokens)}).`;
+  const flashFreedTitle = `Tokens freed this action: ${displayFreed.toLocaleString()} (~${formatTokens(displayFreed)}).`;
+  const chatCostTitle = `This chat (current conversation): ${chatCostCents.toLocaleString()}¢ — ${formatCost(chatCostCents)}.`;
+  const sessionCostTitle = `This app session (since launch): ${sessionCostCents.toLocaleString()}¢ — ${formatCost(sessionCostCents)}.`;
+  const todayCostTitle = `Today (persisted daily total): ${todayTotalCents.toLocaleString()}¢ — ${formatCost(todayTotalCents)}.`;
+  const zeroCostTitle = 'No recorded cost yet for chat, session, or today.';
+
   return (
     <div className="flex flex-col gap-0.5 px-2 py-0.5 text-[9px] text-studio-muted">
       {/* Token usage bar */}
       <div className="flex items-center gap-2">
-        <span className="shrink-0 text-studio-accent cursor-help" title={hoverBreakdown}>
-          chunks:{chunkCount}{pm.totalOverheadTokens ? ` +${formatTokens(pm.totalOverheadTokens)}` : ''}
+        <span className="shrink-0 text-studio-accent cursor-help inline-flex gap-0" title={hoverBreakdown}>
+          <span className="cursor-help" title={chunkCountTitle}>chunks:{chunkCount}</span>
+          {pm.totalOverheadTokens ? (
+            <span className="cursor-help" title={overheadSuffixTitle}>
+              {` +${formatTokens(pm.totalOverheadTokens)}`}
+            </span>
+          ) : null}
         </span>
-        <div className="flex-1 h-1 bg-studio-border rounded-full overflow-hidden min-w-[40px] cursor-help" title={hoverBreakdown}>
+        <div className="flex-1 h-1 bg-studio-border rounded-full overflow-hidden min-w-[40px] cursor-help" title={barTrackTitle}>
           <div 
-            className={`h-full transition-all duration-300 ${getBarColor()}`}
+            className={`h-full transition-all duration-300 cursor-help ${getBarColor()}`}
             style={{ width: `${percentage}%` }}
+            title={barFillTitle}
           />
         </div>
-        <span className="shrink-0">{formatTokens(usedTokens)}/{formatTokens(maxTokens)}</span>
+        <span className="shrink-0 cursor-help" title={usedMaxTitle}>
+          {formatTokens(usedTokens)}/{formatTokens(maxTokens)}
+        </span>
         {freedTokens > 0 && (
-          <span className="shrink-0 text-studio-success">
+          <span className="shrink-0 text-studio-success cursor-help" title={wmSavedTitle}>
             saved:{formatTokens(freedTokens)}
           </span>
         )}
         {showFreed && displayFreed > 0 && (
-          <span className="shrink-0 text-studio-success animate-pulse font-medium">
+          <span className="shrink-0 text-studio-success animate-pulse font-medium cursor-help" title={flashFreedTitle}>
             -{formatTokens(displayFreed)} freed!
           </span>
         )}
         {/* Input/output token split */}
         {(sessionInputTokens > 0 || sessionOutputTokens > 0) && (
-          <span className="shrink-0 text-studio-text-secondary" title={sessionTokensTitle}>
-            in:{formatTokens(sessionInputTokens)} out:{formatTokens(sessionOutputTokens)}
+          <span className="shrink-0 text-studio-text-secondary inline-flex gap-x-1">
+            <span className="cursor-help" title={sessionTokensTitle}>
+              in:{formatTokens(sessionInputTokens)}
+            </span>
+            <span className="cursor-help" title={sessionOutputTitle}>
+              out:{formatTokens(sessionOutputTokens)}
+            </span>
           </span>
         )}
         {/* Cost display: chat | session | today */}
-        <span className="shrink-0 text-studio-title" title={`Chat: ${formatCost(chatCostCents)} | Session: ${formatCost(sessionCostCents)} | Today: ${formatCost(todayTotalCents)}`}>
+        <span className="shrink-0 text-studio-title inline-flex flex-wrap items-center gap-x-0">
           {chatCostCents > 0 && (
-            <span className="text-studio-accent">{formatCost(chatCostCents)}</span>
+            <span className="text-studio-accent cursor-help" title={chatCostTitle}>{formatCost(chatCostCents)}</span>
           )}
           {sessionCostCents > chatCostCents && (
-            <span className="text-studio-text ml-1">{formatCost(sessionCostCents)}</span>
+            <span className="text-studio-text ml-1 cursor-help" title={sessionCostTitle}>{formatCost(sessionCostCents)}</span>
           )}
           {todayTotalCents > sessionCostCents && (
-            <span className="text-studio-muted ml-1">{formatCost(todayTotalCents)}</span>
+            <span className="text-studio-muted ml-1 cursor-help" title={todayCostTitle}>{formatCost(todayTotalCents)}</span>
           )}
           {chatCostCents === 0 && sessionCostCents === 0 && todayTotalCents === 0 && (
-            <span className="text-studio-muted">$0</span>
+            <span className="text-studio-muted cursor-help" title={zeroCostTitle}>$0</span>
           )}
         </span>
       </div>
@@ -620,35 +656,81 @@ const ContextMetrics = memo(function ContextMetrics() {
     return segs;
   }, [pm.modePromptTokens, pm.toolRefTokens, pm.shellGuideTokens, pm.nativeToolTokens, pm.primerTokens, pm.contextControlTokens, pm.workspaceContextTokens, pm.entryManifestTokens, emDepth]);
 
+  const metricsCollapseHint = hasData
+    ? 'Click for overhead breakdown, savings, provider cache, and budget split.'
+    : 'Click to open; data appears after the first context build / round.';
+
+  const headerOverheadTitle = `Prompt overhead (mode, tools, guides, workspace block, etc.): ${pm.totalOverheadTokens.toLocaleString()} tokens (~${formatTokens(pm.totalOverheadTokens)}).`;
+
+  const headerSavedTitle = [
+    'Cumulative input tokens avoided across rounds (sum of per-round compression + rolling + freed savings).',
+    `${cumulativeInputSaved.toLocaleString()} tokens (~${formatTokens(cumulativeInputSaved)}).`,
+    `~${formatCost(cumulativeCostCents)} at current model input pricing (output not included).`,
+  ].join('\n');
+
+  const headerRoundsTitle = `Main chat tool-loop rounds counted this session: ${roundCount.toLocaleString()}.`;
+
+  const headerEffTitle = [
+    'Efficiency: working-memory (chunk) tokens as a share of estimated total prompt.',
+    `WM: ${wmTokens.toLocaleString()} (~${formatTokens(wmTokens)})`,
+    `Estimated used: ${usedTokens.toLocaleString()} (~${formatTokens(usedTokens)})`,
+    `→ ${efficiency}%`,
+  ].join('\n');
+
+  const headerCacheTitle = [
+    `Provider prompt-cache session stats: ${cacheMetrics.sessionRequests.toLocaleString()} request(s).`,
+    `Hit rate: ${Math.round(cacheMetrics.sessionHitRate * 100)}% (cache read tokens as a share of read+write+uncached totals).`,
+    `Reads: ${cacheMetrics.sessionCacheReads.toLocaleString()} | Writes: ${cacheMetrics.sessionCacheWrites.toLocaleString()} | Uncached: ${cacheMetrics.sessionUncached.toLocaleString()}`,
+  ].join('\n');
+
+  const headerBp3Title = logicalCache.bp3Hit === null
+    ? 'BP3: no data.'
+    : [
+        'Anthropic logical cache: prior-turns prefix (BP3) reuse vs churn.',
+        logicalCache.bp3Hit ? 'Last check: HIT (prefix stable).' : 'Last check: MISS (prefix changed).',
+        logicalCache.bp3Reason ? `Reason: ${logicalCache.bp3Reason}` : '',
+      ].filter(Boolean).join('\n');
+
+  const overheadLineRightTitle = `Overhead uses ${pm.totalOverheadTokens.toLocaleString()} of ${maxTokens.toLocaleString()} max window tokens (${overheadPct.toFixed(1)}%).`;
+
+  const budgetUsedMaxTitle = [
+    latestSnapshot
+      ? 'Latest round snapshot: estimated total prompt tokens vs model max.'
+      : 'No snapshot yet: WM + overhead estimate vs model max.',
+    `Used: ${usedTokens.toLocaleString()} (~${formatTokens(usedTokens)})`,
+    `Max: ${maxTokens.toLocaleString()} (~${formatTokens(maxTokens)})`,
+  ].join('\n');
+
   return (
     <div className="px-2 text-[9px] text-studio-muted">
       <button
         className="w-full flex items-center gap-1.5 py-0.5 hover:text-studio-text transition-colors"
         onClick={() => setExpanded(!expanded)}
         type="button"
+        title={metricsCollapseHint}
       >
-        <span className="text-studio-accent shrink-0">metrics</span>
+        <span className="text-studio-accent shrink-0 cursor-help" title={metricsCollapseHint}>metrics</span>
         {hasData ? (
           <>
-            <span className="shrink-0">overhead:{formatTokens(pm.totalOverheadTokens)}</span>
+            <span className="shrink-0 cursor-help" title={headerOverheadTitle}>overhead:{formatTokens(pm.totalOverheadTokens)}</span>
         {cumulativeInputSaved > 0 && (
-          <span className="shrink-0 text-studio-success">saved:{formatTokens(cumulativeInputSaved)}</span>
+          <span className="shrink-0 text-studio-success cursor-help" title={headerSavedTitle}>saved:{formatTokens(cumulativeInputSaved)}</span>
         )}
         {roundCount > 0 && (
-          <span className="shrink-0">r:{roundCount}</span>
+          <span className="shrink-0 cursor-help" title={headerRoundsTitle}>r:{roundCount}</span>
         )}
-        <span className="shrink-0">eff:{efficiency}%</span>
+        <span className="shrink-0 cursor-help" title={headerEffTitle}>eff:{efficiency}%</span>
         {cacheMetrics.sessionRequests > 0 && (
-          <span className="shrink-0 text-studio-success">cache:{Math.round(cacheMetrics.sessionHitRate * 100)}%</span>
+          <span className="shrink-0 text-studio-success cursor-help" title={headerCacheTitle}>cache:{Math.round(cacheMetrics.sessionHitRate * 100)}%</span>
         )}
         {provider === 'anthropic' && logicalCache.bp3Hit !== null && (
-          <span className={`shrink-0 ${logicalCache.bp3Hit ? 'text-green-400' : 'text-red-400'}`}>
+          <span className={`shrink-0 cursor-help ${logicalCache.bp3Hit ? 'text-green-400' : 'text-red-400'}`} title={headerBp3Title}>
             bp3:{logicalCache.bp3Hit ? 'hit' : 'miss'}
           </span>
         )}
           </>
         ) : (
-          <span className="shrink-0 text-studio-muted">no data yet</span>
+          <span className="shrink-0 text-studio-muted cursor-help" title={metricsCollapseHint}>no data yet</span>
         )}
         <svg className={`w-2.5 h-2.5 text-studio-text-muted transition-transform ml-auto ${expanded ? 'rotate-180' : ''}`} viewBox="0 0 24 24" fill="currentColor">
           <path d="M7 10l5 5 5-5z" />
@@ -659,25 +741,34 @@ const ContextMetrics = memo(function ContextMetrics() {
           {/* Overhead breakdown bar */}
           <div>
             <div className="flex items-center justify-between mb-0.5">
-              <span className="text-studio-text-secondary">Prompt Overhead</span>
-              <span>{formatTokens(pm.totalOverheadTokens)} ({overheadPct.toFixed(1)}% of window)</span>
+              <span className="text-studio-text-secondary cursor-help" title="Non-user content counted toward the prompt: system-mode text, tool references, guides, workspace injection, etc.">
+                Prompt Overhead
+              </span>
+              <span className="cursor-help" title={overheadLineRightTitle}>
+                {formatTokens(pm.totalOverheadTokens)} ({overheadPct.toFixed(1)}% of window)
+              </span>
             </div>
             <div className="flex h-1.5 rounded-full overflow-hidden bg-studio-border">
               {segments.map((seg) => {
                 const pct = pm.totalOverheadTokens > 0 ? (seg.tokens / pm.totalOverheadTokens) * 100 : 0;
+                const segTitle = `${seg.label}: ${seg.tokens.toLocaleString()} tokens (~${formatTokens(seg.tokens)}), ${pct.toFixed(1)}% of overhead bar.`;
                 return (
                   <div
                     key={seg.label}
-                    className={`${seg.color} transition-all`}
+                    className={`${seg.color} transition-all cursor-help`}
                     style={{ width: `${pct}%` }}
-                    title={`${seg.label}: ${formatTokens(seg.tokens)}`}
+                    title={segTitle}
                   />
                 );
               })}
             </div>
             <div className="flex flex-wrap gap-x-2 gap-y-0 mt-0.5">
               {segments.map((seg) => (
-                <span key={seg.label} className="flex items-center gap-0.5">
+                <span
+                  key={seg.label}
+                  className="flex items-center gap-0.5 cursor-help"
+                  title={`${seg.label}: ${seg.tokens.toLocaleString()} tokens (~${formatTokens(seg.tokens)}).`}
+                >
                   <span className={`inline-block w-1.5 h-1.5 rounded-full ${seg.color}`} />
                   <span>{seg.label} {formatTokens(seg.tokens)}</span>
                 </span>
@@ -689,36 +780,64 @@ const ContextMetrics = memo(function ContextMetrics() {
           {(perRoundSavings > 0 || cumulativeInputSaved > 0) && (
             <div className="border-t border-studio-border pt-1">
               <div className="flex items-center justify-between mb-0.5">
-                <span className="text-studio-text-secondary">Context Savings</span>
-                <span className="text-studio-text-muted">{roundCount} round{roundCount !== 1 ? 's' : ''}</span>
+                <span className="text-studio-text-secondary cursor-help" title="Tokens not sent or reclaimed via compression, rolling summaries, and WM frees; cumulative line sums per-round savings over the session.">
+                  Context Savings
+                </span>
+                <span className="text-studio-text-muted cursor-help" title={headerRoundsTitle}>
+                  {roundCount} round{roundCount !== 1 ? 's' : ''}
+                </span>
               </div>
               {/* Per-round breakdown */}
               <div className="flex flex-wrap gap-x-3 gap-y-0">
-                <span className="text-studio-text-secondary">per round:</span>
+                <span className="text-studio-text-secondary cursor-help" title="Per API call: compression + rolling distill savings + WM freed tokens (current counters).">
+                  per round:
+                </span>
                 {pm.compressionSavings > 0 && (
-                  <span>compression {formatTokens(pm.compressionSavings)} ({pm.compressionCount} items)</span>
+                  <span
+                    className="cursor-help"
+                    title={`History/tool-result compression savings (current window): ${pm.compressionSavings.toLocaleString()} tokens across ${pm.compressionCount.toLocaleString()} item(s).`}
+                  >
+                    compression {formatTokens(pm.compressionSavings)} ({pm.compressionCount} items)
+                  </span>
                 )}
                 {(pm.rollingSavings ?? 0) > 0 && (
-                  <span>rolling {formatTokens(pm.rollingSavings ?? 0)} ({pm.rolledRounds ?? 0} rounds distilled)</span>
+                  <span
+                    className="cursor-help"
+                    title={`Tokens removed by rolling summary / distillation: ${(pm.rollingSavings ?? 0).toLocaleString()} from ${(pm.rolledRounds ?? 0).toLocaleString()} round(s) folded in.`}
+                  >
+                    rolling {formatTokens(pm.rollingSavings ?? 0)} ({pm.rolledRounds ?? 0} rounds distilled)
+                  </span>
                 )}
                 {freedTokens > 0 && (
-                  <span>freed {formatTokens(freedTokens)}</span>
+                  <span className="cursor-help" title={`Working-memory chunks freed or compacted: ${freedTokens.toLocaleString()} tokens (~${formatTokens(freedTokens)}).`}>
+                    freed {formatTokens(freedTokens)}
+                  </span>
                 )}
                 {pm.orphanSummaryRemovals > 0 && (
-                  <span>orphans {pm.orphanSummaryRemovals} removed</span>
+                  <span className="cursor-help" title={`Compressed rolling-summary pointers removed as orphans: ${pm.orphanSummaryRemovals.toLocaleString()}.`}>
+                    orphans {pm.orphanSummaryRemovals} removed
+                  </span>
                 )}
                 {perRoundSavings > 0 && (
-                  <span className="text-studio-text-secondary">= {formatTokens(perRoundSavings)}/call</span>
+                  <span
+                    className="text-studio-text-secondary cursor-help"
+                    title={`Sum of compression + rolling + freed: ${perRoundSavings.toLocaleString()} tokens (~${formatTokens(perRoundSavings)}) avoided per call at current counters.`}
+                  >
+                    = {formatTokens(perRoundSavings)}/call
+                  </span>
                 )}
               </div>
               {/* Cumulative — the real cost impact */}
               {cumulativeInputSaved > 0 && (
-                <div className="flex items-center gap-2 mt-0.5">
-                  <span className="text-studio-success font-medium">
+                <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                  <span
+                    className="text-studio-success font-medium cursor-help"
+                    title={headerSavedTitle}
+                  >
                     cumulative: {formatTokens(cumulativeInputSaved)} input tokens avoided
                   </span>
                   {cumulativeCostCents > 0 && (
-                    <span className="text-studio-success">
+                    <span className="text-studio-success cursor-help" title={headerSavedTitle}>
                       (~{formatCost(cumulativeCostCents)} saved)
                     </span>
                   )}
@@ -731,26 +850,51 @@ const ContextMetrics = memo(function ContextMetrics() {
           {cacheMetrics.sessionRequests > 0 && (
             <div className="border-t border-studio-border pt-1">
               <div className="flex items-center justify-between mb-0.5">
-                <span className="text-studio-text-secondary">Cache Performance</span>
-                <span>{cacheMetrics.sessionRequests} request{cacheMetrics.sessionRequests !== 1 ? 's' : ''}</span>
+                <span className="text-studio-text-secondary cursor-help" title="Provider prompt-cache token accounting for this app session (reads/writes/uncached).">
+                  Cache Performance
+                </span>
+                <span className="cursor-help" title={`Recorded cache-bearing API requests this session: ${cacheMetrics.sessionRequests.toLocaleString()}.`}>
+                  {cacheMetrics.sessionRequests} request{cacheMetrics.sessionRequests !== 1 ? 's' : ''}
+                </span>
               </div>
               <div className="flex flex-wrap gap-x-3 gap-y-0">
-                <span className="text-studio-success font-medium">
+                <span className="text-studio-success font-medium cursor-help" title={headerCacheTitle}>
                   hit rate: {Math.round(cacheMetrics.sessionHitRate * 100)}%
                 </span>
                 {cacheMetrics.sessionCacheReads > 0 && (
-                  <span>reads: {formatTokens(cacheMetrics.sessionCacheReads)}</span>
+                  <span
+                    className="cursor-help"
+                    title={`Cache read (reused prefix) tokens summed: ${cacheMetrics.sessionCacheReads.toLocaleString()} (~${formatTokens(cacheMetrics.sessionCacheReads)}).`}
+                  >
+                    reads: {formatTokens(cacheMetrics.sessionCacheReads)}
+                  </span>
                 )}
                 {cacheMetrics.sessionCacheWrites > 0 && (
-                  <span>writes: {formatTokens(cacheMetrics.sessionCacheWrites)}</span>
+                  <span
+                    className="cursor-help"
+                    title={`Cache creation / write tokens summed: ${cacheMetrics.sessionCacheWrites.toLocaleString()} (~${formatTokens(cacheMetrics.sessionCacheWrites)}).`}
+                  >
+                    writes: {formatTokens(cacheMetrics.sessionCacheWrites)}
+                  </span>
                 )}
                 {cacheMetrics.sessionUncached > 0 && (
-                  <span className="text-studio-text-secondary">uncached: {formatTokens(cacheMetrics.sessionUncached)}</span>
+                  <span
+                    className="text-studio-text-secondary cursor-help"
+                    title={`Uncached prompt tokens (billed as fresh) summed: ${cacheMetrics.sessionUncached.toLocaleString()} (~${formatTokens(cacheMetrics.sessionUncached)}).`}
+                  >
+                    uncached: {formatTokens(cacheMetrics.sessionUncached)}
+                  </span>
                 )}
               </div>
               {cacheMetrics.sessionCacheReads > 0 && (
                 <div className="flex items-center gap-2 mt-0.5">
-                  <span className="text-studio-success">
+                  <span
+                    className="text-studio-success cursor-help"
+                    title={
+                      'Rough $ savings vs pricing input rate, using read tokens × heuristic discount '
+                      + `(OpenAI ~50%, Google/Vertex ~75%, Anthropic ~90% of input price — illustrative only).`
+                    }
+                  >
                     ~{formatCost(calculateCost(provider as CostProvider, selectedModel, cacheMetrics.sessionCacheReads, 0) * (
                       provider === 'openai' ? 0.5
                       : (provider === 'google' || provider === 'vertex') ? 0.75
@@ -761,11 +905,23 @@ const ContextMetrics = memo(function ContextMetrics() {
               )}
               {provider === 'anthropic' && logicalCache.staticHit !== null && (
                 <div className="flex flex-wrap gap-x-3 gap-y-0 mt-0.5">
-                  <span className="text-studio-text-secondary">expected:</span>
-                  <span className={logicalCache.staticHit ? 'text-green-400' : 'text-red-400'}>
+                  <span className="text-studio-text-secondary cursor-help" title="Logical cache expectation from last request: static system prefix and BP3 prior-turns stability.">
+                    expected:
+                  </span>
+                  <span
+                    className={`cursor-help ${logicalCache.staticHit ? 'text-green-400' : 'text-red-400'}`}
+                    title={
+                      logicalCache.staticHit
+                        ? 'Static system prefix matched cache breakpoint (expected HIT).'
+                        : 'Static system prefix changed; cache breakpoint may miss.'
+                    }
+                  >
                     Static {logicalCache.staticHit ? 'HIT' : 'MISS'}
                   </span>
-                  <span className={logicalCache.bp3Hit ? 'text-green-400' : 'text-red-400'}>
+                  <span
+                    className={`cursor-help ${logicalCache.bp3Hit ? 'text-green-400' : 'text-red-400'}`}
+                    title={headerBp3Title}
+                  >
                     BP3 {logicalCache.bp3Hit ? 'HIT' : 'MISS'}
                     {logicalCache.bp3Reason && <span className="text-studio-muted"> ({logicalCache.bp3Reason})</span>}
                   </span>
@@ -777,29 +933,44 @@ const ContextMetrics = memo(function ContextMetrics() {
           {/* Context budget split — buckets match aiService RoundSnapshot / getEstimatedTotalPromptTokens */}
           <div className="border-t border-studio-border pt-1">
             <div className="flex items-center justify-between mb-0.5">
-              <span className="text-studio-text-secondary">Budget Split</span>
-              <span>{formatTokens(usedTokens)} / {formatTokens(maxTokens)}</span>
+              <span className="text-studio-text-secondary cursor-help" title="Last round snapshot buckets (system, history, staged, WM, workspace) when available; bar widths are share of model max window.">
+                Budget Split
+              </span>
+              <span className="cursor-help" title={budgetUsedMaxTitle}>
+                {formatTokens(usedTokens)} / {formatTokens(maxTokens)}
+              </span>
             </div>
             {latestSnapshot && budgetSplitBuckets.length > 0 ? (
               <>
                 <div className="flex h-1.5 rounded-full overflow-hidden bg-studio-border">
-                  {budgetSplitBuckets.map((b) => (
-                    <div
-                      key={b.label}
-                      className={`${b.color} transition-all`}
-                      style={{ width: `${Math.min(100, (b.tokens / maxTokens) * 100)}%` }}
-                      title={`${b.label}: ${formatTokens(b.tokens)}`}
-                    />
-                  ))}
+                  {budgetSplitBuckets.map((b) => {
+                    const wPct = Math.min(100, (b.tokens / maxTokens) * 100);
+                    const bTitle = `${b.label}: ${b.tokens.toLocaleString()} tokens (~${formatTokens(b.tokens)}), ${wPct.toFixed(1)}% of max window.`;
+                    return (
+                      <div
+                        key={b.label}
+                        className={`${b.color} transition-all cursor-help`}
+                        style={{ width: `${wPct}%` }}
+                        title={bTitle}
+                      />
+                    );
+                  })}
                 </div>
                 <div className="flex flex-wrap gap-x-2 gap-y-0 mt-0.5">
                   {budgetSplitBuckets.map((b) => (
-                    <span key={b.label} className="flex items-center gap-0.5">
+                    <span
+                      key={b.label}
+                      className="flex items-center gap-0.5 cursor-help"
+                      title={`${b.label}: ${b.tokens.toLocaleString()} tokens (~${formatTokens(b.tokens)}).`}
+                    >
                       <span className={`inline-block w-1.5 h-1.5 rounded-full ${b.color}`} />
                       {b.label.toLowerCase()} {formatTokens(b.tokens)}
                     </span>
                   ))}
-                  <span className="flex items-center gap-0.5">
+                  <span
+                    className="flex items-center gap-0.5 cursor-help"
+                    title={`Remaining headroom: ${Math.max(0, maxTokens - usedTokens).toLocaleString()} tokens (~${formatTokens(Math.max(0, maxTokens - usedTokens))}) before max context.`}
+                  >
                     <span className="inline-block w-1.5 h-1.5 rounded-full bg-studio-border" />
                     free {formatTokens(Math.max(0, maxTokens - usedTokens))}
                   </span>
@@ -809,9 +980,9 @@ const ContextMetrics = memo(function ContextMetrics() {
               <>
                 <div className="flex h-1.5 rounded-full overflow-hidden bg-studio-border">
                   <div
-                    className="bg-studio-accent/80 transition-all"
+                    className="bg-studio-accent/80 transition-all cursor-help"
                     style={{ width: `${Math.min(100, maxTokens > 0 ? (usedTokens / maxTokens) * 100 : 0)}%` }}
-                    title={`WM + overhead estimate: ${formatTokens(usedTokens)}`}
+                    title={`Estimated prompt fill (no bucket snapshot): ${usedTokens.toLocaleString()} (~${formatTokens(usedTokens)}) — ${(maxTokens > 0 ? (usedTokens / maxTokens) * 100 : 0).toFixed(1)}% of ${maxTokens.toLocaleString()} max.`}
                   />
                 </div>
                 <div className="text-[9px] text-studio-text-muted mt-0.5">
@@ -820,7 +991,10 @@ const ContextMetrics = memo(function ContextMetrics() {
                     : 'No round snapshot yet — bar is WM + overhead estimate; bucketed split after the first completed round.'}
                 </div>
                 <div className="flex flex-wrap gap-x-2 gap-y-0 mt-0.5">
-                  <span className="flex items-center gap-0.5">
+                  <span
+                    className="flex items-center gap-0.5 cursor-help"
+                    title={`Remaining headroom: ${Math.max(0, maxTokens - usedTokens).toLocaleString()} tokens (~${formatTokens(Math.max(0, maxTokens - usedTokens))}).`}
+                  >
                     <span className="inline-block w-1.5 h-1.5 rounded-full bg-studio-border" />
                     free {formatTokens(Math.max(0, maxTokens - usedTokens))}
                   </span>
