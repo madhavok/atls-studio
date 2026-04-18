@@ -85,7 +85,9 @@ function makeFileView(partial: Partial<FileView> & Pick<FileView, 'filePath' | '
     filledRegions: partial.filledRegions ?? [],
     hash: partial.hash ?? 'fv-0000',
     lastAccessed: partial.lastAccessed ?? Date.now(),
-    pinned: partial.pinned ?? false,
+    // Default pinned:true for accounting tests — unpinned views render/charge 0
+    // tokens (they roll out of context), which would mask the thing we're testing.
+    pinned: partial.pinned ?? true,
     ...partial,
   } as FileView;
 }

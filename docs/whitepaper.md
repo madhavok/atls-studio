@@ -532,7 +532,7 @@ The prompt is constructed in three regions with distinct cache behavior:
 
 1. **`buildDynamicContextBlock()`**: hash manifest (active/dematerialized/archived refs with turn metadata), orientation lines (task, context stats with pressure thresholds at 50%/70%/85%), blackboard entries (filtered through `canSteerExecution` freshness gate), pending-action blocks (`STATE CHANGED` / `BLOCKED` / `ACTION REQUIRED`), edit-awareness steering (damaged/recent/escalated edits from BB `edit:`/`err:`/`repair:` keys), completion gates, spin circuit-breaker messages (tiered: nudge → warning → halt), project structure (first turn only), and workspace context (TOON-serialized editor state).
 2. **Staged snippets**: pre-materialized code context with active-engram dedup (pointers replace duplicate content).
-3. **Working memory**: active engrams with full content, sorted pinned-first then LRU; dormant count; archived list; cognitive rules.
+3. **Working memory**: `## FILE VIEWS` block (pinned FileViews, file-ordered, skeleton + fills + fullBody + markers) followed by `## ACTIVE ENGRAMS` (non-file artifacts + file-backed chunks whose view is unpinned, sorted pinned-first then LRU); dormant count; archived list; cognitive rules. Chunks covered by a pinned FileView are filtered from ACTIVE ENGRAMS to prevent double-render.
 
 The state block is never persisted into conversation history. For Gemini/Vertex, it flows through a separate `dynamicContext` parameter rather than being embedded in message content.
 
@@ -555,12 +555,13 @@ Engrams are the unit of content in ATLS. Each engram has:
 The memory runtime maintains:
 
 - A map of engrams by hash.
+- A **FileView map** keyed by normalized path: the unified, hash-addressed file-content surface. Multiple slice reads of the same file merge into one view as sorted non-overlapping regions, composed over a cheap signature skeleton; full reads materialize `fullBody` directly. Views are addressable as `h:fv:<hash>` and render in a dedicated `## FILE VIEWS` block above `## ACTIVE ENGRAMS`. Pinning a view (or any of its slices) is the gate for prompt inclusion: unpinned views are dormant — zero token cost, state warm for cheap re-pin — and their constituent chunks re-surface in ACTIVE ENGRAMS under normal HPP rules. Auto-heal reconcile rebases shifted regions via the freshness journal's line delta; rebase failures surface as `[REMOVED was Lx-y]` markers. See [engrams.md — FileView](./engrams.md#fileview--the-unified-file-content-surface).
 - A set of pinned engrams (protected from eviction).
 - A staged snippet area (pre-materialized content for the next round).
 - A blackboard (persistent key-value entries that survive across rounds).
 - A chunk graph (derived relationships: parent/child, edit-predecessor/successor, etc.).
 
-Eviction under budget pressure follows a tiered strategy: completed-subtask engrams first, then non-chat engrams, then unprotected chat engrams. Pinned and stale-but-protected engrams are never evicted without explicit operator action.
+Eviction under budget pressure follows a tiered strategy: completed-subtask engrams first, then non-chat engrams, then unprotected chat engrams. Pinned and stale-but-protected engrams are never evicted without explicit operator action. TTL archival of a file-backed chunk also prunes any FileView regions backed by that chunk (`pruneFileViewsForChunks` on the round-end sweep), so dormant views thin naturally as their backing chunks age out.
 
 The memory runtime also accumulates **batch metrics** per round (tool call count, manage-op count, substantive-BB-write flag, read/edit flags), which are captured into a `RoundSnapshot` at round end. These snapshots feed the telemetry pipeline: `captureInternalsSnapshot` in the AI service computes hypothetical non-batched cost from manage-op counts and round cost splits, then pushes to a 200-snapshot ring buffer in `roundHistoryStore`. The cost store aggregates monetary totals per-chat, per-session, and per-day. The UI's Internals dashboard reads these stores to render the batch-efficiency, tool-token, cache-composition, cost-I/O, and spin-trace sections — closing the design→implement→measure→tune loop with first-party telemetry.
 

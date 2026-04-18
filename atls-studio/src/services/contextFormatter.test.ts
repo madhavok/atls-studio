@@ -121,7 +121,7 @@ describe('syncHppPinsWithStore (via formatWorkingMemory)', () => {
 describe('formatWorkingMemory — FileView block rendering', () => {
   beforeEach(() => resetStore());
 
-  it('renders a ## FILE VIEWS block when a populated FileView exists', () => {
+  it('renders a ## FILE VIEWS block when a populated pinned FileView exists', () => {
     const store = useContextStore.getState();
     const rev = 'rev-fv-1';
     store.applyFullBodyFromChunk({
@@ -131,6 +131,8 @@ describe('formatWorkingMemory — FileView block rendering', () => {
       chunkHash: 'h-toon-full',
       totalLines: 3,
     });
+    // Unpinned views are dormant (roll out of prompt). Pin to assert render.
+    useContextStore.getState().setFileViewPinned('src/toon.ts', true);
 
     const state = useContextStore.getState();
     const output = formatWorkingMemory({
@@ -154,7 +156,7 @@ describe('formatWorkingMemory — FileView block rendering', () => {
     expect(output).toMatch(/=== .*src\/toon\.ts @h:/);
   });
 
-  it('filters out file-backed chunks that a FileView already covers', () => {
+  it('filters out file-backed chunks that a pinned FileView already covers', () => {
     const store = useContextStore.getState();
     const rev = 'rev-cover';
     // Install a chunk with a readSpan so addChunk auto-populates the FileView
@@ -169,6 +171,9 @@ describe('formatWorkingMemory — FileView block rendering', () => {
         readSpan: { filePath: 'src/cover.ts', sourceRevision: rev, contextType: 'full' },
       },
     );
+    // Coverage only applies when the view is pinned — dormant views let their
+    // constituent chunks re-surface in ACTIVE ENGRAMS.
+    useContextStore.getState().setFileViewPinned('src/cover.ts', true);
 
     const state = useContextStore.getState();
     const output = formatWorkingMemory({

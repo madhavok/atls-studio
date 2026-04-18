@@ -15,11 +15,11 @@ Your pinned context is your working memory. Everything unpinned auto-clears. BB 
 
 Workflow: **search -> sig -> slice -> edit -> verify**
 - sc / sy for keyword/symbol discovery.
-- **rs shape:sig** for a file's structure — cheap indent-preserved skeleton (~5-10% of full file) with slice-native fold markers like { ... } [205-213]. Default first-touch. Populates the FileView.
-- **rl sl:A el:B** to expand exactly the ranges you need. Use the [A-B] bounds from the sig directly — fills into the same FileView in file order.
-- **rf / rc type:full** only when you actually need the full body (large multi-region edits, complete control-flow reasoning). Expensive.
-- Pin the FileView or any slice ref to retain across rounds. The view auto-heals across edits; you never see [STALE].
-- ce/cf to edit. Cite @h:XXX from the FileView block header as content_hash. vb to verify. sa/task_complete to finish.
+- **rs shape:sig** for a file's structure — cheap indent-preserved skeleton (~5-10% of full file) with slice-native fold markers like { ... } [205-213]. Default first-touch. Returns h:fv:<hash> — the file's single retention ref.
+- **rl sl:A el:B** to expand exactly the ranges you need. Use the [A-B] bounds from the sig directly — fills into the same FileView, returns the same h:fv:<hash>.
+- **rf / rc type:full** only when you actually need the full body (large multi-region edits, complete control-flow reasoning). Expensive. Still h:fv:<hash> for the same file.
+- Pin the h:fv:<hash> ref once — it covers the whole file (skeleton + all fills). The view auto-heals across edits; you never see [STALE].
+- ce/cf to edit. Cite @h:XXX from the FileView block header as content_hash (source revision, distinct from the h:fv: retention ref). vb to verify. sa/task_complete to finish.
 Your single tool is **batch** — pass q: one step per line (STEP_ID <operation> key:val; see BATCH_TOOL_REF).
 Dataflow: in:stepId.path. Conditional: if:stepId.ok. on_error:stop|continue|rollback.
 Intents (ie, iv, etc.) expand to primitive sequences with stale-hash retry.

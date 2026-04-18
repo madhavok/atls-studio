@@ -66,6 +66,10 @@ function shouldMaterialize(ref: ChunkRef): boolean {
 
 Only engrams materialized this turn (or pinned) get their full content in the prompt. Everything else appears as a dormant count or is invisible.
 
+### Interaction with FileView
+
+HPP governs the **per-chunk** visibility state machine. The FileView layer sits above it for file-backed content: a pinned FileView renders its skeleton + fills + fullBody in `## FILE VIEWS` and suppresses its constituent chunks from ACTIVE ENGRAMS (the view is the canonical surface). An unpinned FileView is dormant and does not suppress anything — its constituent chunks participate normally under HPP (`seenAtTurn`-gated dematerialization, TTL archive via `refreshRoundEnd`). `pruneFileViewsForChunks` is invoked when chunks TTL-archive, so dormant views thin naturally as their backing chunks age out. See [engrams.md — FileView lifecycle](./engrams.md#fileview-lifecycle-pin-gated-rollout).
+
 ### Sorting
 
 ```typescript
@@ -94,9 +98,34 @@ UHPP provides a rich reference syntax for addressing, slicing, and operating on 
 ```
 h:a1b2c3                 → Direct hash reference (6-16 hex chars)
 h:a1b2c3d4e5f6           → Full 16-char hash
+h:fv:XXXXXXXX            → FileView reference (unified file-content surface)
+h:bb:key                 → Blackboard entry by key (see §Blackboard References)
 ```
 
 Resolution: exact map key → exact `shortHash` → unambiguous prefix match (≥8 chars).
+
+### FileView refs (`h:fv:<hash>`) — one retention ref per file
+
+A FileView is the per-path unified surface (skeleton + filled regions + optional `fullBody`) for one source file at one revision. Identity is `h:fv:<fnv(normalizedPath + sourceRevision)>` (16-char FNV slice) — **stable across fills**, so a ref emitted by a first-touch `rs shape:sig` stays valid as subsequent `rl` slices or `rf type:full` land in the same view.
+
+Read handlers (`read.shaped`, `read.lines`, `read.file`, `read.context`) return `h:fv:<hash>` as their primary ref for every file-backed read. This is the **single retention identity per file** — the model pins / unpins / drops that one ref, and any slice hash for the same file transparently routes to the view (see [engrams.md — FileView lifecycle](./engrams.md#fileview-lifecycle-pin-gated-rollout)).
+
+| Op | Behavior on `h:fv:<hash>` (or any slice ref whose source has a FileView) |
+|----|-------------------------------------------------------------------------|
+| `session.pin` | Pins the view (renders + charges tokens). Non-file chunks still pin at chunk level. |
+| `session.unpin` / wildcard `*` | Unpins the view. View stays in state (dormant, 0 prompt cost); re-pin instantly restores it. |
+| `session.drop` | Drops the view entry and all backing chunks — model writes one ref, runtime cleans up the whole file's working-memory footprint. |
+| Subagent handoff / Tauri IPC | `h:fv:` never crosses the TS↔Rust boundary — `resolveFileViewRefs` in [`contextStore.ts`](../atls-studio/src/stores/contextStore.ts) expands a view ref into its constituent chunk hashes before ship-out. Unknown `h:fv:` refs drop silently. |
+
+FileViews are **rendered outside ACTIVE ENGRAMS** in their own `## FILE VIEWS` block (see [prompt-assembly.md](./prompt-assembly.md)); chunks whose hashes back a pinned view are filtered from ACTIVE ENGRAMS to prevent double-render.
+
+Three hash roles coexist for file content — don't confuse them:
+
+| Role | Form | Where it comes from | What it's used for |
+|------|------|---------------------|---------------------|
+| Retention | `h:fv:<16>` | Read handlers' primary ref | `pi` / `pu` / `dro` — one per file |
+| Edit citation | `h:<sourceRevision>` | `@h:XXX` in the FileView block header | `content_hash` on `change.edit`, path refs like `f:h:...:L-M` |
+| Slice / range | `h:<chunkHash>` | Search results, edit `edits_resolved`, diff refs, inline `content:"h:..."` | Citing a specific region or piece of content — not for retention |
 
 ### Line Ranges
 
@@ -355,4 +384,4 @@ These rows are **UHPP reference-syntax** versions (how `h:` refs are parsed and 
 
 ---
 
-**Source**: [`hashProtocol.ts`](../atls-studio/src/services/hashProtocol.ts), [`hashRefParsers.ts`](../atls-studio/src/utils/hashRefParsers.ts), [`hashModifierParser.ts`](../atls-studio/src/utils/hashModifierParser.ts), [`uhppTypes.ts`](../atls-studio/src/utils/uhppTypes.ts), [`uhppExpansion.ts`](../atls-studio/src/services/uhppExpansion.ts), [`hash_resolver.rs`](../atls-studio/src-tauri/src/hash_resolver.rs), [`hash_commands.rs`](../atls-studio/src-tauri/src/hash_commands.rs), [`hashProtocol.ts` (prompt)](../atls-studio/src/prompts/hashProtocol.ts)
+**Source**: [`hashProtocol.ts`](../atls-studio/src/services/hashProtocol.ts), [`hashRefParsers.ts`](../atls-studio/src/utils/hashRefParsers.ts), [`hashModifierParser.ts`](../atls-studio/src/utils/hashModifierParser.ts), [`uhppTypes.ts`](../atls-studio/src/utils/uhppTypes.ts), [`uhppExpansion.ts`](../atls-studio/src/services/uhppExpansion.ts), [`hash_resolver.rs`](../atls-studio/src-tauri/src/hash_resolver.rs), [`hash_commands.rs`](../atls-studio/src-tauri/src/hash_commands.rs), [`hashProtocol.ts` (prompt)](../atls-studio/src/prompts/hashProtocol.ts), [`fileViewStore.ts`](../atls-studio/src/services/fileViewStore.ts) (FileView identity + reconcile), [`fileViewRender.ts`](../atls-studio/src/services/fileViewRender.ts) (pin-gated render + cover set)

@@ -41,7 +41,10 @@ describe('FileView PR4 — pinChunks with h:fv:', () => {
     expect(useContextStore.getState().getFileView('src/foo.ts')!.pinned).toBe(true);
   });
 
-  it('pinning a slice auto-promotes the parent FileView', () => {
+  it('pinning a slice ref routes to the FileView; chunk itself stays unpinned', () => {
+    // Under the single-retention-ref contract: pin on any slice/chunk ref whose
+    // source has a FileView pins the view, not the chunk. The chunk remains
+    // unpinned — it's citation-only, not a retention target.
     const store = useContextStore.getState();
     const rev = 'rev1';
     const shortSliceHash = store.addChunk(
@@ -57,7 +60,57 @@ describe('FileView PR4 — pinChunks with h:fv:', () => {
     expect(useContextStore.getState().getFileView('src/parent.ts')!.pinned).toBe(false);
 
     useContextStore.getState().pinChunks([shortSliceHash]);
+    // View is pinned.
     expect(useContextStore.getState().getFileView('src/parent.ts')!.pinned).toBe(true);
+    // Chunk is NOT pinned — retention routed to the view. `pinned` is optional
+    // on ContextChunk (unset === falsy); check for truthy rather than === false.
+    const sliceChunk = Array.from(useContextStore.getState().chunks.values())
+      .find(c => c.source === 'src/parent.ts');
+    expect(sliceChunk).toBeDefined();
+    expect(sliceChunk!.pinned).toBeFalsy();
+  });
+
+  it('unpinning a slice ref routes to the parent FileView', () => {
+    // Symmetric with pin — `pu` on a slice hash unpins the view.
+    const store = useContextStore.getState();
+    const rev = 'rev1';
+    const shortSliceHash = store.addChunk(
+      row(10, 'a'),
+      'smart',
+      'src/sym.ts',
+      undefined, undefined, 'hslice-sym',
+      {
+        sourceRevision: rev,
+        readSpan: { filePath: 'src/sym.ts', sourceRevision: rev, startLine: 10, endLine: 10 },
+      },
+    );
+    useContextStore.getState().pinChunks([shortSliceHash]);
+    expect(useContextStore.getState().getFileView('src/sym.ts')!.pinned).toBe(true);
+
+    useContextStore.getState().unpinChunks([shortSliceHash]);
+    expect(useContextStore.getState().getFileView('src/sym.ts')!.pinned).toBe(false);
+  });
+
+  it('dropping a slice ref removes the FileView + all backing chunks', () => {
+    const store = useContextStore.getState();
+    const rev = 'rev1';
+    const shortSliceHash = store.addChunk(
+      row(10, 'a'),
+      'smart',
+      'src/dropslice.ts',
+      undefined, undefined, 'hslice-drop',
+      {
+        sourceRevision: rev,
+        readSpan: { filePath: 'src/dropslice.ts', sourceRevision: rev, startLine: 10, endLine: 10 },
+      },
+    );
+    expect(useContextStore.getState().getFileView('src/dropslice.ts')).toBeDefined();
+
+    useContextStore.getState().dropChunks([shortSliceHash]);
+    expect(useContextStore.getState().getFileView('src/dropslice.ts')).toBeUndefined();
+    const chunkPresent = Array.from(useContextStore.getState().chunks.values())
+      .some(c => c.shortHash === shortSliceHash);
+    expect(chunkPresent).toBe(false);
   });
 
   it('unpinChunks releases FileView by h:fv: ref', () => {

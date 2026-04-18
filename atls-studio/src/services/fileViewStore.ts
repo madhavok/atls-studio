@@ -357,7 +357,7 @@ export function reconcileFileView(
     filledRegions: rebased,
     fullBody: undefined,
     fullBodyChunkHash: undefined,
-    hash: computeFileViewHash(view.filePath, currentRevision, rebased),
+    hash: computeFileViewHash(view.filePath, currentRevision),
     freshness: isSameFileEdit && rebased.length > 0 ? 'shifted' : 'fresh',
     freshnessCause: cause,
     pendingRefetches: refetchRequests.length > 0 ? refetchRequests : undefined,
@@ -405,7 +405,7 @@ export function onConstituentChunkRemoved(
   return {
     ...view,
     filledRegions: nextRegions,
-    hash: computeFileViewHash(view.filePath, view.sourceRevision, nextRegions),
+    hash: computeFileViewHash(view.filePath, view.sourceRevision),
     lastAccessed: Date.now(),
   };
 }
@@ -425,7 +425,7 @@ export function createFileView(skeleton: FileSkeleton, opts?: { pinned?: boolean
     skeletonRows: skeleton.rows,
     sigLevel: skeleton.sigLevel,
     filledRegions: [],
-    hash: computeFileViewHash(path, skeleton.revision, []),
+    hash: computeFileViewHash(path, skeleton.revision),
     lastAccessed: Date.now(),
     pinned: opts?.pinned ?? false,
     freshness: 'fresh',
@@ -453,14 +453,14 @@ export function applyFillToView(
       fullBody: body,
       fullBodyChunkHash: fill.chunkHash,
       filledRegions: nextRegions,
-      hash: computeFileViewHash(view.filePath, view.sourceRevision, nextRegions),
+      hash: computeFileViewHash(view.filePath, view.sourceRevision),
       lastAccessed: Date.now(),
     };
   }
   return {
     ...view,
     filledRegions: nextRegions,
-    hash: computeFileViewHash(view.filePath, view.sourceRevision, nextRegions),
+    hash: computeFileViewHash(view.filePath, view.sourceRevision),
     lastAccessed: Date.now(),
   };
 }
@@ -478,7 +478,7 @@ export function applyFullBodyToView(
     ...view,
     fullBody,
     fullBodyChunkHash: chunkHash,
-    hash: computeFileViewHash(view.filePath, view.sourceRevision, view.filledRegions, chunkHash),
+    hash: computeFileViewHash(view.filePath, view.sourceRevision),
     lastAccessed: Date.now(),
   };
 }
@@ -508,20 +508,17 @@ export function clearRemovedMarker(
 // Internals
 // ---------------------------------------------------------------------------
 
-/** Build a deterministic `h:fv:<hash>` identity. */
-export function computeFileViewHash(
-  filePath: string,
-  revision: string,
-  regions: FilledRegion[],
-  fullBodyHash?: string,
-): string {
-  const bounds = regions.map(r => `${r.start}-${r.end}`).join(',');
-  const parts = [
-    normalizePath(filePath),
-    revision,
-    bounds,
-    fullBodyHash ?? '',
-  ].join('|');
+/**
+ * Build a deterministic `h:fv:<hash>` identity — stable per `(filePath, revision)`.
+ *
+ * Identity does NOT depend on filled regions or fullBody: the view IS the file
+ * at this revision, regardless of how much the agent has materialized. This is
+ * what makes `h:fv:` usable as the single retention ref — the model can pin
+ * once on first read and the ref stays valid as the view grows. Identity
+ * changes only on revision bumps (source edits) or path changes.
+ */
+export function computeFileViewHash(filePath: string, revision: string): string {
+  const parts = [normalizePath(filePath), revision].join('|');
   const h = hashContentSync(parts).slice(0, 16);
   return `h:fv:${h}`;
 }

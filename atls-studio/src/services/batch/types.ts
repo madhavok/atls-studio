@@ -475,6 +475,14 @@ export interface ContextStoreApi {
   // FileView — the unified file-context engine. Handlers call these to keep
   // the FileView aggregation in sync after reads. See docs: Unified FileView plan.
   ensureFileViewSkeleton: (filePath: string, sourceRevision: string) => Promise<void>;
+  /**
+   * Synchronously ensure a FileView exists for (filePath, sourceRevision) and
+   * return its stable `h:fv:<hash>` retention ref. Read handlers call this
+   * before returning so the ref the model sees is pinnable immediately.
+   */
+  ensureFileView: (filePath: string, sourceRevision: string) => string;
+  /** Look up a FileView by path (normalized forward-slash). */
+  getFileView: (path: string) => { hash: string; filePath: string; sourceRevision: string; pinned: boolean } | undefined;
 }
 
 // ---------------------------------------------------------------------------

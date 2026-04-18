@@ -55,6 +55,7 @@ import {
   applyFillToView,
   applyFullBodyToView,
   clearRemovedMarker as fvClearRemovedMarker,
+  computeFileViewHash,
   createFileView,
   onConstituentChunkRemoved,
   reconcileFileView,
@@ -1029,6 +1030,15 @@ interface ContextStoreState {
    * refs pass through unchanged. Use at subagent / Tauri boundaries.
    */
   resolveFileViewRefs: (refs: string[]) => string[];
+  /**
+   * Synchronously ensure a FileView exists for (filePath, sourceRevision), creating
+   * a minimal empty-skeleton view if absent. Returns the view's stable `h:fv:<hash>`
+   * identity — computed deterministically from path + revision, so callers can emit
+   * the ref before the skeleton is populated. Used by read handlers to surface the
+   * retention ref synchronously; `ensureFileViewSkeleton` may run async alongside
+   * to populate the sig spine.
+   */
+  ensureFileView: (filePath: string, sourceRevision: string) => string;
   /**
    * Ensure the FileView for (filePath, sourceRevision) has its skeleton populated.
    * Async — pulls imports + sig via `getFileSkeleton` (cached per revision) and
@@ -2826,7 +2836,11 @@ export const useContextStore = create<ContextStoreState>()(
   /**
    * Permanently drop chunks — removes content from both working memory and archive,
    * keeping only a lightweight manifest entry for episodic memory.
-   * Supports "*" to drop all non-pinned from both maps.
+   *
+   * Retention routing: `h:fv:<hash>` or any chunk ref whose source has a live
+   * FileView drops the view (removes it from `fileViews`) **and** all backing
+   * chunks for that file. Non-file chunks (search, BB, etc.) drop at the chunk
+   * level. Supports "*" to drop all non-pinned from both maps.
    */
   dropChunks: (hashes: string[], opts?: { confirmWildcard?: boolean }) => {
     let dropped = 0;
@@ -2841,11 +2855,13 @@ export const useContextStore = create<ContextStoreState>()(
       const newChunks = new Map(state.chunks);
       const newArchived = new Map(state.archivedChunks);
       const newManifest = new Map(state.droppedManifest);
+      const newFileViews = new Map(state.fileViews);
+      let fileViewsChanged = false;
       const now = Date.now();
       let usedTokens = 0;
       for (const c of newChunks.values()) usedTokens += c.tokens;
       const { hashes: protectedChat } = getProtectedChatHashes(newChunks, usedTokens, state.maxTokens);
-      
+
       const createManifest = (chunk: ContextChunk): ManifestEntry => ({
         hash: chunk.hash,
         shortHash: chunk.shortHash,
@@ -2856,7 +2872,70 @@ export const useContextStore = create<ContextStoreState>()(
         droppedAt: now,
         subtaskId: chunk.subtaskId,
       });
-      
+
+      // Drop a FileView by path key: removes the view entry and all active /
+      // archived chunks that back it. Returns true if the view existed.
+      const dropViewByKey = (fvKey: string): boolean => {
+        const view = newFileViews.get(fvKey);
+        if (!view) return false;
+        newFileViews.delete(fvKey);
+        fileViewsChanged = true;
+        // Collect backing chunk hashes from filled regions + fullBody.
+        const backingHashes = new Set<string>();
+        for (const region of view.filledRegions) {
+          for (const bh of region.chunkHashes) backingHashes.add(bh);
+        }
+        if (view.fullBodyChunkHash) backingHashes.add(view.fullBodyChunkHash);
+        // Drop any backing chunks from active + archive.
+        for (const bh of backingHashes) {
+          const inWorking = findChunkByRef(newChunks, bh);
+          if (inWorking) {
+            const [key, chunk] = inWorking;
+            if (protectedChat.has(chunk.hash)) continue;
+            newManifest.set(key, createManifest(chunk));
+            freedTokens += chunk.tokens;
+            dropped++;
+            droppedHashes.push(chunk.hash);
+            newChunks.delete(key);
+          }
+          const inArchive = findChunkByRef(newArchived, bh);
+          if (inArchive) {
+            const [key, chunk] = inArchive;
+            newManifest.set(key, createManifest(chunk));
+            dropped++;
+            droppedHashes.push(chunk.hash);
+            newArchived.delete(key);
+          }
+        }
+        // Also drop any file-backed chunks whose source matches this path —
+        // catches chunks that haven't been merged into a region yet (e.g. a
+        // pending smart read chunk whose readSpan has no line range).
+        const normSrc = fvKey;
+        for (const [key, chunk] of newChunks) {
+          if (!chunk.source) continue;
+          if (fvNormalizePath(chunk.source) !== normSrc) continue;
+          if (protectedChat.has(chunk.hash)) continue;
+          newManifest.set(key, createManifest(chunk));
+          freedTokens += chunk.tokens;
+          dropped++;
+          droppedHashes.push(chunk.hash);
+          newChunks.delete(key);
+        }
+        for (const [key, chunk] of newArchived) {
+          if (!chunk.source) continue;
+          if (fvNormalizePath(chunk.source) !== normSrc) continue;
+          newManifest.set(key, createManifest(chunk));
+          dropped++;
+          droppedHashes.push(chunk.hash);
+          newArchived.delete(key);
+        }
+        return true;
+      };
+
+      // h:fv:<hash> index for explicit view-ref drops.
+      const fvHashIndex = new Map<string, FileView>();
+      for (const view of state.fileViews.values()) fvHashIndex.set(view.hash, view);
+
       if (effectiveHashes.includes('*') || effectiveHashes.includes('all')) {
         // Drop all non-pinned from working memory (protect recent chat turns)
         for (const [key, chunk] of newChunks) {
@@ -2875,10 +2954,31 @@ export const useContextStore = create<ContextStoreState>()(
           droppedHashes.push(chunk.hash);
           newArchived.delete(key);
         }
+        // Drop all unpinned FileViews; pinned views survive wildcard (parity
+        // with pinned chunks). Model can explicitly unpin + drop if desired.
+        for (const [fvKey, view] of newFileViews) {
+          if (!view.pinned) {
+            newFileViews.delete(fvKey);
+            fileViewsChanged = true;
+          }
+        }
       } else {
         for (const h of effectiveHashes) {
-          // Check working memory first
+          // Route 1: explicit h:fv: ref → drop view + backing chunks.
+          if (h.startsWith('h:fv:')) {
+            const view = fvHashIndex.get(h);
+            if (view) dropViewByKey(view.filePath);
+            continue;
+          }
+          // Route 2: chunk ref whose source has a FileView → drop the view.
           const inWorking = findChunkByRef(newChunks, h);
+          const inArchive = !inWorking ? findChunkByRef(newArchived, h) : null;
+          const srcPath = inWorking?.[1].source ?? inArchive?.[1].source;
+          if (srcPath) {
+            const fvKey = fvNormalizePath(srcPath);
+            if (newFileViews.has(fvKey) && dropViewByKey(fvKey)) continue;
+          }
+          // Route 3: non-file chunk — drop at chunk level.
           if (inWorking) {
             const [key, chunk] = inWorking;
             if (protectedChat.has(chunk.hash)) continue;
@@ -2889,8 +2989,6 @@ export const useContextStore = create<ContextStoreState>()(
             newChunks.delete(key);
             continue;
           }
-          // Check archive
-          const inArchive = findChunkByRef(newArchived, h);
           if (inArchive) {
             const [key, chunk] = inArchive;
             newManifest.set(key, createManifest(chunk));
@@ -2909,6 +3007,7 @@ export const useContextStore = create<ContextStoreState>()(
         freedTokens: state.freedTokens + freedTokens,
         lastFreed: freedTokens,
         lastFreedAt: Date.now(),
+        ...(fileViewsChanged ? { fileViews: newFileViews } : {}),
         ...(dropped > 0 ? {
           memoryEvents: appendMemoryEvent(state.memoryEvents, {
             action: 'drop',
@@ -2957,7 +3056,13 @@ export const useContextStore = create<ContextStoreState>()(
   
   /**
    * Pin chunks to protect from bulk unload.
-   * Also recalls archived chunks and promotes staged snippets when pinned.
+   *
+   * Retention routing: for any chunk whose source has a live FileView, pinning
+   * routes to the view (`h:fv:<hash>`) — the single retention identity per
+   * file. The chunk itself stays unpinned; the view is the canonical surface
+   * the model manages. Non-file artifacts (search, BB, tool results) still
+   * pin at the chunk level. Also recalls archived chunks and promotes staged
+   * snippets when pinned.
    */
   pinChunks: (hashes: string[], shape?: string) => {
     let count = 0;
@@ -2977,80 +3082,113 @@ export const useContextStore = create<ContextStoreState>()(
         fvHashIndex.set(view.hash, view);
       }
 
+      // Helper: pin a FileView by path key.
+      const pinViewByKey = (fvKey: string): boolean => {
+        const view = newFileViews.get(fvKey) ?? state.fileViews.get(fvKey);
+        if (!view) return false;
+        if (view.pinned) { alreadyPinned++; return true; }
+        newFileViews.set(fvKey, { ...view, pinned: true, pinnedShape: shape, lastAccessed: Date.now() });
+        fileViewsChanged = true;
+        count++;
+        return true;
+      };
+
       for (const h of hashes) {
-        // Route FileView pins directly to the fileViews map.
+        // Route 1: h:fv:<hash> — explicit view ref.
         if (h.startsWith('h:fv:')) {
           const view = fvHashIndex.get(h);
-          if (view && !view.pinned) {
-            newFileViews.set(view.filePath, { ...view, pinned: true, pinnedShape: shape, lastAccessed: Date.now() });
-            fileViewsChanged = true;
+          if (view) pinViewByKey(view.filePath);
+          continue;
+        }
+
+        // Route 2: chunk ref whose source has a FileView → pin the view.
+        // This is the core "one hash per file" contract: legacy prompts that
+        // emit `pi h:sliceHash` transparently land on the view.
+        const found = findChunkByRef(newChunks, h);
+        if (found) {
+          const srcPath = found[1].source;
+          if (srcPath) {
+            const fvKey = fvNormalizePath(srcPath);
+            if (pinViewByKey(fvKey)) continue;
+          }
+          // Non-file chunk (search, BB, tool result, etc.) — pin at chunk level.
+          if (!found[1].pinned) {
+            newChunks.set(found[0], {
+              ...found[1],
+              pinned: true,
+              ...(shape !== undefined ? { pinnedShape: shape } : {}),
+            });
+            hppSetPinned(found[0], true, shape);
             count++;
-          } else if (view && view.pinned) {
+          } else {
+            if (shape !== undefined) {
+              newChunks.set(found[0], { ...found[1], pinnedShape: shape });
+              hppSetPinned(found[0], true, shape);
+            }
             alreadyPinned++;
           }
           continue;
         }
-        const found = findChunkByRef(newChunks, h);
-        if (found && !found[1].pinned) {
-          newChunks.set(found[0], {
-            ...found[1],
+
+        // Route 3: not in active chunks — try archive, then staged.
+        const archived = findChunkByRef(newArchived, h);
+        if (archived) {
+          const archivedSrc = archived[1].source;
+          if (archivedSrc) {
+            const fvKey = fvNormalizePath(archivedSrc);
+            if (pinViewByKey(fvKey)) {
+              // Promote archive back to active alongside the view pin so
+              // edit citation + slice refs keep resolving.
+              newArchived.delete(archived[0]);
+              const recalled = { ...archived[1], lastAccessed: Date.now() };
+              newChunks.set(archived[0], recalled);
+              hppMaterialize(recalled.hash, recalled.type, recalled.source, recalled.tokens, (recalled.content.match(/\n/g) || []).length + 1, recalled.editDigest || recalled.digest || '', recalled.shortHash);
+              continue;
+            }
+          }
+          // Non-file archived chunk — recall + pin at chunk level.
+          newArchived.delete(archived[0]);
+          const recalled = {
+            ...archived[1],
+            pinned: true,
+            ...(shape !== undefined ? { pinnedShape: shape } : {}),
+            lastAccessed: Date.now(),
+          } as typeof archived[1];
+          if (recalled.source && isFileBackedType(recalled.type) && recalled.sourceRevision) {
+            const awareness = get().getAwareness(recalled.source);
+            if (awareness && awareness.snapshotHash !== recalled.sourceRevision) {
+              recalled.suspectSince = Date.now();
+              recalled.freshness = 'suspect' as FreshnessState;
+              recalled.freshnessCause = 'unknown' as FreshnessCause;
+            }
+          }
+          newChunks.set(archived[0], recalled);
+          hppMaterialize(recalled.hash, recalled.type, recalled.source, recalled.tokens, (recalled.content.match(/\n/g) || []).length + 1, recalled.editDigest || recalled.digest || '', recalled.shortHash);
+          hppSetPinned(archived[0], true, shape);
+          count++;
+          continue;
+        }
+
+        const staged = findStagedByRef(state.stagedSnippets, h);
+        if (staged) {
+          const stagedSrc = staged[1].source;
+          if (stagedSrc) {
+            const fvKey = fvNormalizePath(stagedSrc);
+            if (pinViewByKey(fvKey)) {
+              // Promote staged→chunk so slice refs resolve, but don't chunk-pin.
+              const [, promoted] = promoteStagedToChunk(staged[0], staged[1], newChunks);
+              newChunks.set(promoted.hash, promoted);
+              continue;
+            }
+          }
+          const [, promoted] = promoteStagedToChunk(staged[0], staged[1], newChunks);
+          newChunks.set(promoted.hash, {
+            ...promoted,
             pinned: true,
             ...(shape !== undefined ? { pinnedShape: shape } : {}),
           });
-          hppSetPinned(found[0], true, shape);
+          hppSetPinned(promoted.hash, true, shape);
           count++;
-          // Auto-promote parent FileView when pinning a slice, so the slice's
-          // file-context survives token pressure along with the slice itself.
-          const srcPath = found[1].source;
-          if (srcPath) {
-            const fvKey = fvNormalizePath(srcPath);
-            const parentView = newFileViews.get(fvKey) ?? state.fileViews.get(fvKey);
-            if (parentView && !parentView.pinned) {
-              newFileViews.set(fvKey, { ...parentView, pinned: true, lastAccessed: Date.now() });
-              fileViewsChanged = true;
-            }
-          }
-        } else if (found && found[1].pinned) {
-          if (shape !== undefined) {
-            newChunks.set(found[0], { ...found[1], pinnedShape: shape });
-            hppSetPinned(found[0], true, shape);
-          }
-          alreadyPinned++;
-        } else if (!found) {
-          const archived = findChunkByRef(newArchived, h);
-          if (archived) {
-            newArchived.delete(archived[0]);
-            const recalled = {
-              ...archived[1],
-              pinned: true,
-              ...(shape !== undefined ? { pinnedShape: shape } : {}),
-              lastAccessed: Date.now(),
-            } as typeof archived[1];
-            if (recalled.source && isFileBackedType(recalled.type) && recalled.sourceRevision) {
-              const awareness = get().getAwareness(recalled.source);
-              if (awareness && awareness.snapshotHash !== recalled.sourceRevision) {
-                recalled.suspectSince = Date.now();
-                recalled.freshness = 'suspect' as FreshnessState;
-                recalled.freshnessCause = 'unknown' as FreshnessCause;
-              }
-            }
-            newChunks.set(archived[0], recalled);
-            hppMaterialize(recalled.hash, recalled.type, recalled.source, recalled.tokens, (recalled.content.match(/\n/g) || []).length + 1, recalled.editDigest || recalled.digest || '', recalled.shortHash);
-            hppSetPinned(archived[0], true, shape);
-            count++;
-          } else {
-            const staged = findStagedByRef(state.stagedSnippets, h);
-            if (staged) {
-              const [, promoted] = promoteStagedToChunk(staged[0], staged[1], newChunks);
-              newChunks.set(promoted.hash, {
-                ...promoted,
-                pinned: true,
-                ...(shape !== undefined ? { pinnedShape: shape } : {}),
-              });
-              hppSetPinned(promoted.hash, true, shape);
-              count++;
-            }
-          }
         }
       }
       
@@ -3063,8 +3201,9 @@ export const useContextStore = create<ContextStoreState>()(
   },
   
   /**
-   * Unpin chunks to allow bulk unload.
-   * Supports "*" / "all" to unpin every pinned chunk in working memory.
+   * Unpin chunks to allow bulk unload. Mirrors `pinChunks` routing — any chunk
+   * ref whose source has a live FileView unpins the view (the single retention
+   * identity). Supports "*" / "all" to unpin every pinned chunk and view.
    */
   unpinChunks: (hashes: string[]) => {
     let count = 0;
@@ -3074,6 +3213,16 @@ export const useContextStore = create<ContextStoreState>()(
       const newChunks = new Map(state.chunks);
       const newFileViews = new Map(state.fileViews);
       let fileViewsChanged = false;
+
+      const unpinViewByKey = (fvKey: string): boolean => {
+        const view = newFileViews.get(fvKey) ?? state.fileViews.get(fvKey);
+        if (!view) return false;
+        if (!view.pinned) return true; // view exists, already unpinned — still "handled"
+        newFileViews.set(fvKey, { ...view, pinned: false, pinnedShape: undefined, lastAccessed: Date.now() });
+        fileViewsChanged = true;
+        count++;
+        return true;
+      };
 
       if (hasWildcard) {
         for (const [key, chunk] of newChunks) {
@@ -3097,18 +3246,23 @@ export const useContextStore = create<ContextStoreState>()(
         for (const h of hashes) {
           if (h.startsWith('h:fv:')) {
             const view = fvHashIndex.get(h);
-            if (view && view.pinned) {
-              newFileViews.set(view.filePath, { ...view, pinned: false, pinnedShape: undefined, lastAccessed: Date.now() });
-              fileViewsChanged = true;
-              count++;
-            }
+            if (view) unpinViewByKey(view.filePath);
             continue;
           }
           const found = findChunkByRef(newChunks, h);
-          if (found && found[1].pinned) {
-            newChunks.set(found[0], { ...found[1], pinned: false, pinnedShape: undefined });
-            hppSetPinned(found[0], false);
-            count++;
+          if (found) {
+            const srcPath = found[1].source;
+            // If chunk has a FileView parent, unpin the view (retention ref).
+            if (srcPath) {
+              const fvKey = fvNormalizePath(srcPath);
+              if (unpinViewByKey(fvKey)) continue;
+            }
+            // Non-file chunk — unpin at chunk level.
+            if (found[1].pinned) {
+              newChunks.set(found[0], { ...found[1], pinned: false, pinnedShape: undefined });
+              hppSetPinned(found[0], false);
+              count++;
+            }
           }
         }
       }
@@ -3611,6 +3765,12 @@ export const useContextStore = create<ContextStoreState>()(
         };
       });
       for (const h of ttlArchiveHashes) hppArchive(h);
+      // FileView: prune any regions backed by TTL-archived chunks. Mirrors the
+      // manual-drop path (~2927-2931); lets unpinned/dormant views thin
+      // naturally as their backing chunks age out of working memory.
+      if (ttlArchiveHashes.length > 0) {
+        get().pruneFileViewsForChunks(ttlArchiveHashes);
+      }
     }
 
     const state = get();
@@ -6493,6 +6653,31 @@ export const useContextStore = create<ContextStoreState>()(
       next.set(key, applyFullBodyToView(view, content, chunkHash));
       return { fileViews: next };
     });
+  },
+
+  ensureFileView: (filePath, sourceRevision) => {
+    const key = fvNormalizePath(filePath);
+    const viewHash = computeFileViewHash(key, sourceRevision);
+    if (!filePath || !sourceRevision) return viewHash;
+    set(state => {
+      const existing = state.fileViews.get(key);
+      if (existing && existing.sourceRevision === sourceRevision) return {};
+      const next = new Map(state.fileViews);
+      if (!existing) {
+        // Minimal empty-skeleton view; skeleton fetch lands async via ensureFileViewSkeleton.
+        next.set(
+          key,
+          createFileView(
+            { path: key, revision: sourceRevision, totalLines: 0, rows: [], tokens: 0, sigLevel: 'sig' },
+            { pinned: false },
+          ),
+        );
+        return { fileViews: next };
+      }
+      // Revision drift: reconcile-path owns this; don't stomp here.
+      return {};
+    });
+    return viewHash;
   },
 
   ensureFileViewSkeleton: async (filePath, sourceRevision) => {

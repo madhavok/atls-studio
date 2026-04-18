@@ -33,7 +33,7 @@ as `PRICING`, updated Feb 2026.
 | Metric | Unit | Source | Reset | Notes |
 |---|---|---|---|---|
 | `usedTokens` (context bar) | tokens | `RoundSnapshot.estimatedTotalPromptTokens` or `wmTokens + totalOverheadTokens` fallback | per snapshot | FileView-aware (see `contextStore.getPromptTokens`). |
-| `wmTokens` | tokens | `contextStore.getPromptTokens()` | — | Sums non-chat chunks not covered by any FileView, plus every live FileView block's rendered token cost. |
+| `wmTokens` | tokens | `contextStore.getPromptTokens()` | — | Sums non-chat chunks not covered by any **pinned** FileView, plus every **pinned** live FileView block's rendered token cost. Unpinned views are dormant — they contribute 0 tokens and their constituent chunks re-surface in ACTIVE ENGRAMS under normal HPP rules. |
 | `totalOverheadTokens` | tokens | `setPromptMetrics` composes from static components | `resetChat` | Mode + tools + shell guide + native + primer + ctx control + entry manifest. Excludes dynamic workspace block. |
 | `compressionSavings` | tokens | `historyCompressor.addCompressionSavings` | `resetChat` | Monotonic session counter. Sum of tool-result deflation + assistant stubbing. |
 | `rollingSavings` | tokens | `addRollingSavings` | `resetChat` | Monotonic session counter. Tokens removed by rolling-summary fold-in. |
@@ -80,10 +80,15 @@ signal, not invoice math.
 ## Other accounting fixes in the same pass
 
 - `contextStore.getPromptTokens()` now matches what `formatTaggedContext`
-  actually emits: covered chunks are suppressed and every live FileView
-  block's rendered tokens (skeleton rows not overlaid + fill bodies +
-  fullBody + chrome) are added.
-  ([`src/services/fileViewTokens.ts`](../atls-studio/src/services/fileViewTokens.ts))
+  actually emits: chunks covered by a **pinned** FileView are suppressed
+  and every **pinned** live FileView block's rendered tokens (skeleton
+  rows not overlaid + fill bodies + fullBody + chrome) are added. Unpinned
+  views are dormant — they render nothing, charge 0 tokens, and their
+  constituent chunks participate normally in ACTIVE ENGRAMS under HPP
+  dematerialization + TTL archive rules (see [engrams.md](./engrams.md)
+  `Active ──(unpin)──► Dormant ──(age/evict)──► Archived`).
+  ([`src/services/fileViewTokens.ts`](../atls-studio/src/services/fileViewTokens.ts),
+   [`src/services/fileViewRender.ts`](../atls-studio/src/services/fileViewRender.ts))
 - `~$ saved via cache` used a one-multiplier heuristic that drifted from
   `calculateCostBreakdown`. It is now computed per round as
   `calculateCostBreakdown(noCache) − calculateCostBreakdown(actual)` and the

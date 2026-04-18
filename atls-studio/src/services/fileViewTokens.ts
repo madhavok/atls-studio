@@ -216,9 +216,9 @@ export function estimateFileViewTokens(view: FileView, currentRound = 0): FileVi
 }
 
 /**
- * Aggregate across all live views. Skips views that render nothing
- * (empty skeleton, no fills, no fullBody, no markers) to match
- * `renderAllFileViewBlocks` output.
+ * Aggregate across all live views. Counts **pinned** views only — unpinned
+ * views are dormant (do not render, charge 0 tokens), mirroring
+ * `renderAllFileViewBlocks`. Also skips pinned views that render nothing.
  */
 export function summarizeFileViewTokens(
   views: Iterable<FileView>,
@@ -229,6 +229,7 @@ export function summarizeFileViewTokens(
   let bodyTokens = 0;
   let viewCount = 0;
   for (const view of views) {
+    if (!view.pinned) continue;
     const hasContent =
       view.skeletonRows.length > 0
       || view.filledRegions.length > 0

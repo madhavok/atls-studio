@@ -176,22 +176,33 @@ Built by `formatWorkingMemory()` via the context formatter:
 6. Transition bridge (if subtask just advanced)
 7. Staged snippet references
 8. Chat context (recent turns with hash references)
-9. **ACTIVE ENGRAMS** — Full content of materialized chunks
-10. Dormant count (pointer to dormant block)
-11. Archived engram list
-12. Dropped manifest
+9. **FILE VIEWS** — Unified file-content surface: one block per pinned FileView, sorted by `lastAccessed` desc. Each block is `=== path @h:<rev> (N lines) [pinned] === ... ===` containing skeleton rows, filled regions overlaid in file order, ephemeral `[edited L..-.. this round]` / persistent `[REMOVED was L..-..]` / `[changed: N regions pending refetch]` markers. Unpinned views are dormant — they render nothing and their constituent chunks re-surface in ACTIVE ENGRAMS under normal HPP rules.
+10. **ACTIVE ENGRAMS** — Full content of materialized chunks **not covered by any pinned FileView** (search results, tool outputs, analysis, non-file artifacts, plus file-backed chunks whose view is unpinned or not yet promoted)
+11. Dormant count (pointer to dormant block)
+12. Archived engram list
+13. Dropped manifest
+
+### FileView / ACTIVE ENGRAMS cover set
+
+[`contextFormatter.ts`](../atls-studio/src/services/contextFormatter.ts) ~345-367 builds two things from the `fileViews` map on every round:
+
+- **`fileViewBlocks`** via `renderAllFileViewBlocks` — emitted into `## FILE VIEWS` above ACTIVE ENGRAMS so the model sees file-ordered views first. **Only pinned views render**; unpinned views are skipped entirely (see [engrams.md — FileView lifecycle](./engrams.md#fileview-lifecycle-pin-gated-rollout)).
+- **`fileViewCoveredChunkHashes`** via `collectFileViewChunkHashes` — the set of chunk hashes owned by **pinned** views. Chunks whose hash is in this set are filtered out of ACTIVE ENGRAMS so the same bytes never appear twice. Unpinned views do **not** contribute to the cover set — their chunks remain visible in ACTIVE ENGRAMS under normal HPP dematerialization + TTL archive.
 
 ### Chunk Ordering in ACTIVE ENGRAMS
 
 ```typescript
-// contextFormatter.ts ~298-306
-sortedChunks.sort((a, b) => {
-  if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;      // Pinned first
-  const aFile = FILE_TYPES.has(a.type);
-  const bFile = FILE_TYPES.has(b.type);
-  if (aFile !== bFile) return aFile ? -1 : 1;                // Files before artifacts
-  return b.lastAccessed - a.lastAccessed;                     // Most recent first (LRU)
-});
+// contextFormatter.ts ~362-374
+sortedChunks = Array.from(chunks.values())
+  .filter(c => c.type !== 'msg:user' && c.type !== 'msg:asst')
+  .filter(c => !fileViewCoveredChunkHashes.has(c.hash))      // Pin-gated cover set
+  .sort((a, b) => {
+    if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;      // Pinned first
+    const aFile = FILE_TYPES.has(a.type);
+    const bFile = FILE_TYPES.has(b.type);
+    if (aFile !== bFile) return aFile ? -1 : 1;                // Files before artifacts
+    return b.lastAccessed - a.lastAccessed;                     // Most recent first (LRU)
+  });
 ```
 
 Note this differs from `sortRefs` in [`hashProtocol.ts`](../atls-studio/src/services/hashProtocol.ts), which sorts by `seenAtTurn` for manifest/diagnostic purposes. Prompt ordering follows `lastAccessed`; see [`hash-protocol.md#sorting`](./hash-protocol.md).
@@ -226,4 +237,4 @@ Each mode uses a different combination of system prompt, tool reference, and con
 
 ---
 
-**Source**: [`aiService.ts`](../atls-studio/src/services/aiService.ts) (`buildStateBlock`, `buildDynamicContextBlock`, `assembleProviderMessages`, round loop, steering), [`appStore.ts`](../atls-studio/src/stores/appStore.ts) (`ToolLoopSteering`), [`logicalCacheMetrics.ts`](../atls-studio/src/services/logicalCacheMetrics.ts) (logical BP3/static hit model), [`contextFormatter.ts`](../atls-studio/src/services/contextFormatter.ts) (working memory formatting), [`promptMemory.ts`](../atls-studio/src/services/promptMemory.ts) (stage budgets, research/phase budgets), [`chatMiddleware.ts`](../atls-studio/src/services/chatMiddleware.ts) (middleware pipeline), [`modePrompts.ts`](../atls-studio/src/prompts/modePrompts.ts) (mode-specific prompts)
+**Source**: [`aiService.ts`](../atls-studio/src/services/aiService.ts) (`buildStateBlock`, `buildDynamicContextBlock`, `assembleProviderMessages`, round loop, steering), [`appStore.ts`](../atls-studio/src/stores/appStore.ts) (`ToolLoopSteering`), [`logicalCacheMetrics.ts`](../atls-studio/src/services/logicalCacheMetrics.ts) (logical BP3/static hit model), [`contextFormatter.ts`](../atls-studio/src/services/contextFormatter.ts) (working memory formatting, FileView block + cover-set wiring), [`fileViewRender.ts`](../atls-studio/src/services/fileViewRender.ts) (pin-gated render + cover set), [`promptMemory.ts`](../atls-studio/src/services/promptMemory.ts) (stage budgets, research/phase budgets), [`chatMiddleware.ts`](../atls-studio/src/services/chatMiddleware.ts) (middleware pipeline), [`modePrompts.ts`](../atls-studio/src/prompts/modePrompts.ts) (mode-specific prompts)

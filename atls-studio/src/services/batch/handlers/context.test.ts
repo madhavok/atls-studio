@@ -118,9 +118,17 @@ describe('context handlers snapshot authority', () => {
     const result = await handleRead({ type: 'full', file_paths: ['src/demo.ts'] }, ctx);
 
     expect(result.ok).toBe(true);
-    expect((result.content as { results: Array<Record<string, unknown>> }).results).toEqual([
-      { file: 'src/demo.ts', h: expect.any(String), content_hash: 'canon1234' },
-    ]);
+    // Primary ref is h:fv:<hash> (the FileView retention identity). The slice
+    // hash for the chunk itself travels on `slice_ref` for edit citation.
+    const results = (result.content as { results: Array<Record<string, unknown>> }).results;
+    expect(results).toHaveLength(1);
+    expect(results[0]).toMatchObject({
+      file: 'src/demo.ts',
+      h: expect.stringMatching(/^h:fv:/),
+      content_hash: 'canon1234',
+    });
+    expect(results[0]).toHaveProperty('slice_ref');
+    expect(String(results[0].slice_ref)).toMatch(/^h:/);
   });
 
   it('exposes content.file_paths and content.tree for type tree (intent.survey bindings)', async () => {
@@ -152,7 +160,7 @@ describe('context handlers snapshot authority', () => {
     expect(c.results[0]).toMatchObject({ file: 'src', h: expect.any(String), root: 'src' });
   });
 
-  it('keeps shaped reads tied to the backend snapshot authority', async () => {
+  it('keeps shaped reads tied to the backend snapshot authority and returns h:fv: as the retention ref', async () => {
     const ctx = makeCtx({
       atlsBatchQuery: vi.fn().mockResolvedValue({
         results: [{ file: 'src/demo.ts', content: 'function demo() {\n  return 1;\n}\n', content_hash: 'canon1234' }],
@@ -176,10 +184,17 @@ describe('context handlers snapshot authority', () => {
     expect(result.ok).toBe(true);
     const results = (result.content as { results: Array<Record<string, unknown>> }).results;
     expect(results).toHaveLength(1);
-    expect(results[0]).toMatchObject({ file: 'src/demo.ts', h: 'h:canon1', content_hash: 'canon1234', selector: 'sig' });
+    // Primary ref is h:fv:<hash> — the file's stable FileView identity.
+    expect(results[0]).toMatchObject({
+      file: 'src/demo.ts',
+      h: expect.stringMatching(/^h:fv:/),
+      content_hash: 'canon1234',
+      selector: 'sig',
+    });
     expect(results[0]).toHaveProperty('shape_hash');
+    // read.shaped no longer auto-stages — the FileView holds the skeleton.
     const staged = [...useContextStore.getState().stagedSnippets.values()];
-    expect(staged[0]?.sourceRevision).toBe('canon1234');
+    expect(staged).toHaveLength(0);
   });
 
   it('caps file_paths with max_files before expandFilePathRefs', async () => {

@@ -233,9 +233,22 @@ When files change, `reconcileSourceRevision` sweeps all memory regions:
 
 ### Round-end revision sweep (`refreshRoundEnd`)
 
-`refreshRoundEnd` gathers normalized source paths from every **latest** file-backed engram in working memory and **archived** chunks, plus **staged snippet** sources (skipping `viewKind: 'snapshot'`). Before the revision sweep it **decrements `ttl` on unpinned chunks**; when `ttl` reaches 0 the chunk is **archived with `freshnessCause: 'ttl_expired'`** (recallable, not evicted outright — see [`contextStore.ts`](../atls-studio/src/stores/contextStore.ts) ~3335-3358).
+`refreshRoundEnd` gathers normalized source paths from every **latest** file-backed engram in working memory and **archived** chunks, plus **staged snippet** sources (skipping `viewKind: 'snapshot'`). Before the revision sweep it **decrements `ttl` on unpinned chunks**; when `ttl` reaches 0 the chunk is **archived with `freshnessCause: 'ttl_expired'`** (recallable, not evicted outright — see [`contextStore.ts`](../atls-studio/src/stores/contextStore.ts) ~3573-3615). Immediately after `hppArchive`, TTL-archived chunk hashes are passed to **`pruneFileViewsForChunks`** so any FileView regions backed by those chunks are dropped — unpinned / dormant views thin naturally as their backing chunks age out. See [engrams.md — FileView lifecycle](./engrams.md#fileview-lifecycle-pin-gated-rollout).
 
-It then resolves **current** content hashes for those paths in bulk via the Tauri command **`get_current_revisions`** (registered at app startup from [`useAtls.ts`](../atls-studio/src/hooks/useAtls.ts) as `setBulkRevisionResolver` — one IPC round-trip for the whole path set). For each path it calls **`reconcileSourceRevision`**. Paths that cannot be resolved are passed to **`markEngramsSuspect`** with `external_file_change`; directory-like keys are skipped (`suspectSkippedDirKeys`).
+It then resolves **current** content hashes for those paths in bulk via the Tauri command **`get_current_revisions`** (registered at app startup from [`useAtls.ts`](../atls-studio/src/hooks/useAtls.ts) as `setBulkRevisionResolver` — one IPC round-trip for the whole path set). For each path it calls **`reconcileSourceRevision`**, which also fans out to **`reconcileFileViewsForPath`**. Paths that cannot be resolved are passed to **`markEngramsSuspect`** with `external_file_change`; directory-like keys are skipped (`suspectSkippedDirKeys`).
+
+### FileView auto-heal reconcile
+
+`reconcileFileView` ([`fileViewStore.ts`](../atls-studio/src/services/fileViewStore.ts) ~284-377) is the FileView counterpart to `reconcileSourceRevision`. Policy:
+
+| Cause | Pinned view | Unpinned view |
+|-------|-------------|---------------|
+| `same_file_prior_edit` with non-zero journal `lineDelta` | Rebase regions by `lineDelta` (line numbers + `N|` row prefixes rewritten); freshness → `shifted` |
+| `external_file_change` / `session_restore` | Queue `pendingRefetches` (capped per round by `applyRefetchCap`, default 10) | Regions drop silently |
+| Rebase would push a region below line 1 | Record `[REMOVED was L..-..]` marker |
+| Revision unchanged | Bump `observedRevision`, freshness → `fresh`; no region work |
+
+`fullBody` invalidates on any revision bump (conservatively cleared; model re-reads if still needed). Pending refetches above the per-round cap surface an aggregate `[changed: N regions pending refetch — re-read on demand]` marker in the render block.
 
 The hash-protocol **`advanceTurn`** hook invokes `refreshRoundEnd` (via [`aiService.ts`](../atls-studio/src/services/aiService.ts) `setRoundRefreshHook`). In the main chat tool loop, **`advanceTurn` runs only when `round > 0`**, so the **first** round of a user turn does **not** run this sweep before the model step; reconciliation for restored sessions is therefore **deferred** until the next round boundary, preflight, or other triggers (see [session-persistence.md](./session-persistence.md)).
 

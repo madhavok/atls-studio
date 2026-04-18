@@ -157,8 +157,9 @@ function formatMarkers(view: FileView, currentRound: number): string {
 }
 
 /**
- * Bulk render for WORKING MEMORY assembly. Sorts views pinned-first, then
- * by `lastAccessed` descending.
+ * Bulk render for WORKING MEMORY assembly. Emits blocks only for pinned views
+ * (unpinned views roll out of prompt context like any other unpinned engram,
+ * per docs/engrams.md lifecycle); sorts by `lastAccessed` descending.
  */
 export function renderAllFileViewBlocks(
   views: Iterable<FileView>,
@@ -166,6 +167,9 @@ export function renderAllFileViewBlocks(
 ): string[] {
   const arr: FileView[] = [];
   for (const v of views) {
+    // Unpinned views are dormant — state stays warm for cheap re-pin, but
+    // nothing renders. Symmetric with unpinned chunk dematerialization.
+    if (!v.pinned) continue;
     // Skip views with no content AT ALL (no skeleton, no fills, no fullBody,
     // no markers) — they're indistinguishable from a missing view.
     const hasContent =
@@ -176,21 +180,21 @@ export function renderAllFileViewBlocks(
       (v.pendingRefetches?.length ?? 0) > 0;
     if (hasContent) arr.push(v);
   }
-  arr.sort((a, b) => {
-    if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;
-    return b.lastAccessed - a.lastAccessed;
-  });
+  arr.sort((a, b) => b.lastAccessed - a.lastAccessed);
   return arr.map(v => renderFileViewBlock(v, opts));
 }
 
 /**
- * Collect every chunk hash referenced by any FileView. Used to filter
- * file-backed chunks from the flat ACTIVE ENGRAMS listing so the same bytes
- * don't appear twice in WORKING MEMORY.
+ * Collect every chunk hash referenced by any **pinned** FileView. Used to
+ * filter file-backed chunks from the flat ACTIVE ENGRAMS listing so the same
+ * bytes don't appear twice in WORKING MEMORY. Unpinned views do not render,
+ * so their constituent chunks are allowed to re-surface under normal HPP
+ * rules (dematerialize → dormant digest → TTL-archive).
  */
 export function collectFileViewChunkHashes(views: Iterable<FileView>): Set<string> {
   const set = new Set<string>();
   for (const v of views) {
+    if (!v.pinned) continue;
     for (const region of v.filledRegions) {
       for (const h of region.chunkHashes) set.add(h);
     }

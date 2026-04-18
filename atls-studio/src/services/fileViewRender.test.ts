@@ -156,57 +156,104 @@ describe('fileViewRender — renderFileViewBlock', () => {
 });
 
 describe('fileViewRender — renderAllFileViewBlocks', () => {
-  it('sorts pinned first, then by lastAccessed desc', () => {
-    const old = { ...createFileView(sk({ path: 'src/a.ts' })), lastAccessed: 100 };
-    const recent = { ...createFileView(sk({ path: 'src/b.ts' })), lastAccessed: 500 };
-    const pinned = { ...createFileView(sk({ path: 'src/c.ts' })), lastAccessed: 10, pinned: true };
-    const blocks = renderAllFileViewBlocks([old, recent, pinned], { currentRound: 1 });
-    expect(blocks[0]).toContain('src/c.ts'); // pinned first
-    expect(blocks[1]).toContain('src/b.ts'); // then most recent
-    expect(blocks[2]).toContain('src/a.ts'); // then oldest
+  it('renders only pinned views; unpinned views roll out of the prompt', () => {
+    const unpinnedA = { ...createFileView(sk({ path: 'src/a.ts' })), lastAccessed: 100 };
+    const unpinnedB = { ...createFileView(sk({ path: 'src/b.ts' })), lastAccessed: 500 };
+    const pinnedC = { ...createFileView(sk({ path: 'src/c.ts' })), lastAccessed: 10, pinned: true };
+    const blocks = renderAllFileViewBlocks([unpinnedA, unpinnedB, pinnedC], { currentRound: 1 });
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0]).toContain('src/c.ts');
+    expect(blocks.join('\n')).not.toContain('src/a.ts');
+    expect(blocks.join('\n')).not.toContain('src/b.ts');
   });
 
-  it('skips empty views with nothing to render', () => {
-    const empty = createFileView(sk({ rows: [] }));
-    const populated = applyFillToView(createFileView(sk({ path: 'src/x.ts' })), {
+  it('sorts pinned views by lastAccessed desc', () => {
+    const oldPinned = { ...createFileView(sk({ path: 'src/a.ts' })), lastAccessed: 100, pinned: true };
+    const midPinned = { ...createFileView(sk({ path: 'src/b.ts' })), lastAccessed: 300, pinned: true };
+    const recentPinned = { ...createFileView(sk({ path: 'src/c.ts' })), lastAccessed: 500, pinned: true };
+    const blocks = renderAllFileViewBlocks([oldPinned, midPinned, recentPinned], { currentRound: 1 });
+    expect(blocks[0]).toContain('src/c.ts');
+    expect(blocks[1]).toContain('src/b.ts');
+    expect(blocks[2]).toContain('src/a.ts');
+  });
+
+  it('skips empty pinned views with nothing to render', () => {
+    const empty = { ...createFileView(sk({ rows: [] })), pinned: true };
+    const populated0 = applyFillToView(createFileView(sk({ path: 'src/x.ts' })), {
       start: 10,
       end: 20,
       content: row(10, 'a'),
       chunkHash: 'h',
     });
+    const populated = { ...populated0, pinned: true };
     const blocks = renderAllFileViewBlocks([empty, populated], { currentRound: 1 });
     expect(blocks).toHaveLength(1);
     expect(blocks[0]).toContain('src/x.ts');
   });
 
-  it('keeps a view with only a removed marker', () => {
+  it('keeps a pinned view with only a removed marker', () => {
     const v = {
       ...createFileView(sk({ rows: [] })),
+      pinned: true,
       removedMarkers: [{ start: 10, end: 20 }],
     };
     const blocks = renderAllFileViewBlocks([v], { currentRound: 1 });
     expect(blocks).toHaveLength(1);
     expect(blocks[0]).toContain('[REMOVED was L10-20]');
   });
+
+  it('emits zero blocks when every view is unpinned (dormant rollout)', () => {
+    const v1 = applyFillToView(createFileView(sk({ path: 'src/a.ts' })), {
+      start: 1, end: 10, content: row(1, 'a'), chunkHash: 'h1',
+    });
+    const v2 = applyFullBodyToView(createFileView(sk({ path: 'src/b.ts' })), 'body', 'h2');
+    const blocks = renderAllFileViewBlocks([v1, v2], { currentRound: 1 });
+    expect(blocks).toHaveLength(0);
+  });
 });
 
 describe('fileViewRender — collectFileViewChunkHashes', () => {
-  it('returns every chunk hash referenced by any view', () => {
-    const v1 = applyFillToView(createFileView(sk({ path: 'src/a.ts' })), {
-      start: 1,
-      end: 10,
-      content: row(1, 'a'),
-      chunkHash: 'h1',
-    });
-    const v2 = applyFullBodyToView(createFileView(sk({ path: 'src/b.ts' })), 'body', 'h2');
+  it('returns every chunk hash referenced by any pinned view', () => {
+    const v1 = {
+      ...applyFillToView(createFileView(sk({ path: 'src/a.ts' })), {
+        start: 1, end: 10, content: row(1, 'a'), chunkHash: 'h1',
+      }),
+      pinned: true,
+    };
+    const v2 = {
+      ...applyFullBodyToView(createFileView(sk({ path: 'src/b.ts' })), 'body', 'h2'),
+      pinned: true,
+    };
     const set = collectFileViewChunkHashes([v1, v2]);
     expect(set.has('h1')).toBe(true);
     expect(set.has('h2')).toBe(true);
     expect(set.size).toBe(2);
   });
 
+  it('ignores chunk hashes owned by unpinned views (so chunks can re-surface in ACTIVE ENGRAMS)', () => {
+    const unpinned = applyFillToView(createFileView(sk({ path: 'src/a.ts' })), {
+      start: 1, end: 10, content: row(1, 'a'), chunkHash: 'h1',
+    });
+    const pinned = {
+      ...applyFullBodyToView(createFileView(sk({ path: 'src/b.ts' })), 'body', 'h2'),
+      pinned: true,
+    };
+    const set = collectFileViewChunkHashes([unpinned, pinned]);
+    expect(set.has('h1')).toBe(false);
+    expect(set.has('h2')).toBe(true);
+  });
+
+  it('returns an empty set when all views are unpinned', () => {
+    const v1 = applyFillToView(createFileView(sk({ path: 'src/a.ts' })), {
+      start: 1, end: 10, content: row(1, 'a'), chunkHash: 'h1',
+    });
+    const v2 = applyFullBodyToView(createFileView(sk({ path: 'src/b.ts' })), 'body', 'h2');
+    const set = collectFileViewChunkHashes([v1, v2]);
+    expect(set.size).toBe(0);
+  });
+
   it('returns an empty set when no views carry chunk hashes', () => {
-    const v = createFileView(sk());
+    const v = { ...createFileView(sk()), pinned: true };
     const set = collectFileViewChunkHashes([v]);
     expect(set.size).toBe(0);
   });

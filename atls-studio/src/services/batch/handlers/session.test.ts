@@ -433,11 +433,40 @@ describe('handleDrop', () => {
     expect(result.summary).toMatch(/0 dormant/);
   });
 
-  it('requires hashes when scope is not dormant', async () => {
+  it('requires hashes when scope is not dormant/archived', async () => {
     const ctx = createMockCtx() as unknown as Parameters<typeof handleDrop>[1];
     const result = await handleDrop({}, ctx);
     expect(result.ok).toBe(false);
     expect(result.error).toMatch(/missing hashes/);
+  });
+
+  it('scope:archived drops archived chunks without explicit hashes', async () => {
+    const store = useContextStore.getState();
+    const short = store.addChunk('archived body', 'smart', 'src/arch.ts', undefined, undefined, 'archrev', {
+      sourceRevision: 'archrev',
+      viewKind: 'latest',
+    });
+    // Move to archive via unload.
+    store.unloadChunks([`h:${short}`]);
+    expect(
+      Array.from(useContextStore.getState().archivedChunks.values()).some(c => c.shortHash === short),
+    ).toBe(true);
+
+    const ctx = createMockCtx() as unknown as Parameters<typeof handleDrop>[1];
+    const result = await handleDrop({ scope: 'archived' }, ctx);
+
+    expect(result.ok).toBe(true);
+    expect(result.summary).toContain('scope:archived');
+    expect(
+      Array.from(useContextStore.getState().archivedChunks.values()).some(c => c.shortHash === short),
+    ).toBe(false);
+  });
+
+  it('scope:archived returns ok when nothing archived', async () => {
+    const ctx = createMockCtx() as unknown as Parameters<typeof handleDrop>[1];
+    const result = await handleDrop({ scope: 'archived' }, ctx);
+    expect(result.ok).toBe(true);
+    expect(result.summary).toMatch(/0 archived/);
   });
 });
 

@@ -202,10 +202,23 @@ function ingestStandardContextItems(
     );
     const tk = countTokensSync(content);
     io.totalTokensDelta += tk;
-    io.allRefs.push(`h:${hash}`);
+
+    // Primary ref: the FileView's stable h:fv:<hash> for file-backed reads,
+    // so the model pins one hash per file regardless of shape/slice/full.
+    // Tree reads are directory listings (no FileView) — keep the chunk ref.
+    let primaryRef = `h:${hash}`;
+    if (!isTreeRead && src && backendHash) {
+      // ensure view exists (addChunk's auto-wire covers full/raw/line-range
+      // reads; smart reads without a line range still need the minimal view).
+      const viewRef = ctx.store().ensureFileView(src, backendHash);
+      ctx.store().ensureFileViewSkeleton(src, backendHash).catch(() => {});
+      primaryRef = viewRef;
+    }
+    io.allRefs.push(primaryRef);
     io.readResults.push({
       file: src,
-      h: `h:${hash}`,
+      h: primaryRef,
+      ...(primaryRef !== `h:${hash}` ? { slice_ref: `h:${hash}` } : {}),
       ...(backendHash ? { content_hash: backendHash } : {}),
       ...(isTreeRead && r.root != null ? { root: r.root } : {}),
     });
@@ -218,10 +231,10 @@ function ingestStandardContextItems(
     }
     ctx.store().clearSuspect(src);
     if (backendHash) ctx.store().reconcileSourceRevision(src, backendHash);
-    ctx.store().recordMemoryEvent({ action: 'read', reason: 'context', source: src, newRevision: backendHash, refs: [`h:${hash}`] });
+    ctx.store().recordMemoryEvent({ action: 'read', reason: 'context', source: src, newRevision: backendHash, refs: [primaryRef] });
     const prevInfo = r.previous as Record<string, unknown> | undefined;
     const prevSuffix = prevInfo ? ` previous:${prevInfo.hash} edits:${prevInfo.edits}` : '';
-    io.lines.push(`${p} ${src} → h:${hash} (${tk}tk)${prevSuffix}`);
+    io.lines.push(`${p} ${src} → ${primaryRef} (${tk}tk)${prevSuffix}`);
   }
 }
 
@@ -297,8 +310,15 @@ export const handleLoad: OpHandler = async (params, ctx) => {
       ...(backendHash && filePaths.length === 1 ? { readSpan: { filePath: filePaths[0], sourceRevision: backendHash, contextType: loadType } } : {}),
     });
     const tokens = countTokensSync(resultStr);
-    lines.push(`load: ${filePaths.join(', ')} → h:${hash} (${(tokens / 1000).toFixed(1)}k tk)`);
-    return { kind: 'file_refs', ok: true, refs: [`h:${hash}`], summary: lines.join('\n'), tokens };
+    // Single-file load: primary ref is the FileView. Multi-file falls through the
+    // for-loop above, which also returns view refs per file.
+    let primaryRef = `h:${hash}`;
+    if (filePaths.length === 1 && backendHash) {
+      primaryRef = ctx.store().ensureFileView(filePaths[0], backendHash);
+      ctx.store().ensureFileViewSkeleton(filePaths[0], backendHash).catch(() => {});
+    }
+    lines.push(`load: ${filePaths.join(', ')} → ${primaryRef} (${(tokens / 1000).toFixed(1)}k tk)`);
+    return { kind: 'file_refs', ok: true, refs: [primaryRef], summary: lines.join('\n'), tokens };
   } catch (loadErr) {
     return err(`load: ERROR ${loadErr instanceof Error ? loadErr.message : String(loadErr)}`);
   }
@@ -390,16 +410,19 @@ export const handleRead: OpHandler = async (params, ctx) => {
         const hash = ctx.store().addChunk(ti.content, 'smart', ti.source, undefined, undefined, sourceRevision, { sourceRevision, viewKind: 'latest' });
         const tk = countTokensSync(ti.content);
         totalTokensDelta += tk;
-        allRefs.push(`h:${hash}`);
+        const viewRef = ctx.store().ensureFileView(ti.source, sourceRevision);
+        ctx.store().ensureFileViewSkeleton(ti.source, sourceRevision).catch(() => {});
+        allRefs.push(viewRef);
         readResults.push({
           file: ti.source,
-          h: `h:${hash}`,
+          h: viewRef,
+          slice_ref: `h:${hash}`,
           content_hash: sourceRevision,
         });
         ctx.store().clearSuspect(ti.source);
         ctx.store().reconcileSourceRevision(ti.source, sourceRevision);
-        ctx.store().recordMemoryEvent({ action: 'read', reason: 'context_temporal', source: ti.source, newRevision: sourceRevision, refs: [`h:${hash}`] });
-        lines.push(`read: ${ti.source} → h:${hash} (${tk}tk)`);
+        ctx.store().recordMemoryEvent({ action: 'read', reason: 'context_temporal', source: ti.source, newRevision: sourceRevision, refs: [viewRef] });
+        lines.push(`read: ${ti.source} → ${viewRef} (${tk}tk)`);
       }
       if (filePaths.length > 0) {
         const backendType = loadType === 'raw' ? 'full' : loadType;
@@ -656,17 +679,22 @@ export const handleReadLines: OpHandler = async (params, ctx) => {
     const lineSpecForRef =
       formatLineRanges(actualRange) || formatLineRanges(targetRange) || (typeof rlLines === 'string' ? rlLines.trim() : '');
     const baseRef = normalizeHashRefToken(rlH);
-    const rlRefs = lineSpecForRef ? [`${baseRef}:${lineSpecForRef}`] : [baseRef];
+    const sliceRef = lineSpecForRef ? `${baseRef}:${lineSpecForRef}` : baseRef;
+    // Retention ref = h:fv:<hash> when we have a real file path (not engram reads
+    // where rlFile is 'engram:h:XXXX'). The slice ref remains for edit citation
+    // + freshness and is carried in `artifact.slice_ref` below.
     const rlStore = ctx.store();
-    const rlFreshnessHint = getFreshnessHintForRefs(rlStore, rlRefs);
+    const fvRef = rlFile && rlContentHash && !rlFile.startsWith('engram:')
+      ? rlStore.getFileView(rlFile)?.hash
+      : undefined;
+    const primaryRef = fvRef ?? sliceRef;
+    const rlRefs = [primaryRef];
+    const rlFreshnessHint = getFreshnessHintForRefs(rlStore, [sliceRef]);
     const priorRanges = rlFile ? rlStore.getPriorReadRanges(rlFile).filter(r => r !== (actualLabel || targetLabel)) : [];
     const priorRangesHint = priorRanges.length > 0 ? `\nNOTE previously read regions for this file: ${priorRanges.join(', ')}.` : '';
-    // Legacy slice-after-read auto-unpin removed: under FileView the parent
-    // pin is managed by parent-promote on slice pin (contextStore.pinChunks),
-    // so the pre-FileView "unpin parent when slicing" policy and its "Pin
-    // slices to retain targeted context" note are both stale guidance.
 
-    const rlSummary = `read_lines: ${rlFile}:${targetLabel} → ${rlH} (${tk}tk, ctx:${usedContextLines}${actualLabel ? ` actual:${actualLabel}` : ''})${prevSuffix}\n${rlContent}`;
+    const refDisplay = primaryRef === sliceRef ? rlH : `${primaryRef} (slice ${sliceRef})`;
+    const rlSummary = `read_lines: ${rlFile}:${targetLabel} → ${refDisplay} (${tk}tk, ctx:${usedContextLines}${actualLabel ? ` actual:${actualLabel}` : ''})${prevSuffix}\n${rlContent}`;
     const fullSummary = `${rlSummary}${rlFreshnessHint ? '\n' + rlFreshnessHint : ''}${priorRangesHint}`;
     return {
       kind: 'file_refs', ok: true,
@@ -676,7 +704,8 @@ export const handleReadLines: OpHandler = async (params, ctx) => {
       ...(rlFreshnessHint ? { _hash_warnings: [rlFreshnessHint] } : {}),
       content: {
         file: rlFile,
-        hash: rlH,
+        hash: primaryRef,
+        slice_ref: sliceRef,
         ...(rlContentHash ? { content_hash: rlContentHash } : {}),
         target_range: targetRange,
         actual_range: actualRange,
@@ -1006,44 +1035,6 @@ async function _processShapedFile(
 
   const shapedTokens = countTokensSync(resolved.content);
 
-  const stageResult = ctx.store().stageSnippet(
-    canonicalContentHash.slice(0, SHORT_HASH_LEN),
-    resolved.content,
-    source,
-    shape,
-    canonicalContentHash,
-    shape,
-    'derived',
-  );
-
-  if (!stageResult.ok) {
-    const hash = ctx.store().addChunk(resolved.content, 'smart', source, undefined, undefined, undefined, {
-      subtaskIds: bindIds,
-      boundDuringPlanning: true,
-      fullHash: canonicalContentHash,
-      sourceRevision: canonicalContentHash,
-      viewKind: 'derived',
-    });
-    ctx.store().clearSuspect(source);
-    ctx.store().reconcileSourceRevision(source, canonicalContentHash);
-    ctx.store().recordMemoryEvent({ action: 'read', reason: 'read_shaped_fallback', source, newRevision: canonicalContentHash, refs: [`h:${hash}`] });
-    ctx.store().ensureFileViewSkeleton(source, canonicalContentHash).catch(() => {});
-    const savedPctFb = fullTokens > 0 ? Math.round((1 - shapedTokens / fullTokens) * 100) : 0;
-    const foldHintFb = savedPctFb < 20 && shape === 'fold' ? ' | WARNING: low compression — consider sig shape' : '';
-    lines.push(`read_shaped: ${source} → h:${hash} (full:${fullTokens}tk, shaped:${shapedTokens}tk, saved:${savedPctFb}%, staged full — WM fallback)${foldHintFb} | FileView carries skeleton + overlays; cite @h:XXX from its header for edits.`);
-    return {
-      refs: [`h:${hash}`],
-      tokens: shapedTokens,
-      artifact: {
-        file: source,
-        h: `h:${hash}`,
-        content_hash: canonicalContentHash,
-        selector: resolved.selector ?? shape,
-        shape_hash: hashContentSync(resolved.content),
-      },
-    };
-  }
-
   if (bindIds) {
     const binding = { hash: canonicalContentHash.slice(0, SHORT_HASH_LEN), source, shape, tokens: shapedTokens, fullHash: canonicalContentHash };
     const plan = ctx.store().taskPlan;
@@ -1061,17 +1052,19 @@ async function _processShapedFile(
   const foldHint = savedPct < 20 && shape === 'fold' ? ' | WARNING: low compression — consider sig shape' : '';
   ctx.store().clearSuspect(source);
   ctx.store().reconcileSourceRevision(source, canonicalContentHash);
-  ctx.store().recordMemoryEvent({ action: 'read', reason: 'read_shaped', source, newRevision: canonicalContentHash, refs: [`h:${canonicalContentHash.slice(0, SHORT_HASH_LEN)}`] });
-  // Populate the FileView skeleton — read.shaped stages rather than chunks, so
-  // addChunk's auto-wire does not fire. The skeleton cache keeps this cheap.
+  // FileView is the canonical surface for shaped reads. Create the view
+  // synchronously so the h:fv:<hash> retention ref we return below is pinnable
+  // immediately; skeleton fetch lands async alongside.
+  const viewRef = ctx.store().ensureFileView(source, canonicalContentHash);
   ctx.store().ensureFileViewSkeleton(source, canonicalContentHash).catch(() => {});
-  lines.push(`read_shaped: ${source} → staged:${canonicalContentHash.slice(0, SHORT_HASH_LEN)} (full:${fullTokens}tk, shaped:${shapedTokens}tk, saved:${savedPct}%, cached)${foldHint} | FileView carries this skeleton; rl fills ranges into it, edits cite @h:XXX from the view header.`);
+  ctx.store().recordMemoryEvent({ action: 'read', reason: 'read_shaped', source, newRevision: canonicalContentHash, refs: [viewRef] });
+  lines.push(`read_shaped: ${source} → ${viewRef} (full:${fullTokens}tk, shaped:${shapedTokens}tk, saved:${savedPct}%)${foldHint} | pin ${viewRef} to keep the FileView across rounds; rl fills ranges; edits cite @h:XXX from the view header.`);
   return {
-    refs: [`h:${canonicalContentHash.slice(0, SHORT_HASH_LEN)}`],
+    refs: [viewRef],
     tokens: shapedTokens,
     artifact: {
       file: source,
-      h: `h:${canonicalContentHash.slice(0, SHORT_HASH_LEN)}`,
+      h: viewRef,
       content_hash: canonicalContentHash,
       selector: resolved.selector ?? shape,
       shape_hash: hashContentSync(resolved.content),

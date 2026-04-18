@@ -247,7 +247,7 @@ describe('fileViewStore — createFileView + applyFillToView', () => {
     expect(v.hash).toMatch(/^h:fv:[0-9a-f]+$/);
   });
 
-  it('applies a fill and updates the hash', () => {
+  it('applies a fill but keeps the hash stable (identity per file/revision)', () => {
     const v0 = createFileView(fakeSkeleton());
     const v1 = applyFillToView(v0, {
       start: 42,
@@ -258,7 +258,9 @@ describe('fileViewStore — createFileView + applyFillToView', () => {
     });
     expect(v1.filledRegions.length).toBe(1);
     expect(v1.filledRegions[0].start).toBe(42);
-    expect(v1.hash).not.toBe(v0.hash);
+    // Identity is stable across fills — same (filePath, revision) → same h:fv:<hash>.
+    // This is what makes h:fv: a usable single retention ref.
+    expect(v1.hash).toBe(v0.hash);
   });
 
   it('coverage auto-promote materializes fullBody when threshold crossed', () => {
@@ -543,28 +545,23 @@ describe('fileViewStore — ephemeral marker fade', () => {
 
 describe('fileViewStore — hash identity', () => {
   it('path-case collapses to the same key and hash', () => {
-    const a = computeFileViewHash('Src\\Foo.ts', 'rev1', []);
-    const b = computeFileViewHash('src/foo.ts', 'rev1', []);
+    const a = computeFileViewHash('Src\\Foo.ts', 'rev1');
+    const b = computeFileViewHash('src/foo.ts', 'rev1');
     expect(a).toBe(b);
   });
 
-  it('hash changes when regions change', () => {
-    const a = computeFileViewHash('src/foo.ts', 'rev1', []);
-    const b = computeFileViewHash('src/foo.ts', 'rev1', [
-      { start: 10, end: 20, content: '', chunkHashes: [], tokens: 0, origin: 'read' },
-    ]);
-    expect(a).not.toBe(b);
+  it('hash is stable per (path, revision) — unchanged by fills or fullBody', () => {
+    // This is the property that lets `h:fv:<hash>` be a valid single retention
+    // ref: identity does not drift as the view progressively fills.
+    const base = computeFileViewHash('src/foo.ts', 'rev1');
+    // Same inputs should yield the same hash — no region/fullBody arg in the
+    // new signature at all.
+    expect(computeFileViewHash('src/foo.ts', 'rev1')).toBe(base);
   });
 
   it('hash changes on revision bump', () => {
-    const a = computeFileViewHash('src/foo.ts', 'rev1', []);
-    const b = computeFileViewHash('src/foo.ts', 'rev2', []);
-    expect(a).not.toBe(b);
-  });
-
-  it('hash includes fullBody when present', () => {
-    const a = computeFileViewHash('src/foo.ts', 'rev1', []);
-    const b = computeFileViewHash('src/foo.ts', 'rev1', [], 'fullBodyHash');
+    const a = computeFileViewHash('src/foo.ts', 'rev1');
+    const b = computeFileViewHash('src/foo.ts', 'rev2');
     expect(a).not.toBe(b);
   });
 });

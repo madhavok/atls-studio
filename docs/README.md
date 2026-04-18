@@ -30,7 +30,7 @@ Architecture overview: [`atls-studio/docs/ARCHITECTURE.md`](../atls-studio/docs/
 | **[whitepaper.md](./whitepaper.md)** | **Full technical paper**: output-compression-first thesis, UHPP grammar + semantics, HPP state machine, six compression axes, ~200k LOC system architecture, freshness as epistemic integrity, self-audit evaluation (97.6% batch savings, 0.23 bugs/KLOC), EBNF grammar, cost model |
 | **[hash-protocol.md](./hash-protocol.md)** | UHPP reference syntax (v6): `h:` refs, line ranges, shapes, symbols, selectors, set algebra, temporal refs, recency refs, blackboard refs, diff refs, content-as-ref, batch-level resolution |
 | **[output-compression.md](./output-compression.md)** | Cross-cutting output-token compression inventory across six axes (lexical / semantic / temporal / spatial / computational / transcript) with per-mechanism source links |
-| **[engrams.md](./engrams.md)** | Working memory chunks: data model, activation states, memory regions, lifecycle |
+| **[engrams.md](./engrams.md)** | Working memory chunks + the **Unified FileView** surface: data model, activation states (`Active → Dormant → Archived → Evicted`), FileView lifecycle (pin-gated render, skeleton + fills + fullBody, auto-heal reconcile, TTL-thin), memory regions (`chunks`, `fileViews`, archive, staged, blackboard) |
 
 ## Freshness & edits
 

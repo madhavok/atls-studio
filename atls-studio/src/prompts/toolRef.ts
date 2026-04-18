@@ -44,12 +44,12 @@ sa subtask?:id summary:required — \`subtask\` is the id **before** the colon i
 spl goal:"required" subtasks:id1:Title1,id2:Title2 — comma-separated id:title lines, or JSON [{id,title},…]; h: prefixes are labels, not UHPP expansion targets
 rc type:full|tree ps:path1,path2 depth?:N glob?:pattern line_range?:start-end max_lines?:N
   type:full = whole-file body. type:tree = directory listing (not file content).
-  Any read populates the live FileView for that file — see "## Working Memory — FileView" below.
+  Any file read returns ONE retention ref per file: h:fv:<hash> — the FileView identity. Pin that to keep the file in WM across rounds.
 rl hash:h:XXXX lines:15-50 | f:path sl:N el:N context_lines?:0-5
-  Line slices fill into the file's live FileView at their source position. For file engrams, lines are into that file snapshot. For sc/sy (search/symbol) result hashes, lines are into the formatted result text (engram body), not a source file — use f:+sl/el when you need real file lines.
+  Line slices fill into the file's live FileView at their source position. The returned ref is the SAME h:fv:<hash> as any prior rs/rf/rc on that file — multiple rl calls merge into the same view identity. For sc/sy (search/symbol) result hashes, lines are into the formatted result text (engram body), not a source file — use f:+sl/el when you need real file lines.
 rs ps:path1,path2 shape:sig|fold|grep|dedent|nocomment|exclude|concept|pattern|if|snap|refs|highlight max_files?:N
-  shape:sig is the CHEAPEST first-touch for a file — indent-preserved signature skeleton (~5-10% of full size) with slice-native [A-B] fold markers. Use this BEFORE rf / rc type:full. shape: is required.
-rf ps:path1,path2 type?:full — smart view (symbols + imports + related + issues) by default; type:full for the whole body. HEAVIER than rs shape:sig; reach for it only when you need the dependency graph, issues list, or full content.
+  shape:sig is the CHEAPEST first-touch for a file — indent-preserved signature skeleton (~5-10% of full size) with slice-native [A-B] fold markers. Use this BEFORE rf / rc type:full. shape: is required. Returns h:fv:<hash> — pin once, subsequent rl into the same file uses the same ref.
+rf ps:path1,path2 type?:full — smart view (symbols + imports + related + issues) by default; type:full for the whole body. HEAVIER than rs shape:sig; reach for it only when you need the dependency graph, issues list, or full content. Returns h:fv:<hash>, same as rs/rl for the same file.
 sc qs:term1,term2 ps?:path1,path2 limit?:N compact?:true
 sy sn:name1,name2 limit?:N
 su sn:name1,name2 filter?:pattern limit?:N
@@ -92,9 +92,9 @@ bd keys:key1,key2
 bl — enumerate BB keys (no params; reports active and superseded sections)
 ru action?:set|delete|list key?:name content?:"text" — list needs only action:list (no key). set/delete need key (alias: hash → same as key for rule name).
 em content:"text" type?:name
-pi hashes:h:HASH1,h:HASH2 — or \`pi in:r1.refs\` (dataflow). **hashes** = **h:**… only; use \`in:r1.refs\` on the step line, not inside \`hashes\` as text.
-pu hashes:h:HASH1,h:HASH2 — unpin (requires actual h:refs, not step IDs)
-dro hashes:h:HASH1,h:HASH2 — or scope:dormant max?:N (drops without hashes). Set refs: h:@dormant (archived/cold), h:@dematerialized (last-round refs)
+pi hashes:h:HASH1,h:HASH2 — or \`pi in:r1.refs\` (dataflow). For file reads the refs are h:fv:<hash>; pinning one ref covers the whole file. **hashes** = **h:**… only; use \`in:r1.refs\` on the step line, not inside \`hashes\` as text.
+pu hashes:h:HASH1,h:HASH2 — unpin (requires actual h:refs, not step IDs). Any chunk ref whose source has a FileView transparently unpins the view.
+dro hashes:h:HASH1,h:HASH2 — or scope:dormant|archived max?:N (drops without hashes). Dropping a FileView ref (h:fv: or any chunk ref for that file) removes the whole view + its backing chunks. Set refs: h:@dormant (archived/cold), h:@dematerialized (last-round refs)
 rec hashes:h:HASH1 — recall evicted/archived content back into context
 pc hashes:h:HASH1,h:HASH2 tier?:pointer|sig — compact to digest
 sh hash:h:XXXX — resolve + reshape a hash ref
@@ -158,11 +158,12 @@ Refactor (split): ax -> cm dry_run:true -> cm dry_run:false -> vb -> task_comple
 Investigation: iv -> bw structured findings per target -> task_complete with report
 Review: rs shape:sig targets -> rl changed fns at [A-B] folds + pi slices -> bw review finding per fn -> task_complete
 
-### Read Pattern (FileView — one view per file, auto-healing, cheapest first)
-- First touch: **rs shape:sig** — cheap indent-preserved skeleton with [A-B] fold markers. FileView block appears in WM; folded bodies show as "{ ... } [A-B]".
-- Slice: **rl sl:A el:B** — uses the [A-B] bounds from the sig directly. Fills into the same view in file order.
-- Full body: **rc type:full** or **rf type:full** only when slicing isn't enough (large multi-region refactor, full control-flow reasoning).
-- Edits: cite **@h:XXX** from the block header as **content_hash**; line numbers are current-revision (auto-healed across file edits).
+### Read Pattern (FileView — one hash per file, auto-healing, cheapest first)
+- First touch: **rs shape:sig** — cheap indent-preserved skeleton with [A-B] fold markers. Returns \`h:fv:<hash>\` — the file's single retention ref. FileView block appears in WM; folded bodies show as "{ ... } [A-B]".
+- Slice: **rl sl:A el:B** — uses the [A-B] bounds from the sig directly. Fills into the same view. Returns the SAME h:fv:<hash>; no need to re-pin.
+- Full body: **rc type:full** or **rf type:full** only when slicing isn't enough (large multi-region refactor, full control-flow reasoning). Still h:fv:<hash>.
+- Pin once: \`pi in:rN.refs\` on any read's ref keeps the whole FileView across rounds. Don't pin individual slices — the view already covers them.
+- Edits: cite **@h:XXX** from the block header as **content_hash** (source revision, distinct from the h:fv: retention ref); line numbers are current-revision (auto-healed across file edits).
 - Markers: [edited L..-.. this round] = auto-refreshed content, reconsider prior reasoning. [REMOVED was L..-..] = content is gone, re-orient. The view itself never carries stale bodies.
 - Avoid re-reading the same span: the view persists across rounds. Add slices on demand.
 
@@ -186,8 +187,8 @@ Review: rs shape:sig targets -> rl changed fns at [A-B] folds + pi slices -> bw 
 - prefer cheapest tool: one symbol -> sy; types -> vk; file list -> rc(tree); file structure -> rs shape:sig (NOT rf — sig is ~5-10% of file size, rf defaults to smart which is heavier).
 - use dr/dd when cheap research suffices before a bigger reasoning pass.
 
-## Working Memory — FileView
-Each file you've read appears as ONE block in WM, not as separate chunks:
+## Working Memory — FileView (one hash per file)
+Each file you've read appears as ONE block in WM with ONE retention ref (h:fv:<hash>), regardless of how many rs/rl/rf calls built it up:
   === path @h:XXX (N lines) [pinned?] ===
    1|import ...
   17|const FOO = 1;
@@ -201,7 +202,8 @@ Markers:
   [edited L205-213 this round]    auto-refreshed; reconsider prior reasoning
   [REMOVED was L205-213]          content at that range is gone; re-orient
   [changed: N regions pending refetch — re-read on demand]
-Cite @h:XXX (the block header hash) as content_hash for edits. Line numbers are current-revision.
+Cite @h:XXX (the block header hash = source revision) as content_hash for edits. Line numbers are current-revision.
+Retention: pi/pu/dro on any ref returned by a file read (or h:fv:<hash> directly) acts on the view — pinning it keeps the whole thing in WM, unpinning releases it cleanly. The chunk hash inside the view is for citation, not retention.
 The view auto-heals across file edits: shifted regions rebase, pinned regions refetch, unpinned stale regions drop silently. You never see [STALE].`;
 
 export const SUBAGENT_TOOL_REF = `

@@ -218,10 +218,13 @@ describe('FileView wire — reconcileSourceRevision', () => {
   });
 });
 
-describe('FileView wire — chunk eviction prunes regions', () => {
+describe('FileView wire — dropChunks routing', () => {
   beforeEach(resetStore);
 
-  it('dropChunks removes the backing regions from any FileView', () => {
+  it('dropChunks on a slice ref removes the whole FileView and its backing chunks', () => {
+    // Under the single-retention-ref model, dropping any chunk for a file
+    // drops the whole view — the ref the model emits controls the file as
+    // one unit, matching how session.drop used to work pre-FileView.
     const store = useContextStore.getState();
     const rev = 'r-drop';
     const shortHash = store.addChunk(
@@ -240,8 +243,39 @@ describe('FileView wire — chunk eviction prunes regions', () => {
 
     useContextStore.getState().dropChunks([shortHash]);
     view = useContextStore.getState().getFileView('src/drop.ts');
+    expect(view).toBeUndefined();
+    // Backing chunk also gone from active + archive.
+    const stillPresent = Array.from(useContextStore.getState().chunks.values())
+      .some(c => c.shortHash === shortHash);
+    expect(stillPresent).toBe(false);
+  });
+
+  it('TTL-archived constituent chunks thin their regions via pruneFileViewsForChunks', async () => {
+    const store = useContextStore.getState();
+    const rev = 'r-prune';
+    const shortHash = store.addChunk(
+      rowLine(10, 'a'),
+      'smart',
+      'src/prune.ts',
+      undefined, undefined, 'abcdef1234567890',
+      {
+        sourceRevision: rev,
+        ttl: 1,
+        readSpan: { filePath: 'src/prune.ts', sourceRevision: rev, startLine: 10, endLine: 10 },
+      },
+    );
+    expect(useContextStore.getState().getFileView('src/prune.ts')!.filledRegions).toHaveLength(1);
+
+    await store.refreshRoundEnd({
+      paths: ['src/prune.ts'],
+      getRevisionForPath: async () => rev,
+    });
+
+    // Chunk TTL-archived; region pruned (not the view itself).
+    const view = useContextStore.getState().getFileView('src/prune.ts');
     expect(view).toBeDefined();
     expect(view!.filledRegions).toHaveLength(0);
+    expect(Array.from(useContextStore.getState().chunks.values()).some(c => c.shortHash === shortHash)).toBe(false);
   });
 });
 
