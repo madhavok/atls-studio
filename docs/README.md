@@ -45,6 +45,7 @@ Architecture overview: [`atls-studio/docs/ARCHITECTURE.md`](../atls-studio/docs/
 | Doc | What it covers |
 |-----|----------------|
 | [prompt-assembly.md](./prompt-assembly.md) | State vs chat separation, BP-static + BP3 cache layers, state block prepended into last user message, entry manifest depth, tool-loop steering signals, cognitive core, working memory block |
+| [assess-context.md](./assess-context.md) | Ephemeral pinned-WM cleanup steering: `<<ASSESS:…>>` block with per-row `release` / `compact` / `hold` options, trigger model (user-turn boundary + mid-loop pressure), single-fire dedupe by `(candidate set, CTX bucket)`, ranking (`tokens × (idleRounds + 2 × survivedEditsWhileIdle)`), silent edit-forward detection via session sidecar |
 | [history-compression.md](./history-compression.md) | Hash deflation (threshold 100/200 tokens), `deflateToolResults` chunk creation, `stubBatchToolUseInputs` (assistant side), rolling verbatim window (20 rounds) + distilled summary (1.65k tokens), substantive round counting |
 | [api-economics.md](./api-economics.md) | Input/output cost asymmetry, cache breakpoint architecture, pricing mismatch analysis, mitigation strategies |
 | [input-compression-merit.md](./input-compression-merit.md) | Merit assessment of a proposed "dictionary + ditto-mark" input compressor for tabular tool results: overlap with `compactByFile`/TOON/engram deflation, risks (tokenizer, cache thrash, decode cost), scoped spike gates and kill criteria |

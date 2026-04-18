@@ -144,6 +144,8 @@ The **main** chat tool loop in [`aiService.ts`](../atls-studio/src/services/aiSe
 
 #### ASSESS trigger model
 
+Full treatment: [assess-context.md](./assess-context.md). Summary:
+
 `evaluateAssess()` runs once per round in the main chat loop (skipped for `ask` / `retriever` modes) and publishes `toolLoopSteering.assessContext`. The consumer in `buildDynamicContextBlock()` emits the `<<ASSESS: …>>` block immediately after the spin circuit-breaker block, so corrective steering (spin) precedes hygiene steering (ASSESS) in the preamble. Two fire paths:
 
 1. **User-turn boundary** (`round === 0`): surfaces any pinned content carried over from prior turns whose total tokens clear `boundaryMinTokens`. Gives the model a chance to clean house before starting a new user request.

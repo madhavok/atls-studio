@@ -276,6 +276,7 @@ Common failure modes that lead to context loops and wasted tokens:
 | Full-reading for planning | Full reads cost 2-13k tokens. Sigs cost ~200 tokens and contain all structural info. | Default first-touch: `rs shape:sig` to populate the skeleton. Full reads only when editing. |
 | Reading 3+ times without acting | Analysis paralysis. You have enough context after 1-2 reads. | After 2 reads on the same target, your next step MUST be a mutation or a decision to stop. |
 | Not using BB as primary anchor | BB survives compaction, eviction, and session boundaries. Everything else is ephemeral. | `bb_write` findings immediately. `bb_read` before re-searching. |
+| Pin outliving usefulness (silent accumulator) | A pinned view rides every edit auto-forward; if the model never revisits it, the pin survives across many rounds as stale working memory. The `fileViews` entry is the same; only intent has gone stale. | ASSESS surfaces these automatically — see [assess-context.md](./assess-context.md). Or unpin manually (`pu hashes:h:fv:X`) when you finish with a file. |
 
 ## Engram Annotations and Relationships
 
