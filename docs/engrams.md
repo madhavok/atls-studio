@@ -107,7 +107,7 @@ When pinning, the model can request structural views:
 - `pin(hashes:["h:src"], shape:"sig")` — Signature-level (~200 tokens/round vs ~13k full)
 - `pin(hashes:["h:src"])` — Full content (expensive but complete)
 
-The `sig` shape extracts function/class declarations, preserving structural awareness at a fraction of the token cost.
+The `sig` shape extracts function/class declarations for code — or a heading outline with `[start-end]` section ranges for markdown — preserving structural awareness at a fraction of the token cost.
 
 ### Multi-path `read.file`
 
@@ -137,7 +137,7 @@ Retention routing for file-backed chunks:
 ### Key characteristics
 
 - **One view per path**, keyed by normalized file path. Multiple slice reads (`rl sl:42 el:56` followed by `rl sl:80 el:120`) merge into the same view as sorted, non-overlapping filled regions.
-- **Skeleton + fills**: the view carries a cheap signature-level skeleton (imports + folded bodies, `~5–10%` of full-file tokens) overlaid with filled regions for ranges the agent has actually read. Full-body reads (`rf` / `read.file`) materialize `fullBody` directly and suppress the skeleton.
+- **Skeleton + fills**: the view carries a cheap signature-level skeleton — imports + folded bodies for code, heading outline with `[start-end]` section ranges for markdown, `~5–10%` of full-file tokens — overlaid with filled regions for ranges the agent has actually read. Full-body reads (`rf` / `read.file`) materialize `fullBody` directly and suppress the skeleton.
 - **Addressable as `h:fv:<hash>`**. Identity is `h:fv:<fnv(normalizedPath + sourceRevision)>` — stable across fills. Only revision bumps (source file edits) or path changes produce a new identity. Auto-healing reconcile updates the identity when the source revision changes.
 - **Rendered as a single block** in the prompt (`## FILE VIEWS`), file-ordered, with fold markers like `{ ... } [205-213]` showing what's still elided. Chunks whose hashes are covered by the view are filtered out of `## ACTIVE ENGRAMS` so the same bytes never appear twice.
 - **Auto-heal on revision change**: `same_file_prior_edit` causes shifted regions to rebase via the freshness journal's `lineDelta`; external / session-restore causes queue refetches for pinned views (capped per round); unpinned regions drop silently. Rebase failures surface as `[REMOVED was Lx-y]` markers rather than silent staleness.
