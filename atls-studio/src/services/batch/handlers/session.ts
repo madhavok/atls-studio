@@ -7,7 +7,7 @@ import { SHORT_HASH_LEN, sliceContentByLines } from '../../../utils/contextHash'
 import { PROTECTED_RECENT_ROUNDS } from '../../promptMemory';
 import { parseHashRef } from '../../../utils/hashRefParsers';
 import { invoke } from '@tauri-apps/api/core';
-import { normalizeHashRefsToStrings } from '../paramNorm';
+import { normalizeHashRefsToStrings, normalizeSessionPlanSubtasksInput } from '../paramNorm';
 
 /** If ref is `h:HASH:7-10` / `h:HASH:1-3,5-7`, extract line spec for staged snippet metadata (drift rebase). */
 function lineSpecFromHashRef(rawRef: string): string | undefined {
@@ -52,27 +52,11 @@ function parseSubtaskString(raw: string): { id: string; title: string } {
   return { id, title };
 }
 
-/** Models often send a single subtask label as a string; JSON must be an array to `.map`. */
-function normalizePlanSubtasksInput(
-  raw: unknown,
-): Array<string | { id: string; title: string }> {
-  if (raw === undefined || raw === null) return [];
-  if (Array.isArray(raw)) return raw as Array<string | { id: string; title: string }>;
-  if (typeof raw === 'string') {
-    const t = raw.trim();
-    return t ? [t] : [];
-  }
-  if (typeof raw === 'object' && raw !== null && 'id' in raw && 'title' in raw) {
-    return [raw as { id: string; title: string }];
-  }
-  return [];
-}
-
 export const handleTaskPlan: OpHandler = async (params, ctx) => {
   const goal = params.goal as string;
   if (!goal) return err('task_plan: ERROR missing goal');
 
-  const rawSubtasks = normalizePlanSubtasksInput(params.subtasks);
+  const rawSubtasks = normalizeSessionPlanSubtasksInput(params.subtasks);
   type SubStatus = 'pending' | 'active' | 'done' | 'blocked';
   const subtasks = rawSubtasks.map((s, i) => {
     const st: SubStatus = i === 0 ? 'active' : 'pending';

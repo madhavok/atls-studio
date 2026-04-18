@@ -44,6 +44,7 @@ import { resetProtocol, evict as hppEvict, setPinned as hppSetPinned, archive as
 import { useRoundHistoryStore } from './roundHistoryStore';
 import { formatAge } from '../utils/formatHelpers';
 import { canonicalizeSnapshotHash } from '../services/batch/snapshotTracker';
+import { normalizeSessionPlanSubtasksInput } from '../services/batch/paramNorm';
 import { emptyRollingSummary, type RollingSummary } from '../services/historyDistiller';
 import { freshnessTelemetry, incSessionRestoreReconcileCount, incCognitiveRulesExpired, setManifestMetricsAccessor } from '../services/freshnessTelemetry';
 import { recordForwarding as manifestRecordForwarding, recordEviction as manifestRecordEviction, resolveForward as manifestResolveForward, getManifestMetrics } from '../services/hashManifest';
@@ -3985,10 +3986,27 @@ export const useContextStore = create<ContextStoreState>()(
     const oldPlan = get().taskPlan;
 
     const now = Date.now();
+    const subtasksCoerced: SubTask[] = (() => {
+      const raw = plan.subtasks as unknown;
+      if (Array.isArray(raw)) return raw as SubTask[];
+      const items = normalizeSessionPlanSubtasksInput(raw);
+      return items.map((s, i) => {
+        if (typeof s === 'string') {
+          const colon = s.indexOf(':');
+          const id = colon > 0 ? s.slice(0, colon).trim() : s.trim();
+          const title = colon > 0 ? s.slice(colon + 1).trim() || id : s.trim();
+          const st: SubTask['status'] = i === 0 ? 'active' : 'pending';
+          return { id, title, status: st };
+        }
+        const st: SubTask['status'] = i === 0 ? 'active' : 'pending';
+        return { id: s.id, title: s.title, status: st };
+      });
+    })();
+
     const directive: TaskDirective = {
       id: plan.id ?? now.toString(36),
       goal: plan.goal,
-      subtasks: plan.subtasks ?? [],
+      subtasks: subtasksCoerced,
       activeSubtaskId: plan.activeSubtaskId,
       status: plan.status ?? 'active',
       createdAt: plan.createdAt ?? now,

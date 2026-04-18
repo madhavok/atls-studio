@@ -549,6 +549,25 @@ describe('normalizeStepParams', () => {
     });
   });
 
+  describe('session.plan subtasks coercion', () => {
+    it('wraps scalar string subtasks (e.g. analyze:Exercise) as a one-element array', () => {
+      const out = normalizeStepParams('session.plan', {
+        goal: 'Try FileView',
+        subtasks: 'analyze:Exercise',
+      });
+      expect(out.goal).toBe('Try FileView');
+      expect(out.subtasks).toEqual(['analyze:Exercise']);
+    });
+
+    it('leaves array subtasks unchanged', () => {
+      const out = normalizeStepParams('session.plan', {
+        goal: 'g',
+        subtasks: [{ id: 'a', title: 'A' }],
+      });
+      expect(out.subtasks).toEqual([{ id: 'a', title: 'A' }]);
+    });
+  });
+
   // -----------------------------------------------------------------------
   // Immutability
   // -----------------------------------------------------------------------

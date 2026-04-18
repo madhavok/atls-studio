@@ -289,6 +289,25 @@ export function normalizeHashRefsToStrings(value: unknown): string[] {
   return out;
 }
 
+/**
+ * session.plan `subtasks` must be an array for handlers, but APIs often send
+ * a single string ("analyze", "analyze:Exercise") or one object.
+ */
+export function normalizeSessionPlanSubtasksInput(
+  raw: unknown,
+): Array<string | { id: string; title: string }> {
+  if (raw === undefined || raw === null) return [];
+  if (Array.isArray(raw)) return raw as Array<string | { id: string; title: string }>;
+  if (typeof raw === 'string') {
+    const t = raw.trim();
+    return t ? [t] : [];
+  }
+  if (typeof raw === 'object' && raw !== null && 'id' in raw && 'title' in raw) {
+    return [raw as { id: string; title: string }];
+  }
+  return [];
+}
+
 // ---------------------------------------------------------------------------
 // normalizeStepParams — the single entry point
 // ---------------------------------------------------------------------------
@@ -441,6 +460,11 @@ export function normalizeStepParams(
       }
       return false;
     });
+  }
+
+  // session.plan: coerce scalar / single-object subtasks before handler dispatch
+  if (op === 'session.plan' && out.subtasks !== undefined) {
+    out.subtasks = normalizeSessionPlanSubtasksInput(out.subtasks);
   }
 
   return out;
