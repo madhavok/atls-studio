@@ -4,7 +4,7 @@ import { useAppStore, Message, ToolCall, MessageToolCall, MessageSegment, Messag
 import { useContextStore } from '../../stores/contextStore';
 import { appendTextToSegments as _appendText, appendReasoningToSegments as _appendReasoning, closeBlockById as _closeBlock, upsertToolSegment as _upsertTool, resetStreamingState, clearStreamingState, type StreamingRefs } from './streamingHelpers';
 import { useSwarmStore } from '../../stores/swarmStore';
-import { useCostStore, formatCost, calculateCost, type AIProvider as CostProvider } from '../../stores/costStore';
+import { useCostStore, formatCost, calculateCostBreakdown, type AIProvider as CostProvider } from '../../stores/costStore';
 import { useAttachmentStore, type ChatAttachment, consumeInternalDragPayload } from '../../stores/attachmentStore';
 import { streamChat, stopChat, resetStaticPromptCache, resetProjectTreeCache, type ChatMessage, type AIConfig, type AIProvider, type WorkspaceContext, type ChatMode } from '../../services/aiService';
 import type { SubAgentProgressEvent } from '../../services/batch/types';
@@ -21,6 +21,7 @@ import { MarkdownMessage } from './MarkdownMessage';
 import { TaskCompleteCard } from './TemplateCard';
 import { ToolTokenMetrics } from './ToolTokenMetrics';
 import { HashRefText } from './HashRefInline';
+import { tierTooltip } from './metricsLabels';
 import { SignatureView } from '../SignatureView';
 import { ImageAttachment } from '../ImageAttachment';
 import { formatTokens } from '../../utils/toolTokenMetrics';
@@ -470,17 +471,17 @@ const ContextMeter = memo(function ContextMeter() {
   }, [dailyUsage]);
 
   const promptOverhead = (pm.totalOverheadTokens || 0) - (pm.entryManifestTokens ?? 0);
-  const sessionTokensTitle = [
-    'Cumulative provider tokens since app launch (not one prompt size).',
+  const sessionTokensTitle = tierTooltip('billed', [
+    'Cumulative provider input tokens since app launch (not one prompt size).',
     `Sum of input across ${sessionApiCalls.toLocaleString()} recorded API call${sessionApiCalls === 1 ? '' : 's'}: main chat counts each tool-loop round separately (full prompt each time); subagent rounds included; swarm workers excluded from this total by default.`,
     '',
     `Input: ${sessionInputTokens.toLocaleString()} | Output: ${sessionOutputTokens.toLocaleString()}`,
-  ].join('\n');
+  ]);
 
-  const sessionOutputTitle = [
+  const sessionOutputTitle = tierTooltip('billed', [
     'Cumulative provider output tokens since app launch: sum of completion tokens per recorded API call (same call count as input).',
     `Output: ${sessionOutputTokens.toLocaleString()} (~${formatTokens(sessionOutputTokens)}).`,
-  ].join('\n');
+  ]);
 
   const hoverBreakdown = [
     'Context window budget:',
@@ -495,22 +496,38 @@ const ContextMeter = memo(function ContextMeter() {
     `• Total: ${formatTokens(usedTokens)} / ${formatTokens(maxTokens)}`,
   ].join('\n');
 
-  const chunkCountTitle = `Working-memory chunks: ${chunkCount.toLocaleString()}. See “chunks” line tooltip for full budget breakdown.`;
-  const overheadSuffixTitle = `Prompt overhead (instructions, tool refs, guides, etc.): ${(pm.totalOverheadTokens ?? 0).toLocaleString()} tokens (~${formatTokens(pm.totalOverheadTokens || 0)}).`;
+  const chunkCountTitle = tierTooltip('estimated', [
+    `Working-memory chunks: ${chunkCount.toLocaleString()}. See "chunks" line tooltip for full budget breakdown.`,
+  ]);
+  const overheadSuffixTitle = tierTooltip('estimated', [
+    `Prompt overhead (instructions, tool refs, guides, etc.): ${(pm.totalOverheadTokens ?? 0).toLocaleString()} tokens (~${formatTokens(pm.totalOverheadTokens || 0)}).`,
+  ]);
   const barTrackTitle = hoverBreakdown;
-  const barFillTitle = `${percentage.toFixed(1)}% of model window — estimated used ${usedTokens.toLocaleString()} / max ${maxTokens.toLocaleString()} tokens.`;
-  const usedMaxTitle = [
+  const barFillTitle = tierTooltip('estimated', [
+    `${percentage.toFixed(1)}% of model window — estimated used ${usedTokens.toLocaleString()} / max ${maxTokens.toLocaleString()} tokens.`,
+  ]);
+  const usedMaxTitle = tierTooltip('estimated', [
     latestSnapshot
       ? 'Latest round snapshot: estimated total prompt tokens.'
       : 'No snapshot yet: WM token estimate + overhead.',
     `Used: ${usedTokens.toLocaleString()} (~${formatTokens(usedTokens)})`,
     `Max: ${maxTokens.toLocaleString()} (~${formatTokens(maxTokens)})`,
-  ].join('\n');
-  const wmSavedTitle = `Cumulative working-memory savings (freed / compacted): ${freedTokens.toLocaleString()} tokens (~${formatTokens(freedTokens)}).`;
-  const flashFreedTitle = `Tokens freed this action: ${displayFreed.toLocaleString()} (~${formatTokens(displayFreed)}).`;
-  const chatCostTitle = `This chat (current conversation): ${chatCostCents.toLocaleString()}¢ — ${formatCost(chatCostCents)}.`;
-  const sessionCostTitle = `This app session (since launch): ${sessionCostCents.toLocaleString()}¢ — ${formatCost(sessionCostCents)}.`;
-  const todayCostTitle = `Today (persisted daily total): ${todayTotalCents.toLocaleString()}¢ — ${formatCost(todayTotalCents)}.`;
+  ]);
+  const wmSavedTitle = tierTooltip('estimated', [
+    `Cumulative working-memory savings (freed / compacted): ${freedTokens.toLocaleString()} tokens (~${formatTokens(freedTokens)}).`,
+  ]);
+  const flashFreedTitle = tierTooltip('estimated', [
+    `Tokens freed this action: ${displayFreed.toLocaleString()} (~${formatTokens(displayFreed)}).`,
+  ]);
+  const chatCostTitle = tierTooltip('billed', [
+    `This chat (current conversation): ${chatCostCents.toLocaleString()}¢ — ${formatCost(chatCostCents)}.`,
+  ]);
+  const sessionCostTitle = tierTooltip('billed', [
+    `This app session (since launch): ${sessionCostCents.toLocaleString()}¢ — ${formatCost(sessionCostCents)}.`,
+  ]);
+  const todayCostTitle = tierTooltip('billed', [
+    `Today (persisted daily total): ${todayTotalCents.toLocaleString()}¢ — ${formatCost(todayTotalCents)}.`,
+  ]);
   const zeroCostTitle = 'No recorded cost yet for chat, session, or today.';
 
   return (
@@ -621,10 +638,19 @@ const ContextMetrics = memo(function ContextMetrics() {
     ].filter((b) => b.tokens > 0);
   }, [latestSnapshot]);
 
-  // Per-round savings = what we avoid sending each time the API is called
-  const perRoundSavings = pm.compressionSavings + (pm.rollingSavings ?? 0) + freedTokens;
-  // Cumulative = sum of perRoundSavings across all rounds (compounding effect)
+  // Per-round savings display: current WM-side counters the user can see right
+  // now. `inputCompressionSavings` (tool-result encoder toggle) is a distinct
+  // input-compression track — show it alongside so the toggle surfaces a signal.
+  const inputCompressionSavings = pm.inputCompressionSavings ?? 0;
+  const perRoundSavings =
+    pm.compressionSavings
+    + (pm.rollingSavings ?? 0)
+    + freedTokens
+    + inputCompressionSavings;
+  // cumulativeInputSaved is now a delta-accumulated monotonic total (see
+  // appStore.recordRound); represents tokens we never sent, not compounded.
   const { cumulativeInputSaved, roundCount } = pm;
+  const recurringInputSaved = pm.recurringInputSaved ?? 0;
   const hasData =
     pm.totalOverheadTokens > 0
     || perRoundSavings > 0
@@ -637,8 +663,38 @@ const ContextMetrics = memo(function ContextMetrics() {
     ? Math.round((wmTokens / usedTokens) * 100)
     : 100;
 
-  // Cost estimate using real model pricing on cumulative input tokens avoided
-  const cumulativeCostCents = calculateCost(provider as CostProvider, selectedModel, cumulativeInputSaved, 0);
+  // Cost estimate for cumulative input savings. Blend in the session cache-read
+  // share so the $ reflects what those tokens would have ACTUALLY cost (much of
+  // the "avoided" budget would have been billed at the cache-read rate, not the
+  // full input rate). calculateCostBreakdown handles the provider-specific
+  // cache formula for us.
+  const cacheReadShare = (() => {
+    const total = cacheMetrics.sessionCacheReads
+      + cacheMetrics.sessionCacheWrites
+      + cacheMetrics.sessionUncached;
+    if (total <= 0) return 0;
+    return cacheMetrics.sessionCacheReads / total;
+  })();
+  const cumulativeCacheReadPortion = Math.round(cumulativeInputSaved * cacheReadShare);
+  const cumulativeUncachedPortion = Math.max(0, cumulativeInputSaved - cumulativeCacheReadPortion);
+  const cumulativeCostCents = calculateCostBreakdown(
+    provider as CostProvider,
+    selectedModel,
+    provider === 'anthropic' ? cumulativeUncachedPortion : cumulativeInputSaved,
+    0,
+    provider === 'anthropic' ? cumulativeCacheReadPortion : cumulativeCacheReadPortion,
+    0,
+  ).totalCostCents;
+
+  // Per-session cache savings, in cents — sum of provider-accurate per-round
+  // cache deltas from round history. Stays consistent with Cost & I/O charts.
+  const sessionCacheSavingsCents = useMemo(() => {
+    // Cheap single-pass sum; roundHistoryStore caps at MAX_SNAPSHOTS.
+    const snaps = useRoundHistoryStore.getState().snapshots;
+    let s = 0;
+    for (const snap of snaps) s += snap.cacheSavingsCents ?? 0;
+    return s;
+  }, [latestSnapshot]);
 
   const segments: OverheadSegment[] = useMemo(() => {
     const segs: OverheadSegment[] = [
@@ -663,9 +719,12 @@ const ContextMetrics = memo(function ContextMetrics() {
   const headerOverheadTitle = `Prompt overhead (mode, tools, guides, workspace block, etc.): ${pm.totalOverheadTokens.toLocaleString()} tokens (~${formatTokens(pm.totalOverheadTokens)}).`;
 
   const headerSavedTitle = [
-    'Cumulative input tokens avoided across rounds (sum of per-round compression + rolling + freed savings).',
+    'ESTIMATED. One-time input tokens never sent this session — sum of per-round',
+    'deltas on compression, rolling-summary, WM freed, and input-compression counters.',
+    'Does not double-count recurring saves across rounds (see recurringInputSaved',
+    'for the compounding view).',
     `${cumulativeInputSaved.toLocaleString()} tokens (~${formatTokens(cumulativeInputSaved)}).`,
-    `~${formatCost(cumulativeCostCents)} at current model input pricing (output not included).`,
+    `~${formatCost(cumulativeCostCents)} value, blended at session cache-read share ${(cacheReadShare * 100).toFixed(0)}% (output not included).`,
   ].join('\n');
 
   const headerRoundsTitle = `Main chat tool-loop rounds counted this session: ${roundCount.toLocaleString()}.`;
@@ -813,6 +872,17 @@ const ContextMetrics = memo(function ContextMetrics() {
                     freed {formatTokens(freedTokens)}
                   </span>
                 )}
+                {inputCompressionSavings > 0 && (
+                  <span
+                    className="cursor-help"
+                    title={
+                      `Tool-result input-compression encoder savings (compressToolResults toggle). `
+                      + `${inputCompressionSavings.toLocaleString()} tokens across ${(pm.inputCompressionCount ?? 0).toLocaleString()} tool result${(pm.inputCompressionCount ?? 0) === 1 ? '' : 's'}.`
+                    }
+                  >
+                    input-comp {formatTokens(inputCompressionSavings)} ({pm.inputCompressionCount ?? 0} results)
+                  </span>
+                )}
                 {pm.orphanSummaryRemovals > 0 && (
                   <span className="cursor-help" title={`Compressed rolling-summary pointers removed as orphans: ${pm.orphanSummaryRemovals.toLocaleString()}.`}>
                     orphans {pm.orphanSummaryRemovals} removed
@@ -821,28 +891,96 @@ const ContextMetrics = memo(function ContextMetrics() {
                 {perRoundSavings > 0 && (
                   <span
                     className="text-studio-text-secondary cursor-help"
-                    title={`Sum of compression + rolling + freed: ${perRoundSavings.toLocaleString()} tokens (~${formatTokens(perRoundSavings)}) avoided per call at current counters.`}
+                    title={`Sum of per-round counters (compression + rolling + freed + input-compression): ${perRoundSavings.toLocaleString()} tokens (~${formatTokens(perRoundSavings)}).`}
                   >
                     = {formatTokens(perRoundSavings)}/call
                   </span>
                 )}
               </div>
-              {/* Cumulative — the real cost impact */}
+              {/* Cumulative — est. one-time tokens never sent (delta-accumulated) */}
               {cumulativeInputSaved > 0 && (
                 <div className="flex items-center gap-2 mt-0.5 flex-wrap">
                   <span
                     className="text-studio-success font-medium cursor-help"
                     title={headerSavedTitle}
                   >
-                    cumulative: {formatTokens(cumulativeInputSaved)} input tokens avoided
+                    est.cumulative: {formatTokens(cumulativeInputSaved)} input tokens never sent
                   </span>
                   {cumulativeCostCents > 0 && (
                     <span className="text-studio-success cursor-help" title={headerSavedTitle}>
-                      (~{formatCost(cumulativeCostCents)} saved)
+                      (~{formatCost(cumulativeCostCents)} value)
+                    </span>
+                  )}
+                  {recurringInputSaved > 0 && (
+                    <span
+                      className="text-studio-muted cursor-help"
+                      title={
+                        'Compounding view (not billed): assumes each round re-sends everything and compression + rolling pools re-save themselves.\n'
+                        + `${recurringInputSaved.toLocaleString()} tokens summed across ${roundCount} round${roundCount === 1 ? '' : 's'}. Ignores provider prompt caching.`
+                      }
+                    >
+                      · recur {formatTokens(recurringInputSaved)}
                     </span>
                   )}
                 </div>
               )}
+            </div>
+          )}
+
+          {/* FileView telemetry — unified file-content surface, non-billed */}
+          {(pm.fileViewCount ?? 0) > 0 && (
+            <div className="border-t border-studio-border pt-1">
+              <div className="flex items-center justify-between mb-0.5">
+                <span
+                  className="text-studio-text-secondary cursor-help"
+                  title="Unified FileView: one block per file, skeleton + fills replace flat chunks. Counters are observational; target for staleReadRounds is zero."
+                >
+                  FileView
+                </span>
+                <span className="cursor-help" title={`Live FileView blocks: ${(pm.fileViewCount ?? 0).toLocaleString()}.`}>
+                  {pm.fileViewCount ?? 0} view{(pm.fileViewCount ?? 0) === 1 ? '' : 's'}
+                </span>
+              </div>
+              <div className="flex flex-wrap gap-x-3 gap-y-0">
+                {(pm.fileViewRenderedTokens ?? 0) > 0 && (
+                  <span
+                    className="cursor-help"
+                    title={
+                      'ESTIMATED. Skeleton + fills + fullBody tokens rendered into WM this round, vs the sum of underlying chunks these views replaced.\n'
+                      + `rendered ${(pm.fileViewRenderedTokens ?? 0).toLocaleString()} · covered ${(pm.fileViewCoveredChunkTokens ?? 0).toLocaleString()} · delta ${((pm.fileViewRenderedTokens ?? 0) - (pm.fileViewCoveredChunkTokens ?? 0)).toLocaleString()}`
+                    }
+                  >
+                    rendered {formatTokens(pm.fileViewRenderedTokens ?? 0)} · chunks {formatTokens(pm.fileViewCoveredChunkTokens ?? 0)}
+                  </span>
+                )}
+                {(pm.fileViewReuseCount ?? 0) > 0 && (
+                  <span
+                    className="text-studio-success cursor-help"
+                    title={`Rounds a FileView rendered without a new fill — measures reuse vs. first-touch premium (${(pm.fileViewReuseCount ?? 0).toLocaleString()}).`}
+                  >
+                    reuse {(pm.fileViewReuseCount ?? 0).toLocaleString()}
+                  </span>
+                )}
+                {((pm.autoHealShiftedCount ?? 0) + (pm.autoRefetchCount ?? 0)) > 0 && (
+                  <span
+                    className="cursor-help"
+                    title={
+                      `Auto-heal counts: shifted rebases ${(pm.autoHealShiftedCount ?? 0).toLocaleString()}, `
+                      + `refetches ${(pm.autoRefetchCount ?? 0).toLocaleString()} (skipped by cap ${(pm.autoRefetchSkippedByCap ?? 0).toLocaleString()}).`
+                    }
+                  >
+                    heal {(pm.autoHealShiftedCount ?? 0).toLocaleString()}/{(pm.autoRefetchCount ?? 0).toLocaleString()}
+                  </span>
+                )}
+                {(pm.staleReadRounds ?? 0) > 0 && (
+                  <span
+                    className="text-studio-error cursor-help"
+                    title="Rounds where the model emitted a 'let me re-read because stale' self-correction. Target zero — non-zero indicates an auto-heal bug."
+                  >
+                    stale {(pm.staleReadRounds ?? 0).toLocaleString()}
+                  </span>
+                )}
+              </div>
             </div>
           )}
 
@@ -886,20 +1024,16 @@ const ContextMetrics = memo(function ContextMetrics() {
                   </span>
                 )}
               </div>
-              {cacheMetrics.sessionCacheReads > 0 && (
+              {sessionCacheSavingsCents > 0 && (
                 <div className="flex items-center gap-2 mt-0.5">
                   <span
                     className="text-studio-success cursor-help"
                     title={
-                      'Rough $ savings vs pricing input rate, using read tokens × heuristic discount '
-                      + `(OpenAI ~50%, Google/Vertex ~75%, Anthropic ~90% of input price — illustrative only).`
+                      'Billing-grade cache savings: sum of (no-cache cost) − (with-cache cost) across recorded rounds, using the same calculateCostBreakdown the chat/session totals use. '
+                      + `Session cache reads: ${cacheMetrics.sessionCacheReads.toLocaleString()} tokens; provider-specific discount applied per round.`
                     }
                   >
-                    ~{formatCost(calculateCost(provider as CostProvider, selectedModel, cacheMetrics.sessionCacheReads, 0) * (
-                      provider === 'openai' ? 0.5
-                      : (provider === 'google' || provider === 'vertex') ? 0.75
-                      : 0.9
-                    ))} saved via cache
+                    {formatCost(sessionCacheSavingsCents)} saved via cache
                   </span>
                 </div>
               )}

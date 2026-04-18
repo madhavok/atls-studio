@@ -48,6 +48,7 @@ Architecture overview: [`atls-studio/docs/ARCHITECTURE.md`](../atls-studio/docs/
 | [history-compression.md](./history-compression.md) | Hash deflation (threshold 100/200 tokens), `deflateToolResults` chunk creation, `stubBatchToolUseInputs` (assistant side), rolling verbatim window (20 rounds) + distilled summary (1.65k tokens), substantive round counting |
 | [api-economics.md](./api-economics.md) | Input/output cost asymmetry, cache breakpoint architecture, pricing mismatch analysis, mitigation strategies |
 | [input-compression-merit.md](./input-compression-merit.md) | Merit assessment of a proposed "dictionary + ditto-mark" input compressor for tabular tool results: overlap with `compactByFile`/TOON/engram deflation, risks (tokenizer, cache thrash, decode cost), scoped spike gates and kill criteria |
+| [metrics.md](./metrics.md) | Billing-grade vs estimated metric tiers: full catalog of chat/session/today cost, cumulative savings delta math, FileView-aware WM token counting, cache-savings formula, `RoundSnapshot.cacheSavingsCents`, tooltip tier prefixes, test invariants |
 | [session-persistence.md](./session-persistence.md) | Session save/restore, auto-resume, memory snapshot format v2–v6, freshness-after-restore timing, Tauri close flush |
 
 ## Multi-agent

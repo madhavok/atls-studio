@@ -60,6 +60,8 @@ import {
   reconcileFileView,
 } from '../services/fileViewStore';
 import { normalizePath as fvNormalizePath } from '../services/fileView';
+import { collectFileViewChunkHashes } from '../services/fileViewRender';
+import { summarizeFileViewTokens } from '../services/fileViewTokens';
 
 setManifestMetricsAccessor(getManifestMetrics);
 
@@ -5710,14 +5712,34 @@ export const useContextStore = create<ContextStoreState>()(
     return total;
   },
 
+  /**
+   * Working-memory prompt pressure.
+   *
+   * For each non-chat chunk the model actually sees in `## ACTIVE ENGRAMS`:
+   *  - compacted or HPP-dematerialized chunks pay the dormant digest cost
+   *    (base + optional finding tokens) instead of their full body,
+   *  - chunks covered by a live FileView are suppressed (the view renders
+   *    their content instead) and contribute 0 — the view's tokens are
+   *    accounted for separately below via `summarizeFileViewTokens`.
+   *
+   * Then adds the rendered cost of every live FileView block (skeleton
+   * trimmed to rows not covered by fills, filled-region bodies, fullBody if
+   * promoted, plus header/markers chrome).
+   *
+   * Must stay consistent with `formatTaggedContext` — see
+   * `fileViewTokens.ts` for the estimator contract.
+   */
   getPromptTokens: () => {
     const DORMANT_BASE_TOKENS = 15;
     const DORMANT_FINDING_TOKENS = 20;
     let total = 0;
     const state = get();
+    const fileViewCovered = state.fileViews.size > 0
+      ? collectFileViewChunkHashes(state.fileViews.values())
+      : null;
     for (const [, c] of state.chunks) {
       if (CHAT_TYPES.has(c.type)) continue;
-      // Optimized: check compacted first (cheap boolean) before calling hppGetRef (Map lookup)
+      if (fileViewCovered?.has(c.hash)) continue;
       if (c.compacted) {
         const hasFinding = (c.annotations?.length ?? 0) > 0 || !!c.summary;
         total += DORMANT_BASE_TOKENS + (hasFinding ? DORMANT_FINDING_TOKENS : 0);
@@ -5731,6 +5753,9 @@ export const useContextStore = create<ContextStoreState>()(
           total += c.tokens;
         }
       }
+    }
+    if (state.fileViews.size > 0) {
+      total += summarizeFileViewTokens(state.fileViews.values()).totalRenderedTokens;
     }
     return total;
   },

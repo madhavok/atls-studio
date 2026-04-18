@@ -41,6 +41,14 @@ export interface RoundSnapshot {
   costCents: number;
   inputCostCents?: number;
   outputCostCents?: number;
+  /**
+   * Billing-grade cache savings for this round = (cost without cache discount)
+   * − (actual cost with cache tokens applied). Uses `calculateCostBreakdown`
+   * twice so provider-specific cache semantics (Anthropic non-overlap; OpenAI /
+   * Gemini overlap with shared `inputTokens`) are honored. 0 when the provider
+   * reported no cache tokens.
+   */
+  cacheSavingsCents?: number;
   // Savings
   compressionSavings: number;
   /** Tokens removed by rolling window (not hash compression) */
@@ -51,6 +59,15 @@ export interface RoundSnapshot {
   rollingSummaryTokens: number;
   freedTokens: number;
   cumulativeSaved: number;
+  /**
+   * ESTIMATED. FileView render vs chunk cost for this round — `rendered` is
+   * what the view blocks put in the prompt, `coveredChunks` is the sum of the
+   * underlying chunks the view replaced. Non-negative. Use `rendered - coveredChunks`
+   * to visualize the first-touch premium vs. reuse savings.
+   */
+  fileViewRenderedTokens?: number;
+  fileViewCoveredChunkTokens?: number;
+  fileViewCount?: number;
   // Batch efficiency
   toolCalls: number;
   manageOps: number;

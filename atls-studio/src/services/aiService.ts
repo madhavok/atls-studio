@@ -2473,6 +2473,40 @@ async function streamChatViaTauri(
           ? 0
           : countTokensSync(formatSummaryMessage(trimmedRs).content);
         const costBreakdown = calculateCostBreakdown(config.provider as CostProvider, config.model, roundInputTokens, roundOutputTokens, roundCacheReadTokens, roundCacheWriteTokens);
+        // Billing-grade cache savings = what we'd have paid with zero cache
+        // tokens minus what we actually paid. Anthropic: uncached input alone
+        // would have been `input_tokens + cacheReads + cacheWrites` at full
+        // rate; OpenAI / Gemini: inputTokens already contains the cached
+        // subset, so "no cache" is the same token total at full input rate.
+        let cacheSavingsCents = 0;
+        if (roundCacheReadTokens > 0 || roundCacheWriteTokens > 0) {
+          const provider = config.provider as CostProvider;
+          const noCacheInput = provider === 'anthropic'
+            ? roundInputTokens + roundCacheReadTokens + roundCacheWriteTokens
+            : roundInputTokens;
+          const noCache = calculateCostBreakdown(provider, config.model, noCacheInput, roundOutputTokens, 0, 0);
+          cacheSavingsCents = Math.max(0, noCache.totalCostCents - costBreakdown.totalCostCents);
+        }
+        // FileView render vs chunk cost for this round — non-gating.
+        let fvRendered = 0;
+        let fvCovered = 0;
+        let fvCount = 0;
+        if (ctxState.fileViews.size > 0) {
+          const { summarizeFileViewTokens } = await import('./fileViewTokens');
+          const { collectFileViewChunkHashes } = await import('./fileViewRender');
+          const summary = summarizeFileViewTokens(ctxState.fileViews.values(), round + 1);
+          fvRendered = summary.totalRenderedTokens;
+          fvCount = summary.viewCount;
+          const covered = collectFileViewChunkHashes(ctxState.fileViews.values());
+          for (const [, c] of ctxState.chunks) {
+            if (covered.has(c.hash)) fvCovered += c.tokens;
+          }
+        }
+        useAppStore.getState().setPromptMetrics({
+          fileViewCount: fvCount,
+          fileViewRenderedTokens: fvRendered,
+          fileViewCoveredChunkTokens: fvCovered,
+        });
         useRoundHistoryStore.getState().pushSnapshot({
           round: round + 1,
           timestamp: Date.now(),
@@ -2502,12 +2536,16 @@ async function streamChatViaTauri(
           costCents: roundCostCents,
           inputCostCents: costBreakdown.inputCostCents,
           outputCostCents: costBreakdown.outputCostCents,
+          cacheSavingsCents,
           compressionSavings: appState.promptMetrics.compressionSavings,
           rollingSavings: appState.promptMetrics.rollingSavings ?? 0,
           rolledRounds: appState.promptMetrics.rolledRounds ?? 0,
           rollingSummaryTokens,
           freedTokens: ctxState.freedTokens,
           cumulativeSaved: appState.promptMetrics.cumulativeInputSaved,
+          fileViewRenderedTokens: fvRendered,
+          fileViewCoveredChunkTokens: fvCovered,
+          fileViewCount: fvCount,
           toolCalls: bm.toolCalls,
           manageOps: bm.manageOps,
           hypotheticalNonBatchedCost: hypothetical,

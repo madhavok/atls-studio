@@ -313,18 +313,31 @@ export interface PromptMetrics {
   workspaceContextTokens: number;
   entryManifestTokens?: number;
   totalOverheadTokens: number;
-  // Per-round delta: tokens not sent due to compression (cumulative across compressions)
+  // Monotonic session counter: total input tokens not sent due to history/tool-result compression.
   compressionSavings: number;
   compressionCount: number;
-  /** Tokens not sent because old rounds were removed into rolling summary (cumulative) */
+  /** Monotonic session counter: tokens not sent because old rounds were removed into rolling summary. */
   rollingSavings: number;
   /** Rounds distilled into rolling summary this session */
   rolledRounds: number;
-  // Per-round delta: tokens freed from working memory (mirrors contextStore.freedTokens)
-  // => total per-round savings = compressionSavings + rollingSavings + freedTokens (from contextStore)
-  // Compounding: each API round re-sends everything, so savings multiply across rounds
   roundCount: number;
-  cumulativeInputSaved: number; // sum of perRoundSavings across all rounds
+  /**
+   * ESTIMATED (not billed). Sum of one-time input-token savings events across
+   * the session — i.e. deltas between rounds of compression/rolling/freed/input
+   * compression counters. See `recordRound` for the formula.
+   *
+   * Interpretation: "tokens we avoided ever sending." Does not double-count
+   * recurring saves across rounds; for that, see `recurringInputSaved`.
+   */
+  cumulativeInputSaved: number;
+  /**
+   * ESTIMATED (not billed). "Compounding" view of savings — assumes each round
+   * re-sends the full history, so the current compression pool saves itself
+   * every round. Sum over rounds of `compressionSavings + rollingSavings` at
+   * end-of-round. Useful for "what would I have paid without compression?"
+   * but ignores provider prompt caching discounts.
+   */
+  recurringInputSaved?: number;
   /** Cache composition estimates (for CacheCompositionSection) */
   bp2ToolDefTokens?: number;
   bp3PriorTurnsTokens?: number;
@@ -341,6 +354,18 @@ export interface PromptMetrics {
   inputCompressionCount?: number;
   /** Current FileView count in WM (observability only — not gating). */
   fileViewCount?: number;
+  /**
+   * ESTIMATED. Snapshot sum of skeleton+fill body tokens across all live
+   * FileView blocks (what actually lands in the prompt). Use for the
+   * "FileView replaced N chunks worth X tk with Y tk of view" line.
+   */
+  fileViewRenderedTokens?: number;
+  /**
+   * ESTIMATED. Snapshot sum of `c.tokens` for file-backed chunks that are
+   * covered (and thus suppressed) by a FileView. Pairs with
+   * `fileViewRenderedTokens` to show first-touch premium vs reuse.
+   */
+  fileViewCoveredChunkTokens?: number;
   /** Rounds a FileView rendered without a new fill — measures reuse efficiency. */
   fileViewReuseCount?: number;
   /** Cumulative auto-heal `shifted` rebases via freshnessJournal. */
@@ -698,6 +723,19 @@ interface AppState {
   setFileViewCount: (count: number) => void;
   addRollingSavings: (tokensSaved: number, roundsRolled: number) => void;
   addOrphanRemovals: (count: number) => void;
+  /**
+   * Internal: prior-round snapshot of the monotonic savings counters.
+   * Used by `recordRound` to compute per-round deltas. Reset via
+   * `resetSavingsSnapshot` whenever the counters reset (new chat, session load).
+   */
+  _lastRoundSavingsSnapshot?: {
+    compressionSavings: number;
+    rollingSavings: number;
+    freedTokens: number;
+    inputCompressionSavings: number;
+  };
+  /** Clear the delta baseline used by `recordRound` (call alongside counter resets). */
+  resetSavingsSnapshot: () => void;
   recordRound: () => void;
   cacheMetrics: CacheMetrics;
   /**
@@ -982,6 +1020,7 @@ export const useAppStore = create<AppState>((set) => ({
         compressionCount: 0, rollingSavings: 0, rolledRounds: 0, roundCount: 0, cumulativeInputSaved: 0,
         orphanSummaryRemovals: 0,
       },
+      _lastRoundSavingsSnapshot: undefined,
       // Reset cache metrics for new session
       cacheMetrics: {
         sessionCacheWrites: 0, sessionCacheReads: 0, sessionUncached: 0,
@@ -1025,6 +1064,7 @@ export const useAppStore = create<AppState>((set) => ({
           compressionCount: 0, rollingSavings: 0, rolledRounds: 0, roundCount: 0, cumulativeInputSaved: 0,
           orphanSummaryRemovals: 0,
         },
+        _lastRoundSavingsSnapshot: undefined,
         cacheMetrics: {
           sessionCacheWrites: 0, sessionCacheReads: 0, sessionUncached: 0,
           sessionRequests: 0, lastRequestHitRate: 0, sessionHitRate: 0,
@@ -1291,15 +1331,54 @@ export const useAppStore = create<AppState>((set) => ({
       orphanSummaryRemovals: state.promptMetrics.orphanSummaryRemovals + count,
     },
   })),
+  _lastRoundSavingsSnapshot: undefined,
+  resetSavingsSnapshot: () => set({ _lastRoundSavingsSnapshot: undefined }),
+  /**
+   * Advance one round and accumulate SAVINGS METRICS.
+   *
+   * Two views are maintained:
+   *   1. `cumulativeInputSaved` — one-time savings events. Sum of deltas on
+   *      `compressionSavings`, `rollingSavings`, `freedTokens`, and
+   *      `inputCompressionSavings` since the previous `recordRound` call.
+   *      This is the "tokens we never sent" total; it does NOT double-count.
+   *   2. `recurringInputSaved` — compounding view. Adds the end-of-round
+   *      `compressionSavings + rollingSavings` as if the full history was
+   *      re-sent this round at full uncached rate. Kept for power-user UI.
+   *
+   * Previous bug: summed the cumulative counters each round, producing a
+   * triangular over-count (specifically inflating `freedTokens` by N× in an
+   * N-round session).
+   */
   recordRound: () => set((state) => {
-    const { compressionSavings, rollingSavings } = state.promptMetrics;
+    const pm = state.promptMetrics;
+    const compressionSavings = pm.compressionSavings;
+    const rollingSavings = pm.rollingSavings;
+    const inputCompressionSavings = pm.inputCompressionSavings ?? 0;
     const freedTokens = useContextStore.getState().freedTokens;
-    const perRoundSavings = compressionSavings + rollingSavings + freedTokens;
+    const prev = state._lastRoundSavingsSnapshot ?? {
+      compressionSavings: 0,
+      rollingSavings: 0,
+      freedTokens: 0,
+      inputCompressionSavings: 0,
+    };
+    const deltaCompression = Math.max(0, compressionSavings - prev.compressionSavings);
+    const deltaRolling = Math.max(0, rollingSavings - prev.rollingSavings);
+    const deltaFreed = Math.max(0, freedTokens - prev.freedTokens);
+    const deltaInputCompression = Math.max(0, inputCompressionSavings - prev.inputCompressionSavings);
+    const savingsDelta = deltaCompression + deltaRolling + deltaFreed + deltaInputCompression;
+    const recurringThisRound = compressionSavings + rollingSavings;
     return {
       promptMetrics: {
-        ...state.promptMetrics,
-        roundCount: state.promptMetrics.roundCount + 1,
-        cumulativeInputSaved: state.promptMetrics.cumulativeInputSaved + perRoundSavings,
+        ...pm,
+        roundCount: pm.roundCount + 1,
+        cumulativeInputSaved: pm.cumulativeInputSaved + savingsDelta,
+        recurringInputSaved: (pm.recurringInputSaved ?? 0) + recurringThisRound,
+      },
+      _lastRoundSavingsSnapshot: {
+        compressionSavings,
+        rollingSavings,
+        freedTokens,
+        inputCompressionSavings,
       },
     };
   }),

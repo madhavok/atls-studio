@@ -750,6 +750,7 @@ export function useChatPersistence() {
           compressionCount: 0, rollingSavings: 0, rolledRounds: 0, roundCount: 0, cumulativeInputSaved: 0,
           orphanSummaryRemovals: 0,
         },
+        _lastRoundSavingsSnapshot: undefined,
         cacheMetrics: {
           sessionCacheWrites: 0, sessionCacheReads: 0, sessionUncached: 0,
           sessionRequests: 0, lastRequestHitRate: 0, sessionHitRate: 0,
@@ -1051,6 +1052,7 @@ export function useChatPersistence() {
           compressionCount: 0, rollingSavings: 0, rolledRounds: 0, roundCount: 0, cumulativeInputSaved: 0,
           orphanSummaryRemovals: 0,
         },
+        _lastRoundSavingsSnapshot: undefined,
         cacheMetrics: {
           sessionCacheWrites: 0, sessionCacheReads: 0, sessionUncached: 0,
           sessionRequests: 0, lastRequestHitRate: 0, sessionHitRate: 0,
@@ -1106,6 +1108,7 @@ export function useChatPersistence() {
             compressionCount: 0, rollingSavings: 0, rolledRounds: 0, roundCount: 0, cumulativeInputSaved: 0,
             orphanSummaryRemovals: 0,
           },
+          _lastRoundSavingsSnapshot: undefined,
           cacheMetrics: {
             sessionCacheWrites: 0, sessionCacheReads: 0, sessionUncached: 0,
             sessionRequests: 0, lastRequestHitRate: 0, sessionHitRate: 0,
@@ -1196,6 +1199,7 @@ export function useChatPersistence() {
                 compressionCount: 0, rollingSavings: 0, rolledRounds: 0, roundCount: 0, cumulativeInputSaved: 0,
                 orphanSummaryRemovals: 0,
               },
+              _lastRoundSavingsSnapshot: undefined,
               cacheMetrics: {
                 sessionCacheWrites: 0, sessionCacheReads: 0, sessionUncached: 0,
                 sessionRequests: 0, lastRequestHitRate: 0, sessionHitRate: 0,

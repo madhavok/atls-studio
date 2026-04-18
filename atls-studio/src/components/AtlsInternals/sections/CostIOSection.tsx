@@ -11,6 +11,7 @@ const COLORS = {
   cacheRead: 'rgba(34,197,94,0.55)',
   cacheWrite: '#f59e0b',
   cost: '#eab308',
+  cacheSaved: '#22c55e',
 };
 
 function fmtK(v: number): string {
@@ -46,7 +47,7 @@ export function CostIOSection() {
     return Math.round((sum / research.length) * 10) / 10;
   }, [mainSnapshots]);
 
-  const { chartData, costData, totalInput, totalOutput, totalCacheRead, totalCacheWrite } = useMemo(() => {
+  const { chartData, costData, totalInput, totalOutput, totalCacheRead, totalCacheWrite, totalCacheSavings } = useMemo(() => {
     const cd = mainSnapshots.map((s) => {
       // Anthropic: inputTokens = uncached only, cache buckets are non-overlapping → stack all.
       // OpenAI/Google/Vertex: inputTokens = total prompt including cached subset → subtract to avoid double-count.
@@ -65,15 +66,27 @@ export function CostIOSection() {
     const costD = mainSnapshots.map((s) => ({
       round: s.round,
       Cost: Math.round(s.costCents * 100) / 100,
+      // Billing-grade per-round cache savings — (no-cache cost) − (actual cost).
+      // 0 when the round had no cache tokens, non-negative otherwise.
+      'Cache Saved': Math.round((s.cacheSavingsCents ?? 0) * 100) / 100,
     }));
-    let tIn = 0, tOut = 0, tCache = 0, tCacheW = 0;
+    let tIn = 0, tOut = 0, tCache = 0, tCacheW = 0, tCacheSave = 0;
     for (const s of mainSnapshots) {
       tIn += s.inputTokens;
       tOut += s.outputTokens;
       tCache += s.cacheReadTokens;
       tCacheW += s.cacheWriteTokens;
+      tCacheSave += s.cacheSavingsCents ?? 0;
     }
-    return { chartData: cd, costData: costD, totalInput: tIn, totalOutput: tOut, totalCacheRead: tCache, totalCacheWrite: tCacheW };
+    return {
+      chartData: cd,
+      costData: costD,
+      totalInput: tIn,
+      totalOutput: tOut,
+      totalCacheRead: tCache,
+      totalCacheWrite: tCacheW,
+      totalCacheSavings: tCacheSave,
+    };
   }, [mainSnapshots]);
 
   const costAxisMax = useMemo(() => {
@@ -162,6 +175,18 @@ export function CostIOSection() {
                 activeDot={{ r: 4, fill: COLORS.cost }}
                 isAnimationActive={false}
               />
+              {totalCacheSavings > 0 && (
+                <Line
+                  type="monotone"
+                  dataKey="Cache Saved"
+                  stroke={COLORS.cacheSaved}
+                  strokeWidth={1.5}
+                  strokeDasharray="3 3"
+                  dot={{ r: 2, fill: COLORS.cacheSaved, strokeWidth: 0 }}
+                  activeDot={{ r: 3.5, fill: COLORS.cacheSaved }}
+                  isAnimationActive={false}
+                />
+              )}
             </LineChart>
           </ResponsiveContainer>
         </>
@@ -188,6 +213,11 @@ export function CostIOSection() {
         <StatCard label="Main output" value={fmtK(totalOutput)} />
         <StatCard label="Main cache reads" value={fmtK(totalCacheRead)} />
         <StatCard label="Main cache writes" value={fmtK(totalCacheWrite)} subtitle="1.25× input price" />
+        <StatCard
+          label="Cache savings (billed)"
+          value={totalCacheSavings > 0 ? formatCost(totalCacheSavings) : '—'}
+          subtitle="(no-cache cost) − (actual cost) per round, summed"
+        />
         <StatCard
           label="Avg input cost"
           value={mainSnapshots.length > 0 ? formatCost(avgInputCost) : '—'}
