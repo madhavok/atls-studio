@@ -170,3 +170,4 @@ For completeness, mechanisms that exist in the codebase but are not active in th
 - [hash-protocol.md](./hash-protocol.md) — UHPP reference syntax (Axes 3, 4)
 - [history-compression.md](./history-compression.md) — transcript compression (Axis 6)
 - [prompt-assembly.md](./prompt-assembly.md) — where state, history, and summary attach in the payload
+- [input-compression-merit.md](./input-compression-merit.md) — merit assessment for an input-side dictionary + ditto-mark compressor on tabular tool results; maps the proposal onto axes L7/L8/L9/TR1/TR2 and scopes a measured spike

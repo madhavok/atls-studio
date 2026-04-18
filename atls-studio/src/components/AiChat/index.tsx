@@ -2191,6 +2191,13 @@ const AttachIcon = () => (
   </svg>
 );
 
+/** Compression icon — two arrows pointing inward, conventional "compress" affordance. */
+const CompressIcon = () => (
+  <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
+    <path d="M4 9h4v2H4V9zm0 4h4v2H4v-2zm6-9h2v4h-2V4zm4 0h2v4h-2V4zm2 9h4v2h-4v-2zm0-4h4v2h-4V9zm-6 6h2v4h-2v-4zm4 0h2v4h-2v-4zm-4-4h4v4h-4v-4z" />
+  </svg>
+);
+
 /** Map a FileAttachment result from processFileAttachment into the attachment store */
 function addProcessedAttachment(
   store: ReturnType<typeof useAttachmentStore.getState>,
@@ -3922,6 +3929,26 @@ export function AiChat() {
                 title="Attach files or images"
               >
                 <AttachIcon />
+              </button>
+              {/* Tool-result compression toggle (experimental) */}
+              <button
+                onClick={() =>
+                  useAppStore.getState().setSettings({
+                    compressToolResults: !settings.compressToolResults,
+                  })
+                }
+                className={`p-1.5 rounded transition-colors shrink-0 ${
+                  settings.compressToolResults
+                    ? 'bg-studio-accent-bright/20 text-studio-accent-bright'
+                    : 'text-studio-muted hover:text-studio-text hover:bg-studio-border/50'
+                }`}
+                title={
+                  settings.compressToolResults
+                    ? 'Tool-result compression: ON (experimental). Click to disable.'
+                    : 'Tool-result compression: OFF. Click to enable (experimental).'
+                }
+              >
+                <CompressIcon />
               </button>
               <textarea
                 ref={inputRef}

@@ -180,17 +180,61 @@ export const FORMAT_RESULT_MAX_SEARCH = 120000;
 /** Git status/diff payloads from `system.git`. */
 export const FORMAT_RESULT_MAX_GIT = 100000;
 
+// ---------------------------------------------------------------------------
+// Input-compression hook (registered from outside to avoid circular imports)
+// ---------------------------------------------------------------------------
+
+/** Returns true when the input-compression toggle is on in the app state. */
+type CompressionProvider = () => boolean;
+
+/** Encodes a TOON string; returns null when not beneficial. */
+type CompressionEncoder = (raw: string) => { encoded: string; savedTokens: number } | null;
+
+/** Records savings telemetry. */
+type CompressionRecorder = (tokensSaved: number) => void;
+
+let _compressionProvider: CompressionProvider = () => false;
+let _compressionEncoder: CompressionEncoder = () => null;
+let _compressionRecorder: CompressionRecorder = () => {};
+
+/**
+ * Register the input-compression hooks. Intended to be called once from app
+ * init. Matches the `registerDriftCorrectionProvider` pattern in
+ * `contextHash.ts` — keeps `toon.ts` free of Zustand / app-state dependencies.
+ */
+export function registerCompressionProvider(
+  isEnabled: CompressionProvider,
+  encode: CompressionEncoder,
+  recordSavings: CompressionRecorder,
+): void {
+  _compressionProvider = isEnabled;
+  _compressionEncoder = encode;
+  _compressionRecorder = recordSavings;
+}
+
 /**
  * Format a tool result as TOON with a size ceiling.
  * Applies file-path compaction before serialization for token efficiency.
+ * When the input-compression toggle is on, routes the serialized output
+ * through the encoder registered via `registerCompressionProvider`.
  */
 export function formatResult(result: unknown, maxSize = FORMAT_RESULT_MAX_DEFAULT): string {
   const compacted = compactByFile(result);
   const toon = toTOON(compacted);
-  if (toon.length > maxSize) {
-    return toon.substring(0, maxSize) + '\n[truncated - narrow query]';
+
+  let out = toon;
+  if (_compressionProvider()) {
+    const encoded = _compressionEncoder(toon);
+    if (encoded) {
+      out = encoded.encoded;
+      _compressionRecorder(encoded.savedTokens);
+    }
   }
-  return toon;
+
+  if (out.length > maxSize) {
+    return out.substring(0, maxSize) + '\n[truncated - narrow query]';
+  }
+  return out;
 }
 
 /**

@@ -14,7 +14,7 @@ import { validateSourceIdentity } from '../universalFreshness';
 // ---------------------------------------------------------------------------
 
 /** Global aliases applied to all operations. */
-const GLOBAL_ALIASES: Readonly<Record<string, string>> = {
+export const GLOBAL_ALIASES: Readonly<Record<string, string>> = {
   // File path: ATLS internal
   file: 'file_path',
   f: 'file_path',

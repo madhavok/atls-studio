@@ -330,6 +330,15 @@ export interface PromptMetrics {
   bp3PriorTurnsTokens?: number;
   /** Orphaned compressed rolling summary pointers removed */
   orphanSummaryRemovals: number;
+  /**
+   * Input-side tool-result compression savings (distinct from
+   * `compressionSavings` which tracks history deflation). Cumulative across
+   * the session. Populated by `formatResult` when the chat toggle is on.
+   */
+  inputCompressionSavings?: number;
+  /** Number of tool results the input-compression encoder successfully
+   *  produced a result for (returns null counts as zero). */
+  inputCompressionCount?: number;
 }
 
 // Provider-level cache metrics (Anthropic cache_creation/cache_read tokens)
@@ -501,6 +510,13 @@ export interface Settings {
    * `strong` tiers still fire regardless of this setting.
    */
   spinCircuitBreakerHaltEnabled?: boolean;
+  /**
+   * Input-side tool-result compression. When true, `formatResult` routes
+   * serialized tool output through the dictionary + ditto + key-abbreviation
+   * encoder before returning it to handlers. Experimental; default false.
+   * See `src/utils/toolResultCompression.ts` and `docs/input-compression-merit.md`.
+   */
+  compressToolResults?: boolean;
 }
 
 /** Per-category severity enables. Key = category, value = enabled severities */
@@ -659,6 +675,7 @@ interface AppState {
   promptMetrics: PromptMetrics;
   setPromptMetrics: (metrics: Partial<PromptMetrics>) => void;
   addCompressionSavings: (tokensSaved: number, count: number) => void;
+  addInputCompressionSavings: (tokensSaved: number) => void;
   addRollingSavings: (tokensSaved: number, roundsRolled: number) => void;
   addOrphanRemovals: (count: number) => void;
   recordRound: () => void;
@@ -1225,6 +1242,13 @@ export const useAppStore = create<AppState>((set) => ({
       compressionCount: state.promptMetrics.compressionCount + count,
     },
   })),
+  addInputCompressionSavings: (tokensSaved) => set((state) => ({
+    promptMetrics: {
+      ...state.promptMetrics,
+      inputCompressionSavings: (state.promptMetrics.inputCompressionSavings ?? 0) + tokensSaved,
+      inputCompressionCount: (state.promptMetrics.inputCompressionCount ?? 0) + 1,
+    },
+  })),
   addRollingSavings: (tokensSaved, roundsRolled) => set((state) => ({
     promptMetrics: {
       ...state.promptMetrics,
@@ -1350,6 +1374,7 @@ export const useAppStore = create<AppState>((set) => ({
       entryManifestDepth: 'paths',
       modelOutputSpeed: 'medium',
       modelThinking: 'medium',
+      compressToolResults: false,
     };
     let parsed: Record<string, unknown> = {};
     try { parsed = saved ? JSON.parse(saved) : {}; } catch { /* corrupt settings — use defaults */ }

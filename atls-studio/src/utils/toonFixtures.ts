@@ -129,6 +129,195 @@ export function makeCodeSearchBackendResult() {
   };
 }
 
+// ============================================================================
+// Compression-targeted fixtures
+//
+// These shapes exercise the column-ditto + substring-dictionary encoder at
+// the `formatResult` seam. They are deterministic (seeded with the row index)
+// so token-savings assertions are stable across CI runs.
+// ============================================================================
+
+/**
+ * Large code-search result — `rowCount` rows concentrated across a small
+ * number of files. Exercises columnar dedup (`file` column) and substring
+ * repetition (common import-like prefixes in snippets). Deterministic.
+ */
+export function makeLargeCodeSearchResult(rowCount: number) {
+  const files = [
+    'src/services/batch/handlers/query.ts',
+    'src/services/batch/handlers/change.ts',
+    'src/services/batch/handlers/context.ts',
+  ];
+  const snippetPrefixes = [
+    'export async function handleSearch',
+    'const resultStr = formatResult(result, FORMAT_RESULT_MAX_SEARCH);',
+    'return ok(formatResult(result), refs, result);',
+  ];
+  const results = Array.from({ length: rowCount }, (_, i) => ({
+    file: files[i % files.length],
+    line: 10 + (i * 7) % 500,
+    snippet: `${snippetPrefixes[i % snippetPrefixes.length]} // hit ${i}`,
+  }));
+  return {
+    queries: ['handleSearch', 'formatResult'],
+    results,
+    total_matches: rowCount,
+  };
+}
+
+/**
+ * Repetitive issues result — many entries with a small severity/rule
+ * vocabulary. Exercises dictionary coding of repeated short column values.
+ */
+export function makeRepetitiveIssuesResult(issueCount: number) {
+  const severities = ['error', 'warning', 'info'];
+  const rules = [
+    'no-unused-vars',
+    'prefer-const',
+    'ts2322',
+    'ts2355',
+    'ts7006',
+  ];
+  const files = [
+    'src/services/batch/handlers/query.ts',
+    'src/services/batch/handlers/change.ts',
+    'src/services/batch/handlers/system.ts',
+    'src/utils/toon.ts',
+  ];
+  const issues = Array.from({ length: issueCount }, (_, i) => ({
+    file: files[i % files.length],
+    line: 20 + (i * 13) % 800,
+    severity: severities[i % severities.length],
+    rule: rules[i % rules.length],
+    message: `Issue ${i}: ${rules[i % rules.length]} fired at this location`,
+  }));
+  return {
+    total: issueCount,
+    by_severity: {
+      error: issues.filter((x) => x.severity === 'error').length,
+      warning: issues.filter((x) => x.severity === 'warning').length,
+      info: issues.filter((x) => x.severity === 'info').length,
+    },
+    issues,
+  };
+}
+
+/**
+ * Tree listing — deep directory structure with shared path prefixes.
+ * Exercises substring-prefix dictionary coding. `depth` controls nesting;
+ * `breadth` is files per directory.
+ */
+export function makeTreeListingResult(depth: number, breadth: number) {
+  const segments = ['services', 'batch', 'handlers', 'utils', 'components', 'stores'];
+  const entries: Array<{ path: string; size: number; kind: 'file' | 'dir' }> = [];
+  for (let d = 0; d < depth; d++) {
+    const dirPath = 'src/' + segments.slice(0, d + 1).join('/');
+    entries.push({ path: dirPath, size: 0, kind: 'dir' });
+    for (let b = 0; b < breadth; b++) {
+      entries.push({
+        path: `${dirPath}/file${b}.ts`,
+        size: 1024 + (d * 100 + b * 17) % 4096,
+        kind: 'file',
+      });
+    }
+  }
+  return {
+    root: 'src',
+    total: entries.length,
+    entries,
+  };
+}
+
+/**
+ * Grouped code-search result — rows sorted so several columns stay constant
+ * within each group (file, severity, kind, source). Exercises the ditto pass
+ * in a way the round-robin fixtures do not (those cycle column values and
+ * never leave two adjacent rows agreeing on a key). Shape mirrors real
+ * grouped backend output from FTS / issue detectors where results arrive
+ * clustered by rule + severity + source.
+ *
+ * `groupCount` groups of `groupSize` rows each. Total rows = groupCount * groupSize.
+ */
+export function makeGroupedSearchResult(groupSize: number, groupCount: number) {
+  const files = [
+    'src/services/batch/handlers/query.ts',
+    'src/services/batch/handlers/change.ts',
+    'src/services/batch/handlers/context.ts',
+    'src/services/batch/handlers/system.ts',
+  ];
+  const severities = ['error', 'warning', 'info'];
+  const kinds = ['type_error', 'style', 'lint', 'logic'];
+  const sources = ['tsc', 'eslint', 'detector'];
+  const snippetPrefixes = [
+    'export async function handleSearch',
+    'const resultStr = formatResult(result, FORMAT_RESULT_MAX_SEARCH);',
+    'return ok(formatResult(result), refs, result);',
+  ];
+
+  const results: Array<{
+    file: string;
+    line: number;
+    severity: string;
+    kind: string;
+    source: string;
+    snippet: string;
+  }> = [];
+
+  for (let g = 0; g < groupCount; g++) {
+    const file = files[g % files.length];
+    const severity = severities[g % severities.length];
+    const kind = kinds[g % kinds.length];
+    const source = sources[g % sources.length];
+    for (let r = 0; r < groupSize; r++) {
+      const absolute = g * groupSize + r;
+      results.push({
+        file,
+        line: 10 + (absolute * 7) % 500,
+        severity,
+        kind,
+        source,
+        snippet: `${snippetPrefixes[absolute % snippetPrefixes.length]} // hit ${absolute}`,
+      });
+    }
+  }
+
+  return {
+    queries: ['handleSearch', 'formatResult'],
+    results,
+    total_matches: results.length,
+  };
+}
+
+/**
+ * Low-redundancy negative control — random-looking rows with no shared
+ * column values or substrings. The encoder MUST return null on this input
+ * (nothing to compress); used to validate auto-disable gating.
+ */
+export function makeLowRedundancyResult(rowCount: number) {
+  const results: Array<{ id: string; label: string; payload: string }> = [];
+  let seed = 0x9e3779b1;
+  const next = () => {
+    seed = Math.imul(seed ^ (seed >>> 16), 0x85ebca6b) >>> 0;
+    seed = Math.imul(seed ^ (seed >>> 13), 0xc2b2ae35) >>> 0;
+    seed = (seed ^ (seed >>> 16)) >>> 0;
+    return seed;
+  };
+  const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
+  const rand = (len: number) => {
+    let s = '';
+    for (let i = 0; i < len; i++) s += chars[next() % chars.length];
+    return s;
+  };
+  for (let i = 0; i < rowCount; i++) {
+    results.push({
+      id: rand(10),
+      label: rand(14),
+      payload: rand(24),
+    });
+  }
+  return { kind: 'low_redundancy_control', count: rowCount, results };
+}
+
 /** Structured search.memory-style payload. */
 export function makeMemorySearchStructured() {
   return {

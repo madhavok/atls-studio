@@ -727,6 +727,27 @@ export function Settings({ isOpen, onClose }: SettingsProps) {
                   }`} />
                 </button>
               </div>
+
+              {/* Tool-Result Compression (experimental) */}
+              <div className="flex items-center justify-between">
+                <div>
+                  <span className="text-sm font-medium">Tool-Result Compression <span className="text-xs text-studio-muted">(experimental)</span></span>
+                  <p className="text-xs text-studio-muted">
+                    Dictionary + ditto + key-abbreviation encoder on tabular tool results.
+                    Auto-disables on payloads that would not save tokens.
+                  </p>
+                </div>
+                <button
+                  onClick={() => setLocalSettings(prev => ({ ...prev, compressToolResults: !prev.compressToolResults }))}
+                  className={`w-12 h-6 rounded-full transition-colors ${
+                    localSettings.compressToolResults ? 'bg-studio-accent' : 'bg-studio-border'
+                  }`}
+                >
+                  <div className={`w-5 h-5 bg-white rounded-full shadow transition-transform ${
+                    localSettings.compressToolResults ? 'translate-x-6' : 'translate-x-0.5'
+                  }`} />
+                </button>
+              </div>
             </div>
           )}
 

@@ -2,6 +2,9 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
 import "./index.css";
+// Side-effect import: registers the input-compression encoder with toon.ts
+// (mirrors `registerDriftCorrectionProvider` pattern in tokenCounter.ts).
+import "./utils/toolResultCompression";
 
 // Bootstrap the React application into the DOM root element
 const rootElement = document.getElementById("root");
