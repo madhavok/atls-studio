@@ -458,6 +458,7 @@ const ContextMeter = memo(function ContextMeter() {
   const sessionCostCents = useCostStore(state => state.sessionCostCents);
   const sessionInputTokens = useCostStore(state => state.sessionInputTokens);
   const sessionOutputTokens = useCostStore(state => state.sessionOutputTokens);
+  const sessionApiCalls = useCostStore(state => state.sessionApiCalls);
   const dailyUsage = useCostStore(state => state.dailyUsage);
   
   // Compute today's totals in useMemo to avoid infinite loop
@@ -469,6 +470,13 @@ const ContextMeter = memo(function ContextMeter() {
   }, [dailyUsage]);
 
   const promptOverhead = (pm.totalOverheadTokens || 0) - (pm.entryManifestTokens ?? 0);
+  const sessionTokensTitle = [
+    'Cumulative provider tokens since app launch (not one prompt size).',
+    `Sum of input across ${sessionApiCalls.toLocaleString()} recorded API call${sessionApiCalls === 1 ? '' : 's'}: main chat counts each tool-loop round separately (full prompt each time); subagent rounds included; swarm workers excluded from this total by default.`,
+    '',
+    `Input: ${sessionInputTokens.toLocaleString()} | Output: ${sessionOutputTokens.toLocaleString()}`,
+  ].join('\n');
+
   const hoverBreakdown = [
     'Context window budget:',
     `• Working memory: ${chunkCount} chunks → ${formatTokens(wmTokens)} (prompt WM)`,
@@ -508,7 +516,7 @@ const ContextMeter = memo(function ContextMeter() {
         )}
         {/* Input/output token split */}
         {(sessionInputTokens > 0 || sessionOutputTokens > 0) && (
-          <span className="shrink-0 text-studio-text-secondary" title={`Session input: ${sessionInputTokens.toLocaleString()} | output: ${sessionOutputTokens.toLocaleString()}`}>
+          <span className="shrink-0 text-studio-text-secondary" title={sessionTokensTitle}>
             in:{formatTokens(sessionInputTokens)} out:{formatTokens(sessionOutputTokens)}
           </span>
         )}

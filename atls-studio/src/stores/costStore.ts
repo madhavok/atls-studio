@@ -336,10 +336,18 @@ interface CostState {
   subAgentUsages: SubAgentUsage[];
   chatSubAgentCostCents: number;
 
-  // Current session totals (reset on app restart)
+  /**
+   * Session = since app launch (until resetSession / clearAllData).
+   * Input/output are sums of provider-reported tokens per HTTP request:
+   * main chat (each agent/tool-loop round is its own request with a full prompt),
+   * plus every subagent round. Parallel swarm workers omit costStore when
+   * affectMainChatMetrics is false. Not comparable to the context-meter bar
+   * (single-round prompt estimate).
+   */
   sessionInputTokens: number;
   sessionOutputTokens: number;
   sessionCostCents: number;
+  /** Count of recordUsage calls this session (one per billed API request in costStore). */
   sessionApiCalls: number;
 
   // HPP v2: Output efficiency tracking
