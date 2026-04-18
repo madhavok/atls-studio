@@ -18,6 +18,14 @@ function isValidStepId(id: string): boolean {
 
 export type ValidateBatchStepsResult = { ok: true } | { ok: false; error: string };
 
+/** Targeted hint for the most common "invented op" mistakes we observe. */
+function hintForUnknownOp(useRaw: string): string {
+  if (/^subtask[.:_-]/i.test(useRaw) || /^subtask$/i.test(useRaw)) {
+    return ' — there is no subtask:* operation; use session.advance (sa) with subtask:<id> summary:"<findings>"';
+  }
+  return '';
+}
+
 /** Minimal shape for validation (matches `Step` and loose JSON from tool args). */
 export type BatchStepLike = { id?: unknown; use?: unknown };
 
@@ -46,9 +54,10 @@ export function validateBatchSteps(steps: ReadonlyArray<BatchStepLike>): Validat
     if (!deferredToExecutor) {
       const normalized = normalizeOperationUse(useRaw.toLowerCase()) as string;
       if (!CANONICAL_OPS.has(normalized)) {
+        const hint = hintForUnknownOp(useRaw);
         return {
           ok: false,
-          error: `unknown operation at step ${id}: "${useRaw}"`,
+          error: `unknown operation at step ${id}: "${useRaw}"${hint}`,
         };
       }
     }

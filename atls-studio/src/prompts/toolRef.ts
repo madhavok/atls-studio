@@ -40,7 +40,7 @@ ${generateFamilyLines()}
 ${generateShorthandLegend()}
 
 ### Common Params (short codes in Key above; full names always accepted)
-sa subtask?:name summary:required
+sa subtask?:id summary:required — \`subtask\` is the id **before** the colon in spl (e.g. \`analyze\`, NOT the title \`Inspect\`). Omit to advance the currently active subtask. There is no \`subtask:*\` operation; never set \`use\` to \`subtask:...\`.
 spl goal:"required" subtasks:id1:Title1,id2:Title2 — comma-separated id:title lines, or JSON [{id,title},…]; h: prefixes are labels, not UHPP expansion targets
 rc type:full|tree ps:path1,path2 depth?:N glob?:pattern line_range?:start-end max_lines?:N
   type:full = whole-file body. type:tree = directory listing (not file content).

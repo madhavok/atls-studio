@@ -28,4 +28,19 @@ describe('validateBatchSteps', () => {
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.error).toContain('unknown operation');
   });
+
+  it('hints at session.advance when use looks like subtask:*', () => {
+    const r = validateBatchSteps([{ id: 'sa', use: 'subtask:trace' }]);
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.error).toContain('unknown operation');
+      expect(r.error).toContain('session.advance');
+    }
+  });
+
+  it('hints at session.advance for bare "subtask" use', () => {
+    const r = validateBatchSteps([{ id: 'sa', use: 'subtask' }]);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toContain('session.advance');
+  });
 });

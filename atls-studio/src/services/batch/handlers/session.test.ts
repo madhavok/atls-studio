@@ -124,6 +124,66 @@ describe('handleTaskAdvance', () => {
     expect(result.summary).toContain('task_advance: c(active)');
   });
 
+  it('resolves subtask by human title when passed instead of id (unique match)', async () => {
+    const plan = {
+      goal: 'review',
+      subtasks: [
+        { id: 'analyze', title: 'Inspect', status: 'active' as const },
+        { id: 'report', title: 'Summarize', status: 'pending' as const },
+      ],
+      activeSubtaskId: 'analyze' as string | null,
+    };
+    useContextStore.getState().setTaskPlan(plan);
+
+    const result = await handleTaskAdvance(
+      { subtask: 'Inspect', summary: 'Completed inspect phase: traced runtime boot, context store, and batch executor surface.' },
+      createMockCtx() as unknown as Parameters<typeof handleTaskAdvance>[1],
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.summary).toContain('task_advance: analyze(active)');
+  });
+
+  it('advances via case-insensitive id match', async () => {
+    const plan = {
+      goal: 'x',
+      subtasks: [
+        { id: 'Analyze', title: 'Inspect', status: 'active' as const },
+        { id: 'Report', title: 'Summarize', status: 'pending' as const },
+      ],
+      activeSubtaskId: 'Analyze' as string | null,
+    };
+    useContextStore.getState().setTaskPlan(plan);
+
+    const result = await handleTaskAdvance(
+      { subtask: 'analyze', summary: 'Case-insensitive id match — advance phase with enough detail to satisfy min.' },
+      createMockCtx() as unknown as Parameters<typeof handleTaskAdvance>[1],
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.summary).toContain('task_advance: Analyze(active)');
+  });
+
+  it('rejects ambiguous title match (two subtasks share a title)', async () => {
+    const plan = {
+      goal: 'x',
+      subtasks: [
+        { id: 'a', title: 'Inspect', status: 'active' as const },
+        { id: 'b', title: 'Inspect', status: 'pending' as const },
+      ],
+      activeSubtaskId: 'a' as string | null,
+    };
+    useContextStore.getState().setTaskPlan(plan);
+
+    const result = await handleTaskAdvance(
+      { subtask: 'Inspect', summary: 'Ambiguous title — should not pick silently; enough chars to pass the summary gate.' },
+      createMockCtx() as unknown as Parameters<typeof handleTaskAdvance>[1],
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain('not found in plan');
+  });
+
   it('resolves colon-prefixed string subtasks from session.plan for explicit session.advance', async () => {
     const ctx = createMockCtx() as unknown as Parameters<typeof handleTaskPlan>[1];
     const planResult = await handleTaskPlan(

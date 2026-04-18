@@ -182,6 +182,31 @@ function expandBatchStepsForUiDisplay(steps: Record<string, unknown>[]): Step[] 
     lookahead.length > 0 && !isPressured(store) ? [...expanded, ...lookahead] : expanded;
   return withLookahead.length > 0 ? withLookahead : (steps as unknown as Step[]);
 }
+
+/**
+ * Finalize UI status for batch step rows using the executor's authoritative
+ * step outcomes. Previous logic parsed displayText line-by-index, which marked
+ * N-1 rows "completed" when a single `__batch_validation__` line came back.
+ *
+ * Rules:
+ * - Row id matches an outcome id → status mirrors outcome.ok.
+ * - Row has no matching outcome → "failed" (step never ran: validation aborted,
+ *   intent expansion dropped it, or executor stopped early).
+ */
+export function finalizeBatchAgentProgress(
+  summaries: AgentToolSummary[],
+  outcomes: Array<{ id: string; ok: boolean }> | undefined,
+  _batchOk: boolean | undefined,
+): AgentToolSummary[] {
+  const outcomeById = new Map<string, boolean>();
+  for (const o of outcomes ?? []) outcomeById.set(o.id, o.ok);
+  return summaries.map((row) => {
+    const okVal = row.stepId ? outcomeById.get(row.stepId) : undefined;
+    const status: AgentToolSummary['status'] =
+      okVal === undefined ? 'failed' : okVal ? 'completed' : 'failed';
+    return { ...row, status };
+  });
+}
 import {
   BLACKBOARD_BUDGET_TOKENS,
   STAGED_BUDGET_TOKENS,
@@ -264,6 +289,9 @@ interface ToolExecutionMeta {
   pendingAction?: AgentPendingActionState;
   completionBlocker?: string | null;
   syntheticChildren?: ToolCallEvent[];
+  /** Present only for `batch`: per-step id → ok map for UI progress finalization. */
+  batchOk?: boolean;
+  batchStepOutcomes?: Array<{ id: string; ok: boolean }>;
 }
 
 interface ToolExecutionResult {
@@ -2874,13 +2902,16 @@ async function streamChatViaTauri(
           });
           result = execution.displayText;
 
-          // Final agentProgress update for batch (mark all remaining as completed/failed)
+          // Final agentProgress update for batch: use authoritative per-step outcomes
+          // from the executor, not a line-index walk over displayText. Validation
+          // failures produce a single summary line but N planned UI rows, so indexing
+          // the text used to mark rows 1..N-1 "completed" falsely.
           if (tc.name === 'batch' && batchStepSummaries) {
-            const stepResults = (execution.displayText.match(/^[^\n]+/gm) || []).map(line => line.trim());
-            const completedBatchSteps = batchStepSummaries.map((summary, index) => ({
-              ...summary,
-              status: stepResults[index]?.includes('ERROR') || stepResults[index]?.includes('BLOCKED') ? 'failed' as const : 'completed' as const,
-            }));
+            const completedBatchSteps = finalizeBatchAgentProgress(
+              batchStepSummaries,
+              execution.meta?.batchStepOutcomes,
+              execution.meta?.batchOk,
+            );
             const current = useAppStore.getState().agentProgress.recentTools.filter(t => t.parentId !== tc.id);
             useAppStore.getState().setAgentProgress({ recentTools: [...current, ...completedBatchSteps] });
           }
@@ -3464,12 +3495,15 @@ async function executeToolCallDetailed(
         const pendingAction = analyzeBatchPendingAction(result);
         const completionBlocker = deriveMutationCompletionBlocker(result);
         const syntheticChildren = buildBatchSyntheticToolCalls(result, args);
+        const batchStepOutcomes = result.step_results.map((s) => ({ id: s.id, ok: s.ok }));
         return {
           displayText,
           meta: {
             ...(pendingAction ? { pendingAction } : {}),
             ...(syntheticChildren.length > 0 ? { syntheticChildren } : {}),
             completionBlocker,
+            batchOk: result.ok,
+            batchStepOutcomes,
           },
         };
       }

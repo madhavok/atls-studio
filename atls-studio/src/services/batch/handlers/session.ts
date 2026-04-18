@@ -93,9 +93,26 @@ export const handleTaskAdvance: OpHandler = async (params, ctx) => {
     subtaskId = next.id;
   }
 
-  const target = plan.subtasks.find(s => s.id === subtaskId);
+  // Primary: exact id match. Fallbacks handle common model mistakes where the
+  // model passes the human title (`Inspect`) or a wrong-case id — reject only
+  // when the fallback is ambiguous, so plans never advance to the wrong row.
+  let target = plan.subtasks.find(s => s.id === subtaskId);
+  if (!target) {
+    const needle = subtaskId.toLowerCase();
+    const byIdCI = plan.subtasks.filter(s => s.id.toLowerCase() === needle);
+    if (byIdCI.length === 1) {
+      target = byIdCI[0];
+      subtaskId = target.id;
+    } else {
+      const byTitle = plan.subtasks.filter(s => s.title.trim().toLowerCase() === needle);
+      if (byTitle.length === 1) {
+        target = byTitle[0];
+        subtaskId = target.id;
+      }
+    }
+  }
   if (!target) return err(`task_advance: ERROR subtask "${subtaskId}" not found in plan`);
-  if (target?.status === 'done') return err(`task_advance: ERROR subtask "${subtaskId}" already done`);
+  if (target.status === 'done') return err(`task_advance: ERROR subtask "${subtaskId}" already done`);
 
   const summary = typeof params.summary === 'string' ? (params.summary as string).trim() : '';
   if (summary.length < 50) {
