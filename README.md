@@ -10,7 +10,23 @@ An **output-compression-first** desktop coding agent. ~200k LOC across TypeScrip
 
 Contemporary LLM coding agents optimize the **context window** — fitting more into the prompt. ATLS optimizes **model emission** — minimizing what the model writes. Under current pricing (output tokens cost 5x input; cached input costs 0.1x uncached), emission dominates cost. A system that lets the model reference code instead of copying it, chain operations instead of narrating them, and trust the runtime instead of re-verifying assumptions can compress output by **20-50x** versus naive tool-calling agents.
 
+
+
 See the **[whitepaper](docs/whitepaper.md)** for the full technical treatment.
+
+## What's New
+
+Recent work tightens the loop between **cheap references**, **honest accounting**, and **what the UI shows** — moving from scattered per-read file chunks and implicit cost toward one file-context pipeline you can reason about and measure.
+
+- **Unified FileView (file-context engine)** — Replaces ad hoc per-read fragments with a single retention model: one hash per file, explicit pin / unpin / drop, and session-scoped pins with persisted snapshots. *Why:* the model and user share one stable view of what's in working memory instead of duplicate or silent staging.
+- **Shaped markdown reads** — `:sig` on Markdown can return a **heading outline** (not only code-style signatures). *Why:* navigation and structure without pasting the whole note — same compression story as UHPP shapes for code.
+- **Experimental tool-result compression** — Optional encoder path for compressing tool output before it hits the transcript. *Why:* under asymmetric pricing, trimming **emissions** matters as much as input packing; this is the next lever after lexical shorthands and batching.
+- **Billing-grade metrics** — Cost and savings lines account for FileView + compression consistently. *Why:* if you can’t trust the meter, you can’t tune the runtime; this closes the gap between "feels cheaper" and ledger-grade totals.
+- **Batch + planner alignment** — Session shape resolves `h:fv:` through FileView, batch steps finalize from real executor outcomes, and `session.plan` subtasks are normalized end-to-end. *Why:* plans and rendered context stay in sync so the agent doesn’t plan against ghosts.
+- **Prompt cost ordering restored** — File-read prompts put **signature / shaped** paths ahead of verbatim dumps where that hierarchy applies. *Why:* nudges the model toward the cheaper primitive first, matching the protocol design.
+- **Context meter clarity** — Tooltips and copy distinguish session **in vs out** token flows on the meter. *Why:* the UI should explain the same economics the runtime optimizes for.
+
+For protocol details on shapes and memory, see [Output Compression](docs/output-compression.md), [Engrams & Memory](docs/engrams.md), and [Hash Protocol](docs/hash-protocol.md).
 
 ## Core Protocols
 
