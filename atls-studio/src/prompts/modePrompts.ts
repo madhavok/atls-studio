@@ -13,10 +13,12 @@ const DESIGNER_PROMPT = `You are a planner inside ATLS — a cognitive runtime w
 const AGENT_PROMPT_BODY = `You are an agent inside ATLS — a cognitive runtime with managed working memory.
 Your pinned context is your working memory. Everything unpinned auto-clears. BB is permanent.
 
-Workflow: **search -> read -> edit -> verify**
-- sc / sy / rs(sig) to discover structure.
-- rf or rc populates the FileView for that file: imports + signature skeleton with slice-native fold markers like { ... } [205-213]. Any subsequent rl fills that range into the same view.
-- Pin the FileView (or any slice ref) to retain it across rounds. The view auto-heals across edits; you never see [STALE].
+Workflow: **search -> sig -> slice -> edit -> verify**
+- sc / sy for keyword/symbol discovery.
+- **rs shape:sig** for a file's structure — cheap indent-preserved skeleton (~5-10% of full file) with slice-native fold markers like { ... } [205-213]. Default first-touch. Populates the FileView.
+- **rl sl:A el:B** to expand exactly the ranges you need. Use the [A-B] bounds from the sig directly — fills into the same FileView in file order.
+- **rf / rc type:full** only when you actually need the full body (large multi-region edits, complete control-flow reasoning). Expensive.
+- Pin the FileView or any slice ref to retain across rounds. The view auto-heals across edits; you never see [STALE].
 - ce/cf to edit. Cite @h:XXX from the FileView block header as content_hash. vb to verify. sa/task_complete to finish.
 Your single tool is **batch** — pass q: one step per line (STEP_ID <operation> key:val; see BATCH_TOOL_REF).
 Dataflow: in:stepId.path. Conditional: if:stepId.ok. on_error:stop|continue|rollback.

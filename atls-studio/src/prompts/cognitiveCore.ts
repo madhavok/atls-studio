@@ -41,15 +41,19 @@ Edit inherits pin state: a pinned h:OLD becomes a pinned h:NEW after edit; unpin
 Edit hash chaining: after a successful edit, the file is at h:NEW (from edits_resolved / the [FRESH] response). ALL subsequent edits to that file MUST use h:NEW as content_hash or f:h:NEW — never the original h:OLD. The runtime auto-forwards once, but stale hashes beyond one hop are blocked.
 Self-diagnosis: if context feels wrong (missing refs, stale slices, spin loops), run \`st\` (stats) or \`db\` (debug) before re-reading.
 
-### READ PATTERNS — FileView
-Every read of a file lands in ONE live FileView block per path, not a pile of independent chunks.
-- First touch: rf OR rl any range — the FileView block appears in WM with imports + signature skeleton (indent-preserved). Folded bodies show as \`{ ... } [start-end]\` — pass that range straight to rl.
-- Slice: rl sl:A el:B — the slice overlays the matching folded signature in the same view, in file order. Multiple slices merge in place.
-- Full body: rf type:full or rc type:full — populates the fullBody slot of the same view. Overlap between fills and full body is deduped.
-- Pin: pi on any ref (view, sig, slice) keeps the view alive. Pinning a slice auto-promotes the parent view so the file-context survives.
-- Edits: cite @h:XXX from the FileView header as content_hash. Line numbers are current-revision; the view auto-heals across edits (shifted regions rebase, pinned content-changed regions refetch, stale content never reaches you). You will never see [STALE] on a FileView.
+### READ PATTERNS — FileView (cheapest first)
+Every read of a file lands in ONE live FileView block per path, not a pile of independent chunks. Progression is cost-ordered — do not skip ahead:
 
-rc type:full = whole-file body; rc type:tree = directory listing (not file content). For pure-discovery sig reads, \`rs shape:sig\` still works but \`rf\` is shorter and produces the same skeleton.
+1. **rs shape:sig ps:path** — indent-preserved signature skeleton (~5-10% of file size). Folded bodies render as \`{ ... } [A-B]\`; pass that range straight to rl. **Default first-touch.**
+2. **rl sl:A el:B f:path** — fills the exact range into the same FileView in file order. Multiple rl calls merge.
+3. **rf ps:path** — smart view (symbols, imports, related_files, issues). Richer than sig, heavier. Use when you need the dependency graph or issue list for a file, not when you just want to see its structure.
+4. **rf type:full / rc type:full** — the whole file body. Only when you actually need every line (large multi-region refactor, full control-flow reasoning).
+
+Pin (\`pi\`) on any ref (sig, slice, view, full) retains the view across rounds. Pinning a slice auto-promotes the parent view so the file-context survives. The view auto-heals across edits — shifted regions rebase, pinned content-changed regions refetch, stale content never reaches you; you will not see [STALE] on a FileView.
+
+Cite \`@h:XXX\` from the FileView header as \`content_hash\` for edits. Line numbers are current-revision.
+
+rc type:tree = directory listing (not file content).
 
 Other read primitives:
 - rl on **sc/sy** result hashes targets the formatted result text; use \`f\`+\`sl\`/\`el\` for source file lines.
@@ -75,7 +79,7 @@ BB read paths: **sm** = semantic search across regions (active/archived/bb); **b
 Templates: **tpl:NAME** entries are pre-seeded BB scaffolds, excluded from pin budget. Reference via h:bb:tpl:NAME inside bw content to structure output. Available: analysis, refactor, task, diff, issue, scope, status, complete.
 
 ### WORKFLOW ROUTING
-- Large file (>500L): rf → FileView skeleton appears with folded [A-B] ranges → rl on the ranges you need → pin the view or any slice → edit cites @h:XXX → verify.
+- Large file (>500L): rs shape:sig → FileView skeleton appears with folded [A-B] ranges → rl on the ranges you need → pin the view or any slice → edit cites @h:XXX → verify.
 - Cross-file symbol move -> cf(extract). Localized change -> ce.
 - Persist a plan to BB when it would not survive a compaction round, or for cross-cutting refactors with >=3 verification gates. Advance phases with sa(summary:"...").
 - **task_complete auto-verify**: runs verify.build exactly once when mutations occurred AND no prior vb has passed. Skips otherwise. On auto-verify failure, injects errors and continues — you must fix and re-complete.

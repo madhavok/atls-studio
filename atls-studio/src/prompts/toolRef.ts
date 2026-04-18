@@ -47,9 +47,9 @@ rc type:full|tree ps:path1,path2 depth?:N glob?:pattern line_range?:start-end ma
   Any read populates the live FileView for that file — see "## Working Memory — FileView" below.
 rl hash:h:XXXX lines:15-50 | f:path sl:N el:N context_lines?:0-5
   Line slices fill into the file's live FileView at their source position. For file engrams, lines are into that file snapshot. For sc/sy (search/symbol) result hashes, lines are into the formatted result text (engram body), not a source file — use f:+sl/el when you need real file lines.
-rf ps:path1,path2 type?:full — primary file entry point; produces a FileView (skeleton of imports+signatures). Pass type:full for the full body.
 rs ps:path1,path2 shape:sig|fold|grep|dedent|nocomment|exclude|concept|pattern|if|snap|refs|highlight max_files?:N
-  Power-user shape toolkit. rf auto-produces the sig skeleton into the FileView — reach for rs only when you need a non-default shape (grep a pattern, fold depth, strip comments, etc.). shape: is required.
+  shape:sig is the CHEAPEST first-touch for a file — indent-preserved signature skeleton (~5-10% of full size) with slice-native [A-B] fold markers. Use this BEFORE rf / rc type:full. shape: is required.
+rf ps:path1,path2 type?:full — smart view (symbols + imports + related + issues) by default; type:full for the whole body. HEAVIER than rs shape:sig; reach for it only when you need the dependency graph, issues list, or full content.
 sc qs:term1,term2 ps?:path1,path2 limit?:N compact?:true
 sy sn:name1,name2 limit?:N
 su sn:name1,name2 filter?:pattern limit?:N
@@ -121,7 +121,7 @@ is old_text:"text" new_text:"text" file_glob?:pattern max_matches?:N verify?:tru
 ix source_file:path sn?:s1 target_file:path — aliases: f, path, file_path, or ps:single_path
 
 ### Examples
-r1 rf ps:src/api.ts,src/db.ts
+r1 rs ps:src/api.ts,src/db.ts shape:sig
 p1 pi in:r1.refs
 e1 ce f:h:abc123:15-22 le:[{content:"function auth() { return true; }"}]
 -- minimal: hash ref carries identity + line range; only new content needed.
@@ -151,17 +151,17 @@ qs/queries, le/line_edits, sl/start_line, el/end_line, sf/severity_filter, ff/fo
 key/keys, cmd also auto-resolved
 
 ### Task Recipes (follow the matching recipe)
-Bug hunt: si -> rf top 3-5 suspects (skeleton emerges) -> rl slices + pi slices + bw finding per fn -> fix confirmed -> task_complete
-Feature: rf targets (skeleton emerges) -> spl -> rl slices + pi slices -> ce per subtask -> task_complete
+Bug hunt: si -> rs shape:sig top 3-5 suspects -> rl slices at [A-B] folds + pi slices + bw finding per fn -> fix confirmed -> task_complete
+Feature: rs shape:sig targets -> spl -> rl slices at [A-B] folds + pi slices -> ce per subtask -> task_complete
 Refactor: ax -> spl -> cf per extraction -> vb -> pi if failed (fix from h:ref) -> task_complete
 Refactor (split): ax -> cm dry_run:true -> cm dry_run:false -> vb -> task_complete
 Investigation: iv -> bw structured findings per target -> task_complete with report
-Review: rf targets (skeleton emerges) -> rl changed fns + pi slices -> bw review finding per fn -> task_complete
+Review: rs shape:sig targets -> rl changed fns at [A-B] folds + pi slices -> bw review finding per fn -> task_complete
 
-### Read Pattern (FileView — one view per file, auto-healing)
-- First touch: rf OR rl any range — FileView block appears in WM with imports + signature skeleton (indent-preserved). Folded bodies show as "{ ... } [start-end]" — pass that range straight to rl.
-- Slice: rl targets as needed — regions merge into the same view in file order; each fill overlays the matching folded signature.
-- Full body: rc type:full or rf type:full when a slice-based map is insufficient.
+### Read Pattern (FileView — one view per file, auto-healing, cheapest first)
+- First touch: **rs shape:sig** — cheap indent-preserved skeleton with [A-B] fold markers. FileView block appears in WM; folded bodies show as "{ ... } [A-B]".
+- Slice: **rl sl:A el:B** — uses the [A-B] bounds from the sig directly. Fills into the same view in file order.
+- Full body: **rc type:full** or **rf type:full** only when slicing isn't enough (large multi-region refactor, full control-flow reasoning).
 - Edits: cite **@h:XXX** from the block header as **content_hash**; line numbers are current-revision (auto-healed across file edits).
 - Markers: [edited L..-.. this round] = auto-refreshed content, reconsider prior reasoning. [REMOVED was L..-..] = content is gone, re-orient. The view itself never carries stale bodies.
 - Avoid re-reading the same span: the view persists across rounds. Add slices on demand.
@@ -183,7 +183,7 @@ Review: rf targets (skeleton emerges) -> rl changed fns + pi slices -> bw review
 - ps: actual paths or h:refs, not query strings. deletes/restore: paths or h:refs.
 - vb|vt|vl|vk: subprocess uses PATH with ATLS_TOOLCHAIN_PATH prepended. xe runs in PTY (may see different PATH).
 - xe: PowerShell — cmd saved to temp .ps1; prefer xg for git, vb|vt|vl|vk for checks.
-- prefer cheapest tool: one symbol -> sy; types -> vk; file list -> rc(tree); file structure -> rf (skeleton emerges automatically).
+- prefer cheapest tool: one symbol -> sy; types -> vk; file list -> rc(tree); file structure -> rs shape:sig (NOT rf — sig is ~5-10% of file size, rf defaults to smart which is heavier).
 - use dr/dd when cheap research suffices before a bigger reasoning pass.
 
 ## Working Memory — FileView
@@ -224,7 +224,7 @@ Use batch with q: only — one step per line: STEP_ID <operation> key:val (short
 
 Examples
 s1 sc qs:auth,login
-r1 rf ps:src/api.ts
+r1 rs ps:src/api.ts shape:sig
 
 d1 nd content:"# Plan" append:false
 bb1 bw key:design-decisions content:"..."`;
