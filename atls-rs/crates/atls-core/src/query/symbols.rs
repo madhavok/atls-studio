@@ -10,6 +10,20 @@ const ANCHOR_PREFIXES: &[&str] = &[
     "ctor", "property", "field", "operator", "event", "object", "actor", "union",
 ];
 
+/// Format a scope reference for `CompactSymbolUsage.used_by` with an optional
+/// first-reference line. Emits `<scope>@L<n>` when a line is known, falling
+/// back to the bare scope when the call line is unavailable.
+///
+/// This was added so agents can jump directly to the first call site —
+/// previously the output was `<module>` with no line, which still required a
+/// follow-up read to locate the actual call.
+fn format_scope_ref(scope: &str, first_line: Option<u32>) -> String {
+    match first_line {
+        Some(n) if n > 0 => format!("{}@L{}", scope, n),
+        _ => scope.to_string(),
+    }
+}
+
 /// Extract bare symbol name from fn(name)/cls(name) style. Returns original if not anchor format.
 fn extract_bare_symbol_for_lookup(s: &str) -> &str {
     let trimmed = s.trim();
@@ -705,9 +719,16 @@ impl QueryEngine {
             definitions.push(row?);
         }
 
-        // Scope-grouped references from calls table
+        // Scope-grouped references from calls table.
+        //
+        // Emits `<scope>@L<min_line>` for each (file, scope) group so the
+        // caller (agent) can jump directly to the first reference without a
+        // follow-up read. For module-scope calls (e.g. self-registration at
+        // the bottom of a module), the scope is the sentinel `<module>`, so
+        // output reads `<module>@L831` for the compression-toolkit case.
         let mut scope_stmt = conn.prepare(
-            "SELECT f.path, COALESCE(c.scope_name, '<module>') as scope, COUNT(*) as cnt
+            "SELECT f.path, COALESCE(c.scope_name, '<module>') as scope,
+                    COUNT(*) as cnt, MIN(c.line) as first_line
              FROM calls c
              JOIN files f ON c.file_id = f.id
              WHERE c.name = ?1 OR c.name LIKE '%.' || ?2
@@ -716,20 +737,26 @@ impl QueryEngine {
         )?;
         let scope_rows = scope_stmt.query_map(
             rusqlite::params![symbol_name, symbol_name],
-            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, usize>(2)?)),
+            |row| Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, usize>(2)?,
+                row.get::<_, Option<u32>>(3)?,
+            )),
         )?;
 
         let mut used_by: HashMap<String, Vec<String>> = HashMap::new();
         let mut total_refs: usize = 0;
         for row in scope_rows {
-            let (file, scope, count) = row?;
+            let (file, scope, count, first_line) = row?;
             total_refs += count;
-            used_by.entry(file).or_default().push(scope);
+            used_by.entry(file).or_default().push(format_scope_ref(&scope, first_line));
         }
 
-        // Supplement with symbol_relations callers (same grouping)
+        // Supplement with symbol_relations callers (same grouping).
         let mut rel_stmt = conn.prepare(
-            "SELECT f.path, COALESCE(c.scope_name, '<module>') as scope, COUNT(*) as cnt
+            "SELECT f.path, COALESCE(c.scope_name, '<module>') as scope,
+                    COUNT(*) as cnt, MIN(c.line) as first_line
              FROM symbol_relations sr
              JOIN symbols s2 ON sr.to_symbol_id = s2.id
              JOIN symbols s ON sr.from_symbol_id = s.id
@@ -741,13 +768,19 @@ impl QueryEngine {
         );
         if let Ok(ref mut stmt) = rel_stmt {
             if let Ok(rows) = stmt.query_map([symbol_name], |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, usize>(2)?))
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, usize>(2)?,
+                    row.get::<_, Option<u32>>(3)?,
+                ))
             }) {
                 for row in rows {
-                    if let Ok((file, scope, count)) = row {
+                    if let Ok((file, scope, count, first_line)) = row {
+                        let scope_ref = format_scope_ref(&scope, first_line);
                         let scopes = used_by.entry(file).or_default();
-                        if !scopes.contains(&scope) {
-                            scopes.push(scope);
+                        if !scopes.contains(&scope_ref) {
+                            scopes.push(scope_ref);
                             total_refs += count;
                         }
                     }
@@ -755,11 +788,13 @@ impl QueryEngine {
             }
         }
 
-        // Signature-based fallback for indirect usage (only if no call refs found)
+        // Signature-based fallback for indirect usage (only if no call refs found).
+        // Attach the declaring-symbol line so the agent still gets a jump-to
+        // target in the `scope@L<n>` format even in the fallback path.
         if used_by.is_empty() && symbol_name.len() >= 3 {
             let sig_pattern = format!("%{}%", symbol_name);
             let mut sig_stmt = conn.prepare(
-                "SELECT f.path, s.name
+                "SELECT f.path, s.name, s.line
                  FROM symbols s
                  JOIN files f ON s.file_id = f.id
                  WHERE s.signature LIKE ?1 AND s.name != ?2
@@ -768,14 +803,19 @@ impl QueryEngine {
             )?;
             let sig_rows = sig_stmt.query_map(
                 rusqlite::params![&sig_pattern, symbol_name],
-                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+                |row| Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, Option<u32>>(2)?,
+                )),
             )?;
             for row in sig_rows {
-                let (file, scope) = row?;
+                let (file, scope, sym_line) = row?;
                 total_refs += 1;
+                let scope_ref = format_scope_ref(&scope, sym_line);
                 let scopes = used_by.entry(file).or_default();
-                if !scopes.contains(&scope) {
-                    scopes.push(scope);
+                if !scopes.contains(&scope_ref) {
+                    scopes.push(scope_ref);
                 }
             }
         }
@@ -2431,11 +2471,31 @@ impl<T> OptionalResult<T> for rusqlite::Result<T> {
 
 #[cfg(test)]
 mod tests {
+    use super::format_scope_ref;
     use crate::db::queries::Queries;
     use crate::db::Database;
     use crate::query::QueryEngine;
     use crate::types::{Language, ParsedSymbol, SymbolKind, SymbolMetadata};
     use std::path::PathBuf;
+
+    // -- format_scope_ref (PR5) --
+    // The compact symbol-usage output had to be extended with `@L<line>` so
+    // agents can jump straight to the first reference. This guards that
+    // formatting across the known cases.
+
+    #[test]
+    fn format_scope_ref_attaches_line_when_present() {
+        assert_eq!(format_scope_ref("<module>", Some(831)), "<module>@L831");
+        assert_eq!(format_scope_ref("myFunction", Some(15)), "myFunction@L15");
+    }
+
+    #[test]
+    fn format_scope_ref_falls_back_when_line_missing() {
+        // Defensive: if the SQL `MIN(c.line)` ever returns NULL (no calls
+        // table rows), emit the bare scope rather than a misleading `@L0`.
+        assert_eq!(format_scope_ref("<module>", None), "<module>");
+        assert_eq!(format_scope_ref("<module>", Some(0)), "<module>");
+    }
 
     fn sym(name: &str, line: u32) -> ParsedSymbol {
         ParsedSymbol {

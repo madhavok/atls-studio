@@ -206,7 +206,20 @@ pub async fn handle_batch_query(
                 match context_type.as_str() {
                     "smart" => {
                         match query_engine.get_smart_context(&file_path) {
-                            Ok(context) => {
+                            Ok(mut context) => {
+                                // Surface trailing module-level call statements
+                                // (self-registration IIFEs, plugin installs) that
+                                // the declaration-only symbol index misses. Pure
+                                // string scan; failure to read content is a
+                                // no-op, not an error.
+                                let clean = file_path.trim_start_matches(r"\\?\");
+                                let abs = project.root_path().join(clean.replace('\\', "/"));
+                                if let Ok(src) = std::fs::read_to_string(&abs) {
+                                    atls_core::query::context::append_module_init_symbols(
+                                        &mut context,
+                                        &src,
+                                    );
+                                }
                                 results.push(serde_json::json!({
                                     "file": file_path,
                                     "context": context

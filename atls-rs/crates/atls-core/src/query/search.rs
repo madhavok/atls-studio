@@ -22,6 +22,17 @@ where
     s.serialize_f64(rounded)
 }
 
+/// Additional occurrence of a symbol that shares its `(name, signature)` with
+/// the kept top-ranked hit. Surfaces call sites, re-exports, and self-reference
+/// registrations that would otherwise disappear during cross-file dedup.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct CallSite {
+    pub file: String,
+    pub line: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
+}
+
 /// Code search result with optional snippet context
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CodeSearchResult {
@@ -49,7 +60,17 @@ pub struct CodeSearchResult {
     pub context_before: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub context_after: Option<Vec<String>>,
+    /// Other locations where this symbol appears with the same signature,
+    /// preserved across cross-file dedup so agents can see module-scope call
+    /// sites (self-registration, re-exports) without a second query. Capped
+    /// at MAX_CALL_SITES entries. Empty for unique hits.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub call_sites: Vec<CallSite>,
 }
+
+/// Maximum number of call-site references retained per deduped hit.
+/// Five is enough to carry declaration + up to four call-site anchors.
+const MAX_CALL_SITES: usize = 5;
 
 /// Compact search result for reduced token usage
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -611,6 +632,42 @@ struct RawSearchHit {
     parent_symbol: Option<String>,
 }
 
+/// Collapse identical `(symbol, signature)` hits across files, preserving
+/// displaced locations in the returned map for later attachment as
+/// `CodeSearchResult::call_sites`. Hits without a signature are left intact.
+///
+/// Behavior: first occurrence (best-ranked) of each `(symbol, signature)` key
+/// survives `retain`; each subsequent occurrence is removed from `hits` and
+/// appended to the displaced-map entry (capped at `MAX_CALL_SITES`). The
+/// surviving hit's caller is responsible for looking up its key in the map
+/// and attaching the vec to the emitted result.
+fn dedupe_by_signature_preserving_call_sites(
+    hits: &mut Vec<RawSearchHit>,
+) -> HashMap<(String, String), Vec<CallSite>> {
+    let mut sig_seen: HashSet<(String, String)> = HashSet::new();
+    let mut displaced: HashMap<(String, String), Vec<CallSite>> = HashMap::new();
+    hits.retain(|h| match &h.signature {
+        Some(sig) if !sig.is_empty() => {
+            let key = (h.symbol.clone(), sig.clone());
+            if sig_seen.insert(key.clone()) {
+                true
+            } else {
+                let entry = displaced.entry(key).or_default();
+                if entry.len() < MAX_CALL_SITES {
+                    entry.push(CallSite {
+                        file: h.file.clone(),
+                        line: h.line,
+                        kind: Some(h.kind.clone()),
+                    });
+                }
+                false
+            }
+        }
+        _ => true,
+    });
+    displaced
+}
+
 impl QueryEngine {
     /// Search code by intent/meaning using FTS5 with heuristic reranking and snippet extraction.
     pub fn search_code(
@@ -796,18 +853,12 @@ impl QueryEngine {
         // Cross-file dedup: collapse identical (name, signature) pairs that appear
         // across many files (e.g. `constructor` / `new()` in every test module).
         // First occurrence (best-ranked) wins; skip for symbols without signatures.
-        {
-            let mut sig_seen: HashSet<(String, String)> = HashSet::new();
-            raw_hits.retain(|h| {
-                match &h.signature {
-                    Some(sig) if !sig.is_empty() => {
-                        let key = (h.symbol.clone(), sig.clone());
-                        sig_seen.insert(key)
-                    }
-                    _ => true,
-                }
-            });
-        }
+        //
+        // Displaced hits are preserved as `call_sites` on the kept hit. This
+        // keeps the relevance-ranked top result intact while surfacing
+        // module-scope call sites (self-registration, re-exports) that the
+        // previous implementation silently dropped.
+        let call_sites_map = dedupe_by_signature_preserving_call_sites(&mut raw_hits);
 
         // Hybrid RRF: merge FTS order with embedding vector ranking when embeddings exist.
         let embed_provider = hybrid::default_provider();
@@ -896,6 +947,15 @@ impl QueryEngine {
                 let qualified_name = h.parent_symbol.as_ref().map(|p| {
                     format_qualified_symbol_name(&h.symbol, Some(p.as_str()))
                 });
+                // Attach preserved call sites for this (symbol, signature) group.
+                let call_sites = match &h.signature {
+                    Some(sig) if !sig.is_empty() => {
+                        call_sites_map.get(&(h.symbol.clone(), sig.clone()))
+                            .cloned()
+                            .unwrap_or_default()
+                    }
+                    _ => Vec::new(),
+                };
                 CodeSearchResult {
                     symbol: h.symbol,
                     file: h.file,
@@ -910,6 +970,7 @@ impl QueryEngine {
                     snippet: None,
                     context_before: None,
                     context_after: None,
+                    call_sites,
                 }
             })
             .collect();
@@ -1359,6 +1420,7 @@ impl QueryEngine {
                 snippet: None,
                 context_before: None,
                 context_after: None,
+                call_sites: Vec::new(),
             })
         })?;
 
@@ -1441,6 +1503,7 @@ impl QueryEngine {
                 snippet: None,
                 context_before: None,
                 context_after: None,
+                call_sites: Vec::new(),
             })
         })?;
 
@@ -1504,6 +1567,118 @@ pub(crate) fn search_embedding_ids_brute_force(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // -- Dedupe / call-sites preservation --
+    // Reproduces the scenario from the ATLS compression A/B runs where a
+    // self-registered module (decl in file A, invocation at module scope of
+    // file B sharing the same symbol name + signature) used to collapse to
+    // one hit, hiding the call site. The preserved call_sites map is what
+    // keeps the invocation visible after dedupe.
+
+    fn make_raw_hit(symbol: &str, file: &str, line: u32, kind: &str, signature: Option<&str>) -> RawSearchHit {
+        RawSearchHit {
+            symbol_id: None,
+            symbol: symbol.to_string(),
+            file: file.to_string(),
+            line,
+            kind: kind.to_string(),
+            relevance: 1.0,
+            raw_bm25: -1.0,
+            reason: None,
+            signature: signature.map(str::to_string),
+            parent_symbol: None,
+        }
+    }
+
+    #[test]
+    fn dedupe_preserves_call_sites_for_self_registration() {
+        // Mirrors: `sc qs:"registerCompressionProvider("` — declaration in
+        // toon.ts is the FTS rank-1 hit; the self-registration call at
+        // module scope of toolResultCompression.ts would otherwise be
+        // discarded because both carry `name=registerCompressionProvider`
+        // with an identical normalized signature.
+        let sig = "export function registerCompressionProvider(";
+        let mut hits = vec![
+            make_raw_hit(
+                "registerCompressionProvider",
+                "atls-studio/src/utils/toon.ts",
+                200,
+                "function",
+                Some(sig),
+            ),
+            make_raw_hit(
+                "registerCompressionProvider",
+                "atls-studio/src/utils/toolResultCompression.ts",
+                831,
+                "function",
+                Some(sig),
+            ),
+        ];
+
+        let displaced = dedupe_by_signature_preserving_call_sites(&mut hits);
+
+        assert_eq!(hits.len(), 1, "declaration hit should survive dedupe");
+        assert_eq!(hits[0].file, "atls-studio/src/utils/toon.ts");
+
+        let key = (
+            "registerCompressionProvider".to_string(),
+            sig.to_string(),
+        );
+        let sites = displaced.get(&key).expect("call site map entry exists");
+        assert_eq!(sites.len(), 1, "exactly one call site preserved");
+        assert_eq!(sites[0].file, "atls-studio/src/utils/toolResultCompression.ts");
+        assert_eq!(sites[0].line, 831);
+    }
+
+    #[test]
+    fn dedupe_caps_call_sites_at_max() {
+        // When the same signature appears in MAX_CALL_SITES + 2 files, we
+        // keep one declaration and exactly MAX_CALL_SITES preserved sites.
+        // Excess sites are dropped silently — prevents pathological
+        // memory/token blowup on ubiquitous symbols like `constructor`.
+        let sig = "fn new()";
+        let mut hits: Vec<RawSearchHit> = (0..(MAX_CALL_SITES + 3))
+            .map(|i| make_raw_hit("new", &format!("crate{}.rs", i), (i as u32) + 1, "function", Some(sig)))
+            .collect();
+
+        let displaced = dedupe_by_signature_preserving_call_sites(&mut hits);
+
+        assert_eq!(hits.len(), 1);
+        let key = ("new".to_string(), sig.to_string());
+        let sites = displaced.get(&key).expect("entry exists");
+        assert_eq!(sites.len(), MAX_CALL_SITES);
+    }
+
+    #[test]
+    fn dedupe_leaves_signatureless_hits_untouched() {
+        // Hits without a signature (e.g. raw identifier matches) should
+        // never be folded into a call-site group — same-name hits across
+        // unrelated files may be genuinely different symbols.
+        let mut hits = vec![
+            make_raw_hit("foo", "a.ts", 1, "variable", None),
+            make_raw_hit("foo", "b.ts", 5, "variable", None),
+        ];
+
+        let displaced = dedupe_by_signature_preserving_call_sites(&mut hits);
+
+        assert_eq!(hits.len(), 2, "signatureless hits pass through");
+        assert!(displaced.is_empty());
+    }
+
+    #[test]
+    fn dedupe_keeps_unrelated_symbols_separate() {
+        // Two distinct (symbol, signature) pairs must each yield their own
+        // surviving hit, with no cross-contamination in the displaced map.
+        let mut hits = vec![
+            make_raw_hit("foo", "a.ts", 1, "function", Some("fn foo()")),
+            make_raw_hit("bar", "b.ts", 5, "function", Some("fn bar()")),
+        ];
+
+        let displaced = dedupe_by_signature_preserving_call_sites(&mut hits);
+
+        assert_eq!(hits.len(), 2);
+        assert!(displaced.is_empty());
+    }
 
     // -- Unit tests for query pattern detection --
 
@@ -1741,6 +1916,7 @@ mod tests {
                 snippet: None,
                 context_before: None,
                 context_after: None,
+                call_sites: Vec::new(),
             },
             CodeSearchResult {
                 symbol: "refresh_token".into(),
@@ -1756,6 +1932,7 @@ mod tests {
                 snippet: None,
                 context_before: None,
                 context_after: None,
+                call_sites: Vec::new(),
             },
         ];
         apply_heuristic_rerank(&mut results, "refresh token");
@@ -1782,6 +1959,7 @@ mod tests {
                 snippet: None,
                 context_before: None,
                 context_after: None,
+                call_sites: Vec::new(),
             },
             CodeSearchResult {
                 symbol: "user".into(),
@@ -1797,6 +1975,7 @@ mod tests {
                 snippet: None,
                 context_before: None,
                 context_after: None,
+                call_sites: Vec::new(),
             },
         ];
         apply_heuristic_rerank(&mut results, "getUserById");
@@ -1833,6 +2012,7 @@ mod tests {
             snippet: Some("fn foo() { }".into()),
             context_before: None,
             context_after: None,
+            call_sites: Vec::new(),
         };
         let gm = result.to_group_match();
         assert_eq!(gm.symbol, "foo");
@@ -1858,6 +2038,7 @@ mod tests {
             snippet: Some("fn bar()".into()),
             context_before: None,
             context_after: None,
+            call_sites: Vec::new(),
         };
         let compact = result.to_compact();
         assert_eq!(compact.c.as_deref(), Some("fn bar()"));

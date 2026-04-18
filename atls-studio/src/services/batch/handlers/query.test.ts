@@ -235,6 +235,35 @@ describe('query handlers', () => {
     expect(out.summary).toMatch(/MANIFEST:.*ManifestHit/);
   });
 
+  it('handleSearchCode suppresses manifest note when caller scoped with file_paths', async () => {
+    // Scoped search = agent explicitly wants FTS within the named file.
+    // The manifest only carries signatures, not body text — deflecting to
+    // rc/rs would not satisfy the query. Nudge must stay silent.
+    vi.spyOn(useAppStore, 'getState').mockReturnValue({
+      projectProfile: {
+        entryManifest: [{ path: 'src/ManifestHit.ts' }],
+      },
+    } as any);
+
+    const ctx = {
+      atlsBatchQuery: vi.fn(async () => ({
+        results: [{
+          query: 'q',
+          results: [{ file: 'src/ManifestHit.ts', line: 1 }],
+        }],
+      })),
+      store: () => minimalStore(),
+    } as any;
+
+    const out = await handleSearchCode(
+      { queries: ['x'], file_paths: ['src/ManifestHit.ts'] },
+      ctx,
+    );
+    expect(out.ok).toBe(true);
+    expect(out.summary).not.toMatch(/MANIFEST:/);
+    expect(out.summary).toMatch(/^search:/);
+  });
+
   it('handleSearchSymbol errors when symbol_names missing', async () => {
     const ctx = { atlsBatchQuery: vi.fn(), store: () => minimalStore() } as any;
     const out = await handleSearchSymbol({}, ctx);

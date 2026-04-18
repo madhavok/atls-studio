@@ -78,12 +78,139 @@ pub struct IssueContext {
     pub severity: String,
 }
 
+/// Pure scan: find module-level call statements in `source` past `after_line`.
+///
+/// A "module-level call" is a line that starts at column 0 (no leading
+/// whitespace) with `<identifier>(` or `export const <ident> = (() =>`-style
+/// IIFE patterns. These aren't stored in the `symbols` table because they
+/// are expression statements, not declarations — yet they often carry the
+/// most load-bearing wiring in a module (self-registration, plugin install,
+/// side-effect imports).
+///
+/// The scan is intentionally language-agnostic and syntax-naive: it runs on
+/// raw text and handles JS/TS/Rust/Python call-statement shapes uniformly.
+/// False positives on rare grammar corners are acceptable — the agent sees
+/// `kind: "module_init"` and can read the line if it cares.
+///
+/// Returns `(line, identifier)` pairs, capped at `MAX_MODULE_INIT_ENTRIES`.
+pub fn scan_module_init_calls(source: &str, after_line: u32) -> Vec<(u32, String)> {
+    let mut out = Vec::new();
+    for (idx, raw) in source.lines().enumerate() {
+        let line_num = (idx as u32) + 1;
+        if line_num <= after_line {
+            continue;
+        }
+        if out.len() >= MAX_MODULE_INIT_ENTRIES {
+            break;
+        }
+        // Must start at column 0 (no indent = module scope in brace/indent languages).
+        if raw.is_empty() || raw.starts_with(' ') || raw.starts_with('\t') {
+            continue;
+        }
+        if let Some(ident) = extract_module_init_identifier(raw) {
+            out.push((line_num, ident));
+        }
+    }
+    out
+}
+
+/// Extract the identifier that begins a module-init call on a raw source line.
+///
+/// Recognized shapes (identifier returned in parentheses):
+///   `registerFoo(` → `registerFoo`
+///   `export const __x: bool = (() => { ... registerFoo(...)` → no match here;
+///     the outer `export const` is a declaration, so it's in the symbols table
+///   `installPlugin(app, opts);` → `installPlugin`
+///
+/// Returns `None` for anything that is not a bare call-statement.
+fn extract_module_init_identifier(line: &str) -> Option<String> {
+    let trimmed = line.trim_end();
+    if trimmed.is_empty() {
+        return None;
+    }
+    // Reject lines that look like declarations — these already appear as
+    // real symbols in the index.
+    const DECL_PREFIXES: &[&str] = &[
+        "export ", "import ", "const ", "let ", "var ", "fn ", "pub ",
+        "function ", "class ", "interface ", "type ", "struct ", "enum ",
+        "impl ", "mod ", "trait ", "async ", "static ", "def ",
+        "//", "/*", "*", "#", "--",
+    ];
+    for p in DECL_PREFIXES {
+        if trimmed.starts_with(p) {
+            return None;
+        }
+    }
+
+    // Accept: first token is a plain identifier (possibly qualified with `.`)
+    // and the next non-identifier char is `(`.
+    let mut end = 0;
+    let bytes = trimmed.as_bytes();
+    while end < bytes.len() {
+        let c = bytes[end];
+        let is_ident = (c.is_ascii_alphanumeric()) || c == b'_' || c == b'$' || c == b'.';
+        if !is_ident {
+            break;
+        }
+        end += 1;
+    }
+    if end == 0 {
+        return None;
+    }
+    if end >= bytes.len() || bytes[end] != b'(' {
+        return None;
+    }
+    let ident = &trimmed[..end];
+    // Reject obvious control-flow / operator shapes.
+    if matches!(ident, "if" | "while" | "for" | "switch" | "match" | "return" | "await") {
+        return None;
+    }
+    Some(ident.to_string())
+}
+
+/// Append synthetic `module_init` symbol entries to a `SmartContextResult`.
+///
+/// Used by the MCP `context` handler after fetching the declaration-level
+/// symbols from the index, to also surface trailing module-level call
+/// statements that would otherwise be invisible in `smart`/`sig` views.
+/// Idempotent: safe to call with empty `source`, which is a no-op.
+pub fn append_module_init_symbols(result: &mut SmartContextResult, source: &str) {
+    if source.is_empty() {
+        return;
+    }
+    let last_symbol_line = result
+        .symbols
+        .iter()
+        .map(|s| s.line)
+        .max()
+        .unwrap_or(0);
+    let inits = scan_module_init_calls(source, last_symbol_line);
+    for (line, ident) in inits {
+        result.symbols.push(SymbolContext {
+            name: ident.clone(),
+            kind: "module_init".to_string(),
+            line,
+            signature: Some(format!("{}(...)  [module init]", ident)),
+        });
+    }
+}
+
 const MAX_CONTEXT_DEPTH: u32 = 8;
 const DEFAULT_CONTEXT_DEPTH: u32 = 3;
 const MAX_RELATED_FILES_LIMIT: usize = 100;
 const MAX_TOTAL_IMPORTS: usize = 1000;
 const MAX_IMPORTS_PER_LEVEL: i64 = 200;
 const DEFAULT_MODULE_DEPTH: u32 = 5;
+
+/// Max module-init entries surfaced per file in smart context.
+///
+/// Trailing module-level call statements (IIFEs, self-registrations, plugin
+/// installs) are emitted as synthetic `SymbolContext` entries with kind
+/// `module_init` so `rs shape:sig` and `rc type:smart` surface them alongside
+/// real declarations. Without this, bare module-level calls at the tail of a
+/// file are invisible to the shape view — that was the original cause of the
+/// "UNWIRED" false-negative during the compression A/B investigation.
+const MAX_MODULE_INIT_ENTRIES: usize = 8;
 
 /// True when a file is essentially a re-export scaffold — every non-comment
 /// line is `pub use`, `mod`, `pub mod`, `use`, `export { … } from …`,
@@ -897,12 +1024,130 @@ const DEFAULT_RELATED_FILES_LIMIT: usize = 10;
 
 #[cfg(test)]
 mod tests {
-    use super::is_reexport_only_module;
+    use super::{is_reexport_only_module, scan_module_init_calls, append_module_init_symbols};
+    use super::{SmartContextResult, SymbolContext};
     use crate::db::queries::Queries;
     use crate::db::Database;
     use crate::query::QueryEngine;
     use crate::types::{Language, ParsedSymbol, SymbolKind, SymbolMetadata};
     use std::path::PathBuf;
+
+    // -- Module-init scanning (PR4) --
+    // Reproduces the toolResultCompression.ts case where a trailing
+    // `registerCompressionProvider(...)` at module scope was invisible in
+    // `smart`/`sig` shape views, causing the "UNWIRED" false-negative.
+
+    #[test]
+    fn scan_finds_bare_module_level_call() {
+        let source = r#"function foo() { return 1; }
+
+registerFoo(options);
+"#;
+        let inits = scan_module_init_calls(source, 1);
+        assert_eq!(inits.len(), 1);
+        assert_eq!(inits[0].0, 3);
+        assert_eq!(inits[0].1, "registerFoo");
+    }
+
+    #[test]
+    fn scan_skips_indented_calls() {
+        // Indented = not module scope. These are already inside a declaration
+        // and will appear in the symbol index via the enclosing function.
+        let source = "function outer() {\n    registerFoo(options);\n}\n";
+        let inits = scan_module_init_calls(source, 0);
+        assert!(inits.is_empty(), "indented calls must not be picked up: {:?}", inits);
+    }
+
+    #[test]
+    fn scan_skips_declaration_prefixes() {
+        // `export const`, `function`, `class`, etc. are declarations — already
+        // in the symbols table. We only want bare expression statements.
+        let source = r#"export const foo = (() => {})();
+function bar() {}
+class Baz {}
+const x = 1;
+import { y } from './y';
+"#;
+        let inits = scan_module_init_calls(source, 0);
+        assert!(inits.is_empty(), "declaration prefixes must be skipped: {:?}", inits);
+    }
+
+    #[test]
+    fn scan_skips_control_flow_keywords() {
+        // `if`, `while`, etc. at column 0 are legal but not meaningful
+        // "module inits" — skip them to keep the output signal-to-noise high.
+        let source = "if (cond) { doThing(); }\nwhile (x) { y(); }\n";
+        let inits = scan_module_init_calls(source, 0);
+        assert!(inits.is_empty());
+    }
+
+    #[test]
+    fn scan_honors_after_line_boundary() {
+        // Caller passes the max line of declared symbols. Calls on or before
+        // that boundary are already part of some declaration body and are
+        // visible via normal symbol lookup.
+        let source = "registerA();\nfunction f() {}\nregisterB();\n";
+        let inits = scan_module_init_calls(source, 2);
+        assert_eq!(inits.len(), 1);
+        assert_eq!(inits[0].0, 3);
+        assert_eq!(inits[0].1, "registerB");
+    }
+
+    #[test]
+    fn scan_caps_at_max_entries() {
+        let mut src = String::new();
+        for i in 0..20 {
+            src.push_str(&format!("call{}();\n", i));
+        }
+        let inits = scan_module_init_calls(&src, 0);
+        assert_eq!(inits.len(), super::MAX_MODULE_INIT_ENTRIES);
+    }
+
+    #[test]
+    fn scan_handles_self_registration_pattern() {
+        // End-to-end case matching the A/B run that motivated this fix.
+        // Declaration-heavy file with a trailing registration call — the call
+        // must surface as `module_init` kind with line 5 on this fixture.
+        let source = r#"export function encodeFoo() {}
+export function decodeFoo() {}
+export function helper() {}
+
+registerCompressionProvider(isEnabled, encode, record);
+"#;
+        let mut result = SmartContextResult {
+            file: "fixture.ts".into(),
+            symbols: vec![
+                SymbolContext { name: "encodeFoo".into(), kind: "function".into(), line: 1, signature: None },
+                SymbolContext { name: "decodeFoo".into(), kind: "function".into(), line: 2, signature: None },
+                SymbolContext { name: "helper".into(),   kind: "function".into(), line: 3, signature: None },
+            ],
+            symbols_capped: false,
+            imports: vec![],
+            related_files: vec![],
+            issues: vec![],
+        };
+        append_module_init_symbols(&mut result, source);
+        let init_entries: Vec<_> = result.symbols.iter().filter(|s| s.kind == "module_init").collect();
+        assert_eq!(init_entries.len(), 1);
+        assert_eq!(init_entries[0].name, "registerCompressionProvider");
+        assert_eq!(init_entries[0].line, 5);
+        assert!(init_entries[0].signature.as_deref().unwrap().contains("module init"));
+    }
+
+    #[test]
+    fn append_is_noop_on_empty_source() {
+        let mut result = SmartContextResult {
+            file: "empty.ts".into(),
+            symbols: vec![],
+            symbols_capped: false,
+            imports: vec![],
+            related_files: vec![],
+            issues: vec![],
+        };
+        append_module_init_symbols(&mut result, "");
+        assert!(result.symbols.is_empty());
+    }
+
 
     #[test]
     fn reexport_only_module_detects_rust_mod_rs_stub() {

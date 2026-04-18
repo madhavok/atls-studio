@@ -418,6 +418,14 @@ export interface CodeSearchHitRow {
   file: string;
   line: number;
   end_line?: number;
+  /**
+   * Additional occurrences of this symbol preserved across cross-file dedup on
+   * the Rust side. Populated for declarations that collapse duplicate
+   * `(name, signature)` pairs; carries call sites, re-exports, and module-scope
+   * registrations that would otherwise be hidden. Empty or absent for unique hits.
+   * See `atls-rs/crates/atls-core/src/query/search.rs::CallSite`.
+   */
+  call_sites?: Array<{ file: string; line: number; kind?: string }>;
 }
 
 /**
@@ -433,18 +441,41 @@ export function flattenCodeSearchHits(result: unknown): CodeSearchHitRow[] {
   const outer = obj.results;
   if (!Array.isArray(outer)) return rows;
 
-  function pushRow(file: string | undefined, line: unknown, endLine: unknown) {
+  function pushRow(
+    file: string | undefined,
+    line: unknown,
+    endLine: unknown,
+    callSites?: CodeSearchHitRow['call_sites'],
+  ) {
     if (typeof file !== 'string' || !file.trim()) return;
     const ln = typeof line === 'number' && Number.isFinite(line) && line > 0 ? line : 1;
     const el = typeof endLine === 'number' && Number.isFinite(endLine) && endLine >= ln ? endLine : undefined;
-    rows.push({ file: file.trim(), line: ln, end_line: el });
+    const row: CodeSearchHitRow = { file: file.trim(), line: ln, end_line: el };
+    if (callSites && callSites.length > 0) row.call_sites = callSites;
+    rows.push(row);
+  }
+
+  function extractCallSites(raw: unknown): CodeSearchHitRow['call_sites'] {
+    if (!Array.isArray(raw)) return undefined;
+    const out: NonNullable<CodeSearchHitRow['call_sites']> = [];
+    for (const entry of raw) {
+      if (!entry || typeof entry !== 'object') continue;
+      const e = entry as Record<string, unknown>;
+      const file = typeof e.file === 'string' ? e.file : undefined;
+      const line = typeof e.line === 'number' && Number.isFinite(e.line) ? e.line : undefined;
+      if (!file || line === undefined) continue;
+      const kind = typeof e.kind === 'string' ? e.kind : undefined;
+      out.push(kind ? { file, line, kind } : { file, line });
+    }
+    return out.length > 0 ? out : undefined;
   }
 
   function walkRawHit(hit: Record<string, unknown>) {
     const file = (hit.file ?? hit.f ?? hit.path ?? hit.file_path) as string | undefined;
     const line = hit.line ?? hit.l;
     const endLine = hit.end_line ?? hit.endLine;
-    pushRow(file, line, endLine);
+    const callSites = extractCallSites(hit.call_sites);
+    pushRow(file, line, endLine, callSites);
   }
 
   for (const block of outer) {

@@ -27,8 +27,18 @@ import { formatResult, FORMAT_RESULT_MAX_SEARCH } from '../../../utils/toon';
 import { checkRetention } from './retention';
 import { useAppStore } from '../../../stores/appStore';
 
-/** Check if any result file paths overlap with the entry manifest and return a nudge note. */
-function getManifestHitNote(filePaths: string[]): string {
+/**
+ * Check if any result file paths overlap with the entry manifest and return a nudge note.
+ *
+ * When `wasScoped` is true (caller passed explicit `file_paths` to narrow the
+ * search), the nudge is suppressed: the agent clearly wanted FTS within that
+ * specific file and pointing them at `rc`/`rs` would not help — the entry
+ * manifest only carries signatures, not text. The nudge is meant for
+ * *unscoped* searches that incidentally hit a manifested file during
+ * discovery.
+ */
+function getManifestHitNote(filePaths: string[], wasScoped = false): string {
+  if (wasScoped) return '';
   if (filePaths.length === 0) return '';
   const manifest = useAppStore.getState().projectProfile?.entryManifest;
   if (!manifest?.length) return '';
@@ -226,7 +236,8 @@ export const handleSearchCode: OpHandler = async (params, ctx) => {
     if (retained.reused) return retained.output;
     const hash = ctx.store().addChunk(resultStr, 'search', queries.join(', '), undefined, summary);
     const tk = countTokensSync(resultStr);
-    const manifestNote = getManifestHitNote([...new Set(structuredContent.file_paths)]);
+    const wasScoped = Array.isArray(filePaths) && filePaths.length > 0;
+    const manifestNote = getManifestHitNote([...new Set(structuredContent.file_paths)], wasScoped);
     return {
       kind: 'search_results', ok: true,
       refs: [`h:${hash}`],

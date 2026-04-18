@@ -5,6 +5,12 @@
  * compression toggle is on, the serialized output of `formatResult` is fed
  * through `encodeToolResult` before being returned to the handler.
  *
+ * Self-registers with `toon.ts` at module load via
+ * `registerCompressionProvider(...)`; see the `__compressionWired` named
+ * export at the bottom of this file. That anchor exists so `sy
+ * __compressionWired` surfaces the wiring without having to scan the file
+ * tail for a trailing module-level call.
+ *
  * See `docs/input-compression-merit.md` for scope, risks, and kill criteria.
  *
  * ---------------------------------------------------------------------------
@@ -826,25 +832,33 @@ function splitJoin(s: string, find: string, replace: string): string {
 // Matches the `registerDriftCorrectionProvider` pattern in `contextHash.ts`.
 // No circular import: `toon.ts` only exposes the registrar, it does not import
 // from this module.
+//
+// Wrapped in a named `__compressionWired` IIFE export so symbol search (`sy`)
+// surfaces the wiring anchor directly, without relying on shape/sig views
+// that collapse bare trailing module-level calls. Runtime behavior is
+// identical to a bare call — the IIFE runs at import time.
 // ---------------------------------------------------------------------------
 
-registerCompressionProvider(
-  () => {
-    try {
-      return useAppStore.getState().settings.compressToolResults ?? false;
-    } catch {
-      return false;
-    }
-  },
-  (raw) => {
-    const result = encodeToolResult(raw);
-    return result ? { encoded: result.encoded, savedTokens: result.savedTokens } : null;
-  },
-  (tokensSaved) => {
-    try {
-      useAppStore.getState().addInputCompressionSavings(tokensSaved);
-    } catch {
-      // Store not available (e.g. in tests that mock appStore); swallow.
-    }
-  },
-);
+export const __compressionWired: boolean = (() => {
+  registerCompressionProvider(
+    () => {
+      try {
+        return useAppStore.getState().settings.compressToolResults ?? false;
+      } catch {
+        return false;
+      }
+    },
+    (raw) => {
+      const result = encodeToolResult(raw);
+      return result ? { encoded: result.encoded, savedTokens: result.savedTokens } : null;
+    },
+    (tokensSaved) => {
+      try {
+        useAppStore.getState().addInputCompressionSavings(tokensSaved);
+      } catch {
+        // Store not available (e.g. in tests that mock appStore); swallow.
+      }
+    },
+  );
+  return true;
+})();

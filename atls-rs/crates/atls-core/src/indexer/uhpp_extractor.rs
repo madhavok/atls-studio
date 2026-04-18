@@ -487,6 +487,47 @@ fn try_object_method_lines(lines: &[&str], total: usize) -> Vec<(String, usize)>
     results
 }
 
+/// JS/TS object-literal arrow-property methods (Tier 1.5d).
+///
+/// Matches `name: (args) => {` or `name: (args) => identifier(` patterns at
+/// any indent level, which is how Zustand store actions and React callback
+/// properties are commonly declared. Intentionally does not match type
+/// annotations (`foo: (n: number) => void`) — those end the arrow with a
+/// bare type keyword, not executable code.
+fn try_object_arrow_property_lines(lines: &[&str]) -> Vec<(String, usize)> {
+    // Capture: indent + name + `:` + optional `async` + `(...)` + `=>` + `{` or identifier+`(`
+    static RE: OnceLock<Regex> = OnceLock::new();
+    let re = RE.get_or_init(|| {
+        Regex::new(
+            r"^\s+(\w+)\s*:\s*(?:async\s+)?\([^)]*\)\s*(?::\s*[^=\n]*)?\s*=>\s*(?:\{|[A-Za-z_$][\w$]*\s*\()"
+        ).unwrap()
+    });
+
+    // Reject identifiers that are reserved words or known type-only keywords —
+    // these never mean "method here" even on a match.
+    let reject_names: &[&str] = &[
+        "if", "for", "while", "switch", "catch", "return", "new", "throw",
+        "else", "do", "try", "finally", "typeof", "instanceof", "delete", "void",
+        "type", "interface",
+    ];
+
+    let mut results = Vec::new();
+    for (i, line) in lines.iter().enumerate() {
+        let trimmed = line.trim_start();
+        if trimmed.is_empty() || trimmed.starts_with("//") || trimmed.starts_with('#') {
+            continue;
+        }
+        if let Some(caps) = re.captures(line) {
+            if let Some(m) = caps.get(1) {
+                let name = m.as_str();
+                if reject_names.contains(&name) { continue; }
+                results.push((name.to_string(), i));
+            }
+        }
+    }
+    results
+}
+
 /// Go `type Name struct/interface` declarations.
 fn try_go_type_lines(lines: &[&str], total: usize) -> Vec<(String, usize, &'static str)> {
     static RE: OnceLock<Regex> = OnceLock::new();
@@ -713,6 +754,28 @@ pub fn uhpp_extract_symbols(content: &str, lang: Option<&str>) -> Vec<ParsedSymb
         }
     }
 
+    // --- Tier 1.5d: object literal arrow-property methods ---
+    //
+    // Catches Zustand store actions and similar patterns:
+    //   `addInputCompressionSavings: (tokensSaved) => set(...)`
+    //   `handleClick: async (e) => { ... }`
+    //
+    // These were invisible to the symbol index, which is why
+    // `sy addInputCompressionSavings` returned 0 hits during the A/B
+    // investigation. Distinguished from type-annotation shapes
+    // (`foo: (n: number) => void`) by requiring the arrow to be followed by
+    // executable code (`{` or `identifier(`), never by a bare type keyword.
+    if matches!(lang_str, "typescript" | "javascript" | "ts" | "js" | "") {
+        for (name, line_idx) in try_object_arrow_property_lines(&lines) {
+            if comment_mask[line_idx] { continue; }
+            let key = (line_idx, name);
+            seen.entry(key).or_insert_with_key(|_| {
+                let attr_start = expand_to_attributes(&lines, line_idx);
+                ("fn", attr_start)
+            });
+        }
+    }
+
     // --- Tier 2: C-family return-type ---
     if is_cfamily_lang(lang_str) || lang_str.is_empty() {
         for (name, line_idx) in try_cfamily_fn_lines(&lines, total) {
@@ -924,6 +987,86 @@ fn build_body_preview(lines: &[&str], start: usize, end: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // -- Store-action / arrow-property indexing (PR5) --
+    // Zustand store actions (`name: (args) => set(...)`) were invisible to
+    // `sy` because `try_object_method_lines` only handles shorthand method
+    // syntax, not arrow-property syntax. These tests guard the new Tier 1.5d.
+
+    #[test]
+    fn extracts_zustand_store_action() {
+        let content = r#"import { create } from 'zustand';
+
+export const useAppStore = create((set) => ({
+  count: 0,
+  addInputCompressionSavings: (tokensSaved) => set((state) => ({
+    count: state.count + tokensSaved,
+  })),
+  resetCount: () => set({ count: 0 }),
+}));
+"#;
+        let symbols = uhpp_extract_symbols(content, Some("typescript"));
+        let names: Vec<&str> = symbols.iter().map(|s| s.name.as_str()).collect();
+        assert!(
+            names.contains(&"addInputCompressionSavings"),
+            "store action not indexed: {:?}",
+            names,
+        );
+        assert!(
+            names.contains(&"resetCount"),
+            "zero-arg arrow property not indexed: {:?}",
+            names,
+        );
+    }
+
+    #[test]
+    fn indexes_async_arrow_property() {
+        // `async (args) => { ... }` is a valid store action shape and must
+        // be recognized as a method.
+        let content = r#"const handlers = {
+  onSubmit: async (event) => {
+    await submitForm(event);
+  },
+};
+"#;
+        let symbols = uhpp_extract_symbols(content, Some("typescript"));
+        let names: Vec<&str> = symbols.iter().map(|s| s.name.as_str()).collect();
+        assert!(names.contains(&"onSubmit"), "async arrow property missed: {:?}", names);
+    }
+
+    #[test]
+    fn skips_type_annotation_arrow_properties() {
+        // `name: (args) => void` in an interface/type is NOT a method —
+        // the arrow is followed by a type keyword, not executable code.
+        // Indexing these as symbols would flood search results with phantom
+        // "methods" that have no implementation.
+        let content = r#"interface Handlers {
+  onSubmit: (event: Event) => void;
+  onChange: (value: string) => Promise<number>;
+  onReset: () => never;
+}
+"#;
+        let symbols = uhpp_extract_symbols(content, Some("typescript"));
+        let names: Vec<&str> = symbols.iter().map(|s| s.name.as_str()).collect();
+        // The interface `Handlers` itself is fine to index — we only want
+        // to make sure the type-annotation arrow properties did NOT sneak in.
+        assert!(!names.contains(&"onSubmit"), "type annotation indexed: {:?}", names);
+        assert!(!names.contains(&"onChange"), "type annotation indexed: {:?}", names);
+        assert!(!names.contains(&"onReset"), "type annotation indexed: {:?}", names);
+    }
+
+    #[test]
+    fn arrow_property_must_be_indented() {
+        // Arrow property at column 0 is usually a module-level const decl
+        // caught by Tier 1.5b, not an object literal member. Don't double-index.
+        let content = "name: (args) => set()\n";
+        let symbols = uhpp_extract_symbols(content, Some("typescript"));
+        let names: Vec<&str> = symbols.iter().map(|s| s.name.as_str()).collect();
+        // Column 0 `name: (...) => ...` is not valid JS syntax outside an
+        // object literal, so either nothing or an unrelated match is OK —
+        // just assert we don't produce a spurious `name` entry.
+        assert!(!names.contains(&"name"), "column-0 arrow property indexed: {:?}", names);
+    }
 
     #[test]
     fn test_rust_symbols() {
