@@ -71,15 +71,18 @@ describe('queryBySetSelector', () => {
     expect(result.entries[0].source).toBe('src/foo.ts');
   });
 
-  it('pinChunks blocks full-file reads (latest viewKind)', () => {
+  it('pinChunks now permits full-file pins (FileView treats full bodies as legitimate targets)', () => {
+    // PR4: skippedFullFile branch was relaxed — under the Unified FileView
+    // model, full-body views are legitimate pin targets. See the plan
+    // (Section 11 "Pin / HPP / supersededBy").
     const shortHash = addTestChunk('fn foo() { return 1; }', 'file', 'src/foo.ts');
 
     const { count, skippedFullFile } = useContextStore.getState().pinChunks([shortHash]);
 
-    expect(count).toBe(0);
-    expect(skippedFullFile).toBe(1);
+    expect(count).toBe(1);
+    expect(skippedFullFile).toBe(0);
     const result = useContextStore.getState().queryBySetSelector({ kind: 'pinned' });
-    expect(result.hashes).toHaveLength(0);
+    expect(result.hashes).toHaveLength(1);
   });
 
   it('pinChunks accepts shaped ref (h:XXXX:15-50) on derived chunks', () => {

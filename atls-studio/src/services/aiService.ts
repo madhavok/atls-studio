@@ -96,7 +96,7 @@ import type {
   StreamChunk,
 } from '../stores/appStore';
 import { useAppStore, getMessageParts } from '../stores/appStore';
-import { useContextStore, setCacheHitRateAccessor, setWorkspacesAccessor, setPromptMetricsAccessor, setRoundRefreshRevisionResolver, setRetentionMetricsAccessor, setRetentionResetAccessor } from '../stores/contextStore';
+import { useContextStore, setCacheHitRateAccessor, setWorkspacesAccessor, setPromptMetricsAccessor, setRoundRefreshRevisionResolver, setRetentionMetricsAccessor, setRetentionResetAccessor, setFileViewCounterBumper } from '../stores/contextStore';
 import { useRetentionStore } from '../stores/retentionStore';
 
 // Cross-store accessor wiring — breaks circular deps at runtime.
@@ -105,6 +105,7 @@ function initCrossStoreAccessors(): void {
   setCacheHitRateAccessor(() => useAppStore.getState().cacheMetrics.sessionHitRate);
   setWorkspacesAccessor(() => (useAppStore.getState().projectProfile?.workspaces as Array<{ name: string; path: string }>) ?? []);
   setPromptMetricsAccessor(() => useAppStore.getState().promptMetrics);
+  setFileViewCounterBumper((key, delta) => useAppStore.getState().incFileViewCounter(key, delta));
   setProjectPathGetter(() => useAppStore.getState().projectPath);
   setRecencyResolver((offset: number) => useContextStore.getState().resolveRecencyRef(offset));
   setEditRecencyResolver((offset: number) => useContextStore.getState().resolveEditRecencyRef(offset));

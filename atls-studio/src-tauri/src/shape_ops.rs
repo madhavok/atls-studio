@@ -1309,7 +1309,9 @@ fn extract_signatures(content: &str) -> String {
                 output.push(format!("{:>4}|{}", j + 1, lines[j]));
             }
         } else if *end_of_block > *line_num_0 + 1 {
-            output.push(format!("{:>4}|{} {{ ... }}  [{} lines]", line_num, sig.trim(), span));
+            // Slice-native fold marker: "[start-end]" directly matches read.lines sl/el params.
+            // Eliminates the mental arithmetic of translating "[N lines]" to a slice bound.
+            output.push(format!("{:>4}|{} {{ ... }} [{}-{}]", line_num, sig.trim(), line_num, end_of_block + 1));
         } else {
             output.push(format!("{:>4}|{}", line_num, sig.trim()));
         }
@@ -3763,6 +3765,50 @@ class KVParseStrategy(ParseStrategy):
         assert!(sigs.contains("add"), "sig should include function name: {}", sigs);
         assert!(sigs.contains("-> i32"), "simple return type should survive: {}", sigs);
         assert!(!sigs.contains("-> ..."), "simple return should not be folded: {}", sigs);
+    }
+
+    #[test]
+    fn test_sig_fold_marker_is_slice_native() {
+        // Folded multi-line blocks emit `{ ... } [start-end]` — the range
+        // the model passes directly to read.lines sl/el. No more `[N lines]`.
+        let content = "fn foo() {\n    let a = 1;\n    let b = 2;\n    a + b\n}";
+        let sigs = extract_signatures(content);
+        assert!(
+            sigs.contains("{ ... } [1-5]"),
+            "fold marker should be slice-native [1-5] for a 5-line block starting at L1: {}",
+            sigs
+        );
+        assert!(
+            !sigs.contains("lines]"),
+            "old [N lines] format must be gone: {}",
+            sigs
+        );
+    }
+
+    #[test]
+    fn test_sig_fold_marker_offset_block() {
+        // Block starts at a non-1 line; marker must reflect the real slice range.
+        let content = "// header\n// comment\n\nfn bar() {\n    let x = 1;\n    let y = 2;\n    x + y\n}";
+        let sigs = extract_signatures(content);
+        // bar starts at line 4, body spans to line 8 inclusive → [4-8]
+        assert!(
+            sigs.contains("{ ... } [4-8]"),
+            "slice-native marker should match source line range: {}",
+            sigs
+        );
+    }
+
+    #[test]
+    fn test_sig_short_block_still_verbatim() {
+        // 1-2 line blocks emit verbatim, no fold marker (matches pre-existing behavior).
+        let content = "type Foo = string;";
+        let sigs = extract_signatures(content);
+        assert!(sigs.contains("type Foo"), "short type alias should emit verbatim: {}", sigs);
+        assert!(
+            !sigs.contains("{ ... }"),
+            "single-line decl should not have fold marker: {}",
+            sigs
+        );
     }
 
     // -----------------------------------------------------------------------

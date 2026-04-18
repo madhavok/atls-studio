@@ -41,15 +41,17 @@ Edit inherits pin state: a pinned h:OLD becomes a pinned h:NEW after edit; unpin
 Edit hash chaining: after a successful edit, the file is at h:NEW (from edits_resolved / the [FRESH] response). ALL subsequent edits to that file MUST use h:NEW as content_hash or f:h:NEW — never the original h:OLD. The runtime auto-forwards once, but stale hashes beyond one hop are blocked.
 Self-diagnosis: if context feels wrong (missing refs, stale slices, spin loops), run \`st\` (stats) or \`db\` (debug) before re-reading.
 
-### READ PATTERNS
-Two patterns — pick by task shape:
-- **Same-batch slice (default)**: rs(sig)/sc gave predictable targets. \`rc\` + \`rl\` + \`pi\` in one batch. Full file auto-dematerializes — slice or lose. Best for targeted bug hunts, localized edits, reviewing a specific function.
-- **Read-then-slice (via sg)**: file structure is the information; slice targets emerge from reading. Round N: \`rc\` + \`sg\` the body. Round N+1: \`rl\` + \`pi\` slices + \`ust\` the stage. Use when the sig view hides the needed structure (mostly-data files, heavy JSX, config blobs) or when slices are interdependent. Costs one extra round plus staged budget.
+### READ PATTERNS — FileView
+Every read of a file lands in ONE live FileView block per path, not a pile of independent chunks.
+- First touch: rf OR rl any range — the FileView block appears in WM with imports + signature skeleton (indent-preserved). Folded bodies show as \`{ ... } [start-end]\` — pass that range straight to rl.
+- Slice: rl sl:A el:B — the slice overlays the matching folded signature in the same view, in file order. Multiple slices merge in place.
+- Full body: rf type:full or rc type:full — populates the fullBody slot of the same view. Overlap between fills and full body is deduped.
+- Pin: pi on any ref (view, sig, slice) keeps the view alive. Pinning a slice auto-promotes the parent view so the file-context survives.
+- Edits: cite @h:XXX from the FileView header as content_hash. Line numbers are current-revision; the view auto-heals across edits (shifted regions rebase, pinned content-changed regions refetch, stale content never reaches you). You will never see [STALE] on a FileView.
 
-rc shapes: **smart** = default trimmed view; **full**/**raw** = canonical file (authority for edits); **tree** = directory scaffold. **module**/**component**/**test** are role-scoped shapes passed through to the backend. For pure discovery, prefer \`rs shape:sig\`.
+rc type:full = whole-file body; rc type:tree = directory listing (not file content). For pure-discovery sig reads, \`rs shape:sig\` still works but \`rf\` is shorter and produces the same skeleton.
 
 Other read primitives:
-- rl for targeted reads: pin the rl slices, not the full file.
 - rl on **sc/sy** result hashes targets the formatted result text; use \`f\`+\`sl\`/\`el\` for source file lines.
 - vb/vl/vk/vt return h:refs with diagnostics. Pin to retain; unpin after fixing.
 - xe/xg return h:refs with command output. Pin if you need the output later.
@@ -73,7 +75,7 @@ BB read paths: **sm** = semantic search across regions (active/archived/bb); **b
 Templates: **tpl:NAME** entries are pre-seeded BB scaffolds, excluded from pin budget. Reference via h:bb:tpl:NAME inside bw content to structure output. Available: analysis, refactor, task, diff, issue, scope, status, complete.
 
 ### WORKFLOW ROUTING
-- Large file (>500L): rs(sig) + pin sig + rc (unpinned) + rl slices + pin slices + edit + verify.
+- Large file (>500L): rf → FileView skeleton appears with folded [A-B] ranges → rl on the ranges you need → pin the view or any slice → edit cites @h:XXX → verify.
 - Cross-file symbol move -> cf(extract). Localized change -> ce.
 - Persist a plan to BB when it would not survive a compaction round, or for cross-cutting refactors with >=3 verification gates. Advance phases with sa(summary:"...").
 - **task_complete auto-verify**: runs verify.build exactly once when mutations occurred AND no prior vb has passed. Skips otherwise. On auto-verify failure, injects errors and continues — you must fix and re-complete.
@@ -92,8 +94,7 @@ Anti-patterns (never do these):
 - Making a change with zero observable effect (unused params, dead imports, unreachable paths).
 - Running vb multiple times after it passed. One pass is sufficient; pin the h:ref if you need to re-check.
 - Repeating a change.* dry_run/preview. One preview, then execute (dry_run:false) or abandon.
-- Supplying line ranges from memory. Use tool output coordinates from h:refs.
-- Pinning a full-file engram (enforced by runtime — auto-unpin on slice). Full files are read caches (rc/rf); pin the slices.`;
+- Supplying line ranges from memory. Use the FileView's [A-B] fold markers or tool output coordinates from h:refs.`;
 
 /** Working-memory + convergence instructions for all ATLS tool modes (non-designer). */
 export const CONTEXT_CONTROL = `## COGNITIVE CORE` + COGNITIVE_CORE_BODY;

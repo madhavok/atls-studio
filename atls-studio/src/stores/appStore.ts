@@ -339,6 +339,19 @@ export interface PromptMetrics {
   /** Number of tool results the input-compression encoder successfully
    *  produced a result for (returns null counts as zero). */
   inputCompressionCount?: number;
+  /** Current FileView count in WM (observability only — not gating). */
+  fileViewCount?: number;
+  /** Rounds a FileView rendered without a new fill — measures reuse efficiency. */
+  fileViewReuseCount?: number;
+  /** Cumulative auto-heal `shifted` rebases via freshnessJournal. */
+  autoHealShiftedCount?: number;
+  /** Cumulative content-change refetches completed. */
+  autoRefetchCount?: number;
+  /** Cumulative refetches deferred because the per-round cap was hit. */
+  autoRefetchSkippedByCap?: number;
+  /** Target zero: rounds where the model emitted a "let me re-read because stale" self-correction.
+   *  Non-zero indicates an auto-heal bug, not a tuning parameter. */
+  staleReadRounds?: number;
 }
 
 // Provider-level cache metrics (Anthropic cache_creation/cache_read tokens)
@@ -676,6 +689,13 @@ interface AppState {
   setPromptMetrics: (metrics: Partial<PromptMetrics>) => void;
   addCompressionSavings: (tokensSaved: number, count: number) => void;
   addInputCompressionSavings: (tokensSaved: number) => void;
+  /**
+   * Observability counter bump for FileView telemetry.
+   * `staleReadRounds` target is zero — non-zero is a bug, not a tuning parameter.
+   */
+  incFileViewCounter: (key: 'fileViewReuseCount' | 'autoHealShiftedCount' | 'autoRefetchCount' | 'autoRefetchSkippedByCap' | 'staleReadRounds', delta?: number) => void;
+  /** Set the current FileView count (observational snapshot). */
+  setFileViewCount: (count: number) => void;
   addRollingSavings: (tokensSaved: number, roundsRolled: number) => void;
   addOrphanRemovals: (count: number) => void;
   recordRound: () => void;
@@ -1248,6 +1268,15 @@ export const useAppStore = create<AppState>((set) => ({
       inputCompressionSavings: (state.promptMetrics.inputCompressionSavings ?? 0) + tokensSaved,
       inputCompressionCount: (state.promptMetrics.inputCompressionCount ?? 0) + 1,
     },
+  })),
+  incFileViewCounter: (key, delta = 1) => set((state) => ({
+    promptMetrics: {
+      ...state.promptMetrics,
+      [key]: ((state.promptMetrics as unknown as Record<string, number | undefined>)[key] ?? 0) + delta,
+    },
+  })),
+  setFileViewCount: (count) => set((state) => ({
+    promptMetrics: { ...state.promptMetrics, fileViewCount: count },
   })),
   addRollingSavings: (tokensSaved, roundsRolled) => set((state) => ({
     promptMetrics: {

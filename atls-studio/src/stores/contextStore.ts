@@ -47,6 +47,18 @@ import { canonicalizeSnapshotHash } from '../services/batch/snapshotTracker';
 import { emptyRollingSummary, type RollingSummary } from '../services/historyDistiller';
 import { freshnessTelemetry, incSessionRestoreReconcileCount, incCognitiveRulesExpired, setManifestMetricsAccessor } from '../services/freshnessTelemetry';
 import { recordForwarding as manifestRecordForwarding, recordEviction as manifestRecordEviction, resolveForward as manifestResolveForward, getManifestMetrics } from '../services/hashManifest';
+import {
+  type FileView,
+  type FileViewFreshnessCause,
+  type IncomingFill,
+  applyFillToView,
+  applyFullBodyToView,
+  clearRemovedMarker as fvClearRemovedMarker,
+  createFileView,
+  onConstituentChunkRemoved,
+  reconcileFileView,
+} from '../services/fileViewStore';
+import { normalizePath as fvNormalizePath } from '../services/fileView';
 
 setManifestMetricsAccessor(getManifestMetrics);
 
@@ -69,6 +81,14 @@ function pathMatchesLinkRef(pathNorm: string, chunkSource: string): boolean {
 // Lazy accessor for appStore cache metrics (avoids circular import)
 let _getCacheHitRate: () => number = () => 0;
 export function setCacheHitRateAccessor(fn: () => number): void { _getCacheHitRate = fn; }
+
+// Lazy accessor for FileView observability counters (avoids circular import with appStore).
+// Registered from appStore at module init.
+type FileViewCounterKey = 'fileViewReuseCount' | 'autoHealShiftedCount' | 'autoRefetchCount' | 'autoRefetchSkippedByCap' | 'staleReadRounds';
+let _incFileViewCounter: (key: FileViewCounterKey, delta?: number) => void = () => {};
+export function setFileViewCounterBumper(fn: (key: FileViewCounterKey, delta?: number) => void): void {
+  _incFileViewCounter = fn;
+}
 
 let _getWorkspaces: () => Array<{ name: string; path: string }> = () => [];
 export function setWorkspacesAccessor(fn: () => Array<{ name: string; path: string }>): void {
@@ -935,6 +955,9 @@ interface ContextStoreState {
 
   // Cross-batch awareness cache — persists read awareness keyed on (filePath, snapshotHash)
   awarenessCache: Map<string, AwarenessCacheEntry>;
+  // Unified FileView state — one live view per file, keyed by normalized forward-slash path.
+  // Data layer only in PR2; rendering + auto-heal wiring expand in PR3/PR4.
+  fileViews: Map<string, FileView>;
   hashStack: string[]; // Ordered stack of recently-produced hashes (newest first, bounded to 50)
   editHashStack: string[]; // Edit-only recency stack for h:$last_edit (undo context)
   readHashStack: string[]; // File-read-only recency stack for h:$last_read
@@ -963,6 +986,53 @@ interface ContextStoreState {
    */
   evictChunksForDeletedPaths: (paths: string[]) => { chunks: number; staged: number };
   reconcileSourceRevision: (path: string, currentRevision: string, cause?: FreshnessCause) => ReconcileStats;
+  // ----- FileView (Unified FileView plan — PR2) ----------------------------
+  /** Get a live FileView by file path. Normalized forward-slash lookup. */
+  getFileView: (path: string) => FileView | undefined;
+  /**
+   * Insert or merge a filled region into the FileView for `path` at `sourceRevision`.
+   * Used after any read that produces line-range content. Creates the view on demand.
+   * Skeleton rows default to empty until PR3 wires getFileSkeleton into the pipeline.
+   */
+  applyFillFromChunk: (params: {
+    filePath: string;
+    sourceRevision: string;
+    startLine: number;
+    endLine: number;
+    content: string;
+    chunkHash: string;
+    tokens?: number;
+    origin?: 'read' | 'refetch';
+    refetchedAtRound?: number;
+  }) => void;
+  /** Promote a full-file chunk into the FileView's fullBody slot. */
+  applyFullBodyFromChunk: (params: {
+    filePath: string;
+    sourceRevision: string;
+    content: string;
+    chunkHash: string;
+    totalLines?: number;
+  }) => void;
+  /** Drop any FileView regions backed by these chunk hashes (TTL / eviction callback). */
+  pruneFileViewsForChunks: (chunkHashes: string[]) => number;
+  /** Reconcile all FileViews for a path against a new revision. Called from reconcileSourceRevision. */
+  reconcileFileViewsForPath: (path: string, currentRevision: string, cause: FileViewFreshnessCause, round: number) => void;
+  /** Clear a [REMOVED was L..L..] marker after the agent re-reads that range. */
+  clearFileViewRemovedMarker: (path: string, start: number, end: number) => void;
+  /** Toggle pinned flag on a FileView by path. Used by session.pin in PR4. */
+  setFileViewPinned: (path: string, pinned: boolean) => void;
+  /**
+   * Resolve any `h:fv:<hash>` refs to their constituent chunk hashes. Non-fv
+   * refs pass through unchanged. Use at subagent / Tauri boundaries.
+   */
+  resolveFileViewRefs: (refs: string[]) => string[];
+  /**
+   * Ensure the FileView for (filePath, sourceRevision) has its skeleton populated.
+   * Async — pulls imports + sig via `getFileSkeleton` (cached per revision) and
+   * either creates a fresh view or updates `skeletonRows` on an existing one at
+   * the same revision. Fire-and-forget; failures are silent (best-effort).
+   */
+  ensureFileViewSkeleton: (filePath: string, sourceRevision: string) => Promise<void>;
   /** Post-session-restore: reconcile all file-backed engrams against disk, evict deleted paths. Non-blocking. */
   reconcileRestoredSession: () => Promise<{ updated: number; invalidated: number; evicted: number }>;
   /**
@@ -2088,6 +2158,7 @@ export const useContextStore = create<ContextStoreState>()(
   verifyArtifacts: new Map(),
   taskCompleteRecord: null,
   awarenessCache: new Map(),
+  fileViews: new Map<string, FileView>(),
   freshnessMirror: {
     fileTreeChangedWithPaths: 0,
     fileTreeChangedCoarseNoPaths: 0,
@@ -2464,7 +2535,37 @@ export const useContextStore = create<ContextStoreState>()(
     }
     for (const compactedHash of autoCompactedHashes) hppDematerialize(compactedHash);
     for (const evictedHash of autoEvictedHashes) hppEvict(evictedHash);
-    
+
+    // Unified FileView wire: route read content into the file's live view.
+    // - Line-range reads (rl, rc with line_range) → applyFillFromChunk
+    // - Full/raw file reads (rc type:full|raw, rf type:full) → applyFullBodyFromChunk
+    // - Any read → ensureFileViewSkeleton (async; populates imports + sig spine)
+    // The view is a parallel aggregation layer; hash identity stays with the chunk.
+    if (opts?.readSpan && opts.sourceRevision && opts.readSpan.filePath) {
+      const span = opts.readSpan;
+      if (span.startLine != null && span.endLine != null) {
+        get().applyFillFromChunk({
+          filePath: span.filePath,
+          sourceRevision: opts.sourceRevision,
+          startLine: span.startLine,
+          endLine: span.endLine,
+          content,
+          chunkHash: hash,
+          tokens,
+        });
+      } else if (span.contextType === 'full' || span.contextType === 'raw') {
+        get().applyFullBodyFromChunk({
+          filePath: span.filePath,
+          sourceRevision: opts.sourceRevision,
+          content,
+          chunkHash: hash,
+        });
+      }
+      // Skeleton population runs for every file-backed read, regardless of shape.
+      // Fire-and-forget; the async update lands before the next render.
+      get().ensureFileViewSkeleton(span.filePath, opts.sourceRevision).catch(() => {});
+    }
+
     return returnShort;
   },
 
@@ -2820,6 +2921,12 @@ export const useContextStore = create<ContextStoreState>()(
       hppEvict(h);
     }
 
+    // FileView: drop any regions backed by the dropped chunks. Views thin
+    // gracefully to skeleton-only when all their constituent chunks die.
+    if (droppedHashes.length > 0) {
+      get().pruneFileViewsForChunks(droppedHashes);
+    }
+
     // G9: GC orphaned derivedFrom refs on BB entries pointing to dropped hashes
     if (droppedHashes.length > 0) {
       const droppedShort = new Set(droppedHashes.map(h => h.slice(0, SHORT_HASH_LEN)));
@@ -2853,23 +2960,34 @@ export const useContextStore = create<ContextStoreState>()(
     let count = 0;
     let alreadyPinned = 0;
     let skippedFullFile = 0;
-    
-    const isFullFileRead = (chunk: ContextChunk): boolean =>
-      !chunk.compacted
-      && (chunk.viewKind === 'latest' || chunk.viewKind == null)
-      && isFileBackedType(chunk.type)
-      && chunk.type !== 'result';
 
     set(state => {
       const newChunks = new Map(state.chunks);
       const newArchived = new Map(state.archivedChunks);
-      
+      const newFileViews = new Map(state.fileViews);
+      let fileViewsChanged = false;
+
+      // Build a lookup of h:fv:<hash> → view for quick routing. h:fv: never
+      // reaches Rust — we resolve on the TS side per the Section 9 boundary rule.
+      const fvHashIndex = new Map<string, FileView>();
+      for (const view of state.fileViews.values()) {
+        fvHashIndex.set(view.hash, view);
+      }
+
       for (const h of hashes) {
-        const found = findChunkByRef(newChunks, h);
-        if (found && isFullFileRead(found[1])) {
-          skippedFullFile++;
+        // Route FileView pins directly to the fileViews map.
+        if (h.startsWith('h:fv:')) {
+          const view = fvHashIndex.get(h);
+          if (view && !view.pinned) {
+            newFileViews.set(view.filePath, { ...view, pinned: true, pinnedShape: shape, lastAccessed: Date.now() });
+            fileViewsChanged = true;
+            count++;
+          } else if (view && view.pinned) {
+            alreadyPinned++;
+          }
           continue;
         }
+        const found = findChunkByRef(newChunks, h);
         if (found && !found[1].pinned) {
           newChunks.set(found[0], {
             ...found[1],
@@ -2878,6 +2996,17 @@ export const useContextStore = create<ContextStoreState>()(
           });
           hppSetPinned(found[0], true, shape);
           count++;
+          // Auto-promote parent FileView when pinning a slice, so the slice's
+          // file-context survives token pressure along with the slice itself.
+          const srcPath = found[1].source;
+          if (srcPath) {
+            const fvKey = fvNormalizePath(srcPath);
+            const parentView = newFileViews.get(fvKey) ?? state.fileViews.get(fvKey);
+            if (parentView && !parentView.pinned) {
+              newFileViews.set(fvKey, { ...parentView, pinned: true, lastAccessed: Date.now() });
+              fileViewsChanged = true;
+            }
+          }
         } else if (found && found[1].pinned) {
           if (shape !== undefined) {
             newChunks.set(found[0], { ...found[1], pinnedShape: shape });
@@ -2922,9 +3051,11 @@ export const useContextStore = create<ContextStoreState>()(
         }
       }
       
-      return { chunks: newChunks, archivedChunks: newArchived };
+      return fileViewsChanged
+        ? { chunks: newChunks, archivedChunks: newArchived, fileViews: newFileViews }
+        : { chunks: newChunks, archivedChunks: newArchived };
     });
-    
+
     return { count, alreadyPinned, skippedFullFile };
   },
   
@@ -2935,10 +3066,12 @@ export const useContextStore = create<ContextStoreState>()(
   unpinChunks: (hashes: string[]) => {
     let count = 0;
     const hasWildcard = hashes.includes('*') || hashes.includes('all');
-    
+
     set(state => {
       const newChunks = new Map(state.chunks);
-      
+      const newFileViews = new Map(state.fileViews);
+      let fileViewsChanged = false;
+
       if (hasWildcard) {
         for (const [key, chunk] of newChunks) {
           if (chunk.pinned) {
@@ -2947,8 +3080,27 @@ export const useContextStore = create<ContextStoreState>()(
             count++;
           }
         }
+        for (const [fvKey, view] of newFileViews) {
+          if (view.pinned) {
+            newFileViews.set(fvKey, { ...view, pinned: false, pinnedShape: undefined, lastAccessed: Date.now() });
+            fileViewsChanged = true;
+            count++;
+          }
+        }
       } else {
+        // h:fv:<hash> route first — TS-only per Section 9 boundary rule.
+        const fvHashIndex = new Map<string, FileView>();
+        for (const view of state.fileViews.values()) fvHashIndex.set(view.hash, view);
         for (const h of hashes) {
+          if (h.startsWith('h:fv:')) {
+            const view = fvHashIndex.get(h);
+            if (view && view.pinned) {
+              newFileViews.set(view.filePath, { ...view, pinned: false, pinnedShape: undefined, lastAccessed: Date.now() });
+              fileViewsChanged = true;
+              count++;
+            }
+            continue;
+          }
           const found = findChunkByRef(newChunks, h);
           if (found && found[1].pinned) {
             newChunks.set(found[0], { ...found[1], pinned: false, pinnedShape: undefined });
@@ -2957,8 +3109,10 @@ export const useContextStore = create<ContextStoreState>()(
           }
         }
       }
-      
-      return { chunks: newChunks };
+
+      return fileViewsChanged
+        ? { chunks: newChunks, fileViews: newFileViews }
+        : { chunks: newChunks };
     });
     
     return count;
@@ -3397,6 +3551,18 @@ export const useContextStore = create<ContextStoreState>()(
     if (bbSuperseded > 0) {
       stats.bbSuperseded = bbSuperseded;
     }
+
+    // Unified FileView auto-heal: reconcile the matching FileView under the same cause.
+    // Round number comes from roundHistoryStore — used for ephemeral marker bookkeeping.
+    const round = useRoundHistoryStore.getState().snapshots.length;
+    const fvCause: FileViewFreshnessCause = effectiveCause === 'same_file_prior_edit'
+      ? 'same_file_prior_edit'
+      : effectiveCause === 'session_restore'
+        ? 'session_restore'
+        : effectiveCause === 'external_file_change'
+          ? 'external_file_change'
+          : 'unknown';
+    get().reconcileFileViewsForPath(path, currentRevision, fvCause, round);
 
     return stats;
   },
@@ -5369,9 +5535,11 @@ export const useContextStore = create<ContextStoreState>()(
       memoryEvents: state.memoryEvents,
       memoryTelemetry: summarizeMemoryTelemetry(state.memoryEvents.slice(state._roundStartEventIndex)),
       reconcileStats: state.reconcileStats,
+      fileViews: state.fileViews,
+      currentRound: useRoundHistoryStore.getState().snapshots.length,
     });
   },
-  
+
   /**
    * Get stats line with dynamic hints (delegates to contextFormatter).
    */
@@ -6170,6 +6338,263 @@ export const useContextStore = create<ContextStoreState>()(
     });
 
     return { restored, refs: restoredRefs, ...(droppedRefs.length > 0 ? { droppedRefs } : {}) };
+  },
+
+  // -------------------------------------------------------------------------
+  // Unified FileView — data layer (PR2)
+  // -------------------------------------------------------------------------
+
+  getFileView: (path) => {
+    return get().fileViews.get(fvNormalizePath(path));
+  },
+
+  applyFillFromChunk: ({ filePath, sourceRevision, startLine, endLine, content, chunkHash, tokens, origin, refetchedAtRound }) => {
+    set(state => {
+      const key = fvNormalizePath(filePath);
+      const next = new Map(state.fileViews);
+      let view = next.get(key);
+      // supersededBy: when this slice lands on top of a pre-existing full-file
+      // chunk for the same (source, revision), stamp the full-file chunk with
+      // a pointer to the slice. Rendering-only metadata; see hashManifest.
+      // Field already declared on ContextChunk.
+      let superseded: Map<string, ContextChunk> | null = null;
+      const normSrc = filePath.replace(/\\/g, '/').toLowerCase();
+      for (const [k, c] of state.chunks) {
+        if (!c.source || c.sourceRevision !== sourceRevision) continue;
+        const cNorm = c.source.replace(/\\/g, '/').toLowerCase();
+        if (cNorm !== normSrc) continue;
+        if (!(c.viewKind === 'latest' || c.viewKind == null)) continue;
+        if (c.type !== 'raw' && c.type !== 'file' && c.type !== 'smart') continue;
+        const shortSlice = chunkHash.slice(0, SHORT_HASH_LEN);
+        const existing = c.supersededBy;
+        const hashes = existing?.hashes ?? [];
+        if (hashes.includes(shortSlice)) continue;
+        const nextHashes = [...hashes, shortSlice].slice(0, 5); // cap
+        if (!superseded) superseded = new Map(state.chunks);
+        superseded.set(k, {
+          ...c,
+          supersededBy: { hashes: nextHashes, note: existing?.note ?? 'slices' },
+        });
+      }
+      if (!view) {
+        // Create a minimal view; skeleton stays empty until PR3 wires getFileSkeleton.
+        view = createFileView(
+          {
+            path: key,
+            revision: sourceRevision,
+            totalLines: 0,
+            rows: [],
+            tokens: 0,
+            sigLevel: 'sig',
+          },
+          { pinned: false },
+        );
+      } else if (view.sourceRevision !== sourceRevision) {
+        // Fill at a newer revision than the stored view — the reconcile path
+        // should have fired first. Rebuild the view cleanly rather than
+        // mixing revisions.
+        view = createFileView(
+          {
+            path: key,
+            revision: sourceRevision,
+            totalLines: view.totalLines,
+            rows: view.skeletonRows,
+            tokens: 0,
+            sigLevel: view.sigLevel,
+          },
+          { pinned: view.pinned },
+        );
+      }
+      const fill: IncomingFill = {
+        start: startLine,
+        end: endLine,
+        content,
+        chunkHash,
+        tokens,
+        origin,
+        refetchedAtRound,
+      };
+      const merged = applyFillToView(view, fill);
+      next.set(key, merged);
+      return superseded
+        ? { fileViews: next, chunks: superseded }
+        : { fileViews: next };
+    });
+  },
+
+  applyFullBodyFromChunk: ({ filePath, sourceRevision, content, chunkHash, totalLines }) => {
+    set(state => {
+      const key = fvNormalizePath(filePath);
+      const next = new Map(state.fileViews);
+      let view = next.get(key);
+      if (!view || view.sourceRevision !== sourceRevision) {
+        view = createFileView(
+          {
+            path: key,
+            revision: sourceRevision,
+            totalLines: totalLines ?? view?.totalLines ?? 0,
+            rows: view?.skeletonRows ?? [],
+            tokens: 0,
+            sigLevel: view?.sigLevel ?? 'sig',
+          },
+          { pinned: view?.pinned ?? false },
+        );
+      }
+      next.set(key, applyFullBodyToView(view, content, chunkHash));
+      return { fileViews: next };
+    });
+  },
+
+  ensureFileViewSkeleton: async (filePath, sourceRevision) => {
+    if (!filePath || !sourceRevision) return;
+    let skeleton;
+    try {
+      const { getFileSkeleton } = await import('../services/fileView');
+      skeleton = await getFileSkeleton(filePath, sourceRevision);
+    } catch {
+      // getFileSkeleton can fail for binaries, missing hashes, or unsupported shapes.
+      // Best-effort: leave skeletonRows empty — rendering still works, just without the sig spine.
+      return;
+    }
+    set(state => {
+      const key = fvNormalizePath(filePath);
+      const existing = state.fileViews.get(key);
+      const next = new Map(state.fileViews);
+      if (!existing) {
+        next.set(key, createFileView(skeleton, { pinned: false }));
+        return { fileViews: next };
+      }
+      // Same revision: refresh skeleton rows if they changed (or were empty).
+      if (existing.sourceRevision === sourceRevision) {
+        const sameRows =
+          existing.skeletonRows.length === skeleton.rows.length &&
+          existing.totalLines === skeleton.totalLines &&
+          existing.skeletonRows.every((row, i) => row === skeleton.rows[i]);
+        if (sameRows) return {};
+        next.set(key, {
+          ...existing,
+          skeletonRows: skeleton.rows,
+          totalLines: skeleton.totalLines,
+          sigLevel: skeleton.sigLevel,
+        });
+        return { fileViews: next };
+      }
+      // Different revision: reconcile path owns skeleton refresh. Skip here.
+      return {};
+    });
+  },
+
+  pruneFileViewsForChunks: (chunkHashes) => {
+    if (!chunkHashes.length) return 0;
+    const hashSet = new Set(chunkHashes);
+    let touched = 0;
+    set(state => {
+      const next = new Map(state.fileViews);
+      for (const [key, view] of state.fileViews) {
+        let updated = view;
+        let changed = false;
+        for (const h of hashSet) {
+          const after = onConstituentChunkRemoved(updated, h);
+          if (after !== updated) {
+            updated = after;
+            changed = true;
+          }
+        }
+        if (changed) {
+          next.set(key, updated);
+          touched++;
+        }
+      }
+      return touched > 0 ? { fileViews: next } : {};
+    });
+    return touched;
+  },
+
+  reconcileFileViewsForPath: (path, currentRevision, cause, round) => {
+    let shiftedCount = 0;
+    let hasPendingRefetch = false;
+    set(state => {
+      const key = fvNormalizePath(path);
+      const view = state.fileViews.get(key);
+      if (!view) return {};
+      const outcome = reconcileFileView(view, {
+        currentRevision,
+        cause,
+        round,
+      });
+      if (!outcome.updated) return {};
+      if (outcome.view.freshness === 'shifted') {
+        shiftedCount = outcome.view.filledRegions.length;
+      }
+      if ((outcome.refetchRequests?.length ?? 0) > 0) {
+        hasPendingRefetch = true;
+      }
+      const next = new Map(state.fileViews);
+      next.set(key, outcome.view);
+      return { fileViews: next };
+    });
+    // Observability counters via lazy accessor to avoid circular import with appStore.
+    if (shiftedCount > 0) {
+      try { _incFileViewCounter('autoHealShiftedCount', shiftedCount); } catch { /* telemetry non-critical */ }
+    }
+    if (hasPendingRefetch) {
+      try { _incFileViewCounter('staleReadRounds', 1); } catch { /* telemetry non-critical */ }
+    }
+  },
+
+  clearFileViewRemovedMarker: (path, start, end) => {
+    set(state => {
+      const key = fvNormalizePath(path);
+      const view = state.fileViews.get(key);
+      if (!view) return {};
+      const updated = fvClearRemovedMarker(view, start, end);
+      if (updated === view) return {};
+      const next = new Map(state.fileViews);
+      next.set(key, updated);
+      return { fileViews: next };
+    });
+  },
+
+  setFileViewPinned: (path, pinned) => {
+    set(state => {
+      const key = fvNormalizePath(path);
+      const view = state.fileViews.get(key);
+      if (!view || view.pinned === pinned) return {};
+      const next = new Map(state.fileViews);
+      next.set(key, { ...view, pinned, lastAccessed: Date.now() });
+      return { fileViews: next };
+    });
+  },
+
+  /**
+   * Resolve `h:fv:<hash>` refs to their constituent chunk hashes (h:<short>).
+   * Non-fv refs pass through unchanged. Used at boundaries that ship refs to
+   * systems (subagent handoff, Tauri IPC) that don't understand view hashes.
+   */
+  resolveFileViewRefs: (refs: string[]): string[] => {
+    const state = get();
+    const fvHashIndex = new Map<string, FileView>();
+    for (const view of state.fileViews.values()) fvHashIndex.set(view.hash, view);
+    const out: string[] = [];
+    for (const ref of refs) {
+      if (!ref.startsWith('h:fv:')) {
+        out.push(ref);
+        continue;
+      }
+      // Always filter h:fv: refs — unknown or known, they must not leak past
+      // this boundary. Unknown refs drop silently; known refs expand.
+      const view = fvHashIndex.get(ref);
+      if (!view) continue;
+      for (const region of view.filledRegions) {
+        for (const h of region.chunkHashes) {
+          out.push(`h:${h.slice(0, SHORT_HASH_LEN)}`);
+        }
+      }
+      if (view.fullBodyChunkHash) {
+        out.push(`h:${view.fullBodyChunkHash.slice(0, SHORT_HASH_LEN)}`);
+      }
+    }
+    return out;
   },
 }));
 

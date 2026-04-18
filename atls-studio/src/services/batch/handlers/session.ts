@@ -576,16 +576,16 @@ export const handlePin: OpHandler = async (params, ctx) => {
   });
 
   const pinShape = (params.shape as string) || undefined;
-  const { count, alreadyPinned, skippedFullFile } = ctx.store().pinChunks(resolved, pinShape);
+  const { count, alreadyPinned } = ctx.store().pinChunks(resolved, pinShape);
   const shapeTag = pinShape ? ` (shape:${pinShape})` : '';
   let line = count > 0
     ? `pin: ${count} chunk${count > 1 ? 's' : ''} pinned${shapeTag}`
     : alreadyPinned > 0
       ? `pin: ${alreadyPinned} already pinned${shapeTag}`
       : `pin: no matching chunks`;
-  if (skippedFullFile > 0) {
-    line += ` | BLOCKED ${skippedFullFile} full-file read${skippedFullFile > 1 ? 's' : ''} — full files are read caches, not working memory. Use rl to slice, then pin the slices.`;
-  }
+  // Legacy "BLOCKED full-file read" message removed. Under FileView, full-file
+  // chunks are legitimate pin targets and skippedFullFile is never incremented.
+  // The field stays on the return type as a compat no-op for older callers.
   if (count === 0 && alreadyPinned === 0) {
     const suspicious = resolved.filter((t) => !isPlausibleHashBaseSegment(baseHashFromRefToken(t)));
     if (suspicious.length > 0) {

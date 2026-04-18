@@ -241,7 +241,7 @@ export const handleLoad: OpHandler = async (params, ctx) => {
   const lines: string[] = [];
   const isFull = loadType === 'raw' || loadType === 'full';
   if (isFull) {
-    lines.push('load: NOTE type:"smart" is 70% smaller and sufficient for most tasks — use full when you need canonical mutation authority');
+    lines.push('load: NOTE the FileView already renders imports + signature skeleton for this file — use full only when you need the entire body for deep inspection or a large multi-region edit.');
   }
 
   try {
@@ -330,7 +330,7 @@ export const handleRead: OpHandler = async (params, ctx) => {
   let treePathsTruncated = false;
   const isFull = loadType === 'raw' || loadType === 'full';
   if (isFull && !readShape) {
-    lines.push('read: NOTE type:"smart" is 70% smaller and sufficient for most tasks — use full when you need canonical mutation authority');
+    lines.push('read: NOTE the FileView already renders imports + signature skeleton for this file — use full only when you need the entire body for deep inspection or a large multi-region edit.');
   }
   if (isTreeRead) {
     const fileExtRe = /\.\w{1,10}$/;
@@ -661,19 +661,13 @@ export const handleReadLines: OpHandler = async (params, ctx) => {
     const rlFreshnessHint = getFreshnessHintForRefs(rlStore, rlRefs);
     const priorRanges = rlFile ? rlStore.getPriorReadRanges(rlFile).filter(r => r !== (actualLabel || targetLabel)) : [];
     const priorRangesHint = priorRanges.length > 0 ? `\nNOTE previously read regions for this file: ${priorRanges.join(', ')}.` : '';
-    let autoUnpinHint = '';
-    if (rlFile) {
-      const pinnedParent = rlStore.findPinnedFileEngram(rlFile);
-      if (pinnedParent) {
-        rlStore.unpinChunks([pinnedParent]);
-        const parentShort = pinnedParent.slice(0, 6);
-        rlStore.recordMemoryEvent({ action: 'auto-unpin', reason: 'slice-after-read', source: rlFile, refs: [parentShort] });
-        autoUnpinHint = `\nNOTE: auto-unpinned full-file engram h:${parentShort} (slice-after-read). Pin slices to retain targeted context.`;
-      }
-    }
+    // Legacy slice-after-read auto-unpin removed: under FileView the parent
+    // pin is managed by parent-promote on slice pin (contextStore.pinChunks),
+    // so the pre-FileView "unpin parent when slicing" policy and its "Pin
+    // slices to retain targeted context" note are both stale guidance.
 
     const rlSummary = `read_lines: ${rlFile}:${targetLabel} → ${rlH} (${tk}tk, ctx:${usedContextLines}${actualLabel ? ` actual:${actualLabel}` : ''})${prevSuffix}\n${rlContent}`;
-    const fullSummary = `${rlSummary}${rlFreshnessHint ? '\n' + rlFreshnessHint : ''}${priorRangesHint}${autoUnpinHint}`;
+    const fullSummary = `${rlSummary}${rlFreshnessHint ? '\n' + rlFreshnessHint : ''}${priorRangesHint}`;
     return {
       kind: 'file_refs', ok: true,
       refs: rlRefs,
@@ -1033,9 +1027,10 @@ async function _processShapedFile(
     ctx.store().clearSuspect(source);
     ctx.store().reconcileSourceRevision(source, canonicalContentHash);
     ctx.store().recordMemoryEvent({ action: 'read', reason: 'read_shaped_fallback', source, newRevision: canonicalContentHash, refs: [`h:${hash}`] });
+    ctx.store().ensureFileViewSkeleton(source, canonicalContentHash).catch(() => {});
     const savedPctFb = fullTokens > 0 ? Math.round((1 - shapedTokens / fullTokens) * 100) : 0;
     const foldHintFb = savedPctFb < 20 && shape === 'fold' ? ' | WARNING: low compression — consider sig shape' : '';
-    lines.push(`read_shaped: ${source} → h:${hash} (full:${fullTokens}tk, shaped:${shapedTokens}tk, saved:${savedPctFb}%, staged full — WM fallback)${foldHintFb} | use canonical full read before edits`);
+    lines.push(`read_shaped: ${source} → h:${hash} (full:${fullTokens}tk, shaped:${shapedTokens}tk, saved:${savedPctFb}%, staged full — WM fallback)${foldHintFb} | FileView carries skeleton + overlays; cite @h:XXX from its header for edits.`);
     return {
       refs: [`h:${hash}`],
       tokens: shapedTokens,
@@ -1067,7 +1062,10 @@ async function _processShapedFile(
   ctx.store().clearSuspect(source);
   ctx.store().reconcileSourceRevision(source, canonicalContentHash);
   ctx.store().recordMemoryEvent({ action: 'read', reason: 'read_shaped', source, newRevision: canonicalContentHash, refs: [`h:${canonicalContentHash.slice(0, SHORT_HASH_LEN)}`] });
-  lines.push(`read_shaped: ${source} → staged:${canonicalContentHash.slice(0, SHORT_HASH_LEN)} (full:${fullTokens}tk, shaped:${shapedTokens}tk, saved:${savedPct}%, cached)${foldHint} | discovery only — use canonical full read before edits`);
+  // Populate the FileView skeleton — read.shaped stages rather than chunks, so
+  // addChunk's auto-wire does not fire. The skeleton cache keeps this cheap.
+  ctx.store().ensureFileViewSkeleton(source, canonicalContentHash).catch(() => {});
+  lines.push(`read_shaped: ${source} → staged:${canonicalContentHash.slice(0, SHORT_HASH_LEN)} (full:${fullTokens}tk, shaped:${shapedTokens}tk, saved:${savedPct}%, cached)${foldHint} | FileView carries this skeleton; rl fills ranges into it, edits cite @h:XXX from the view header.`);
   return {
     refs: [`h:${canonicalContentHash.slice(0, SHORT_HASH_LEN)}`],
     tokens: shapedTokens,

@@ -471,6 +471,10 @@ export interface ContextStoreApi {
   invalidateAwareness: (filePath: string) => void;
   invalidateAwarenessForPaths: (paths: string[]) => void;
   getAwarenessCache: () => Map<string, { filePath: string; snapshotHash: string; level: number; readRegions: Array<{ start: number; end: number }>; shapeHash?: string; recordedAt: number }>;
+
+  // FileView — the unified file-context engine. Handlers call these to keep
+  // the FileView aggregation in sync after reads. See docs: Unified FileView plan.
+  ensureFileViewSkeleton: (filePath: string, sourceRevision: string) => Promise<void>;
 }
 
 // ---------------------------------------------------------------------------

@@ -10,8 +10,10 @@
 
 import type { ContextChunk, BlackboardEntry, CognitiveRule, EngramAnnotation, Synapse, ManifestEntry, TaskPlan, StagedSnippet, TransitionBridge, MemoryEvent, ReconcileStats, MemoryTelemetrySummary } from '../stores/contextStore';
 import { STAGE_SOFT_CEILING, STAGED_OMITTED_POINTER_TOKENS } from '../stores/contextStore';
+import type { FileView } from './fileViewStore';
 import { HYGIENE_CHECK_INTERVAL_ROUNDS } from './promptMemory';
 import { formatChunkTag } from '../utils/contextHash';
+import { collectFileViewChunkHashes, renderAllFileViewBlocks } from './fileViewRender';
 import {
   getRef,
   shouldMaterialize,
@@ -54,6 +56,10 @@ export interface FormatterInput {
     usageBefore: number;
     candidates: Array<{ shortHash: string; tokens: number; source?: string; age: string }>;
   } | null;
+  /** FileView blocks for the file-content surface. Empty map renders nothing. */
+  fileViews?: Map<string, FileView>;
+  /** Current round number — drives ephemeral [edited this round] markers. */
+  currentRound?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -332,9 +338,33 @@ export function formatWorkingMemory(input: FormatterInput): string {
     lines.push('');
   }
 
-  // Chunks — sorted: pinned first, file types before artifacts, then LRU
+  // FileView blocks — the new model-visible surface for file content.
+  // Emitted before ACTIVE ENGRAMS so the model reads file-ordered views
+  // before the flat chunk listing. File-backed chunks whose hash is covered
+  // by any view are filtered out of ACTIVE ENGRAMS to avoid double-rendering.
+  const fileViewBlocks = input.fileViews
+    ? renderAllFileViewBlocks(input.fileViews.values(), {
+        currentRound: input.currentRound ?? 0,
+      })
+    : [];
+  const fileViewCoveredChunkHashes = input.fileViews
+    ? collectFileViewChunkHashes(input.fileViews.values())
+    : new Set<string>();
+
+  if (fileViewBlocks.length > 0) {
+    lines.push(`## FILE VIEWS (${fileViewBlocks.length} ${fileViewBlocks.length === 1 ? 'file' : 'files'})`);
+    for (const block of fileViewBlocks) {
+      lines.push(block);
+    }
+    lines.push('');
+  }
+
+  // Chunks — sorted: pinned first, file types before artifacts, then LRU.
+  // File-backed chunks covered by a FileView are filtered to avoid duplicate
+  // bytes — the view already renders that content.
   const sortedChunks = Array.from(chunks.values())
     .filter(c => c.type !== 'msg:user' && c.type !== 'msg:asst')
+    .filter(c => !fileViewCoveredChunkHashes.has(c.hash))
     .sort((a, b) => {
       if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;
       const aFile = FILE_TYPES.has(a.type);

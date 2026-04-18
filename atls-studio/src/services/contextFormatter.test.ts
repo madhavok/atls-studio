@@ -118,6 +118,87 @@ describe('syncHppPinsWithStore (via formatWorkingMemory)', () => {
   });
 });
 
+describe('formatWorkingMemory — FileView block rendering', () => {
+  beforeEach(() => resetStore());
+
+  it('renders a ## FILE VIEWS block when a populated FileView exists', () => {
+    const store = useContextStore.getState();
+    const rev = 'rev-fv-1';
+    store.applyFullBodyFromChunk({
+      filePath: 'src/toon.ts',
+      sourceRevision: rev,
+      content: 'line 1\nline 2\nline 3',
+      chunkHash: 'h-toon-full',
+      totalLines: 3,
+    });
+
+    const state = useContextStore.getState();
+    const output = formatWorkingMemory({
+      chunks: state.chunks,
+      blackboardEntries: state.blackboardEntries,
+      cognitiveRules: state.cognitiveRules,
+      droppedManifest: state.droppedManifest,
+      stagedSnippets: state.stagedSnippets,
+      taskPlan: state.taskPlan,
+      maxTokens: state.maxTokens,
+      freedTokens: state.freedTokens,
+      usedTokens: state.getUsedTokens(),
+      pinnedCount: state.getPinnedCount(),
+      bbTokens: state.getBlackboardTokenCount(),
+      fileViews: state.fileViews,
+      currentRound: 1,
+    });
+
+    expect(output).toContain('## FILE VIEWS');
+    expect(output).toContain('src/toon.ts');
+    expect(output).toMatch(/=== .*src\/toon\.ts @h:/);
+  });
+
+  it('filters out file-backed chunks that a FileView already covers', () => {
+    const store = useContextStore.getState();
+    const rev = 'rev-cover';
+    // Install a chunk with a readSpan so addChunk auto-populates the FileView
+    store.addChunk(
+      'the whole body',
+      'raw',
+      'src/cover.ts',
+      undefined, undefined, 'h-cover',
+      {
+        sourceRevision: rev,
+        viewKind: 'latest',
+        readSpan: { filePath: 'src/cover.ts', sourceRevision: rev, contextType: 'full' },
+      },
+    );
+
+    const state = useContextStore.getState();
+    const output = formatWorkingMemory({
+      chunks: state.chunks,
+      blackboardEntries: state.blackboardEntries,
+      cognitiveRules: state.cognitiveRules,
+      droppedManifest: state.droppedManifest,
+      stagedSnippets: state.stagedSnippets,
+      taskPlan: state.taskPlan,
+      maxTokens: state.maxTokens,
+      freedTokens: state.freedTokens,
+      usedTokens: state.getUsedTokens(),
+      pinnedCount: state.getPinnedCount(),
+      bbTokens: state.getBlackboardTokenCount(),
+      fileViews: state.fileViews,
+      currentRound: 1,
+    });
+
+    // FileView renders the file
+    expect(output).toContain('## FILE VIEWS');
+    // But the raw chunk is NOT duplicated in ACTIVE ENGRAMS (its hash is covered by the view)
+    const activeEngramsIndex = output.indexOf('ACTIVE ENGRAMS');
+    if (activeEngramsIndex >= 0) {
+      const activeSection = output.slice(activeEngramsIndex);
+      // The covered chunk hash should not be re-rendered as an active engram
+      expect(activeSection).not.toContain('h-cover');
+    }
+  });
+});
+
 describe('formatSuspectHint / formatTaskLine (golden)', () => {
   it('formatSuspectHint matches stable literals', () => {
     expect(formatSuspectHint(undefined, undefined)).toMatchInlineSnapshot('""');

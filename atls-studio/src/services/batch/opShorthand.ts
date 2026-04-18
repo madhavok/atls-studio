@@ -65,6 +65,11 @@ const SHORT_TO_OP_ENTRIES: ReadonlyArray<readonly [string, OperationKind]> = [
   ['ru',  'session.rule'],
   ['em',  'session.emit'],
   ['sh',  'session.shape'],
+  // session.load (ld) is deprecated in the model-facing tool list (see
+  // toolRef.ts) but its handler stays wired for internal/subagent callers
+  // and chat-history replay. The shortcode stays in the registry so the full
+  // OperationKind ↔ shortcode round-trip remains consistent; it is simply
+  // not advertised in the default descriptors.
   ['ld',  'session.load'],
   ['ch',  'session.compact_history'],
   // annotate

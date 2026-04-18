@@ -41,11 +41,14 @@ ${generateShorthandLegend()}
 
 ### Common Params (short codes in Key above; full names always accepted)
 sa subtask?:name summary:required
-rc type:smart|full|module|component|test|tree ps:path1,path2 depth?:N glob?:pattern line_range?:start-end max_lines?:N
-rs ps:path1,path2 shape:sig max_files?:N
+rc type:full|tree ps:path1,path2 depth?:N glob?:pattern line_range?:start-end max_lines?:N
+  type:full = whole-file body. type:tree = directory listing (not file content).
+  Any read populates the live FileView for that file — see "## Working Memory — FileView" below.
 rl hash:h:XXXX lines:15-50 | f:path sl:N el:N context_lines?:0-5
-  For file/smart/raw engrams, lines are into that file snapshot. For sc/sy (search/symbol) result hashes, lines are into the formatted result text (engram body), not a source file — use f:+sl/el when you need real file lines.
-rf ps:path1,path2 type?:smart|full — simpler than rc, no shaped/tree/bind support
+  Line slices fill into the file's live FileView at their source position. For file engrams, lines are into that file snapshot. For sc/sy (search/symbol) result hashes, lines are into the formatted result text (engram body), not a source file — use f:+sl/el when you need real file lines.
+rf ps:path1,path2 type?:full — primary file entry point; produces a FileView (skeleton of imports+signatures). Pass type:full for the full body.
+rs ps:path1,path2 shape:sig|fold|grep|dedent|nocomment|exclude|concept|pattern|if|snap|refs|highlight max_files?:N
+  Power-user shape toolkit. rf auto-produces the sig skeleton into the FileView — reach for rs only when you need a non-default shape (grep a pattern, fold depth, strip comments, etc.). shape: is required.
 sc qs:term1,term2 ps?:path1,path2 limit?:N compact?:true
 sy sn:name1,name2 limit?:N
 su sn:name1,name2 filter?:pattern limit?:N
@@ -97,7 +100,6 @@ sh hash:h:XXXX — resolve + reshape a hash ref
 sg hash:h:XXXX lines:start-end | content:"text" label:"name" — stage snippet (hash+lines or content+label)
 ust hash:h:XXXX | label:"name" | hashes:h:H1,h:H2 — unstage (one of hash/label/hashes required)
 ulo hashes:h:HASH1,h:HASH2 — unload engrams from context
-ld ps:path1,path2 — load files into context
 db|st|ch — no required params (debug, stats, compact history)
 nn hash:h:XXXX note:"text" — annotate engram (not content — use eng for structured fields)
 eng hash:h:XXXX fields:{note:"...",type:"..."} — structured engram edit
@@ -118,7 +120,7 @@ is old_text:"text" new_text:"text" file_glob?:pattern max_matches?:N verify?:tru
 ix source_file:path sn?:s1 target_file:path — aliases: f, path, file_path, or ps:single_path
 
 ### Examples
-r1 rc type:smart ps:src/api.ts,src/db.ts
+r1 rf ps:src/api.ts,src/db.ts
 p1 pi in:r1.refs
 e1 ce f:h:abc123:15-22 le:[{content:"function auth() { return true; }"}]
 -- minimal: hash ref carries identity + line range; only new content needed.
@@ -148,20 +150,20 @@ qs/queries, le/line_edits, sl/start_line, el/end_line, sf/severity_filter, ff/fo
 key/keys, cmd also auto-resolved
 
 ### Task Recipes (follow the matching recipe)
-Bug hunt: si -> rs(sig) top 3-5 suspects -> pi sigs -> rc (unpinned) -> rl slices + pi slices + bw finding per fn -> fix confirmed -> task_complete
-Feature: rs(sig) targets -> pi sigs -> spl -> rc + rl slices + pi slices -> ce per subtask -> task_complete
+Bug hunt: si -> rf top 3-5 suspects (skeleton emerges) -> rl slices + pi slices + bw finding per fn -> fix confirmed -> task_complete
+Feature: rf targets (skeleton emerges) -> spl -> rl slices + pi slices -> ce per subtask -> task_complete
 Refactor: ax -> spl -> cf per extraction -> vb -> pi if failed (fix from h:ref) -> task_complete
 Refactor (split): ax -> cm dry_run:true -> cm dry_run:false -> vb -> task_complete
 Investigation: iv -> bw structured findings per target -> task_complete with report
-Review: rs(sig) -> pi sigs -> rc (unpinned) -> rl changed fns + pi slices -> bw review finding per fn -> task_complete
+Review: rf targets (skeleton emerges) -> rl changed fns + pi slices -> bw review finding per fn -> task_complete
 
-### Read Pattern (slice or lose)
-- Discovery: rs(sig) for structure -> pin sigs
-- Load: rc/rf loads full file UNPINNED into dynamic context (one-round read cache)
-- Slice: rl targets in the SAME batch -> pin the slices. Full file dematerializes at turn end.
-- If you skip slicing, you lose the file content next round. Slice or lose.
-- DO NOT pin full files. DO NOT chain rs -> rl -> rc -> rf on same file. One read tool, pin slices, analyze, write finding.
-- If the batch summary includes a **read spin** warning (\`<<WARN:\` / \`<<NUDGE:\`), you already have (or fragmented) coverage of that file — prefer **h:refs**, **bw**, or an **edit** over blind re-reads.
+### Read Pattern (FileView — one view per file, auto-healing)
+- First touch: rf OR rl any range — FileView block appears in WM with imports + signature skeleton (indent-preserved). Folded bodies show as "{ ... } [start-end]" — pass that range straight to rl.
+- Slice: rl targets as needed — regions merge into the same view in file order; each fill overlays the matching folded signature.
+- Full body: rc type:full or rf type:full when a slice-based map is insufficient.
+- Edits: cite **@h:XXX** from the block header as **content_hash**; line numbers are current-revision (auto-healed across file edits).
+- Markers: [edited L..-.. this round] = auto-refreshed content, reconsider prior reasoning. [REMOVED was L..-..] = content is gone, re-orient. The view itself never carries stale bodies.
+- Avoid re-reading the same span: the view persists across rounds. Add slices on demand.
 
 ### Tool messages (read literally — not always "bugs")
 - **redundant** (read.file / load / read.lines): Same revision already in context at the given **h:**. Do **not** repeat the same path read; use that **h:** in \`f\`, \`ce\`, or \`pi\`.
@@ -180,8 +182,26 @@ Review: rs(sig) -> pi sigs -> rc (unpinned) -> rl changed fns + pi slices -> bw 
 - ps: actual paths or h:refs, not query strings. deletes/restore: paths or h:refs.
 - vb|vt|vl|vk: subprocess uses PATH with ATLS_TOOLCHAIN_PATH prepended. xe runs in PTY (may see different PATH).
 - xe: PowerShell — cmd saved to temp .ps1; prefer xg for git, vb|vt|vl|vk for checks.
-- prefer cheapest tool: sigs -> rs; one symbol -> sy; types -> vk; file list -> rc(tree).
-- use dr/dd when cheap research suffices before a bigger reasoning pass.`;
+- prefer cheapest tool: one symbol -> sy; types -> vk; file list -> rc(tree); file structure -> rf (skeleton emerges automatically).
+- use dr/dd when cheap research suffices before a bigger reasoning pass.
+
+## Working Memory — FileView
+Each file you've read appears as ONE block in WM, not as separate chunks:
+  === path @h:XXX (N lines) [pinned?] ===
+   1|import ...
+  17|const FOO = 1;
+  42|export function bar(): T { ... } [42-56]
+ 205|export function baz() {
+ 206|  doThing();
+ 207|}
+  ===
+Slice notation [A-B] after a folded signature is the exact range for rl (read.lines sl:A el:B). No arithmetic needed.
+Markers:
+  [edited L205-213 this round]    auto-refreshed; reconsider prior reasoning
+  [REMOVED was L205-213]          content at that range is gone; re-orient
+  [changed: N regions pending refetch — re-read on demand]
+Cite @h:XXX (the block header hash) as content_hash for edits. Line numbers are current-revision.
+The view auto-heals across file edits: shifted regions rebase, pinned regions refetch, unpinned stale regions drop silently. You never see [STALE].`;
 
 export const SUBAGENT_TOOL_REF = `
 
@@ -203,7 +223,7 @@ Use batch with q: only — one step per line: STEP_ID <operation> key:val (short
 
 Examples
 s1 sc qs:auth,login
-r1 rc type:smart ps:src/api.ts
+r1 rf ps:src/api.ts
 
 d1 nd content:"# Plan" append:false
 bb1 bw key:design-decisions content:"..."`;
