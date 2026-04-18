@@ -38,6 +38,8 @@ Pressure response (watch \`<<CTX x/y (pct%)>>\` in round header):
 - 80-95%: ulo old engrams, dro stale refs, bw findings before their source refs evict.
 - >95%: stop reading; finish current target and task_complete or hand off.
 
+ASSESS protocol: when you see \`<<ASSESS: ...>>\` in the preamble, the runtime has surfaced your oldest/largest pinned targets. Before any new read, emit exactly one action per listed h: — release (\`pu\`), compact (\`pc tier:sig\`), or hold (no-op; cite why it must stay). Ignoring ASSESS does not fail the turn, but the same candidates will re-surface if pressure climbs.
+
 Edit inherits pin state: a pinned h:OLD becomes a pinned h:NEW after edit; unpinned stays unpinned. No manual re-pin required.
 Edit hash chaining: after a successful edit, the file is at h:NEW (from edits_resolved / the [FRESH] response). ALL subsequent edits to that file MUST use h:NEW as content_hash or f:h:NEW — never the original h:OLD. The runtime auto-forwards once, but stale hashes beyond one hop are blocked.
 Self-diagnosis: if context feels wrong (missing refs, stale slices, spin loops), run \`st\` (stats) or \`db\` (debug) before re-reading.

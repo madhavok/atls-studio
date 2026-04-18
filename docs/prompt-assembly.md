@@ -137,9 +137,19 @@ The **main** chat tool loop in [`aiService.ts`](../atls-studio/src/services/aiSe
 | **Completion / verify steering** | When `completionBlocked` is set on `toolLoopSteering`, `buildDynamicContextBlock()` may inject verification or “continue implementation” `<<SYSTEM:…>>` lines (including stale-verify handling). |
 | **Auto-verify after `task_complete`** | In **agent** and **refactor** modes, after `task_complete` with mutations and no verify yet, the loop may run `verify.build` before finishing — **not** gated on any removed force-stop margin. |
 | **Spin early warning** | `diagnoseSpinning()` (round snapshots, coverage plateau flags, tool signatures, etc.) can trigger `<<SYSTEM: SPIN — …>>` lines in the preamble (e.g. **stuck in phase** cites `consecutiveReadOnlyRounds`). **Guidance only** — not a hard loop break. |
+| **ASSESS (pinned-WM hygiene)** | [`evaluateAssess()`](../atls-studio/src/services/assessContext.ts) scores pinned FileViews + pinned non-FV artifacts by `tokens × (idleRounds + 2 × survivedEditsWhileIdle)` and emits a `<<ASSESS: …>>` block listing the top candidates with per-row options `release (pu)`, `compact (pc tier:sig)`, or `hold`. Fires at user-turn boundary (`round === 0`, if pinned tokens ≥ `boundaryMinTokens`) and mid-loop when CTX ≥ `midLoopCtxThreshold` or a new edit-forwarded pin appears. Single-fire per `bucket:sortedHashes` dedupe key; re-fires only on new candidates or CTX bucket climb. **Guidance only** — never halts. |
 | **Pending action block** | `buildPendingActionBlock()` surfaces high-priority agent pending actions (blocked, confirmation, state changed) as a `## ACTION REQUIRED` / `## BLOCKED` section in the dynamic context. |
 | **Edit-awareness** | Recent damaged edits, healthy edits, and escalated repairs produce `<<DAMAGED EDIT:…>>` / `<<RECENT EDITS:…>>` / `<<ESCALATED REPAIR:…>>` lines when BB state warrants it. |
 | **Phase / soft-round budgets** | `PHASE_ROUND_BUDGET`, `TOTAL_ROUND_SOFT_BUDGET`, and `TOTAL_ROUND_ESCALATION` are evaluated in the tool loop (currently **logging**); they are **not** separate dedicated preamble lines in `buildDynamicContextBlock()` — rely on spin nudges and static cognitive guidance for consolidation pressure. |
+
+#### ASSESS trigger model
+
+`evaluateAssess()` runs once per round in the main chat loop (skipped for `ask` / `retriever` modes) and publishes `toolLoopSteering.assessContext`. The consumer in `buildDynamicContextBlock()` emits the `<<ASSESS: …>>` block immediately after the spin circuit-breaker block, so corrective steering (spin) precedes hygiene steering (ASSESS) in the preamble. Two fire paths:
+
+1. **User-turn boundary** (`round === 0`): surfaces any pinned content carried over from prior turns whose total tokens clear `boundaryMinTokens`. Gives the model a chance to clean house before starting a new user request.
+2. **Mid-loop**: fires when `ctxPct ≥ midLoopCtxThreshold` (default `80`) **or** a new edit-forwarded pin is observed (a revision bump on a pinned view whose `lastAccessed` did not advance — "silent accumulator" from the Cognitive Core warning).
+
+Dedupe is single-fire per `bucket:sortedCandidateHashes`. Re-fires only when the candidate set changes or CTX crosses from `mid` to `hi` (≥ 80%); descending back to `mid` with the same candidates stays quiet. Module-private sidecar state (`fvSidecar`) is session-scoped and tracks revision-changes-between-accesses to compute `survivedEditsWhileIdle`; dedupe state (`turnDedupe`) is keyed by `turnId` and resets on new user turns. Both are cleared by `resetAssessContext()` alongside `resetSpinCircuitBreaker()` on session reset. Forward-compat diagnostics (`assessFired`, `assessFiredKey`, `assessCandidateCount`) ride each `RoundSnapshot`; no read-back yet.
 
 ### State Block (dynamic context + staged + WM)
 
@@ -158,6 +168,7 @@ Components that could steer behavior are filtered through **`canSteerExecution`*
 | Context pressure hint | Stale vs active ratio | Per-round |
 | Pending action block | Agent state | Per-round |
 | Tool-loop steering signals | `toolLoopSteering` on `appStore` | Per-round (conditional) |
+| ASSESS cleanup nudge | `toolLoopSteering.assessContext` (via `evaluateAssess`) | Per-round (conditional, single-fire per candidate set + CTX bucket) |
 | Project structure tree | `projectTree` | First turn only |
 | Workspace context (TOON) | Editor state, profile | Per-round |
 | Selected text | IDE selection | Per-round |

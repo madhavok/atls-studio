@@ -269,6 +269,8 @@ import {
   recordReadDiversity,
 } from './spinDiagnostics';
 import { evaluateSpin, resetSpinCircuitBreaker } from './spinCircuitBreaker';
+import { evaluateAssess, resetAssessContext } from './assessContext';
+import { collectFileViewChunkHashes } from './fileViewRender';
 
 /** Content block types for multimodal messages */
 export type TextContentBlock = { type: 'text'; text: string };
@@ -1536,6 +1538,8 @@ function createChatSession(isSwarm: boolean): ChatSessionContext {
   // Spin circuit-breaker state is per-session: reset so a fresh chat doesn't
   // inherit the previous session's escalation streak.
   resetSpinCircuitBreaker();
+  // ASSESS steering: clear sidecar + dedupe so a new chat starts clean.
+  resetAssessContext();
 
   const controller = new AbortController();
   const session: ChatSessionContext = {
@@ -1923,6 +1927,39 @@ async function streamChatViaTauri(
         }
       }
 
+      // -----------------------------------------------------------------
+      // ASSESS — pinned-working-memory hygiene (resource-based steering)
+      // -----------------------------------------------------------------
+      // Fires at user-turn boundary (round === 0) when pinned content warrants
+      // review, and mid-loop only if CTX is high or a new edit-forwarded pin
+      // appeared. Single-fire per (candidate set, CTX bucket). Skipped for
+      // read-only / retriever modes that don't accumulate pinned edits.
+      let assessEvaluation: ReturnType<typeof evaluateAssess> | undefined;
+      if (mode !== 'ask' && mode !== 'retriever') {
+        const ctxState = useContextStore.getState();
+        const fvCovered = ctxState.fileViews.size > 0
+          ? collectFileViewChunkHashes(ctxState.fileViews.values())
+          : new Set<string>();
+        const ctxUsed = ctxState.getUsedTokens();
+        const ctxMax = ctxState.maxTokens;
+        assessEvaluation = evaluateAssess({
+          fileViews: ctxState.fileViews,
+          chunks: ctxState.chunks,
+          fileViewCoveredChunkHashes: fvCovered,
+          ctxUsedTokens: ctxUsed,
+          ctxMaxTokens: ctxMax,
+          round,
+          turnId: session.sessionId,
+        });
+        if (assessEvaluation.fired) {
+          console.debug(
+            `[assess] fired round=${round} ctxPct=${assessEvaluation.ctxPct.toFixed(0)} `
+            + `candidates=${assessEvaluation.candidates.length} `
+            + `topTokens=${assessEvaluation.candidates[0]?.tokens ?? 0}`,
+          );
+        }
+      }
+
       // Publish tool-loop counters so buildDynamicContextBlock can emit
       // conditional steering sections in the non-durable state preamble.
       useAppStore.getState().setToolLoopSteering({
@@ -1943,6 +1980,14 @@ async function streamChatViaTauri(
               confidence: cbEvaluation.diagnosis.confidence,
               message: cbEvaluation.message,
               consecutiveSameMode: cbEvaluation.consecutiveSameMode,
+            }
+          : null,
+        assessContext: assessEvaluation && assessEvaluation.fired && assessEvaluation.message
+          ? {
+              message: assessEvaluation.message,
+              firedKey: assessEvaluation.firedKey,
+              candidateCount: assessEvaluation.candidates.length,
+              ctxPct: assessEvaluation.ctxPct,
             }
           : null,
       });
@@ -2565,6 +2610,9 @@ async function streamChatViaTauri(
           coveragePlateau: ctxState.coveragePlateauStreak >= 2,
           substantiveBbWrites: bm.hadSubstantiveBbWrite ? 1 : 0,
           turnId: sessionId,
+          assessFired: assessEvaluation?.fired === true,
+          assessFiredKey: assessEvaluation?.fired ? assessEvaluation.firedKey : undefined,
+          assessCandidateCount: assessEvaluation?.candidates.length,
           ...getRoundFingerprint(),
         });
       };
@@ -3964,6 +4012,14 @@ function buildDynamicContextBlock(
   // -------------------------------------------------------------------------
   if (tls?.spinCircuitBreaker && tls.spinCircuitBreaker.message) {
     parts.push(tls.spinCircuitBreaker.message);
+  }
+
+  // -------------------------------------------------------------------------
+  // ASSESS — pinned-WM hygiene nudge. Emitted right after spin (corrective
+  // first, hygiene second). Both can fire in the same round.
+  // -------------------------------------------------------------------------
+  if (tls?.assessContext?.message) {
+    parts.push(tls.assessContext.message);
   }
 
   // -------------------------------------------------------------------------

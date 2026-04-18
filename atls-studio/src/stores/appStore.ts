@@ -614,6 +614,19 @@ export interface ToolLoopSteering {
     message: string;
     consecutiveSameMode: number;
   } | null;
+  /**
+   * Latest {@link import('../services/assessContext').AssessEvaluation} from the
+   * pinned-working-memory hygiene detector. Populated by the chat loop each
+   * round when an ASSESS block should be surfaced (single-fire per candidate
+   * set + CTX bucket); null otherwise. Consumed in `buildDynamicContextBlock`
+   * and usable by UI surfaces for a cleanup nudge.
+   */
+  assessContext?: {
+    message: string;
+    firedKey: string;
+    candidateCount: number;
+    ctxPct: number;
+  } | null;
 }
 
 interface AppState {

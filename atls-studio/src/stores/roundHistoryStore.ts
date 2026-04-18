@@ -131,6 +131,14 @@ export interface RoundSnapshot {
   uniqueReadPaths?: number;
   /** Distinct path|line-range read spans this round. */
   uniqueReadSpans?: number;
+
+  // --- ASSESS steering diagnostic (forward-compat; not yet read back) ---
+  /** True when the pinned-WM hygiene detector emitted an ASSESS block this round. */
+  assessFired?: boolean;
+  /** Dedupe key — `bucket:sortedCandidateHashes` — for diagnostics only. */
+  assessFiredKey?: string;
+  /** Number of candidates listed in the ASSESS block (0 when not fired). */
+  assessCandidateCount?: number;
 }
 
 interface RoundHistoryState {
