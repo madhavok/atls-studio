@@ -701,6 +701,117 @@ export function stubBatchToolUseInputs(
   return stubbed;
 }
 
+// ---------------------------------------------------------------------------
+// Retention-op compaction — strips specific hash args and verbose success text
+// from pin/unpin/drop/unload/compact/bb.delete calls so they don't leave a
+// ghost-ref trail in history after the round ends. The current hash manifest
+// is the authoritative source of pin/drop state; the tool_use args and the
+// per-step "unpinned 3 chunks" lines are narrative evidence only.
+// ---------------------------------------------------------------------------
+
+/** Ops whose effect is fully captured in the current hash manifest / BB.
+ *  Their specific refs and success metrics are redundant after the round ends. */
+const RETENTION_OPS: ReadonlySet<string> = new Set([
+  'session.pin',
+  'session.unpin',
+  'session.drop',
+  'session.unload',
+  'session.compact',
+  'session.bb.delete',
+]);
+
+/** Count of refs the retention step was acting on — used for the count-only stub. */
+function countRetentionArgs(withParams: Record<string, unknown> | undefined): number {
+  if (!withParams) return 0;
+  const hashes = withParams.hashes;
+  if (Array.isArray(hashes)) return hashes.length;
+  if (typeof hashes === 'string' && hashes.length > 0) return 1;
+  const keys = withParams.keys;
+  if (Array.isArray(keys)) return keys.length;
+  if (typeof keys === 'string' && keys.length > 0) return 1;
+  return 0;
+}
+
+/** Per-step batch result line: `[OK|FAIL] <id> (<op>): <tail>` */
+const BATCH_RESULT_LINE_RE = /^\[(OK|FAIL)\]\s+(\S+)\s+\((\S+)\):\s+(.+)$/;
+
+/**
+ * Compact retention-op calls in the last tool-loop round:
+ *  - tool_use (batch): replace retention steps' args with count-only stubs (`{n:3}`)
+ *    and drop any `step.in` dataflow reference (also a ghost-ref vector).
+ *  - tool_result (batch): collapse OK per-step lines for retention ops to `ok`,
+ *    stripping "unpinned N chunks (Xms)" / "dropped: [h:…]" tails.
+ *
+ * Failures (`[FAIL]` lines) are preserved verbatim — the error text carries
+ * debuggable signal. Non-retention ops are untouched — their tool_result is
+ * the payload (handled by `deflateToolResults`).
+ *
+ * Runs at turn-finalize before the turn joins the cacheable BP3 prefix, so
+ * subsequent rounds see the compacted form and the prefix stays byte-stable
+ * (no retroactive rewrite of cached history).
+ *
+ * Idempotent: second run sees `_compacted` on steps and `: ok$` lines and
+ * short-circuits.
+ *
+ * @returns counts of compacted steps and result lines for telemetry
+ */
+export function compactRetentionOps(
+  history: Array<{ role: string; content: unknown }>,
+  toolResults: ToolResultBlock[],
+): { stepsCompacted: number; resultLinesCompacted: number } {
+  const stats = { stepsCompacted: 0, resultLinesCompacted: 0 };
+
+  // --- 1. Compact tool_use step args in the last assistant message ---
+  let lastAssistant: { role: string; content: unknown } | undefined;
+  for (let i = history.length - 1; i >= 0; i--) {
+    if (history[i].role === 'assistant') { lastAssistant = history[i]; break; }
+  }
+  if (lastAssistant && Array.isArray(lastAssistant.content)) {
+    const blocks = lastAssistant.content as Array<{
+      type: string; id?: string; input?: Record<string, unknown>;
+    }>;
+    for (const block of blocks) {
+      if (block.type !== 'tool_use' || !block.input) continue;
+      const steps = block.input.steps;
+      if (!Array.isArray(steps)) continue; // e.g. stubBatchToolUseInputs already replaced with `_stubbed`
+      for (const rawStep of steps as Array<Record<string, unknown>>) {
+        if (rawStep._compacted === true) continue;
+        const use = typeof rawStep.use === 'string' ? rawStep.use : '';
+        if (!RETENTION_OPS.has(use)) continue;
+        const n = countRetentionArgs(rawStep.with as Record<string, unknown> | undefined);
+        // Skip scope-based ops with no refs to redact (e.g. session.drop {scope:'archived', max:25}).
+        // They carry no ghost-ref surface; stripping wouldn't help and would lose structural info.
+        if (n === 0 && rawStep.in === undefined) continue;
+        rawStep.with = { n };
+        if (rawStep.in !== undefined) delete rawStep.in;
+        rawStep._compacted = true;
+        stats.stepsCompacted++;
+      }
+    }
+  }
+
+  // --- 2. Compact tool_result per-step OK lines for retention ops ---
+  for (const tr of toolResults) {
+    if (!tr.content || typeof tr.content !== 'string') continue;
+    const lines = tr.content.split('\n');
+    let changed = false;
+    for (let i = 0; i < lines.length; i++) {
+      const m = BATCH_RESULT_LINE_RE.exec(lines[i]);
+      if (!m) continue;
+      const [, status, id, op, tail] = m;
+      if (status !== 'OK') continue;          // FAIL text is diagnostic — preserve
+      if (!RETENTION_OPS.has(op)) continue;   // deflateToolResults owns these
+      if (tail === 'ok') continue;            // already compacted
+      lines[i] = `[OK] ${id} (${op}): ok`;
+      changed = true;
+      stats.resultLinesCompacted++;
+    }
+    if (changed) tr.content = lines.join('\n');
+  }
+
+  return stats;
+}
+
 /**
  * Deflate tool_result entries in-place: if the content (or a chunk matching
  * the tool description) already exists in the context store, replace the

@@ -94,6 +94,8 @@ Every read should move toward a finding or edit — not just accumulate context.
 - 5+ targets read without any BB findings = you are spinning. STOP reading and write findings for what you have.
 - Pure discovery rounds (search + rs(sig) + pin, no findings) are fine early in a task. Once you start reading function bodies (rl), produce findings as you go.
 
+Retention-op history contract: pi, pu, dro, ulo, pc, bb:delete calls are compacted in history once their round ends — you will see \`{n:3}\` not the hashes, and \`ok\` not byte counts. The CURRENT hash manifest is the authoritative source of pin/drop state. Never re-emit hashes you see only in your own prior tool_use or tool_result — those refs are gone by design. If the ref is not in this round's manifest, it is released; do not repeat cleanup you already ran.
+
 Anti-patterns (never do these):
 - Re-reading a file whose content is dormant — use rec to recall, not a fresh read. rec is O(1); re-read is a full round trip.
 - Re-reading a file you've already read this session — the FileView holds it; rl new ranges into the same view if you need more lines. The ref stays \`h:fv:<hash>\`.

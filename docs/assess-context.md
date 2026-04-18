@@ -180,6 +180,7 @@ Ship criterion: overhead ≤ 10%, no regression in rounds-to-convergence, at lea
 | Subsystem | Relationship |
 |---|---|
 | **Spin circuit breaker** | Sibling, publishes through the same `toolLoopSteering` surface. Spin block renders first (corrective); ASSESS second (hygiene). Independent triggers — both can fire in one round. |
+| **Retention-op compaction** | Same goal (kill ghost-ref surface from pin/unpin/drop/unload/compact/bb.delete), different layer. ASSESS acts on **live pinned state** the current round — "here are the candidates, decide." Retention-op compaction acts on **persisted tool-call history** after the round ends — "the hashes you already unpinned are gone, don't re-emit them." See [`history-compression.md`](history-compression.md#retention-op-compaction). |
 | **FileView render** | ASSESS does not mutate views. The model's response (`pu` / `pc`) flows through the normal batch handlers and updates the store the same way as any other pin change. |
 | **Freshness** | `freshness === 'suspect'` / `'changed'` entries are **excluded** from candidates — they need `rec` or refresh, not cleanup. `canSteerExecution` is not invoked here (that gate covers steering content, not memory hygiene). |
 | **Pressure response bullets in Cognitive Core** | Cached rules (`<50%` / `50-80%` / `80-95%` / `>95%`) describe *what* actions to take at each band. ASSESS provides *which* specific refs to act on — the missing activation cue between rules and state. |

@@ -224,7 +224,7 @@ import {
   type PromptPressureBuckets,
   type PromptReliefAction,
 } from './promptMemory';
-import { compressToolLoopHistory, deflateToolResults, stubBatchToolUseInputs, estimateHistoryTokens, estimateHistoryTokensAsync } from './historyCompressor';
+import { compressToolLoopHistory, compactRetentionOps, deflateToolResults, stubBatchToolUseInputs, estimateHistoryTokens, estimateHistoryTokensAsync } from './historyCompressor';
 import { formatSummaryMessage, isRollingSummaryEmpty, trimSummaryToTokenBudget } from './historyDistiller';
 import { createGuardrailCallbacks, runBeforeRoundMiddlewares, setPromptBudgetEstimates } from './chatMiddleware';
 import { createTauriChatStream } from './chatTransport';
@@ -3116,6 +3116,14 @@ async function streamChatViaTauri(
       // message is in history, but BEFORE deflate uses buildCompressionDescription
       // which only needs tool name/first-step, not full args.
       stubBatchToolUseInputs(conversationHistory);
+
+      // Retention-op compaction: strip specific hash args from pin/unpin/drop/
+      // unload/compact/bb.delete steps that survived the 80-token stub threshold,
+      // and collapse their OK per-step result lines to `ok`. Kills ghost-ref
+      // leakage from tool_use/tool_result into the model's next-round view
+      // without touching reasoning, text, or non-retention ops.
+      // Runs pre-BP3 so the compacted form is what lands in the cacheable prefix.
+      compactRetentionOps(conversationHistory, toolResults);
 
       // Eager deflation: replace tool_result content with hash-pointer refs
       // when the content already lives in the context store as an engram.

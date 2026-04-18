@@ -117,6 +117,27 @@ Compression traditionally targets tool *results* (the user-role messages). `stub
 
 This matters because a large `batch` payload (say, 20 steps with inline content) can dominate the transcript the next round will re-read. After stubbing, the model sees the shape of what it did without re-reading the full step list.
 
+## Retention-op compaction
+
+`compactRetentionOps` in [`historyCompressor.ts`](../atls-studio/src/services/historyCompressor.ts) runs **between** `stubBatchToolUseInputs` and `deflateToolResults` at turn-finalize. It strips ghost-ref surface from state-mutation calls whose effect is already captured in the current hash manifest:
+
+| Retention op | `tool_use` args after compaction | `tool_result` line after compaction |
+|---|---|---|
+| `session.pin`, `session.unpin` | `{n:N}` (count of hashes) | `[OK] <id> (session.pin): ok` |
+| `session.drop`, `session.unload` | `{n:N}` (scope-based drops unchanged) | `[OK] <id> (session.drop): ok` |
+| `session.compact` | `{n:N}` | `[OK] <id> (session.compact): ok` |
+| `session.bb.delete` | `{n:N}` (count of keys) | `[OK] <id> (session.bb.delete): ok` |
+
+**Rules:**
+- Only `[OK]` per-step lines are compacted. `[FAIL]` lines are preserved verbatim — their error text carries debuggable signal (e.g. `step 'r1' produced no h:refs`).
+- Non-retention ops (`read.*`, `search.*`, `session.bb.write`, `change.*`, `verify.*`, `task_complete`, …) are untouched. `deflateToolResults` handles their payloads.
+- Scope-based drops with no specific refs (`{scope:'archived', max:25}`) skip — no ghost surface to strip.
+- `step.in` dataflow references are also dropped (they resolve to prior-step refs, same ghost vector).
+- Idempotent via `_compacted: true` marker on each step; second run is a no-op.
+- Runs **pre-BP3** so the compacted form is what lands in the cacheable prefix — no retroactive rewrite.
+
+**Why:** sub-threshold retention batches (often 2–5 steps) stay under the 80-token stub threshold and otherwise survive verbatim for the full rolling window. The literal hashes in the tool_use and the "unpinned 3 chunks (19ms)" tails in the tool_result become a template the model re-emits next round, pointing at hashes that are already gone from the manifest — the template-calcification spin pattern. Compacting these leaves the narrative action (`session.unpin: ok`) visible but the refs unreachable.
+
 ## Emergency compression
 
 `compressToolLoopHistory` accepts an optional `emergency` flag. When set, it compresses **even protected rounds** — normally the last N rounds are preserved verbatim, but under pressure the safety net is lowered. Used by `chatMiddleware` when token pressure crosses hard caps mid-loop.
