@@ -6,6 +6,7 @@
  * compose as typed steps within a single batch run.
  */
 
+import type { FileView } from '../fileViewStore';
 import type { SetRefLookup, HashLookup } from '../../utils/hashResolver';
 import type { RebaseConfidence, RebaseEvidence, RebaseStrategy, RebindOutcome } from '../freshnessJournal';
 
@@ -366,6 +367,12 @@ export interface ContextStoreApi {
   chunks: Map<string, ChunkEntry>;
   archivedChunks: Map<string, ChunkEntry>;
   droppedManifest: Map<string, unknown>;
+
+  // FileViews — per-path unified surfaces keyed by filePath. Entries carry
+  // `view.hash` (`h:fv:<hash>`) as the single retention ref. Exposed so
+  // ref-resolving handlers (session.shape on `h:fv:…`) can render views
+  // without an extra Rust round-trip.
+  fileViews?: Map<string, FileView>;
   addChunk: (content: string, type: string, source?: string, symbols?: unknown[], summary?: string, backendHash?: string, opts?: Record<string, unknown>) => string;
   findReusableRead: (span: { filePath: string; startLine?: number; endLine?: number; shape?: string; sourceRevision: string; contextType?: string }) => string | null;
   getChunkContent: (hash: string) => string | null;

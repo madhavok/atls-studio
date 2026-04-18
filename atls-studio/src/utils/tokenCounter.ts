@@ -1,3 +1,4 @@
+// tested by ATLS tool exerciser [workspace_rev=726]
 /**
  * Token Counter — async wrapper around Rust tokenizer with LRU cache.
  *

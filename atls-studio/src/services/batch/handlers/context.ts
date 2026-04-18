@@ -928,8 +928,51 @@ export const handleShape: OpHandler = async (params, ctx) => {
   const hashRef = params.hash as string;
   if (!hashRef) return err('shape: ERROR missing hash param');
 
+  const rawRef = hashRef.startsWith('h:') ? hashRef : `h:${hashRef}`;
+
+  // FileView refs resolve entirely frontend-side: the view is built in the
+  // context store, rendered by fileViewRender, and already visible in WM.
+  // Rust's `resolve_hash_ref` doesn't know about `h:fv:…`, so we short-
+  // circuit here and return the same rendered block the model would see
+  // in its WORKING MEMORY section.
+  if (rawRef.startsWith('h:fv:')) {
+    const store = ctx.store();
+    const views = store.fileViews;
+    if (!views) {
+      return err(
+        `shape: ERROR ${rawRef} is a FileView ref but the store does not expose fileViews — no view access in this context`,
+      );
+    }
+    // FileView keys are per-path; index by the view's own `h:fv:` hash.
+    let view: import('../../fileViewStore').FileView | undefined;
+    for (const v of views.values()) {
+      if (v.hash === rawRef) { view = v; break; }
+    }
+    if (!view) {
+      return err(
+        `shape: ERROR ${rawRef} not found — FileView was dropped or never registered. FileView blocks auto-render in WORKING MEMORY; no explicit shape call is needed for a live view.`,
+      );
+    }
+    try {
+      const { renderFileViewBlock } = await import('../../fileViewRender');
+      const { useRoundHistoryStore } = await import('../../../stores/roundHistoryStore');
+      const currentRound = useRoundHistoryStore.getState().snapshots.length;
+      const content = renderFileViewBlock(view, { currentRound });
+      const hash = store.addChunk(content, 'smart', view.filePath);
+      const tokens = countTokensSync(content);
+      return ok(
+        `shape: ${rawRef} → h:${hash} (${tokens}tk, FileView ${view.filePath})`,
+        [`h:${hash}`],
+        tokens,
+      );
+    } catch (renderErr) {
+      return err(
+        `shape: ERROR rendering FileView ${rawRef}: ${renderErr instanceof Error ? renderErr.message : String(renderErr)}`,
+      );
+    }
+  }
+
   try {
-    const rawRef = hashRef.startsWith('h:') ? hashRef : `h:${hashRef}`;
     const resolved = await invokeWithTimeout<ResolvedHashContent>('resolve_hash_ref', { rawRef }, READ_TIMEOUT_MS);
     const hash = ctx.store().addChunk(resolved.content, 'smart', resolved.source || undefined);
     const tokens = countTokensSync(resolved.content);

@@ -415,6 +415,51 @@ describe('context handlers validation and errors', () => {
     expect(r.error).toMatch(/no such ref/);
   });
 
+  it('handleShape resolves h:fv: refs by rendering the FileView block (no Rust round-trip)', async () => {
+    // Build a FileView for src/foo.ts via the store's addChunk readSpan path
+    // (same pattern used in fileViewPin.test.ts).
+    const store = useContextStore.getState();
+    store.addChunk(
+      '  10|const a = 1;',
+      'smart',
+      'src/foo.ts',
+      undefined, undefined, 'hchunk1',
+      {
+        sourceRevision: 'rev1',
+        readSpan: { filePath: 'src/foo.ts', sourceRevision: 'rev1', startLine: 10, endLine: 10 },
+      },
+    );
+    const fvHash = useContextStore.getState().getFileView('src/foo.ts')!.hash;
+    expect(fvHash.startsWith('h:fv:')).toBe(true);
+
+    const r = await handleShape({ hash: fvHash }, makeCtx());
+    expect(r.ok).toBe(true);
+    expect(r.summary).toMatch(/FileView src\/foo\.ts/);
+    expect(r.refs?.[0]).toMatch(/^h:/);
+    // Rust resolver MUST NOT be called for h:fv: refs — the whole point.
+    expect(invokeWithTimeoutMock).not.toHaveBeenCalled();
+    // The rendered block must land as a chunk the model can reference.
+    // `addChunk` returns a short hash; `chunk.shortHash` is the matching field.
+    const chunkShort = r.refs![0].replace(/^h:/, '');
+    const chunk = Array.from(useContextStore.getState().chunks.values())
+      .find(c => c.shortHash === chunkShort);
+    expect(chunk).toBeDefined();
+    // The rendered block carries the FileView fence + path header.
+    expect(chunk!.content).toContain('src/foo.ts');
+    expect(chunk!.content).toContain('===');
+  });
+
+  it('handleShape on unknown h:fv: returns an actionable error (not "Invalid h:ref syntax")', async () => {
+    const r = await handleShape({ hash: 'h:fv:0000000000000000' }, makeCtx());
+    expect(r.ok).toBe(false);
+    // Must NOT forward to Rust's "Invalid h:ref syntax" — that was the
+    // original pain point.
+    expect(r.error).not.toMatch(/Invalid h:ref syntax/);
+    expect(r.error).toMatch(/FileView/);
+    expect(r.error).toMatch(/not found|dropped|never registered/);
+    expect(invokeWithTimeoutMock).not.toHaveBeenCalled();
+  });
+
   it('handleEmit errors when content missing', async () => {
     const r = await handleEmit({ label: 'x' }, makeCtx());
     expect(r.ok).toBe(false);
