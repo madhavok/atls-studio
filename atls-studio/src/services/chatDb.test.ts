@@ -341,4 +341,64 @@ describe('chatDb', () => {
     expect(invoke).toHaveBeenCalledWith('chat_db_save_memory_snapshot', expect.any(Object));
     await chatDb.close();
   });
+
+  it('v7 memory snapshot preserves fileViews entries through save/get', async () => {
+    const v7Snap = {
+      version: 7 as const,
+      savedAt: new Date().toISOString(),
+      chunks: [],
+      archivedChunks: [],
+      droppedManifest: [],
+      stagedSnippets: [],
+      blackboardEntries: [],
+      cognitiveRules: [],
+      taskPlan: null,
+      freedTokens: 0,
+      stageVersion: 0,
+      transitionBridge: null,
+      batchMetrics: { toolCalls: 0, manageOps: 0 },
+      hashStack: [],
+      editHashStack: [],
+      readHashStack: [],
+      stageHashStack: [],
+      memoryEvents: [],
+      reconcileStats: null,
+      freshnessJournal: [],
+      fileViews: [
+        ['src/pinned.ts', {
+          filePath: 'src/pinned.ts',
+          sourceRevision: 'rev-a',
+          observedRevision: 'rev-a',
+          totalLines: 20,
+          skeletonRows: [],
+          sigLevel: 'sig',
+          filledRegions: [],
+          hash: 'h:fv:abc',
+          lastAccessed: Date.now(),
+          pinned: true,
+        }],
+      ],
+    };
+    invoke.mockImplementation(async (cmd: string, args: Record<string, unknown>) => {
+      if (cmd === 'chat_db_save_memory_snapshot') {
+        const parsed = JSON.parse(args.snapshotJson as string);
+        expect(parsed.version).toBe(7);
+        expect(parsed.fileViews).toHaveLength(1);
+        expect(parsed.fileViews[0][1].pinned).toBe(true);
+        return undefined;
+      }
+      if (cmd === 'chat_db_get_memory_snapshot') {
+        return JSON.stringify(v7Snap);
+      }
+      return undefined;
+    });
+    await chatDb.init('/proj');
+    await chatDb.saveMemorySnapshot('sess-v7', v7Snap as any);
+    const back = await chatDb.getMemorySnapshot('sess-v7');
+    expect(back?.version).toBe(7);
+    expect(back?.fileViews).toBeDefined();
+    expect(back!.fileViews!).toHaveLength(1);
+    expect(back!.fileViews![0][1].pinned).toBe(true);
+    await chatDb.close();
+  });
 });

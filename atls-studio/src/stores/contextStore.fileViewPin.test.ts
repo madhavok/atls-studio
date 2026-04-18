@@ -10,11 +10,6 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }));
 
 function reset() {
   useContextStore.getState().resetSession();
-  useContextStore.setState({
-    hashStack: [],
-    editHashStack: [],
-    fileViews: new Map(),
-  });
   clearFreshnessJournal();
 }
 
@@ -131,6 +126,28 @@ describe('FileView PR4 — pinChunks with h:fv:', () => {
     const r = useContextStore.getState().pinChunks([shortHash]);
     expect(r.count).toBe(1);
     expect(r.skippedFullFile).toBe(0);
+  });
+
+  it('resetSession clears pinned FileViews (no cross-session leak)', () => {
+    const store = useContextStore.getState();
+    store.addChunk(
+      row(10, 'a'),
+      'smart',
+      'src/leak.ts',
+      undefined, undefined, 'h-leak1',
+      {
+        sourceRevision: 'rev1',
+        readSpan: { filePath: 'src/leak.ts', sourceRevision: 'rev1', startLine: 10, endLine: 10 },
+      },
+    );
+    useContextStore.getState().setFileViewPinned('src/leak.ts', true);
+    expect(useContextStore.getState().fileViews.size).toBe(1);
+    expect(useContextStore.getState().getFileView('src/leak.ts')!.pinned).toBe(true);
+
+    useContextStore.getState().resetSession();
+
+    expect(useContextStore.getState().fileViews.size).toBe(0);
+    expect(useContextStore.getState().getFileView('src/leak.ts')).toBeUndefined();
   });
 });
 

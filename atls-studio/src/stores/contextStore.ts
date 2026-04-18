@@ -729,7 +729,7 @@ function computeActiveEngramSources(state: ContextStoreState): Set<string> {
 }
 
 function emittedTokensForSnippet(snippet: StagedSnippet, activeEngramSources: Set<string>): number {
-  if (snippet.source != null && activeEngramSources.has(snippet.source)) {
+  if (snippet.source != null && activeEngramSources.has(snippet.source.replace(/\\/g, '/').toLowerCase())) {
     return STAGED_OMITTED_POINTER_TOKENS;
   }
   return snippet.tokens;
@@ -5417,7 +5417,13 @@ export const useContextStore = create<ContextStoreState>()(
         }
       }
     }
-    if (activeHashes.size === 0) return;
+    if (activeHashes.size === 0) {
+      // All chunks are compacted/evicted — clear all stacks entirely
+      if (state.hashStack.length || state.editHashStack.length || state.readHashStack.length || state.stageHashStack.length) {
+        set({ hashStack: [], editHashStack: [], readHashStack: [], stageHashStack: [] });
+      }
+      return;
+    }
     const prune = (stack: string[]) => stack.filter(h => activeHashes.has(h));
     const newHash = prune(state.hashStack);
     const newEdit = prune(state.editHashStack);
@@ -5649,6 +5655,7 @@ export const useContextStore = create<ContextStoreState>()(
       archivedChunks: new Map(),
       droppedManifest: new Map(),
       stagedSnippets: new Map(),
+      fileViews: new Map<string, FileView>(),
       stageVersion: 0,
       transitionBridge: null,
       freedTokens: 0,

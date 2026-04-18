@@ -62,7 +62,7 @@ describe('memory snapshot helpers', () => {
 
     const snapshot = serializeMemorySnapshot(useContextStore.getState(), DUMMY_GEMINI_CACHE);
 
-    expect(snapshot.version).toBe(6);
+    expect(snapshot.version).toBe(7);
     expect(snapshot.rollingSummary).toBeDefined();
     expect(snapshot.promptMetrics).toBeDefined();
     expect(snapshot.cacheMetrics).toBeDefined();
@@ -144,7 +144,7 @@ describe('memory snapshot helpers', () => {
 
     const snapshot = serializeMemorySnapshot(useContextStore.getState(), DUMMY_GEMINI_CACHE);
 
-    expect(snapshot.version).toBe(6);
+    expect(snapshot.version).toBe(7);
     expect(snapshot.verifyArtifacts).toHaveLength(1);
     expect(snapshot.verifyArtifacts![0]![0]).toBe('va-1');
     expect(snapshot.awarenessCache).toHaveLength(1);
@@ -490,6 +490,8 @@ describe('applyHashFirstFreshness', () => {
       preserved: 0,
       suspect: 0,
       staleSnippets: 0,
+      staleFileViews: 0,
+      evictedFileViews: 0,
       evictedPaths: 0,
       changedPaths: [],
     });
@@ -645,6 +647,194 @@ describe('full snapshot round-trip', () => {
     expect(journal).toBeDefined();
     expect(journal?.lineDelta).toBe(5);
     expect(journal?.currentRevision).toBe('rev-rt');
+  });
+});
+
+describe('FileView persistence — per-session isolation + restart round-trip', () => {
+  beforeEach(() => {
+    useContextStore.getState().resetSession();
+    clearFreshnessJournal();
+  });
+
+  const rowLine = (n: number, c: string) => `${String(n).padStart(4)}|${c}`;
+
+  function seedPinnedFileView(path: string, rev: string): void {
+    const store = useContextStore.getState();
+    store.addChunk(
+      rowLine(10, 'pinned content'),
+      'smart',
+      path,
+      undefined, undefined, 'fv-seed-' + path,
+      {
+        sourceRevision: rev,
+        readSpan: { filePath: path, sourceRevision: rev, startLine: 10, endLine: 10 },
+      },
+    );
+    useContextStore.getState().setFileViewPinned(path, true);
+  }
+
+  it('v7 snapshot serializes + restores a pinned FileView by path', () => {
+    seedPinnedFileView('src/fv-rt.ts', 'rev-fv');
+    const viewBefore = useContextStore.getState().getFileView('src/fv-rt.ts');
+    expect(viewBefore?.pinned).toBe(true);
+
+    const snapshot = serializeMemorySnapshot(useContextStore.getState(), DUMMY_GEMINI_CACHE);
+    expect(snapshot.version).toBe(7);
+    expect(snapshot.fileViews).toBeDefined();
+    expect(snapshot.fileViews!.length).toBe(1);
+
+    useContextStore.getState().resetSession();
+    expect(useContextStore.getState().fileViews.size).toBe(0);
+
+    useContextStore.setState({
+      fileViews: new Map(snapshot.fileViews ?? []),
+    });
+    const viewAfter = useContextStore.getState().getFileView('src/fv-rt.ts');
+    expect(viewAfter).toBeDefined();
+    expect(viewAfter!.pinned).toBe(true);
+    expect(viewAfter!.sourceRevision).toBe('rev-fv');
+  });
+
+  it('simulated session switch (resetSession) wipes pinned FileViews', () => {
+    seedPinnedFileView('src/session-a.ts', 'rev-a');
+    expect(useContextStore.getState().fileViews.size).toBe(1);
+
+    useContextStore.getState().resetSession();
+    expect(useContextStore.getState().fileViews.size).toBe(0);
+
+    seedPinnedFileView('src/session-b.ts', 'rev-b');
+    const state = useContextStore.getState();
+    expect(state.fileViews.size).toBe(1);
+    expect(state.getFileView('src/session-a.ts')).toBeUndefined();
+    expect(state.getFileView('src/session-b.ts')?.pinned).toBe(true);
+  });
+
+  it('v6 (legacy) snapshot restores with empty fileViews — no crash', () => {
+    const v6Snapshot: PersistedMemorySnapshot = {
+      version: 6,
+      savedAt: new Date().toISOString(),
+      chunks: [],
+      archivedChunks: [],
+      droppedManifest: [],
+      stagedSnippets: [],
+      blackboardEntries: [],
+      cognitiveRules: [],
+      taskPlan: null,
+      freedTokens: 0,
+      stageVersion: 0,
+      transitionBridge: null,
+      batchMetrics: { toolCalls: 0, manageOps: 0 },
+      hashStack: [],
+      editHashStack: [],
+      readHashStack: [],
+      stageHashStack: [],
+      memoryEvents: [],
+      reconcileStats: null,
+      // Intentionally no fileViews field (v6 didn't have one).
+    };
+
+    // Mimic the loadSession gated restore.
+    useContextStore.setState({
+      ...(v6Snapshot.version >= 7 ? {
+        fileViews: new Map((v6Snapshot as PersistedMemorySnapshot).fileViews ?? []),
+      } : {}),
+    });
+    expect(useContextStore.getState().fileViews.size).toBe(0);
+  });
+});
+
+describe('applyHashFirstFreshness — FileView rebase', () => {
+  beforeEach(() => {
+    useContextStore.getState().resetSession();
+    clearFreshnessJournal();
+  });
+
+  const rowLine = (n: number, c: string) => `${String(n).padStart(4)}|${c}`;
+
+  function pin(path: string, rev: string): void {
+    useContextStore.getState().addChunk(
+      rowLine(10, 'x'),
+      'smart',
+      path,
+      undefined, undefined, 'h-pin-' + path,
+      {
+        sourceRevision: rev,
+        readSpan: { filePath: path, sourceRevision: rev, startLine: 10, endLine: 10 },
+      },
+    );
+    useContextStore.getState().setFileViewPinned(path, true);
+  }
+
+  it('preserves a FileView when disk revision matches', async () => {
+    pin('src/ok.ts', 'rev-ok');
+    setBulkRevisionResolver(async (paths: string[]) => {
+      const m = new Map<string, string | null>();
+      for (const p of paths) m.set(p.toLowerCase(), 'rev-ok');
+      return m;
+    });
+
+    const result = await applyHashFirstFreshness();
+    const view = useContextStore.getState().getFileView('src/ok.ts');
+    expect(view).toBeDefined();
+    expect(view!.freshness).not.toBe('suspect');
+    expect(result.staleFileViews).toBe(0);
+    expect(result.evictedFileViews).toBe(0);
+  });
+
+  it('marks pinned FileView suspect when disk revision diverged', async () => {
+    pin('src/diverged.ts', 'rev-old');
+    setBulkRevisionResolver(async (paths: string[]) => {
+      const m = new Map<string, string | null>();
+      for (const p of paths) m.set(p.toLowerCase(), 'rev-new');
+      return m;
+    });
+
+    const result = await applyHashFirstFreshness();
+    const view = useContextStore.getState().getFileView('src/diverged.ts');
+    expect(view).toBeDefined();
+    expect(view!.freshness).toBe('suspect');
+    expect(view!.freshnessCause).toBe('session_restore');
+    expect(result.staleFileViews).toBeGreaterThanOrEqual(1);
+    expect(result.changedPaths).toContain('src/diverged.ts');
+  });
+
+  it('drops unpinned FileView when disk revision diverged', async () => {
+    useContextStore.getState().addChunk(
+      rowLine(10, 'y'),
+      'smart',
+      'src/unpinned.ts',
+      undefined, undefined, 'h-unpin',
+      {
+        sourceRevision: 'rev-old',
+        readSpan: { filePath: 'src/unpinned.ts', sourceRevision: 'rev-old', startLine: 10, endLine: 10 },
+      },
+    );
+    expect(useContextStore.getState().getFileView('src/unpinned.ts')).toBeDefined();
+
+    setBulkRevisionResolver(async (paths: string[]) => {
+      const m = new Map<string, string | null>();
+      for (const p of paths) m.set(p.toLowerCase(), 'rev-new');
+      return m;
+    });
+
+    await applyHashFirstFreshness();
+    expect(useContextStore.getState().getFileView('src/unpinned.ts')).toBeUndefined();
+  });
+
+  it('evicts FileView when backing path missing on disk (null-valued resolver entry)', async () => {
+    pin('src/gone.ts', 'rev-g');
+    setBulkRevisionResolver(async (paths: string[]) => {
+      const m = new Map<string, string | null>();
+      // Null-valued but present entry → resolveRevision returns 'missing' →
+      // view is evicted regardless of pin (content unrecoverable).
+      for (const p of paths) m.set(p.toLowerCase(), null);
+      return m;
+    });
+
+    const result = await applyHashFirstFreshness();
+    expect(useContextStore.getState().getFileView('src/gone.ts')).toBeUndefined();
+    expect(result.evictedFileViews).toBeGreaterThanOrEqual(1);
+    expect(result.changedPaths).toContain('src/gone.ts');
   });
 });
 

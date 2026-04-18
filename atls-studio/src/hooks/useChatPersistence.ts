@@ -109,7 +109,7 @@ function rehydrateSubAgentRows(rows: PersistedSubAgentUsageRow[] | undefined): S
 
 /** Apply v4+ fields (prompt/cache metrics, round history, chat cost, v5 rolling summary) after context snapshot. */
 export function applyV4SessionExtras(snapshot: PersistedMemorySnapshot): void {
-  if (snapshot.version !== 4 && snapshot.version !== 5 && snapshot.version !== 6) return;
+  if (snapshot.version !== 4 && snapshot.version !== 5 && snapshot.version !== 6 && snapshot.version !== 7) return;
   if (snapshot.promptMetrics) {
     const pm = snapshot.promptMetrics;
     useAppStore.setState({
@@ -133,7 +133,7 @@ export function applyV4SessionExtras(snapshot: PersistedMemorySnapshot): void {
       subAgentUsages: rehydrateSubAgentRows(snapshot.costChat.subAgentUsages),
     });
   }
-  if ((snapshot.version === 5 || snapshot.version === 6) && snapshot.rollingSummary) {
+  if ((snapshot.version === 5 || snapshot.version === 6 || snapshot.version === 7) && snapshot.rollingSummary) {
     const rs = snapshot.rollingSummary;
     useContextStore.getState().setRollingSummary({
       ...rs,
@@ -170,12 +170,13 @@ export function serializeMemorySnapshot(
   const cost = useCostStore.getState();
   const rounds = useRoundHistoryStore.getState();
   return {
-    version: 6,
+    version: 7,
     savedAt: new Date().toISOString(),
     chunks: Array.from(ctxState.chunks.values()),
     archivedChunks: Array.from(ctxState.archivedChunks.values()),
     droppedManifest: Array.from(ctxState.droppedManifest.entries()),
     stagedSnippets: persistedStaged,
+    fileViews: Array.from(ctxState.fileViews.entries()),
     blackboardEntries: Array.from(ctxState.blackboardEntries.entries()),
     cognitiveRules: Array.from(ctxState.cognitiveRules.entries()),
     taskPlan: ctxState.taskPlan,
@@ -279,12 +280,12 @@ const FILE_BACKED_TYPES = new Set(['file', 'smart', 'raw', 'result']);
  * missing/unresolvable). Chunks whose sourceRevision matches disk are
  * preserved with their persisted freshness — no amnesia window.
  */
-export async function applyHashFirstFreshness(): Promise<{ preserved: number; suspect: number; staleSnippets: number; evictedPaths: number; changedPaths: string[] }> {
+export async function applyHashFirstFreshness(): Promise<{ preserved: number; suspect: number; staleSnippets: number; staleFileViews: number; evictedFileViews: number; evictedPaths: number; changedPaths: string[] }> {
   const resolver = getBulkRevisionResolver();
   if (!resolver) {
     console.warn('[ChatPersistence] No bulk resolver — falling back to blanket suspect');
     applyBlanketSuspect();
-    return { preserved: 0, suspect: 0, staleSnippets: 0, evictedPaths: 0, changedPaths: [] };
+    return { preserved: 0, suspect: 0, staleSnippets: 0, staleFileViews: 0, evictedFileViews: 0, evictedPaths: 0, changedPaths: [] };
   }
 
   const state = useContextStore.getState();
@@ -307,9 +308,14 @@ export async function applyHashFirstFreshness(): Promise<{ preserved: number; su
     if (s.viewKind === 'snapshot') continue;
     addSource(s.source);
   }
+  // v7+: FileViews carry their own filePath; include them so revision rebase
+  // catches views whose backing file moved or changed on disk between sessions.
+  for (const [, v] of state.fileViews) {
+    addSource(v.filePath);
+  }
 
   const paths = [...pathSet];
-  if (paths.length === 0) return { preserved: 0, suspect: 0, staleSnippets: 0, evictedPaths: 0, changedPaths: [] };
+  if (paths.length === 0) return { preserved: 0, suspect: 0, staleSnippets: 0, staleFileViews: 0, evictedFileViews: 0, evictedPaths: 0, changedPaths: [] };
 
   let revisionMap: Map<string, string | null>;
   try {
@@ -317,7 +323,7 @@ export async function applyHashFirstFreshness(): Promise<{ preserved: number; su
   } catch (e) {
     console.warn('[ChatPersistence] Bulk revision lookup failed — falling back to blanket suspect:', e);
     applyBlanketSuspect();
-    return { preserved: 0, suspect: 0, staleSnippets: 0, evictedPaths: 0, changedPaths: [] };
+    return { preserved: 0, suspect: 0, staleSnippets: 0, staleFileViews: 0, evictedFileViews: 0, evictedPaths: 0, changedPaths: [] };
   }
 
   const resolveRevision = (source: string | undefined): string | null | 'missing' => {
@@ -338,6 +344,8 @@ export async function applyHashFirstFreshness(): Promise<{ preserved: number; su
   let preserved = 0;
   let suspect = 0;
   let staleSnippets = 0;
+  let staleFileViews = 0;
+  let evictedFileViews = 0;
   let evictedPaths = 0;
   const changedSourcePaths = new Set<string>();
 
@@ -345,6 +353,7 @@ export async function applyHashFirstFreshness(): Promise<{ preserved: number; su
     const now = Date.now();
     const chunks = new Map(currentState.chunks);
     const stagedSnippets = new Map(currentState.stagedSnippets);
+    const fileViews = new Map(currentState.fileViews);
 
     for (const [hash, chunk] of chunks) {
       if (chunk.viewKind === 'snapshot') continue;
@@ -404,10 +413,46 @@ export async function applyHashFirstFreshness(): Promise<{ preserved: number; su
       }
     }
 
-    return { chunks, stagedSnippets };
+    // v7+: rebase persisted FileViews. Policy mirrors fileViewStore.reconcileFileView:
+    // - disk rev matches    → preserve
+    // - diverged            → mark suspect; drop unpinned; keep pinned for auto-refetch
+    // - path missing on disk → drop (content is unrecoverable regardless of pin)
+    for (const [key, view] of fileViews) {
+      const diskRev = resolveRevision(view.filePath);
+
+      if (diskRev === 'missing') {
+        fileViews.delete(key);
+        evictedFileViews++;
+        changedSourcePaths.add(view.filePath);
+        continue;
+      }
+
+      if (diskRev === null) {
+        fileViews.set(key, { ...view, freshness: 'suspect', freshnessCause: 'session_restore', lastAccessed: now });
+        staleFileViews++;
+        changedSourcePaths.add(view.filePath);
+        continue;
+      }
+
+      if (view.sourceRevision === diskRev) {
+        preserved++;
+        continue;
+      }
+
+      if (view.pinned) {
+        fileViews.set(key, { ...view, freshness: 'suspect', freshnessCause: 'session_restore', lastAccessed: now });
+        staleFileViews++;
+      } else {
+        fileViews.delete(key);
+        staleFileViews++;
+      }
+      changedSourcePaths.add(view.filePath);
+    }
+
+    return { chunks, stagedSnippets, fileViews };
   });
 
-  return { preserved, suspect, staleSnippets, evictedPaths, changedPaths: [...changedSourcePaths] };
+  return { preserved, suspect, staleSnippets, staleFileViews, evictedFileViews, evictedPaths, changedPaths: [...changedSourcePaths] };
 }
 
 function applyBlanketSuspect(): void {
@@ -720,7 +765,7 @@ export function useChatPersistence() {
       let memorySnapshot: PersistedMemorySnapshot | null = null;
       try {
         memorySnapshot = await chatDb.getMemorySnapshot(sessionId);
-        if (memorySnapshot && memorySnapshot.version >= 2 && memorySnapshot.version <= 6) {
+        if (memorySnapshot && memorySnapshot.version >= 2 && memorySnapshot.version <= 7) {
           const normalizedStagedSnippets = normalizePersistedStagedEntries(memorySnapshot.stagedSnippets);
           useContextStore.setState({
             chunks: new Map(rehydrateChunkDates(memorySnapshot.chunks).map(chunk => [chunk.hash, chunk])),
@@ -747,6 +792,11 @@ export function useChatPersistence() {
               cumulativeCoveragePaths: new Set(memorySnapshot.cumulativeCoveragePaths ?? []),
               fileReadSpinByPath: memorySnapshot.fileReadSpinByPath ?? {},
               fileReadSpinRanges: memorySnapshot.fileReadSpinRanges ?? {},
+            } : {}),
+            // v7+: restore FileView map so pins survive session reload. Older snapshots
+            // leave fileViews empty — they repopulate from chunks on first read.
+            ...(memorySnapshot.version >= 7 ? {
+              fileViews: new Map(memorySnapshot.fileViews ?? []),
             } : {}),
           });
           if (memorySnapshot.freshnessJournal?.length) {
@@ -929,11 +979,11 @@ export function useChatPersistence() {
         if (restoredFromSnapshot && memorySnapshot) {
           console.log(
             '[ChatPersistence] Restored memory snapshot v' + memorySnapshot.version +
-            ` (hash-first: ${freshnessResult.preserved} preserved, ${freshnessResult.suspect} suspect, ${freshnessResult.staleSnippets} stale snippets, ${freshnessResult.evictedPaths} missing paths)`,
+            ` (hash-first: ${freshnessResult.preserved} preserved, ${freshnessResult.suspect} suspect, ${freshnessResult.staleSnippets} stale snippets, ${freshnessResult.staleFileViews} stale fileViews, ${freshnessResult.evictedFileViews} evicted fileViews, ${freshnessResult.evictedPaths} missing paths)`,
           );
-        } else if (!restoredFromSnapshot && (freshnessResult.preserved + freshnessResult.suspect > 0 || freshnessResult.staleSnippets > 0)) {
+        } else if (!restoredFromSnapshot && (freshnessResult.preserved + freshnessResult.suspect > 0 || freshnessResult.staleSnippets > 0 || freshnessResult.staleFileViews > 0)) {
           console.log(
-            `[ChatPersistence] Legacy restore hash-first: ${freshnessResult.preserved} preserved, ${freshnessResult.suspect} suspect, ${freshnessResult.staleSnippets} stale snippets`,
+            `[ChatPersistence] Legacy restore hash-first: ${freshnessResult.preserved} preserved, ${freshnessResult.suspect} suspect, ${freshnessResult.staleSnippets} stale snippets, ${freshnessResult.staleFileViews} stale fileViews`,
           );
         }
         const stats = await useContextStore.getState().reconcileRestoredSession();
@@ -1335,6 +1385,8 @@ export function useChatPersistence() {
       cumulativeCoveragePaths: new Set(snapshot.cumulativeCoveragePaths ?? []),
       fileReadSpinByPath: snapshot.fileReadSpinByPath ?? {},
       fileReadSpinRanges: snapshot.fileReadSpinRanges ?? {},
+      // v7+ snapshots carry fileViews; older ones default to empty (rebuilds on read).
+      fileViews: new Map(snapshot.fileViews ?? []),
     });
     if (snapshot.freshnessJournal?.length) {
       restoreJournal(snapshot.freshnessJournal);
@@ -1346,7 +1398,7 @@ export function useChatPersistence() {
       ctxStore.invalidateAwarenessForPaths(freshnessResult.changedPaths);
     }
     console.log(
-      `[ChatPersistence] applyMemorySnapshot hash-first: ${freshnessResult.preserved} preserved, ${freshnessResult.suspect} suspect, ${freshnessResult.staleSnippets} stale snippets`,
+      `[ChatPersistence] applyMemorySnapshot hash-first: ${freshnessResult.preserved} preserved, ${freshnessResult.suspect} suspect, ${freshnessResult.staleSnippets} stale snippets, ${freshnessResult.staleFileViews} stale fileViews`,
     );
     if (snapshot.geminiCache) restoreGeminiCacheSnapshot(snapshot.geminiCache);
     applyV4SessionExtras(snapshot);

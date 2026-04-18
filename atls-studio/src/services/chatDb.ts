@@ -20,6 +20,7 @@ import type { RoundSnapshot } from '../stores/roundHistoryStore';
 import type { RollingSummary } from './historyDistiller';
 import type { VerifyArtifact } from './batch/types';
 import type { FreshnessJournalEntry } from './freshnessJournal';
+import type { FileView } from './fileViewStore';
 
 // ============================================================================
 // Database Types
@@ -1134,7 +1135,7 @@ export interface PersistedCostChat {
 }
 
 export interface PersistedMemorySnapshot {
-  version: 2 | 3 | 4 | 5 | 6;
+  version: 2 | 3 | 4 | 5 | 6 | 7;
   savedAt: string;
   chunks: ContextChunk[];
   archivedChunks: ContextChunk[];
@@ -1171,6 +1172,8 @@ export interface PersistedMemorySnapshot {
   freshnessJournal?: Array<[string, FreshnessJournalEntry]>;
   /** v6+ (optional): spin diagnosis from last detection run */
   spinDiagnosisSummary?: PersistedSpinDiagnosis;
+  /** v7+ (optional): FileView map — per-session to prevent cross-session pin leak. */
+  fileViews?: Array<[string, FileView]>;
 }
 
 export interface PersistedSpinDiagnosis {
