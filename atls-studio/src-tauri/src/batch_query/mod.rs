@@ -719,7 +719,18 @@ pub async fn atls_batch_query(
                                 fp_norm == *t || fp_norm.ends_with(t.as_str()) || t.ends_with(fp_norm.as_str())
                             });
                             match project.query().get_smart_context(&relative_path) {
-                                Ok(context) => {
+                                Ok(mut context) => {
+                                    // Surface trailing module-level call statements
+                                    // (self-registration IIFEs, plugin installs) that
+                                    // the declaration-only symbol index misses. Pure
+                                    // string scan; read failure is a silent no-op.
+                                    let abs = resolve_project_path(project_root, &file_path);
+                                    if let Ok(src) = std::fs::read_to_string(&abs) {
+                                        atls_core::query::context::append_module_init_symbols(
+                                            &mut context,
+                                            &src,
+                                        );
+                                    }
                                     let mut entry = serde_json::json!({
                                         "file": file_path,
                                         "context": context
@@ -957,11 +968,14 @@ pub async fn atls_batch_query(
                                 continue;
                             }
                             
-                            // Get smart context as base
-                            let smart_ctx = project.query().get_smart_context(&file_path).ok();
-                            
-                            // Read file to extract component-specific info
+                            // Read file first — used both for module-init scan and component introspection below.
                             let content = std::fs::read_to_string(&resolved_path).unwrap_or_default();
+
+                            // Get smart context as base, enriched with trailing module-level calls.
+                            let smart_ctx = project.query().get_smart_context(&file_path).ok().map(|mut ctx| {
+                                atls_core::query::context::append_module_init_symbols(&mut ctx, &content);
+                                ctx
+                            });
                             
                             // Extract props (look for interface Props or type Props)
                             let props: Vec<&str> = content.lines()
@@ -1071,8 +1085,11 @@ pub async fn atls_batch_query(
                                 .take(30)
                                 .collect();
                             
-                            // Get smart context for the file
-                            let smart_ctx = project.query().get_smart_context(&file_path).ok();
+                            // Get smart context for the file, enriched with trailing module-level calls.
+                            let smart_ctx = project.query().get_smart_context(&file_path).ok().map(|mut ctx| {
+                                atls_core::query::context::append_module_init_symbols(&mut ctx, &content);
+                                ctx
+                            });
 
                             // Check if the paired file actually exists on disk
                             let paired_resolved = resolve_project_path(project_root, &impl_file);
