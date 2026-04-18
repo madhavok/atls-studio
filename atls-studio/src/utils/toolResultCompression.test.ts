@@ -15,6 +15,8 @@
  * and `toolResultCompression.ts` header.
  */
 
+import { readFileSync } from 'node:fs';
+
 import { describe, expect, it } from 'vitest';
 
 import { estimateTokens } from './contextHash';
@@ -499,6 +501,225 @@ describe('toolResultCompression — collision safety', () => {
         encodedKey.length,
         `newly coined key abbreviation ${encodedKey} must be at least 2 chars to avoid ambiguity with batch tokens`,
       ).toBeGreaterThanOrEqual(2);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 10. Markdown `:sig` outline — paired token measurement on real docs
+//
+// The prose branch of `extract_signatures` (shape_ops.rs) emits a heading
+// outline when the sniff detects markdown. These tests produce the same
+// outline in TS (mirroring the Rust logic) and the today-style `head(20)`
+// fallback, then compare their token footprints on an actual doc so the
+// Pillars "measure on real workloads" gate has a recorded number rather
+// than a vibes-check.
+// ---------------------------------------------------------------------------
+
+interface MdHeadingTs {
+  lineIdx: number;
+  level: number;
+  text: string;
+}
+
+const MD_HEADING_MAX_CHARS = 120;
+
+function mdFenceOpen(line: string): string | null {
+  const ltrim = line.replace(/^ {0,3}/, '');
+  if (line.length - ltrim.length > 3) return null;
+  const first = ltrim.charAt(0);
+  if (first !== '`' && first !== '~') return null;
+  let run = 0;
+  while (run < ltrim.length && ltrim.charAt(run) === first) run += 1;
+  return run >= 3 ? first : null;
+}
+
+function mdFenceClose(line: string, fence: string): boolean {
+  const ltrim = line.replace(/^ {0,3}/, '');
+  if (line.length - ltrim.length > 3) return false;
+  let run = 0;
+  while (run < ltrim.length && ltrim.charAt(run) === fence) run += 1;
+  if (run < 3) return false;
+  return ltrim.slice(run).trim().length === 0;
+}
+
+function mdAtxHeading(line: string): { level: number; text: string } | null {
+  const ltrim = line.replace(/^ {0,3}/, '');
+  if (line.length - ltrim.length > 3) return null;
+  let hashes = 0;
+  while (hashes < ltrim.length && ltrim.charAt(hashes) === '#') hashes += 1;
+  if (hashes === 0 || hashes > 6) return null;
+  const rest = ltrim.slice(hashes);
+  if (!rest.startsWith(' ')) return null;
+  let body = rest.slice(1).trim();
+  if (body.length === 0) return null;
+  body = body.replace(/[ \t]*#+[ \t]*$/, '').trimEnd();
+  if (body.length === 0) return null;
+  return { level: hashes, text: body };
+}
+
+function mdSetextLevel(line: string): number | null {
+  const ltrim = line.replace(/^ {0,3}/, '');
+  if (line.length - ltrim.length > 3) return null;
+  const first = ltrim.charAt(0);
+  if (first !== '=' && first !== '-') return null;
+  let run = 0;
+  while (run < ltrim.length && ltrim.charAt(run) === first) run += 1;
+  if (run < 3) return null;
+  if (ltrim.slice(run).trim().length !== 0) return null;
+  return first === '=' ? 1 : 2;
+}
+
+function mdCollectHeadings(content: string): MdHeadingTs[] {
+  const lines = content.split('\n');
+  const out: MdHeadingTs[] = [];
+  let fence: string | null = null;
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+    if (fence !== null) {
+      if (mdFenceClose(line, fence)) fence = null;
+      i += 1;
+      continue;
+    }
+    const open = mdFenceOpen(line);
+    if (open !== null) {
+      fence = open;
+      i += 1;
+      continue;
+    }
+    const atx = mdAtxHeading(line);
+    if (atx !== null) {
+      out.push({ lineIdx: i, level: atx.level, text: atx.text });
+      i += 1;
+      continue;
+    }
+    if (i + 1 < lines.length && line.trim().length > 0) {
+      const setext = mdSetextLevel(lines[i + 1]);
+      if (setext !== null && mdAtxHeading(line) === null && mdFenceOpen(line) === null) {
+        out.push({ lineIdx: i, level: setext, text: line.trim() });
+        i += 2;
+        continue;
+      }
+    }
+    i += 1;
+  }
+  return out;
+}
+
+function renderMdOutline(content: string): string {
+  const headings = mdCollectHeadings(content);
+  if (headings.length === 0) return '';
+  const totalLines = content.split('\n').length;
+
+  const rows: string[] = [];
+  for (let idx = 0; idx < headings.length; idx += 1) {
+    const h = headings[idx];
+    let endIdx = totalLines - 1;
+    for (let j = idx + 1; j < headings.length; j += 1) {
+      if (headings[j].level <= h.level) {
+        endIdx = Math.max(0, headings[j].lineIdx - 1);
+        break;
+      }
+    }
+    const startLine = h.lineIdx + 1;
+    const endLine = endIdx + 1;
+    const text =
+      h.text.length > MD_HEADING_MAX_CHARS ? `${h.text.slice(0, MD_HEADING_MAX_CHARS)}\u2026` : h.text;
+    const hashes = '#'.repeat(h.level);
+    const indent = '  '.repeat(Math.max(0, h.level - 1));
+    const span = endLine - startLine + 1;
+    const body = span <= 1
+      ? `${indent}${hashes} ${text}`
+      : `${indent}${hashes} ${text} [${startLine}-${endLine}]`;
+    rows.push(`${String(startLine).padStart(4)}|${body}`);
+  }
+  return rows.join('\n');
+}
+
+/** Today's fallback on a non-code file: first N lines with `NNNN|` prefix. */
+function renderHeadN(content: string, n: number): string {
+  return content
+    .split('\n')
+    .slice(0, n)
+    .map((l, i) => `${String(i + 1).padStart(4)}|${l}`)
+    .join('\n');
+}
+
+/** Load a real doc from the repo `docs/` folder. Resolved relative to this
+ *  test file via `import.meta.url`, matching the pattern used in
+ *  `hpp-validation.test.ts` and avoiding `__dirname` / `process.cwd()`. */
+function loadRealDoc(relFromDocs: string): string {
+  const url = new URL(`../../../docs/${relFromDocs}`, import.meta.url);
+  return readFileSync(url, 'utf8');
+}
+
+describe('markdown :sig outline — paired token measurement', () => {
+  const realDoc = loadRealDoc('output-compression.md');
+  const docLines = realDoc.split('\n').length;
+
+  it('real doc has enough lines for a meaningful comparison', () => {
+    expect(docLines).toBeGreaterThan(100);
+  });
+
+  it('outline recovers every top-level ATX heading (structural soundness)', () => {
+    const outline = renderMdOutline(realDoc);
+    const topLevel = realDoc
+      .split('\n')
+      .filter((l) => /^# [^#]/.test(l))
+      .map((l) => l.trim());
+    expect(topLevel.length).toBeGreaterThan(0);
+    for (const h of topLevel) {
+      expect(outline, `outline missing top-level heading: ${h}`).toContain(h);
+    }
+  });
+
+  it('records token comparison: head(20) fallback vs outline (real BPE + estimate)', () => {
+    const headOut = renderHeadN(realDoc, 20);
+    const outlineOut = renderMdOutline(realDoc);
+
+    const headEst = estimateTokens(headOut);
+    const outlineEst = estimateTokens(outlineOut);
+    const headBpe = countTokensSync(headOut);
+    const outlineBpe = countTokensSync(outlineOut);
+
+    const coveragePctHead = ((20 / docLines) * 100).toFixed(1);
+    const coveragePctOutline = '100.0';
+
+    console.log(
+      [
+        `[md-outline] docs/output-compression.md (${docLines} lines)`,
+        `  head(20)    : ${headOut.length} ch / est ${headEst} tok / bpe ${headBpe} tok / coverage ${coveragePctHead}%`,
+        `  outline     : ${outlineOut.length} ch / est ${outlineEst} tok / bpe ${outlineBpe} tok / coverage ${coveragePctOutline}%`,
+        `  est/line    : head ${(headEst / 20).toFixed(2)} vs outline ${(outlineEst / renderMdOutline(realDoc).split('\n').length).toFixed(2)}`,
+      ].join('\n'),
+    );
+
+    // Both paths must produce non-empty output and be bounded.
+    expect(headOut.length).toBeGreaterThan(0);
+    expect(outlineOut.length).toBeGreaterThan(0);
+
+    // Comprehension-per-token gate: outline must cover the entire document
+    // (every top-level section surfaced) at less than 3x the tokens of the
+    // 20-line head fallback. On our current doc corpus this easily holds;
+    // the test locks the relationship so a regression can't slip past.
+    const outlineRows = outlineOut.split('\n').length;
+    expect(outlineRows).toBeGreaterThan(5);
+    expect(outlineEst).toBeLessThan(headEst * 3);
+  });
+
+  it('outline is fence-safe: no lines from inside ``` blocks leak in', () => {
+    const outline = renderMdOutline(realDoc);
+    // Sentinel: the doc's inline example at the top contains shorthand like
+    // `r1 rc ps:src/auth.ts` inside a fenced code block. That must not
+    // appear in a heading outline.
+    expect(outline).not.toContain('r1 rc ps:src/auth.ts');
+    // Every emitted row (after the `NNNN|` prefix + indent) must start with `#`.
+    for (const row of outline.split('\n')) {
+      const pipeIdx = row.indexOf('|');
+      expect(pipeIdx).toBeGreaterThan(0);
+      const bodyTrim = row.slice(pipeIdx + 1).trimStart();
+      expect(bodyTrim.startsWith('#'), `outline row has non-heading body: ${row}`).toBe(true);
     }
   });
 });

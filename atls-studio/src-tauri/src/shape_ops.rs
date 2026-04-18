@@ -1234,11 +1234,240 @@ fn find_rust_return_tail(sig: &str) -> Option<usize> {
     None
 }
 
+// ---------------------------------------------------------------------------
+// Markdown heading outline (prose :sig branch)
+// ---------------------------------------------------------------------------
+
+/// Represents a markdown heading discovered during the outline pass.
+/// `line_idx` is 0-based; `level` is 1..=6; `text` is the trimmed heading text.
+#[derive(Debug, Clone)]
+struct MdHeading {
+    line_idx: usize,
+    level: u8,
+    text: String,
+}
+
+/// Maximum characters of heading text to emit before truncation. Guards
+/// against pathological long headings without meaningfully impacting normal
+/// docs.
+const MD_HEADING_MAX_CHARS: usize = 120;
+
+/// Detect the start of a fenced code block. Returns `Some(fence_marker)` for
+/// a well-formed opener (3+ backticks or tildes, optionally indented up to 3
+/// spaces), else `None`. The returned marker is the repeated char so callers
+/// can match only the same type of fence when closing.
+fn md_fence_open(line: &str) -> Option<char> {
+    let trimmed_start = line.trim_start_matches(|c: char| c == ' ');
+    // Commonmark: up to 3 leading spaces; 4+ is an indented code block.
+    if line.len() - trimmed_start.len() > 3 {
+        return None;
+    }
+    let first = trimmed_start.chars().next()?;
+    if first != '`' && first != '~' {
+        return None;
+    }
+    let run = trimmed_start.chars().take_while(|&c| c == first).count();
+    if run >= 3 { Some(first) } else { None }
+}
+
+/// Detect a fenced code block closer for the given fence character. The
+/// closer must be the same char, at least as many as opened (we accept 3+
+/// here since we don't track opener length; this matches the overwhelming
+/// majority of real-world docs).
+fn md_fence_close(line: &str, fence: char) -> bool {
+    let trimmed_start = line.trim_start_matches(|c: char| c == ' ');
+    if line.len() - trimmed_start.len() > 3 {
+        return false;
+    }
+    let run = trimmed_start.chars().take_while(|&c| c == fence).count();
+    if run < 3 { return false; }
+    // After the fence chars, only whitespace is allowed on a closing line.
+    trimmed_start[run..].trim().is_empty()
+}
+
+/// Match a well-formed ATX heading (`#` … `######` followed by at least one
+/// space and a non-empty body). Returns `(level, text)` on success. Strips
+/// an optional trailing `#` sequence (ATX closing hashes) and trims.
+fn md_atx_heading(line: &str) -> Option<(u8, String)> {
+    let trimmed_start = line.trim_start_matches(|c: char| c == ' ');
+    if line.len() - trimmed_start.len() > 3 {
+        return None;
+    }
+    let hashes = trimmed_start.chars().take_while(|&c| c == '#').count();
+    if hashes == 0 || hashes > 6 { return None; }
+    let rest = &trimmed_start[hashes..];
+    // Must be followed by space (or be end-of-line for blank heading, which
+    // we reject — the plan requires `\S` after the hashes).
+    let body = rest.strip_prefix(' ')?.trim();
+    if body.is_empty() { return None; }
+    // Strip optional trailing closing hashes: `## Title ##` → `Title`.
+    let body = body
+        .trim_end_matches(|c: char| c == ' ' || c == '\t')
+        .trim_end_matches('#')
+        .trim_end();
+    if body.is_empty() { return None; }
+    Some((hashes as u8, body.to_string()))
+}
+
+/// Match a Setext underline (`===+` for H1 or `---+` for H2). Returns the
+/// level on success. The underline must be the only content on the line
+/// (allowing up to 3 leading spaces and trailing whitespace).
+fn md_setext_level(line: &str) -> Option<u8> {
+    let trimmed_start = line.trim_start_matches(|c: char| c == ' ');
+    if line.len() - trimmed_start.len() > 3 { return None; }
+    let first = trimmed_start.chars().next()?;
+    if first != '=' && first != '-' { return None; }
+    let run = trimmed_start.chars().take_while(|&c| c == first).count();
+    if run < 3 { return None; }
+    if !trimmed_start[run..].trim().is_empty() { return None; }
+    Some(if first == '=' { 1 } else { 2 })
+}
+
+/// Walk `content` once and collect every heading (ATX + Setext) that sits
+/// outside fenced code blocks. Also reports whether any heading was found
+/// in the very first lines (used by the sniff to short-circuit doc
+/// detection on small files with a single leading heading).
+fn md_collect_headings(content: &str) -> (Vec<MdHeading>, bool) {
+    let lines: Vec<&str> = content.lines().collect();
+    let mut out: Vec<MdHeading> = Vec::new();
+    let mut fence: Option<char> = None;
+    let mut heading_in_first_10 = false;
+
+    let mut i = 0;
+    while i < lines.len() {
+        let line = lines[i];
+
+        // Fence state takes priority over heading detection.
+        if let Some(f) = fence {
+            if md_fence_close(line, f) { fence = None; }
+            i += 1;
+            continue;
+        }
+        if let Some(f) = md_fence_open(line) {
+            fence = Some(f);
+            i += 1;
+            continue;
+        }
+
+        if let Some((level, text)) = md_atx_heading(line) {
+            if i < 10 { heading_in_first_10 = true; }
+            out.push(MdHeading { line_idx: i, level, text });
+            i += 1;
+            continue;
+        }
+
+        // Setext: current line is the heading text, next line is underline.
+        if i + 1 < lines.len() {
+            let text_line = line.trim();
+            if !text_line.is_empty() {
+                if let Some(level) = md_setext_level(lines[i + 1]) {
+                    // Reject lines that look like ATX or fence to avoid double-classifying.
+                    if md_atx_heading(line).is_none() && md_fence_open(line).is_none() {
+                        if i < 10 { heading_in_first_10 = true; }
+                        out.push(MdHeading {
+                            line_idx: i,
+                            level,
+                            text: text_line.to_string(),
+                        });
+                        i += 2;
+                        continue;
+                    }
+                }
+            }
+        }
+
+        i += 1;
+    }
+
+    (out, heading_in_first_10)
+}
+
+/// Return true when `content` looks like prose/markdown with a meaningful
+/// heading structure. Heuristic: two or more ATX/Setext headings outside
+/// fences, or a single heading in the first 10 lines (catches short README
+/// stubs and doc fragments). Called as a cheap gate before the code-oriented
+/// signature pipeline.
+fn md_sniff(content: &str) -> Option<Vec<MdHeading>> {
+    let (headings, heading_in_first_10) = md_collect_headings(content);
+    if headings.len() >= 2 || (headings.len() >= 1 && heading_in_first_10) {
+        Some(headings)
+    } else {
+        None
+    }
+}
+
+/// Produce the heading outline text for a markdown document. Each heading
+/// emits one row in the shared `NNNN|…` signature format, with nested
+/// levels indented two spaces per level beyond 1. Multi-line sections carry
+/// a `[start-end]` range mirroring the code-sig fold marker; single-line
+/// sections omit the range (parity with the `span <= 2` branch in
+/// `extract_signatures`). Returns the rendered outline, or the empty string
+/// if no headings survive (callers fall back to `head(20)`).
+fn extract_markdown_headings(content: &str, headings: &[MdHeading]) -> String {
+    if headings.is_empty() { return String::new(); }
+    let total_lines = content.lines().count();
+    if total_lines == 0 { return String::new(); }
+
+    let mut rows: Vec<String> = Vec::with_capacity(headings.len());
+    for (idx, h) in headings.iter().enumerate() {
+        // End of section = line before the next heading of same-or-shallower level.
+        let end_idx = headings
+            .iter()
+            .skip(idx + 1)
+            .find(|next| next.level <= h.level)
+            .map(|next| next.line_idx.saturating_sub(1))
+            .unwrap_or(total_lines.saturating_sub(1));
+
+        let start_line = h.line_idx + 1;
+        let end_line = end_idx + 1;
+
+        // Truncate long headings to bound tokens.
+        let text = if h.text.chars().count() > MD_HEADING_MAX_CHARS {
+            let cut: String = h.text.chars().take(MD_HEADING_MAX_CHARS).collect();
+            format!("{}…", cut)
+        } else {
+            h.text.clone()
+        };
+
+        let hashes = "#".repeat(h.level as usize);
+        let indent = "  ".repeat((h.level as usize).saturating_sub(1));
+        let span = end_line.saturating_sub(start_line) + 1;
+
+        let row = if span <= 1 {
+            format!("{:>4}|{}{} {}", start_line, indent, hashes, text)
+        } else {
+            format!(
+                "{:>4}|{}{} {} [{}-{}]",
+                start_line, indent, hashes, text, start_line, end_line
+            )
+        };
+        rows.push(row);
+    }
+
+    rows.join("\n")
+}
+
 /// Extract function/class/struct signatures, collapsing bodies to `{ ... }`.
 /// Scans keyword declarations, C-family return-type functions, class method
 /// shorthand, arrow functions, and Go type declarations.
+///
+/// Prose/markdown content is routed through `extract_markdown_headings` so
+/// `h:XXXX:sig` on a `.md` file returns a heading outline instead of the
+/// code-oriented `head(20)` fallback.
 fn extract_signatures(content: &str) -> String {
-    // Use [^\S\n]* instead of \s* to prevent matching across line boundaries
+    // Markdown outline: cheap content sniff before the regex pipeline.
+    // Routes prose docs to a heading-aware branch without touching the
+    // code-sig output for source files.
+    if let Some(headings) = md_sniff(content) {
+        let outline = extract_markdown_headings(content, &headings);
+        if !outline.is_empty() {
+            return outline;
+        }
+        // Fall through to the code path (and ultimately head(20)) if the
+        // outline came back empty — defensive, should be unreachable given
+        // md_sniff requires >= 1 heading.
+    }
+
     let sig_re = regex::Regex::new(
         r"(?m)^([^\S\n]*(?:export\s+)?(?:pub(?:\([^)]*\))?\s+)?(?:unsafe\s+)?(?:const\s+)?(?:async\s+)?(?:extern\s+\S+\s+)?(?:fn|fun|function|def|func(?:\s+\([^)]*\))?|class|struct|interface|trait|enum|type|impl)\s+(?:self\.)?\w+[^\n]*)"
     ).unwrap();
@@ -5700,5 +5929,197 @@ class HomePage extends StatelessWidget {
         let result = resolve_symbol_anchor(&content, Some("interface"), "MyConfig");
         assert!(result.is_ok(), "should find interface in large file: {:?}", result.err());
         assert!(result.unwrap().contains("MyConfig"));
+    }
+
+    // ── Markdown heading outline (prose :sig branch) ─────────────────────────
+
+    /// Parse a `"NNNN|body"` outline row into (1-based line number, trimmed body).
+    fn parse_outline_row(row: &str) -> (usize, &str) {
+        let (num, rest) = row.split_once('|').expect("outline row missing `|`");
+        (num.trim().parse().expect("outline row line number"), rest)
+    }
+
+    /// Extract `[start-end]` range from an outline row body, if present.
+    fn parse_outline_range(row_body: &str) -> Option<(usize, usize)> {
+        let open = row_body.rfind('[')?;
+        let close = row_body[open..].find(']')? + open;
+        let inner = &row_body[open + 1..close];
+        let (s, e) = inner.split_once('-')?;
+        Some((s.parse().ok()?, e.parse().ok()?))
+    }
+
+    #[test]
+    fn test_md_sig_atx_basic() {
+        let md = "# Title\n\nIntro paragraph.\n\n## Section A\n\nBody A\n\n## Section B\n\nBody B\n";
+        let out = apply_shape(md, &ShapeOp::Sig);
+        let rows: Vec<&str> = out.lines().collect();
+        assert_eq!(rows.len(), 3, "expected 3 heading rows, got: {}", out);
+
+        // H1 has no following heading of level <= 1, so it spans to EOF (line 11).
+        let (l1, b1) = parse_outline_row(rows[0]);
+        assert_eq!(l1, 1);
+        assert!(b1.trim_start().starts_with("# Title"), "row: {}", rows[0]);
+        let (h1_start, h1_end) = parse_outline_range(b1).expect("h1 range");
+        assert_eq!(h1_start, 1);
+        assert!(h1_end >= 11, "H1 should span to EOF, got [{}-{}]", h1_start, h1_end);
+
+        // H2a closes when H2b opens at line 9.
+        let (l2, b2) = parse_outline_row(rows[1]);
+        assert_eq!(l2, 5);
+        assert!(b2.contains("## Section A"), "row: {}", rows[1]);
+        assert_eq!(parse_outline_range(b2), Some((5, 8)));
+
+        // Final section extends to EOF.
+        let (l3, b3) = parse_outline_row(rows[2]);
+        assert_eq!(l3, 9);
+        assert!(b3.contains("## Section B"), "row: {}", rows[2]);
+        let (_, end) = parse_outline_range(b3).expect("range on final heading");
+        assert!(end >= 11, "final section should extend to EOF, got {}", end);
+    }
+
+    #[test]
+    fn test_md_sig_ignores_headings_inside_fences() {
+        let md = "# Real\n\n```rust\n// # Fake heading in code\n## Also fake\nfn foo() {}\n```\n\n## Real Two\nbody\n";
+        let out = apply_shape(md, &ShapeOp::Sig);
+        assert!(out.contains("# Real"), "must include top heading:\n{}", out);
+        assert!(out.contains("## Real Two"), "must include second heading:\n{}", out);
+        assert!(!out.contains("Fake heading"), "must skip fenced content:\n{}", out);
+        assert!(!out.contains("Also fake"), "must skip fenced content:\n{}", out);
+    }
+
+    #[test]
+    fn test_md_sig_setext_h1_h2() {
+        let md = "Title Here\n==========\n\nIntro.\n\nSub Here\n--------\n\nBody.\n";
+        let out = apply_shape(md, &ShapeOp::Sig);
+        let rows: Vec<&str> = out.lines().collect();
+        assert_eq!(rows.len(), 2, "expected 2 headings, got:\n{}", out);
+
+        let (l1, b1) = parse_outline_row(rows[0]);
+        assert_eq!(l1, 1);
+        assert!(b1.contains("# Title Here"), "row: {}", rows[0]);
+
+        let (l2, b2) = parse_outline_row(rows[1]);
+        assert_eq!(l2, 6);
+        assert!(b2.contains("## Sub Here"), "row: {}", rows[1]);
+    }
+
+    #[test]
+    fn test_md_sig_code_file_falls_through() {
+        // Rust source with a single `#` doc-attr style line should NOT be
+        // misclassified as markdown.
+        let code = "#![warn(clippy::all)]\n\nfn alpha() -> i32 { 1 }\nfn beta() -> i32 { 2 }\n";
+        let out = apply_shape(code, &ShapeOp::Sig);
+        assert!(out.contains("fn alpha"), "code path regressed:\n{}", out);
+        assert!(out.contains("fn beta"), "code path regressed:\n{}", out);
+    }
+
+    #[test]
+    fn test_md_sig_no_headings_falls_through_to_head20() {
+        // Pure prose with zero headings → no md branch, no code regex hits, head(20).
+        let prose = "Just some prose.\nNo headings here.\nJust paragraphs.\n";
+        let out = apply_shape(prose, &ShapeOp::Sig);
+        // head(20) formatting: " N|line".
+        assert!(out.contains("|Just some prose."), "expected head(20) output:\n{}", out);
+    }
+
+    #[test]
+    fn test_md_sig_nested_level_ranges_nest_correctly() {
+        let md = "# H1\nintro\n## H2a\nbody\n### H3a\nsubbody\n## H2b\nbody2\n";
+        let out = apply_shape(md, &ShapeOp::Sig);
+        let rows: Vec<&str> = out.lines().collect();
+        assert_eq!(rows.len(), 4, "expected 4 headings:\n{}", out);
+
+        let (_, h1_body) = parse_outline_row(rows[0]);
+        let (_, h2a_body) = parse_outline_row(rows[1]);
+        let (_, h3a_body) = parse_outline_row(rows[2]);
+        let (_, h2b_body) = parse_outline_row(rows[3]);
+
+        let h1_range = parse_outline_range(h1_body).expect("h1 range");
+        let h2a_range = parse_outline_range(h2a_body).expect("h2a range");
+        let h3a_range = parse_outline_range(h3a_body).expect("h3a range");
+        let h2b_range = parse_outline_range(h2b_body).expect("h2b range");
+
+        // H3a is nested strictly within H2a.
+        assert!(h3a_range.0 >= h2a_range.0 && h3a_range.1 <= h2a_range.1,
+            "H3a {:?} not within H2a {:?}", h3a_range, h2a_range);
+        // H2a closes before H2b opens.
+        assert!(h2a_range.1 < h2b_range.0,
+            "H2a {:?} should close before H2b {:?}", h2a_range, h2b_range);
+        // H1 spans to EOF.
+        assert!(h1_range.1 >= h2b_range.1,
+            "H1 {:?} should contain last section {:?}", h1_range, h2b_range);
+    }
+
+    #[test]
+    fn test_md_sig_indentation_scales_with_level() {
+        let md = "# One\n\n## Two\n\n### Three\n\ntext\n";
+        let out = apply_shape(md, &ShapeOp::Sig);
+        let rows: Vec<&str> = out.lines().collect();
+        assert_eq!(rows.len(), 3);
+
+        // Parse out the body after `NNNN|`.
+        let bodies: Vec<&str> = rows.iter().map(|r| r.split_once('|').unwrap().1).collect();
+        // H1: no indent. H2: 2 spaces. H3: 4 spaces.
+        assert!(bodies[0].starts_with("# "), "h1 body: {:?}", bodies[0]);
+        assert!(bodies[1].starts_with("  ## "), "h2 body: {:?}", bodies[1]);
+        assert!(bodies[2].starts_with("    ### "), "h3 body: {:?}", bodies[2]);
+    }
+
+    #[test]
+    fn test_md_sig_truncates_long_headings() {
+        let long_text: String = "A".repeat(MD_HEADING_MAX_CHARS + 50);
+        let md = format!("# {}\n\n## Next\ntext\n", long_text);
+        let out = apply_shape(&md, &ShapeOp::Sig);
+        let first = out.lines().next().expect("first row");
+        assert!(first.contains('…'), "expected ellipsis on long heading: {}", first);
+    }
+
+    /// Measurement test on a real documentation file. Asserts structural
+    /// correctness (all top-level headings present, ranges non-empty) and
+    /// prints a compact token/ratio summary for the Pillars record. The
+    /// paired token comparison with `head(20)` lives in the TS suite
+    /// (`toolResultCompression.test.ts`) where `countTokensSync` is native.
+    #[test]
+    fn test_md_sig_on_real_docs_output_compression() {
+        const REAL_DOC: &str = include_str!("../../../docs/output-compression.md");
+        let outline = apply_shape(REAL_DOC, &ShapeOp::Sig);
+        assert!(!outline.is_empty(), "outline was empty");
+
+        // Known top-level headings from the doc at the time of the plan.
+        for expected in [
+            "# Output-Token Compression",
+            "## Axis 1: Lexical",
+            "## Axis 4: Spatial",
+            "## Axis 6: Transcript",
+            "## Aggregate effect",
+        ] {
+            assert!(outline.contains(expected),
+                "missing expected heading {:?} in outline:\n{}", expected, outline);
+        }
+
+        // Every row must be a well-formed `NNNN|body`.
+        for row in outline.lines() {
+            let (_, body) = row.split_once('|')
+                .unwrap_or_else(|| panic!("row missing pipe: {:?}", row));
+            let trimmed = body.trim_start();
+            assert!(trimmed.starts_with('#'),
+                "row body should begin with `#`: {:?}", row);
+        }
+
+        // No fenced content should appear in the outline. The fixture
+        // `r1 rc ps:src/auth.ts` line from the inline example is a good
+        // sentinel.
+        assert!(!outline.contains("r1 rc ps:src/auth.ts"),
+            "fenced sample leaked into outline:\n{}", outline);
+
+        // Print a size summary so local runs surface the measurement.
+        let body_bytes = REAL_DOC.len();
+        let outline_bytes = outline.len();
+        eprintln!(
+            "md-outline[output-compression.md]: body={}B outline={}B ratio={:.1}%",
+            body_bytes,
+            outline_bytes,
+            (outline_bytes as f64 / body_bytes.max(1) as f64) * 100.0
+        );
     }
 }

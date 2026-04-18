@@ -142,7 +142,7 @@ Transform engram content into alternative views without modifying the source:
 
 | Shape | Description | Typical Savings |
 |-------|-------------|-----------------|
-| `sig` | Function/class signatures only | ~85% token reduction |
+| `sig` | Code: function/class signatures. Markdown: heading outline with `[start-end]` section ranges. | ~85% token reduction |
 | `fold` | Collapsed function bodies | ~50-70% |
 | `dedent` | Remove leading whitespace | ~10-15% |
 | `nocomment` | Strip comments | ~10-30% |

@@ -48,7 +48,7 @@ rc type:full|tree ps:path1,path2 depth?:N glob?:pattern line_range?:start-end ma
 rl hash:h:XXXX lines:15-50 | f:path sl:N el:N context_lines?:0-5
   Line slices fill into the file's live FileView at their source position. The returned ref is the SAME h:fv:<hash> as any prior rs/rf/rc on that file — multiple rl calls merge into the same view identity. For sc/sy (search/symbol) result hashes, lines are into the formatted result text (engram body), not a source file — use f:+sl/el when you need real file lines.
 rs ps:path1,path2 shape:sig|fold|grep|dedent|nocomment|exclude|concept|pattern|if|snap|refs|highlight max_files?:N
-  shape:sig is the CHEAPEST first-touch for a file — indent-preserved signature skeleton (~5-10% of full size) with slice-native [A-B] fold markers. Use this BEFORE rf / rc type:full. shape: is required. Returns h:fv:<hash> — pin once, subsequent rl into the same file uses the same ref.
+  shape:sig is the CHEAPEST first-touch — indent-preserved signature skeleton (code) / heading outline (markdown), ~5-10% of full size, with slice-native [A-B] fold/section markers. Use this BEFORE rf / rc type:full. shape: is required. Returns h:fv:<hash> — pin once, subsequent rl into the same file uses the same ref.
 rf ps:path1,path2 type?:full — smart view (symbols + imports + related + issues) by default; type:full for the whole body. HEAVIER than rs shape:sig; reach for it only when you need the dependency graph, issues list, or full content. Returns h:fv:<hash>, same as rs/rl for the same file.
 sc qs:term1,term2 ps?:path1,path2 limit?:N compact?:true
 sy sn:name1,name2 limit?:N

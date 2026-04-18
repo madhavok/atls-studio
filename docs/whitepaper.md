@@ -179,7 +179,7 @@ Shape operators transform content into alternative views without modifying the s
 
 | Shape | Description | Typical savings |
 |---|---|---|
-| `sig` | Function/class signatures only | ~85% |
+| `sig` | Code: function/class signatures. Markdown: heading outline with `[start-end]` section ranges. | ~85% |
 | `fold` | Collapsed function bodies (keeps signatures, elides implementations) | ~50–70% |
 | `dedent` | Strip leading whitespace | ~10–15% |
 | `nocomment` | Strip comments | ~10–30% |

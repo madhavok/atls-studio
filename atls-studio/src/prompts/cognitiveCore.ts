@@ -45,7 +45,7 @@ Self-diagnosis: if context feels wrong (missing refs, stale slices, spin loops),
 ### READ PATTERNS — FileView (cheapest first)
 Every read of a file lands in ONE live FileView block per path. The read returns **one** retention ref — \`h:fv:<hash>\` — regardless of shape or range. Pin that one ref; subsequent reads of the same file merge into the same view and keep the same \`h:fv:\` identity. Progression is cost-ordered — do not skip ahead:
 
-1. **rs shape:sig ps:path** — indent-preserved signature skeleton (~5-10% of file size). Folded bodies render as \`{ ... } [A-B]\`; pass that range straight to rl. **Default first-touch.**
+1. **rs shape:sig ps:path** — indent-preserved signature skeleton (code) / heading outline (markdown), ~5-10% of file size. Folded bodies or sections render as \`{ ... } [A-B]\` or \`## H [A-B]\`; pass that range straight to rl. **Default first-touch.**
 2. **rl sl:A el:B f:path** — fills the exact range into the same FileView in file order. Multiple rl calls merge into the existing view. No second pin needed if you already pinned.
 3. **rf ps:path** — smart view (symbols, imports, related_files, issues). Richer than sig, heavier. Use when you need the dependency graph or issue list for a file, not when you just want to see its structure.
 4. **rf type:full / rc type:full** — the whole file body. Only when you actually need every line (large multi-region refactor, full control-flow reasoning).
