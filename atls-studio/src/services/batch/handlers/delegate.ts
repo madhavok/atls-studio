@@ -3,7 +3,8 @@
  */
 
 import type { HandlerContext, OpHandler, StepOutput, SubAgentProgressEvent } from '../types';
-import type { SubAgentProgress } from '../../subagentService';
+import type { SubAgentProgress, SubAgentToolTraceEntry } from '../../subagentService';
+import { countTokensSync } from '../../../utils/tokenCounter';
 
 /** Max chars for assistant-only block when no blackboard body is inlined. */
 const DELEGATE_FINAL_TEXT_CAP = 2000;
@@ -11,6 +12,12 @@ const DELEGATE_FINAL_TEXT_CAP = 2000;
 const DELEGATE_BB_PER_KEY_CAP = 2800;
 /** Combined cap for inlined blackboard text + optional final assistant turn in the step summary. */
 const DELEGATE_FINDINGS_TOTAL_CAP = 5200;
+/** Hard cap on the per-round action trace we inline into the delegate summary. */
+const DELEGATE_TRACE_MAX_TOKENS = 300;
+/** Max actions surfaced per round in the trace digest. */
+const DELEGATE_TRACE_ACTIONS_PER_ROUND = 3;
+/** Max chars for a single compacted trace message. */
+const DELEGATE_TRACE_MSG_CAP = 60;
 const FOCUS_CONTEXT_CAP = 3000;
 
 /**
@@ -65,6 +72,50 @@ function ok(summary: string, refs: string[], content?: unknown): StepOutput {
 
 function err(summary: string): StepOutput {
   return { kind: 'raw', ok: false, refs: [], summary, error: summary };
+}
+
+/**
+ * Strip the common progress-prefix ("Searching: ", "Reading: ", ...) and
+ * truncate to a compact form for inline display in the delegate summary.
+ */
+function compactTraceMsg(message: string): string {
+  const stripped = message.replace(/^(Searching|Reading|Pinning|Editing|Verifying|Processing):\s*/i, '');
+  return stripped.length > DELEGATE_TRACE_MSG_CAP
+    ? stripped.slice(0, DELEGATE_TRACE_MSG_CAP - 1) + '…'
+    : stripped;
+}
+
+/**
+ * Build a compact per-round action digest from the subagent's toolTrace.
+ * Surfaces up to N actions per round so the caller can inspect what the
+ * sub-agent actually did without having to dig through the batch UI's
+ * synthetic child tool calls.
+ *
+ * Budget: capped at DELEGATE_TRACE_MAX_TOKENS to stay within the
+ * overhead-<=10% ATLS gate on delegate summaries.
+ */
+export function buildRoundDigest(toolTrace: SubAgentToolTraceEntry[] | undefined): string {
+  if (!toolTrace || toolTrace.length === 0) return '';
+  const byRound = new Map<number, string[]>();
+  for (const entry of toolTrace) {
+    if (entry.done) continue;
+    const bucket = byRound.get(entry.round) ?? [];
+    if (bucket.length >= DELEGATE_TRACE_ACTIONS_PER_ROUND) continue;
+    bucket.push(compactTraceMsg(entry.message));
+    byRound.set(entry.round, bucket);
+  }
+  if (byRound.size === 0) return '';
+  const rounds = [...byRound.keys()].sort((a, b) => a - b);
+  const lines = rounds.map(r => `R${r + 1}: ${(byRound.get(r) ?? []).join(' · ')}`);
+  const digest = `\n  trace: ${lines.join(' | ')}`;
+  if (countTokensSync(digest) <= DELEGATE_TRACE_MAX_TOKENS) return digest;
+  // Truncate from the tail: drop later rounds until under cap.
+  for (let end = lines.length - 1; end > 0; end--) {
+    const truncated = `\n  trace: ${lines.slice(0, end).join(' | ')} | …`;
+    if (countTokensSync(truncated) <= DELEGATE_TRACE_MAX_TOKENS) return truncated;
+  }
+  // Single round already over cap: hard-truncate its text.
+  return `\n  trace: ${lines[0].slice(0, DELEGATE_TRACE_MSG_CAP * 2)}…`;
 }
 
 /**
@@ -210,6 +261,10 @@ async function runDelegate(
       (key) => store.getBlackboardEntry(key),
       result.finalText,
     );
+
+    // Round digest: compact per-round action trace so the caller can
+    // verify what the sub-agent did before trusting its refs.
+    summary += buildRoundDigest(result.toolTrace);
 
     if (refHashes.length > 0) {
       summary += '\n⚠ VOLATILE — delegate refs expire next round. pin key refs or `bw` to persist findings.';

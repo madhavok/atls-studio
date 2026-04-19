@@ -217,6 +217,36 @@ describe('fileViewRender — renderAllFileViewBlocks', () => {
     const blocks = renderAllFileViewBlocks([v1, v2], { currentRound: 1 });
     expect(blocks).toHaveLength(0);
   });
+
+  it('renders view-level annotations as header lines (capped at 3 + overflow)', () => {
+    const base = createFileView(sk());
+    const view = {
+      ...base,
+      annotations: [
+        { id: 'a1', content: 'eviction uses XOR tie-break', createdAt: 1, tokens: 6 },
+        { id: 'a2', content: 'hot path: materialize()', createdAt: 2, tokens: 5 },
+        { id: 'a3', content: 'short-hash index is O(1)', createdAt: 3, tokens: 6 },
+        { id: 'a4', content: 'overflow note 4', createdAt: 4, tokens: 3 },
+        { id: 'a5', content: 'overflow note 5', createdAt: 5, tokens: 3 },
+      ],
+    };
+    const text = renderFileViewBlock(view, { currentRound: 1 });
+    expect(text).toContain('note: eviction uses XOR tie-break');
+    expect(text).toContain('note: hot path: materialize()');
+    expect(text).toContain('note: short-hash index is O(1)');
+    expect(text).toContain('note: +2 more');
+    // Notes precede the body
+    const firstNoteIdx = text.indexOf('note: eviction');
+    const firstRowIdx = text.indexOf('1|import');
+    expect(firstNoteIdx).toBeGreaterThan(0);
+    expect(firstRowIdx).toBeGreaterThan(firstNoteIdx);
+  });
+
+  it('emits no annotation lines when the view has none (zero overhead)', () => {
+    const view = createFileView(sk());
+    const text = renderFileViewBlock(view, { currentRound: 1 });
+    expect(text).not.toContain('note:');
+  });
 });
 
 describe('fileViewRender — collectFileViewChunkHashes', () => {

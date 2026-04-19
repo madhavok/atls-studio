@@ -80,6 +80,115 @@ export function didVerifyPass(raw: unknown): boolean {
   return false;
 }
 
+/**
+ * Default tail size for verify.* bodies. Matches PowerShell `Select-Object
+ * -Last 20` / unix `tail -n 20`. Models can override via the `tail_lines`
+ * param on any verify.* step; hard-capped at VERIFY_TAIL_MAX_CAP to prevent
+ * accidental context blowup.
+ */
+const VERIFY_TAIL_DEFAULT_LINES = 20;
+const VERIFY_TAIL_MAX_CAP = 200;
+/** Byte budget per line — the total byte cap scales with requested line count. */
+const VERIFY_TAIL_BYTES_PER_LINE = 256;
+
+/**
+ * Resolve the effective `tail_lines` from caller params. Clamps to
+ * [1, VERIFY_TAIL_MAX_CAP]; non-numeric / missing falls back to the default.
+ */
+function resolveTailLines(params: Record<string, unknown>): number {
+  const raw = params.tail_lines;
+  if (typeof raw !== 'number' || !Number.isFinite(raw)) return VERIFY_TAIL_DEFAULT_LINES;
+  return Math.min(VERIFY_TAIL_MAX_CAP, Math.max(1, Math.floor(raw)));
+}
+
+/**
+ * Bound a body of text to the last N lines / M bytes. UTF-8 safe on the
+ * byte slice (snaps to a char boundary). Preserves the tail end because
+ * the relevant diagnostics usually sit at the bottom.
+ */
+function boundTail(text: string, maxLines: number): string {
+  const trimmed = text.replace(/\n+$/, '');
+  if (!trimmed) return '';
+  const lines = trimmed.split('\n');
+  const from = Math.max(0, lines.length - maxLines);
+  const tailed = lines.slice(from).join('\n');
+  const maxBytes = maxLines * VERIFY_TAIL_BYTES_PER_LINE;
+  if (tailed.length <= maxBytes) return tailed;
+  // Naive byte slice is fine — JS strings are UTF-16 units; we accept a
+  // possible low-surrogate orphan at the start because `…` follows anyway.
+  return '…' + tailed.slice(tailed.length - maxBytes);
+}
+
+/**
+ * Extract the preferred body text for the tail.
+ *
+ * Order of preference:
+ *   1. Concatenated `rendered` fields from parsed `issues[]` — only clippy
+ *      produces this (via `--message-format=json`), and it's what a user
+ *      sees with `--message-format=human`. ~4.7x smaller than NDJSON tail.
+ *   2. Backend-provided `raw_tail` — pre-bounded tail of combined
+ *      stdout+stderr. Works for eslint/flake8/go vet/pytest/tsc/cargo build
+ *      (they emit human-readable output natively).
+ *
+ * See src/services/batch/handlers/lintOutputFormats.test.ts for the
+ * measurement that drove this ordering.
+ */
+function extractVerifyBody(r: Record<string, unknown>, maxLines: number): string {
+  const issues = Array.isArray(r.issues) ? (r.issues as unknown[]) : null;
+  if (issues && issues.length > 0) {
+    const rendered: string[] = [];
+    for (const iss of issues) {
+      if (iss && typeof iss === 'object' && typeof (iss as { rendered?: unknown }).rendered === 'string') {
+        rendered.push((iss as { rendered: string }).rendered);
+      }
+    }
+    if (rendered.length > 0) {
+      return boundTail(rendered.join(''), maxLines);
+    }
+  }
+  if (typeof r.raw_tail === 'string') {
+    return boundTail(r.raw_tail as string, maxLines);
+  }
+  return '';
+}
+
+/**
+ * Build the model-facing chunk body for a verify.* step.
+ *
+ * Output shape:
+ *   verify.<mode>: <status> (<N issues>, exit <code>)
+ *   <tail body — human-readable, last `tail_lines` lines>
+ *
+ * `tail_lines` defaults to 20 and is capped at 200 — same knob as PowerShell
+ * `Select-Object -Last N`. Errors tend to cluster at the bottom of compiler/
+ * linter output, so the tail captures the most actionable signal.
+ *
+ * Source of the tail body, in order:
+ *   1. Concatenated `issues[*].rendered` (clippy — human-readable form of
+ *      the parsed NDJSON; ~4.7x better than tailing raw NDJSON).
+ *   2. `raw_tail` field from Rust (all other linters — clean stdout tail).
+ *
+ * Falls back to `formatResult(raw)` when neither is available (older Rust
+ * binary or unexpected shape). No regression path.
+ */
+export function formatVerifyTail(
+  r: Record<string, unknown>,
+  mode: string,
+  passed: boolean,
+  params: Record<string, unknown> = {},
+): string {
+  const count = typeof r.issue_count === 'number' ? (r.issue_count as number) : undefined;
+  const exit = typeof r.exit_code === 'number' ? (r.exit_code as number) : undefined;
+  const parts: string[] = [];
+  if (count !== undefined) parts.push(`${count} issues`);
+  if (exit !== undefined) parts.push(`exit ${exit}`);
+  const suffix = parts.length > 0 ? ` (${parts.join(', ')})` : '';
+  const statusLine = `verify.${mode}: ${passed ? 'passed' : 'failed'}${suffix}`;
+  const maxLines = resolveTailLines(params);
+  const body = extractVerifyBody(r, maxLines);
+  return body ? `${statusLine}\n${body}` : statusLine;
+}
+
 /** Fold backend `error`, `hint`, `_hint`, and monorepo workspace hints into one line for the model/UI. */
 function buildVerifyStepSummary(mode: string, passed: boolean, r: Record<string, unknown>, base: string): string {
   const extras: string[] = [];
@@ -121,7 +230,14 @@ function makeVerifyHandler(mode: string): OpHandler {
       const summary = buildVerifyStepSummary(mode, passed, r, baseSummary);
       echoVerifyToTerminal(ctx, raw, mode, passed);
 
-      const resultStr = formatResult(raw);
+      // Prefer compact tail body (uses issues[].rendered when present, else
+      // raw_tail). Honors agent-supplied `tail_lines` param (default 20, max
+      // 200). Falls back to TOON formatting only when neither tail source
+      // is available.
+      const hasTailSource = r.raw_tail !== undefined || Array.isArray(r.issues);
+      const resultStr = hasTailSource
+        ? formatVerifyTail(r, mode, passed, params)
+        : formatResult(raw);
       const opKind = `verify.${mode}` as const;
       const retained = checkRetention(opKind, params, resultStr, passed, 'verify_result', opKind, classification);
       if (retained.reused) return retained.output;

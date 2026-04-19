@@ -3092,6 +3092,7 @@ pub async fn atls_batch_query(
                         runner_result["failure_category"] = serde_json::json!(cat);
                         runner_result["_hint"] = serde_json::json!(hint);
                     }
+                    attach_raw_tail(&mut runner_result, &stdout, &stderr, &params);
                     return Ok(runner_result);
                 }
 
@@ -3414,6 +3415,7 @@ pub async fn atls_batch_query(
                         if let Some(cat) = failure_category {
                             result["failure_category"] = serde_json::json!(cat);
                         }
+                        attach_raw_tail(&mut result, &stdout, &stderr, &params);
                         result["_metadata"] = verify_metadata(&work_dir, &manifest_file, &cmd_str, &selection_reason);
                         Ok(result)
                     }
@@ -3622,6 +3624,7 @@ pub async fn atls_batch_query(
                             build_result["baseline_confirmed"] = serde_json::json!(cat == "BaselineProjectFailure");
                         }
                         build_result["build_executed"] = serde_json::json!(true);
+                        attach_raw_tail(&mut build_result, &stdout, &stderr, &params);
                         build_result["_metadata"] = verify_metadata(&work_dir, &manifest_file, &cmd_str, &selection_reason);
                         Ok(build_result)
                     }
@@ -3778,6 +3781,7 @@ pub async fn atls_batch_query(
                                     "Fix type errors using q: e1 change.edit file_path:... line_edits:[...], then re-run: v2 verify.typecheck"
                                 }
                             });
+                            attach_raw_tail(&mut result, &stdout, &stderr, &params);
                             result["_metadata"] = verify_metadata(&work_dir, &manifest_file, &"cargo check --message-format=json", &selection_reason);
                             if let Some(ref err) = tool_error {
                                 result.as_object_mut().unwrap().insert("tool_error".to_string(), serde_json::json!(err));
@@ -3864,6 +3868,7 @@ pub async fn atls_batch_query(
                                     "Fix type errors using q: e1 change.edit file_path:... line_edits:[...], then re-run: v2 verify.typecheck"
                                 }
                             });
+                            attach_raw_tail(&mut result, &stdout, &stderr, &params);
                             result["_metadata"] = verify_metadata(&work_dir, &manifest_file, &"npx -p typescript tsc -b --pretty false", &selection_reason);
                             if let Some(ref err) = tool_error {
                                 result.as_object_mut().unwrap().insert("tool_error".to_string(), serde_json::json!(err));
@@ -3885,7 +3890,7 @@ pub async fn atls_batch_query(
                             let success = output.status.success();
                             let (java_output, java_truncated, java_total) = truncate_output_tail_biased(&combined, 5000, 15, 50);
                             let java_next = if success { "Compilation passed." } else { "Fix compilation errors, then re-run: q: v1 verify.typecheck" };
-                            Ok(serde_json::json!({
+                            let mut result = serde_json::json!({
                                 "type": "typecheck",
                                 "toolchain": "java",
                                 "success": success,
@@ -3893,7 +3898,9 @@ pub async fn atls_batch_query(
                                 "lines": java_total,
                                 "output": java_output,
                                 "_next": java_next
-                            }))
+                            });
+                            attach_raw_tail(&mut result, &stdout, &stderr, &params);
+                            Ok(result)
                         } else if use_csharp {
                             let output = run_shell_cmd_async("dotnet build --no-restore".to_string(), csharp_dir.clone().unwrap_or_else(|| project_root.to_path_buf()), timeout_seconds).await?;
                             let stdout = String::from_utf8_lossy(&output.stdout).to_string();
@@ -3902,7 +3909,7 @@ pub async fn atls_batch_query(
                             let success = output.status.success();
                             let (csharp_output, csharp_truncated, csharp_total) = truncate_output_tail_biased(&combined, 5000, 15, 50);
                             let csharp_next = if success { "Build passed." } else { "Fix build errors, then re-run: q: v1 verify.build" };
-                            Ok(serde_json::json!({
+                            let mut result = serde_json::json!({
                                 "type": "typecheck",
                                 "toolchain": "csharp",
                                 "success": success,
@@ -3910,7 +3917,9 @@ pub async fn atls_batch_query(
                                 "lines": csharp_total,
                                 "output": csharp_output,
                                 "_next": csharp_next
-                            }))
+                            });
+                            attach_raw_tail(&mut result, &stdout, &stderr, &params);
+                            Ok(result)
                         } else if use_swift {
                             let output = run_shell_cmd_async("swift build".to_string(), swift_dir.clone().unwrap(), timeout_seconds).await?;
                             let stdout = String::from_utf8_lossy(&output.stdout).to_string();
@@ -3919,7 +3928,7 @@ pub async fn atls_batch_query(
                             let success = output.status.success();
                             let (swift_output, swift_truncated, swift_total) = truncate_output_tail_biased(&combined, 5000, 15, 50);
                             let swift_next = if success { "Build passed." } else { "Fix build errors, then re-run: q: v1 verify.build" };
-                            Ok(serde_json::json!({
+                            let mut result = serde_json::json!({
                                 "type": "typecheck",
                                 "toolchain": "swift",
                                 "success": success,
@@ -3927,7 +3936,9 @@ pub async fn atls_batch_query(
                                 "lines": swift_total,
                                 "output": swift_output,
                                 "_next": swift_next
-                            }))
+                            });
+                            attach_raw_tail(&mut result, &stdout, &stderr, &params);
+                            Ok(result)
                         } else if use_go {
                             let work_dir = go_dir.clone().unwrap();
                             let output = run_shell_cmd_async("go vet ./...".to_string(), work_dir.clone(), timeout_seconds).await?;
@@ -3974,7 +3985,7 @@ pub async fn atls_batch_query(
 
                             let success = output.status.success() && errors.is_empty();
 
-                            Ok(serde_json::json!({
+                            let mut result = serde_json::json!({
                                 "type": "typecheck",
                                 "toolchain": "go",
                                 "success": success,
@@ -3987,7 +3998,9 @@ pub async fn atls_batch_query(
                                 } else {
                                     "Fix vet errors, then re-run: q: v1 verify.typecheck toolchain:go"
                                 }
-                            }))
+                            });
+                            attach_raw_tail(&mut result, &stdout, &stderr, &params);
+                            Ok(result)
                         } else if use_python {
                             let work_dir = python_dir.clone().unwrap();
 
@@ -4099,7 +4112,7 @@ pub async fn atls_batch_query(
 
                             let success = exit_success && errors.is_empty();
 
-                            Ok(serde_json::json!({
+                            let mut result = serde_json::json!({
                                 "type": "typecheck",
                                 "toolchain": toolchain_name,
                                 "success": success,
@@ -4112,7 +4125,9 @@ pub async fn atls_batch_query(
                                 } else {
                                     "Fix type errors, then re-run: q: v1 verify.typecheck toolchain:python"
                                 }
-                            }))
+                            });
+                            attach_raw_tail(&mut result, &stdout, &stderr, &params);
+                            Ok(result)
                         } else if use_c {
                             let work_dir = c_cpp_dir.clone().unwrap();
 
@@ -4173,7 +4188,7 @@ pub async fn atls_batch_query(
 
                             let success = output.status.success() && errors.is_empty();
 
-                            Ok(serde_json::json!({
+                            let mut result = serde_json::json!({
                                 "type": "typecheck",
                                 "toolchain": "c",
                                 "success": success,
@@ -4186,7 +4201,9 @@ pub async fn atls_batch_query(
                                 } else {
                                     "Fix compilation errors, then re-run: q: v1 verify.typecheck toolchain:c"
                                 }
-                            }))
+                            });
+                            attach_raw_tail(&mut result, &stdout, &stderr, &params);
+                            Ok(result)
                         } else {
                             let tc_msg = if let Some(tc) = toolchain_override {
                                 format!("Toolchain '{}' requested but project files not found. Detected: see below.", tc)
@@ -4338,6 +4355,7 @@ pub async fn atls_batch_query(
                             result.as_object_mut().unwrap().insert("tool_error".to_string(),
                                 serde_json::json!("Linter exited with error but output could not be parsed. Check raw_output or stderr for details."));
                         }
+                        attach_raw_tail(&mut result, &stdout, &stderr, &params);
                         result["_metadata"] = verify_metadata(&work_dir, &manifest_file, &cmd_str, &selection_reason);
                         Ok(result)
                     }

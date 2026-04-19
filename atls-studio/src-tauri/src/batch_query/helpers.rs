@@ -34,6 +34,79 @@ pub(crate) fn combine_output(stdout: &str, stderr: &str) -> String {
     }
 }
 
+/// Default tail size for verify.* — small by design, matches PowerShell
+/// `Select-Object -Last 20` / unix `tail -n 20`. Models can override via the
+/// `tail_lines` param on any verify.* step; hard-capped at VERIFY_TAIL_MAX_CAP
+/// to prevent context blowup if the model accidentally asks for the whole log.
+pub(crate) const VERIFY_TAIL_DEFAULT_LINES: usize = 20;
+pub(crate) const VERIFY_TAIL_MAX_CAP: usize = 200;
+/// Byte budget per line (rough average for code-formatted output). The total
+/// byte cap scales with the requested line count so a 100-line request gets
+/// ~25KB of room, not just 2KB.
+const VERIFY_TAIL_BYTES_PER_LINE: usize = 256;
+
+/// Resolve the effective `tail_lines` for a verify.* step.
+///
+/// Reads `params.tail_lines` (1-200 clamped) with a default of 20.
+/// Non-numeric or out-of-range values fall back to the default.
+pub(crate) fn resolve_tail_lines(params: &serde_json::Value) -> usize {
+    params
+        .get("tail_lines")
+        .and_then(|v| v.as_u64())
+        .map(|n| (n as usize).clamp(1, VERIFY_TAIL_MAX_CAP))
+        .unwrap_or(VERIFY_TAIL_DEFAULT_LINES)
+}
+
+/// Build a compact tail of combined stdout+stderr for the `raw_tail` field on
+/// verify.* results. Bounded by line count and byte count to prevent
+/// one-long-line pathology (e.g. minified JSON). Used uniformly across
+/// build/typecheck/test/lint so the TS side has a single format to render.
+///
+/// `max_lines` is the agent-controlled knob (default 20, cap 200). The byte
+/// budget scales with it (`max_lines * VERIFY_TAIL_BYTES_PER_LINE`) so the
+/// model can request more depth without hitting a fixed byte ceiling.
+pub(crate) fn tail_combined_output(stdout: &str, stderr: &str, max_lines: usize) -> String {
+    let combined = combine_output(stdout, stderr);
+    let trimmed = combined.trim_end_matches('\n');
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    let effective_lines = max_lines.clamp(1, VERIFY_TAIL_MAX_CAP);
+    let max_bytes = effective_lines.saturating_mul(VERIFY_TAIL_BYTES_PER_LINE);
+    let lines: Vec<&str> = trimmed.lines().collect();
+    let from = lines.len().saturating_sub(effective_lines);
+    let tailed = lines[from..].join("\n");
+    if tailed.len() > max_bytes {
+        // Byte-slice from the end, but snap to a char boundary so we don't split UTF-8.
+        let start = tailed.len() - max_bytes;
+        let start_aligned = (start..tailed.len())
+            .find(|&i| tailed.is_char_boundary(i))
+            .unwrap_or(tailed.len());
+        format!("…{}", &tailed[start_aligned..])
+    } else {
+        tailed
+    }
+}
+
+/// Attach `raw_tail` to a verify.* result JSON object. No-op if `result` is
+/// not an object or the computed tail is empty (pass path with no output).
+/// Honors the agent-supplied `tail_lines` param via `resolve_tail_lines`.
+pub(crate) fn attach_raw_tail(
+    result: &mut serde_json::Value,
+    stdout: &str,
+    stderr: &str,
+    params: &serde_json::Value,
+) {
+    let max_lines = resolve_tail_lines(params);
+    let tail = tail_combined_output(stdout, stderr, max_lines);
+    if tail.is_empty() {
+        return;
+    }
+    if let Some(obj) = result.as_object_mut() {
+        obj.insert("raw_tail".to_string(), serde_json::Value::String(tail));
+    }
+}
+
 /// Routes `operation == "edit"` to concrete backend ops (`draft`, `batch_edits`, `delete_files`, etc.).
 pub(crate) fn resolve_edit_operation(
     operation: String,
@@ -448,6 +521,120 @@ pub(crate) async fn maybe_format_go_after_write(
             .ok()
             .map(|content| normalize_line_endings(&content).into_owned()),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod verify_tail_tests {
+    use super::{
+        attach_raw_tail, resolve_tail_lines, tail_combined_output, VERIFY_TAIL_DEFAULT_LINES,
+        VERIFY_TAIL_MAX_CAP,
+    };
+
+    const DEFAULT_LINES: usize = VERIFY_TAIL_DEFAULT_LINES;
+    const DEFAULT_BYTES: usize = VERIFY_TAIL_DEFAULT_LINES * 256;
+
+    #[test]
+    fn short_output_returns_unchanged() {
+        let out = tail_combined_output("hello\nworld", "", DEFAULT_LINES);
+        assert_eq!(out, "hello\nworld");
+    }
+
+    #[test]
+    fn empty_output_returns_empty_string() {
+        assert_eq!(tail_combined_output("", "", DEFAULT_LINES), "");
+        assert_eq!(tail_combined_output("\n\n\n", "", DEFAULT_LINES), "");
+    }
+
+    #[test]
+    fn tails_to_last_n_lines_at_default() {
+        let many: String = (1..=50).map(|i| format!("line{}", i)).collect::<Vec<_>>().join("\n");
+        let out = tail_combined_output(&many, "", DEFAULT_LINES);
+        let lines: Vec<&str> = out.lines().collect();
+        assert_eq!(lines.len(), DEFAULT_LINES);
+        assert_eq!(lines.first().copied(), Some("line31"));
+        assert_eq!(lines.last().copied(), Some("line50"));
+    }
+
+    #[test]
+    fn respects_agent_supplied_max_lines() {
+        let many: String = (1..=120).map(|i| format!("line{}", i)).collect::<Vec<_>>().join("\n");
+        // Agent asks for 100 lines; should surface 100, not just 20.
+        let out = tail_combined_output(&many, "", 100);
+        let lines: Vec<&str> = out.lines().collect();
+        assert_eq!(lines.len(), 100);
+        assert_eq!(lines.first().copied(), Some("line21"));
+        assert_eq!(lines.last().copied(), Some("line120"));
+    }
+
+    #[test]
+    fn clamps_oversize_requests_to_cap() {
+        let many: String = (1..=1000).map(|i| format!("line{}", i)).collect::<Vec<_>>().join("\n");
+        let out = tail_combined_output(&many, "", 10_000);
+        let lines: Vec<&str> = out.lines().collect();
+        assert_eq!(lines.len(), VERIFY_TAIL_MAX_CAP);
+    }
+
+    #[test]
+    fn tails_to_byte_cap_on_long_single_line() {
+        let huge = "x".repeat(DEFAULT_BYTES * 2);
+        let out = tail_combined_output(&huge, "", DEFAULT_LINES);
+        assert!(out.len() <= DEFAULT_BYTES + 4);
+        assert!(out.starts_with('\u{2026}'), "expected ellipsis prefix on truncation, got: {:?}", &out[..10]);
+    }
+
+    #[test]
+    fn byte_cap_scales_with_requested_lines() {
+        // A 100-line request gets ~25KB; a 20-line request gets ~5KB.
+        let huge = "x".repeat(100_000);
+        let small_req = tail_combined_output(&huge, "", 20);
+        let big_req = tail_combined_output(&huge, "", 100);
+        assert!(big_req.len() > small_req.len());
+    }
+
+    #[test]
+    fn merges_stdout_and_stderr_in_order() {
+        let out = tail_combined_output("stdout line", "stderr line", DEFAULT_LINES);
+        assert!(out.contains("stdout line"));
+        assert!(out.contains("stderr line"));
+    }
+
+    #[test]
+    fn attach_raw_tail_noop_on_empty_output() {
+        let mut v = serde_json::json!({"type": "lint", "success": true});
+        let empty_params = serde_json::json!({});
+        attach_raw_tail(&mut v, "", "", &empty_params);
+        assert!(v.get("raw_tail").is_none());
+    }
+
+    #[test]
+    fn attach_raw_tail_sets_field_when_output_present() {
+        let mut v = serde_json::json!({"type": "lint", "success": false});
+        let empty_params = serde_json::json!({});
+        attach_raw_tail(&mut v, "warning: foo", "error: bar", &empty_params);
+        let tail = v.get("raw_tail").and_then(|t| t.as_str()).unwrap_or("");
+        assert!(tail.contains("warning: foo"));
+        assert!(tail.contains("error: bar"));
+    }
+
+    #[test]
+    fn attach_raw_tail_honors_tail_lines_param() {
+        let mut v = serde_json::json!({"type": "lint", "success": false});
+        let params = serde_json::json!({ "tail_lines": 50 });
+        let many: String = (1..=80).map(|i| format!("line{}", i)).collect::<Vec<_>>().join("\n");
+        attach_raw_tail(&mut v, &many, "", &params);
+        let tail = v.get("raw_tail").and_then(|t| t.as_str()).unwrap_or("");
+        let count = tail.lines().count();
+        assert_eq!(count, 50, "expected 50 lines with tail_lines:50, got {}", count);
+    }
+
+    #[test]
+    fn resolve_tail_lines_defaults_when_missing_or_invalid() {
+        assert_eq!(resolve_tail_lines(&serde_json::json!({})), VERIFY_TAIL_DEFAULT_LINES);
+        assert_eq!(resolve_tail_lines(&serde_json::json!({ "tail_lines": "not a number" })), VERIFY_TAIL_DEFAULT_LINES);
+        assert_eq!(resolve_tail_lines(&serde_json::json!({ "tail_lines": 0 })), 1);
+        assert_eq!(resolve_tail_lines(&serde_json::json!({ "tail_lines": 50 })), 50);
+        assert_eq!(resolve_tail_lines(&serde_json::json!({ "tail_lines": 99999 })), VERIFY_TAIL_MAX_CAP);
     }
 }
 

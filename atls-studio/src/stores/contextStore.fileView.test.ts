@@ -544,3 +544,71 @@ describe('FileView wire — unified hash namespace (h:<short>)', () => {
     expect(drainRefCollisionCount()).toBeGreaterThan(0);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Watch-item 3: annotate.note accepts FileView hashes (engram vs view routing)
+// ---------------------------------------------------------------------------
+
+describe('annotation routing — FileView hashes attach to the view', () => {
+  beforeEach(resetStore);
+
+  function seedView(path: string, rev: string, chunkHash: string) {
+    const store = useContextStore.getState();
+    store.addChunk(
+      rowLine(42, 'payload'),
+      'smart',
+      path,
+      undefined, undefined, chunkHash,
+      {
+        sourceRevision: rev,
+        readSpan: { filePath: path, sourceRevision: rev, startLine: 42, endLine: 42 },
+      },
+    );
+    return useContextStore.getState().getFileView(path)!;
+  }
+
+  it('annotate.note with a view hash lands on FileView.annotations (not chunk)', () => {
+    const view = seedView('src/note-view.ts', 'rev-n1', 'chk-n1');
+    const r = useContextStore.getState().addAnnotation(view.hash, 'eviction uses XOR tie-break');
+    expect(r.ok).toBe(true);
+
+    const after = useContextStore.getState().getFileView('src/note-view.ts')!;
+    expect(after.annotations).toBeDefined();
+    expect(after.annotations!.length).toBe(1);
+    expect(after.annotations![0].content).toBe('eviction uses XOR tie-break');
+
+    // The chunk must not have received the annotation.
+    const state = useContextStore.getState();
+    for (const [, chunk] of state.chunks) {
+      expect(chunk.annotations ?? []).toHaveLength(0);
+    }
+  });
+
+  it('annotate.note with a chunk hash still lands on the chunk (no regression)', () => {
+    // Use addChunk without a readSpan so no view is created; the returned
+    // short hash points at a plain chunk. Validates the existing chunk path.
+    const store = useContextStore.getState();
+    const shortHash = store.addChunk('plain body', 'result', 'verify.lint', undefined, 'summary');
+    const r = useContextStore.getState().addAnnotation(`h:${shortHash}`, 'lint audit note');
+    expect(r.ok).toBe(true);
+
+    const state = useContextStore.getState();
+    const chunk = Array.from(state.chunks.values()).find(c => c.shortHash === shortHash);
+    expect(chunk).toBeDefined();
+    expect(chunk!.annotations?.[0].content).toBe('lint audit note');
+  });
+
+  it('editEngram rejects FileView hashes with a specific hint', () => {
+    const view = seedView('src/edit-view.ts', 'rev-e1', 'chk-e1');
+    const r = useContextStore.getState().editEngram(view.hash, { content: 'new' });
+    expect(r.ok).toBe(false);
+    expect(r.error ?? '').toMatch(/FileView/i);
+    expect(r.error ?? '').toMatch(/change\.edit|annotate\.note/);
+  });
+
+  it('annotate.note on an unknown hash returns "engram not found"', () => {
+    const r = useContextStore.getState().addAnnotation('h:deadbeef', 'ghost note');
+    expect(r.ok).toBe(false);
+    expect(r.error ?? '').toMatch(/engram not found/);
+  });
+});

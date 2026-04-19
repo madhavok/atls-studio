@@ -45,6 +45,9 @@ export const GLOBAL_ALIASES: Readonly<Record<string, string>> = {
   ps: 'file_paths',
   sn: 'symbol_names',
   qs: 'queries',
+  // verify.* tail-size knob (PowerShell -Last N / unix tail -n N equivalent).
+  // Clamped server-side to [1, 200]; default 20.
+  tl: 'tail_lines',
   le: 'line_edits',
   sl: 'start_line',
   el: 'end_line',

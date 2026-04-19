@@ -17,6 +17,10 @@ import { countTokensSync } from '../utils/tokenCounter';
 import { getFreshnessJournal } from './freshnessJournal';
 import type { FileSkeleton } from './fileView';
 import { normalizePath } from './fileView';
+// Type-only import: EngramAnnotation is defined in contextStore. Importing it
+// back keeps FileView.annotations structurally identical to
+// ContextChunk.annotations. The import is erased at runtime, so no cycle.
+import type { EngramAnnotation } from '../stores/contextStore';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -98,6 +102,12 @@ export interface FileView {
    * content-changed regions; caller processes under a per-round cap.
    */
   pendingRefetches?: PendingRefetch[];
+  /**
+   * Free-form notes attached to this view via `annotate.note` with a FileView
+   * hash. Persists across rounds alongside the view; rendered in the
+   * `## FILE VIEWS` block header. Parallels `ContextChunk.annotations`.
+   */
+  annotations?: EngramAnnotation[];
 }
 
 export interface PendingRefetch {

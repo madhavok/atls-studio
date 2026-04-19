@@ -89,6 +89,11 @@ function overlayRegions(
 /** Emitted when ShapeOp::Sig returns nothing (binary, minified, parse fail). */
 const UNPARSEABLE_PLACEHOLDER = '(no sig extracted — read lines to explore)';
 
+/** Max annotations surfaced inline in the FileView header. Overflow is summarized. */
+const ANNOTATIONS_VISIBLE_CAP = 3;
+/** Per-note char cap to bound overhead on views with long notes. */
+const ANNOTATION_CHAR_CAP = 160;
+
 export interface RenderFileViewOptions {
   /** Current round number; drives ephemeral `[edited L..-..L.. this round]` markers. */
   currentRound: number;
@@ -109,14 +114,39 @@ export interface RenderFileViewOptions {
  */
 export function renderFileViewBlock(view: FileView, opts: RenderFileViewOptions): string {
   const header = formatHeader(view);
+  const annotations = formatAnnotations(view);
   const body = formatBody(view);
   const markers = formatMarkers(view, opts.currentRound);
 
   const parts: string[] = [header];
+  if (annotations) parts.push(annotations);
   if (body) parts.push(body);
   if (markers) parts.push(markers);
   parts.push(FENCE_BOT);
   return parts.join('\n');
+}
+
+/**
+ * Render view-level annotations (from `annotate.note` on a FileView hash) as
+ * compact header lines. No overhead when the view has no annotations.
+ */
+function formatAnnotations(view: FileView): string {
+  const notes = view.annotations;
+  if (!notes || notes.length === 0) return '';
+  const lines: string[] = [];
+  const visible = notes.slice(0, ANNOTATIONS_VISIBLE_CAP);
+  for (const note of visible) {
+    const text = note.content.replace(/\s+/g, ' ').trim();
+    const capped = text.length > ANNOTATION_CHAR_CAP
+      ? text.slice(0, ANNOTATION_CHAR_CAP - 1) + '…'
+      : text;
+    lines.push(`  note: ${capped}`);
+  }
+  const overflow = notes.length - visible.length;
+  if (overflow > 0) {
+    lines.push(`  note: +${overflow} more`);
+  }
+  return lines.join('\n');
 }
 
 function formatHeader(view: FileView): string {

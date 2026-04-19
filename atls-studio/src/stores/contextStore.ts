@@ -4771,13 +4771,31 @@ export const useContextStore = create<ContextStoreState>()(
 
   addAnnotation: (hashRef: string, note: string) => {
     const state = get();
-    const newChunks = new Map(state.chunks);
-    const found = findOrPromoteEngram(hashRef, newChunks, state.archivedChunks, state.stagedSnippets);
-    if (!found) return { ok: false, error: `engram not found: ${hashRef}` };
-    const [key, chunk] = found;
     const id = `ann_${Date.now().toString(36)}`;
     const tokens = countTokensSync(note);
     const annotation: EngramAnnotation = { id, content: note, createdAt: Date.now(), tokens };
+
+    // Route through resolveAnyRef: FileView hashes attach the note to the
+    // view (shares the `h:` namespace); chunk hashes take the legacy path.
+    // When neither matches, fall through to archive/staged promotion so
+    // previously-evicted engrams can still be annotated.
+    const routed = resolveAnyRef(hashRef, state.fileViews, state.chunks);
+    if (routed?.kind === 'view') {
+      const newViews = new Map(state.fileViews);
+      newViews.set(routed.key, {
+        ...routed.view,
+        annotations: [...(routed.view.annotations ?? []), annotation],
+      });
+      set({ fileViews: newViews });
+      return { ok: true, id };
+    }
+
+    const newChunks = new Map(state.chunks);
+    const found = routed?.kind === 'chunk'
+      ? [routed.key, routed.chunk] as [string, ContextChunk]
+      : findOrPromoteEngram(hashRef, newChunks, state.archivedChunks, state.stagedSnippets);
+    if (!found) return { ok: false, error: `engram not found: ${hashRef}` };
+    const [key, chunk] = found;
     newChunks.set(key, {
       ...chunk,
       annotations: [...(chunk.annotations || []), annotation],
@@ -4870,8 +4888,17 @@ export const useContextStore = create<ContextStoreState>()(
 
   editEngram: (hashRef: string, fields: { content?: string; digest?: string; summary?: string; type?: ChunkType }) => {
     const state = get();
+    // Views don't carry editable content/digest/summary/type in the engram
+    // sense — their identity is (path, revision). Reject with a specific
+    // message so the agent knows to use change.edit on the file instead.
+    const routed = resolveAnyRef(hashRef, state.fileViews, state.chunks);
+    if (routed?.kind === 'view') {
+      return { ok: false, error: `cannot edit FileView (${hashRef}) as an engram; use change.edit on the file to modify content, or annotate.note to attach a note` };
+    }
     const newChunks = new Map(state.chunks);
-    const found = findOrPromoteEngram(hashRef, newChunks, state.archivedChunks, state.stagedSnippets);
+    const found = routed?.kind === 'chunk'
+      ? [routed.key, routed.chunk] as [string, ContextChunk]
+      : findOrPromoteEngram(hashRef, newChunks, state.archivedChunks, state.stagedSnippets);
     if (!found) return { ok: false, error: `engram not found: ${hashRef}` };
     const [, oldChunk] = found;
 
