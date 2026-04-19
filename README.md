@@ -8,7 +8,7 @@ An **output-compression-first** desktop coding agent. ~200k LOC across TypeScrip
 
 ## The Thesis
 
-Contemporary LLM coding agents optimize the **context window** — fitting more into the prompt. ATLS optimizes **model emission** — minimizing what the model writes. Under current pricing (output tokens cost 5x input; cached input costs 0.1x uncached), emission dominates cost. A system that lets the model reference code instead of copying it, chain operations instead of narrating them, and trust the runtime instead of re-verifying assumptions can compress output by **20-50x** versus naive tool-calling agents.
+Contemporary LLM coding agents optimize the **context window** — fitting more into the prompt. ATLS optimizes **both sides**: minimizing what the model **writes** (output compression) and what the model **reads** (input compression). Under current pricing (output tokens cost 5× input; cached input costs 0.1× uncached), emission dominates cost — but input volume drives cache misses, latency, and context pressure. A system that lets the model reference code instead of copying it, chain operations instead of narrating them, and trust the runtime instead of re-verifying assumptions can compress output by **20–50×** versus naive tool-calling agents, while a 10-layer input compression stack (TOON serialization, dictionary compression, shaped reads, FileView incremental access, history deflation, cache-aware layout, token budgets, materialization control, workspace context compression, and UHPP content references) keeps the input side lean enough to sustain long sessions at high cache-hit rates.
 
 
 
@@ -64,6 +64,7 @@ Tracks what the model can currently "see." Scoped views let subagents participat
 
 - **Single batch tool** -- 76 operations across 9 families (discover, understand, change, verify, session, annotate, delegate, intent, system), step-to-step dataflow, conditional execution, intent macros that expand to primitive sequences
 - **Six axes of emission compression** -- lexical (shorthands, TOON), semantic (intent macros, named bindings), temporal (recency refs), spatial (set selectors, shapes, content-as-ref), computational (line rebase, auto-verify, snapshot injection), transcript (hash deflation, rolling summary, batch stubbing)
+- **Ten-layer input compression** -- TOON serialization (30–60% smaller than JSON), dictionary compression on tool results (substring dedup, ditto encoding, key abbreviation), shaped reads (sig/fold/grep at 5–10% of file size), FileView incremental access (one view per file, slices merge), history deflation (hash-reference replacement above 100-token threshold), cache-aware prompt layout (state/chat separation, two breakpoints), token budgets (per-layer admission control via promptMemory), materialization control (HPP visibility gating), workspace context TOON, UHPP content-as-ref (zero-copy inline expansion)
 - **Freshness as epistemic integrity** -- five-state taxonomy (fresh/forwarded/shifted/changed/suspect), preflight gating before every mutation, round-end reconciliation, universal filter on steering signals, own-write suppression
 - **Managed working memory** -- content-addressed engrams with HPP visibility, tiered eviction, staging, blackboard, task plans with subtask-scoped lifecycle
 - **Multi-agent orchestration** -- research digest with dependency graphs, task hydration with token-budget degradation, file-claim enforcement, engram-first delegate subagents (retriever/design/coder/tester) with scoped HPP views
@@ -111,6 +112,7 @@ See [Architecture Document](atls-studio/docs/ARCHITECTURE.md) for the full techn
 | [Architecture Overview](atls-studio/docs/ARCHITECTURE.md) | Complete technical architecture (start here for code orientation) |
 | [Hash Protocol](docs/hash-protocol.md) | UHPP v6 reference syntax + HPP visibility tracking |
 | [Output Compression](docs/output-compression.md) | Six-axis emission compression inventory with per-mechanism source links |
+| [Input Compression](docs/input-compression.md) | Ten-layer input-side compression stack: TOON, dictionary, shaped reads, FileView, history deflation, cache layout, budgets, HPP, workspace TOON, UHPP |
 | [Batch Executor](docs/batch-executor.md) | `batch()` tool surface, operation families, dataflow, intents, line rebase, error recovery |
 | [Symbol Resolver](docs/symbol-resolver.md) | Tiered regex resolver, `findBlockEnd`, TS/Rust parity |
 | [Freshness System](docs/freshness.md) | Epistemic integrity: five-state taxonomy, preflight gating, round-end reconciliation |
