@@ -494,6 +494,11 @@ export function compressToolLoopHistory(
           shortHash = existing.shortHash;
           chunkDigest = existing.digest;
         } else {
+          // Rule C parity: skip chunk creation for batch results that carry no
+          // recoverable content (dedupe tails + status lines + merge pointers +
+          // footer only). Leave content inline; history rolls it into the
+          // rolling summary like any below-threshold text.
+          if (!isContentArchiveWorthy(tr.content, toolName)) continue;
           hash = getCtx().addChunk(tr.content, 'result', description, undefined, `result: ${description}`);
           shortHash = hash.slice(0, SHORT_HASH_LEN);
           chunkDigest = getCtx().chunks.get(hash)?.digest;

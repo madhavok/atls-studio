@@ -660,6 +660,91 @@ describe('deflateToolResults Rule C skip-archive gate', () => {
   });
 });
 
+describe('compressToolLoopHistory Rule C skip-archive gate', () => {
+  beforeEach(() => resetStore());
+
+  it('does NOT create chunk for batch status-only tool_result even above compression threshold', () => {
+    const tool_use_id = 'tu_status';
+    // Contrive a batch tool_result that's large (lots of status lines, N=40
+    // identical-shaped failures collapsed) yet carries no recoverable body.
+    const lines = [
+      '[FAIL] f1 (read.lines): read_lines: requires lines or ref (40ms)',
+      '[FAIL] +39 identical (f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12, f13, f14, f15, f16, f17, f18, f19, f20, f21, f22, f23, f24, f25, f26, f27, f28, f29, f30, f31, f32, f33, f34, f35, f36, f37, f38, f39, f40) - same class: read.lines',
+      '[ATLS] 40 steps: 40 fail (1600ms) | ok',
+    ];
+    const content = lines.join('\n');
+    const history: Array<{ role: string; content: unknown }> = [
+      { role: 'user', content: 'start' },
+      {
+        role: 'assistant',
+        content: [
+          { type: 'tool_use', id: tool_use_id, name: 'batch', input: { version: '1.0', steps: [{ use: 'read.lines', with: { hash: 'h:abc' } }] } },
+        ],
+      },
+      { role: 'user', content: [{ type: 'tool_result', tool_use_id, content }] },
+      { role: 'assistant', content: 'r2' },
+      { role: 'user', content: 'ok' },
+      { role: 'assistant', content: 'r3' },
+      { role: 'user', content: 'ok' },
+      { role: 'assistant', content: 'r4' },
+      { role: 'user', content: 'ok' },
+      { role: 'assistant', content: 'r5' },
+      { role: 'user', content: 'ok' },
+      { role: 'assistant', content: 'r6' },
+      { role: 'user', content: 'ok' },
+    ];
+
+    const chunksBefore = useContextStore.getState().chunks.size;
+    compressToolLoopHistory(history, 8, 0);
+    const chunksAfter = useContextStore.getState().chunks.size;
+
+    expect(chunksAfter).toBe(chunksBefore);
+    // Tool result content stays inline (not replaced by a ref)
+    const tr = (history[2].content as Array<{ content: string }>)[0];
+    expect(tr.content).toBe(content);
+  });
+
+  it('DOES create chunk for batch tool_result with real recoverable body', () => {
+    const tool_use_id = 'tu_search';
+    const realBody = Array.from({ length: 40 }, (_, i) => `src/file${i}.ts:${i * 10}: matching line here`).join('\n');
+    const content = [
+      '[OK] s1 (search.code): found 40 matches (30ms)',
+      realBody,
+      '[ATLS] 1 steps: 1 pass (30ms) | ok',
+    ].join('\n');
+
+    const history: Array<{ role: string; content: unknown }> = [
+      { role: 'user', content: 'start' },
+      {
+        role: 'assistant',
+        content: [
+          { type: 'tool_use', id: tool_use_id, name: 'batch', input: { version: '1.0', steps: [{ use: 'search.code', with: { queries: ['foo'] } }] } },
+        ],
+      },
+      { role: 'user', content: [{ type: 'tool_result', tool_use_id, content }] },
+      { role: 'assistant', content: 'r2' },
+      { role: 'user', content: 'ok' },
+      { role: 'assistant', content: 'r3' },
+      { role: 'user', content: 'ok' },
+      { role: 'assistant', content: 'r4' },
+      { role: 'user', content: 'ok' },
+      { role: 'assistant', content: 'r5' },
+      { role: 'user', content: 'ok' },
+      { role: 'assistant', content: 'r6' },
+      { role: 'user', content: 'ok' },
+    ];
+
+    const chunksBefore = useContextStore.getState().chunks.size;
+    compressToolLoopHistory(history, 8, 0);
+    const chunksAfter = useContextStore.getState().chunks.size;
+
+    expect(chunksAfter).toBeGreaterThan(chunksBefore);
+    // Compressed to a ref
+    const tr = (history[2].content as Array<{ content: string }>)[0];
+    expect(tr.content).toContain('[h:');
+  });
+});
+
 describe('compressToolLoopHistory rolling window', () => {
   beforeEach(() => resetStore());
 
