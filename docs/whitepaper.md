@@ -12,6 +12,8 @@ Contemporary LLM coding agents treat the **context window** as the primary resou
 
 We present **output-compression-first architecture** as a unifying design thesis for LLM agent tooling: every subsystem should be architected to minimize the tokens the model must emit, not merely the tokens the model must ingest. We identify **six axes** along which emission can be compressed — lexical, semantic, temporal, spatial, computational, and transcript — and show how disciplined application of all six stacks multiplicatively.
 
+Complementing this, we document a **ten-layer input compression stack** — wire-format serialization (TOON), dictionary compression with ditto encoding, progressive-disclosure shaped reads, one-hash-per-file FileView merging, history deflation to hash pointers, cache-aware prompt layout with hard token budgets, materialization control, workspace-context minimization, and redundant-read blocking — that reduces input cost by an additional 20–25% beyond prompt caching alone. The two approaches compound: output compression saves at 5× per token, input compression saves at 1× (uncached) or 0.1× (cached), and together they achieve roughly **40–50% total cost reduction** versus either approach in isolation.
+
 We introduce two protocols that operationalize this thesis:
 
 - **UHPP (Universal Hash Pointer Protocol)** — a reference calculus for addressing, slicing, shaping, and composing LLM working memory. UHPP provides a unified syntax (`h:SHORT:slice:shape:op`) with temporal refs, set selectors, symbol extraction, and content-as-ref resolution, enabling a model to reference code artifacts compactly instead of copying them.
@@ -45,13 +47,12 @@ This paper makes the following contributions:
 
 6. We describe **ATLS**, a reference implementation that integrates UHPP, HPP, a managed memory runtime with a single-tool batch execution surface, a freshness subsystem, and a history-compression pipeline.
 
-7. We describe the **symbol resolver** — a tiered regex + block-end scanner with TypeScript/Rust parity that makes UHPP anchor resolution fast enough to run inline in the batch execution hot path without IPC or full AST parsing.
+7. We document a **ten-layer input compression stack** — TOON serialization, dictionary compression, shaped reads, FileView merging, history deflation, cache-aware prompt layout, token budgets, materialization control, workspace minimization, and redundant-read blocking — that complements the output-side thesis with measured input-side savings.
 
-8. We report empirical results from a **self-audit workload** — the system auditing its own critical cognitive paths — including cost breakdown, tool-token distribution, and bug density across ~22k LOC of audited surface.
+8. We describe the **symbol resolver** — a tiered regex + block-end scanner with TypeScript/Rust parity that makes UHPP anchor resolution fast enough to run inline in the batch execution hot path without IPC or full AST parsing.
 
-9. We argue that these contributions are transferable primitives that should outlive the specific reference implementation.
+The remainder of the paper is organized as follows. §2 presents the economic problem. §3 articulates the output-compression-first thesis and introduces the complementary input compression stack. §4 defines UHPP. §5 defines HPP. §6 enumerates the six compression axes. §7 describes the reference system architecture (approximately 200k LOC across TypeScript and Rust). §8 treats freshness as epistemic integrity. §9 presents the empirical evaluation. §10 surveys related work. §11 discusses limitations and future work. §12 concludes.
 
-The remainder of the paper is organized as follows. §2 presents the economic problem. §3 articulates the output-compression-first thesis. §4 defines UHPP. §5 defines HPP. §6 enumerates the six compression axes. §7 describes the reference system architecture (approximately 200k LOC across TypeScript and Rust). §8 treats freshness as epistemic integrity. §9 presents the empirical evaluation. §10 surveys related work. §11 discusses limitations and future work. §12 concludes.
 
 ---
 
@@ -72,11 +73,13 @@ A model round that reads 10k cached input tokens and writes 1k output tokens thu
 
 For Opus-tier pricing ($15/MTok input, $75/MTok output), these ratios translate directly into dollar costs. A 10-round tool loop spending 30–50k uncached input per round and 2–4k output per round costs approximately \$1.37–\$2.27 on Sonnet 4 and \$6.85–\$11.35 on Opus 4.
 
-### 2.2 Why the dominant mitigations are input-side
+### 2.2 Why the dominant mitigations are input-side — and why they are insufficient alone
 
 Prompt caching — the standard economic mitigation — reduces **input** cost by preserving prefix byte-identity across requests. Cached reads at 0.1× can bring input cost to near-zero for the static portion of the prompt. But cache prefixes must be byte-stable: any changing content between the cache breakpoint and the request terminator invalidates cache for everything after it. Agents with living working memory — hash manifests, blackboards, staged snippets, dynamically-materialized engrams, steering signals — have, by design, a large mutable tail that cannot sit inside a cacheable prefix. Empirically, naive agent architectures report cache hit rates of 30–40% versus 85% for static chatbots, precisely because the interesting parts of the prompt are the moving parts.
 
-This is a well-known structural limitation. The implication that is less commonly internalized: **input-side caching is already at the limits of what the pricing structure allows**. Further compression must come from the output side. And the output side is where the design conversation in the field has invested *least*.
+This is a well-known structural limitation. But the conclusion that input-side work is exhausted does not follow. **Beyond caching, substantial input compression remains available**: wire-format optimization (replacing JSON with token-efficient serialization), dictionary compression on structured tool results, progressive-disclosure reads that deliver 5–10% of a file's tokens instead of the full body, history deflation that replaces past tool results with hash pointers, and hard token budgets that cap each prompt section regardless of session length. ATLS implements all of these as a ten-layer input compression stack (documented in [docs/input-compression.md](./input-compression.md)), achieving roughly 20–25% input cost reduction beyond what caching alone provides.
+
+The deeper point: **input-side caching addresses the static prefix; input-side compression addresses the dynamic tail**. Both are necessary. But neither eliminates the fundamental asymmetry: output tokens still cost 5× input tokens, and the output side is where the design conversation in the field has invested *least*. Further compression must come from both sides — and the output side offers the larger per-token return.
 
 ### 2.3 The naive agent round: an audit
 
@@ -121,6 +124,14 @@ The output-compression frame inverts this. It treats the model as an expensive p
 A single compression mechanism rarely delivers more than 10–20% emission reduction. The ATLS result (20–50× on representative workflows) arises because disciplined application of **all six axes** stacks multiplicatively. A 4-step batch using lexical shorthand alone saves ~30%; using shorthand plus intent macros saves ~60%; using shorthand, intents, content-as-ref, and computational inference can save 95%+.
 
 The implication for design is that half-measures are worse than they look. A system that applies only lexical compression captures one-sixth of the available gain. Output-compression-first is most effective as a system-wide discipline, not a point optimization.
+
+### 3.4 The complementary input stack
+
+Output-compression-first does not mean input compression is unimportant — it means output compression offers higher per-token ROI under current pricing. ATLS applies both.
+
+The input compression stack operates across ten layers: (1) **TOON serialization** replaces JSON's quoted keys and nested braces with a token-efficient wire format, saving 30–60% on structured payloads; (2) **dictionary compression** abbreviates repeated keys to single-character codes and applies ditto encoding across adjacent array elements; (3) **substring dictionaries** identify frequently-occurring strings and replace them with numbered codes via an inline legend; (4) **shaped reads** deliver progressive-disclosure views — signature skeletons at ~5% of file size, with targeted line slices on demand; (5) **FileView merging** consolidates multiple reads of the same file into one live view with a single hash identity; (6) **history deflation** replaces past tool results and assistant stubs with hash pointers, capping conversation history at 24k tokens regardless of session length; (7) **cache-aware prompt layout** places stable content in cacheable prefix regions and confines dynamic content to the mutable tail; (8) **hard token budgets** cap each prompt section (WM: 38k, history: 24k, workspace: 7k, BB: 4.8k) with proportional relief under pressure; (9) **materialization control** renders previously-seen chunks as compact digest lines instead of full content; (10) **redundant-read blocking** prevents re-ingestion of content already present in working memory.
+
+The full input compression architecture is documented in [docs/input-compression.md](./input-compression.md). The key insight: output compression saves at **5×** per token while input compression saves at **1×** (uncached) or **0.1×** (cached). Combining both yields roughly 40–50% total cost reduction — neither captures the full benefit alone.
 
 ---
 

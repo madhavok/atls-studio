@@ -174,3 +174,9 @@ The tool reference surfaces the `ch` shorthand; the Cognitive Core doesn't carry
 ---
 
 **Source**: [`historyCompressor.ts`](../atls-studio/src/services/historyCompressor.ts), [`historyDistiller.ts`](../atls-studio/src/services/historyDistiller.ts), [`chatMiddleware.ts`](../atls-studio/src/services/chatMiddleware.ts), [`contextHash.ts`](../atls-studio/src/utils/contextHash.ts) (`formatChunkRef`), [`promptMemory.ts`](../atls-studio/src/services/promptMemory.ts) (thresholds)
+
+## See also
+
+- [input-compression.md](input-compression.md) — The ten-layer input compression stack, including history compression (Layer 5)
+- [output-compression.md](output-compression.md) — The six axes of emission compression
+- [prompt-assembly.md](prompt-assembly.md) — Cache breakpoints and prompt layout

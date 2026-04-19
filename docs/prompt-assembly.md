@@ -251,3 +251,9 @@ Each mode uses a different combination of system prompt, tool reference, and con
 ---
 
 **Source**: [`aiService.ts`](../atls-studio/src/services/aiService.ts) (`buildStateBlock`, `buildDynamicContextBlock`, `assembleProviderMessages`, round loop, steering), [`appStore.ts`](../atls-studio/src/stores/appStore.ts) (`ToolLoopSteering`), [`logicalCacheMetrics.ts`](../atls-studio/src/services/logicalCacheMetrics.ts) (logical BP3/static hit model), [`contextFormatter.ts`](../atls-studio/src/services/contextFormatter.ts) (working memory formatting, FileView block + cover-set wiring), [`fileViewRender.ts`](../atls-studio/src/services/fileViewRender.ts) (pin-gated render + cover set), [`promptMemory.ts`](../atls-studio/src/services/promptMemory.ts) (stage budgets, research/phase budgets), [`chatMiddleware.ts`](../atls-studio/src/services/chatMiddleware.ts) (middleware pipeline), [`modePrompts.ts`](../atls-studio/src/prompts/modePrompts.ts) (mode-specific prompts)
+
+## See also
+
+- [input-compression.md](input-compression.md) — The ten-layer input compression stack, including cache-aware layout (Layer 6) and token budgets (Layer 7)
+- [output-compression.md](output-compression.md) — The six axes of emission compression
+- [history-compression.md](history-compression.md) — Hash-reference deflation and rolling summary compression

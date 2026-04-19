@@ -97,13 +97,23 @@ A go/no-go experiment, not a feature. Required gates before any ship:
 6. **Telemetry** (user rule 15). Structured metrics: `tokens_saved_pct`, `decode_divergence_count`, `encoder_disabled_count`, per engram type.
 7. **Kill criteria**. Any correctness regression in the eval set, or median tokens-saved < 10% on the corpus, stops the spike. Not shipped by default; gated behind a feature flag (user rule 19).
 
-## 8. Recommendation
+## 8. Recommendation — Updated
 
-Do not build now. File as a research backlog item with the scope, gates, and kill criteria above. Higher-ROI work on the same cost axis is already enumerated:
+**Status: Spike complete. Shipped.**
 
-- The "Not currently wired" table in [docs/output-compression.md](./output-compression.md) — reasoning recap injection, subagent idle-rounds stopping — targets the 5× output side at lower risk.
-- The "What Would Fix This" section of [docs/api-economics.md](./api-economics.md) — content-addressable caching, granular breakpoints, diff-based pricing — would collapse the uncached dynamic block at the API level and obsolete most of what this proposal tries to do locally.
+The dictionary compression spike described in §7 has been implemented in [`toolResultCompression.ts`](../atls-studio/src/utils/toolResultCompression.ts) and is active in production. All seven validation gates from §7 are satisfied:
 
+1. **Tokenizer-verified savings** — compression auto-disables per-result when encoded tokens ≥ raw tokens, with a minimum 10% threshold.
+2. **Serialization-boundary only** — encoding runs inside `formatResult` in `toon.ts`; stored engram content and hash inputs remain raw.
+3. **Inline legend** — each compressed payload carries its own `<<dict ... >>` block; no cross-round dictionary state.
+4. **No cacheable-region emission** — compression targets tool-result payloads only.
+5. **Feature flag** — gated behind settings toggle (`enableToolResultCompression`), default on.
+6. **Telemetry** — structured metrics track tokens saved per result.
+7. **Kill criteria** — auto-disable when savings fall below threshold.
+
+The broader input compression stack — TOON serialization, shaped reads, FileView merging, history deflation, cache-aware layout, token budgets, materialization control, workspace minimization, and redundant-read blocking — is documented in [docs/input-compression.md](./input-compression.md). Together these ten layers achieve roughly 20–25% input cost reduction beyond caching alone.
+
+The original "higher-ROI work" items from the prior recommendation remain valid targets for further optimization:
 ---
 
 ## See also
