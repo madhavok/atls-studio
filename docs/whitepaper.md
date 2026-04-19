@@ -47,7 +47,7 @@ This paper makes the following contributions:
 
 7. We describe the **symbol resolver** — a tiered regex + block-end scanner with TypeScript/Rust parity that makes UHPP anchor resolution fast enough to run inline in the batch execution hot path without IPC or full AST parsing.
 
-8. We report empirical results from a **self-audit workload** — the system auditing its own critical cognitive paths — and quantify the cost impact of the batch primitive at **97.6% reduction** against a per-step-dispatch baseline.
+8. We report empirical results from a **self-audit workload** — the system auditing its own critical cognitive paths — including cost breakdown, tool-token distribution, and bug density across ~22k LOC of audited surface.
 
 9. We argue that these contributions are transferable primitives that should outlive the specific reference implementation.
 
@@ -666,11 +666,8 @@ Audit scope: 18 files spanning the critical cognitive path of the ~200k LOC syst
 |---|---|
 | Total session cost | **\$91.28** |
 | Main-agent cost (46 rounds) | **\$9.23** |
-| Hypothetical cost without batching | **\$398.73** |
-| Savings attributable to batch primitive | **\$381.50** (97.6%) |
 | Rounds | 92 (46 main-chat, ~46 subagent) |
-
-The hypothetical-cost comparison assumes each of the 198 sub-steps executed within batch envelopes would have been a separate API round-trip with full context re-sent. The 97.6% figure therefore isolates the impact of the batch primitive specifically, not the full six-axis compression stack.
+| Total tool calls (within batch envelopes) | 198 |
 
 ### 9.4 Tool-token distribution
 
@@ -718,7 +715,7 @@ Analysis of the round-composition dashboard reveals:
 
 ### 9.7 Caveats
 
-The evaluation is a single workload in a single environment with a single provider. The self-audit workload is plausibly representative of a common professional-developer workflow (careful code review with verification), but we do not claim statistical coverage of the space of agent workloads. The 97.6% batch-savings figure is specific to the counterfactual we construct (per-step API dispatch); more sophisticated baselines would show different numbers, though in our view the direction of the result is robust.
+The evaluation is a single workload in a single environment with a single provider. The self-audit workload is plausibly representative of a common professional-developer workflow (careful code review with verification), but we do not claim statistical coverage of the space of agent workloads.
 
 ---
 
@@ -796,7 +793,7 @@ These moves convert "one tool with interesting properties" into "a transferable 
 
 ## 12. Conclusion
 
-We have argued that the dominant cost axis in current LLM coding agents is not context-window pressure but model emission, and that a disciplined **output-compression-first** architecture can reduce that cost by 20–50× on representative workloads. We have introduced **UHPP**, a reference calculus for LLM working memory that lets models reference content without copying it, and **HPP**, a round-scoped visibility state machine that tracks what the model can currently see. We have described **ATLS**, a reference implementation that integrates these protocols with a managed memory runtime, a single-tool batch execution surface, a freshness subsystem, and a history-compression pipeline. We have presented empirical evidence from a self-audit workload in which the system found and fixed 5 real correctness bugs in its own cognitive subsystems at a total cost of \$91.28 and a measured 97.6% cost reduction over a per-step-dispatch baseline.
+We have argued that the dominant cost axis in current LLM coding agents is not context-window pressure but model emission, and that a disciplined **output-compression-first** architecture can reduce that cost substantially on representative workloads. We have introduced **UHPP**, a reference calculus for LLM working memory that lets models reference content without copying it, and **HPP**, a round-scoped visibility state machine that tracks what the model can currently see. We have described **ATLS**, a reference implementation that integrates these protocols with a managed memory runtime, a single-tool batch execution surface, a freshness subsystem, and a history-compression pipeline. We have presented empirical evidence from a self-audit workload in which the system found and fixed 5 real correctness bugs in its own cognitive subsystems at a total cost of \$91.28.
 
 The primary contribution is not the specific system; it is the transferable discipline of treating model emission as the optimization target and the specific protocols that make that discipline practical. We believe UHPP in particular should be adopted beyond the reference implementation, and we identify the concrete moves (standalone spec, reference implementations in multiple languages, public benchmark suite) that would make such adoption feasible.
 
