@@ -395,31 +395,23 @@ describe('resultFormatter Rule B — FileView-merge pointer', () => {
     useContextStore.getState().resetSession();
   });
 
-  function setupPinnedView(filePath: string, filledStart: number, filledEnd: number): string {
+  /**
+   * Set up a pinned FileView for a path. Does NOT pre-fill filledRegions —
+   * this mirrors real runtime: the rl handler auto-pins the view, but the
+   * content merge into filledRegions happens asynchronously after the
+   * formatter has already run. Rule B must work under this timing.
+   */
+  function setupPinnedViewNoFill(filePath: string): string {
     const store = useContextStore.getState();
     const revision = 'rev-' + filePath;
     const ref = store.ensureFileView(filePath, revision);
-    // Fill a region via applyFillFromChunk — use a fake chunk hash
-    const chunkHash = 'abcdef1234567890'.padEnd(64, '0');
-    const content = Array.from({ length: filledEnd - filledStart + 1 },
-      (_, i) => `${filledStart + i}| line-${filledStart + i}`).join('\n');
-    store.applyFillFromChunk({
-      filePath,
-      sourceRevision: revision,
-      startLine: filledStart,
-      endLine: filledEnd,
-      content,
-      chunkHash,
-      tokens: 50,
-      origin: 'read',
-    });
     store.setFileViewPinned(filePath, true);
     return ref;
   }
 
-  it('replaces read.lines body with a merge pointer when view is pinned and covers range', () => {
+  it('emits merge pointer when view is pinned (fill is async — do not gate on filledRegions)', () => {
     const filePath = 'atls-studio/src/foo.ts';
-    const ref = setupPinnedView(filePath, 10, 30);
+    const ref = setupPinnedViewNoFill(filePath);
 
     const result: UnifiedBatchResult = {
       ok: true,
@@ -453,18 +445,6 @@ describe('resultFormatter Rule B — FileView-merge pointer', () => {
     const store = useContextStore.getState();
     const revision = 'rev-' + filePath;
     const ref = store.ensureFileView(filePath, revision);
-    store.applyFillFromChunk({
-      filePath,
-      sourceRevision: revision,
-      startLine: 10,
-      endLine: 30,
-      content: '10| line-10',
-      chunkHash: 'a'.repeat(64),
-      tokens: 50,
-      origin: 'read',
-    });
-    // Note: NOT calling setFileViewPinned(true)
-    // (auto-pin may fire on ensureFileView — explicitly unpin to test the unpinned path)
     store.setFileViewPinned(filePath, false);
 
     const summary = 'read_lines: ... content body ...';
@@ -488,10 +468,7 @@ describe('resultFormatter Rule B — FileView-merge pointer', () => {
     expect(out).toContain('content body');
   });
 
-  it('keeps full body when range is not covered by any filled region', () => {
-    const filePath = 'atls-studio/src/foo.ts';
-    const ref = setupPinnedView(filePath, 10, 30);
-
+  it('keeps full body when no FileView exists for the path (engram:* reads)', () => {
     const result: UnifiedBatchResult = {
       ok: true,
       duration_ms: 1,
@@ -501,20 +478,20 @@ describe('resultFormatter Rule B — FileView-merge pointer', () => {
           use: 'read.lines',
           ok: true,
           duration_ms: 1,
-          summary: 'read_lines: uncovered range body',
-          artifacts: { file: filePath, hash: ref, actual_range: [[100, 200]] },
+          summary: 'read_lines: engram body preserved',
+          artifacts: { file: 'engram:h:abc123', hash: 'h:abc123', actual_range: [[1, 10]] },
         },
       ],
     };
 
     const out = formatBatchResult(result);
     expect(out).not.toContain('merged into');
-    expect(out).toContain('uncovered range body');
+    expect(out).toContain('engram body preserved');
   });
 
   it('keeps body for failed read.lines (Rule B only applies to ok=true)', () => {
     const filePath = 'atls-studio/src/foo.ts';
-    const ref = setupPinnedView(filePath, 10, 30);
+    const ref = setupPinnedViewNoFill(filePath);
 
     const result: UnifiedBatchResult = {
       ok: false,
@@ -539,7 +516,7 @@ describe('resultFormatter Rule B — FileView-merge pointer', () => {
 
   it('reduces token count substantially on merged pointer replacement', () => {
     const filePath = 'atls-studio/src/foo.ts';
-    const ref = setupPinnedView(filePath, 10, 30);
+    const ref = setupPinnedViewNoFill(filePath);
 
     // Fake a real-world read.lines body with many numbered lines
     const fatBody = Array.from({ length: 200 }, (_, i) => `${i + 1}| line content body number ${i + 1}`).join('\n');

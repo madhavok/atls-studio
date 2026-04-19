@@ -107,23 +107,11 @@ describe('pillar gate — 3-slice successful read merged into pinned FileView', 
     const store = useContextStore.getState();
     const revision = 'rev-fixture';
     const ref = store.ensureFileView(filePath, revision);
-
-    // Fill three regions matching the transcript: 243-444, 564-726, 909-984.
+    // Mirror real runtime: view is auto-pinned by the rl handler. Body merge
+    // into filledRegions happens asynchronously AFTER the formatter runs, so
+    // we only pin — do not pre-fill. Rule B relies on `view.pinned` as the
+    // signal that the view will own the content by next round.
     const regions: Array<[number, number]> = [[243, 444], [564, 726], [909, 984]];
-    regions.forEach(([start, end], idx) => {
-      const content = Array.from({ length: end - start + 1 },
-        (_, i) => `${start + i}| dense docs body line ${start + i} with words and tokens`).join('\n');
-      store.applyFillFromChunk({
-        filePath,
-        sourceRevision: revision,
-        startLine: start,
-        endLine: end,
-        content,
-        chunkHash: `${idx}`.padEnd(64, '0'),
-        tokens: (end - start + 1) * 10,
-        origin: 'read',
-      });
-    });
     store.setFileViewPinned(filePath, true);
 
     const mkOk = (id: string, range: [number, number], approxTk: number): StepResult => {

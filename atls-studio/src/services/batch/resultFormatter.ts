@@ -14,7 +14,6 @@ import { parseHashRef } from '../../utils/hashRefParsers';
 import type { HashModifierV2 } from '../../utils/uhppTypes';
 import { getRef } from '../hashProtocol';
 import { useContextStore } from '../../stores/contextStore';
-import type { FilledRegion } from '../fileViewStore';
 import {
   BATCH_FAILURE_BB_KEY,
   BATCH_FAILURE_THRESHOLD,
@@ -203,25 +202,18 @@ function capStepSummary(text: string, stepUse: string, step: StepResult): string
 
 // ---------------------------------------------------------------------------
 // Rule B — FileView-merge pointer
-// When a successful read.lines / read.shaped result's content is fully covered
-// by a live, pinned FileView, emit a one-line pointer instead of the raw line
-// bodies. FileView block in working memory is the canonical record.
+// When a successful read.lines / read.shaped result will be canonically held
+// by a live pinned FileView, emit a one-line pointer instead of the raw body.
+// The FileView block in working memory becomes the single source of truth.
+//
+// Timing note: the `rl` handler creates the view via `ensureFileView` and
+// auto-pins it, but the actual merge of the read body into `filledRegions`
+// happens AFTER this formatter runs (via `addChunk(readSpan)` from
+// `materializeFileRefsContentIfNeeded` or `refreshRoundEnd`). By the time the
+// model sees the next round's manifest, the fill has landed. We therefore
+// gate on `view.pinned` — a sufficient signal that (a) the fill path is
+// wired and (b) the model will retain the view — and trust the async merge.
 // ---------------------------------------------------------------------------
-
-/**
- * True when the union of `regions` (non-overlapping, sorted in file order)
- * fully covers the closed interval `[s, e]` (1-based inclusive).
- */
-function filledRegionsCover(regions: FilledRegion[], s: number, e: number): boolean {
-  if (s > e) return false;
-  let cursor = s;
-  for (const r of regions) {
-    if (r.start > cursor) return false;
-    if (r.end >= e) return true;
-    cursor = Math.max(cursor, r.end + 1);
-  }
-  return false;
-}
 
 function formatRange(r: [number, number | null]): string {
   const [s, e] = r;
@@ -243,8 +235,8 @@ function coerceRangeArray(value: unknown): Array<[number, number | null]> | null
 }
 
 /**
- * If this step's content is fully subsumed by a pinned FileView covering the
- * returned range(s), return a compact pointer line; else null.
+ * If this step's content will be canonically held by a pinned FileView,
+ * return a compact pointer line; else null.
  */
 function tryBuildFileViewMergedPointer(step: StepResult): string | null {
   if (!step.ok) return null;
@@ -278,15 +270,22 @@ function tryBuildFileViewMergedPointer(step: StepResult): string | null {
     coerceRangeArray(art.actual_range) ??
     coerceRangeArray(art.target_range);
   if (!file || !hashRef || !ranges) return null;
-  // engram: reads (from hashes) don't have a FileView — skip
+  // engram: reads (from hashes) don't have a backing file — skip.
   if (file.startsWith('engram:')) return null;
 
   const view = store.getFileView(file);
   if (!view || !view.pinned) return null;
-  if (view.filledRegions.length === 0) return null;
-  for (const [s, e] of ranges) {
-    const endLine = e ?? s;
-    if (!filledRegionsCover(view.filledRegions, s, endLine)) return null;
+
+  // Optional safety: if the view has loaded its skeleton (totalLines > 0) and
+  // the requested range falls entirely outside the file, bail — the handler
+  // should have failed the step, but a bad backend payload shouldn't emit a
+  // misleading pointer. Ranges within [1, totalLines] or with totalLines
+  // unknown (pre-skeleton) pass through.
+  if (view.totalLines > 0) {
+    for (const [s, e] of ranges) {
+      const endLine = e ?? s;
+      if (s < 1 || endLine > view.totalLines) return null;
+    }
   }
 
   const rangeLabel = ranges.map(formatRange).join(',');
