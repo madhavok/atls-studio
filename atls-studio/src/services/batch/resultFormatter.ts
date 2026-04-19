@@ -276,17 +276,11 @@ function tryBuildFileViewMergedPointer(step: StepResult): string | null {
   const view = store.getFileView(file);
   if (!view || !view.pinned) return null;
 
-  // Optional safety: if the view has loaded its skeleton (totalLines > 0) and
-  // the requested range falls entirely outside the file, bail — the handler
-  // should have failed the step, but a bad backend payload shouldn't emit a
-  // misleading pointer. Ranges within [1, totalLines] or with totalLines
-  // unknown (pre-skeleton) pass through.
-  if (view.totalLines > 0) {
-    for (const [s, e] of ranges) {
-      const endLine = e ?? s;
-      if (s < 1 || endLine > view.totalLines) return null;
-    }
-  }
+  // Note: we intentionally do NOT validate ranges against view.totalLines.
+  // For shape:sig on markdown files, the backend reports totalLines as the
+  // skeleton row count (~100), not the source-file line count (~1000). A
+  // range like 243-300 would be incorrectly rejected as out-of-file. The
+  // handler has already validated the range — step.ok === true is authority.
 
   const rangeLabel = ranges.map(formatRange).join(',');
   const tokenTag = typeof step.tokens_delta === 'number' && step.tokens_delta > 0
