@@ -153,7 +153,8 @@ describe('formatWorkingMemory — FileView block rendering', () => {
 
     expect(output).toContain('## FILE VIEWS');
     expect(output).toContain('src/toon.ts');
-    expect(output).toMatch(/=== .*src\/toon\.ts @h:/);
+    // Fence format: `=== path h:<retention> cite:@h:<cite> ...`
+    expect(output).toMatch(/=== .*src\/toon\.ts h:[0-9a-f]{6} cite:@h:/);
   });
 
   it('filters out file-backed chunks that a pinned FileView already covers', () => {

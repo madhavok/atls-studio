@@ -384,7 +384,7 @@ export interface ContextStoreApi {
   compactChunks: (hashes: string[], opts?: { confirmWildcard?: boolean; tier?: 'pointer' | 'sig'; sigContentByRef?: Map<string, string> }) => { compacted: number; freedTokens: number };
   dropChunks: (hashes: string[], opts?: { confirmWildcard?: boolean }) => { dropped: number; freedTokens: number };
   pinChunks: (hashes: string[], shape?: string) => { count: number; alreadyPinned: number; skippedFullFile: number };
-  unpinChunks: (hashes: string[]) => number;
+  unpinChunks: (hashes: string[]) => { count: number; alreadyUnpinned: number; unknown: number };
   findPinnedFileEngram: (filePath: string) => string | null;
   invalidateStaleHashes: (hashes: string[]) => void;
   markEngramsSuspect: (sourcePaths?: string[], cause?: FreshnessCause, suspectKind?: 'content' | 'structural' | 'unknown') => number;

@@ -51,7 +51,11 @@ Every read of a file lands in ONE live FileView block per path. The read returns
 
 The view auto-heals across edits — shifted regions rebase, content-changed regions refetch, stale content never reaches you; you will not see [STALE] on a FileView. Unpin (pu) when you finish a target so ASSESS can keep the pinned set lean.
 
-Cite \`@h:XXX\` from the FileView header as \`content_hash\` for edits — that's the source revision hash (different from the view's retention ref, which is a separate \`h:<short>\`). Line numbers are current-revision.
+FileView fence carries TWO hashes — do not conflate them:
+  \`=== path h:<RET> cite:@h:<CITE> (N lines) [pinned?] ===\`
+- **h:<RET>** (first slot) = retention ref. Pass to **pu**, **pc**, **dro**, **pi** — the only token that matches a pinned FileView. Different hex from cite by construction.
+- **cite:@h:<CITE>** (second slot) = source revision. Pass as \`content_hash\` or embed in \`f:h:<CITE>\` for edits. Line numbers in the view are current-revision (auto-healed).
+Using cite:@h: for pu (or h:<RET> for content_hash) produces "no matching pinned refs" / stale_hash. The HASH MANIFEST lists FileViews under their retention ref (type: fileview).
 
 rc type:tree = directory listing (not file content).
 
@@ -79,7 +83,7 @@ BB read paths: **sm** = semantic search across regions (active/archived/bb); **b
 Templates: **tpl:NAME** entries are pre-seeded BB scaffolds, excluded from pin budget. Reference via h:bb:tpl:NAME inside bw content to structure output. Available: analysis, refactor, task, diff, issue, scope, status, complete.
 
 ### WORKFLOW ROUTING
-- Large file (>500L): rs shape:sig → FileView skeleton appears with folded [A-B] ranges → rl on the ranges you need → pin the view or any slice → edit cites @h:XXX → verify.
+- Large file (>500L): rs shape:sig → FileView skeleton appears with folded [A-B] ranges → rl on the ranges you need → pin the view or any slice → edit cites \`cite:@h:<CITE>\` from the fence → verify.
 - Cross-file symbol move -> cf(extract). Localized change -> ce.
 - Persist a plan to BB when it would not survive a compaction round, or for cross-cutting refactors with >=3 verification gates. Advance phases with sa(summary:"...").
 - **task_complete auto-verify**: runs verify.build exactly once when mutations occurred AND no prior vb has passed. Skips otherwise. On auto-verify failure, injects errors and continues — you must fix and re-complete.

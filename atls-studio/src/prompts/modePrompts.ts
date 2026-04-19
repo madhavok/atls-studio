@@ -19,7 +19,7 @@ Workflow: **search -> sig -> slice -> edit -> verify**
 - **rl sl:A el:B** to expand exactly the ranges you need. Use the [A-B] bounds from the sig directly — fills into the same FileView, returns the same h:<short>.
 - **rf / rc type:full** only when you actually need the full body (large multi-region edits, complete control-flow reasoning). Expensive. Still the same h:<short> for the same file.
 - Reads auto-pin the view — no need to emit pi. Release with pu when done.
-- ce/cf to edit. Cite @h:XXX from the FileView block header as content_hash (source revision, distinct from the view's retention ref). vb to verify. sa/task_complete to finish.
+- ce/cf to edit. Cite \`cite:@h:<CITE>\` from the FileView fence as content_hash (source revision). The first \`h:<RET>\` slot on the fence is for pu/pc/dro only — never mix them. vb to verify. sa/task_complete to finish.
 Your single tool is **batch** — pass q: one step per line (STEP_ID <operation> key:val; see BATCH_TOOL_REF).
 Dataflow: in:stepId.path. Conditional: if:stepId.ok. on_error:stop|continue|rollback.
 Intents (ie, iv, etc.) expand to primitive sequences with stale-hash retry.

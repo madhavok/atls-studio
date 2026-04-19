@@ -684,14 +684,37 @@ export const handleUnpin: OpHandler = async (params, ctx) => {
   }
 
   const { expanded, notes } = ctx.expandSetRefsInHashes(rawHashes);
-  const count = ctx.store().unpinChunks(expanded);
+  const { count, alreadyUnpinned, unknown } = ctx.store().unpinChunks(expanded);
   if (count === 0) {
     const noteSuffix = notes.length > 0 ? ` | ${notes.join('; ')}` : '';
+    // Discriminate zero-match causes — each implies a different model action:
+    //  * alreadyUnpinned > 0 → idempotent no-op; nothing to fix.
+    //  * unknown > 0        → refs don't resolve. Often the model passed the
+    //                         cite hash (edit content_hash) instead of the
+    //                         retention hash (view.shortHash). FileView fence
+    //                         shows both: first slot `h:<RET>` is the unpin
+    //                         target, `cite:@h:<CITE>` is for edits.
+    if (alreadyUnpinned > 0 && unknown === 0) {
+      return ok(`unpin: 0 unpinned (${alreadyUnpinned} already unpinned — no-op)${noteSuffix}`);
+    }
+    if (unknown > 0 && alreadyUnpinned === 0) {
+      return err(
+        `unpin: ERROR ${unknown} ref${unknown === 1 ? '' : 's'} did not resolve to any FileView or chunk${noteSuffix}. Check the HASH MANIFEST. FileView fence format: \`h:<RET> cite:@h:<CITE>\` — unpin targets the first slot (retention), NOT \`cite:@h:<CITE>\` (that's for edit content_hash).`,
+      );
+    }
+    if (unknown > 0 && alreadyUnpinned > 0) {
+      return err(
+        `unpin: ERROR ${unknown} unknown ref${unknown === 1 ? '' : 's'}, ${alreadyUnpinned} already unpinned${noteSuffix}. Unknown refs don't match any FileView or chunk — likely wrong hash identity (did you pass \`cite:@h:<CITE>\` instead of \`h:<RET>\`?). Check the HASH MANIFEST.`,
+      );
+    }
+    // Defensive: unpinChunks returned 0/0/0 — request was empty after expansion.
     return err(
       `unpin: ERROR no matching pinned refs in manifest${noteSuffix}. Check the HASH MANIFEST for pin state — refs listed as unpinned or absent can't be unpinned again. Prior-round unpin receipts are not callable.`,
     );
   }
   let line = `unpin: ${count} chunk${count > 1 ? 's' : ''} unpinned`;
+  if (alreadyUnpinned > 0) line += ` (${alreadyUnpinned} already unpinned)`;
+  if (unknown > 0) line += ` (${unknown} unknown)`;
   if (notes.length > 0) line += ` | ${notes.join('; ')}`;
   return ok(line);
 };

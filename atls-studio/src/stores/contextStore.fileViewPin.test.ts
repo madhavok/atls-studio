@@ -132,8 +132,10 @@ describe('FileView PR4 — pinChunks with view refs (unified h:<short> namespace
     expect(useContextStore.getState().getFileView('src/unpin.ts')!.pinned).toBe(true);
 
     const viewHash = useContextStore.getState().getFileView('src/unpin.ts')!.hash;
-    const n = useContextStore.getState().unpinChunks([viewHash]);
-    expect(n).toBe(1);
+    const result = useContextStore.getState().unpinChunks([viewHash]);
+    expect(result.count).toBe(1);
+    expect(result.alreadyUnpinned).toBe(0);
+    expect(result.unknown).toBe(0);
     expect(useContextStore.getState().getFileView('src/unpin.ts')!.pinned).toBe(false);
   });
 

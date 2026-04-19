@@ -1119,7 +1119,7 @@ async function _processShapedFile(
   ctx.store().ensureFileViewSkeleton(source, canonicalContentHash).catch(() => {});
   autoPinViewAfterRead(ctx, source, shape);
   ctx.store().recordMemoryEvent({ action: 'read', reason: 'read_shaped', source, newRevision: canonicalContentHash, refs: [viewRef] });
-  lines.push(`read_shaped: ${source} → ${viewRef} (full:${fullTokens}tk, shaped:${shapedTokens}tk, saved:${savedPct}%)${foldHint} | pin ${viewRef} to keep the FileView across rounds; rl fills ranges; edits cite @h:XXX from the view header.`);
+  lines.push(`read_shaped: ${source} → ${viewRef} (full:${fullTokens}tk, shaped:${shapedTokens}tk, saved:${savedPct}%)${foldHint} | pin ${viewRef} to keep the FileView across rounds; rl fills ranges; edits cite the \`cite:@h:<CITE>\` slot from the fence (not ${viewRef} — that's for pu/pc/dro).`);
   return {
     refs: [viewRef],
     tokens: shapedTokens,

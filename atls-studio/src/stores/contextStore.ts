@@ -979,7 +979,7 @@ interface ContextStoreState {
   unloadChunks: (hashes: string[], opts?: { confirmWildcard?: boolean }) => { freed: number; count: number; pinnedKept: number };
   dropChunks: (hashes: string[], opts?: { confirmWildcard?: boolean }) => { dropped: number; freedTokens: number };
   pinChunks: (hashes: string[], shape?: string) => { count: number; alreadyPinned: number; skippedFullFile: number };
-  unpinChunks: (hashes: string[]) => number;
+  unpinChunks: (hashes: string[]) => { count: number; alreadyUnpinned: number; unknown: number };
   findPinnedFileEngram: (filePath: string) => string | null;
   registerEditHash: (hash: string, source: string, editSessionId?: string) => { registered: boolean; reason?: string };
   invalidateStaleHashes: (shortHashes: string[]) => number;
@@ -3294,9 +3294,17 @@ export const useContextStore = create<ContextStoreState>()(
    * Unpin chunks to allow bulk unload. Mirrors `pinChunks` routing — any chunk
    * ref whose source has a live FileView unpins the view (the single retention
    * identity). Supports "*" / "all" to unpin every pinned chunk and view.
+   *
+   * Returns a discriminated result so the handler can differentiate
+   * "already unpinned" (ref resolves but wasn't pinned) from "unknown ref"
+   * (ref doesn't resolve at all). Zero `count` with `alreadyUnpinned > 0` is a
+   * no-op, not a failure; `unknown > 0` suggests the model used the wrong
+   * hash identity (e.g. cite hash instead of retention hash).
    */
   unpinChunks: (hashes: string[]) => {
     let count = 0;
+    let alreadyUnpinned = 0;
+    let unknown = 0;
     const hasWildcard = hashes.includes('*') || hashes.includes('all');
 
     set(state => {
@@ -3304,10 +3312,15 @@ export const useContextStore = create<ContextStoreState>()(
       const newFileViews = new Map(state.fileViews);
       let fileViewsChanged = false;
 
-      const unpinViewByKey = (fvKey: string): boolean => {
+      /**
+       * Returns 'unpinned' when the view transitioned pinned→unpinned this
+       * call, 'already' when it existed but was already unpinned, or 'miss'
+       * when no view matched the key. Callers classify for the handler.
+       */
+      const unpinViewByKey = (fvKey: string): 'unpinned' | 'already' | 'miss' => {
         const view = newFileViews.get(fvKey) ?? state.fileViews.get(fvKey);
-        if (!view) return false;
-        if (!view.pinned) return true; // view exists, already unpinned — still "handled"
+        if (!view) return 'miss';
+        if (!view.pinned) return 'already';
         // Auto-pin telemetry: released without ever being re-accessed after pin.
         // Guard on both autoPinnedAt marker (it was an auto-pin) and the
         // lastAccessed <= autoPinnedAt invariant (never bumped by a later read).
@@ -3317,7 +3330,7 @@ export const useContextStore = create<ContextStoreState>()(
         newFileViews.set(fvKey, { ...view, pinned: false, pinnedShape: undefined, autoPinnedAt: undefined, lastAccessed: Date.now() });
         fileViewsChanged = true;
         count++;
-        return true;
+        return 'unpinned';
       };
 
       if (hasWildcard) {
@@ -3345,7 +3358,8 @@ export const useContextStore = create<ContextStoreState>()(
           trackRefCollision(h, newFileViews, newChunks);
           const viewHit = findViewByRef(newFileViews, h);
           if (viewHit) {
-            unpinViewByKey(viewHit[0]);
+            const outcome = unpinViewByKey(viewHit[0]);
+            if (outcome === 'already') alreadyUnpinned++;
             continue;
           }
           const found = findChunkByRef(newChunks, h);
@@ -3354,14 +3368,23 @@ export const useContextStore = create<ContextStoreState>()(
             // If chunk has a FileView parent, unpin the view (retention ref).
             if (srcPath) {
               const fvKey = fvNormalizePath(srcPath);
-              if (unpinViewByKey(fvKey)) continue;
+              const outcome = unpinViewByKey(fvKey);
+              if (outcome === 'unpinned' || outcome === 'already') {
+                if (outcome === 'already') alreadyUnpinned++;
+                continue;
+              }
+              // 'miss' falls through to chunk-level handling below.
             }
             // Non-file chunk — unpin at chunk level.
             if (found[1].pinned) {
               newChunks.set(found[0], { ...found[1], pinned: false, pinnedShape: undefined });
               hppSetPinned(found[0], false);
               count++;
+            } else {
+              alreadyUnpinned++;
             }
+          } else {
+            unknown++;
           }
         }
       }
@@ -3370,8 +3393,8 @@ export const useContextStore = create<ContextStoreState>()(
         ? { chunks: newChunks, fileViews: newFileViews }
         : { chunks: newChunks };
     });
-    
-    return count;
+
+    return { count, alreadyUnpinned, unknown };
   },
   
   findPinnedFileEngram: (filePath: string): string | null => {

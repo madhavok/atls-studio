@@ -1,9 +1,23 @@
 /**
  * Rendering layer for the Unified FileView.
  *
- * Produces the `=== path @h:XXX (N lines) === ... ===` block that replaces
- * flat file-backed chunks in WORKING MEMORY. Pure function — takes a FileView
- * + current round + lookup for filled regions, returns a string.
+ * Produces the `=== path h:<RETENTION> cite:@h:<CITE> (N lines) === ... ===`
+ * block that replaces flat file-backed chunks in WORKING MEMORY. Pure
+ * function — takes a FileView + current round + lookup for filled regions,
+ * returns a string.
+ *
+ * The fence carries TWO distinct hash identities:
+ *   - `h:<view.shortHash>`   — RETENTION ref. Use for pu / pc / dro / pi and
+ *                              any other op that acts on the view itself.
+ *                              Derived from (path, sourceRevision) via
+ *                              `computeFileViewHashParts` in fileViewStore.
+ *   - `cite:@h:<revision6>`  — CITATION ref. Use as `content_hash` (or
+ *                              embedded in `f:h:…`) for edits. This is the
+ *                              source revision prefix the backend uses to
+ *                              rebase line edits (plan Section 10).
+ *
+ * These two tokens are different hex by construction; passing the cite hash
+ * to a retention op (or vice versa) yields "no matching pinned refs".
  *
  * See docs/ — plan: Unified FileView (Sections 5 + 9).
  */
@@ -14,9 +28,10 @@ const FENCE_TOP = '===';
 const FENCE_BOT = '===';
 
 /**
- * Short hash tag for the block header. Uses the file's sourceRevision —
- * this is the content_hash the model cites for edits, per the
- * edit-rebasing compatibility constraint (plan Section 10).
+ * Short hash tag for the block header's citation slot. Uses the file's
+ * sourceRevision — this is the content_hash the model cites for edits, per
+ * the edit-rebasing compatibility constraint (plan Section 10). The
+ * retention ref (`view.shortHash`) is emitted separately in the header.
  */
 function shortRev(revision: string, length = 6): string {
   const clean = revision.replace(/^h:/, '');
@@ -85,7 +100,7 @@ export interface RenderFileViewOptions {
  * Render a FileView block suitable for injection into WORKING MEMORY.
  *
  * Layout:
- *   === path @h:<sourceRevision short> (N lines) ===
+ *   === path h:<retention short> cite:@h:<revision short> (N lines) ===
  *   <row>
  *   <row>
  *   ...
@@ -105,9 +120,11 @@ export function renderFileViewBlock(view: FileView, opts: RenderFileViewOptions)
 }
 
 function formatHeader(view: FileView): string {
-  const h = shortRev(view.sourceRevision);
+  const cite = shortRev(view.sourceRevision);
   const pinSuffix = view.pinned ? ' [pinned]' : '';
-  return `${FENCE_TOP} ${view.filePath} @h:${h} (${view.totalLines} lines)${pinSuffix} ${FENCE_TOP}`;
+  // Dual identity: retention ref (view.shortHash) for pu/pc/dro, cite hash
+  // (sourceRevision prefix) for content_hash in edits. See file header doc.
+  return `${FENCE_TOP} ${view.filePath} h:${view.shortHash} cite:@h:${cite} (${view.totalLines} lines)${pinSuffix} ${FENCE_TOP}`;
 }
 
 function formatBody(view: FileView): string {

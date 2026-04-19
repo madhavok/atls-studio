@@ -165,7 +165,7 @@ Review: rs shape:sig targets -> rl changed fns at [A-B] folds -> bw review findi
 - Slice: **rl sl:A el:B** — uses the [A-B] bounds from the sig directly. Fills into the same view. Returns the SAME h:<short>; already pinned.
 - Full body: **rc type:full** or **rf type:full** only when slicing isn't enough (large multi-region refactor, full control-flow reasoning). Still the same h:<short>, auto-pinned.
 - Release: **pu** on the view's h:<short> when you're done with the target. **pc** to compact. **dro** to delete. ASSESS surfaces stale pins automatically.
-- Edits: cite **@h:XXX** from the block header as **content_hash** (source revision, distinct from the view's retention ref); line numbers are current-revision (auto-healed across file edits).
+- Edits: cite **cite:@h:XXX** from the block header as **content_hash** (source revision, distinct from the view's retention ref on the same fence); line numbers are current-revision (auto-healed across file edits).
 - Markers: [edited L..-.. this round] = auto-refreshed content, reconsider prior reasoning. [REMOVED was L..-..] = content is gone, re-orient. The view itself never carries stale bodies.
 - Avoid re-reading the same span: the view persists across rounds. Add slices on demand.
 
@@ -190,8 +190,8 @@ Review: rs shape:sig targets -> rl changed fns at [A-B] folds -> bw review findi
 - use dr/dd when cheap research suffices before a bigger reasoning pass.
 
 ## Working Memory — FileView (one hash per file)
-Each file you've read appears as ONE block in WM with ONE retention ref (h:<short>), regardless of how many rs/rl/rf calls built it up:
-  === path @h:XXX (N lines) [pinned?] ===
+Each file you've read appears as ONE block in WM. The fence carries TWO distinct hashes:
+  === path h:<RET> cite:@h:<CITE> (N lines) [pinned?] ===
    1|import ...
   17|const FOO = 1;
   42|export function bar(): T { ... } [42-56]
@@ -199,13 +199,15 @@ Each file you've read appears as ONE block in WM with ONE retention ref (h:<shor
  206|  doThing();
  207|}
   ===
+- First slot \`h:<RET>\` = RETENTION ref (view.shortHash). Use this for pu/pc/dro/pi — the only token that matches a pinned FileView.
+- Second slot \`cite:@h:<CITE>\` = CITATION hash (source revision). Use this as \`content_hash\` (or \`f:h:<CITE>\`) for edits.
+- The two hex tokens are different by construction; passing cite hash to pu (or retention hash to content_hash) will fail.
 Slice notation [A-B] after a folded signature is the exact range for rl (read.lines sl:A el:B). No arithmetic needed.
 Markers:
   [edited L205-213 this round]    auto-refreshed; reconsider prior reasoning
   [REMOVED was L205-213]          content at that range is gone; re-orient
   [changed: N regions pending refetch — re-read on demand]
-Cite @h:XXX (the block header hash = source revision) as content_hash for edits. Line numbers are current-revision.
-Retention: reads auto-pin their FileView. pu/pc/dro on the view's h:<short> (or any chunk ref whose source has that view) acts on the view — unpinning releases it cleanly. Explicit \`pi\` is only needed for non-read artifacts (search/verify results) or to re-pin with a different shape. The chunk hash inside the view is for citation, not retention.
+Retention: reads auto-pin their FileView. pu/pc/dro on the view's h:<RET> (or any chunk ref whose source has that view) acts on the view — unpinning releases it cleanly. Explicit \`pi\` is only needed for non-read artifacts (search/verify results) or to re-pin with a different shape. The chunk hash inside the view is for citation, not retention.
 The view auto-heals across file edits: shifted regions rebase, pinned regions refetch, unpinned stale regions drop silently. You never see [STALE].`;
 
 export const SUBAGENT_TOOL_REF = `

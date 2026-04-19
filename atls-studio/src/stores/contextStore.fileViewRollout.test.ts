@@ -382,8 +382,8 @@ describe('FileView rollout — single retention hash trace replay', () => {
     expect(useContextStore.getState().stagedSnippets.size).toBe(0);
 
     // Wildcard unpin → all views unpinned in one shot.
-    const n = useContextStore.getState().unpinChunks(['*']);
-    expect(n).toBe(9);
+    const { count } = useContextStore.getState().unpinChunks(['*']);
+    expect(count).toBe(9);
     const stillPinned = [...useContextStore.getState().fileViews.values()].filter(v => v.pinned);
     expect(stillPinned).toHaveLength(0);
   });

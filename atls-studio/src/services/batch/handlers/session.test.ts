@@ -987,13 +987,30 @@ describe('retention handlers — ephemeral output defense', () => {
     expect(result.error).toMatch(/ephemeral/i);
   });
 
-  it('handleUnpin errs when hashes resolve to no pinned refs (zero-match)', async () => {
+  it('handleUnpin errs with "did not resolve" when refs are unknown', async () => {
     const result = await handleUnpin(
       { hashes: ['h:nonexistent123'] },
       createMockCtx() as unknown as Parameters<typeof handleUnpin>[1],
     );
     expect(result.ok).toBe(false);
-    expect(result.error).toMatch(/no matching pinned refs/);
+    expect(result.error).toMatch(/did not resolve/);
+    // Hints at wrong hash identity (cite vs retention).
+    expect(result.error).toMatch(/cite:@h:|retention/);
+  });
+
+  it('handleUnpin returns ok no-op when refs are already unpinned', async () => {
+    const store = useContextStore.getState();
+    const h = store.addChunk('content', 'smart', 'src/noop.ts');
+    // pin then unpin so the ref exists but is already unpinned
+    await handlePin({ hashes: [`h:${h}`] }, createMockCtx() as any);
+    await handleUnpin({ hashes: [`h:${h}`] }, createMockCtx() as any);
+    // second unpin of the same ref: existing but already released
+    const result = await handleUnpin(
+      { hashes: [`h:${h}`] },
+      createMockCtx() as any,
+    );
+    expect(result.ok).toBe(true);
+    expect(result.summary).toMatch(/already unpinned.*no-op/);
   });
 
   it('handlePin errs when no hashes supplied', async () => {

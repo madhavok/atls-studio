@@ -141,6 +141,7 @@ import { getShellGuide } from '../prompts/shellGuide';
 import { GEMINI_REINFORCEMENT, GEMINI_RECENCY_BOOST } from '../prompts/providerOverrides';
 import { advanceTurn, dematerialize, getAllRefs, getRef, shouldMaterialize, getTurn, setRoundRefreshHook, getArchivedRefs as getArchivedHppRefs } from './hashProtocol';
 import { formatHashManifest, pruneStaleEntries, getForwardMap, getEvictionMap } from './hashManifest';
+import { estimateFileViewTokens } from './fileViewTokens';
 import { useRoundHistoryStore, type VerificationConfidence } from '../stores/roundHistoryStore';
 import {
   executeUnifiedBatch,
@@ -3951,6 +3952,30 @@ function buildDynamicContextBlock(
       } else if (ref.visibility === 'referenced') {
         dematRefs.push(ref);
       }
+    }
+    // Include FileViews as `fileview` manifest rows keyed by view.shortHash
+    // (the retention ref). FileViews live in ctxState.fileViews, not
+    // ctxState.chunks, so the loop above misses them — leaving pinned views
+    // visible in WM but absent from the HASH MANIFEST. Without this, pu/pc/dro
+    // targets (which resolve on view.shortHash) appear "stale" to the model.
+    const seenActiveShort = new Set(activeChunks.map(c => c.shortHash));
+    for (const view of ctxState.fileViews.values()) {
+      if (seenActiveShort.has(view.shortHash)) continue;
+      seenActiveShort.add(view.shortHash);
+      const est = estimateFileViewTokens(view, currentTurn);
+      activeChunks.push({
+        shortHash: view.shortHash,
+        type: 'fileview',
+        source: view.filePath,
+        tokens: est.total,
+        pinned: view.pinned,
+        pinnedShape: view.pinnedShape,
+        compacted: false,
+        freshness: view.freshness === 'suspect' ? 'suspect' : 'fresh',
+        freshnessCause: view.freshnessCause as string | undefined,
+        suspectSince: undefined,
+        supersededBy: undefined,
+      });
     }
     const archivedRefs = getArchivedHppRefs();
     const manifestBlock = formatHashManifest({ activeChunks, dematRefs, archivedRefs, turn: currentTurn });
