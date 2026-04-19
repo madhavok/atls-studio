@@ -14,6 +14,13 @@ import { parseHashRef } from '../../utils/hashRefParsers';
 import type { HashModifierV2 } from '../../utils/uhppTypes';
 import { getRef } from '../hashProtocol';
 import { useContextStore } from '../../stores/contextStore';
+import type { FilledRegion } from '../fileViewStore';
+import {
+  BATCH_FAILURE_BB_KEY,
+  BATCH_FAILURE_THRESHOLD,
+  getBatchFailureSummary,
+  recordBatchFailure,
+} from '../freshnessTelemetry';
 
 // ---------------------------------------------------------------------------
 // Per-step formatting
@@ -194,6 +201,158 @@ function capStepSummary(text: string, stepUse: string, step: StepResult): string
   return `${head}\n...${omission}...\n${tail}`;
 }
 
+// ---------------------------------------------------------------------------
+// Rule B — FileView-merge pointer
+// When a successful read.lines / read.shaped result's content is fully covered
+// by a live, pinned FileView, emit a one-line pointer instead of the raw line
+// bodies. FileView block in working memory is the canonical record.
+// ---------------------------------------------------------------------------
+
+/**
+ * True when the union of `regions` (non-overlapping, sorted in file order)
+ * fully covers the closed interval `[s, e]` (1-based inclusive).
+ */
+function filledRegionsCover(regions: FilledRegion[], s: number, e: number): boolean {
+  if (s > e) return false;
+  let cursor = s;
+  for (const r of regions) {
+    if (r.start > cursor) return false;
+    if (r.end >= e) return true;
+    cursor = Math.max(cursor, r.end + 1);
+  }
+  return false;
+}
+
+function formatRange(r: [number, number | null]): string {
+  const [s, e] = r;
+  return e != null && e !== s ? `${s}-${e}` : `${s}`;
+}
+
+function coerceRangeArray(value: unknown): Array<[number, number | null]> | null {
+  if (!Array.isArray(value) || value.length === 0) return null;
+  const out: Array<[number, number | null]> = [];
+  for (const r of value) {
+    if (!Array.isArray(r) || r.length === 0) return null;
+    const s = r[0];
+    const e = r.length > 1 ? r[1] : null;
+    if (typeof s !== 'number') return null;
+    if (e != null && typeof e !== 'number') return null;
+    out.push([s, e]);
+  }
+  return out;
+}
+
+/**
+ * If this step's content is fully subsumed by a pinned FileView covering the
+ * returned range(s), return a compact pointer line; else null.
+ */
+function tryBuildFileViewMergedPointer(step: StepResult): string | null {
+  if (!step.ok) return null;
+  if (step.use !== 'read.lines' && step.use !== 'read.shaped') return null;
+  const art = step.artifacts as Record<string, unknown> | undefined;
+  if (!art || typeof art !== 'object') return null;
+
+  const store = useContextStore.getState();
+
+  if (step.use === 'read.shaped') {
+    const results = art.results;
+    if (!Array.isArray(results) || results.length === 0) return null;
+    const pointers: string[] = [];
+    for (const entry of results) {
+      if (!entry || typeof entry !== 'object') return null;
+      const row = entry as Record<string, unknown>;
+      const file = typeof row.file === 'string' ? row.file : null;
+      const hashRef = typeof row.h === 'string' ? row.h : null;
+      if (!file || !hashRef) return null;
+      const view = store.getFileView(file);
+      if (!view || !view.pinned) return null;
+      pointers.push(`${file} -> ${hashRef}`);
+    }
+    return `read_shaped: merged into FileViews: ${pointers.join('; ')} | see ## FILE VIEWS`;
+  }
+
+  // step.use === 'read.lines'
+  const file = typeof art.file === 'string' ? art.file : null;
+  const hashRef = typeof art.hash === 'string' ? art.hash : null;
+  const ranges =
+    coerceRangeArray(art.actual_range) ??
+    coerceRangeArray(art.target_range);
+  if (!file || !hashRef || !ranges) return null;
+  // engram: reads (from hashes) don't have a FileView — skip
+  if (file.startsWith('engram:')) return null;
+
+  const view = store.getFileView(file);
+  if (!view || !view.pinned) return null;
+  if (view.filledRegions.length === 0) return null;
+  for (const [s, e] of ranges) {
+    const endLine = e ?? s;
+    if (!filledRegionsCover(view.filledRegions, s, endLine)) return null;
+  }
+
+  const rangeLabel = ranges.map(formatRange).join(',');
+  const tokenTag = typeof step.tokens_delta === 'number' && step.tokens_delta > 0
+    ? ` (${step.tokens_delta}tk)`
+    : '';
+  return `read_lines: ${file}:${rangeLabel} -> merged into ${hashRef} [${rangeLabel}]${tokenTag} | see ## FILE VIEWS`;
+}
+
+// ---------------------------------------------------------------------------
+// Rule A — failed-step dedupe (byte-equal, within-batch)
+// ---------------------------------------------------------------------------
+
+interface FailureGroup {
+  op: string;
+  primary: string;
+  stepIds: string[];
+  sources: Array<string | undefined>;
+}
+
+function extractPrimaryMessage(step: StepResult): string {
+  return (typeof step.summary === 'string' ? step.summary.trim() : '')
+    || (typeof step.error === 'string' ? step.error.trim() : '')
+    || '';
+}
+
+/**
+ * Group all failed steps by (op, primary-message). Empty messages are not deduped
+ * (they'd render as "[failed — no message]" which is already tiny).
+ */
+function groupFailuresByClass(steps: StepResult[]): Map<string, FailureGroup> {
+  const groups = new Map<string, FailureGroup>();
+  for (const step of steps) {
+    if (step.ok) continue;
+    const primary = extractPrimaryMessage(step);
+    if (!primary) continue;
+    const key = `${step.use}::${primary}`;
+    let group = groups.get(key);
+    if (!group) {
+      group = { op: step.use, primary, stepIds: [], sources: [] };
+      groups.set(key, group);
+    }
+    group.stepIds.push(step.id);
+    group.sources.push(buildTruncationAnchor(step));
+  }
+  return groups;
+}
+
+/**
+ * After telemetry records, write/update the repeated-misuse BB key when any class
+ * has crossed BATCH_FAILURE_THRESHOLD. Idempotent — overwrites the same key with
+ * a fresh digest each round a crossing class is observed.
+ */
+function maybeWriteBatchFailuresBb(): void {
+  const crossing = getBatchFailureSummary().filter(e => e.count >= BATCH_FAILURE_THRESHOLD);
+  if (crossing.length === 0) return;
+  const body = crossing.map(e =>
+    `- ${e.op} x${e.count}: ${e.errorSnippet}${e.exampleStepIds.length > 0 ? `  [recent steps: ${e.exampleStepIds.join(', ')}]` : ''}`
+  ).join('\n');
+  try {
+    useContextStore.getState().setBlackboardEntry(BATCH_FAILURE_BB_KEY, body);
+  } catch {
+    // BB write is best-effort; telemetry remains in memory regardless.
+  }
+}
+
 export function formatBatchResult(result: UnifiedBatchResult): string {
   const lines: string[] = [];
 
@@ -202,16 +361,47 @@ export function formatBatchResult(result: UnifiedBatchResult): string {
     if (artifact.stale) staleVerifyStepIds.add(artifact.stepId);
   }
 
+  // Rule A — prebuild failure groups. First occurrence of each class renders
+  // the full message; subsequent identical failures are replaced by a single
+  // "+N identical" tail inserted immediately after the first.
+  const failureGroups = groupFailuresByClass(result.step_results);
+  const suppressedStepIds = new Set<string>();
+  const collapseAfterStepId = new Map<string, FailureGroup>();
+  for (const group of failureGroups.values()) {
+    if (group.stepIds.length < 2) continue;
+    const [firstId, ...rest] = group.stepIds;
+    for (const id of rest) suppressedStepIds.add(id);
+    collapseAfterStepId.set(firstId, group);
+  }
+
+  // Rule D — record every failure class (even N=1) once per batch, with total
+  // count. Surfaces repeated-misuse patterns that per-batch dedupe otherwise
+  // hides from the archived-shell learning loop.
+  let thresholdCrossed = false;
+  for (const group of failureGroups.values()) {
+    const postCount = recordBatchFailure(group.op, group.primary, group.stepIds);
+    if (postCount >= BATCH_FAILURE_THRESHOLD) thresholdCrossed = true;
+  }
+  if (thresholdCrossed) maybeWriteBatchFailuresBb();
+
   for (const step of result.step_results) {
+    if (suppressedStepIds.has(step.id)) continue;
+
     const label = stepStatusLabel(step);
     const suffix = step.use.startsWith('verify.') ? verifyArtifactSuffix(step) : '';
     const durationTag = step.duration_ms > 0 ? ` (${step.duration_ms}ms)` : '';
     const staleSuffix = step.use.startsWith('verify.') && step.ok && staleVerifyStepIds.has(step.id)
       ? ' [cached — result may not reflect latest edits; rerun with vb to refresh]'
       : '';
-    const primary = (typeof step.summary === 'string' ? step.summary.trim() : '')
-      || (typeof step.error === 'string' ? step.error.trim() : '')
-      || '';
+
+    // Rule B — replace raw line-body dump with a FileView merge pointer when
+    // the content is already canonical in a live pinned view. Falls through to
+    // the normal summary/error chain when no view covers the range.
+    const mergedPointer = tryBuildFileViewMergedPointer(step);
+    const summaryPrimary = typeof step.summary === 'string' ? step.summary.trim() : '';
+    const errorPrimary = typeof step.error === 'string' ? step.error.trim() : '';
+    const primary = mergedPointer ?? (summaryPrimary || errorPrimary);
+
     if (primary) {
       lines.push(`${label} ${step.id} (${step.use}): ${capStepSummary(primary, step.use, step)}${suffix}${staleSuffix}${durationTag}`);
     } else {
@@ -219,6 +409,15 @@ export function formatBatchResult(result: UnifiedBatchResult): string {
         ? `[completed${step.refs?.length ? ` — ${step.refs.length} ref(s)` : ''}]`
         : '[failed — no message]';
       lines.push(`${label} ${step.id} (${step.use}): ${fallback}${suffix}${staleSuffix}${durationTag}`);
+    }
+
+    // Rule A — immediate dedupe tail for this group's suppressed siblings.
+    const collapse = collapseAfterStepId.get(step.id);
+    if (collapse) {
+      const tailIds = collapse.stepIds.slice(1);
+      const tailSources = collapse.sources.slice(1).filter((s): s is string => !!s);
+      const sourcesSuffix = tailSources.length > 0 ? ` - ${tailSources.join(', ')}` : '';
+      lines.push(`[FAIL] +${tailIds.length} identical (${tailIds.join(', ')})${sourcesSuffix} - same class: ${collapse.op}`);
     }
 
     if (step.use.startsWith('delegate.') && step.ok) {

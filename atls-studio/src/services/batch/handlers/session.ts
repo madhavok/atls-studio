@@ -789,6 +789,7 @@ export const handleStats: OpHandler = async (_params, ctx) => {
 // ---------------------------------------------------------------------------
 
 export const handleSessionDebug: OpHandler = async (_params, ctx) => {
+  const { getBatchFailureSummary, BATCH_FAILURE_THRESHOLD } = await import('../../freshnessTelemetry');
   const state = ctx.store();
   const stats = state.getStats();
   const stagedK = (state.getStagedTokenCount() / 1000).toFixed(1);
@@ -805,8 +806,31 @@ export const handleSessionDebug: OpHandler = async (_params, ctx) => {
           `h:${c.shortHash} ${c.tokens}tk ${c.source?.split(/[/\\]/).pop() ?? c.type ?? '?'}`)
         .join(', ')}${chunkCount > 5 ? ` ... +${chunkCount - 5} more` : ''}`
     : '';
+
+  // Batch-failure telemetry: surface repeated misuse patterns (count >= threshold)
+  // ahead of single-shot noise so the agent sees its own persistent blind spots.
+  const failureSummary = getBatchFailureSummary();
+  let failureBlock = '';
+  if (failureSummary.length > 0) {
+    const crossing = failureSummary.filter(e => e.count >= BATCH_FAILURE_THRESHOLD);
+    const rest = failureSummary.filter(e => e.count < BATCH_FAILURE_THRESHOLD);
+    const topLines: string[] = [];
+    for (const e of crossing.slice(0, 5)) {
+      topLines.push(`  [REPEATED x${e.count}] ${e.op}: ${e.errorSnippet}`);
+    }
+    for (const e of rest.slice(0, 3)) {
+      topLines.push(`  [x${e.count}] ${e.op}: ${e.errorSnippet}`);
+    }
+    if (topLines.length > 0) {
+      const header = crossing.length > 0
+        ? `\nBatch failures (${failureSummary.length} classes, ${crossing.length} repeated):`
+        : `\nBatch failures (${failureSummary.length} classes):`;
+      failureBlock = `${header}\n${topLines.join('\n')}`;
+    }
+  }
+
   return ok(
-    `debug: ${stats.usedTokens / 1000}k tk | ${archiveCount} archived | staged:${stagedK}k${planLine}${chunkSummary}`,
+    `debug: ${stats.usedTokens / 1000}k tk | ${archiveCount} archived | staged:${stagedK}k${planLine}${chunkSummary}${failureBlock}`,
   );
 };
 

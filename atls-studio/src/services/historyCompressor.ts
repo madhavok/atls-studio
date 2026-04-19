@@ -726,6 +726,83 @@ const RETENTION_OPS: ReadonlySet<string> = new Set([
 /** Per-step batch result line: `[OK|FAIL] <id> (<op>): <tail>` */
 const BATCH_RESULT_LINE_RE = /^\[(OK|FAIL)\]\s+(\S+)\s+\((\S+)\):\s+(.+)$/;
 
+// ---------------------------------------------------------------------------
+// Rule C — skip-archive predicate for no-recoverable-content batch tool_results
+// Batch results that are only status lines, dedupe tails, FileView merge
+// pointers, volatile/interrupt nudges, and the footer carry no content that
+// would ever be recalled — archiving them produces manifest shells with zero
+// signal. See docs/input-compression-merit.md for the gating rationale.
+// ---------------------------------------------------------------------------
+
+/** Per-batch dedupe tail emitted by Rule A in resultFormatter. */
+const BATCH_DEDUPE_TAIL_RE = /^\[FAIL\]\s+\+\d+\s+identical\b/;
+/** Trailing footer (always present). */
+const BATCH_FOOTER_RE = /^\[ATLS\]\s+\d+\s+steps:/;
+/** Interruption notice (pre-footer). */
+const BATCH_INTERRUPT_RE = /^\[ATLS\]\s+BATCH\s+INTERRUPTED\b/;
+/** Volatile-refs nudge emitted after step lines. */
+const VOLATILE_NUDGE_RE = /^⚠\s*VOLATILE\b/;
+/** Sub-line under a delegate step (refs: / BB: / parenthetical). */
+const DELEGATE_SUBLINE_RE = /^\s{2,}(?:refs:|BB:|\()/;
+/** FileView merge pointer markers used by Rule B. */
+const MERGED_POINTER_MARKERS = [
+  'merged into ',
+  'see ## FILE VIEWS',
+];
+
+/**
+ * True when `content` carries content worth archiving as an engram. Returns
+ * false only for `batch` tool_results whose every non-empty line is a status
+ * line, dedupe tail, merge pointer, or footer/nudge — i.e. nothing a future
+ * `rec` call could usefully recover.
+ *
+ * Non-batch tools (search, verify, exec, git, etc.) always return true — their
+ * output carries recoverable content and archival is load-bearing.
+ *
+ * @param content raw tool_result text
+ * @param toolName paired `tool_use.name` (usually 'batch'); omit to assume non-batch
+ */
+export function isContentArchiveWorthy(content: string, toolName?: string): boolean {
+  if (toolName !== 'batch') return true;
+  const raw = content.split('\n');
+  for (const rawLine of raw) {
+    const line = rawLine.trimEnd();
+    if (!line.trim()) continue;
+    if (BATCH_RESULT_LINE_RE.test(line)) continue;
+    if (BATCH_DEDUPE_TAIL_RE.test(line)) continue;
+    if (BATCH_FOOTER_RE.test(line)) continue;
+    if (BATCH_INTERRUPT_RE.test(line)) continue;
+    if (VOLATILE_NUDGE_RE.test(line)) continue;
+    if (DELEGATE_SUBLINE_RE.test(rawLine)) continue;
+    if (MERGED_POINTER_MARKERS.some(m => line.includes(m))) continue;
+    // Anything else (raw body, error trace, diff, structured JSON, ...) is
+    // real content — archive as usual.
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Walk history to find the paired `tool_use.name` for this tool_use_id.
+ * Returns undefined when no paired block exists (non-batch scenarios).
+ */
+function findPairedToolName(
+  toolUseId: string,
+  history: Array<{ role: string; content: unknown }>,
+): string | undefined {
+  for (let i = history.length - 1; i >= 0; i--) {
+    const msg = history[i];
+    if (msg.role !== 'assistant' || !Array.isArray(msg.content)) continue;
+    const blocks = msg.content as Array<{ type: string; id?: string; name?: string }>;
+    for (const block of blocks) {
+      if (block.type === 'tool_use' && block.id === toolUseId) {
+        return block.name;
+      }
+    }
+  }
+  return undefined;
+}
+
 /**
  * Idempotence marker for tool_use steps. WeakSet-keyed by the step object so
  * the marker NEVER serializes to the API (the prior `_compacted: true` flag
@@ -849,12 +926,20 @@ export function deflateToolResults(
       continue;
     }
 
+    // Rule C — skip engram creation for batch results that carry no recoverable
+    // content (status lines + footer only). Small inline text stays; no chunk,
+    // no manifest shell. Source/description lookups still run below so an
+    // existing engram match is used when available — we only skip *creation*.
+    const pairedTool = findPairedToolName(tr.tool_use_id, history);
+    const archiveWorthy = isContentArchiveWorthy(tr.content, pairedTool);
+
     // Fallback: match by tool description against any chunk type (handles
     // cases where the batch handler stored content under a backend-provided
     // hash or as a non-result chunk type like 'smart' or 'raw')
     const description = buildCompressionDescription(tr.tool_use_id, history);
     // No paired tool_use in history → do not match by vague label (would alias many results).
     if (description === 'tool_result') {
+      if (!archiveWorthy) continue;
       const tokens = countTokensSync(tr.content);
       if (tokens >= MIN_DEFLATE_TOKENS) {
         store.addChunk(tr.content, 'result', `result:${tr.tool_use_id}`, undefined, `result: ${tr.tool_use_id}`);
@@ -876,10 +961,11 @@ export function deflateToolResults(
       continue;
     }
 
-    // No existing engram — create one if content is large enough.
+    // No existing engram — create one if content is large enough AND worth archiving.
     // This closes the receipt gap: every tool result above threshold
     // becomes an engram at insertion time, so history always gets a
     // lightweight ref instead of inline content.
+    if (!archiveWorthy) continue;
     const tokens = countTokensSync(tr.content);
     if (tokens >= MIN_DEFLATE_TOKENS) {
       store.addChunk(tr.content, 'result', description, undefined, `result: ${description}`);

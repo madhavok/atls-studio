@@ -5,6 +5,7 @@ import {
   estimateHistoryTokens,
   analyzeHistoryBreakdown,
   extractToolDescription,
+  isContentArchiveWorthy,
 } from './historyCompressor';
 import { ROLLING_SUMMARY_MARKER } from './historyDistiller';
 import { useContextStore } from '../stores/contextStore';
@@ -467,6 +468,195 @@ describe('deflateToolResults', () => {
     const count2 = deflateToolResults(toolResults2, history);
     expect(count2).toBe(1);
     expect(toolResults2[0].content).toContain('[h:');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Rule C — isContentArchiveWorthy + skip-archive gate
+// ---------------------------------------------------------------------------
+
+describe('isContentArchiveWorthy', () => {
+  it('returns true for any non-batch tool content', () => {
+    expect(isContentArchiveWorthy('anything at all', 'read')).toBe(true);
+    expect(isContentArchiveWorthy('', 'verify.build')).toBe(true);
+    expect(isContentArchiveWorthy('arbitrary', undefined)).toBe(true);
+  });
+
+  it('returns false for batch results containing only status + footer lines', () => {
+    const content = [
+      '[FAIL] r1 (read.lines): read_lines: requires lines (e.g. "15-50") (39ms)',
+      '[FAIL] r2 (read.lines): read_lines: requires lines (e.g. "15-50") (40ms)',
+      '[ATLS] 2 steps: 2 fail (74ms) | ok',
+    ].join('\n');
+    expect(isContentArchiveWorthy(content, 'batch')).toBe(false);
+  });
+
+  it('returns false for batch results with dedupe tails + footer', () => {
+    const content = [
+      '[FAIL] r1 (read.lines): requires lines (39ms)',
+      '[FAIL] +2 identical (r2, r3) - same class: read.lines',
+      '[ATLS] 3 steps: 3 fail (74ms) | ok',
+    ].join('\n');
+    expect(isContentArchiveWorthy(content, 'batch')).toBe(false);
+  });
+
+  it('returns false for batch results with FileView merge pointers', () => {
+    const content = [
+      '[OK] r1 (read.lines): read_lines: src/foo.ts:10-20 -> merged into h:abc123 [10-20] (50tk) | see ## FILE VIEWS (5ms)',
+      '[OK] r2 (read.lines): read_lines: src/bar.ts:30-40 -> merged into h:def456 [30-40] (50tk) | see ## FILE VIEWS (6ms)',
+      '[ATLS] 2 steps: 2 pass (11ms) | ok',
+    ].join('\n');
+    expect(isContentArchiveWorthy(content, 'batch')).toBe(false);
+  });
+
+  it('returns false for batch results with volatile nudge + status + footer only', () => {
+    // When the search step summary is a one-liner that fits BATCH_RESULT_LINE_RE
+    // and the body is just the nudge + footer, there is nothing recoverable to
+    // archive — everything the agent needs is in the live manifest refs.
+    const content = [
+      '[OK] s1 (search.code): search: found 3 refs (20ms)',
+      '⚠ VOLATILE — WILL BE LOST NEXT ROUND. PIN NOW in this batch or write to BB. Add: `pi h:abc123`',
+      '[ATLS] 1 steps: 1 pass (20ms) | ok',
+    ].join('\n');
+    expect(isContentArchiveWorthy(content, 'batch')).toBe(false);
+  });
+
+  it('returns true for batch results with real search content', () => {
+    const content = [
+      '[OK] s1 (search.code): found 42 matches in 17 files',
+      'src/foo.ts:42:  function bar() { return 1; }',
+      'src/foo.ts:58:  function baz() { return 2; }',
+      '[ATLS] 1 steps: 1 pass (20ms) | ok',
+    ].join('\n');
+    expect(isContentArchiveWorthy(content, 'batch')).toBe(true);
+  });
+
+  it('returns true for batch results with verify output', () => {
+    const content = [
+      '[FAIL] v1 (verify.build): build failed (stale-suspect, errors: 3) (120ms)',
+      'error TS2304: Cannot find name "foo" at src/a.ts:10',
+      'error TS2304: Cannot find name "bar" at src/a.ts:20',
+      '[ATLS] 1 steps: 1 fail (120ms) | ok',
+    ].join('\n');
+    expect(isContentArchiveWorthy(content, 'batch')).toBe(true);
+  });
+
+  it('returns false for delegate sub-lines (refs / BB) when no other body', () => {
+    const content = [
+      '[OK] d1 (delegate.retrieve): retrieval complete (200ms)',
+      '  refs: h:abc123 h:def456',
+      '  BB: h:bb:retriever:findings',
+      '  (Blackboard bodies are inlined in the step summary when present.)',
+      '[ATLS] 1 steps: 1 pass (200ms) | ok',
+    ].join('\n');
+    expect(isContentArchiveWorthy(content, 'batch')).toBe(false);
+  });
+});
+
+describe('deflateToolResults Rule C skip-archive gate', () => {
+  beforeEach(() => resetStore());
+
+  it('does NOT create a new engram for batch failure-only content', () => {
+    const tool_use_id = 'tu_fail';
+    const history: Array<{ role: string; content: unknown }> = [
+      {
+        role: 'assistant',
+        content: [
+          { type: 'tool_use', id: tool_use_id, name: 'batch', input: { version: '1.0', steps: [{ use: 'read.lines', with: { hash: 'h:abc' } }] } },
+        ],
+      },
+    ];
+    // Simulate a 3x-identical failure tool_result (dedupe already applied)
+    const content = [
+      '[FAIL] r1 (read.lines): read_lines: requires lines (e.g. "15-50") or ref (h:XXXX:15-50) or (start_line + end_line). (39ms)',
+      '[FAIL] +2 identical (r2, r3) - same class: read.lines',
+      '[ATLS] 3 steps: 3 fail (74ms) | ok',
+    ].join('\n');
+
+    const chunksBefore = useContextStore.getState().chunks.size;
+    const toolResults = [{ type: 'tool_result', tool_use_id, content }];
+    const deflated = deflateToolResults(toolResults, history);
+    const chunksAfter = useContextStore.getState().chunks.size;
+
+    expect(deflated).toBe(0);
+    expect(chunksAfter).toBe(chunksBefore);
+    // Content stays inline (not replaced by a ref)
+    expect(toolResults[0].content).toBe(content);
+  });
+
+  it('does NOT create a new engram for batch FileView-merged read content', () => {
+    const tool_use_id = 'tu_read';
+    const history: Array<{ role: string; content: unknown }> = [
+      {
+        role: 'assistant',
+        content: [
+          { type: 'tool_use', id: tool_use_id, name: 'batch', input: { version: '1.0', steps: [{ use: 'read.lines', with: { hash: 'h:abc' } }] } },
+        ],
+      },
+    ];
+    const content = [
+      '[OK] r1 (read.lines): read_lines: src/foo.ts:10-20 -> merged into h:abc123 [10-20] (50tk) | see ## FILE VIEWS (5ms)',
+      '[OK] r2 (read.lines): read_lines: src/bar.ts:30-40 -> merged into h:def456 [30-40] (50tk) | see ## FILE VIEWS (6ms)',
+      '[ATLS] 2 steps: 2 pass (11ms) | ok',
+    ].join('\n');
+
+    const chunksBefore = useContextStore.getState().chunks.size;
+    const toolResults = [{ type: 'tool_result', tool_use_id, content }];
+    const deflated = deflateToolResults(toolResults, history);
+    const chunksAfter = useContextStore.getState().chunks.size;
+
+    expect(deflated).toBe(0);
+    expect(chunksAfter).toBe(chunksBefore);
+  });
+
+  it('DOES create engram for batch results carrying real content (search output)', () => {
+    const tool_use_id = 'tu_search';
+    const history: Array<{ role: string; content: unknown }> = [
+      {
+        role: 'assistant',
+        content: [
+          { type: 'tool_use', id: tool_use_id, name: 'batch', input: { version: '1.0', steps: [{ use: 'search.code', with: { queries: ['foo'] } }] } },
+        ],
+      },
+    ];
+    // Real search content — plenty of match lines
+    const content = [
+      '[OK] s1 (search.code): found 100 matches across 20 files (50ms)',
+      ...Array.from({ length: 40 }, (_, i) => `src/file${i}.ts:${i * 10}:  function foo${i}() { return ${i}; }`),
+      '[ATLS] 1 steps: 1 pass (50ms) | ok',
+    ].join('\n');
+
+    const chunksBefore = useContextStore.getState().chunks.size;
+    const toolResults = [{ type: 'tool_result', tool_use_id, content }];
+    const deflated = deflateToolResults(toolResults, history);
+    const chunksAfter = useContextStore.getState().chunks.size;
+
+    expect(deflated).toBe(1);
+    expect(chunksAfter).toBeGreaterThan(chunksBefore);
+    expect(toolResults[0].content).toContain('[h:');
+  });
+
+  it('does NOT gate non-batch tools (e.g., direct read)', () => {
+    // Direct tool call (not batch) should archive per existing rules
+    const tool_use_id = 'tu_direct';
+    const history: Array<{ role: string; content: unknown }> = [
+      {
+        role: 'assistant',
+        content: [
+          { type: 'tool_use', id: tool_use_id, name: 'some_direct_tool', input: { path: 'src/x.ts' } },
+        ],
+      },
+    ];
+    // Looks like a batch status but tool name is NOT 'batch'
+    const content = '[OK] r1 (read.lines): some content here\n[ATLS] 1 steps: 1 pass (5ms) | ok';
+
+    const chunksBefore = useContextStore.getState().chunks.size;
+    const toolResults = [{ type: 'tool_result', tool_use_id, content }];
+    deflateToolResults(toolResults, history);
+    const chunksAfter = useContextStore.getState().chunks.size;
+
+    // Non-batch → isContentArchiveWorthy returns true → archives as usual
+    expect(chunksAfter).toBeGreaterThanOrEqual(chunksBefore);
   });
 });
 
