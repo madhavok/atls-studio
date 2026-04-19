@@ -44,6 +44,7 @@ as `PRICING`, updated Feb 2026.
 | `cumulativeCostCents` | cents (est.) | `calculateCostBreakdown` on cumulative savings blended by session cache-read share | — | Uses the same formula chat/session totals use, so the blended $ tracks the actual billing mix. |
 | `fileViewCount` / `fileViewRenderedTokens` / `fileViewCoveredChunkTokens` | count / tokens | `captureInternalsSnapshot` | per snapshot | `rendered − coveredChunks` is the first-touch premium vs reuse savings. |
 | `fileViewReuseCount`, `autoHealShiftedCount`, `autoRefetchCount`, `autoRefetchSkippedByCap`, `staleReadRounds` | count | FileView lifecycle callbacks | `resetChat` | Observability only. `staleReadRounds` target is zero — non-zero is a bug. |
+| `batchFailureTotal` / `batchFailureClasses` | count | [`freshnessTelemetry.ts`](../atls-studio/src/services/freshnessTelemetry.ts) `getFreshnessMetrics` → `recordBatchFailure` | `resetSession` | Session-scoped. Total = sum of counts across classes; classes = distinct `(op, error-snippet)` buckets. Drives the `[REPEATED xN]` `session.debug` surface and the `telemetry:failed-ops:session` BB write at threshold (>= 3). See [history-compression.md — Rule D](history-compression.md#rule-d--repeated-misuse-telemetry). |
 
 ## The bug we fixed — `cumulativeInputSaved`
 

@@ -50,6 +50,7 @@ Runs right after tool execution completes, before the next round. A lighter pass
 
 - First, tries to match the tool_result against an existing engram (by content hash or source description) and replaces inline content with a hash pointer.
 - When **no match exists** and the tool_result is **≥ 30 tokens** (`MIN_DEFLATE_TOKENS` in [`historyCompressor.ts`](../atls-studio/src/services/historyCompressor.ts) ~722), a new engram is created via `addChunk` and the history entry is replaced with a ref to it. History never carries large inline tool results — they're always written at insertion time.
+- **Skip-archive gate** (Rule C — see [Batch-shell cruft reduction](#batch-shell-cruft-reduction) below): `isContentArchiveWorthy(content, toolName)` runs before `addChunk`. For `batch` tool_results whose every line is a status line, failure-dedupe tail, FileView merge pointer, retention-op receipt, volatile nudge, or `[ATLS]` footer, the predicate returns `false` and no chunk is created — the tiny tool_result stays inline.
 - **Revision guard**: skips deflating onto engrams whose backing file revision no longer matches the current source (avoids pointing history at stale WM).
 - **Assistant side**: `stubBatchToolUseInputs` runs on the latest assistant message and replaces large `tool_use.input.steps` arrays (> 80 tokens of serialized form) with a compact `_stubbed` summary — see below.
 ## Rolling history window
@@ -146,6 +147,87 @@ Retention ops (`session.pin`, `session.unpin`, `session.drop`, `session.unload`,
 **Measured savings** (scripted 20-round retention-heavy session, sub-threshold batches): **35.5%** input-token reduction versus no compaction, up from ~20% under the prior collapse-to-`ok` shape. See [`historyCompressor.retention.measurement.test.ts`](../atls-studio/src/services/historyCompressor.retention.measurement.test.ts).
 
 **Interaction with auto-pin on read:** under `autoPinReads: true` (default; see [auto-pin-on-read.md](auto-pin-on-read.md)), reads don't emit explicit `pi`, so retention output is already rarer. When the model does emit release ops (`pu`/`pc`/`dro`), this compaction keeps them out of persisted history. The two features compound: fewer emissions, and the ones that happen don't leave receipts.
+
+## Batch-shell cruft reduction
+
+A `batch` tool_result that carries no recoverable content — three identical failure messages, a dozen successful reads that merged into a FileView, a pure retention batch — used to become an archived `result` chunk anyway, because `addChunk` ran uniformly on every tool_result above `MIN_DEFLATE_TOKENS`. The archived shell appeared in the manifest as `arch batch` every round, adding noise and cache churn, and `rec` on it returned nothing actionable. The receipt existed purely because the tool_result text existed.
+
+Four coordinated rules kill those shells at the emit boundary, so `addChunk` never sees them.
+
+### Rule A — Failed-step dedupe (emit-time)
+
+[`formatBatchResult`](../atls-studio/src/services/batch/resultFormatter.ts) groups failed steps by `(step.use, trimmed-message)`. The first occurrence of each group renders the full error; subsequent identical failures collapse to a single tail line:
+
+```
+[FAIL] f1 (read.lines): read_lines: requires lines (e.g. "15-50") or ref (h:XXXX:15-50) or (start_line + end_line).
+[FAIL] +2 identical (f2, f3) - same class: read.lines
+[ATLS] 3 steps: 3 fail (14ms) | ok
+```
+
+Dedupe is strict byte-equal on the trimmed message — no fuzzy normalization, so subtly different errors stay distinct. The exemplar keeps the model's steering signal; the tail preserves per-step IDs (and sources when available via `buildTruncationAnchor`) for debugging. Savings scale with `N`: three identical short-message failures drop to ~55% of before; six drop to ~30%.
+
+### Rule B — FileView-merge pointer (emit-time)
+
+Successful `read.lines` / `read.shaped` steps whose content will be canonically held by a live pinned [FileView](engrams.md#fileview--the-unified-file-content-surface) emit a one-line pointer instead of the raw line dump:
+
+```
+[OK] s1 (read.lines): read_lines: atls-studio/docs/architecture.md:243-300 -> merged into h:0beb95 [243-300] (1139tk) | see ## FILE VIEWS (61ms)
+```
+
+The `rl` handler auto-pins the view via `ensureFileView` + `autoPinViewAfterRead`. The actual merge of the read body into `filledRegions` happens **asynchronously after `formatBatchResult` runs** (via `addChunk(readSpan)` from [`materializeFileRefsContentIfNeeded`](../atls-studio/src/services/batch/handlers/session.ts) or `refreshRoundEnd`) — by the time the next round's manifest renders, the fill has landed. The predicate therefore gates on `view.pinned` alone (with an out-of-range safety when `totalLines > 0`), not on `filledRegions` coverage. Emit-time → format-time → async merge → next round sees the pointer backed by real content.
+
+On a 3-slice read of a large file, this collapses ~10k tokens of raw line-dump in the tool_result to three pointer lines at ~200tk total.
+
+### Rule C — Skip-archive predicate
+
+[`isContentArchiveWorthy(content, toolName)`](../atls-studio/src/services/historyCompressor.ts) inspects batch tool_result content line-by-line. It returns `false` when every non-empty line matches one of:
+
+- `[OK]` / `[FAIL]` status line (per-step `BATCH_RESULT_LINE_RE`)
+- Dedupe tail from Rule A (`[FAIL] +N identical ...`)
+- FileView merge pointer from Rule B (`... merged into h:...`, `see ## FILE VIEWS`)
+- `[ATLS] N steps: ...` footer / `[ATLS] BATCH INTERRUPTED ...` notice
+- Volatile-refs nudge (`⚠ VOLATILE ...`)
+- Delegate sub-lines (`  refs:`, `  BB:`, `  (Blackboard ...)`)
+
+Non-batch tools (search, verify, exec, git, direct reads) always return `true` — their output carries recoverable content and archival is load-bearing.
+
+**Both** chunk-creation paths gate on the predicate:
+
+- [`deflateToolResults`](../atls-studio/src/services/historyCompressor.ts) — immediate post-tool deflation.
+- [`compressToolLoopHistory`](../atls-studio/src/services/historyCompressor.ts) ~L497 — between-turns rolling-window compression.
+
+Without both gates, a batch that cleared the deflate threshold (or stayed just under it but cleared the compress threshold) would still create a shell. The combined gate means: dedupe-tail-only, merge-pointer-only, and retention-only batch results **never become engrams**. The inline tool_result text stays small and rolls into the rolling summary like any below-threshold content.
+
+### Rule D — Repeated-misuse telemetry
+
+[`recordBatchFailure(op, message, stepIds)`](../atls-studio/src/services/freshnessTelemetry.ts) runs once per unique `(op, message)` class per batch from inside `formatBatchResult`. A session-scoped `Map<string, BatchFailureBucket>` keyed by `${op}::${snippet(120)}` accumulates:
+
+- `count` — total failures of this class across the session (not just this batch).
+- `exampleStepIds` — ring-buffered last 3 step IDs, most-recent first.
+
+When `count >= BATCH_FAILURE_THRESHOLD = 3`, the formatter atomically writes BB key `telemetry:failed-ops:session` via `setBlackboardEntry`. The write is idempotent — each crossing round overwrites the same key with a fresh digest ordered by count desc. The key survives compaction and rolling summaries, so a repeated-misuse pattern (10× `read.lines` param error across a session) stays visible even after every individual batch shell gets gated away by Rule C.
+
+[`session.debug`](../atls-studio/src/services/batch/handlers/session.ts) surfaces the summary inline:
+
+```
+Batch failures (1 classes, 1 repeated):
+  [REPEATED x3] read.lines: read_lines: requires lines (e.g. "15-50") ...
+```
+
+`getFreshnessMetrics()` exposes aggregate counters `batchFailureTotal` and `batchFailureClasses` for `AtlsInternals`. Counters clear on `freshnessTelemetry.reset()` (session boundary).
+
+### Measured savings (pillar gate)
+
+[`resultFormatter.pillar.test.ts`](../atls-studio/src/services/batch/resultFormatter.pillar.test.ts) measures `countTokensSync` before/after on fixtures lifted from the transcript that motivated the change:
+
+| Fixture | Before | After | Ratio |
+|---|---|---|---|
+| N=3 identical short failures (Rule A) | ~135tk | ~72tk | ~53% |
+| N=6 identical failures (Rule A) | ~255tk | ~75tk | ~30% |
+| 3-slice read merged to pinned view (Rule B) | ~10k | ~250tk | ~2.5% |
+| Pure retention batch (Rule C) | ~90tk | 0 engram created | — |
+
+Ratios are test-asserted ceilings; measured savings are tighter. The regression gate fails if any ratio climbs past the ceiling — see the test file for exact thresholds.
 
 ## Emergency compression
 

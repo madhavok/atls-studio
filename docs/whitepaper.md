@@ -465,6 +465,10 @@ Tokens saved by shrinking the history the model reads, so the next emission repe
 
 - **Inline tool-result deflation**: Tool results over a threshold (100 tokens base, 200 for verify/system) are replaced with hash pointers in the transcript; the content remains in working memory or archive.
 - **Assistant-side batch stubbing**: Past batch tool-use inputs over 80 tokens are replaced with `_stubbed` summaries, compressing the assistant's own trail.
+- **Failed-step dedupe (emit-time)**: Within a single `batch` tool_result, identical `(op, message)` failures collapse to one exemplar plus a single `+N identical` tail, preserving the model's steering signal without repeating the message N times.
+- **FileView-merge pointer (emit-time)**: Successful `read.lines`/`read.shaped` against a pinned FileView emit a one-line `→ merged into h:<RET> [A-B]` pointer instead of the raw body; the FileView block in working memory is the canonical source.
+- **Skip-archive predicate**: Batch tool_results whose every line is a status line, dedupe tail, merge pointer, footer, or volatile nudge are classified as having no recoverable content; both the immediate-deflation and rolling-window-compression chunk-creation paths skip `addChunk`, so no archived `batch` shell appears in the manifest.
+- **Repeated-misuse telemetry**: Session-scoped failure buckets keyed by `(op, error-snippet)` accumulate across the conversation; crossing a threshold writes a durable blackboard entry and surfaces a `[REPEATED xN]` note in `session.debug`, preserving the learning signal that archived shells never carried.
 - **Rolling window + distillation**: Rounds beyond a 20-round window are distilled into a bounded (1.65k-token) summary of decisions, files-changed, user preferences, work-done, findings, and errors.
 - **Substantive-round counting**: Synthetic auto-continue rounds are excluded from window-eviction bookkeeping, so real rounds are not prematurely aged out.
 - **Emergency compression**: Under hard token pressure, the compressor may deflate even rounds normally protected from modification.
