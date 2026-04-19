@@ -322,3 +322,53 @@ describe('FileView PR4 — resolveFileViewRefs (subagent boundary)', () => {
     expect(resolved).toEqual(refs);
   });
 });
+
+describe('getChunkForHashRef — FileView retention ref fallback', () => {
+  beforeEach(reset);
+
+  // Regression: HASH MANIFEST now lists FileViews under view.shortHash as
+  // `type: fileview`, but view.shortHash lives in a different map than
+  // chunk shortHashes. Callers (handleReadLines) need source path from this
+  // lookup to forward file_path fallback to the backend.
+  it('resolves a FileView retention hash to {chunkType:fileview, source:filePath}', () => {
+    const store = useContextStore.getState();
+    const rev = 'rev-resolver';
+    store.addChunk(
+      row(5, 'line five'),
+      'smart',
+      'src/resolver.ts',
+      undefined, undefined, 'h-chunk-resolver',
+      {
+        sourceRevision: rev,
+        readSpan: { filePath: 'src/resolver.ts', sourceRevision: rev, startLine: 5, endLine: 5 },
+      },
+    );
+    const view = useContextStore.getState().getFileView('src/resolver.ts')!;
+    expect(view.shortHash).toMatch(/^[0-9a-f]{6}$/);
+
+    const info = useContextStore.getState().getChunkForHashRef(view.hash);
+    expect(info).not.toBeNull();
+    expect(info!.chunkType).toBe('fileview');
+    expect(info!.source).toBe('src/resolver.ts');
+    // Empty content is the signal to the handler: load from disk via file_path.
+    expect(info!.content).toBe('');
+  });
+
+  it('prefers chunk content over FileView when both resolve to the same ref', () => {
+    // A chunk's shortHash can collide with a FileView's shortHash in the 6-hex
+    // namespace; when both exist, the chunk path (with real content) should win
+    // so rl hash: can still slice directly without a disk round-trip.
+    const store = useContextStore.getState();
+    const chunkHash = store.addChunk('chunk content body', 'search', 'src/prefer.ts');
+    const info = useContextStore.getState().getChunkForHashRef(`h:${chunkHash}`);
+    expect(info).not.toBeNull();
+    // Whatever the chunkType is, it must NOT be 'fileview' — chunk won.
+    expect(info!.chunkType).not.toBe('fileview');
+    expect(info!.content).toContain('chunk content body');
+  });
+
+  it('returns null when the hash matches neither chunk nor FileView', () => {
+    const info = useContextStore.getState().getChunkForHashRef('h:deadbe');
+    expect(info).toBeNull();
+  });
+});

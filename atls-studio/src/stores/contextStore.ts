@@ -5739,7 +5739,15 @@ export const useContextStore = create<ContextStoreState>()(
 
   /**
    * Retrieve chunk content and source by hash reference (for h: resolution).
-   * Checks working memory, archive, then staged snippets.
+   * Checks working memory, archive, staged snippets, then FileViews.
+   *
+   * FileView fallback: retention hashes (view.shortHash) live in a separate
+   * namespace from chunk shortHashes but share the `h:<short>` shape. When the
+   * hash matches no chunk/archive/staged entry but does resolve to a live
+   * FileView, return a `fileview` marker with the view's filePath as `source`
+   * and empty `content`. Callers (e.g. handleReadLines) use this to forward
+   * `file_path` to the backend so `read_lines` can load the file by path even
+   * though the backend HashRegistry doesn't know FileView retention hashes.
    */
   getChunkForHashRef: (hashRef: string): { content: string; source?: string; chunkType?: string } | null => {
     // h:bb:* resolves from blackboard store
@@ -5774,6 +5782,8 @@ export const useContextStore = create<ContextStoreState>()(
     }
     const staged = findStagedByRef(state.stagedSnippets, hashRef);
     if (staged) return { content: staged[1].content, source: staged[1].source, chunkType: 'staged' };
+    const viewHit = findViewByRef(state.fileViews, hashRef);
+    if (viewHit) return { content: '', source: viewHit[1].filePath, chunkType: 'fileview' };
     return null;
   },
 
