@@ -8,9 +8,13 @@ An **output-compression-first** desktop coding agent. ~200k LOC across TypeScrip
 
 ## The Thesis
 
-Contemporary LLM coding agents optimize the **context window** — fitting more into the prompt. ATLS optimizes **both directions of the token economy**: a 10-layer input compression stack (TOON serialization, dictionary compression, shaped reads, FileView incremental access, history deflation, cache-aware layout, token budgets, materialization control, workspace context compression, and UHPP content references) keeps what the model **reads** lean enough to sustain long sessions at high cache-hit rates, while six axes of output compression (lexical, semantic, temporal, spatial, computational, transcript) let the model **write** 20–50× fewer tokens than naive tool-calling agents. Under current pricing (output 5× input; cached input 0.1× uncached), both sides compound: smaller input means higher cache hits and lower latency; smaller output means lower cost per round. Neither alone is sufficient.
+Contemporary LLM coding agents optimize the **context window** — fitting more into the prompt. ATLS optimizes **both directions of the token economy**.
 
+**Input compression** — a 10-layer stack (TOON serialization, dictionary compression, shaped reads, FileView incremental access, history deflation, cache-aware layout, token budgets, materialization control, workspace context compression, and UHPP content references) keeps what the model **reads** lean enough to sustain long sessions at high cache-hit rates.
 
+**Output compression** — six axes (lexical, semantic, temporal, spatial, computational, transcript) let the model **write** 20–50× fewer tokens than naive tool-calling agents.
+
+Under current pricing (output 5× input; cached input 0.1× uncached), both sides compound: smaller input means higher cache hits and lower latency; smaller output means lower cost per round. Neither alone is sufficient.
 
 See the **[whitepaper](docs/whitepaper.md)** for the full technical treatment.
 
@@ -59,12 +63,9 @@ materialized -> referenced -> archived -> evicted
 ```
 
 Tracks what the model can currently "see." Scoped views let subagents participate without disturbing global presence state. Pinned engrams survive turn boundaries; unpinned refs dematerialize automatically.
-
-## Key Capabilities
-
-- **Single batch tool** -- 76 operations across 9 families (discover, understand, change, verify, session, annotate, delegate, intent, system), step-to-step dataflow, conditional execution, intent macros that expand to primitive sequences
-- **Six axes of emission compression** -- lexical (shorthands, TOON), semantic (intent macros, named bindings), temporal (recency refs), spatial (set selectors, shapes, content-as-ref), computational (line rebase, auto-verify, snapshot injection), transcript (hash deflation, rolling summary, batch stubbing)
 - **Ten-layer input compression** -- TOON serialization (30–60% smaller than JSON), dictionary compression on tool results (substring dedup, ditto encoding, key abbreviation), shaped reads (sig/fold/grep at 5–10% of file size), FileView incremental access (one view per file, slices merge), history deflation (hash-reference replacement above 100-token threshold), cache-aware prompt layout (state/chat separation, two breakpoints), token budgets (per-layer admission control via promptMemory), materialization control (HPP visibility gating), workspace context TOON, UHPP content-as-ref (zero-copy inline expansion)
+- **Six axes of emission compression** -- lexical (shorthands, TOON), semantic (intent macros, named bindings), temporal (recency refs), spatial (set selectors, shapes, content-as-ref), computational (line rebase, auto-verify, snapshot injection), transcript (hash deflation, rolling summary, batch stubbing)
+
 - **Freshness as epistemic integrity** -- five-state taxonomy (fresh/forwarded/shifted/changed/suspect), preflight gating before every mutation, round-end reconciliation, universal filter on steering signals, own-write suppression
 - **Managed working memory** -- content-addressed engrams with HPP visibility, tiered eviction, staging, blackboard, task plans with subtask-scoped lifecycle
 - **Multi-agent orchestration** -- research digest with dependency graphs, task hydration with token-budget degradation, file-claim enforcement, engram-first delegate subagents (retriever/design/coder/tester) with scoped HPP views
