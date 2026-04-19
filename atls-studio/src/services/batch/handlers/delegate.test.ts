@@ -97,7 +97,13 @@ describe('delegate handlers', () => {
     expect(out.summary).toContain('Planning note only.');
   });
 
-  it('includes per-round action trace in the summary when toolTrace is populated', async () => {
+  it('summary never contains a trace line — refs + findings are the canonical signal', async () => {
+    // A live audit showed the trace degenerated to "R1: batch | R2: batch |
+    // ..." because the toolTrace captures the Anthropic-visible tool
+    // envelope, not the ops inside each batch. The parent already has
+    // everything it needs: refs (what came back) + findings (how the
+    // sub-agent interpreted it) + round count (how much work). A trace
+    // line adds noise without signal.
     mockGetState.mockReturnValue({
       projectPath: '/proj',
       settings: { subagentModel: 'claude-3-haiku', selectedProvider: 'anthropic', selectedModel: 'claude-3-haiku' },
@@ -109,66 +115,30 @@ describe('delegate handlers', () => {
       stagedSnippets: new Map(),
       chunks: new Map(),
     });
-    // Realistic toolTrace: 3 rounds, each with one search action + a done entry.
-    const toolTrace = [
-      { toolName: 'search.code', message: 'Searching: formatVerifyTail', round: 0, ts: 100, done: false },
-      { toolName: 'search.code', message: 'Done: search.code', round: 0, ts: 101, done: true },
-      { toolName: 'read.shaped', message: 'Reading: verify.ts', round: 1, ts: 200, done: false },
-      { toolName: 'read.shaped', message: 'Done: read.shaped', round: 1, ts: 201, done: true },
-      { toolName: 'session.pin', message: 'Pinning findings...', round: 2, ts: 300, done: false },
-      { toolName: 'session.pin', message: 'Done: session.pin', round: 2, ts: 301, done: true },
-    ];
     mockExecuteSubagent.mockResolvedValue({
       ...baseSubagentResult,
       bbKeys: [],
       pinCount: 1,
       pinTokens: 200,
-      rounds: 3,
-      invocationId: 'inv-digest',
+      rounds: 5,
+      invocationId: 'inv-no-trace',
       finalText: undefined,
-      toolTrace,
+      toolTrace: [
+        { toolName: 'batch', message: 'batch', round: 0, ts: 100, done: false },
+        { toolName: 'batch', message: 'batch', round: 1, ts: 200, done: false },
+        { toolName: 'batch', message: 'batch', round: 2, ts: 300, done: false },
+        { toolName: 'batch', message: 'batch', round: 3, ts: 400, done: false },
+        { toolName: 'batch', message: 'batch', round: 4, ts: 500, done: false },
+      ],
     });
 
-    const out = await handleDelegateRetrieve({ query: 'how does verify tail work' }, {} as never, 's-digest');
+    const out = await handleDelegateRetrieve({ query: 'q' }, {} as never, 's-no-trace');
     expect(out.ok).toBe(true);
-    // The digest line must be present in the summary the model sees.
-    expect(out.summary).toContain('trace:');
-    expect(out.summary).toMatch(/R1:/);
-    expect(out.summary).toMatch(/R2:/);
-    expect(out.summary).toMatch(/R3:/);
-    // Each round's action should be compacted (prefix stripped, ≤60 chars).
-    expect(out.summary).toContain('formatVerifyTail');
-    expect(out.summary).toContain('verify.ts');
-    // "Done:" entries must NOT appear in the digest.
-    const tracePortion = out.summary.slice(out.summary.indexOf('trace:'));
-    expect(tracePortion).not.toContain('Done:');
-  });
-
-  it('omits the trace line when toolTrace is empty (no pollution)', async () => {
-    mockGetState.mockReturnValue({
-      projectPath: '/proj',
-      settings: { subagentModel: 'claude-3-haiku' },
-    });
-    mockContextGetState.mockReturnValue({
-      getCurrentRev: () => 'ws-rev-1',
-      getBlackboardEntry: () => null,
-      stagedSnippets: new Map(),
-      chunks: new Map(),
-    });
-    mockExecuteSubagent.mockResolvedValue({
-      ...baseSubagentResult,
-      bbKeys: [],
-      pinCount: 0,
-      pinTokens: 0,
-      rounds: 0,
-      invocationId: 'inv-empty',
-      finalText: undefined,
-      toolTrace: [],
-    });
-
-    const out = await handleDelegateRetrieve({ query: 'q' }, {} as never, 's-empty');
-    expect(out.ok).toBe(true);
+    // No trace line — even when toolTrace is populated.
     expect(out.summary).not.toContain('trace:');
+    expect(out.summary).not.toMatch(/R1:\s*batch/);
+    // Header still carries round count (the useful piece of trace info).
+    expect(out.summary).toContain('5 rounds');
   });
 
   it('uses legacy Delegate Findings heading when only assistant text is present', async () => {

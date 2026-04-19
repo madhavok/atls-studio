@@ -1,15 +1,19 @@
 /**
- * Measurement gates for the three watch-items from the ATLS toolkit audit:
+ * Measurement gates for watch-items from the ATLS toolkit audit:
  *   1. `verify.*` tail + header budget (universal; works for build/typecheck/test/lint)
- *   2. `delegate.retrieve` round-digest overhead + cap enforcement
- *   3. `annotate.note` routing to FileView hashes (architectural correctness)
+ *   2. `annotate.note` routing to FileView hashes (architectural correctness;
+ *      covered in contextStore.fileView.test.ts)
+ *
+ * Delegate transparency was originally in scope but the per-round trace
+ * digest turned out to add noise without signal (tool envelope names like
+ * "batch" repeat every round). Refs + findings appendix already convey
+ * what the sub-agent did; the digest was removed — see delegate.test.ts.
  *
  * See docs/output-compression.md and the toolkit-audit plan for the pillar
  * budgets these gates enforce.
  */
 import { describe, it, expect } from 'vitest';
 import { formatVerifyTail } from './verify';
-import { buildRoundDigest } from './delegate';
 import { countTokensSync } from '../../../utils/tokenCounter';
 
 // ---------------------------------------------------------------------------
@@ -100,65 +104,6 @@ describe('formatVerifyTail — universal verify output primitive', () => {
 });
 
 // ---------------------------------------------------------------------------
-// 2. delegate.retrieve round-digest
-// ---------------------------------------------------------------------------
-
-describe('buildRoundDigest — delegate transparency', () => {
-  const mkTrace = (rounds: number, actionsPerRound: number) => {
-    const out: Array<{ toolName: string; message: string; round: number; ts: number; done: boolean }> = [];
-    let ts = 1_000_000;
-    for (let r = 0; r < rounds; r++) {
-      for (let a = 0; a < actionsPerRound; a++) {
-        out.push({
-          toolName: 'search.code',
-          message: `Searching: query-${r}-${a}`,
-          round: r,
-          ts: ts++,
-          done: false,
-        });
-        out.push({ toolName: 'search.code', message: `Done: search.code`, round: r, ts: ts++, done: true });
-      }
-    }
-    return out;
-  };
-
-  it('produces a compact per-round digest under 300 tokens (gate)', () => {
-    const trace = mkTrace(5, 3);
-    const digest = buildRoundDigest(trace);
-    expect(countTokensSync(digest)).toBeLessThanOrEqual(300);
-    expect(digest).toContain('R1:');
-    expect(digest).toContain('R5:');
-    expect(digest).toContain('query-0-0');
-  });
-
-  it('skips "Done:" entries; only start entries land in the digest', () => {
-    const trace = mkTrace(2, 1);
-    const digest = buildRoundDigest(trace);
-    expect(digest).not.toContain('Done:');
-  });
-
-  it('returns empty string on empty or missing trace (zero overhead)', () => {
-    expect(buildRoundDigest(undefined)).toBe('');
-    expect(buildRoundDigest([])).toBe('');
-  });
-
-  it('caps actions per round (does not explode on chatty rounds)', () => {
-    const trace = mkTrace(1, 10);
-    const digest = buildRoundDigest(trace);
-    // DELEGATE_TRACE_ACTIONS_PER_ROUND = 3, so only 3 actions surface.
-    const matches = digest.match(/query-0-/g) ?? [];
-    expect(matches.length).toBeLessThanOrEqual(3);
-  });
-
-  it('truncates with "…" tail when over the 300-token cap', () => {
-    const trace = mkTrace(50, 3); // very chatty run
-    const digest = buildRoundDigest(trace);
-    expect(countTokensSync(digest)).toBeLessThanOrEqual(300);
-    expect(digest).toMatch(/…/);
-  });
-});
-
-// ---------------------------------------------------------------------------
 // Measurement reporter (non-gating — records actual numbers for the record)
 // ---------------------------------------------------------------------------
 
@@ -177,30 +122,10 @@ describe('measurement gates — actuals', () => {
     const passBuild = formatVerifyTail({ type: 'build', success: true, exit_code: 0 }, 'build', true);
     const passBuildTokens = countTokensSync(passBuild);
 
-    const trace5x3: Array<{ toolName: string; message: string; round: number; ts: number; done: boolean }> = [];
-    for (let r = 0; r < 5; r++) {
-      for (let a = 0; a < 3; a++) {
-        trace5x3.push({
-          toolName: 'search.code',
-          message: `Searching: eviction-query-${r}-${a}`,
-          round: r,
-          ts: 1000 + r * 10 + a,
-          done: false,
-        });
-        trace5x3.push({ toolName: 'search.code', message: 'Done: search.code', round: r, ts: 1001 + r * 10 + a, done: true });
-      }
-    }
-    const digest = buildRoundDigest(trace5x3);
-    const digestTokens = countTokensSync(digest);
-
-    // Emit to console for log inspection (test-level visibility, not assertion).
     console.log(`[watch-item measurements]`);
     console.log(`  vl (50 issues, with raw_tail): ${lintTokens} tk (target: 500-700; gate: <=900)`);
     console.log(`  vb (pass, no raw_tail):        ${passBuildTokens} tk (target: <10)`);
-    console.log(`  dr digest (5 rounds × 3 act):  ${digestTokens} tk (target: <=300)`);
 
-    // Soft sanity bounds — the hard gates are in the dedicated describe blocks.
     expect(lintTokens).toBeGreaterThan(100);
-    expect(digestTokens).toBeGreaterThan(0);
   });
 });
