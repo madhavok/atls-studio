@@ -367,7 +367,7 @@ describe('FileView rollout — single retention hash trace replay', () => {
           readSpan: { filePath: p, sourceRevision: rev, startLine: 10, endLine: 10 },
         },
       );
-      // Read handler would return h:fv:<viewHash>; for the test we call ensureFileView directly.
+      // Read handler would return the view's `h:<short>`; for the test we call ensureFileView directly.
       refs.push(store.ensureFileView(p, rev));
     }
     store.pinChunks(refs);
@@ -413,13 +413,13 @@ describe('FileView rollout — single retention hash trace replay', () => {
     expect(chunk!.pinned).toBeFalsy();
   });
 
-  it('ensureFileView returns the same h:fv:<hash> regardless of fill progression', () => {
+  it('ensureFileView returns the same h:<short> regardless of fill progression', () => {
     // Stable identity — the ref the model pins on first read stays valid as
     // regions get filled and fullBody lands.
     const store = useContextStore.getState();
     const rev = 'stable-rev';
     const ref1 = store.ensureFileView('src/stable.ts', rev);
-    expect(ref1).toMatch(/^h:fv:/);
+    expect(ref1).toMatch(/^h:[0-9a-f]{6}$/);
 
     // Fill a region — view's identity unchanged.
     store.addChunk(

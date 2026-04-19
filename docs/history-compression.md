@@ -117,26 +117,35 @@ Compression traditionally targets tool *results* (the user-role messages). `stub
 
 This matters because a large `batch` payload (say, 20 steps with inline content) can dominate the transcript the next round will re-read. After stubbing, the model sees the shape of what it did without re-reading the full step list.
 
-## Retention-op compaction
+## Retention-op compaction (ephemeral output)
 
-`compactRetentionOps` in [`historyCompressor.ts`](../atls-studio/src/services/historyCompressor.ts) runs **between** `stubBatchToolUseInputs` and `deflateToolResults` at turn-finalize. It strips ghost-ref surface from state-mutation calls whose effect is already captured in the current hash manifest:
+Retention ops (`session.pin`, `session.unpin`, `session.drop`, `session.unload`, `session.compact`, `session.bb.delete`) mutate state that the model reads back through the next round's hash manifest. The manifest is authoritative; emitting a tool_result echo is duplicate signal and — worse — a stable shape the model will re-emit verbatim next round (template calcification). The compactor's job is to ensure retention output is **ephemeral by design**: visible during the round, absent from persisted history on success.
 
-| Retention op | `tool_use` args after compaction | `tool_result` line after compaction |
+`compactRetentionOps` in [`historyCompressor.ts`](../atls-studio/src/services/historyCompressor.ts) runs **between** `stubBatchToolUseInputs` and `deflateToolResults` at turn-finalize.
+
+| Surface | Before compaction | After compaction |
 |---|---|---|
-| `session.pin`, `session.unpin` | `{n:N}` (count of hashes) | `[OK] <id> (session.pin): ok` |
-| `session.drop`, `session.unload` | `{n:N}` (scope-based drops unchanged) | `[OK] <id> (session.drop): ok` |
-| `session.compact` | `{n:N}` | `[OK] <id> (session.compact): ok` |
-| `session.bb.delete` | `{n:N}` (count of keys) | `[OK] <id> (session.bb.delete): ok` |
+| `tool_use` step args | `{id:"u1", use:"session.unpin", with:{hashes:["h:abc123","h:def456","h:7890ab"]}}` | `{id:"u1", use:"session.unpin"}` — no `with`, no `in`, no markers |
+| `tool_result` OK line | `[OK] u1 (session.unpin): unpin: 3 chunks unpinned (19ms)` | *(line removed entirely)* |
+| `tool_result` FAIL line | `[FAIL] u1 (session.unpin): unpin: ERROR no matching refs…` | *(unchanged — FAIL text is the model's only diagnostic signal)* |
+| `[ATLS]` footer | `[ATLS] 3 steps: 3 pass | ok` | *(unchanged — keeps true step count)* |
+| Non-retention lines | *(unchanged)* | *(unchanged — `deflateToolResults` handles their payloads)* |
 
 **Rules:**
-- Only `[OK]` per-step lines are compacted. `[FAIL]` lines are preserved verbatim — their error text carries debuggable signal (e.g. `step 'r1' produced no h:refs`).
-- Non-retention ops (`read.*`, `search.*`, `session.bb.write`, `change.*`, `verify.*`, `task_complete`, …) are untouched. `deflateToolResults` handles their payloads.
-- Scope-based drops with no specific refs (`{scope:'archived', max:25}`) skip — no ghost surface to strip.
-- `step.in` dataflow references are also dropped (they resolve to prior-step refs, same ghost vector).
-- Idempotent via `_compacted: true` marker on each step; second run is a no-op.
+
+- Only `[OK]` retention lines are removed. `[FAIL]` lines stay verbatim — failure means the model targeted something not in the manifest, and it needs to know.
+- All retention tool_use args are stripped (including `with.scope` for scope-based drops) — the manifest carries every effect.
+- `step.in` dataflow references are also dropped.
+- Idempotence is tracked via a module-scoped `WeakSet<object>`, not a serialized flag — no `_compacted: true` leaks to the API (that was the prior spin surface).
 - Runs **pre-BP3** so the compacted form is what lands in the cacheable prefix — no retroactive rewrite.
 
-**Why:** sub-threshold retention batches (often 2–5 steps) stay under the 80-token stub threshold and otherwise survive verbatim for the full rolling window. The literal hashes in the tool_use and the "unpinned 3 chunks (19ms)" tails in the tool_result become a template the model re-emits next round, pointing at hashes that are already gone from the manifest — the template-calcification spin pattern. Compacting these leaves the narrative action (`session.unpin: ok`) visible but the refs unreachable.
+**Handler defense (zero-match surfaces as FAIL):** The handlers for `pin/unpin/drop/unload/compact/bb.delete` in [`session.ts`](../atls-studio/src/services/batch/handlers/session.ts) and `bb.delete` in [`blackboard.ts`](../atls-studio/src/services/batch/handlers/blackboard.ts) err loudly when args resolve to zero targets. Previously a no-op retention call returned `ok('no matching chunks')` which compaction hid as a successful receipt. Now a retention call with no resolvable targets returns `[FAIL]` with an explicit message pointing at the manifest — visible to the model, not compacted away.
+
+**Why this shape:** The model templates whatever stable structure it sees in prior tool_use. The pre-Nov-2026 compaction left `{n:3, _compacted:true}` behind, which the model re-emitted verbatim as a "valid" call; the runtime processed it as a no-op and returned another receipt, and the model spun. The fix is not to dress up the receipt — it's to not write one at all. The manifest is the receipt.
+
+**Measured savings** (scripted 20-round retention-heavy session, sub-threshold batches): **35.5%** input-token reduction versus no compaction, up from ~20% under the prior collapse-to-`ok` shape. See [`historyCompressor.retention.measurement.test.ts`](../atls-studio/src/services/historyCompressor.retention.measurement.test.ts).
+
+**Interaction with auto-pin on read:** under `autoPinReads: true` (default; see [auto-pin-on-read.md](auto-pin-on-read.md)), reads don't emit explicit `pi`, so retention output is already rarer. When the model does emit release ops (`pu`/`pc`/`dro`), this compaction keeps them out of persisted history. The two features compound: fewer emissions, and the ones that happen don't leave receipts.
 
 ## Emergency compression
 

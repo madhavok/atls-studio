@@ -555,6 +555,15 @@ export interface Settings {
    * See `src/utils/toolResultCompression.ts` and `docs/input-compression-merit.md`.
    */
   compressToolResults?: boolean;
+  /**
+   * Auto-pin read results. When true, `read.shaped` / `read.lines` / `read.context`
+   * auto-pin their FileView so the model's retention vocabulary collapses to
+   * release-only (`pu` / `pc` / `dro`). Default true; the cognitive core prompt
+   * is written assuming auto-pin, so turning this off decouples prompt from
+   * runtime — intended purely as an emergency rollback lever, not a supported
+   * configuration. See `docs/auto-pin-on-read.md`.
+   */
+  autoPinReads?: boolean;
 }
 
 /** Per-category severity enables. Key = category, value = enabled severities */
@@ -1496,6 +1505,7 @@ export const useAppStore = create<AppState>((set) => ({
       modelOutputSpeed: 'medium',
       modelThinking: 'medium',
       compressToolResults: false,
+      autoPinReads: true,
     };
     let parsed: Record<string, unknown> = {};
     try { parsed = saved ? JSON.parse(saved) : {}; } catch { /* corrupt settings — use defaults */ }

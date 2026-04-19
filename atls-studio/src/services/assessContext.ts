@@ -45,7 +45,7 @@ import type { ContextChunk } from '../stores/contextStore';
 // ---------------------------------------------------------------------------
 
 export interface AssessCandidate {
-  /** `h:fv:<hash>` for FileViews, short hash for other chunks. */
+  /** Short hash ref (`h:<short>`) — same shape for FileViews and other chunks. */
   hash: string;
   kind: 'fileview' | 'artifact';
   /** Display label — file path or chunk source. */

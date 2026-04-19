@@ -162,7 +162,11 @@ export const handleBbRead: OpHandler = async (params, ctx) => {
 export const handleBbDelete: OpHandler = async (params, ctx) => {
   let keys = params.keys as string[] | string | undefined;
   if (typeof keys === 'string') keys = [keys];
-  if (!keys?.length) return err('bb_delete: ERROR missing keys param');
+  if (!keys?.length) {
+    return err(
+      'bb_delete: ERROR no keys supplied. Retention calls (pi/pu/dro/ulo/pc/bb:delete) require real arguments — prior-round retention steps are stripped of args in history (ephemeral by design) and are not callable as shapes.',
+    );
+  }
 
   let deleted = 0;
   for (const k of keys) {
@@ -171,6 +175,11 @@ export const handleBbDelete: OpHandler = async (params, ctx) => {
       return err(`bb_delete: ERROR could not delete ${k} from database`);
     }
     if (ctx.store().removeBlackboardEntry(k)) deleted++;
+  }
+  if (deleted === 0) {
+    return err(
+      `bb_delete: ERROR no matching BB keys (${keys.join(', ')}). Check bl (bb_list) for current keys — entries deleted in prior rounds are gone.`,
+    );
   }
   return ok(`bb_delete: ${deleted} entries removed`);
 };

@@ -369,9 +369,9 @@ export interface ContextStoreApi {
   droppedManifest: Map<string, unknown>;
 
   // FileViews — per-path unified surfaces keyed by filePath. Entries carry
-  // `view.hash` (`h:fv:<hash>`) as the single retention ref. Exposed so
-  // ref-resolving handlers (session.shape on `h:fv:…`) can render views
-  // without an extra Rust round-trip.
+  // `view.hash` (`h:<short>`, same shape as chunk refs) as the single retention
+  // ref. Exposed so ref-resolving handlers (session.shape on a view's h:<short>)
+  // can render views without an extra Rust round-trip.
   fileViews?: Map<string, FileView>;
   addChunk: (content: string, type: string, source?: string, symbols?: unknown[], summary?: string, backendHash?: string, opts?: Record<string, unknown>) => string;
   findReusableRead: (span: { filePath: string; startLine?: number; endLine?: number; shape?: string; sourceRevision: string; contextType?: string }) => string | null;
@@ -484,12 +484,17 @@ export interface ContextStoreApi {
   ensureFileViewSkeleton: (filePath: string, sourceRevision: string) => Promise<void>;
   /**
    * Synchronously ensure a FileView exists for (filePath, sourceRevision) and
-   * return its stable `h:fv:<hash>` retention ref. Read handlers call this
+   * return its stable `h:<short>` retention ref. Read handlers call this
    * before returning so the ref the model sees is pinnable immediately.
    */
   ensureFileView: (filePath: string, sourceRevision: string) => string;
   /** Look up a FileView by path (normalized forward-slash). */
   getFileView: (path: string) => { hash: string; filePath: string; sourceRevision: string; pinned: boolean } | undefined;
+  /**
+   * Auto-pin a FileView from a read handler. Idempotent; returns `true` only
+   * on first-time auto-pin. See `contextStore.autoPinFileView`.
+   */
+  autoPinFileView?: (path: string, shape?: string) => boolean;
 }
 
 // ---------------------------------------------------------------------------

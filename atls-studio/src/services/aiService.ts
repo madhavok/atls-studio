@@ -96,7 +96,7 @@ import type {
   StreamChunk,
 } from '../stores/appStore';
 import { useAppStore, getMessageParts } from '../stores/appStore';
-import { useContextStore, setCacheHitRateAccessor, setWorkspacesAccessor, setPromptMetricsAccessor, setRoundRefreshRevisionResolver, setRetentionMetricsAccessor, setRetentionResetAccessor, setFileViewCounterBumper } from '../stores/contextStore';
+import { useContextStore, setCacheHitRateAccessor, setWorkspacesAccessor, setPromptMetricsAccessor, setRoundRefreshRevisionResolver, setRetentionMetricsAccessor, setRetentionResetAccessor, setFileViewCounterBumper, drainRefCollisionCount } from '../stores/contextStore';
 import { useRetentionStore } from '../stores/retentionStore';
 
 // Cross-store accessor wiring — breaks circular deps at runtime.
@@ -270,6 +270,7 @@ import {
 } from './spinDiagnostics';
 import { evaluateSpin, resetSpinCircuitBreaker } from './spinCircuitBreaker';
 import { evaluateAssess, resetAssessContext } from './assessContext';
+import { drainAutoPinMetrics, resetAutoPinTelemetry } from './autoPinTelemetry';
 import { collectFileViewChunkHashes } from './fileViewRender';
 
 /** Content block types for multimodal messages */
@@ -1540,6 +1541,9 @@ function createChatSession(isSwarm: boolean): ChatSessionContext {
   resetSpinCircuitBreaker();
   // ASSESS steering: clear sidecar + dedupe so a new chat starts clean.
   resetAssessContext();
+  // Auto-pin telemetry: drain the round-scoped counters so a new session
+  // doesn't inherit stale auto-pin metrics from the prior chat.
+  resetAutoPinTelemetry();
 
   const controller = new AbortController();
   const session: ChatSessionContext = {
@@ -2613,6 +2617,20 @@ async function streamChatViaTauri(
           assessFired: assessEvaluation?.fired === true,
           assessFiredKey: assessEvaluation?.fired ? assessEvaluation.firedKey : undefined,
           assessCandidateCount: assessEvaluation?.candidates.length,
+          // Drain auto-pin telemetry once per round so each snapshot carries
+          // only this round's counts. Empty (0/0) when the flag is off or no
+          // reads/unpins happened this round.
+          ...(() => {
+            const m = drainAutoPinMetrics();
+            return {
+              autoPinsCreated: m.created,
+              autoPinsReleasedUnused: m.releasedUnused,
+            };
+          })(),
+          // Unified hash namespace: ambient collision counter — how many ref
+          // lookups this round matched both a view and a chunk (views won).
+          // Non-zero values inform the SHORT_HASH_LEN=6→8 decision.
+          refCollisions: drainRefCollisionCount(),
           ...getRoundFingerprint(),
         });
       };

@@ -12,7 +12,7 @@
  *
  * See docs/ — plan: Unified FileView.
  */
-import { hashContentSync } from '../utils/contextHash';
+import { hashContentSync, SHORT_HASH_LEN } from '../utils/contextHash';
 import { countTokensSync } from '../utils/tokenCounter';
 import { getFreshnessJournal } from './freshnessJournal';
 import type { FileSkeleton } from './fileView';
@@ -69,11 +69,26 @@ export interface FileView {
   fullBody?: string;
   /** Chunk hash that owns fullBody, when set */
   fullBodyChunkHash?: string;
-  /** Aggregate identity: h:fv:<fnv(path + revision + region bounds)> */
+  /**
+   * Aggregate identity: `h:<SHORT_HASH_LEN hex>` derived from (filePath, sourceRevision).
+   * Shares the chunk-hash namespace — the model sees one format. Lookup routes
+   * `h:<short>` to either the fileViews map (views first) or chunks map via
+   * `resolveAnyRef` in contextStore.
+   */
   hash: string;
+  /** Short hex portion of `hash` (without the `h:` prefix), for O(1) prefix lookups. */
+  shortHash: string;
   lastAccessed: number;
   pinned: boolean;
   pinnedShape?: string;
+  /**
+   * Wall-clock timestamp at which auto-pin first set `pinned = true`.
+   * Absent when the pin was created by explicit `session.pin` (manual).
+   * Cleared when the view is unpinned. Used by the telemetry path to detect
+   * auto-pins that were released without ever being re-accessed
+   * (`lastAccessed <= autoPinnedAt` at release time).
+   */
+  autoPinnedAt?: number;
   freshness?: FileViewFreshness;
   freshnessCause?: FileViewFreshnessCause;
   /** Rebase-failed ranges surfaced as `[REMOVED was L205-213]` until resolved */
@@ -347,6 +362,7 @@ export function reconcileFileView(
   // mapping inside fullBody we conservatively clear and let the model re-read).
   const clearedFullBody = view.fullBody !== undefined;
 
+  const nextHashParts = computeFileViewHashParts(view.filePath, currentRevision);
   const nextView: FileView = {
     ...view,
     sourceRevision: currentRevision,
@@ -357,7 +373,8 @@ export function reconcileFileView(
     filledRegions: rebased,
     fullBody: undefined,
     fullBodyChunkHash: undefined,
-    hash: computeFileViewHash(view.filePath, currentRevision),
+    hash: nextHashParts.hash,
+    shortHash: nextHashParts.shortHash,
     freshness: isSameFileEdit && rebased.length > 0 ? 'shifted' : 'fresh',
     freshnessCause: cause,
     pendingRefetches: refetchRequests.length > 0 ? refetchRequests : undefined,
@@ -402,10 +419,12 @@ export function onConstituentChunkRemoved(
 ): FileView {
   const nextRegions = dropRegionByChunk(view.filledRegions, chunkHash);
   if (nextRegions === view.filledRegions) return view;
+  const nextHashParts = computeFileViewHashParts(view.filePath, view.sourceRevision);
   return {
     ...view,
     filledRegions: nextRegions,
-    hash: computeFileViewHash(view.filePath, view.sourceRevision),
+    hash: nextHashParts.hash,
+    shortHash: nextHashParts.shortHash,
     lastAccessed: Date.now(),
   };
 }
@@ -417,6 +436,7 @@ export function onConstituentChunkRemoved(
 /** Compose a fresh empty FileView around a skeleton. */
 export function createFileView(skeleton: FileSkeleton, opts?: { pinned?: boolean }): FileView {
   const path = normalizePath(skeleton.path);
+  const { hash, shortHash } = computeFileViewHashParts(path, skeleton.revision);
   return {
     filePath: path,
     sourceRevision: skeleton.revision,
@@ -425,7 +445,8 @@ export function createFileView(skeleton: FileSkeleton, opts?: { pinned?: boolean
     skeletonRows: skeleton.rows,
     sigLevel: skeleton.sigLevel,
     filledRegions: [],
-    hash: computeFileViewHash(path, skeleton.revision),
+    hash,
+    shortHash,
     lastAccessed: Date.now(),
     pinned: opts?.pinned ?? false,
     freshness: 'fresh',
@@ -446,6 +467,7 @@ export function applyFillToView(
     ...view,
     filledRegions: nextRegions,
   };
+  const refreshed = computeFileViewHashParts(view.filePath, view.sourceRevision);
   if (shouldAutoPromoteToFullBody(probe, opts?.avgTokensPerLine)) {
     const body = composeFullBodyFromRegions(probe);
     return {
@@ -453,14 +475,16 @@ export function applyFillToView(
       fullBody: body,
       fullBodyChunkHash: fill.chunkHash,
       filledRegions: nextRegions,
-      hash: computeFileViewHash(view.filePath, view.sourceRevision),
+      hash: refreshed.hash,
+      shortHash: refreshed.shortHash,
       lastAccessed: Date.now(),
     };
   }
   return {
     ...view,
     filledRegions: nextRegions,
-    hash: computeFileViewHash(view.filePath, view.sourceRevision),
+    hash: refreshed.hash,
+    shortHash: refreshed.shortHash,
     lastAccessed: Date.now(),
   };
 }
@@ -474,11 +498,13 @@ export function applyFullBodyToView(
   fullBody: string,
   chunkHash: string,
 ): FileView {
+  const { hash, shortHash } = computeFileViewHashParts(view.filePath, view.sourceRevision);
   return {
     ...view,
     fullBody,
     fullBodyChunkHash: chunkHash,
-    hash: computeFileViewHash(view.filePath, view.sourceRevision),
+    hash,
+    shortHash,
     lastAccessed: Date.now(),
   };
 }
@@ -509,18 +535,44 @@ export function clearRemovedMarker(
 // ---------------------------------------------------------------------------
 
 /**
- * Build a deterministic `h:fv:<hash>` identity — stable per `(filePath, revision)`.
+ * Build a deterministic short ref (`h:<SHORT_HASH_LEN hex>`) identity — stable
+ * per `(filePath, revision)`. Shares the chunk-hash namespace; the runtime
+ * disambiguates via `resolveAnyRef` in contextStore (views first, chunks
+ * fallback).
  *
  * Identity does NOT depend on filled regions or fullBody: the view IS the file
  * at this revision, regardless of how much the agent has materialized. This is
- * what makes `h:fv:` usable as the single retention ref — the model can pin
- * once on first read and the ref stays valid as the view grows. Identity
- * changes only on revision bumps (source edits) or path changes.
+ * what makes the ref stable as the view grows; identity changes only on
+ * revision bumps (source edits) or path changes.
  */
 export function computeFileViewHash(filePath: string, revision: string): string {
+  return computeFileViewHashParts(filePath, revision).hash;
+}
+
+/**
+ * Same as {@link computeFileViewHash} but returns both the full ref and the
+ * raw short-hash portion, so callers can populate FileView.shortHash without
+ * re-slicing.
+ */
+export function computeFileViewHashParts(
+  filePath: string,
+  revision: string,
+): { hash: string; shortHash: string } {
   const parts = [normalizePath(filePath), revision].join('|');
-  const h = hashContentSync(parts).slice(0, 16);
-  return `h:fv:${h}`;
+  const shortHash = hashContentSync(parts).slice(0, SHORT_HASH_LEN);
+  return { hash: `h:${shortHash}`, shortHash };
+}
+
+/**
+ * Restore migration: legacy snapshots persisted FileViews with `h:fv:<16hex>`
+ * hashes and no `shortHash` field. The unified namespace retires the prefix;
+ * recompute the view's hash deterministically so restored sessions keep
+ * working against the current runtime. No-op when already current.
+ */
+export function migrateLegacyFileView(view: FileView): FileView {
+  const expected = computeFileViewHashParts(view.filePath, view.sourceRevision);
+  if (view.hash === expected.hash && view.shortHash === expected.shortHash) return view;
+  return { ...view, hash: expected.hash, shortHash: expected.shortHash };
 }
 
 /** Parse `N|CONTENT` rows into a line→row map. Skips malformed rows. */

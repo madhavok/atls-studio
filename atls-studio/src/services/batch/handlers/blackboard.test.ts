@@ -238,6 +238,25 @@ describe('blackboard handlers', () => {
     expect(r.summary).toMatch(/could not delete/);
   });
 
+  it('bb_delete errs loudly when no keys supplied (compacted-stub reuse)', async () => {
+    const r = await handleBbDelete(
+      {},
+      createMockCtx() as unknown as Parameters<typeof handleBbDelete>[1],
+    );
+    expect(r.ok).toBe(false);
+    expect(r.summary).toMatch(/no keys supplied/);
+    expect(r.summary).toMatch(/ephemeral/i);
+  });
+
+  it('bb_delete errs when keys resolve to zero matches', async () => {
+    const r = await handleBbDelete(
+      { keys: ['does-not-exist'] },
+      createMockCtx() as unknown as Parameters<typeof handleBbDelete>[1],
+    );
+    expect(r.ok).toBe(false);
+    expect(r.summary).toMatch(/no matching BB keys/);
+  });
+
   it('bb_list summarizes keys', async () => {
     const s = useContextStore.getState();
     s.setBlackboardEntry('z1', 'a');

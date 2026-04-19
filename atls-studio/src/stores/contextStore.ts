@@ -47,6 +47,7 @@ import { canonicalizeSnapshotHash } from '../services/batch/snapshotTracker';
 import { normalizeSessionPlanSubtasksInput } from '../services/batch/paramNorm';
 import { emptyRollingSummary, type RollingSummary } from '../services/historyDistiller';
 import { freshnessTelemetry, incSessionRestoreReconcileCount, incCognitiveRulesExpired, setManifestMetricsAccessor } from '../services/freshnessTelemetry';
+import { recordAutoPinReleasedUnused } from '../services/autoPinTelemetry';
 import { recordForwarding as manifestRecordForwarding, recordEviction as manifestRecordEviction, resolveForward as manifestResolveForward, getManifestMetrics } from '../services/hashManifest';
 import {
   type FileView,
@@ -1026,13 +1027,21 @@ interface ContextStoreState {
   /** Toggle pinned flag on a FileView by path. Used by session.pin in PR4. */
   setFileViewPinned: (path: string, pinned: boolean) => void;
   /**
-   * Resolve any `h:fv:<hash>` refs to their constituent chunk hashes. Non-fv
+   * Auto-pin a FileView from a read handler. Sets `pinned = true`,
+   * `pinnedShape`, and `autoPinnedAt = Date.now()` marker so the unpin path
+   * can detect releases that never saw a re-access. Idempotent: returns
+   * `false` when the view is already pinned (manual or auto) and does not
+   * overwrite state. Returns `true` on successful first-time auto-pin.
+   */
+  autoPinFileView: (path: string, shape?: string) => boolean;
+  /**
+   * Resolve any `h:<short>` refs that identify a FileView into their constituent chunk hashes. Non-view
    * refs pass through unchanged. Use at subagent / Tauri boundaries.
    */
   resolveFileViewRefs: (refs: string[]) => string[];
   /**
    * Synchronously ensure a FileView exists for (filePath, sourceRevision), creating
-   * a minimal empty-skeleton view if absent. Returns the view's stable `h:fv:<hash>`
+   * a minimal empty-skeleton view if absent. Returns the view's stable `h:<short>`
    * identity — computed deterministically from path + revision, so callers can emit
    * the ref before the skeleton is populated. Used by read handlers to surface the
    * retention ref synchronously; `ensureFileViewSkeleton` may run async alongside
@@ -1790,6 +1799,90 @@ function findChunkByRef<T extends { hash: string; shortHash: string }>(
   }
 
   return null;
+}
+
+// ---------------------------------------------------------------------------
+// Unified ref resolution: views and chunks share a single `h:<short>` namespace.
+// Views take precedence on collision (they're the retention primitive).
+// ---------------------------------------------------------------------------
+
+/**
+ * Look up a FileView by short-hash ref. Returns the [filePath, view] pair on
+ * match, or null. Iterates the views map (typically <100 entries per session).
+ */
+function findViewByRef(
+  views: Map<string, FileView>,
+  ref: string,
+): [string, FileView] | null {
+  if (!ref || ref.startsWith('h:bb:') || ref.startsWith('bb:')) return null;
+  const normalized = refToBaseHash(ref);
+  for (const [filePath, view] of views) {
+    if (view.shortHash === normalized || view.shortHash.startsWith(normalized) || normalized.startsWith(view.shortHash)) {
+      return [filePath, view];
+    }
+  }
+  return null;
+}
+
+/**
+ * Diagnostic: when a short-hash ref matches BOTH a view and a chunk in the
+ * current session, increment this counter. Observability tells us whether to
+ * bump `SHORT_HASH_LEN` from 6 to 8 (birthday-bound at ~3% for N=1000).
+ *
+ * Read + reset via `drainRefCollisionCount()`; captured once per round in
+ * the snapshot telemetry pipeline.
+ */
+let _refCollisionCount = 0;
+export function drainRefCollisionCount(): number {
+  const n = _refCollisionCount;
+  _refCollisionCount = 0;
+  return n;
+}
+export function peekRefCollisionCount(): number {
+  return _refCollisionCount;
+}
+/** Test-only reset; not part of the prod reset path. */
+export function _resetRefCollisionCountForTests(): void {
+  _refCollisionCount = 0;
+}
+
+/**
+ * Unified resolver: `h:<short>` could refer to a FileView or a chunk. Views
+ * win on ambiguity. Returns null on no match.
+ *
+ * Callers use this in retention ops (pin/unpin/drop) to replace the prior
+ * separate view/chunk route split. Chunk-level hash lookups that still
+ * need the chunk object directly can keep using `findChunkByRef`.
+ */
+function resolveAnyRef(
+  ref: string,
+  views: Map<string, FileView>,
+  chunks: Map<string, ContextChunk>,
+): { kind: 'view'; key: string; view: FileView }
+  | { kind: 'chunk'; key: string; chunk: ContextChunk }
+  | null {
+  const viewHit = findViewByRef(views, ref);
+  const chunkHit = findChunkByRef(chunks, ref);
+  if (viewHit && chunkHit) _refCollisionCount++;
+  if (viewHit) return { kind: 'view', key: viewHit[0], view: viewHit[1] };
+  if (chunkHit) return { kind: 'chunk', key: chunkHit[0], chunk: chunkHit[1] };
+  return null;
+}
+
+/**
+ * Collision-detection probe for retention-op hot paths that use
+ * view-first/chunk-fallback routing without going through `resolveAnyRef`.
+ * Bumps the ambient collision counter when a ref matches BOTH a view and a
+ * chunk, without changing routing behavior. Used inside pin/unpin/drop loops.
+ */
+function trackRefCollision(
+  ref: string,
+  views: Map<string, FileView>,
+  chunks: Map<string, ContextChunk>,
+): void {
+  if (findViewByRef(views, ref) && findChunkByRef(chunks, ref)) {
+    _refCollisionCount++;
+  }
 }
 
 /**
@@ -2837,7 +2930,7 @@ export const useContextStore = create<ContextStoreState>()(
    * Permanently drop chunks — removes content from both working memory and archive,
    * keeping only a lightweight manifest entry for episodic memory.
    *
-   * Retention routing: `h:fv:<hash>` or any chunk ref whose source has a live
+   * Retention routing: view refs or any chunk ref whose source has a live
    * FileView drops the view (removes it from `fileViews`) **and** all backing
    * chunks for that file. Non-file chunks (search, BB, etc.) drop at the chunk
    * level. Supports "*" to drop all non-pinned from both maps.
@@ -2932,10 +3025,6 @@ export const useContextStore = create<ContextStoreState>()(
         return true;
       };
 
-      // h:fv:<hash> index for explicit view-ref drops.
-      const fvHashIndex = new Map<string, FileView>();
-      for (const view of state.fileViews.values()) fvHashIndex.set(view.hash, view);
-
       if (effectiveHashes.includes('*') || effectiveHashes.includes('all')) {
         // Drop all non-pinned from working memory (protect recent chat turns)
         for (const [key, chunk] of newChunks) {
@@ -2964,13 +3053,18 @@ export const useContextStore = create<ContextStoreState>()(
         }
       } else {
         for (const h of effectiveHashes) {
-          // Route 1: explicit h:fv: ref → drop view + backing chunks.
-          if (h.startsWith('h:fv:')) {
-            const view = fvHashIndex.get(h);
-            if (view) dropViewByKey(view.filePath);
+          // Unified lookup: views win on ambiguity. Short-hash `h:<6>` may hit
+          // either a view (retention primitive) or a chunk.
+          trackRefCollision(h, newFileViews, newChunks);
+          const viewHit = findViewByRef(newFileViews, h);
+          if (viewHit) {
+            dropViewByKey(viewHit[0]);
             continue;
           }
-          // Route 2: chunk ref whose source has a FileView → drop the view.
+
+          // No view match — fall through to chunk-level resolution. A chunk
+          // whose source has a FileView still routes to the view (legacy
+          // behavior for prompts that cite slice hashes directly).
           const inWorking = findChunkByRef(newChunks, h);
           const inArchive = !inWorking ? findChunkByRef(newArchived, h) : null;
           const srcPath = inWorking?.[1].source ?? inArchive?.[1].source;
@@ -2978,7 +3072,7 @@ export const useContextStore = create<ContextStoreState>()(
             const fvKey = fvNormalizePath(srcPath);
             if (newFileViews.has(fvKey) && dropViewByKey(fvKey)) continue;
           }
-          // Route 3: non-file chunk — drop at chunk level.
+          // Non-file chunk — drop at chunk level.
           if (inWorking) {
             const [key, chunk] = inWorking;
             if (protectedChat.has(chunk.hash)) continue;
@@ -3058,7 +3152,7 @@ export const useContextStore = create<ContextStoreState>()(
    * Pin chunks to protect from bulk unload.
    *
    * Retention routing: for any chunk whose source has a live FileView, pinning
-   * routes to the view (`h:fv:<hash>`) — the single retention identity per
+   * routes to the view (`h:<short>`) — the single retention identity per
    * file. The chunk itself stays unpinned; the view is the canonical surface
    * the model manages. Non-file artifacts (search, BB, tool results) still
    * pin at the chunk level. Also recalls archived chunks and promotes staged
@@ -3075,13 +3169,6 @@ export const useContextStore = create<ContextStoreState>()(
       const newFileViews = new Map(state.fileViews);
       let fileViewsChanged = false;
 
-      // Build a lookup of h:fv:<hash> → view for quick routing. h:fv: never
-      // reaches Rust — we resolve on the TS side per the Section 9 boundary rule.
-      const fvHashIndex = new Map<string, FileView>();
-      for (const view of state.fileViews.values()) {
-        fvHashIndex.set(view.hash, view);
-      }
-
       // Helper: pin a FileView by path key.
       const pinViewByKey = (fvKey: string): boolean => {
         const view = newFileViews.get(fvKey) ?? state.fileViews.get(fvKey);
@@ -3094,14 +3181,17 @@ export const useContextStore = create<ContextStoreState>()(
       };
 
       for (const h of hashes) {
-        // Route 1: h:fv:<hash> — explicit view ref.
-        if (h.startsWith('h:fv:')) {
-          const view = fvHashIndex.get(h);
-          if (view) pinViewByKey(view.filePath);
+        // Unified ref resolution: try views first (retention primitive), then
+        // fall through to chunks. Model emits `h:<short>` for both; the
+        // runtime disambiguates. See `resolveAnyRef` / `findViewByRef` above.
+        trackRefCollision(h, newFileViews, newChunks);
+        const viewHit = findViewByRef(newFileViews, h);
+        if (viewHit) {
+          pinViewByKey(viewHit[0]);
           continue;
         }
 
-        // Route 2: chunk ref whose source has a FileView → pin the view.
+        // Chunk ref whose source has a FileView → pin the view.
         // This is the core "one hash per file" contract: legacy prompts that
         // emit `pi h:sliceHash` transparently land on the view.
         const found = findChunkByRef(newChunks, h);
@@ -3218,7 +3308,13 @@ export const useContextStore = create<ContextStoreState>()(
         const view = newFileViews.get(fvKey) ?? state.fileViews.get(fvKey);
         if (!view) return false;
         if (!view.pinned) return true; // view exists, already unpinned — still "handled"
-        newFileViews.set(fvKey, { ...view, pinned: false, pinnedShape: undefined, lastAccessed: Date.now() });
+        // Auto-pin telemetry: released without ever being re-accessed after pin.
+        // Guard on both autoPinnedAt marker (it was an auto-pin) and the
+        // lastAccessed <= autoPinnedAt invariant (never bumped by a later read).
+        if (view.autoPinnedAt != null && view.lastAccessed <= view.autoPinnedAt) {
+          recordAutoPinReleasedUnused();
+        }
+        newFileViews.set(fvKey, { ...view, pinned: false, pinnedShape: undefined, autoPinnedAt: undefined, lastAccessed: Date.now() });
         fileViewsChanged = true;
         count++;
         return true;
@@ -3234,19 +3330,22 @@ export const useContextStore = create<ContextStoreState>()(
         }
         for (const [fvKey, view] of newFileViews) {
           if (view.pinned) {
-            newFileViews.set(fvKey, { ...view, pinned: false, pinnedShape: undefined, lastAccessed: Date.now() });
+            if (view.autoPinnedAt != null && view.lastAccessed <= view.autoPinnedAt) {
+              recordAutoPinReleasedUnused();
+            }
+            newFileViews.set(fvKey, { ...view, pinned: false, pinnedShape: undefined, autoPinnedAt: undefined, lastAccessed: Date.now() });
             fileViewsChanged = true;
             count++;
           }
         }
       } else {
-        // h:fv:<hash> route first — TS-only per Section 9 boundary rule.
-        const fvHashIndex = new Map<string, FileView>();
-        for (const view of state.fileViews.values()) fvHashIndex.set(view.hash, view);
         for (const h of hashes) {
-          if (h.startsWith('h:fv:')) {
-            const view = fvHashIndex.get(h);
-            if (view) unpinViewByKey(view.filePath);
+          // Unified ref resolution: views first (retention primitive), chunks
+          // fallback. Model-supplied short hashes resolve to either store.
+          trackRefCollision(h, newFileViews, newChunks);
+          const viewHit = findViewByRef(newFileViews, h);
+          if (viewHit) {
+            unpinViewByKey(viewHit[0]);
             continue;
           }
           const found = findChunkByRef(newChunks, h);
@@ -6795,31 +6894,73 @@ export const useContextStore = create<ContextStoreState>()(
       const key = fvNormalizePath(path);
       const view = state.fileViews.get(key);
       if (!view || view.pinned === pinned) return {};
+      // On unpin, honor the auto-pin telemetry contract — clear the marker
+      // and record "released unused" if applicable. Mirror of unpinChunks.
+      if (!pinned && view.autoPinnedAt != null && view.lastAccessed <= view.autoPinnedAt) {
+        recordAutoPinReleasedUnused();
+      }
       const next = new Map(state.fileViews);
-      next.set(key, { ...view, pinned, lastAccessed: Date.now() });
+      next.set(key, {
+        ...view,
+        pinned,
+        autoPinnedAt: pinned ? view.autoPinnedAt : undefined,
+        lastAccessed: Date.now(),
+      });
       return { fileViews: next };
     });
   },
 
   /**
-   * Resolve `h:fv:<hash>` refs to their constituent chunk hashes (h:<short>).
-   * Non-fv refs pass through unchanged. Used at boundaries that ship refs to
-   * systems (subagent handoff, Tauri IPC) that don't understand view hashes.
+   * Auto-pin a FileView from a read handler. Idempotent: returns false when
+   * already pinned (manual or auto); does not overwrite existing pin state.
+   * Sets `autoPinnedAt = Date.now()` so the unpin path can detect
+   * "released without re-access" (lastAccessed <= autoPinnedAt).
+   */
+  autoPinFileView: (path, shape) => {
+    let pinned = false;
+    set(state => {
+      const key = fvNormalizePath(path);
+      const view = state.fileViews.get(key);
+      if (!view || view.pinned) return {}; // no view, or already pinned → no-op
+      const now = Date.now();
+      const next = new Map(state.fileViews);
+      next.set(key, {
+        ...view,
+        pinned: true,
+        pinnedShape: shape,
+        autoPinnedAt: now,
+        // Intentionally do NOT advance lastAccessed here: the read that
+        // preceded this auto-pin already set it. Keeping it untouched makes
+        // `lastAccessed <= autoPinnedAt` the clean "never re-accessed" test.
+      });
+      pinned = true;
+      return { fileViews: next };
+    });
+    return pinned;
+  },
+
+  /**
+   * Expand any refs that resolve to a FileView into their constituent chunk
+   * hashes. Non-view refs pass through unchanged. Used at boundaries that
+   * ship refs to systems (subagent handoff, Tauri IPC) that don't model
+   * FileViews — they only understand content-addressed chunks.
+   *
+   * After hash-namespace unification, any ref may be a view or chunk; the
+   * filter identifies views via short-hash match (`findViewByRef`). A ref
+   * that matches a view AND a chunk expands the view (retention primitive).
    */
   resolveFileViewRefs: (refs: string[]): string[] => {
     const state = get();
-    const fvHashIndex = new Map<string, FileView>();
-    for (const view of state.fileViews.values()) fvHashIndex.set(view.hash, view);
     const out: string[] = [];
     for (const ref of refs) {
-      if (!ref.startsWith('h:fv:')) {
+      const viewHit = findViewByRef(state.fileViews, ref);
+      if (!viewHit) {
+        // Non-view ref — pass through. If the ref is unknown on the chunk
+        // side too, downstream resolvers handle it.
         out.push(ref);
         continue;
       }
-      // Always filter h:fv: refs — unknown or known, they must not leak past
-      // this boundary. Unknown refs drop silently; known refs expand.
-      const view = fvHashIndex.get(ref);
-      if (!view) continue;
+      const view = viewHit[1];
       for (const region of view.filledRegions) {
         for (const h of region.chunkHashes) {
           out.push(`h:${h.slice(0, SHORT_HASH_LEN)}`);

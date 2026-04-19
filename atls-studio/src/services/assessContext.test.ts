@@ -60,7 +60,8 @@ function makeView(opts: {
           origin: 'read',
         }]
       : [],
-    hash: opts.hash ?? `h:fv:${opts.path.replace(/[^a-z0-9]/gi, '').slice(0, 8)}`,
+    hash: opts.hash ?? `h:${opts.path.replace(/[^a-z0-9]/gi, '').slice(0, 6).padEnd(6, '0')}`,
+    shortHash: (opts.hash ?? `h:${opts.path.replace(/[^a-z0-9]/gi, '').slice(0, 6).padEnd(6, '0')}`).replace(/^h:/, '').replace(/^fv:/, '').slice(0, 6),
     lastAccessed: opts.lastAccessed ?? (NOW - 5 * DEFAULT_ROUND_MS),
     pinned: opts.pinned ?? true,
     freshness: opts.freshness ?? 'fresh',
@@ -267,6 +268,38 @@ describe('assessContext — selectCandidates', () => {
       { maxCandidates: 3 },
     );
     expect(cands).toHaveLength(3);
+  });
+
+  it('ranks auto-pinned views identically to manually-pinned views of the same age/size', () => {
+    // Under auto-pin-on-read the runtime sets `autoPinnedAt` on the view but
+    // ASSESS's ranking formula is pin-source-agnostic. Two views with the
+    // same tokens and idleRounds must tie in score regardless of whether the
+    // pin was auto or manual.
+    const auto: FileView = {
+      ...makeView({
+        path: 'src/auto.ts',
+        hash: 'h:fv:auto',
+        lastAccessed: NOW - 5 * DEFAULT_ROUND_MS,
+        filledTokens: 2000,
+      }),
+      autoPinnedAt: NOW - 5 * DEFAULT_ROUND_MS,
+    };
+    const manual = makeView({
+      path: 'src/manual.ts',
+      hash: 'h:fv:manual',
+      lastAccessed: NOW - 5 * DEFAULT_ROUND_MS,
+      filledTokens: 2000,
+    });
+    const cands = selectCandidates(makeInput({
+      fileViews: asMap('filePath', [auto, manual]),
+    }));
+    expect(cands).toHaveLength(2);
+    const [a, b] = cands;
+    expect(a.score).toBe(b.score);
+    expect(a.tokens).toBe(b.tokens);
+    expect(a.idleRounds).toBe(b.idleRounds);
+    // Order is ambiguous on a tie but both must be present.
+    expect(new Set(cands.map(c => c.hash))).toEqual(new Set(['h:fv:auto', 'h:fv:manual']));
   });
 });
 

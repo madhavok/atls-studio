@@ -118,13 +118,14 @@ describe('context handlers snapshot authority', () => {
     const result = await handleRead({ type: 'full', file_paths: ['src/demo.ts'] }, ctx);
 
     expect(result.ok).toBe(true);
-    // Primary ref is h:fv:<hash> (the FileView retention identity). The slice
-    // hash for the chunk itself travels on `slice_ref` for edit citation.
+    // Primary ref is the FileView's `h:<short>` (retention identity, unified
+    // namespace with chunks). The slice hash for the chunk itself travels on
+    // `slice_ref` for edit citation.
     const results = (result.content as { results: Array<Record<string, unknown>> }).results;
     expect(results).toHaveLength(1);
     expect(results[0]).toMatchObject({
       file: 'src/demo.ts',
-      h: expect.stringMatching(/^h:fv:/),
+      h: expect.stringMatching(/^h:[0-9a-f]{6}$/),
       content_hash: 'canon1234',
     });
     expect(results[0]).toHaveProperty('slice_ref');
@@ -184,10 +185,10 @@ describe('context handlers snapshot authority', () => {
     expect(result.ok).toBe(true);
     const results = (result.content as { results: Array<Record<string, unknown>> }).results;
     expect(results).toHaveLength(1);
-    // Primary ref is h:fv:<hash> — the file's stable FileView identity.
+    // Primary ref is the view's `h:<short>` — the file's stable FileView identity.
     expect(results[0]).toMatchObject({
       file: 'src/demo.ts',
-      h: expect.stringMatching(/^h:fv:/),
+      h: expect.stringMatching(/^h:[0-9a-f]{6}$/),
       content_hash: 'canon1234',
       selector: 'sig',
     });
@@ -241,10 +242,15 @@ describe('context handlers snapshot authority', () => {
     const result = await handleReadLines({ hash: 'h:deadbeefcafe1234567890abcdef', lines: '2-3' }, ctx);
 
     expect(result.ok).toBe(true);
-    expect(result.refs).toEqual(['h:deadbeefcafe:2-3']);
+    // Primary ref is the view's `h:<short>` — read.lines now ensures a FileView
+    // for the file (even without a prior rs), so the retention ref is stable
+    // across subsequent reads. Slice ref lives on `content.slice_ref` for citations.
+    expect(result.refs).toHaveLength(1);
+    expect(result.refs?.[0]).toMatch(/^h:[0-9a-f]{6}$/);
     expect(result.content).toMatchObject({
       file: 'src/demo.ts',
       content_hash: 'deadbeefcafe1234567890abcdef',
+      slice_ref: 'h:deadbeefcafe:2-3',
     });
   });
 
@@ -415,9 +421,11 @@ describe('context handlers validation and errors', () => {
     expect(r.error).toMatch(/no such ref/);
   });
 
-  it('handleShape resolves h:fv: refs by rendering the FileView block (no Rust round-trip)', async () => {
+  it('handleShape resolves view refs by rendering the FileView block (no Rust round-trip)', async () => {
     // Build a FileView for src/foo.ts via the store's addChunk readSpan path
-    // (same pattern used in fileViewPin.test.ts).
+    // (same pattern used in fileViewPin.test.ts). Under the unified h:<short>
+    // namespace, the view's ref looks identical to any chunk ref — the handler
+    // disambiguates by short-hash match against the views map.
     const store = useContextStore.getState();
     store.addChunk(
       '  10|const a = 1;',
@@ -429,35 +437,23 @@ describe('context handlers validation and errors', () => {
         readSpan: { filePath: 'src/foo.ts', sourceRevision: 'rev1', startLine: 10, endLine: 10 },
       },
     );
-    const fvHash = useContextStore.getState().getFileView('src/foo.ts')!.hash;
-    expect(fvHash.startsWith('h:fv:')).toBe(true);
+    const view = useContextStore.getState().getFileView('src/foo.ts')!;
+    expect(view.hash).toMatch(/^h:[0-9a-f]{6}$/);
 
-    const r = await handleShape({ hash: fvHash }, makeCtx());
+    const r = await handleShape({ hash: view.hash }, makeCtx());
     expect(r.ok).toBe(true);
     expect(r.summary).toMatch(/FileView src\/foo\.ts/);
     expect(r.refs?.[0]).toMatch(/^h:/);
-    // Rust resolver MUST NOT be called for h:fv: refs — the whole point.
+    // Rust resolver MUST NOT be called for refs that match a known view —
+    // that's the whole point of the frontend short-circuit.
     expect(invokeWithTimeoutMock).not.toHaveBeenCalled();
     // The rendered block must land as a chunk the model can reference.
-    // `addChunk` returns a short hash; `chunk.shortHash` is the matching field.
     const chunkShort = r.refs![0].replace(/^h:/, '');
     const chunk = Array.from(useContextStore.getState().chunks.values())
       .find(c => c.shortHash === chunkShort);
     expect(chunk).toBeDefined();
-    // The rendered block carries the FileView fence + path header.
     expect(chunk!.content).toContain('src/foo.ts');
     expect(chunk!.content).toContain('===');
-  });
-
-  it('handleShape on unknown h:fv: returns an actionable error (not "Invalid h:ref syntax")', async () => {
-    const r = await handleShape({ hash: 'h:fv:0000000000000000' }, makeCtx());
-    expect(r.ok).toBe(false);
-    // Must NOT forward to Rust's "Invalid h:ref syntax" — that was the
-    // original pain point.
-    expect(r.error).not.toMatch(/Invalid h:ref syntax/);
-    expect(r.error).toMatch(/FileView/);
-    expect(r.error).toMatch(/not found|dropped|never registered/);
-    expect(invokeWithTimeoutMock).not.toHaveBeenCalled();
   });
 
   it('handleEmit errors when content missing', async () => {

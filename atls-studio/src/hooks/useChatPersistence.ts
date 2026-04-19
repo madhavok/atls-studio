@@ -26,6 +26,7 @@ import { getCurrentWindow } from '@tauri-apps/api/window';
 import { getGeminiCacheSnapshot, restoreGeminiCacheSnapshot, type GeminiCacheSnapshot } from '../services/aiService';
 import { classifyStageSnippet, MAX_PERSISTENT_STAGE_ENTRY_TOKENS } from '../services/promptMemory';
 import { emptyRollingSummary } from '../services/historyDistiller';
+import { migrateLegacyFileView } from '../services/fileViewStore';
 import { useSwarmStore } from '../stores/swarmStore';
 import { serializeJournal, restoreJournal } from '../services/freshnessJournal';
 import { diagnoseSpinning } from '../services/spinDetector';
@@ -796,8 +797,12 @@ export function useChatPersistence() {
             } : {}),
             // v7+: restore FileView map so pins survive session reload. Older snapshots
             // leave fileViews empty — they repopulate from chunks on first read.
+            // Legacy `h:fv:<16>` view hashes migrate silently via `migrateLegacyFileView`
+            // (deterministic recompute; no new schema version needed).
             ...(memorySnapshot.version >= 7 ? {
-              fileViews: new Map(memorySnapshot.fileViews ?? []),
+              fileViews: new Map((memorySnapshot.fileViews ?? []).map(
+                ([k, v]) => [k, migrateLegacyFileView(v)] as [string, typeof v],
+              )),
             } : {}),
           });
           if (memorySnapshot.freshnessJournal?.length) {
@@ -1390,7 +1395,10 @@ export function useChatPersistence() {
       fileReadSpinByPath: snapshot.fileReadSpinByPath ?? {},
       fileReadSpinRanges: snapshot.fileReadSpinRanges ?? {},
       // v7+ snapshots carry fileViews; older ones default to empty (rebuilds on read).
-      fileViews: new Map(snapshot.fileViews ?? []),
+      // Migrate legacy `h:fv:<16>` view hashes → unified `h:<short>` on load.
+      fileViews: new Map((snapshot.fileViews ?? []).map(
+        ([k, v]) => [k, migrateLegacyFileView(v)] as [string, typeof v],
+      )),
     });
     if (snapshot.freshnessJournal?.length) {
       restoreJournal(snapshot.freshnessJournal);

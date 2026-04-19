@@ -139,6 +139,22 @@ export interface RoundSnapshot {
   assessFiredKey?: string;
   /** Number of candidates listed in the ASSESS block (0 when not fired). */
   assessCandidateCount?: number;
+
+  // --- Auto-pin on read telemetry ---
+  /** Count of FileViews auto-pinned by read handlers this round. */
+  autoPinsCreated?: number;
+  /** Count of auto-pinned FileViews released this round without ever being
+   *  re-accessed (`lastAccessed <= autoPinnedAt` at unpin time). Ratio
+   *  `autoPinsReleasedUnused / autoPinsCreated` is the ship-gate signal for
+   *  "is auto-pinning too aggressive?" — see `docs/auto-pin-on-read.md`. */
+  autoPinsReleasedUnused?: number;
+
+  // --- Unified hash namespace collision telemetry ---
+  /** Count of ref resolutions this round where a short hash matched BOTH a
+   *  FileView and a chunk. Non-zero observed values over many sessions would
+   *  justify bumping `SHORT_HASH_LEN` from 6 to 8. See the unify-hash-namespace
+   *  plan for precedence rules (views win). */
+  refCollisions?: number;
 }
 
 interface RoundHistoryState {

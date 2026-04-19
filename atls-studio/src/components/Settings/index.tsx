@@ -748,6 +748,28 @@ export function Settings({ isOpen, onClose }: SettingsProps) {
                   }`} />
                 </button>
               </div>
+
+              {/* Auto-Pin on Read */}
+              <div className="flex items-center justify-between">
+                <div>
+                  <span className="text-sm font-medium">Auto-Pin on Read</span>
+                  <p className="text-xs text-studio-muted">
+                    Reads (rs / rl / rc) auto-pin their FileView. Retention vocabulary
+                    collapses to release-only (pu / pc / dro); ASSESS surfaces stale pins
+                    for cleanup. Turn off to restore explicit `pi`-after-read.
+                  </p>
+                </div>
+                <button
+                  onClick={() => setLocalSettings(prev => ({ ...prev, autoPinReads: prev.autoPinReads === false ? true : false }))}
+                  className={`w-12 h-6 rounded-full transition-colors ${
+                    localSettings.autoPinReads !== false ? 'bg-studio-accent' : 'bg-studio-border'
+                  }`}
+                >
+                  <div className={`w-5 h-5 bg-white rounded-full shadow transition-transform ${
+                    localSettings.autoPinReads !== false ? 'translate-x-6' : 'translate-x-0.5'
+                  }`} />
+                </button>
+              </div>
             </div>
           )}
 

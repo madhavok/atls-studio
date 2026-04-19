@@ -12,7 +12,27 @@ import { parseHashRef } from '../../../utils/hashRefParsers';
 import { parseLineRanges } from '../../../utils/hashModifierParser';
 import { resolveRecencyInString } from '../../../utils/hashResolver';
 import { useRetentionStore } from '../../../stores/retentionStore';
+import { useAppStore } from '../../../stores/appStore';
 import { formatResult } from '../../../utils/toon';
+import { recordAutoPinCreated } from '../../autoPinTelemetry';
+
+/**
+ * Auto-pin a FileView after a read, when the `autoPinReads` setting is enabled.
+ * The FileView must already exist (call `ensureFileView` first). Idempotent —
+ * a no-op when the view is already pinned (manual or auto). On first-time
+ * auto-pin, increments the round-scoped `autoPinsCreated` telemetry counter.
+ *
+ * Kept as a module-local helper so every read path has one audit surface and
+ * ASSESS / retention-op compaction see a uniform pin shape. See
+ * `docs/auto-pin-on-read.md`.
+ */
+function autoPinViewAfterRead(ctx: HandlerContext, filePath: string, shape?: string): void {
+  if (useAppStore.getState().settings.autoPinReads === false) return;
+  const autoPin = ctx.store().autoPinFileView;
+  if (typeof autoPin !== 'function') return; // handler tests may stub a partial store
+  const pinned = autoPin(filePath, shape);
+  if (pinned) recordAutoPinCreated();
+}
 
 interface ResolvedHashContent {
   content: string;
@@ -203,7 +223,7 @@ function ingestStandardContextItems(
     const tk = countTokensSync(content);
     io.totalTokensDelta += tk;
 
-    // Primary ref: the FileView's stable h:fv:<hash> for file-backed reads,
+    // Primary ref: the FileView's stable h:<short> for file-backed reads,
     // so the model pins one hash per file regardless of shape/slice/full.
     // Tree reads are directory listings (no FileView) — keep the chunk ref.
     let primaryRef = `h:${hash}`;
@@ -213,6 +233,7 @@ function ingestStandardContextItems(
       const viewRef = ctx.store().ensureFileView(src, backendHash);
       ctx.store().ensureFileViewSkeleton(src, backendHash).catch(() => {});
       primaryRef = viewRef;
+      autoPinViewAfterRead(ctx, src);
     }
     io.allRefs.push(primaryRef);
     io.readResults.push({
@@ -316,6 +337,7 @@ export const handleLoad: OpHandler = async (params, ctx) => {
     if (filePaths.length === 1 && backendHash) {
       primaryRef = ctx.store().ensureFileView(filePaths[0], backendHash);
       ctx.store().ensureFileViewSkeleton(filePaths[0], backendHash).catch(() => {});
+      autoPinViewAfterRead(ctx, filePaths[0]);
     }
     lines.push(`load: ${filePaths.join(', ')} → ${primaryRef} (${(tokens / 1000).toFixed(1)}k tk)`);
     return { kind: 'file_refs', ok: true, refs: [primaryRef], summary: lines.join('\n'), tokens };
@@ -412,6 +434,7 @@ export const handleRead: OpHandler = async (params, ctx) => {
         totalTokensDelta += tk;
         const viewRef = ctx.store().ensureFileView(ti.source, sourceRevision);
         ctx.store().ensureFileViewSkeleton(ti.source, sourceRevision).catch(() => {});
+        autoPinViewAfterRead(ctx, ti.source);
         allRefs.push(viewRef);
         readResults.push({
           file: ti.source,
@@ -680,13 +703,19 @@ export const handleReadLines: OpHandler = async (params, ctx) => {
       formatLineRanges(actualRange) || formatLineRanges(targetRange) || (typeof rlLines === 'string' ? rlLines.trim() : '');
     const baseRef = normalizeHashRefToken(rlH);
     const sliceRef = lineSpecForRef ? `${baseRef}:${lineSpecForRef}` : baseRef;
-    // Retention ref = h:fv:<hash> when we have a real file path (not engram reads
+    // Retention ref = view's h:<short> when we have a real file path (not engram reads
     // where rlFile is 'engram:h:XXXX'). The slice ref remains for edit citation
     // + freshness and is carried in `artifact.slice_ref` below.
     const rlStore = ctx.store();
-    const fvRef = rlFile && rlContentHash && !rlFile.startsWith('engram:')
-      ? rlStore.getFileView(rlFile)?.hash
-      : undefined;
+    let fvRef: string | undefined;
+    if (rlFile && rlContentHash && !rlFile.startsWith('engram:')) {
+      // Ensure a FileView exists so the read has a pinnable retention ref
+      // even when `rl` is the first op on this file (no prior `rs`). Auto-pin
+      // immediately after so the model sees one consistent pin shape.
+      fvRef = rlStore.ensureFileView(rlFile, rlContentHash);
+      rlStore.ensureFileViewSkeleton(rlFile, rlContentHash).catch(() => {});
+      autoPinViewAfterRead(ctx, rlFile);
+    }
     const primaryRef = fvRef ?? sliceRef;
     const rlRefs = [primaryRef];
     const rlFreshnessHint = getFreshnessHintForRefs(rlStore, [sliceRef]);
@@ -930,38 +959,26 @@ export const handleShape: OpHandler = async (params, ctx) => {
 
   const rawRef = hashRef.startsWith('h:') ? hashRef : `h:${hashRef}`;
 
-  // FileView refs resolve entirely frontend-side: the view is built in the
-  // context store, rendered by fileViewRender, and already visible in WM.
-  // Rust's `resolve_hash_ref` doesn't know about `h:fv:…`, so we short-
-  // circuit here and return the same rendered block the model would see
-  // in its WORKING MEMORY section.
-  if (rawRef.startsWith('h:fv:')) {
-    const store = ctx.store();
-    const views = store.fileViews;
-    if (!views) {
-      return err(
-        `shape: ERROR ${rawRef} is a FileView ref but the store does not expose fileViews — no view access in this context`,
-      );
-    }
-    // FileView keys are per-path; index by the view's own `h:fv:` hash.
-    let view: import('../../fileViewStore').FileView | undefined;
-    for (const v of views.values()) {
-      if (v.hash === rawRef) { view = v; break; }
-    }
-    if (!view) {
-      return err(
-        `shape: ERROR ${rawRef} not found — FileView was dropped or never registered. FileView blocks auto-render in WORKING MEMORY; no explicit shape call is needed for a live view.`,
-      );
-    }
+  // Unified hash namespace: a ref could be either a FileView or a chunk. Views
+  // resolve entirely frontend-side (the store owns them, `fileViewRender`
+  // already composed the block). If the ref matches a view, short-circuit
+  // and return the rendered block. Otherwise fall through to Rust.
+  const store = ctx.store();
+  const views = store.fileViews;
+  const shortLookup = rawRef.replace(/^h:/, '').split(':')[0];
+  const viewMatch = views ? [...views.values()].find(v =>
+    v.shortHash === shortLookup || v.shortHash.startsWith(shortLookup) || shortLookup.startsWith(v.shortHash)
+  ) : undefined;
+  if (viewMatch) {
     try {
       const { renderFileViewBlock } = await import('../../fileViewRender');
       const { useRoundHistoryStore } = await import('../../../stores/roundHistoryStore');
       const currentRound = useRoundHistoryStore.getState().snapshots.length;
-      const content = renderFileViewBlock(view, { currentRound });
-      const hash = store.addChunk(content, 'smart', view.filePath);
+      const content = renderFileViewBlock(viewMatch, { currentRound });
+      const hash = store.addChunk(content, 'smart', viewMatch.filePath);
       const tokens = countTokensSync(content);
       return ok(
-        `shape: ${rawRef} → h:${hash} (${tokens}tk, FileView ${view.filePath})`,
+        `shape: ${rawRef} → h:${hash} (${tokens}tk, FileView ${viewMatch.filePath})`,
         [`h:${hash}`],
         tokens,
       );
@@ -1096,10 +1113,11 @@ async function _processShapedFile(
   ctx.store().clearSuspect(source);
   ctx.store().reconcileSourceRevision(source, canonicalContentHash);
   // FileView is the canonical surface for shaped reads. Create the view
-  // synchronously so the h:fv:<hash> retention ref we return below is pinnable
+  // synchronously so the h:<short> retention ref we return below is pinnable
   // immediately; skeleton fetch lands async alongside.
   const viewRef = ctx.store().ensureFileView(source, canonicalContentHash);
   ctx.store().ensureFileViewSkeleton(source, canonicalContentHash).catch(() => {});
+  autoPinViewAfterRead(ctx, source, shape);
   ctx.store().recordMemoryEvent({ action: 'read', reason: 'read_shaped', source, newRevision: canonicalContentHash, refs: [viewRef] });
   lines.push(`read_shaped: ${source} → ${viewRef} (full:${fullTokens}tk, shaped:${shapedTokens}tk, saved:${savedPct}%)${foldHint} | pin ${viewRef} to keep the FileView across rounds; rl fills ranges; edits cite @h:XXX from the view header.`);
   return {

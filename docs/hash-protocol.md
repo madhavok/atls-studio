@@ -98,24 +98,25 @@ UHPP provides a rich reference syntax for addressing, slicing, and operating on 
 ```
 h:a1b2c3                 → Direct hash reference (6-16 hex chars)
 h:a1b2c3d4e5f6           → Full 16-char hash
-h:fv:XXXXXXXX            → FileView reference (unified file-content surface)
 h:bb:key                 → Blackboard entry by key (see §Blackboard References)
 ```
 
 Resolution: exact map key → exact `shortHash` → unambiguous prefix match (≥8 chars).
 
-### FileView refs (`h:fv:<hash>`) — one retention ref per file
+### FileView refs — one retention ref per file (unified namespace)
 
-A FileView is the per-path unified surface (skeleton + filled regions + optional `fullBody`) for one source file at one revision. Identity is `h:fv:<fnv(normalizedPath + sourceRevision)>` (16-char FNV slice) — **stable across fills**, so a ref emitted by a first-touch `rs shape:sig` stays valid as subsequent `rl` slices or `rf type:full` land in the same view.
+A FileView is the per-path unified surface (skeleton + filled regions + optional `fullBody`) for one source file at one revision. Identity is `h:<SHORT_HASH_LEN hex>` derived from `(normalizedPath, sourceRevision)` — **stable across fills**, so a ref emitted by a first-touch `rs shape:sig` stays valid as subsequent `rl` slices or `rf type:full` land in the same view.
 
-Read handlers (`read.shaped`, `read.lines`, `read.file`, `read.context`) return `h:fv:<hash>` as their primary ref for every file-backed read. This is the **single retention identity per file** — the model pins / unpins / drops that one ref, and any slice hash for the same file transparently routes to the view (see [engrams.md — FileView lifecycle](./engrams.md#fileview-lifecycle-pin-gated-rollout)).
+View refs and chunk refs share the same `h:<short>` namespace. The model sees one format. The runtime disambiguates via `resolveAnyRef` in [`contextStore.ts`](../atls-studio/src/stores/contextStore.ts): views win on short-hash collision (retention primitive), chunks fall through. Collision counts are tracked per-round on `RoundSnapshot.refCollisions`.
 
-| Op | Behavior on `h:fv:<hash>` (or any slice ref whose source has a FileView) |
+Read handlers (`read.shaped`, `read.lines`, `read.file`, `read.context`) return this `h:<short>` as their primary ref for every file-backed read. This is the **single retention identity per file** — the model pins / unpins / drops that one ref, and any slice hash for the same file transparently routes to the view (see [engrams.md — FileView lifecycle](./engrams.md#fileview-lifecycle-pin-gated-rollout)).
+
+| Op | Behavior on a view ref (or any slice ref whose source has a FileView) |
 |----|-------------------------------------------------------------------------|
 | `session.pin` | Pins the view (renders + charges tokens). Non-file chunks still pin at chunk level. |
 | `session.unpin` / wildcard `*` | Unpins the view. View stays in state (dormant, 0 prompt cost); re-pin instantly restores it. |
 | `session.drop` | Drops the view entry and all backing chunks — model writes one ref, runtime cleans up the whole file's working-memory footprint. |
-| Subagent handoff / Tauri IPC | `h:fv:` never crosses the TS↔Rust boundary — `resolveFileViewRefs` in [`contextStore.ts`](../atls-studio/src/stores/contextStore.ts) expands a view ref into its constituent chunk hashes before ship-out. Unknown `h:fv:` refs drop silently. |
+| Subagent handoff / Tauri IPC | View refs never cross the TS↔Rust boundary — `resolveFileViewRefs` in [`contextStore.ts`](../atls-studio/src/stores/contextStore.ts) expands any ref that matches a view into its constituent chunk hashes before ship-out. Non-view refs pass through. |
 
 FileViews are **rendered outside ACTIVE ENGRAMS** in their own `## FILE VIEWS` block (see [prompt-assembly.md](./prompt-assembly.md)); chunks whose hashes back a pinned view are filtered from ACTIVE ENGRAMS to prevent double-render.
 
@@ -123,7 +124,7 @@ Three hash roles coexist for file content — don't confuse them:
 
 | Role | Form | Where it comes from | What it's used for |
 |------|------|---------------------|---------------------|
-| Retention | `h:fv:<16>` | Read handlers' primary ref | `pi` / `pu` / `dro` — one per file |
+| Retention | `h:<short>` (view-derived) | Read handlers' primary ref | `pi` / `pu` / `dro` — one per file |
 | Edit citation | `h:<sourceRevision>` | `@h:XXX` in the FileView block header | `content_hash` on `change.edit`, path refs like `f:h:...:L-M` |
 | Slice / range | `h:<chunkHash>` | Search results, edit `edits_resolved`, diff refs, inline `content:"h:..."` | Citing a specific region or piece of content — not for retention |
 

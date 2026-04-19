@@ -85,7 +85,7 @@ Tokens saved by selecting sets and views instead of enumerating members.
 | SP5 | **Meta modifiers** (`:tokens`, `:meta`, `:lang`, `:source`) | Same | Zero-content metadata retrieval |
 | SP6 | **Content-as-ref inline resolution** — `"content": "h:XXXX:fn(name):dedent"` resolves to extracted content at execution time | [src-tauri/src/hash_resolver.rs](../atls-studio/src-tauri/src/hash_resolver.rs), [services/batch/executor.ts](../atls-studio/src/services/batch/executor.ts) | Model references code instead of copying it verbatim — large savings on `change.create` / `change.refactor` |
 | SP7 | **Line-range refs** (`h:XXXX:15-50`, `h:XXXX:45-`) | UHPP | Slice without a separate read |
-| SP8 | **Unified FileView** (`h:fv:<hash>`) — one canonical surface per file, skeleton + fills + optional `fullBody`, addressable by a single ref regardless of how many slice reads built it | [services/fileViewStore.ts](../atls-studio/src/services/fileViewStore.ts), [services/fileViewRender.ts](../atls-studio/src/services/fileViewRender.ts); see [engrams.md — FileView](./engrams.md#fileview--the-unified-file-content-surface) | One pin ref covers arbitrary many regions; removes per-read hash bookkeeping; unpinned views are dormant (zero prompt cost) so the model doesn't have to emit explicit unload calls to roll file content out |
+| SP8 | **Unified FileView** (`h:<short>`, shared namespace with chunks) — one canonical surface per file, skeleton + fills + optional `fullBody`, addressable by a single ref regardless of how many slice reads built it | [services/fileViewStore.ts](../atls-studio/src/services/fileViewStore.ts), [services/fileViewRender.ts](../atls-studio/src/services/fileViewRender.ts); see [engrams.md — FileView](./engrams.md#fileview--the-unified-file-content-surface) | One pin ref covers arbitrary many regions; removes per-read hash bookkeeping; unpinned views are dormant (zero prompt cost) so the model doesn't have to emit explicit unload calls to roll file content out |
 
 ---
 
@@ -169,7 +169,7 @@ For completeness, mechanisms that exist in the codebase but are not active in th
 - [api-economics.md](./api-economics.md) — input-side caching and the economic mismatch
 - [batch-executor.md](./batch-executor.md) — the batch surface itself
 - [engrams.md](./engrams.md) — FileView as the unified file-content surface, pin-gated rollout, auto-heal reconcile
-- [hash-protocol.md](./hash-protocol.md) — UHPP reference syntax including `h:fv:<hash>` (Axes 3, 4)
+- [hash-protocol.md](./hash-protocol.md) — UHPP reference syntax including FileView refs in the unified `h:<short>` namespace (Axes 3, 4)
 - [history-compression.md](./history-compression.md) — transcript compression (Axis 6)
 - [prompt-assembly.md](./prompt-assembly.md) — where state, history, and summary attach in the payload (including `## FILE VIEWS` block)
 - [input-compression-merit.md](./input-compression-merit.md) — merit assessment for an input-side dictionary + ditto-mark compressor on tabular tool results; maps the proposal onto axes L7/L8/L9/TR1/TR2 and scopes a measured spike

@@ -32,10 +32,10 @@ function getSteps(msg: Msg): Array<Record<string, unknown>> {
   return (blocks[0].input?.steps ?? []) as Array<Record<string, unknown>>;
 }
 
-describe('compactRetentionOps — tool_use step args', () => {
+describe('compactRetentionOps — tool_use step args (ephemeral)', () => {
   beforeEach(() => resetStore());
 
-  it('replaces hashes array with count-only stub for retention ops', () => {
+  it('strips with and in from retention steps — nothing handler-parseable remains', () => {
     const history: Msg[] = [
       { role: 'user', content: 'go' },
       mkAssistant([
@@ -44,12 +44,17 @@ describe('compactRetentionOps — tool_use step args', () => {
     ];
     const { stepsCompacted } = compactRetentionOps(history, []);
     expect(stepsCompacted).toBe(1);
-    const steps = getSteps(history[1]);
-    expect(steps[0].with).toEqual({ n: 3 });
-    expect(steps[0]._compacted).toBe(true);
+    const step = getSteps(history[1])[0];
+    // Persisted shape is {id, use} only — no args, no markers.
+    expect(step).toEqual({ id: 'u1', use: 'session.unpin' });
+    expect(step.with).toBeUndefined();
+    expect(step._compacted).toBeUndefined();
+    expect(step._receipt).toBeUndefined();
+    // JSON-serialization-stable: a serialized observer sees nothing beyond id+use.
+    expect(JSON.parse(JSON.stringify(step))).toEqual({ id: 'u1', use: 'session.unpin' });
   });
 
-  it('handles hashes as string (single ref) → n:1', () => {
+  it('strips with for pin with single-string hashes', () => {
     const history: Msg[] = [
       { role: 'user', content: 'go' },
       mkAssistant([
@@ -57,10 +62,12 @@ describe('compactRetentionOps — tool_use step args', () => {
       ]),
     ];
     compactRetentionOps(history, []);
-    expect(getSteps(history[1])[0].with).toEqual({ n: 1 });
+    const step = getSteps(history[1])[0];
+    expect(step.with).toBeUndefined();
+    expect(step).toEqual({ id: 'p1', use: 'session.pin' });
   });
 
-  it('handles bb.delete keys array', () => {
+  it('strips with for bb.delete (keys array)', () => {
     const history: Msg[] = [
       { role: 'user', content: 'go' },
       mkAssistant([
@@ -68,10 +75,10 @@ describe('compactRetentionOps — tool_use step args', () => {
       ]),
     ];
     compactRetentionOps(history, []);
-    expect(getSteps(history[1])[0].with).toEqual({ n: 2 });
+    expect(getSteps(history[1])[0]).toEqual({ id: 'd1', use: 'session.bb.delete' });
   });
 
-  it('drops step.in dataflow reference (also a ghost-ref vector)', () => {
+  it('strips step.in dataflow reference (also a ghost-ref vector)', () => {
     const history: Msg[] = [
       { role: 'user', content: 'go' },
       mkAssistant([
@@ -86,11 +93,11 @@ describe('compactRetentionOps — tool_use step args', () => {
     expect(stepsCompacted).toBe(1);
     const step = getSteps(history[1])[0];
     expect(step.in).toBeUndefined();
-    expect(step.with).toEqual({ n: 0 });
-    expect(step._compacted).toBe(true);
+    expect(step.with).toBeUndefined();
+    expect(step).toEqual({ id: 'p1', use: 'session.pin' });
   });
 
-  it('skips scope-based drop with no hashes/keys/in (no ghost-ref surface)', () => {
+  it('strips scope-based drop args too — no args survives on any retention step', () => {
     const history: Msg[] = [
       { role: 'user', content: 'go' },
       mkAssistant([
@@ -98,8 +105,11 @@ describe('compactRetentionOps — tool_use step args', () => {
       ]),
     ];
     const { stepsCompacted } = compactRetentionOps(history, []);
-    expect(stepsCompacted).toBe(0);
-    expect(getSteps(history[1])[0].with).toEqual({ scope: 'archived', max: 25 });
+    expect(stepsCompacted).toBe(1);
+    const step = getSteps(history[1])[0];
+    // Ephemeral principle: manifest carries state; scope arg not needed in history.
+    expect(step.with).toBeUndefined();
+    expect(step).toEqual({ id: 'd1', use: 'session.drop' });
   });
 
   it('leaves non-retention ops alone in mixed batch', () => {
@@ -113,19 +123,19 @@ describe('compactRetentionOps — tool_use step args', () => {
       ]),
     ];
     const { stepsCompacted } = compactRetentionOps(history, []);
-    expect(stepsCompacted).toBe(2);
+    expect(stepsCompacted).toBe(2); // pin + unpin
     const steps = getSteps(history[1]);
-    expect(steps[0].with).toEqual({ ps: 'src/foo.ts', shape: 'sig' });
-    expect(steps[1].with).toEqual({ n: 2 });
-    expect(steps[2].with).toEqual({ key: 'finding:x', content: 'clear — no issues' });
-    expect(steps[3].with).toEqual({ n: 1 });
+    expect(steps[0].with).toEqual({ ps: 'src/foo.ts', shape: 'sig' }); // read preserved
+    expect(steps[1].with).toBeUndefined(); // pin stripped
+    expect(steps[2].with).toEqual({ key: 'finding:x', content: 'clear — no issues' }); // bb.write preserved
+    expect(steps[3].with).toBeUndefined(); // unpin stripped
   });
 });
 
-describe('compactRetentionOps — tool_result per-step lines', () => {
+describe('compactRetentionOps — tool_result per-step lines (ephemeral)', () => {
   beforeEach(() => resetStore());
 
-  it('collapses OK retention lines to terse form', () => {
+  it('removes OK retention lines entirely — not collapsed to ok', () => {
     const tr = mkToolResult('tu_1', [
       '[OK] u1 (session.unpin): unpin: 4 chunks unpinned (1ms)',
       '[OK] u2 (session.unpin): unpin: 3 chunks unpinned (19ms)',
@@ -135,25 +145,24 @@ describe('compactRetentionOps — tool_result per-step lines', () => {
     ].join('\n'));
     const { resultLinesCompacted } = compactRetentionOps([], [tr]);
     expect(resultLinesCompacted).toBe(4);
-    expect(tr.content).toBe([
-      '[OK] u1 (session.unpin): ok',
-      '[OK] u2 (session.unpin): ok',
-      '[OK] d1 (session.bb.delete): ok',
-      '[OK] d2 (session.drop): ok',
-      '[ATLS] 4 steps: 4 pass (89ms) | ok',
-    ].join('\n'));
+    // Only the footer remains.
+    expect(tr.content).toBe('[ATLS] 4 steps: 4 pass (89ms) | ok');
+    // No retention OK chatter left behind.
+    expect(tr.content).not.toContain('session.unpin');
+    expect(tr.content).not.toContain('session.drop');
+    expect(tr.content).not.toContain('session.bb.delete');
+    // No per-step "[OK] <id> (<op>): ok" stubs (the old spin surface). The
+    // [ATLS] footer legitimately ends with "| ok" and is untouched.
+    expect(tr.content).not.toMatch(/^\[OK\]\s+\S+\s+\(\S+\):\s+ok$/m);
   });
 
-  it('strips hash-bearing drop tails (ghost-ref vector)', () => {
+  it('strips hash-bearing drop tails completely (ghost-ref vector)', () => {
     const tr = mkToolResult('tu_1', [
       '[OK] d1 (session.drop): drop: 12 chunks permanently dropped (5.8k freed, manifest entries kept) | dropped: [h:0b897d session.bb.write, h:cb829d task_complete, h:e135b9 session.unload +17]',
       '[ATLS] 1 steps: 1 pass (4ms) | ok',
     ].join('\n'));
     compactRetentionOps([], [tr]);
-    expect(tr.content).toBe([
-      '[OK] d1 (session.drop): ok',
-      '[ATLS] 1 steps: 1 pass (4ms) | ok',
-    ].join('\n'));
+    expect(tr.content).toBe('[ATLS] 1 steps: 1 pass (4ms) | ok');
     expect(tr.content).not.toContain('h:0b897d');
     expect(tr.content).not.toContain('h:cb829d');
   });
@@ -166,7 +175,9 @@ describe('compactRetentionOps — tool_result per-step lines', () => {
     ].join('\n'));
     const { resultLinesCompacted } = compactRetentionOps([], [tr]);
     expect(resultLinesCompacted).toBe(1);
-    expect(tr.content).toContain('[OK] u1 (session.unpin): ok');
+    // OK unpin is gone.
+    expect(tr.content).not.toContain('session.unpin');
+    // FAIL line kept verbatim.
     expect(tr.content).toContain("[FAIL] p1 (session.pin): pin: ERROR step 'r1' produced no h:refs");
     expect(tr.content).toContain('[ATLS] 2 steps: 1 pass, 1 fail (667ms) | failed');
   });
@@ -186,7 +197,8 @@ describe('compactRetentionOps — tool_result per-step lines', () => {
     expect(tr.content).toContain('[OK] b1 (session.bb.write): bb_write: h:bb:finding:x');
     expect(tr.content).toContain('[OK] s1 (search.code): search: foo');
     expect(tr.content).toContain('[OK] v1 (verify.build): verify.build: OK');
-    expect(tr.content).toContain('[OK] u1 (session.unpin): ok');
+    // Unpin line removed, not rewritten.
+    expect(tr.content).not.toContain('session.unpin');
   });
 
   it('ignores non-batch tool_result content (no per-step lines)', () => {
@@ -212,17 +224,22 @@ describe('compactRetentionOps — idempotence', () => {
     const second = compactRetentionOps(history, []);
     expect(first.stepsCompacted).toBe(1);
     expect(second.stepsCompacted).toBe(0);
+    // WeakSet idempotence: the step object is flagged, so a second pass is a no-op.
     expect(JSON.stringify(history[1])).toBe(snapshot);
   });
 
   it('running twice equals running once (tool_result)', () => {
-    const tr = mkToolResult('tu_1', '[OK] u1 (session.unpin): unpin: 3 chunks unpinned (19ms)');
+    const tr = mkToolResult('tu_1',
+      '[OK] u1 (session.unpin): unpin: 3 chunks unpinned (19ms)\n[ATLS] 1 steps: 1 pass | ok',
+    );
     const first = compactRetentionOps([], [tr]);
     const snapshot = tr.content;
     const second = compactRetentionOps([], [tr]);
     expect(first.resultLinesCompacted).toBe(1);
+    // Nothing to strip the second time — the OK line is gone.
     expect(second.resultLinesCompacted).toBe(0);
     expect(tr.content).toBe(snapshot);
+    expect(tr.content).toBe('[ATLS] 1 steps: 1 pass | ok');
   });
 });
 
@@ -231,7 +248,6 @@ describe('compactRetentionOps — integration with stub + deflate', () => {
 
   it('plays nicely with stubBatchToolUseInputs (stub runs first on big batches)', () => {
     // Build a batch large enough (>=80tk) to trigger stubBatchToolUseInputs.
-    // 15 steps × meaty args should cross the threshold.
     const steps: Array<Record<string, unknown>> = [];
     for (let i = 0; i < 15; i++) {
       steps.push({
@@ -269,7 +285,9 @@ describe('compactRetentionOps — integration with stub + deflate', () => {
 
     const { stepsCompacted } = compactRetentionOps(history, []);
     expect(stepsCompacted).toBe(1);
-    expect(getSteps(history[1])[0].with).toEqual({ n: 1 });
+    const step = getSteps(history[1])[0];
+    expect(step.with).toBeUndefined();
+    expect(step).toEqual({ id: 'u1', use: 'session.unpin' });
   });
 
   it('deflateToolResults still functions on content after compaction', () => {
@@ -281,9 +299,8 @@ describe('compactRetentionOps — integration with stub + deflate', () => {
     ].join('\n'));
 
     compactRetentionOps([], [tr]);
-    expect(tr.content).toContain('[OK] u1 (session.unpin): ok');
-    // Non-retention line preserved for deflate to process:
-    expect(tr.content).toContain('read_shaped: atls-studio/src/foo.ts');
+    expect(tr.content).not.toContain('session.unpin'); // retention line removed
+    expect(tr.content).toContain('read_shaped: atls-studio/src/foo.ts'); // non-retention preserved
 
     // deflateToolResults may collapse or keep based on chunk presence, but it
     // must not error on the post-compaction content.
@@ -326,10 +343,58 @@ describe('compactRetentionOps — cache stability invariant', () => {
     const r1PrefixFromR1 = hashContentSync(JSON.stringify(JSON.parse(JSON.stringify([
       history[0], history[1], history[2],
     ]))));
-    // Recompute the original round-1 prefix hash by re-hashing from the slice
-    // taken before round-2 mutation. They must match.
     expect(r1PrefixAfterR2).toBe(r1PrefixFromR1);
     // Sanity: the full history hash changed (round 2 added content).
     expect(hashContentSync(JSON.stringify(history))).not.toBe(prefixHashAfterR1);
+  });
+});
+
+describe('compactRetentionOps — templating-spin prevention', () => {
+  beforeEach(() => resetStore());
+
+  it('persisted retention tool_use has no re-emittable shape', () => {
+    // This is the regression test for the spin that motivated the ephemeral
+    // rewrite: prior implementation left {n:5, _compacted:true} in the step,
+    // which the model templated verbatim as a fresh call with no real hashes.
+    const history: Msg[] = [
+      { role: 'user', content: 'go' },
+      mkAssistant([
+        { id: 'u1', use: 'session.unpin', with: { hashes: ['h:fv:A', 'h:fv:B', 'h:fv:C', 'h:fv:D', 'h:fv:E'] } },
+      ]),
+    ];
+    compactRetentionOps(history, []);
+
+    const step = getSteps(history[1])[0];
+    const serialized = JSON.stringify(step);
+
+    // Must not contain any of the old markers that made the shape callable-looking.
+    expect(serialized).not.toContain('_compacted');
+    expect(serialized).not.toContain('_receipt');
+    expect(serialized).not.toMatch(/"n":\s*\d/);
+    expect(serialized).not.toContain('with');
+    // Must not leak any of the original hashes.
+    expect(serialized).not.toContain('h:fv:');
+
+    // The only shape the model can template is id+use — and a call with no
+    // args triggers the handler's "no hashes supplied" err (see session.ts).
+    expect(JSON.parse(serialized)).toEqual({ id: 'u1', use: 'session.unpin' });
+  });
+
+  it('persisted retention tool_result has no re-emittable receipt', () => {
+    const tr = mkToolResult('tu_1', [
+      '[OK] u1 (session.unpin): unpin: 3 chunks unpinned (19ms)',
+      '[OK] p1 (session.pin): pin: 2 chunks pinned (5ms)',
+      '[OK] d1 (session.drop): drop: 5 chunks permanently dropped (1.2k freed)',
+      '[ATLS] 3 steps: 3 pass (25ms) | ok',
+    ].join('\n'));
+    compactRetentionOps([], [tr]);
+
+    // No per-step OK retention lines survive (the old spin surface).
+    expect(tr.content).not.toMatch(/^\[OK\]\s+\S+\s+\(session\.(pin|unpin|drop|unload|compact|bb\.delete)\)/m);
+    expect(tr.content).not.toContain('chunks unpinned');
+    expect(tr.content).not.toContain('chunks pinned');
+    expect(tr.content).not.toContain('chunks permanently dropped');
+    // Footer only.
+    expect(tr.content).toBe('[ATLS] 3 steps: 3 pass (25ms) | ok');
   });
 });

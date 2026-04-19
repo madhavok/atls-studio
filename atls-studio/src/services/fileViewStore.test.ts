@@ -244,7 +244,9 @@ describe('fileViewStore — createFileView + applyFillToView', () => {
     expect(v.filledRegions).toEqual([]);
     expect(v.totalLines).toBe(100);
     expect(v.pinned).toBe(false);
-    expect(v.hash).toMatch(/^h:fv:[0-9a-f]+$/);
+    expect(v.hash).toMatch(/^h:[0-9a-f]{6}$/);
+    expect(v.shortHash).toMatch(/^[0-9a-f]{6}$/);
+    expect(v.hash).toBe(`h:${v.shortHash}`);
   });
 
   it('applies a fill but keeps the hash stable (identity per file/revision)', () => {
@@ -258,8 +260,8 @@ describe('fileViewStore — createFileView + applyFillToView', () => {
     });
     expect(v1.filledRegions.length).toBe(1);
     expect(v1.filledRegions[0].start).toBe(42);
-    // Identity is stable across fills — same (filePath, revision) → same h:fv:<hash>.
-    // This is what makes h:fv: a usable single retention ref.
+    // Identity is stable across fills — same (filePath, revision) → same h:<short>.
+    // This is what makes the view ref a usable single retention identity.
     expect(v1.hash).toBe(v0.hash);
   });
 
@@ -551,8 +553,8 @@ describe('fileViewStore — hash identity', () => {
   });
 
   it('hash is stable per (path, revision) — unchanged by fills or fullBody', () => {
-    // This is the property that lets `h:fv:<hash>` be a valid single retention
-    // ref: identity does not drift as the view progressively fills.
+    // This is the property that lets the view's `h:<short>` be a valid single
+    // retention ref: identity does not drift as the view progressively fills.
     const base = computeFileViewHash('src/foo.ts', 'rev1');
     // Same inputs should yield the same hash — no region/fullBody arg in the
     // new signature at all.

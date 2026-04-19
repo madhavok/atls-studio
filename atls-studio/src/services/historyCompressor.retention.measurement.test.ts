@@ -139,11 +139,14 @@ describe('retention-op compaction — measurement gate', () => {
     );
 
     // Gate: meaningful reduction on the exact pattern that caused the spin.
-    // Per-round: step.with goes from `{hashes:[h:fv:X, h:fv:Y, h:fv:Z]}` (~20tk)
-    // to `{n:3}` (~3tk); tool_result tail goes from "unpin: 3 chunks unpinned (4ms)"
-    // (~8tk) to "ok" (~1tk). ~20tk saved per round × 20 rounds = ~400tk savings.
+    // Per-round under the ephemeral rewrite:
+    //   step.with {hashes:[h:fv:X,Y,Z]} (~20tk) → stripped entirely (~0tk).
+    //   tool_result "[OK] u1 (session.unpin): unpin: 3 chunks unpinned (4ms)"
+    //     (~18tk) → REMOVED (~0tk); only the [ATLS] footer remains.
+    // ~30-40tk saved per round × 20 rounds. Prior plan (collapse-to-ok) hit
+    // ~20%; full-line removal should clear 30%.
     expect(saved).toBeGreaterThan(0);
-    expect(pct).toBeGreaterThanOrEqual(15);
+    expect(pct).toBeGreaterThanOrEqual(30);
   });
 
   it('ghost-ref elimination — prior hashes gone from retention-op positions', () => {
@@ -161,31 +164,36 @@ describe('retention-op compaction — measurement gate', () => {
     }
 
     // Assertion 1: no ghost hash appears in any retention-op step.with.hashes.
-    // (compactRetentionOps replaced them all with {n:3}.)
+    // Under the ephemeral rewrite, step.with is stripped entirely — no
+    // retention step carries any hashes in history at all.
     const liveRetentionHashes = collectRetentionHashesInHistory(history);
     expect(liveRetentionHashes).toHaveLength(0);
 
-    // Assertion 2: no ghost hash appears in any retention-op tool_result line.
-    // (All `[OK] u1 (session.unpin): ...` lines collapsed to `ok`.)
+    // Assertion 2: no OK retention-op tool_result line survives anywhere in
+    // history. The whole line is gone, not just the tail. No ghost hash can
+    // leak back because the line carrying it has been removed.
     for (const msg of history) {
       if (msg.role !== 'user' || !Array.isArray(msg.content)) continue;
       for (const block of msg.content as Array<{ type: string; content?: string }>) {
         if (typeof block.content !== 'string') continue;
         const lines = block.content.split('\n');
         for (const line of lines) {
-          const m = /^\[OK\]\s+\S+\s+\((session\.\S+)\):\s+(.+)$/.exec(line);
+          const m = /^\[OK\]\s+\S+\s+\((session\.\S+)\):/.exec(line);
           if (!m) continue;
           const op = m[1];
-          const tail = m[2];
           const isRetention = op.startsWith('session.') &&
             ['unpin', 'pin', 'drop', 'unload', 'compact', 'bb.delete'].some((r) => op.endsWith(r));
-          if (!isRetention) continue;
-          expect(tail).toBe('ok');
-          for (const ghost of ghostHashes) {
-            expect(line).not.toContain(ghost);
-          }
+          // Retention OK lines should not exist at all in persisted history.
+          expect(isRetention).toBe(false);
         }
       }
+    }
+
+    // Assertion 3: no ghost hash appears anywhere in serialized history.
+    // The whole-line-removal makes this much stronger than the prior plan.
+    const serialized = JSON.stringify(history);
+    for (const ghost of ghostHashes) {
+      expect(serialized).not.toContain(ghost);
     }
   });
 

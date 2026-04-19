@@ -91,7 +91,7 @@ Through session operations, the model can manage its active working set within t
 
 | Operation | Effect | When to Use |
 |-----------|--------|-------------|
-| `session.pin` | Keep active across turns | File being actively edited |
+| `session.pin` | Keep active across turns | Non-read artifact (search, verify, exec result) or shape override. Reads auto-pin by default — see [auto-pin-on-read.md](./auto-pin-on-read.md). |
 | `session.unpin` | Allow dormancy on next turn | Done with a file for now |
 | `session.compact` | Replace content with structural digest | Need awareness but not full content |
 | `session.unload` | Move to archive | Done for this subtask, might need later |
@@ -123,14 +123,14 @@ A FileView is a **progressively-refined, hash-addressed view of one file at one 
 
 ### One hash per file
 
-FileView identity is **stable per `(filePath, sourceRevision)`** — it does not change as fills, the skeleton, or a `fullBody` are added. The model sees **one `h:fv:<hash>` ref per file**, regardless of how many reads built it up; pinning once retains the whole view across rounds. This is what restores the pre-FileView "flat refs" manageability: `pi` on any file read's ref pins the file's view, `pu` unpins it, `dro` drops the view plus its backing chunks — all cascading through a single retention identity.
+FileView identity is **stable per `(filePath, sourceRevision)`** — it does not change as fills, the skeleton, or a `fullBody` are added. The model sees **one `h:<short>` ref per file**, sharing the unified hash namespace with chunks (the runtime disambiguates internally via `resolveAnyRef`; views win on collision). Reads **auto-pin** their view (under the default `autoPinReads: true` flag), so the retention ref survives across rounds without the model emitting `pi`. This is what restores the pre-FileView "flat refs" manageability: every read lands as a retained view, `pu` unpins it, `dro` drops the view plus its backing chunks — all cascading through a single retention identity. Explicit `pi` remains for non-read artifacts (searches, analyses). See [auto-pin-on-read.md](./auto-pin-on-read.md).
 
 Retention routing for file-backed chunks:
 
 | Ref form the model emits | What actually happens |
 |--------------------------|-----------------------|
-| `pi h:fv:<hash>` | Pins the view directly. |
-| `pi h:<sliceHash>` (slice/chunk hash for a file) | Routes to the view — same effect as `pi h:fv:<hash>`. Backward-compatible with legacy prompts. |
+| `pi h:<short>` (view hash) | Pins the view directly. |
+| `pi h:<sliceHash>` (slice/chunk hash for a file) | Routes to the view — same effect as pinning the view's own hash. Shared namespace; runtime tries views first. |
 | `pu` / `dro` on any of the above | Mirror routing — unpin / drop act on the view. |
 | `pi` on a non-file chunk (search, BB, tool result) | Still chunk-level — these have no FileView. |
 
@@ -138,7 +138,7 @@ Retention routing for file-backed chunks:
 
 - **One view per path**, keyed by normalized file path. Multiple slice reads (`rl sl:42 el:56` followed by `rl sl:80 el:120`) merge into the same view as sorted, non-overlapping filled regions.
 - **Skeleton + fills**: the view carries a cheap signature-level skeleton — imports + folded bodies for code, heading outline with `[start-end]` section ranges for markdown, `~5–10%` of full-file tokens — overlaid with filled regions for ranges the agent has actually read. Full-body reads (`rf` / `read.file`) materialize `fullBody` directly and suppress the skeleton.
-- **Addressable as `h:fv:<hash>`**. Identity is `h:fv:<fnv(normalizedPath + sourceRevision)>` — stable across fills. Only revision bumps (source file edits) or path changes produce a new identity. Auto-healing reconcile updates the identity when the source revision changes.
+- **Addressable as `h:<short>`** (unified namespace; same shape as chunk refs). Identity is derived from `(normalizedPath, sourceRevision)` via the same FNV-then-truncate-to-`SHORT_HASH_LEN` pipeline used by chunks — stable across fills. Only revision bumps (source file edits) or path changes produce a new identity. Auto-healing reconcile updates the identity when the source revision changes.
 - **Rendered as a single block** in the prompt (`## FILE VIEWS`), file-ordered, with fold markers like `{ ... } [205-213]` showing what's still elided. Chunks whose hashes are covered by the view are filtered out of `## ACTIVE ENGRAMS` so the same bytes never appear twice.
 - **Auto-heal on revision change**: `same_file_prior_edit` causes shifted regions to rebase via the freshness journal's `lineDelta`; external / session-restore causes queue refetches for pinned views (capped per round); unpinned regions drop silently. Rebase failures surface as `[REMOVED was Lx-y]` markers rather than silent staleness.
 
@@ -155,7 +155,8 @@ interface FileView {
   filledRegions: FilledRegion[]; // sorted, non-overlapping ranges
   fullBody?: string;           // set if a full read landed or coverage auto-promoted
   fullBodyChunkHash?: string;
-  hash: string;                // h:fv:<16-char> — stable per (filePath, sourceRevision)
+  hash: string;                // h:<SHORT_HASH_LEN hex> — stable per (filePath, sourceRevision); shares namespace with chunks
+  shortHash: string;           // hex portion of hash, for O(1) prefix lookup
   pinned: boolean;             // lifecycle gate — see "FileView lifecycle" below
   pinnedShape?: string;
   removedMarkers?: Array<{ start: number; end: number }>; // rebase failures
@@ -191,22 +192,23 @@ Unpinned state stays warm in the `fileViews` map, so re-pin instantly restores t
 
 ### FileView operations
 
-Reads return `h:fv:<hash>` as the primary retention ref for the file:
+Reads return `h:<short>` as the primary retention ref for the file:
 
 | Operation | Effect | Returned ref |
 |-----------|--------|--------------|
-| `read.shaped shape:sig` (`rs`) | Creates or refreshes the view's skeleton at the current revision. Default first-touch for a new file. | `h:fv:<hash>` |
-| `read.lines sl:A el:B` (`rl`) | Creates a filled region `[A, B]`. Merges with adjacent or overlapping regions on the same view. | `h:fv:<hash>` (same identity as any prior read on this file at this revision) |
-| `read.file` / `read.context contextType:full` / `rf type:full` | Populates `fullBody` directly; subsequent slice reads merge into regions but `fullBody` remains authoritative for rendering. | `h:fv:<hash>` |
+| `read.shaped shape:sig` (`rs`) | Creates or refreshes the view's skeleton at the current revision. Default first-touch for a new file. | `h:<short>` |
+| `read.lines sl:A el:B` (`rl`) | Creates a filled region `[A, B]`. Merges with adjacent or overlapping regions on the same view. | `h:<short>` (same identity as any prior read on this file at this revision) |
+| `read.file` / `read.context contextType:full` / `rf type:full` | Populates `fullBody` directly; subsequent slice reads merge into regions but `fullBody` remains authoritative for rendering. | `h:<short>` |
 | Tree / directory reads | Directory listings have no FileView. | Chunk hash |
 
 Retention primitives route through the view when the ref has a file source:
 
 | Operation | Effect |
 |-----------|--------|
-| `session.pin <ref>` | `ref = h:fv:<hash>` or a slice hash whose source has a FileView → pins the view. Slice refs for non-file chunks still pin at chunk level. |
+| `session.pin <ref>` | `ref = h:<short>` — if it matches a view, pins the view; if it matches a chunk whose source has a FileView, routes to the view; otherwise pins the chunk directly. Reads already auto-pin; explicit `pi` is for non-read artifacts or re-pinning with a different shape. |
+| *auto-pin (runtime)* | Under `autoPinReads: true` (default), `rs`/`rl`/`rc`/`rf` set `pinned = true` and mark `autoPinnedAt = Date.now()` on the view immediately after `ensureFileView`. Idempotent — skips views already pinned manually. Telemetry in [auto-pin-on-read.md](./auto-pin-on-read.md). |
 | `session.unpin <ref>` / `session.unpin *` | Mirrors pin routing. Wildcard unpins all pinned views and non-file chunks. |
-| `session.drop <ref>` | `ref = h:fv:<hash>` or any chunk ref for a file → drops the whole view and all backing chunks. |
+| `session.drop <ref>` | `ref` matching a view or any chunk ref whose source has a view → drops the whole view and all backing chunks. |
 | `session.drop scope:dormant` / `scope:archived` | Bulk drops compacted-dormant (active map) or archived chunks without requiring explicit hashes. |
 
 ### Token accounting
@@ -268,7 +270,7 @@ Common failure modes that lead to context loops and wasted tokens:
 
 | Anti-Pattern | Why It Fails | Fix |
 |-------------|-------------|-----|
-| Reading file content without pinning the FileView ref | Unpinned FileView is dormant — nothing renders. Next turn you re-read the same file. | Pin the `h:fv:<hash>` returned by any file read. One pin covers the whole file. |
+| Reading file content without pinning the FileView ref | Unpinned FileView is dormant — nothing renders. Next turn you re-read the same file. | Pin the `h:<short>` returned by any file read. One pin covers the whole file. |
 | Pinning multiple slice refs for the same file | Slice pins route to the view anyway — the second and later pins are no-ops. | One `pi` per file. The view already covers every slice you've filled. |
 | Treating `sg` as a "lighter pin" | Staging was never a retention tier for file content; FileView handles that. Using `sg` duplicates bytes into the staged block. | Use `pi` on the FileView ref. Reserve `sg` for explicit cross-subtask anchors / prefetch. |
 | Waiting for "complete picture" before writing to BB | You lose partial findings to compaction before ever recording them. | Write to BB after your first read pass. Update incrementally. |
@@ -276,7 +278,7 @@ Common failure modes that lead to context loops and wasted tokens:
 | Full-reading for planning | Full reads cost 2-13k tokens. Sigs cost ~200 tokens and contain all structural info. | Default first-touch: `rs shape:sig` to populate the skeleton. Full reads only when editing. |
 | Reading 3+ times without acting | Analysis paralysis. You have enough context after 1-2 reads. | After 2 reads on the same target, your next step MUST be a mutation or a decision to stop. |
 | Not using BB as primary anchor | BB survives compaction, eviction, and session boundaries. Everything else is ephemeral. | `bb_write` findings immediately. `bb_read` before re-searching. |
-| Pin outliving usefulness (silent accumulator) | A pinned view rides every edit auto-forward; if the model never revisits it, the pin survives across many rounds as stale working memory. The `fileViews` entry is the same; only intent has gone stale. | ASSESS surfaces these automatically — see [assess-context.md](./assess-context.md). Or unpin manually (`pu hashes:h:fv:X`) when you finish with a file. |
+| Pin outliving usefulness (silent accumulator) | A pinned view rides every edit auto-forward; if the model never revisits it, the pin survives across many rounds as stale working memory. The `fileViews` entry is the same; only intent has gone stale. | ASSESS surfaces these automatically — see [assess-context.md](./assess-context.md). Or unpin manually (`pu hashes:h:<short>`) when you finish with a file. |
 
 ## Engram Annotations and Relationships
 

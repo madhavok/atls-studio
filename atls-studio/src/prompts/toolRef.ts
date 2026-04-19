@@ -12,12 +12,11 @@ Everything resolves through **workspace paths** and **h:XXXX** (UHPP). Arrays: c
 Complex values: inline {…} syntax where noted (le, creates).
 Dataflow: in:stepId.path (e.g. in:r1.refs) binds prior step output into this step. **f**, **ps**, **hashes** must be real paths or **h:**… — never paste \`in:r1.refs\` as if it were a path or hash string. Conditional: if:stepId.ok. on_error:stop|continue|rollback
 
-### *** PIN IN THE SAME BATCH — NON-NEGOTIABLE ***
-Every read/search/verify returns VOLATILE h:refs. They are DESTROYED after one round.
-You MUST include \`pi in:rN.refs\` (or \`pi hashes:h:XXXX,...\`) in the SAME q: block as the reads.
-DO NOT defer pinning to a separate batch call — by then the refs are gone and you must re-read.
-Correct: \`r1 rc ps:file.ts\` + \`p1 pi in:r1.refs\` in one q: block.
-WRONG: batch 1 reads, batch 2 pins. The refs expired between batches.
+### *** RETENTION — AUTO-PIN ON READS, SAME-BATCH PIN FOR EVERYTHING ELSE ***
+Reads (rs/rl/rc/rf) auto-pin their FileView — the returned \`h:<short>\` survives across rounds automatically. Do not emit \`pi\` after a read.
+Every ref is \`h:<short>\` — FileViews and chunks share the same shape; the runtime resolves which one based on current state. No special prefix needed for views.
+Non-read results (search, verify, exec, git) return VOLATILE h:refs and are DESTROYED after one round unless pinned (\`pi\`) or persisted (\`bw\`) in the SAME q: block as the call. Deferring pin to the next batch loses the ref — you'll have to re-run.
+Release is always explicit: \`pu\` when done with a FileView, \`pc\` to compact, \`dro\` to delete. ASSESS surfaces stale pins for cleanup.
 
 ### q: field — executable steps only
 - \`q\` must contain **only** step lines (format above). Each non-empty line with two or more tokens is parsed and **executed** as a batch step.
@@ -44,12 +43,12 @@ sa subtask?:id summary:required — \`subtask\` is the id **before** the colon i
 spl goal:"required" subtasks:id1:Title1,id2:Title2 — comma-separated id:title lines, or JSON [{id,title},…]; h: prefixes are labels, not UHPP expansion targets
 rc type:full|tree ps:path1,path2 depth?:N glob?:pattern line_range?:start-end max_lines?:N
   type:full = whole-file body. type:tree = directory listing (not file content).
-  Any file read returns ONE retention ref per file: h:fv:<hash> — the FileView identity. Pin that to keep the file in WM across rounds.
+  Any file read returns ONE retention ref per file: h:<short> — the FileView identity. Auto-pinned; unpin (pu) when you're done.
 rl hash:h:XXXX lines:15-50 | f:path sl:N el:N context_lines?:0-5
-  Line slices fill into the file's live FileView at their source position. The returned ref is the SAME h:fv:<hash> as any prior rs/rf/rc on that file — multiple rl calls merge into the same view identity. For sc/sy (search/symbol) result hashes, lines are into the formatted result text (engram body), not a source file — use f:+sl/el when you need real file lines.
+  Line slices fill into the file's live FileView at their source position. The returned ref is the SAME h:<short> as any prior rs/rf/rc on that file — multiple rl calls merge into the same view identity. Auto-pinned. For sc/sy (search/symbol) result hashes, lines are into the formatted result text (engram body), not a source file — use f:+sl/el when you need real file lines.
 rs ps:path1,path2 shape:sig|fold|grep|dedent|nocomment|exclude|concept|pattern|if|snap|refs|highlight max_files?:N
-  shape:sig is the CHEAPEST first-touch — indent-preserved signature skeleton (code) / heading outline (markdown), ~5-10% of full size, with slice-native [A-B] fold/section markers. Use this BEFORE rf / rc type:full. shape: is required. Returns h:fv:<hash> — pin once, subsequent rl into the same file uses the same ref.
-rf ps:path1,path2 type?:full — smart view (symbols + imports + related + issues) by default; type:full for the whole body. HEAVIER than rs shape:sig; reach for it only when you need the dependency graph, issues list, or full content. Returns h:fv:<hash>, same as rs/rl for the same file.
+  shape:sig is the CHEAPEST first-touch — indent-preserved signature skeleton (code) / heading outline (markdown), ~5-10% of full size, with slice-native [A-B] fold/section markers. Use this BEFORE rf / rc type:full. shape: is required. Returns h:<short> (auto-pinned); subsequent rl into the same file uses the same ref.
+rf ps:path1,path2 type?:full — smart view (symbols + imports + related + issues) by default; type:full for the whole body. HEAVIER than rs shape:sig; reach for it only when you need the dependency graph, issues list, or full content. Returns h:<short> (auto-pinned), same as rs/rl for the same file.
 sc qs:term1,term2 ps?:path1,path2 limit?:N compact?:true
 sy sn:name1,name2 limit?:N
 su sn:name1,name2 filter?:pattern limit?:N
@@ -92,9 +91,9 @@ bd keys:key1,key2
 bl — enumerate BB keys (no params; reports active and superseded sections)
 ru action?:set|delete|list key?:name content?:"text" — list needs only action:list (no key). set/delete need key (alias: hash → same as key for rule name).
 em content:"text" type?:name
-pi hashes:h:HASH1,h:HASH2 — or \`pi in:r1.refs\` (dataflow). For file reads the refs are h:fv:<hash>; pinning one ref covers the whole file. **hashes** = **h:**… only; use \`in:r1.refs\` on the step line, not inside \`hashes\` as text.
+pi hashes:h:HASH1,h:HASH2 — or \`pi in:r1.refs\` (dataflow). Reads auto-pin their FileView; use \`pi\` only for **non-read** results (search/verify/exec) or to re-pin with a different shape. **hashes** = **h:**… only; use \`in:r1.refs\` on the step line, not inside \`hashes\` as text.
 pu hashes:h:HASH1,h:HASH2 — unpin (requires actual h:refs, not step IDs). Any chunk ref whose source has a FileView transparently unpins the view.
-dro hashes:h:HASH1,h:HASH2 — or scope:dormant|archived max?:N (drops without hashes). Dropping a FileView ref (h:fv: or any chunk ref for that file) removes the whole view + its backing chunks. Set refs: h:@dormant (archived/cold), h:@dematerialized (last-round refs)
+dro hashes:h:HASH1,h:HASH2 — or scope:dormant|archived max?:N (drops without hashes). Dropping a FileView ref (any h:<short> that resolves to a view, or any chunk ref for that file) removes the whole view + its backing chunks. Set refs: h:@dormant (archived/cold), h:@dematerialized (last-round refs)
 rec hashes:h:HASH1 — recall evicted/archived content back into context
 pc hashes:h:HASH1,h:HASH2 tier?:pointer|sig — compact to digest
 sh hash:h:XXXX — resolve + reshape a hash ref
@@ -122,15 +121,17 @@ ix source_file:path sn?:s1 target_file:path — aliases: f, path, file_path, or 
 
 ### Examples
 r1 rs ps:src/api.ts,src/db.ts shape:sig
-p1 pi in:r1.refs
+-- read auto-pins the FileView for src/api.ts and src/db.ts; no p1 pi step needed.
 e1 ce f:h:abc123:15-22 le:[{content:"function auth() { return true; }"}]
 -- minimal: hash ref carries identity + line range; only new content needed.
 e2 ce f:src/api.ts content_hash:h:abc123 le:[{line:30,end_line:30,content:"const x = 1;"}]
 -- explicit form: when editing by path or targeting a range not in the hash ref.
 v1 vk if:e2.ok
 
-p2 pi hashes:h:abc123,h:def456
--- WRONG: pi hashes:h:r1  (r1 is a step ID, not a content hash — use in:r1.refs instead)
+s1 sc qs:authenticate ps:src
+p2 pi in:s1.refs
+-- search result refs ARE volatile — pin in the same batch if you want to keep them.
+-- (reads skip this step; they auto-pin.)
 
 u1 iu ps:src/api.ts
 e3 ie f:h:abc123:10-10 le:[{content:"const x = 1;"}]
@@ -151,19 +152,20 @@ qs/queries, le/line_edits, sl/start_line, el/end_line, sf/severity_filter, ff/fo
 key/keys, cmd also auto-resolved
 
 ### Task Recipes (follow the matching recipe)
-Bug hunt: si -> rs shape:sig top 3-5 suspects -> rl slices at [A-B] folds + pi slices + bw finding per fn -> fix confirmed -> task_complete
-Feature: rs shape:sig targets -> spl -> rl slices at [A-B] folds + pi slices -> ce per subtask -> task_complete
-Refactor: ax -> spl -> cf per extraction -> vb -> pi if failed (fix from h:ref) -> task_complete
+Bug hunt: si -> rs shape:sig top 3-5 suspects -> rl slices at [A-B] folds + bw finding per fn -> fix confirmed -> task_complete
+Feature: rs shape:sig targets -> spl -> rl slices at [A-B] folds -> ce per subtask -> task_complete
+Refactor: ax -> spl -> cf per extraction -> vb -> fix from h:ref if failed -> task_complete
 Refactor (split): ax -> cm dry_run:true -> cm dry_run:false -> vb -> task_complete
 Investigation: iv -> bw structured findings per target -> task_complete with report
-Review: rs shape:sig targets -> rl changed fns at [A-B] folds + pi slices -> bw review finding per fn -> task_complete
+Review: rs shape:sig targets -> rl changed fns at [A-B] folds -> bw review finding per fn -> task_complete
+(Reads auto-pin; no explicit pi step in these recipes. pu finished targets before moving on.)
 
 ### Read Pattern (FileView — one hash per file, auto-healing, cheapest first)
-- First touch: **rs shape:sig** — cheap indent-preserved skeleton with [A-B] fold markers. Returns \`h:fv:<hash>\` — the file's single retention ref. FileView block appears in WM; folded bodies show as "{ ... } [A-B]".
-- Slice: **rl sl:A el:B** — uses the [A-B] bounds from the sig directly. Fills into the same view. Returns the SAME h:fv:<hash>; no need to re-pin.
-- Full body: **rc type:full** or **rf type:full** only when slicing isn't enough (large multi-region refactor, full control-flow reasoning). Still h:fv:<hash>.
-- Pin once: \`pi in:rN.refs\` on any read's ref keeps the whole FileView across rounds. Don't pin individual slices — the view already covers them.
-- Edits: cite **@h:XXX** from the block header as **content_hash** (source revision, distinct from the h:fv: retention ref); line numbers are current-revision (auto-healed across file edits).
+- First touch: **rs shape:sig** — cheap indent-preserved skeleton with [A-B] fold markers. Returns \`h:<short>\` — the file's single retention ref (auto-pinned). FileView block appears in WM; folded bodies show as "{ ... } [A-B]".
+- Slice: **rl sl:A el:B** — uses the [A-B] bounds from the sig directly. Fills into the same view. Returns the SAME h:<short>; already pinned.
+- Full body: **rc type:full** or **rf type:full** only when slicing isn't enough (large multi-region refactor, full control-flow reasoning). Still the same h:<short>, auto-pinned.
+- Release: **pu** on the view's h:<short> when you're done with the target. **pc** to compact. **dro** to delete. ASSESS surfaces stale pins automatically.
+- Edits: cite **@h:XXX** from the block header as **content_hash** (source revision, distinct from the view's retention ref); line numbers are current-revision (auto-healed across file edits).
 - Markers: [edited L..-.. this round] = auto-refreshed content, reconsider prior reasoning. [REMOVED was L..-..] = content is gone, re-orient. The view itself never carries stale bodies.
 - Avoid re-reading the same span: the view persists across rounds. Add slices on demand.
 
@@ -188,7 +190,7 @@ Review: rs shape:sig targets -> rl changed fns at [A-B] folds + pi slices -> bw 
 - use dr/dd when cheap research suffices before a bigger reasoning pass.
 
 ## Working Memory — FileView (one hash per file)
-Each file you've read appears as ONE block in WM with ONE retention ref (h:fv:<hash>), regardless of how many rs/rl/rf calls built it up:
+Each file you've read appears as ONE block in WM with ONE retention ref (h:<short>), regardless of how many rs/rl/rf calls built it up:
   === path @h:XXX (N lines) [pinned?] ===
    1|import ...
   17|const FOO = 1;
@@ -203,7 +205,7 @@ Markers:
   [REMOVED was L205-213]          content at that range is gone; re-orient
   [changed: N regions pending refetch — re-read on demand]
 Cite @h:XXX (the block header hash = source revision) as content_hash for edits. Line numbers are current-revision.
-Retention: pi/pu/dro on any ref returned by a file read (or h:fv:<hash> directly) acts on the view — pinning it keeps the whole thing in WM, unpinning releases it cleanly. The chunk hash inside the view is for citation, not retention.
+Retention: reads auto-pin their FileView. pu/pc/dro on the view's h:<short> (or any chunk ref whose source has that view) acts on the view — unpinning releases it cleanly. Explicit \`pi\` is only needed for non-read artifacts (search/verify results) or to re-pin with a different shape. The chunk hash inside the view is for citation, not retention.
 The view auto-heals across file edits: shifted regions rebase, pinned regions refetch, unpinned stale regions drop silently. You never see [STALE].`;
 
 export const SUBAGENT_TOOL_REF = `

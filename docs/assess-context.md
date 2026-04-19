@@ -34,13 +34,13 @@ Corrective first, hygiene second. Both can fire in the same round without confli
 
 ```text
 <<ASSESS: CTX 62% (128k/200k). 3 pinned targets bloating WM. Decide before next read:
-  h:fv:a1b2  src/services/aiService.ts        9.4k  idle:4r (pin survived 2 edits untouched)
-  h:fv:c3d4  src/prompts/cognitiveCore.ts     3.1k  idle:6r
-  h:fv:e5f6  src/utils/toon.ts                2.8k  idle:3r
+  h:a1b2cd  src/services/aiService.ts        9.4k  idle:4r (pin survived 2 edits untouched)
+  h:c3d4ef  src/prompts/cognitiveCore.ts     3.1k  idle:6r
+  h:e5f6ab  src/utils/toon.ts                2.8k  idle:3r
 Per row: release (pu hashes:h:X) | compact (pc hashes:h:X tier:sig) | hold (no-op; cite why).>>
 ```
 
-- **One row per pinned file / artifact.** Identities are the stable `h:fv:<hash>` retention refs from `computeFileViewHash(path, revision)` — the same hash the model pinned originally, auto-forwarded through any edits.
+- **One row per pinned file / artifact.** Identities are the stable `h:<short>` retention refs from `computeFileViewHash(path, revision)` — the same hash the model pinned originally, auto-forwarded through any edits. Refs share the `h:<short>` namespace with chunks; the runtime resolves either.
 - **`idle:Nr`** — rounds since `lastAccessed` last advanced.
 - **`pin survived K edits untouched`** — `K` revision bumps happened while the view was idle (the silent accumulator signal).
 - **K ≤ 5 rows** by default (`maxCandidates`); token-budget gated under 300 BPE tokens even at max-K (verified by [assessContext.test.ts](../atls-studio/src/services/assessContext.test.ts)).
@@ -181,6 +181,7 @@ Ship criterion: overhead ≤ 10%, no regression in rounds-to-convergence, at lea
 |---|---|
 | **Spin circuit breaker** | Sibling, publishes through the same `toolLoopSteering` surface. Spin block renders first (corrective); ASSESS second (hygiene). Independent triggers — both can fire in one round. |
 | **Retention-op compaction** | Same goal (kill ghost-ref surface from pin/unpin/drop/unload/compact/bb.delete), different layer. ASSESS acts on **live pinned state** the current round — "here are the candidates, decide." Retention-op compaction acts on **persisted tool-call history** after the round ends — "the hashes you already unpinned are gone, don't re-emit them." See [`history-compression.md`](history-compression.md#retention-op-compaction). |
+| **Auto-pin on read** | Upstream source of pin candidates. Under `autoPinReads: true` (default), every read auto-pins its FileView — so ASSESS sees more candidates, which is exactly what the ranking formula is designed for (`tokens × (idleRounds + 2 × survivedEditsWhileIdle)` surfaces large-and-idle regardless of pin source). Counter-metric for "is auto-pin too aggressive?" lives in the auto-pin telemetry path, not here. See [`auto-pin-on-read.md`](auto-pin-on-read.md). |
 | **FileView render** | ASSESS does not mutate views. The model's response (`pu` / `pc`) flows through the normal batch handlers and updates the store the same way as any other pin change. |
 | **Freshness** | `freshness === 'suspect'` / `'changed'` entries are **excluded** from candidates — they need `rec` or refresh, not cleanup. `canSteerExecution` is not invoked here (that gate covers steering content, not memory hygiene). |
 | **Pressure response bullets in Cognitive Core** | Cached rules (`<50%` / `50-80%` / `80-95%` / `>95%`) describe *what* actions to take at each band. ASSESS provides *which* specific refs to act on — the missing activation cue between rules and state. |

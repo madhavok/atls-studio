@@ -298,15 +298,17 @@ describe('handlePin', () => {
     useContextStore.getState().resetSession();
   });
 
-  it('adds a hint when h: prefix is used with a step-like id and nothing pins', async () => {
+  it('adds a hint when h: prefix is used with a step-like id and nothing pins (zero-match errs)', async () => {
     const result = await handlePin(
       { hashes: ['h:r1', 'h:r2'] },
       createMockCtx() as unknown as Parameters<typeof handlePin>[1],
     );
-    expect(result.ok).toBe(true);
-    expect(result.summary).toContain('pin: no matching chunks');
-    expect(result.summary).toContain('from_step');
-    expect(result.summary).toContain('h:r1');
+    // Zero-match retention ops now err loudly instead of silently returning ok
+    // (prevents the templated-stub spin).
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain('pin: ERROR no matching chunks');
+    expect(result.error).toContain('from_step');
+    expect(result.error).toContain('h:r1');
   });
 
   it('materializes file_refs step output into chunks before pinning hashes', async () => {
@@ -385,7 +387,7 @@ describe('handlePin', () => {
 
     const result = await handlePin({ in: 'r99.refs' }, ctx);
     expect(result.ok).toBe(false);
-    expect(result.error).toMatch(/missing hashes/);
+    expect(result.error).toMatch(/no hashes supplied/);
   });
 
   it('includes executor binding warning when hashes resolved to nothing from from_step', async () => {
@@ -437,7 +439,7 @@ describe('handleDrop', () => {
     const ctx = createMockCtx() as unknown as Parameters<typeof handleDrop>[1];
     const result = await handleDrop({}, ctx);
     expect(result.ok).toBe(false);
-    expect(result.error).toMatch(/missing hashes/);
+    expect(result.error).toMatch(/no hashes supplied/);
   });
 
   it('scope:archived drops archived chunks without explicit hashes', async () => {
@@ -705,7 +707,7 @@ describe('handleUnload / handleCompact', () => {
   it('handleUnload errors when hashes missing', async () => {
     const r = await handleUnload({}, createMockCtx() as any);
     expect(r.ok).toBe(false);
-    expect(r.error).toMatch(/missing hashes/);
+    expect(r.error).toMatch(/no hashes supplied/);
   });
 
   it('handleCompact compacts chunks (pointer tier)', async () => {
@@ -736,7 +738,7 @@ describe('handleUnload / handleCompact', () => {
   it('handleCompact errors when hashes missing', async () => {
     const r = await handleCompact({}, createMockCtx() as any);
     expect(r.ok).toBe(false);
-    expect(r.error).toMatch(/missing hashes/);
+    expect(r.error).toMatch(/no hashes supplied/);
   });
 });
 
@@ -810,7 +812,7 @@ describe('handleUnpin', () => {
   it('errors when hashes missing', async () => {
     const r = await handleUnpin({}, createMockCtx() as any);
     expect(r.ok).toBe(false);
-    expect(r.error).toMatch(/missing hashes/);
+    expect(r.error).toMatch(/no hashes supplied/);
   });
 
   it('recovers dataflow from params.in string', async () => {
@@ -959,5 +961,84 @@ describe('handleDrop scope dormant max', () => {
     const r = await handleDrop({ scope: 'dormant', max: 2 }, createMockCtx() as any);
     expect(r.ok).toBe(true);
     expect(r.summary).toContain('scope:dormant');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Ephemeral-retention handler defense — zero-match retention ops err loudly
+// instead of silently returning ok, so the templated-stub spin pattern
+// (`{use:"session.unpin"}` with no args, re-emitted from compacted history)
+// surfaces as [FAIL] lines the model can self-correct on.
+// ---------------------------------------------------------------------------
+
+describe('retention handlers — ephemeral output defense', () => {
+  beforeEach(() => {
+    useContextStore.getState().resetSession();
+  });
+
+  it('handleUnpin errs when no hashes supplied (compacted-stub reuse)', async () => {
+    const result = await handleUnpin(
+      {},
+      createMockCtx() as unknown as Parameters<typeof handleUnpin>[1],
+    );
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatch(/no hashes supplied/);
+    expect(result.error).toMatch(/MANIFEST|manifest/);
+    expect(result.error).toMatch(/ephemeral/i);
+  });
+
+  it('handleUnpin errs when hashes resolve to no pinned refs (zero-match)', async () => {
+    const result = await handleUnpin(
+      { hashes: ['h:nonexistent123'] },
+      createMockCtx() as unknown as Parameters<typeof handleUnpin>[1],
+    );
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatch(/no matching pinned refs/);
+  });
+
+  it('handlePin errs when no hashes supplied', async () => {
+    const result = await handlePin(
+      {},
+      createMockCtx() as unknown as Parameters<typeof handlePin>[1],
+    );
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatch(/no hashes supplied/);
+    expect(result.error).toMatch(/ephemeral/i);
+  });
+
+  it('handleDrop errs when no hashes and no scope supplied', async () => {
+    const result = await handleDrop(
+      {},
+      createMockCtx() as unknown as Parameters<typeof handleDrop>[1],
+    );
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatch(/no hashes supplied/);
+  });
+
+  it('handleDrop errs when explicit hashes resolve to zero matches', async () => {
+    const result = await handleDrop(
+      { hashes: ['h:nonexistent456'] },
+      createMockCtx() as unknown as Parameters<typeof handleDrop>[1],
+    );
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatch(/no matching refs in manifest/);
+  });
+
+  it('handleUnload errs when no hashes supplied', async () => {
+    const result = await handleUnload(
+      {},
+      createMockCtx() as unknown as Parameters<typeof handleUnload>[1],
+    );
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatch(/no hashes supplied/);
+  });
+
+  it('handleCompact errs when no hashes supplied', async () => {
+    const result = await handleCompact(
+      {},
+      createMockCtx() as unknown as Parameters<typeof handleCompact>[1],
+    );
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatch(/no hashes supplied/);
   });
 });

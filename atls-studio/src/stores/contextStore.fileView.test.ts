@@ -476,3 +476,71 @@ describe('FileView wire — skeleton population', () => {
     expect(useContextStore.getState().fileViews.size).toBe(0);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Unified hash namespace — view refs and chunk refs share `h:<short>`
+// ---------------------------------------------------------------------------
+
+describe('FileView wire — unified hash namespace (h:<short>)', () => {
+  beforeEach(resetStore);
+
+  it('pinChunks accepts the short view ref directly (no h:fv: prefix)', () => {
+    // Model-side contract: a read returns `h:<6hex>`; that exact string,
+    // passed back through pinChunks, must pin the view.
+    const store = useContextStore.getState();
+    const rev = 'rev-short';
+    store.addChunk(
+      rowLine(10, 'line'),
+      'smart',
+      'src/short.ts',
+      undefined, undefined, 'hchk-short',
+      {
+        sourceRevision: rev,
+        readSpan: { filePath: 'src/short.ts', sourceRevision: rev, startLine: 10, endLine: 10 },
+      },
+    );
+    const view = useContextStore.getState().getFileView('src/short.ts')!;
+    expect(view.hash).toMatch(/^h:[0-9a-f]{6}$/);
+    expect(view.shortHash).toMatch(/^[0-9a-f]{6}$/);
+
+    const r = useContextStore.getState().pinChunks([view.hash]);
+    expect(r.count).toBe(1);
+    expect(useContextStore.getState().getFileView('src/short.ts')!.pinned).toBe(true);
+  });
+
+  it('view/chunk precedence on short-hash collision: view wins', async () => {
+    // Force the collision by directly injecting two entries whose short hashes
+    // are equal. The resolver should route retention ops to the view.
+    const { drainRefCollisionCount, _resetRefCollisionCountForTests } = await import('./contextStore');
+    _resetRefCollisionCountForTests();
+
+    const store = useContextStore.getState();
+    const rev = 'rev-collide';
+    store.addChunk(
+      rowLine(10, 'payload'),
+      'smart',
+      'src/collide.ts',
+      undefined, undefined, 'collide-slice',
+      {
+        sourceRevision: rev,
+        readSpan: { filePath: 'src/collide.ts', sourceRevision: rev, startLine: 10, endLine: 10 },
+      },
+    );
+    const view = useContextStore.getState().getFileView('src/collide.ts')!;
+
+    // Surgically clone a chunk and rewrite its shortHash to collide with the view.
+    const targetShort = view.shortHash;
+    const chunks = new Map(useContextStore.getState().chunks);
+    const firstChunk = chunks.values().next().value!;
+    const aliasedChunk = { ...firstChunk, shortHash: targetShort, hash: `h:${targetShort}` };
+    chunks.set(`h:${targetShort}`, aliasedChunk);
+    useContextStore.setState({ chunks });
+
+    // Pin via the colliding short hash: view must win.
+    const r = useContextStore.getState().pinChunks([`h:${targetShort}`]);
+    expect(r.count).toBe(1);
+    expect(useContextStore.getState().getFileView('src/collide.ts')!.pinned).toBe(true);
+    // Collision counter reports the ambiguity for observability.
+    expect(drainRefCollisionCount()).toBeGreaterThan(0);
+  });
+});

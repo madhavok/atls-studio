@@ -17,10 +17,10 @@ function row(n: number, c: string): string {
   return `${String(n).padStart(4)}|${c}`;
 }
 
-describe('FileView PR4 — pinChunks with h:fv:', () => {
+describe('FileView PR4 — pinChunks with view refs (unified h:<short> namespace)', () => {
   beforeEach(reset);
 
-  it('pins a FileView by h:fv:<hash>', () => {
+  it('pins a FileView by its h:<short> ref', () => {
     const store = useContextStore.getState();
     const rev = 'rev1';
     store.addChunk(
@@ -33,10 +33,12 @@ describe('FileView PR4 — pinChunks with h:fv:', () => {
         readSpan: { filePath: 'src/foo.ts', sourceRevision: rev, startLine: 10, endLine: 10 },
       },
     );
-    const viewHash = useContextStore.getState().getFileView('src/foo.ts')!.hash;
-    expect(viewHash.startsWith('h:fv:')).toBe(true);
+    const view = useContextStore.getState().getFileView('src/foo.ts')!;
+    // Unified namespace: view hash is plain `h:<short>`, no `fv:` prefix.
+    expect(view.hash).toMatch(/^h:[0-9a-f]{6}$/);
+    expect(view.shortHash).toMatch(/^[0-9a-f]{6}$/);
 
-    const r = useContextStore.getState().pinChunks([viewHash]);
+    const r = useContextStore.getState().pinChunks([view.hash]);
     expect(r.count).toBe(1);
     expect(useContextStore.getState().getFileView('src/foo.ts')!.pinned).toBe(true);
   });
@@ -113,7 +115,7 @@ describe('FileView PR4 — pinChunks with h:fv:', () => {
     expect(chunkPresent).toBe(false);
   });
 
-  it('unpinChunks releases FileView by h:fv: ref', () => {
+  it('unpinChunks releases FileView by view ref', () => {
     const store = useContextStore.getState();
     const rev = 'rev1';
     store.addChunk(
@@ -271,7 +273,7 @@ describe('FileView PR4 — supersededBy', () => {
 describe('FileView PR4 — resolveFileViewRefs (subagent boundary)', () => {
   beforeEach(reset);
 
-  it('expands h:fv:<hash> to its constituent chunk hashes', () => {
+  it('expands a view ref to its constituent chunk hashes', () => {
     const store = useContextStore.getState();
     const rev = 'rev1';
     store.addChunk(
@@ -304,9 +306,12 @@ describe('FileView PR4 — resolveFileViewRefs (subagent boundary)', () => {
     expect(resolved.length).toBeGreaterThanOrEqual(2);
   });
 
-  it('silently drops unknown h:fv: refs', () => {
-    const resolved = useContextStore.getState().resolveFileViewRefs(['h:fv:unknown']);
-    expect(resolved).toEqual([]);
+  it('passes through refs that do not match a FileView (unified namespace)', () => {
+    // Under the unified h:<short> namespace there is no way to tell from the
+    // wire format whether a ref was "meant" to be a view. Unknown refs pass
+    // through; only known view hashes expand.
+    const resolved = useContextStore.getState().resolveFileViewRefs(['h:unknn1']);
+    expect(resolved).toEqual(['h:unknn1']);
   });
 
   it('passes through when no FileViews exist', () => {

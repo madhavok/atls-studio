@@ -83,7 +83,8 @@ function makeFileView(partial: Partial<FileView> & Pick<FileView, 'filePath' | '
     skeletonRows: partial.skeletonRows ?? [],
     sigLevel: partial.sigLevel ?? 'sig',
     filledRegions: partial.filledRegions ?? [],
-    hash: partial.hash ?? 'fv-0000',
+    hash: partial.hash ?? 'h:000000',
+    shortHash: partial.shortHash ?? (partial.hash ? partial.hash.replace(/^h:/, '').slice(0, 6) : '000000'),
     lastAccessed: partial.lastAccessed ?? Date.now(),
     // Default pinned:true for accounting tests — unpinned views render/charge 0
     // tokens (they roll out of context), which would mask the thing we're testing.
