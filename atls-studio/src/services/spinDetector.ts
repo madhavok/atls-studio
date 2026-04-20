@@ -388,6 +388,19 @@ function detectToolConfusion(window: SpinFingerprint[]): SpinDiagnosis | null {
       evidence.push(`Round ${curr.round}: tool signature ${(sigSimilarity * 100).toFixed(0)}% similar to round ${prev.round}, no new files`);
     }
 
+    // Identical batch: same tools AND identical target-file set (not just
+    // subset). Pushes repeated bit-for-bit batches over the circuit-breaker
+    // threshold even when narrative text drifts round-to-round.
+    const identicalBatch =
+      sigSimilarity > 0.95
+      && prev.targetFiles.length === curr.targetFiles.length
+      && prev.targetFiles.every(f => curr.targetFiles.includes(f));
+    if (!bothChangePreviews && identicalBatch) {
+      score += 0.25;
+      if (!triggerRound) triggerRound = curr.round;
+      evidence.push(`Round ${curr.round}: identical tool signature and target files as round ${prev.round}`);
+    }
+
     // Identical assistant text hash = literal repetition
     if (curr.assistantTextHash && curr.assistantTextHash === prev.assistantTextHash) {
       score += 0.4;

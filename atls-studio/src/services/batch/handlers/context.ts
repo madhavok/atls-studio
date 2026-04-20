@@ -573,7 +573,11 @@ export const handleReadLines: OpHandler = async (params, ctx) => {
     return err(`read_lines: requires lines (e.g. "15-50") or ref (h:XXXX:15-50) or (start_line + end_line).${refHint}`);
   }
 
-  // Resolve file_path → hash when hash missing but file_path + lines provided
+  // Resolve file_path → hash when hash missing but file_path + lines provided.
+  // Capture the backend error so we can surface "File not found" instead of
+  // falling through to the generic "requires hash" message (GAP: prevents
+  // the agent from spinning on a deleted file, see spinDetector root cause).
+  let backendFileErr: string | undefined;
   if (!rlHash && fp) {
     const { items } = await ctx.expandFilePathRefs([fp]);
     const pathItem = items.find((it): it is ExpandedFilePath & { kind: 'path' } => it.kind === 'path');
@@ -582,10 +586,19 @@ export const handleReadLines: OpHandler = async (params, ctx) => {
       const results = (ctxResult as Record<string, unknown>)?.results as Array<Record<string, unknown>> | undefined;
       const first = results?.[0];
       const contentHash = first?.content_hash ?? first?.hash;
-      if (typeof contentHash === 'string') rlHash = contentHash.startsWith('h:') ? contentHash : `h:${contentHash}`;
+      if (typeof contentHash === 'string') {
+        rlHash = contentHash.startsWith('h:') ? contentHash : `h:${contentHash}`;
+      } else if (typeof first?.error === 'string') {
+        backendFileErr = first.error;
+      }
     }
   }
 
+  if (!rlHash && backendFileErr) {
+    return err(
+      `read_lines: ${backendFileErr} (file_path=${fp}). File was deleted or never existed — drop the file_path and re-read a file that exists.`,
+    );
+  }
   const hashHint = ref && !rlHash ? ` Ref "${ref}" missing valid hash — use h:XXXX:15-50 (6-16 hex chars).` : '';
   if (!rlHash) {
     return err(`read_lines: requires hash (or ref h:XXXX:15-50, or file_path to resolve).${hashHint}`);

@@ -396,6 +396,33 @@ describe('context handlers validation and errors', () => {
     expect(r.error).toMatch(/invalid lines spec/);
   });
 
+  it('handleReadLines surfaces backend File-not-found instead of generic "requires hash"', async () => {
+    // When the file_path resolves but the backend says the file is gone
+    // (deleted by a prior change.delete), read.lines must propagate the
+    // real error so the agent stops retrying the same dead path.
+    const ctx = makeCtx({
+      atlsBatchQuery: vi.fn().mockResolvedValue({
+        results: [
+          {
+            file: 'atls-studio/src/__deleted.ts',
+            error: 'File not found: atls-studio/src/__deleted.ts',
+            resolved_path: 'F:/proj/atls-studio/src/__deleted.ts',
+          },
+        ],
+      }),
+    });
+
+    const r = await handleReadLines(
+      { file_path: 'atls-studio/src/__deleted.ts', start_line: 1, end_line: 10 },
+      ctx,
+    );
+
+    expect(r.ok).toBe(false);
+    expect(r.error).toMatch(/File not found/);
+    expect(r.error).toMatch(/__deleted\.ts/);
+    expect(r.error).not.toMatch(/requires hash/);
+  });
+
   it('handleReadShaped errors when file_paths missing', async () => {
     const r = await handleReadShaped({ shape: 'sig' }, makeCtx());
     expect(r.ok).toBe(false);

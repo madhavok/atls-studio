@@ -138,6 +138,31 @@ describe('diagnoseSpinning', () => {
     expect(d.evidence.every(e => !/tool signature \d+% similar.*no new files/i.test(e))).toBe(true);
   });
 
+  it('three identical batches with distinct narration cross the 0.7 circuit-breaker threshold', () => {
+    // Regression: rounds 11–13 of the "Full ATLS Tools" session were three
+    // bit-for-bit identical read.lines batches whose assistant text drifted
+    // just enough to deny the assistantTextHash bump. The previous scoring
+    // ceiling (0.6) left the circuit breaker silent. The identical-batch
+    // bump must push confidence ≥ 0.7.
+    const snaps: RoundSnapshot[] = [11, 12, 13].map((r, i) => baseSnap({
+      round: r,
+      toolSignature: ['read.lines', 'read.lines'],
+      targetFiles: ['atls-studio/src/__test_edit.ts', 'atls-studio/src/__test_scratch.ts'],
+      assistantTextHash: `narration-${i}`,
+      hadRealChangeThisRound: false,
+      changeDryRunPreviewRound: false,
+      bbDelta: [],
+      isResearchRound: true,
+      volatileRefsSuggested: false,
+      hadSessionPinStep: false,
+    }));
+    const d = diagnoseSpinning(snaps);
+    expect(d.spinning).toBe(true);
+    expect(d.mode).toBe('tool_confusion');
+    expect(d.confidence).toBeGreaterThanOrEqual(0.7);
+    expect(d.evidence.some(e => /identical tool signature and target files/i.test(e))).toBe(true);
+  });
+
   it('detects volatile output without session.pin when pattern repeats in window', () => {
     const snaps: RoundSnapshot[] = [1, 2, 3].map((r) => baseSnap({
       round: r,
