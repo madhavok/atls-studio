@@ -5,6 +5,7 @@
 
 import type { HandlerContext, OpHandler, StepOutput } from '../types';
 import { useContextStore } from '../../../stores/contextStore';
+import { useAppStore } from '../../../stores/appStore';
 import { getPreflightAutomationDecision, runFreshnessPreflight } from '../../../services/freshnessPreflight';
 import { recordFreshnessJournal, clearFreshnessJournal } from '../../../services/freshnessJournal';
 import { invoke } from '@tauri-apps/api/core';
@@ -398,12 +399,25 @@ const EDIT_SUMMARY_DIFF_CAP = 800;
  * remembers across turns without pinning (which breaks caching).
  * Entries use the `edit:` namespace and are auto-evicted when stale.
  * Includes a compact diff snippet resolved from h:OLD..h:NEW when available.
+ *
+ * Exported for tests. When `settings.compressEditAcks` is true the
+ * embedded diff preview is skipped (slim-ack mode); the `diff:h:OLD..h:NEW`
+ * ref is always emitted so on-demand diff resolution still works.
  */
-async function recordEditSummary(result: unknown, params: Record<string, unknown>): Promise<void> {
+export async function recordEditSummary(result: unknown, params: Record<string, unknown>): Promise<void> {
   try {
     if (!result || typeof result !== 'object') return;
     const r = result as Record<string, unknown>;
     const store = useContextStore.getState();
+
+    // Slim-ack mode: when enabled, skip resolving and embedding the unified
+    // diff preview. The `diff:h:OLD..h:NEW` ref is still emitted below, so the
+    // model (and the chat DiffRefPill) can resolve the delta on demand, and
+    // the FILE VIEWS block carries the post-edit content.
+    const slim = (() => {
+      try { return useAppStore.getState().settings.compressEditAcks === true; }
+      catch { return false; }
+    })();
 
     const entries = (r.batch ?? r.results ?? r.drafts) as Array<Record<string, unknown>> | undefined;
     const singleEntry = (!entries && (r.h || r.hash)) ? [r] : undefined;
@@ -426,9 +440,9 @@ async function recordEditSummary(result: unknown, params: Record<string, unknown
       const oldShort = oldHash ? `h:${oldHash.replace(/^h:/, '').slice(0, SHORT_HASH_LEN)}` : '';
       const diffRef = (oldShort && shortHash) ? ` diff:${oldShort}..${shortHash}` : '';
 
-      // Resolve compact diff preview from h:OLD..h:NEW
+      // Resolve compact diff preview from h:OLD..h:NEW unless slim-ack is on.
       let diffPreview = '';
-      if (oldHash && hash && oldHash !== hash) {
+      if (!slim && oldHash && hash && oldHash !== hash) {
         try {
           const rawRef = `h:${oldHash.replace(/^h:/, '')}..h:${hash.replace(/^h:/, '')}`;
           const resolved = await invoke<{ content?: string }>('resolve_hash_ref', { rawRef });

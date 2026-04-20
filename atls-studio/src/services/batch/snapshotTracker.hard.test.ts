@@ -147,3 +147,60 @@ describe('SnapshotTracker hasReadCoverage / canonical gate', () => {
     expect(t.hasReadCoverage('src/pt.ts', 1, 2)).toBe(false);
   });
 });
+
+describe('SnapshotTracker.setReadRegions (slim-ack rebase path)', () => {
+  it('replaces readRegions in place on an existing identity', () => {
+    const t = new SnapshotTracker();
+    t.record('src/a.ts', 'h1', 'canonical', { readRegion: { start: 1, end: 10 }, fullFileLineCount: 10 });
+    t.setReadRegions('src/a.ts', [{ start: 1, end: 12 }], 12);
+    const id = t.getIdentity('src/a.ts');
+    expect(id?.readRegions).toEqual([{ start: 1, end: 12 }]);
+    expect(id?.fullFileLineCount).toBe(12);
+    expect(id?.snapshotHash).toBe('h1');
+    expect(id?.canonicalHash).toBe('h1');
+    expect(id?.readKind).toBe('canonical');
+  });
+
+  it('preserves canonical-read gate after rebase', () => {
+    const t = new SnapshotTracker();
+    t.record('src/a.ts', 'h1', 'canonical', { readRegion: { start: 1, end: 10 }, fullFileLineCount: 10 });
+    t.setReadRegions('src/a.ts', [{ start: 1, end: 12 }], 12);
+    expect(t.hasCanonicalRead('src/a.ts')).toBe(true);
+    expect(t.hasReadCoverage('src/a.ts', 11, 12)).toBe(true);
+  });
+
+  it('merges overlapping rebased regions', () => {
+    const t = new SnapshotTracker();
+    t.record('src/a.ts', 'h1', 'lines', { readRegion: { start: 1, end: 5 } });
+    t.setReadRegions('src/a.ts', [
+      { start: 1, end: 5 },
+      { start: 4, end: 10 },
+    ]);
+    expect(t.getIdentity('src/a.ts')?.readRegions).toEqual([{ start: 1, end: 10 }]);
+  });
+
+  it('drops regions with start < 1 or end < start (defensive after rebase)', () => {
+    const t = new SnapshotTracker();
+    t.record('src/a.ts', 'h1', 'lines', { readRegion: { start: 1, end: 10 } });
+    t.setReadRegions('src/a.ts', [
+      { start: 0, end: 5 },
+      { start: 10, end: 3 },
+      { start: 5, end: 12 },
+    ]);
+    expect(t.getIdentity('src/a.ts')?.readRegions).toEqual([{ start: 5, end: 12 }]);
+  });
+
+  it('no-op when identity does not exist (rebase only applies to tracked files)', () => {
+    const t = new SnapshotTracker();
+    t.setReadRegions('src/ghost.ts', [{ start: 1, end: 10 }], 10);
+    expect(t.getIdentity('src/ghost.ts')).toBeUndefined();
+  });
+
+  it('writes empty regions as undefined (so hasReadCoverage returns false)', () => {
+    const t = new SnapshotTracker();
+    t.record('src/a.ts', 'h1', 'lines', { readRegion: { start: 1, end: 10 } });
+    t.setReadRegions('src/a.ts', []);
+    expect(t.getIdentity('src/a.ts')?.readRegions).toBeUndefined();
+    expect(t.hasReadCoverage('src/a.ts', 1, 1)).toBe(false);
+  });
+});

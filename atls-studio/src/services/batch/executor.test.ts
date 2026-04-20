@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { OpHandler, OperationKind, StepOutput } from './types';
 
 const handlers = new Map<string, OpHandler>();
@@ -25,7 +25,10 @@ vi.mock('./handlers/session', () => ({
   resetRecallBudget: () => {},
 }));
 
-import { executeUnifiedBatch } from './executor';
+import { executeUnifiedBatch, rebaseRegionsByDeltas, rebaseHashRefLineRange } from './executor';
+import type { PositionalDelta } from './executor';
+import { AwarenessLevel } from './snapshotTracker';
+import { useAppStore } from '../../stores/appStore';
 import { isBlockedForSwarm } from './policy';
 
 function makeCtx() {
@@ -2758,5 +2761,467 @@ describe('recordRevisionAdvance on change step outputs', () => {
     );
 
     expect(revAdvanceSpy).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// rebaseRegionsByDeltas — same positional math as applyDeltasToLineEdits,
+// applied to read-coverage regions for the slim-ack rebase path.
+// ---------------------------------------------------------------------------
+
+describe('slim-ack rebase — end-of-batch awareness flush', () => {
+  // appStore.setSettings persists to localStorage; stub under vitest node env.
+  beforeAll(() => {
+    if (typeof (globalThis as { localStorage?: Storage }).localStorage === 'undefined') {
+      const store: Record<string, string> = {};
+      (globalThis as unknown as { localStorage: Storage }).localStorage = {
+        getItem: (k: string) => store[k] ?? null,
+        setItem: (k: string, v: string) => { store[k] = v; },
+        removeItem: (k: string) => { delete store[k]; },
+        clear: () => { for (const k of Object.keys(store)) delete store[k]; },
+        key: (i: number) => Object.keys(store)[i] ?? null,
+        get length() { return Object.keys(store).length; },
+      } satisfies Storage;
+    }
+  });
+
+  beforeEach(() => {
+    handlers.clear();
+    useAppStore.getState().setSettings({ compressEditAcks: false });
+  });
+
+  afterEach(() => {
+    useAppStore.getState().setSettings({ compressEditAcks: false });
+  });
+
+  function makeCtxWithSeededAwareness() {
+    const base = makeCtx();
+    const preSeeded = new Map<string, Record<string, unknown>>();
+    preSeeded.set('src/f.ts', {
+      filePath: 'src/f.ts',
+      snapshotHash: 'hash-before',
+      level: AwarenessLevel.CANONICAL,
+      readRegions: [{ start: 1, end: 10 }],
+      shapeHash: undefined,
+      recordedAt: 0,
+    });
+    const setAwarenessCalls: Array<Record<string, unknown>> = [];
+    return {
+      ...base,
+      store: () => ({
+        ...base.store(),
+        getAwarenessCache: () => preSeeded,
+        setAwareness: (entry: Record<string, unknown>) => {
+          setAwarenessCalls.push(entry);
+          preSeeded.set(entry.filePath as string, entry);
+        },
+      }),
+      _calls: setAwarenessCalls,
+    } as ReturnType<typeof makeCtx> & { _calls: Array<Record<string, unknown>> };
+  }
+
+  it('compressEditAcks OFF (default): edited file flushed with level NONE and empty regions', async () => {
+    const ctx = makeCtxWithSeededAwareness();
+
+    handlers.set('change.edit', async () =>
+      raw('applied', {
+        status: 'ok',
+        drafts: [{ file: 'src/f.ts', content_hash: 'hash-after' }],
+        edits_resolved: [{ resolved_line: 5, action: 'insert_after', lines_affected: 2 }],
+      }),
+    );
+
+    await executeUnifiedBatch({
+      version: '1.0',
+      steps: [{
+        id: 'e1', use: 'change.edit', with: {
+          file: 'src/f.ts',
+          content_hash: 'hash-before',
+          line_edits: [{ line: 5, action: 'insert_after', content: 'new1\nnew2' }],
+        },
+      }],
+    }, ctx);
+
+    const fEntry = ctx._calls.find(c => c.filePath === 'src/f.ts');
+    expect(fEntry).toBeDefined();
+    expect(fEntry?.level).toBe(AwarenessLevel.NONE);
+    expect(fEntry?.readRegions).toEqual([]);
+  });
+
+  it('compressEditAcks ON: edited file flushed with canonical level and rebased regions', async () => {
+    useAppStore.getState().setSettings({ compressEditAcks: true });
+
+    const ctx = makeCtxWithSeededAwareness();
+
+    handlers.set('change.edit', async () =>
+      raw('applied', {
+        status: 'ok',
+        drafts: [{ file: 'src/f.ts', content_hash: 'hash-after' }],
+        edits_resolved: [{ resolved_line: 5, action: 'insert_after', lines_affected: 2 }],
+      }),
+    );
+
+    await executeUnifiedBatch({
+      version: '1.0',
+      steps: [{
+        id: 'e1', use: 'change.edit', with: {
+          file: 'src/f.ts',
+          content_hash: 'hash-before',
+          line_edits: [{ line: 5, action: 'insert_after', content: 'new1\nnew2' }],
+        },
+      }],
+    }, ctx);
+
+    const fEntry = ctx._calls.find(c => c.filePath === 'src/f.ts');
+    expect(fEntry).toBeDefined();
+    expect(fEntry?.level).toBe(AwarenessLevel.CANONICAL);
+    // insert_after L5 with 2 content lines → +2 delta at line 5 (strict > 5)
+    // region [1,10]: start=1 (5<1 false, no shift), end=10 (5<10 true, +2) → [1,12]
+    expect(fEntry?.readRegions).toEqual([{ start: 1, end: 12 }]);
+    expect(fEntry?.snapshotHash).toBe('hash-after');
+  });
+
+  it('compressEditAcks ON: non-edited files flush unchanged regardless of toggle', async () => {
+    useAppStore.getState().setSettings({ compressEditAcks: true });
+
+    const ctx = makeCtxWithSeededAwareness();
+    // Also seed an unrelated file
+    (ctx.store().getAwarenessCache() as Map<string, Record<string, unknown>>).set('src/other.ts', {
+      filePath: 'src/other.ts',
+      snapshotHash: 'other-hash',
+      level: AwarenessLevel.CANONICAL,
+      readRegions: [{ start: 1, end: 50 }],
+      recordedAt: 0,
+    });
+
+    handlers.set('change.edit', async () =>
+      raw('applied', {
+        status: 'ok',
+        drafts: [{ file: 'src/f.ts', content_hash: 'hash-after' }],
+      }),
+    );
+
+    await executeUnifiedBatch({
+      version: '1.0',
+      steps: [{
+        id: 'e1', use: 'change.edit', with: {
+          file: 'src/f.ts',
+          content_hash: 'hash-before',
+          line_edits: [{ line: 5, action: 'insert_after', content: 'x' }],
+        },
+      }],
+    }, ctx);
+
+    const otherEntry = ctx._calls.find(c => c.filePath === 'src/other.ts');
+    expect(otherEntry?.level).toBe(AwarenessLevel.CANONICAL);
+    expect(otherEntry?.readRegions).toEqual([{ start: 1, end: 50 }]);
+  });
+});
+
+describe('rebaseRegionsByDeltas', () => {
+  it('returns regions unchanged when deltas are empty', () => {
+    const regions = [{ start: 1, end: 10 }];
+    expect(rebaseRegionsByDeltas(regions, [])).toEqual(regions);
+  });
+
+  it('returns deltas unchanged when regions are empty', () => {
+    expect(rebaseRegionsByDeltas([], [{ line: 5, delta: 2 }])).toEqual([]);
+  });
+
+  it('insert_after style (strict > anchor): shifts end when anchor < end, not start when anchor >= start', () => {
+    // region [1,10], edit inserts 2 lines AFTER line 5 → end shifts +2 (5<10), start unchanged (5>=1 but !inclusive means 5<1 is false)
+    const deltas: PositionalDelta[] = [{ line: 5, delta: 2 }];
+    expect(rebaseRegionsByDeltas([{ start: 1, end: 10 }], deltas)).toEqual([{ start: 1, end: 12 }]);
+  });
+
+  it('insert_before style (inclusive at anchor): shifts both start and end when anchor <= boundary', () => {
+    // region [5,10], insert_before at line 5 with +2 → start shifts +2, end shifts +2 → [7,12]
+    const deltas: PositionalDelta[] = [{ line: 5, delta: 2, lineInclusive: true }];
+    expect(rebaseRegionsByDeltas([{ start: 5, end: 10 }], deltas)).toEqual([{ start: 7, end: 12 }]);
+  });
+
+  it('delete shrinks region end when delete anchor < end', () => {
+    // region [1,10], delete 3 lines starting at line 4 → end shifts -3 → [1,7]
+    const deltas: PositionalDelta[] = [{ line: 4, delta: -3 }];
+    expect(rebaseRegionsByDeltas([{ start: 1, end: 10 }], deltas)).toEqual([{ start: 1, end: 7 }]);
+  });
+
+  it('delete above region shifts both start and end', () => {
+    // region [20,30], delete 5 lines at line 5 → both shift -5 → [15,25]
+    const deltas: PositionalDelta[] = [{ line: 5, delta: -5 }];
+    expect(rebaseRegionsByDeltas([{ start: 20, end: 30 }], deltas)).toEqual([{ start: 15, end: 25 }]);
+  });
+
+  it('cumulative deltas stack: multiple insertions below a region', () => {
+    // region [50,60], +2 at L10, +3 at L20, +1 at L100 (last doesn't shift — 100 > 60)
+    const deltas: PositionalDelta[] = [
+      { line: 10, delta: 2 },
+      { line: 20, delta: 3 },
+      { line: 100, delta: 1 },
+    ];
+    expect(rebaseRegionsByDeltas([{ start: 50, end: 60 }], deltas)).toEqual([{ start: 55, end: 65 }]);
+  });
+
+  it('region whose start > anchor but end < anchor does not shift (anchor below region)', () => {
+    // This shouldn't happen in practice, but we assert behavior: if anchor is below the region,
+    // no shift occurs — only anchors at or before a boundary shift that boundary.
+    const deltas: PositionalDelta[] = [{ line: 100, delta: 5 }];
+    expect(rebaseRegionsByDeltas([{ start: 10, end: 20 }], deltas)).toEqual([{ start: 10, end: 20 }]);
+  });
+
+  it('drops a region whose end falls below start after a delete', () => {
+    // region [5,6], delete 10 lines at line 1 → both shift -10 → [-5,-4] → dropped
+    const deltas: PositionalDelta[] = [{ line: 1, delta: -10 }];
+    expect(rebaseRegionsByDeltas([{ start: 5, end: 6 }], deltas)).toEqual([]);
+  });
+
+  it('drops a region whose start clamps below 1 after a large delete', () => {
+    // region [2,10], delete 5 lines at line 1 → start=-3, end=5 → start<1 → dropped
+    const deltas: PositionalDelta[] = [{ line: 1, delta: -5 }];
+    expect(rebaseRegionsByDeltas([{ start: 2, end: 10 }], deltas)).toEqual([]);
+  });
+
+  it('handles multiple regions independently', () => {
+    // Two regions; insert +2 at L5 only shifts the higher region.
+    const deltas: PositionalDelta[] = [{ line: 5, delta: 2 }];
+    expect(rebaseRegionsByDeltas([
+      { start: 1, end: 3 },
+      { start: 10, end: 20 },
+    ], deltas)).toEqual([
+      { start: 1, end: 3 },
+      { start: 12, end: 22 },
+    ]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// rebaseHashRefLineRange — shift the A-B portion of h:HASH:A-B refs using
+// the same positional-delta math applyDeltasToLineEdits / rebaseRegionsByDeltas
+// use. Needed so step 2's f:"h:HASH:A-B" lines up with the file state that
+// step 1 produced (Rust treats A-B as current-file line numbers).
+// ---------------------------------------------------------------------------
+
+describe('rebaseHashRefLineRange', () => {
+  it('returns value unchanged when deltas are empty', () => {
+    expect(rebaseHashRefLineRange('h:abc123:6-10', [])).toBe('h:abc123:6-10');
+  });
+
+  it('returns value unchanged when not a hash-ref', () => {
+    const deltas: PositionalDelta[] = [{ line: 5, delta: 2 }];
+    expect(rebaseHashRefLineRange('src/foo.ts', deltas)).toBe('src/foo.ts');
+  });
+
+  it('returns hash-ref without line range unchanged', () => {
+    const deltas: PositionalDelta[] = [{ line: 5, delta: 2 }];
+    expect(rebaseHashRefLineRange('h:abc123', deltas)).toBe('h:abc123');
+  });
+
+  it('returns value unchanged when anchor is above the range (no applicable shift)', () => {
+    const deltas: PositionalDelta[] = [{ line: 100, delta: 5 }];
+    expect(rebaseHashRefLineRange('h:abc123:6-10', deltas)).toBe('h:abc123:6-10');
+  });
+
+  it('insert_after style (strict): anchor < end shifts end only when anchor >= start', () => {
+    // h:abc:6-10 + insert_after L5 with +2:
+    //   start=6: 5<6 true → +2 = 8
+    //   end=10:  5<10 true → +2 = 12
+    //   → h:abc:8-12
+    const deltas: PositionalDelta[] = [{ line: 5, delta: 2 }];
+    expect(rebaseHashRefLineRange('h:abc123:6-10', deltas)).toBe('h:abc123:8-12');
+  });
+
+  it('insert_after mid-range: anchor inside range shifts end only', () => {
+    // h:abc:6-10 + insert_after L7 with +3:
+    //   start=6: 7<6 false → +0 = 6
+    //   end=10:  7<10 true → +3 = 13
+    //   → h:abc:6-13
+    const deltas: PositionalDelta[] = [{ line: 7, delta: 3 }];
+    expect(rebaseHashRefLineRange('h:abc123:6-10', deltas)).toBe('h:abc123:6-13');
+  });
+
+  it('insert_before style (inclusive): anchor at start shifts both', () => {
+    // h:abc:6-10 + insert_before L6 with +2 (lineInclusive):
+    //   start=6: 6<=6 true → +2 = 8
+    //   end=10:  6<=10 true → +2 = 12
+    const deltas: PositionalDelta[] = [{ line: 6, delta: 2, lineInclusive: true }];
+    expect(rebaseHashRefLineRange('h:abc123:6-10', deltas)).toBe('h:abc123:8-12');
+  });
+
+  it('delete above the range shifts both', () => {
+    // h:abc:20-30 + delete 5 lines at L5:
+    //   start=20: 5<20 true → -5 = 15
+    //   end=30:   5<30 true → -5 = 25
+    const deltas: PositionalDelta[] = [{ line: 5, delta: -5 }];
+    expect(rebaseHashRefLineRange('h:abc123:20-30', deltas)).toBe('h:abc123:15-25');
+  });
+
+  it('multiple ranges shift independently (h:HASH:A-B,C-D)', () => {
+    // insert +2 at L5: first range fully above → shifts both; second range starts at 10 → also shifts both
+    const deltas: PositionalDelta[] = [{ line: 5, delta: 2 }];
+    expect(rebaseHashRefLineRange('h:abc123:6-8,10-15', deltas)).toBe('h:abc123:8-10,12-17');
+  });
+
+  it('reproduces the demo-trace scenario (e1 +2 delta shifts e2 target)', () => {
+    // Round 5 e1 replaced 5 lines with 7 lines at L6 (insert_after-equivalent, delta +2 at line 6).
+    // e2 used f:"h:53e378:12-14" expecting greetUser. After rebase, target shifts to L14-16.
+    const deltas: PositionalDelta[] = [{ line: 6, delta: 2 }];
+    expect(rebaseHashRefLineRange('h:53e378:12-14', deltas)).toBe('h:53e378:14-16');
+  });
+
+  it('clamps rebased start to >= 1 after a large delete above', () => {
+    // h:abc:2-8 + delete 10 at L1:
+    //   start=2: 1<2 true → -10 = -8 → clamp 1
+    //   end=8:   1<8 true → -10 = -2 → clamp max(newStart, 1) = 1
+    const deltas: PositionalDelta[] = [{ line: 1, delta: -10 }];
+    expect(rebaseHashRefLineRange('h:abc123:2-8', deltas)).toBe('h:abc123:1-1');
+  });
+
+  it('leaves shaped refs (h:HASH:sig, h:HASH:fold) untouched', () => {
+    const deltas: PositionalDelta[] = [{ line: 5, delta: 2 }];
+    expect(rebaseHashRefLineRange('h:abc123:sig', deltas)).toBe('h:abc123:sig');
+    expect(rebaseHashRefLineRange('h:abc123:fold', deltas)).toBe('h:abc123:fold');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Inter-step hash-ref rebase integration: when step 1 shifts lines in a file,
+// step 2's f:"h:HASH:A-B" gets its range rebased so the backend applies at
+// the right coordinates in the current file. Reproduces the demo-trace bug
+// (round 5 e2 / round 6 / round 8) and confirms the fix.
+// ---------------------------------------------------------------------------
+
+describe('inter-step rebase — hash-ref line ranges on f/file/file_path', () => {
+  beforeEach(() => {
+    handlers.clear();
+  });
+
+  it('shifts future step f:"h:HASH:A-B" by deltas from prior same-file edit', async () => {
+    const editCalls: Array<Record<string, unknown>> = [];
+    handlers.set('change.edit', async (params) => {
+      editCalls.push(JSON.parse(JSON.stringify(params)));
+      return raw('applied', {
+        status: 'ok',
+        drafts: [{ file: 'src/foo.ts', content_hash: 'hash-after', h: 'hash-after', old_h: 'abc123' }],
+        edits_resolved: [{ resolved_line: 6, action: 'replace', lines_affected: 7 }],
+      });
+    });
+
+    const ctx = makeCtx();
+    // Seed the tracker via a read so the hash → path resolver works when
+    // rebaseSubsequentSteps sees f:"h:abc123:12-14" in step 2.
+    handlers.set('read.lines', async () =>
+      raw('read', { file: 'src/foo.ts', content_hash: 'abc123', actual_range: [[1, 20]], lines: 20 }),
+    );
+
+    await executeUnifiedBatch({
+      version: '1.0',
+      steps: [
+        {
+          id: 'r1', use: 'read.lines', with: { f: 'src/foo.ts', sl: 1, el: 20 },
+        },
+        {
+          id: 'e1', use: 'change.edit', with: {
+            file: 'src/foo.ts',
+            content_hash: 'abc123',
+            line_edits: [{ line: 6, end_line: 10, action: 'replace', content: Array(7).fill('x').join('\n') }],
+          },
+        },
+        {
+          id: 'e2', use: 'change.edit', with: {
+            f: 'h:abc123:12-14',
+            line_edits: [{ content: 'new body' }],
+          },
+        },
+      ],
+    }, ctx);
+
+    // e1 was the first change.edit call; e2's `f:` was rebased by the
+    // executor pre-normalization, and `paramNorm` then aliased `f` → `file_path`
+    // before the handler saw it. Assert on file_path.
+    const e2Call = editCalls[1];
+    expect(e2Call).toBeDefined();
+    expect(e2Call.file_path ?? e2Call.file ?? e2Call.f).toBe('h:abc123:14-16');
+  });
+
+  it('does not shift when hash does not resolve to an edited file', async () => {
+    const editCalls: Array<Record<string, unknown>> = [];
+    handlers.set('change.edit', async (params) => {
+      editCalls.push(JSON.parse(JSON.stringify(params)));
+      return raw('applied', {
+        status: 'ok',
+        drafts: [{ file: 'src/foo.ts', content_hash: 'hash-after', h: 'hash-after', old_h: 'abc123' }],
+        edits_resolved: [{ resolved_line: 6, action: 'replace', lines_affected: 7 }],
+      });
+    });
+
+    const ctx = makeCtx();
+
+    await executeUnifiedBatch({
+      version: '1.0',
+      steps: [
+        {
+          id: 'e1', use: 'change.edit', with: {
+            file: 'src/foo.ts',
+            content_hash: 'abc123',
+            line_edits: [{ line: 6, end_line: 10, action: 'replace', content: Array(7).fill('x').join('\n') }],
+          },
+        },
+        {
+          // Different file — hash doesn't resolve to src/foo.ts, no rebase should apply
+          id: 'e2', use: 'change.edit', with: {
+            f: 'h:beef9999:12-14',
+            line_edits: [{ content: 'other' }],
+          },
+        },
+      ],
+    }, ctx);
+
+    const e2Call = editCalls[1];
+    expect(e2Call?.file_path ?? e2Call?.file ?? e2Call?.f).toBe('h:beef9999:12-14');
+  });
+
+  it('shifts nested batch_edits edits[] entry f: hash-refs', async () => {
+    const editCalls: Array<Record<string, unknown>> = [];
+    handlers.set('change.edit', async (params) => {
+      editCalls.push(JSON.parse(JSON.stringify(params)));
+      return raw('applied', {
+        status: 'ok',
+        drafts: [{ file: 'src/foo.ts', content_hash: 'hash-after', h: 'hash-after', old_h: 'abc123' }],
+        edits_resolved: [{ resolved_line: 6, action: 'replace', lines_affected: 7 }],
+      });
+    });
+
+    const ctx = makeCtx();
+    handlers.set('read.lines', async () =>
+      raw('read', { file: 'src/foo.ts', content_hash: 'abc123', actual_range: [[1, 20]], lines: 20 }),
+    );
+
+    await executeUnifiedBatch({
+      version: '1.0',
+      steps: [
+        { id: 'r1', use: 'read.lines', with: { f: 'src/foo.ts', sl: 1, el: 20 } },
+        {
+          id: 'e1', use: 'change.edit', with: {
+            file: 'src/foo.ts',
+            content_hash: 'abc123',
+            line_edits: [{ line: 6, end_line: 10, action: 'replace', content: Array(7).fill('x').join('\n') }],
+          },
+        },
+        {
+          id: 'e2', use: 'change.edit', with: {
+            mode: 'batch_edits',
+            edits: [
+              { f: 'h:abc123:12-14', line_edits: [{ content: 'a' }] },
+              { f: 'h:abc123:16-18', line_edits: [{ content: 'b' }] },
+            ],
+          },
+        },
+      ],
+    }, ctx);
+
+    const e2Call = editCalls[1];
+    const edits = e2Call?.edits as Array<Record<string, unknown>> | undefined;
+    expect(edits?.[0]?.f).toBe('h:abc123:14-16');
+    expect(edits?.[1]?.f).toBe('h:abc123:18-20');
   });
 });

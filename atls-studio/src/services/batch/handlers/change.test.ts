@@ -2,7 +2,7 @@
  * Unit tests for change.edit normalization.
  */
 
-import { beforeEach, describe, it, expect, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, it, expect, vi } from 'vitest';
 import { invoke } from '@tauri-apps/api/core';
 import { useContextStore } from '../../../stores/contextStore';
 import { normalizeStepParams } from '../paramNorm';
@@ -14,10 +14,12 @@ import {
   handleEdit,
   handleRollback,
   normalizeEditParams,
+  recordEditSummary,
   registerEditHashes,
   invalidateStaleHashes,
   injectDiffRefs,
 } from './change';
+import { useAppStore } from '../../../stores/appStore';
 
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: vi.fn(),
@@ -1783,6 +1785,139 @@ describe('injectDiffRefs', () => {
     const result = { batch };
     injectDiffRefs(result);
     expect((batch[0] as { diff?: string }).diff).toBe('h:old222..h:new111');
+  });
+});
+
+describe('recordEditSummary', () => {
+  // appStore.setSettings persists to localStorage; stub under vitest node env.
+  beforeAll(() => {
+    if (typeof (globalThis as { localStorage?: Storage }).localStorage === 'undefined') {
+      const store: Record<string, string> = {};
+      (globalThis as unknown as { localStorage: Storage }).localStorage = {
+        getItem: (k: string) => store[k] ?? null,
+        setItem: (k: string, v: string) => { store[k] = v; },
+        removeItem: (k: string) => { delete store[k]; },
+        clear: () => { for (const k of Object.keys(store)) delete store[k]; },
+        key: (i: number) => Object.keys(store)[i] ?? null,
+        get length() { return Object.keys(store).length; },
+      } satisfies Storage;
+    }
+  });
+
+  beforeEach(() => {
+    resetContextStore();
+    invokeMock.mockReset();
+    useAppStore.getState().setSettings({ compressEditAcks: false });
+  });
+
+  afterEach(() => {
+    useAppStore.getState().setSettings({ compressEditAcks: false });
+  });
+
+  function readEditEntry(basename: string): string {
+    return useContextStore.getState().getBlackboardEntry(`edit:${basename}`) ?? '';
+  }
+
+  it('off-mode (default): embeds unified diff preview from resolve_hash_ref', async () => {
+    invokeMock.mockImplementation(async (cmd: string) => {
+      if (cmd === 'resolve_hash_ref') {
+        return { content: '--- a/a.ts\n+++ b/a.ts\n@@ -1,2 +1,2 @@\n-old line\n+new line\n' };
+      }
+      return {};
+    });
+
+    const result = {
+      batch: [{ f: 'a.ts', h: 'new111111', old_h: 'old222222', ok: 1, lines_changed: 1 }],
+      edits_resolved: [{ resolved_line: 42, action: 'replace', lines_affected: 1 }],
+    };
+
+    await recordEditSummary(result, { file_path: 'a.ts' });
+
+    const entry = readEditEntry('a.ts');
+    expect(entry).toContain('diff:h:old222..h:new111');
+    expect(entry).toContain('resolved:[L42 replace 1L]');
+    expect(entry).toContain('@@');
+    expect(entry).toContain('+new line');
+    expect(entry).toContain('-old line');
+  });
+
+  it('off-mode: truncates diff preview over EDIT_SUMMARY_DIFF_CAP and appends marker', async () => {
+    const hugeDiff = '@@ -1,1 +1,1 @@\n' + '+x\n'.repeat(400);
+    invokeMock.mockImplementation(async (cmd: string) => {
+      if (cmd === 'resolve_hash_ref') return { content: hugeDiff };
+      return {};
+    });
+
+    const result = {
+      batch: [{ f: 'big.ts', h: 'new000000', old_h: 'old999999', ok: 1 }],
+    };
+
+    await recordEditSummary(result, { file_path: 'big.ts' });
+
+    const entry = readEditEntry('big.ts');
+    expect(entry).toContain('[diff truncated]');
+  });
+
+  it('on-mode (compressEditAcks=true): emits slim ack with ref + resolved but no diff hunks', async () => {
+    useAppStore.getState().setSettings({ compressEditAcks: true });
+
+    invokeMock.mockImplementation(async (cmd: string) => {
+      if (cmd === 'resolve_hash_ref') {
+        throw new Error('resolve_hash_ref should not be called in slim mode');
+      }
+      return {};
+    });
+
+    const result = {
+      batch: [{ f: 'a.ts', h: 'new111111', old_h: 'old222222', ok: 1, lines_changed: 3 }],
+      edits_resolved: [{ resolved_line: 42, action: 'replace', lines_affected: 3 }],
+    };
+
+    await recordEditSummary(result, { file_path: 'a.ts' });
+
+    const entry = readEditEntry('a.ts');
+    expect(entry).toContain('h:new111');
+    expect(entry).toContain('3L');
+    expect(entry).toContain('diff:h:old222..h:new111');
+    expect(entry).toContain('resolved:[L42 replace 3L]');
+    expect(entry).not.toContain('@@');
+    expect(entry).not.toContain('+++');
+    expect(entry).not.toContain('---');
+    expect(entry).not.toContain('[diff truncated]');
+
+    expect(invokeMock).not.toHaveBeenCalledWith('resolve_hash_ref', expect.anything());
+  });
+
+  it('on-mode: preserves line delta segment when estimateLineDelta is non-zero', async () => {
+    useAppStore.getState().setSettings({ compressEditAcks: true });
+
+    const result = {
+      batch: [{ f: 'd.ts', h: 'newaaaaaa', old_h: 'oldbbbbbb', ok: 1 }],
+    };
+    const params = {
+      file_path: 'd.ts',
+      line_edits: [{ action: 'insert_after', content: '// a\n// b', line: 5 }],
+    };
+
+    await recordEditSummary(result, params);
+
+    const entry = readEditEntry('d.ts');
+    expect(entry).toMatch(/\(\+2\)/);
+    expect(entry).not.toContain('@@');
+  });
+
+  it('on-mode: errors in resolve_hash_ref are never attempted', async () => {
+    useAppStore.getState().setSettings({ compressEditAcks: true });
+
+    const result = {
+      batch: [{ f: 'e.ts', h: 'new333333', old_h: 'old444444', ok: 1 }],
+    };
+
+    await recordEditSummary(result, { file_path: 'e.ts' });
+
+    expect(invokeMock).not.toHaveBeenCalled();
+    const entry = readEditEntry('e.ts');
+    expect(entry).toContain('diff:h:old444..h:new333');
   });
 });
 

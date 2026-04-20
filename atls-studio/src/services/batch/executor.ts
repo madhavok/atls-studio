@@ -24,6 +24,7 @@ import { stepOutputToResult } from './resultFormatter';
 import { resetRecallBudget } from './handlers/session';
 import { SnapshotTracker, AwarenessLevel } from './snapshotTracker';
 import type { LineRegion } from './snapshotTracker';
+import { parseHashRef } from '../../utils/hashRefParsers';
 import { buildIntentContext, resolveIntents, isPressured } from './intents';
 import { validateBatchSteps } from './validateBatchSteps';
 import { useRetentionStore } from '../../stores/retentionStore';
@@ -88,7 +89,12 @@ function normalizePathForRebase(value: string): string {
 }
 
 function extractEditTargetFile(params: Record<string, unknown>): string | undefined {
-  const f = params.file ?? params.file_path;
+  // Include the `f` alias: rebaseSubsequentSteps runs against future steps
+  // BEFORE normalizeStepParams aliases `f` → `file_path`. Without this, a
+  // future step using `f: "h:HASH:A-B"` (or `f: "src/foo.ts"`) would be
+  // skipped by the rebase even though the handler will ultimately target
+  // that file.
+  const f = params.file ?? params.file_path ?? params.f;
   return typeof f === 'string' ? f : undefined;
 }
 
@@ -102,7 +108,8 @@ function countContentLines(content: string): number {
   return stripped.split(/\r?\n/).length;
 }
 
-interface PositionalDelta {
+/** Exported for tests — positional shift contract for rebase math. */
+export interface PositionalDelta {
   line: number;
   delta: number;
   /**
@@ -455,6 +462,33 @@ function buildPerFileDeltaMap(
   return map;
 }
 
+/**
+ * Shift a set of LineRegion boundaries by the same positional-delta math used
+ * for `line_edits` rebase. Mirrors `applyDeltasToLineEdits` (inclusive vs
+ * strict) so tracker read-coverage stays aligned with where code actually
+ * moved. Used by the slim-ack rebase path to keep canonical-level awareness
+ * across edits without forcing a re-read. Exported for tests.
+ */
+export function rebaseRegionsByDeltas(
+  regions: LineRegion[],
+  deltas: PositionalDelta[],
+): LineRegion[] {
+  if (regions.length === 0 || deltas.length === 0) return regions.slice();
+  const out: LineRegion[] = [];
+  for (const region of regions) {
+    let startShift = 0;
+    let endShift = 0;
+    for (const d of deltas) {
+      if (d.lineInclusive ? d.line <= region.start : d.line < region.start) startShift += d.delta;
+      if (d.lineInclusive ? d.line <= region.end   : d.line < region.end)   endShift   += d.delta;
+    }
+    const start = region.start + startShift;
+    const end = region.end + endShift;
+    if (end >= start && start >= 1) out.push({ start, end });
+  }
+  return out;
+}
+
 /** Apply positional deltas to a single line_edits array in-place. */
 function applyDeltasToLineEdits(
   lineEdits: unknown[],
@@ -493,10 +527,94 @@ function applyDeltasToLineEdits(
   }
 }
 
+/**
+ * Shift the line-range portion of an `h:HASH:A-B` (or `h:HASH:A-B,C-D`) ref by
+ * the same positional-delta math `applyDeltasToLineEdits` uses. Returns the
+ * rewritten string, or the original if there's nothing to shift.
+ *
+ * The Rust `draft` handler treats the A-B portion of such refs as absolute
+ * line numbers in the CURRENT on-disk file (see `load_draft_base_content` +
+ * the `edit_target_range` path in `batch_query/mod.rs`). That means when an
+ * earlier same-batch edit shifts lines, A-B must be shifted identically —
+ * same invariant as `line_edits[].line/end_line`. Exported for tests.
+ */
+export function rebaseHashRefLineRange(value: string, deltas: PositionalDelta[]): string {
+  if (deltas.length === 0 || !value.startsWith('h:')) return value;
+  const parsed = parseHashRef(value);
+  if (!parsed) return value;
+  const { modifier } = parsed;
+  if (typeof modifier !== 'object' || modifier === null) return value;
+  if (!('lines' in modifier) || 'shape' in modifier) return value;
+  const lines = modifier.lines as Array<[number, number | null]>;
+  if (!Array.isArray(lines) || lines.length === 0) return value;
+
+  let changed = false;
+  const rebased: Array<[number, number | null]> = lines.map(([start, end]) => {
+    let startShift = 0;
+    let endShift = 0;
+    const effectiveEnd = end ?? start;
+    for (const d of deltas) {
+      if (d.lineInclusive ? d.line <= start : d.line < start) startShift += d.delta;
+      if (d.lineInclusive ? d.line <= effectiveEnd : d.line < effectiveEnd) endShift += d.delta;
+    }
+    if (startShift !== 0 || endShift !== 0) changed = true;
+    const newStart = Math.max(1, start + startShift);
+    const newEnd = end == null ? null : Math.max(newStart, end + endShift);
+    return [newStart, newEnd];
+  });
+  if (!changed) return value;
+
+  const rangeStr = rebased.map(([s, e]) => (e == null ? `${s}` : `${s}-${e}`)).join(',');
+  return `h:${parsed.hash}:${rangeStr}`;
+}
+
+/**
+ * Resolve the delta-map lookup key for a future step's file reference.
+ * - Plain paths → normalized path key.
+ * - Hash-refs (h:HASH or h:HASH:A-B) → resolved via a pre-captured
+ *   hash → path alias map (or undefined if the hash isn't known).
+ *
+ * The alias map is captured BEFORE `recordSnapshotFromOutput` runs for the
+ * just-completed edit — otherwise `invalidateAndRerecord` would have already
+ * wiped the old hash, and the model's common pattern of citing the
+ * pre-edit hash in a subsequent step would be un-resolvable.
+ */
+function resolveFileKeyForRebaseLookup(
+  rawFile: string,
+  hashAliases: ReadonlyMap<string, string>,
+): string | undefined {
+  if (!rawFile.startsWith('h:')) return normalizePathForRebase(rawFile);
+  // canonicalizeSnapshotHash mirrors the same `h:<hex>:<rest>` → `<hex>` rule
+  // the tracker uses, so ranges and shape modifiers don't defeat lookup.
+  const bare = rawFile.startsWith('h:')
+    ? (() => {
+        const stripped = rawFile.slice(2);
+        const colon = stripped.indexOf(':');
+        return colon >= 0 ? stripped.slice(0, colon) : stripped;
+      })()
+    : rawFile;
+  const resolved = hashAliases.get(bare);
+  return resolved ? normalizePathForRebase(resolved) : undefined;
+}
+
+/** Shift hash-ref ranges on the f/file/file_path keys of a params object in place. */
+function rebaseHashRefFileKeys(
+  params: Record<string, unknown>,
+  deltas: PositionalDelta[],
+): void {
+  for (const key of ['f', 'file', 'file_path'] as const) {
+    const v = params[key];
+    if (typeof v !== 'string') continue;
+    const rebased = rebaseHashRefLineRange(v, deltas);
+    if (rebased !== v) params[key] = rebased;
+  }
+}
+
 function rebaseSubsequentSteps(
   completedParams: Record<string, unknown>,
   stepsToRun: Array<{ id: string; use: string; with?: Record<string, unknown> }>,
   startIndex: number,
+  hashAliases: ReadonlyMap<string, string>,
 ): void {
   const deltaMap = buildPerFileDeltaMap(completedParams);
   if (deltaMap.size === 0) return;
@@ -505,12 +623,19 @@ function rebaseSubsequentSteps(
     const future = stepsToRun[j];
     if (!future.use.startsWith('change.') || !future.with) continue;
 
-    // Rebase top-level line_edits when the future step targets a file we edited
+    // Rebase top-level line_edits AND any h:HASH:A-B ranges on f/file/file_path
+    // when the future step targets a file we edited. Hash-ref file keys are
+    // resolved to a path via the captured pre-edit hash→path aliases so the
+    // lookup matches the same key `buildPerFileDeltaMap` produces.
     const futureFile = extractEditTargetFile(future.with);
     if (futureFile) {
-      const deltas = deltaMap.get(normalizePathForRebase(futureFile));
-      if (deltas && Array.isArray(future.with.line_edits)) {
-        applyDeltasToLineEdits(future.with.line_edits as unknown[], deltas);
+      const lookupKey = resolveFileKeyForRebaseLookup(futureFile, hashAliases);
+      const deltas = lookupKey ? deltaMap.get(lookupKey) : undefined;
+      if (deltas) {
+        if (Array.isArray(future.with.line_edits)) {
+          applyDeltasToLineEdits(future.with.line_edits as unknown[], deltas);
+        }
+        rebaseHashRefFileKeys(future.with, deltas);
       }
     }
 
@@ -521,13 +646,34 @@ function rebaseSubsequentSteps(
         const entry = ed as Record<string, unknown>;
         const entryFile = extractEditTargetFile(entry);
         if (!entryFile) continue;
-        const deltas = deltaMap.get(normalizePathForRebase(entryFile));
-        if (deltas && Array.isArray(entry.line_edits)) {
+        const lookupKey = resolveFileKeyForRebaseLookup(entryFile, hashAliases);
+        const deltas = lookupKey ? deltaMap.get(lookupKey) : undefined;
+        if (!deltas) continue;
+        if (Array.isArray(entry.line_edits)) {
           applyDeltasToLineEdits(entry.line_edits as unknown[], deltas);
         }
+        rebaseHashRefFileKeys(entry, deltas);
       }
     }
   }
+}
+
+/**
+ * Snapshot the tracker's hash → path mapping at this instant. Called BEFORE
+ * `recordSnapshotFromOutput` runs `invalidateAndRerecord`, so the pre-edit
+ * hash the model is most likely to cite in a subsequent step is still
+ * resolvable. Includes both `snapshotHash` and (when present) `canonicalHash`
+ * so shaped reads which produce derived hashes still resolve to the file.
+ */
+function captureHashAliases(tracker: SnapshotTracker): Map<string, string> {
+  const aliases = new Map<string, string>();
+  for (const [, id] of tracker.entries()) {
+    aliases.set(id.snapshotHash, id.filePath);
+    if (id.canonicalHash && id.canonicalHash !== id.snapshotHash) {
+      aliases.set(id.canonicalHash, id.filePath);
+    }
+  }
+  return aliases;
 }
 
 // ---------------------------------------------------------------------------
@@ -1254,6 +1400,16 @@ export async function executeUnifiedBatch(
   const snapshotTracker = new SnapshotTracker();
   const batchEditedPaths = new Set<string>();
 
+  // Slim-ack rebase toggle: when true, after a successful change.edit we
+  // rebase tracker readRegions + fullFileLineCount by the same positional
+  // deltas the executor already uses for line_edits rebase, and end-of-batch
+  // awareness flush preserves those rebased regions (instead of wiping).
+  // Default false — preserves today's diff-only protocol.
+  const slimAckEnabled = (() => {
+    try { return useAppStore.getState().settings.compressEditAcks === true; }
+    catch { return false; }
+  })();
+
   // Seed from persistent awareness cache
   seedSnapshotTracker(snapshotTracker, ctx.store().getAwarenessCache());
 
@@ -1608,6 +1764,35 @@ export async function executeUnifiedBatch(
       }
     }
 
+    // Slim-ack rebase path: capture pre-edit tracker regions for files this
+    // change.edit step will touch so that after the handler wipes the tracker
+    // via invalidateAndRerecord we can replay rebased regions back in.
+    // Keyed by normalizePathForRebase so buildPerFileDeltaMap lookups align.
+    let preEditTrackerRegions: Map<string, { file: string; regions: LineRegion[]; lineCount?: number; shapeHash?: string }> | undefined;
+    if (slimAckEnabled && step.use === 'change.edit') {
+      preEditTrackerRegions = new Map();
+      const collect = (f: string | undefined) => {
+        if (!f || f.startsWith('h:')) return;
+        const id = snapshotTracker.getIdentity(f);
+        if (!id) return;
+        if ((id.readRegions?.length ?? 0) === 0 && id.fullFileLineCount == null) return;
+        const key = normalizePathForRebase(f);
+        if (preEditTrackerRegions!.has(key)) return;
+        preEditTrackerRegions!.set(key, {
+          file: id.filePath,
+          regions: (id.readRegions ?? []).slice(),
+          lineCount: id.fullFileLineCount,
+          shapeHash: id.shapeHash,
+        });
+      };
+      collect(extractEditTargetFile(mergedParams));
+      if (Array.isArray(mergedParams.edits)) {
+        for (const e of mergedParams.edits) {
+          if (e && typeof e === 'object') collect(extractEditTargetFile(e as Record<string, unknown>));
+        }
+      }
+    }
+
     let output: StepOutput;
     try {
       output = await handler(mergedParams, ctx, step.id);
@@ -1637,6 +1822,13 @@ export async function executeUnifiedBatch(
     // Store outputs
     stepOutputs.set(step.id, output);
 
+    // Capture pre-edit hash→path aliases for rebaseSubsequentSteps. Must
+    // happen BEFORE recordSnapshotFromOutput's invalidateAndRerecord wipes
+    // the old hash; otherwise a future step citing h:OLD:A-B on the same
+    // file can't be resolved for rebase.
+    const hashAliasesForRebase: ReadonlyMap<string, string> =
+      step.use === 'change.edit' ? captureHashAliases(snapshotTracker) : new Map();
+
     // Record snapshot hashes from step output
     recordSnapshotFromOutput(step, output, snapshotTracker, ctx, policy);
 
@@ -1645,12 +1837,30 @@ export async function executeUnifiedBatch(
       // Rebase line numbers in subsequent same-file change steps
       if (step.use === 'change.edit') {
         backfillResolvedBodySpans(mergedParams, output);
-        rebaseSubsequentSteps(mergedParams, stepsToRun, i + 1);
+        rebaseSubsequentSteps(mergedParams, stepsToRun, i + 1, hashAliasesForRebase);
         // G3: rebase staged snippet line ranges as fallback before re-resolve
         const deltaMap = buildPerFileDeltaMap(mergedParams);
         for (const [normPath, deltas] of deltaMap) {
           const netDelta = deltas.reduce((sum, d) => sum + d.delta, 0);
           if (netDelta !== 0) ctx.store().rebaseStagedLineNumbers(normPath, netDelta);
+        }
+        // Slim-ack: replay rebased tracker regions. recordSnapshotFromOutput
+        // just ran invalidateAndRerecord which wiped readRegions; shift the
+        // captured pre-edit regions by the same deltas used for line_edits /
+        // staged snippet rebase and write them back. Keeps canonical awareness
+        // across edits — the model doesn't need a fresh read.lines if FileView
+        // already carries the post-edit content at these coordinates.
+        if (slimAckEnabled && preEditTrackerRegions && preEditTrackerRegions.size > 0) {
+          for (const [normPath, deltas] of deltaMap) {
+            const pre = preEditTrackerRegions.get(normPath);
+            if (!pre) continue;
+            const rebasedRegions = rebaseRegionsByDeltas(pre.regions, deltas);
+            const netDelta = deltas.reduce((sum, d) => sum + d.delta, 0);
+            const newLineCount = pre.lineCount != null
+              ? Math.max(0, pre.lineCount + netDelta)
+              : undefined;
+            snapshotTracker.setReadRegions(pre.file, rebasedRegions, newLineCount, pre.shapeHash);
+          }
         }
       }
       // Track edited file paths for auto-workspace inference and own-write registration.
@@ -1879,18 +2089,23 @@ export async function executeUnifiedBatch(
 
   // Build summary
   // Flush awareness to persistent cross-batch cache.
-  // Edited files get downgraded awareness (no readRegions) so the next batch
-  // requires a fresh read.lines before further edits — the diff-only protocol.
+  // Default (diff-only protocol): edited files get downgraded awareness
+  // (no readRegions) so the next batch requires a fresh read.lines before
+  // further edits.
+  // Slim-ack mode (compressEditAcks): preserve the tracker's rebased regions
+  // + line count so canonical awareness carries across batches — FileView
+  // already holds the post-edit content at those coordinates.
   for (const [, identity] of snapshotTracker.entries()) {
     const wasEditedInBatch = batchEditedPaths.has(identity.filePath);
+    const preserveAfterEdit = wasEditedInBatch && slimAckEnabled;
     ctx.store().setAwareness({
       filePath: identity.filePath,
       snapshotHash: identity.snapshotHash,
-      level: wasEditedInBatch
+      level: (wasEditedInBatch && !preserveAfterEdit)
         ? AwarenessLevel.NONE
         : snapshotTracker.getAwarenessLevel(identity.filePath),
-      readRegions: wasEditedInBatch ? [] : (identity.readRegions ?? []),
-      shapeHash: wasEditedInBatch ? undefined : identity.shapeHash,
+      readRegions: (wasEditedInBatch && !preserveAfterEdit) ? [] : (identity.readRegions ?? []),
+      shapeHash: (wasEditedInBatch && !preserveAfterEdit) ? undefined : identity.shapeHash,
       recordedAt: Date.now(),
     });
   }

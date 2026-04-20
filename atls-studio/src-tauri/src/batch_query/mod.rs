@@ -10,8 +10,8 @@ use crate::git_ops::{
 use crate::code_intel::expand_concept;
 use crate::path_utils::{
     detect_format, find_manifest_candidates_under, find_manifest_nearest, normalize_line_endings,
-    read_file_with_format, resolve_project_path, resolve_tree_directory_path, serialize_with_format,
-    to_relative_path, FileFormat, ManifestKind,
+    read_file_with_format, resolve_project_path, resolve_source_file_with_workspace_hint,
+    resolve_tree_directory_path, serialize_with_format, to_relative_path, FileFormat, ManifestKind,
 };
 /// Split a comma-separated path list (agents often pass `"a.py,b.py"` as one string).
 /// Paths containing literal commas are not supported.
@@ -13182,11 +13182,23 @@ pub async fn atls_batch_query(
                 let mut errors: Vec<serde_json::Value> = Vec::new();
                 
                 for path in file_paths {
+                    // Path resolution matches read/edit/create: try the direct
+                    // project-root join first, then fall back to sub-workspace
+                    // prefixes (monorepo layouts like `atls-studio/<path>`) and
+                    // suffix/BFS search before the absolute-raw-path fallback.
+                    // Without this, the model passing `src/foo.ts` when the file
+                    // lives at `atls-studio/src/foo.ts` would fail with
+                    // `not_found` on delete only, even though read/edit on the
+                    // same path resolve correctly.
                     let resolved_path = resolve_project_path(project_root, &path);
-                    
-                    // Try resolved path first, then raw path as fallback
                     let actual_path = if resolved_path.exists() {
                         resolved_path.clone()
+                    } else if let Some((hinted, _)) = resolve_source_file_with_workspace_hint(
+                        project_root,
+                        &path,
+                        &workspace_rel_paths,
+                    ) {
+                        hinted
                     } else {
                         let raw_path = PathBuf::from(&path);
                         if raw_path.exists() {

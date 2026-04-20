@@ -219,6 +219,35 @@ export class SnapshotTracker {
     });
   }
 
+  /**
+   * Replace an existing identity's readRegions / fullFileLineCount in place.
+   * Used by the slim-ack rebase path: after a successful edit rotates the
+   * snapshot hash, the caller computes rebased regions (positional-delta
+   * shifted) and pushes them back so subsequent steps / batches retain
+   * canonical-level awareness at post-edit coordinates.
+   *
+   * Preserves snapshotHash, canonicalHash, and readKind. If no identity
+   * exists this is a no-op — rebasing only applies to files already tracked.
+   */
+  setReadRegions(
+    filePath: string,
+    regions: LineRegion[],
+    fullFileLineCount?: number,
+    shapeHash?: string,
+  ): void {
+    const key = normalizePathKey(filePath);
+    const existing = this.snapshots.get(key);
+    if (!existing) return;
+    const merged = mergeRanges(regions.filter(r => r.end >= r.start && r.start >= 1));
+    this.snapshots.set(key, {
+      ...existing,
+      readRegions: merged.length > 0 ? merged : undefined,
+      ...(fullFileLineCount != null ? { fullFileLineCount } : {}),
+      ...(shapeHash !== undefined ? { shapeHash } : {}),
+      readAt: Date.now(),
+    });
+  }
+
   /** Clear all tracked snapshots. */
   clear(): void {
     this.snapshots.clear();

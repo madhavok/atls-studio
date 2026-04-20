@@ -556,6 +556,16 @@ export interface Settings {
    */
   compressToolResults?: boolean;
   /**
+   * Slim successful-edit acks. When true, `recordEditSummary` skips the
+   * embedded unified-diff preview in `edit:*` blackboard entries and keeps
+   * only file + hash + line metadata + `diff:h:OLD..h:NEW` ref. The model
+   * reads the post-edit state from the `## FILE VIEWS` block and can resolve
+   * the ref on demand; humans still expand the chat `DiffRefPill`. Errors
+   * stay verbose regardless. Experimental; default false to preserve today's
+   * behavior. See `src/services/batch/handlers/change.ts` (`recordEditSummary`).
+   */
+  compressEditAcks?: boolean;
+  /**
    * Auto-pin read results. When true, `read.shaped` / `read.lines` / `read.context`
    * auto-pin their FileView so the model's retention vocabulary collapses to
    * release-only (`pu` / `pc` / `dro`). Default true; the cognitive core prompt
@@ -1505,6 +1515,7 @@ export const useAppStore = create<AppState>((set) => ({
       modelOutputSpeed: 'medium',
       modelThinking: 'medium',
       compressToolResults: false,
+      compressEditAcks: false,
       autoPinReads: true,
     };
     let parsed: Record<string, unknown> = {};

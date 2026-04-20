@@ -749,6 +749,28 @@ export function Settings({ isOpen, onClose }: SettingsProps) {
                 </button>
               </div>
 
+              {/* Slim Edit Acks (experimental) */}
+              <div className="flex items-center justify-between">
+                <div>
+                  <span className="text-sm font-medium">Slim Edit Acks <span className="text-xs text-studio-muted">(experimental)</span></span>
+                  <p className="text-xs text-studio-muted">
+                    On successful edits, send only file + hash + line numbers + h:OLD..h:NEW ref.
+                    Model reads the updated FILE VIEWS block for current content; click the diff pill
+                    in chat or resolve the ref on demand to see the unified diff. Errors stay verbose.
+                  </p>
+                </div>
+                <button
+                  onClick={() => setLocalSettings(prev => ({ ...prev, compressEditAcks: !prev.compressEditAcks }))}
+                  className={`w-12 h-6 rounded-full transition-colors ${
+                    localSettings.compressEditAcks ? 'bg-studio-accent' : 'bg-studio-border'
+                  }`}
+                >
+                  <div className={`w-5 h-5 bg-white rounded-full shadow transition-transform ${
+                    localSettings.compressEditAcks ? 'translate-x-6' : 'translate-x-0.5'
+                  }`} />
+                </button>
+              </div>
+
               {/* Auto-Pin on Read */}
               <div className="flex items-center justify-between">
                 <div>
