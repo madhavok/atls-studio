@@ -14,7 +14,7 @@ import { BATCH_TOOL_REF } from './toolRef';
 const ANTI_SPIN_RULES = `
 - **2-read rule:** After 2 reads of the same file, you MUST write a BB finding, make an edit, or stop. Do not re-read hoping for different content.
 - **Search once, act:** After completing a search, ACT on results. Do not re-search the same query.
-- **BLOCKED = done:** If a read returns BLOCKED or a spin warning, you already have the content. Use what you have.
+- **Reuse existing content:** If a read result says content already available at h:X, use that ref instead of re-reading.
 - **No tool-chaining on same file:** Do not chain rs -> rl -> rc -> rf on the same file. Pick one tool, pin, analyze, write finding.`;
 
 // ---------------------------------------------------------------------------
@@ -55,13 +55,13 @@ export interface SubagentOpts {
 const RETRIEVER_PROTOCOL = `Round 1 (search + read + pin + BB):
 s1 sc qs:your_search_terms ps:relevant/dir limit:10
 r1 rs ps:top_hit.ts shape:sig
-p1 pi in:r1.refs
+p1 pi r1
 b1 bw key:"retriever:findings" content:"Found: [description]. Key refs: h:XXXX (file, Ntk). Answer: [direct answer — entry points, paths, line ranges or h: refs, resolution chain]."
 
 Round 2 (only if round 1 was insufficient — refine and update BB):
 s2 sc qs:refined_terms
 r2 rs ps:new_hit.ts shape:sig
-p2 pi in:r2.refs
+p2 pi r2
 b2 bw key:"retriever:findings" content:"Updated: [revised answer with new evidence]."
 
 Round 3 (only if the BB still lacks a direct answer to the query): b3 bw key:"retriever:findings" content:"[Repair: same structured answer format; no meta, no placeholders.]" — add reads only if essential.
@@ -71,20 +71,20 @@ Then STOP. Do not paste a standalone essay: the BB entry is the answer. A tool-l
 const DESIGN_PROTOCOL = `Round 1 (discover + pin + initial findings):
 s1 sc qs:architecture_terms ps:relevant/dir
 r1 rs ps:target1.ts,target2.ts shape:sig
-p1 pi in:r1.refs
+p1 pi r1
 b1 bw key:"design:research" content:"Architecture: [what exists]. Dependencies: [list]. Initial assessment: [risks/gaps]."
 
 Round 2 (analyze + refine findings):
 a1 ad ps:target1.ts filter:pattern
 r2 rs ps:dependency.ts shape:sig
-p2 pi in:r2.refs
+p2 pi r2
 b2 bw key:"design:research" content:"Approach: [proposal]. Tradeoffs: [list]. Implementation steps: [1,2,3]. Impact: [files affected]."
 
 Keep the final reply to 1-2 sentences.`;
 
 const CODER_PROTOCOL = `Round 1 (read target + pin + initial BB):
 r1 rl f:target_file.ts sl:START el:END
-p1 pi in:r1.refs
+p1 pi r1
 b1 bw key:"coder:report" content:"Reading target. Function at lines L-M."
 
 Round 2 (edit + verify + report):
@@ -99,7 +99,7 @@ b3 bw key:"coder:report" content:"Fix applied. Verify: [pass/fail]."`;
 
 const TESTER_PROTOCOL = `Round 1 (read source + understand):
 r1 rs ps:source_file.ts shape:sig
-p1 pi in:r1.refs
+p1 pi r1
 b1 bw key:"tester:results" content:"Source read. Functions to test: [list]."
 
 Round 2 (write tests + run):
@@ -115,7 +115,7 @@ b3 bw key:"tester:results" content:"Fixed tests. Run: [pass/fail counts]."`;
 const SEMANTIC_PROTOCOL = `Round 1 (search + pin + BB):
 s1 sc qs:search_terms limit:10
 r1 rs ps:top_hit.ts shape:sig
-p1 pi in:r1.refs
+p1 pi r1
 g1 sg
 b1 bw key:"retriever:results" content:"Found: [structured refs with h:XXXX citations]."
 
@@ -195,7 +195,7 @@ export function buildSubagentPrompt(role: SubagentRole, opts?: SubagentOpts): st
   sections.push(body);
 
   if (cfg.hasBbKeySection && opts?.bbKey) {
-    let findings = `\n## FINDINGS (REQUIRED)\nYou MUST write structured findings to bw key:"${opts.bbKey}" before your final round. The delegate step summary inlines blackboard text for the parent model alongside hash refs — if you do not write to BB, your work is lost. Write early and update incrementally; do not defer the BB write to the end.`;
+    let findings = `\n## FINDINGS (REQUIRED)\nWrite findings to bw key:"${opts.bbKey}" before stopping — it's how the parent model sees your work. Write early and update incrementally.`;
     if (role === 'retriever') {
       findings += `\n\n**Retriever:** The BB body must directly answer the query: name entry points (functions/classes), file paths, line ranges or h: refs, and the resolution or data-flow chain. Forbidden in BB: meta-only lines ("Let me read…", "I will search…"), placeholders, or empty filler.`;
     }

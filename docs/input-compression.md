@@ -116,12 +116,14 @@ The model never re-reads content it already has. The FileView auto-heals across 
 
 `getFileSkeleton` builds the skeleton with an LRU cache keyed by `(path, sourceRevision)`. It tries `sig` shape first, falls back to `fold` if over the token budget (default `SKELETON_TOKEN_BUDGET_DEFAULT = 1500` tokens), then stitches imports at the head.
 
-The FileView fence carries two hashes:
+The FileView fence emits a single ref:
 ```
-=== path h:<RET> cite:@h:<CITE> (N lines) [pinned] ===
+=== path h:<short> (N lines) [pinned] ===
 ```
-- `h:<RET>` for retention operations (pin/unpin/drop)
-- `cite:@h:<CITE>` for edit operations (content_hash)
+`h:<short>` is the one retention identity per file. Pass it to any slot
+(retention ops, edit `content_hash`, `f:h:<short>:L-M`, reads) — the
+runtime swaps the retention hash for the current `sourceRevision` when it
+lands in a cite slot via `injectSnapshotHashes` in the executor.
 
 ### Layer 5: History compression — temporal dedup
 

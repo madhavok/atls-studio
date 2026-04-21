@@ -201,7 +201,10 @@ function ingestStandardContextItems(
         useRetentionStore.getState().incrementReadsReused();
         io.allRefs.push(`h:${reusedRead}`);
         io.readResults.push({ file: src, h: `h:${reusedRead}`, ...(backendHash ? { content_hash: backendHash } : {}) });
-        io.lines.push(`${p} ERROR redundant — ${src} already at h:${reusedRead} (same rev). Content is live. Use read.lines(ref:"h:${reusedRead}:LL-LL") for a different span, or change.edit file_path:"h:${reusedRead}:source". Do NOT re-read.`);
+        // Redundant read: silently succeed with the existing ref. Runtime
+        // already has the content; the model can chain from this ref via
+        // read.lines or change.edit without a re-read round trip.
+        io.lines.push(`${p} → h:${reusedRead} (reused, same rev)`);
         continue;
       }
     }
@@ -292,8 +295,9 @@ export const handleLoad: OpHandler = async (params, ctx) => {
       const reused = ctx.store().findReusableRead({ filePath: filePaths[0], sourceRevision: backendHash, contextType: loadType });
       if (reused) {
         useRetentionStore.getState().incrementReadsReused();
-        lines.push(`load: ERROR redundant — ${filePaths[0]} already at h:${reused} (same rev). Content is live at that hash. Do NOT re-read. Use h:${reused} in file_path params directly, or change.edit file_path:"h:${reused}:source".`);
-        return { kind: 'file_refs', ok: false, refs: [`h:${reused}`], summary: lines.join('\n'), tokens: 0 };
+        // Redundant read → silent success. Runtime already has the content.
+        lines.push(`load: ${filePaths[0]} → h:${reused} (reused, same rev)`);
+        return { kind: 'file_refs', ok: true, refs: [`h:${reused}`], summary: lines.join('\n'), tokens: 0 };
       }
     }
 
@@ -619,17 +623,17 @@ export const handleReadLines: OpHandler = async (params, ctx) => {
       const totalLines = body.length === 0 ? 0 : body.split('\n').length;
       const rangeInfo = engramLineRanges(rlLines, totalLines, requestedContextLines);
       if (!rangeInfo) {
-        return err(`read_lines: invalid lines spec for engram — ${rlLines}`);
+        return err(`read_lines: invalid range spec — ${rlLines}`);
       }
       const rlContent = sliceContentByLines(body, rlLines, false, requestedContextLines);
       if (!rlContent.trim()) {
-        return err(`read_lines: no lines matched for engram (${rlLines}; engram has ${totalLines} lines)`);
+        return err(`read_lines: range ${rlLines} out of bounds (content has ${totalLines} lines)`);
       }
       const { target: targetRange, actual: actualRange } = rangeInfo;
       const tk = countTokensSync(rlContent);
       const targetLabel = formatLineRanges(targetRange) || rlLines;
       const actualLabel = formatLineRanges(actualRange);
-      const displayFile = `engram:${normalizeHashRefToken(rlHash)}`;
+      const displayFile = normalizeHashRefToken(rlHash);
       const contentHash = hashContentSync(body);
       const lineSpecForRef =
         formatLineRanges(targetRange) || (typeof rlLines === 'string' ? rlLines.trim() : '');
@@ -637,9 +641,10 @@ export const handleReadLines: OpHandler = async (params, ctx) => {
       const rlRefs = lineSpecForRef ? [`${baseRef}:${lineSpecForRef}`] : [baseRef];
       const rlStore = ctx.store();
       const rlFreshnessHint = getFreshnessHintForRefs(rlStore, rlRefs);
-      const kindLabel = engramType === 'blackboard' ? 'blackboard' : engramType;
+      // Summary describes the slice action uniformly — substrate kind
+      // (file vs search-body vs bb vs analysis) stays runtime-internal.
       const rlSummary =
-        `read_lines: ${displayFile}:${targetLabel} → ${baseRef} (${kindLabel}, ${tk}tk, ctx:${requestedContextLines}${actualLabel ? ` actual:${actualLabel}` : ''})\n${rlContent}`;
+        `read_lines: ${displayFile}:${targetLabel} → ${baseRef} (${tk}tk, ctx:${requestedContextLines}${actualLabel ? ` actual:${actualLabel}` : ''})\n${rlContent}`;
       const fullSummary = rlFreshnessHint ? `${rlSummary}\n${rlFreshnessHint}` : rlSummary;
       return {
         kind: 'file_refs',
@@ -698,9 +703,10 @@ export const handleReadLines: OpHandler = async (params, ctx) => {
             formatLineRanges(actualRange) || formatLineRanges(targetRange) || (typeof rlLines === 'string' ? rlLines.trim() : '');
           const baseRef = normalizeHashRefToken(`h:${reusedLines}`);
           const refWithLines = lineSpecForRef ? `${baseRef}:${lineSpecForRef}` : baseRef;
-          const reuseSummary = `read_lines: ERROR redundant — ${rlFile}:${targetLabel} already at h:${reusedLines} (same rev). Content is live. Chain from this ref — change.edit file_path:"h:${reusedLines}:source" or read.lines ref:"h:${reusedLines}:LL-LL" for a different span. Do NOT re-read.`;
+          // Redundant read → silent success. Runtime already has content.
+          const reuseSummary = `read_lines: ${rlFile}:${targetLabel} → h:${reusedLines} (reused, same rev)`;
           return {
-            kind: 'file_refs', ok: false, refs: [refWithLines],
+            kind: 'file_refs', ok: true, refs: [refWithLines],
             summary: reuseSummary, tokens: 0,
             content: { file: rlFile, hash: reusedLines, ...(rlContentHash ? { content_hash: rlContentHash } : {}), target_range: targetRange, actual_range: actualRange, context_lines: usedContextLines, content: rlContent },
           };
@@ -759,12 +765,12 @@ export const handleReadLines: OpHandler = async (params, ctx) => {
     const primaryRef = fvRef ?? sliceRef;
     const rlRefs = [primaryRef];
     const rlFreshnessHint = getFreshnessHintForRefs(rlStore, [sliceRef]);
-    const priorRanges = rlFile ? rlStore.getPriorReadRanges(rlFile).filter(r => r !== (actualLabel || targetLabel)) : [];
-    const priorRangesHint = priorRanges.length > 0 ? `\nNOTE previously read regions for this file: ${priorRanges.join(', ')}.` : '';
+    // Prior-reads hint intentionally removed: FileView already renders every
+    // filled region, so enumerating them again is duplicate surface.
 
     const refDisplay = primaryRef === sliceRef ? rlH : `${primaryRef} (slice ${sliceRef})`;
     const rlSummary = `read_lines: ${rlFile}:${targetLabel} → ${refDisplay} (${tk}tk, ctx:${usedContextLines}${actualLabel ? ` actual:${actualLabel}` : ''})${prevSuffix}\n${rlContent}`;
-    const fullSummary = `${rlSummary}${rlFreshnessHint ? '\n' + rlFreshnessHint : ''}${priorRangesHint}`;
+    const fullSummary = `${rlSummary}${rlFreshnessHint ? '\n' + rlFreshnessHint : ''}`;
     return {
       kind: 'file_refs', ok: true,
       refs: rlRefs,
@@ -1159,7 +1165,7 @@ async function _processShapedFile(
   ctx.store().ensureFileViewSkeleton(source, canonicalContentHash).catch(() => {});
   autoPinViewAfterRead(ctx, source, shape);
   ctx.store().recordMemoryEvent({ action: 'read', reason: 'read_shaped', source, newRevision: canonicalContentHash, refs: [viewRef] });
-  lines.push(`read_shaped: ${source} → ${viewRef} (full:${fullTokens}tk, shaped:${shapedTokens}tk, saved:${savedPct}%)${foldHint} | pin ${viewRef} to keep the FileView across rounds; rl fills ranges; edits cite the \`cite:@h:<CITE>\` slot from the fence (not ${viewRef} — that's for pu/pc/dro).`);
+  lines.push(`read_shaped: ${source} → ${viewRef} (full:${fullTokens}tk, shaped:${shapedTokens}tk, saved:${savedPct}%)${foldHint} | pass ${viewRef} to reads, edits (content_hash / f:${viewRef}:L-M), or retention ops; runtime resolves the right identity for each slot.`);
   return {
     refs: [viewRef],
     tokens: shapedTokens,

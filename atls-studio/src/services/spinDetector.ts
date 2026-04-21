@@ -21,7 +21,6 @@ export type SpinMode =
   | 'goal_drift'
   | 'stuck_in_phase'
   | 'tool_confusion'
-  | 'volatile_unpinned'
   | 'completion_gate'
   | 'none';
 
@@ -279,21 +278,11 @@ function detectGoalDrift(window: SpinFingerprint[]): SpinDiagnosis | null {
 // Detector: Stuck in Phase
 // ---------------------------------------------------------------------------
 
-function detectVolatileUnpinned(window: SpinFingerprint[]): SpinDiagnosis | null {
-  const bad = window.filter(fp => fp.volatileRefsSuggested && !fp.hadSessionPinStep);
-  if (bad.length < 2) return null;
-  const evidence = bad.map(fp =>
-    `Round ${fp.round}: VOLATILE refs emitted but NO session.pin in that batch — content LOST next round`,
-  );
-  return {
-    spinning: true,
-    mode: 'volatile_unpinned',
-    confidence: Math.min(0.55 + bad.length * 0.15, 1.0),
-    evidence,
-    triggerRound: bad[0].round,
-    suggestedAction: 'PIN IMMEDIATELY. Every read/search returns h:refs that expire after ONE round. Add pi in:rN.refs in the SAME batch as your reads — not the next batch.',
-  };
-}
+// Note: `detectVolatileUnpinned` + `volatile_unpinned` spin mode were removed
+// in the ref-language unification pass. Intra-batch auto-persist in
+// `executor.ts` pins refs a later step consumes, so the failure mode this
+// detector watched for — "read/search produced refs but no session.pin in
+// the same batch" — is impossible by construction.
 
 function detectStuckInPhase(window: SpinFingerprint[]): SpinDiagnosis | null {
   if (window.length < MIN_WINDOW) return null;
@@ -500,7 +489,6 @@ export function diagnoseSpinning(
 
   const detectors = [
     detectContextLoss,
-    detectVolatileUnpinned,
     detectToolConfusion,
     detectStuckInPhase,
     detectGoalDrift,

@@ -82,12 +82,12 @@ export const handleTaskPlan: OpHandler = async (params, ctx) => {
 export const handleTaskAdvance: OpHandler = async (params, ctx) => {
   let subtaskId = typeof params.subtask === 'string' ? params.subtask.trim() : undefined;
   const plan = ctx.store().taskPlan;
-  if (!plan) return err('task_advance: ERROR no active plan — call session.plan first');
+  if (!plan) return err('task_advance: plan not started — call session.plan first');
 
   if (!subtaskId) {
     const { subtasks } = plan;
     const currentIdx = subtasks.findIndex(s => s.status === 'active');
-    if (currentIdx < 0) return err('task_advance: ERROR no active subtask in plan — call session.status to inspect');
+    if (currentIdx < 0) return err('task_advance: no active subtask — call session.status to inspect');
     const next = subtasks[currentIdx + 1];
     if (!next) return err('task_advance: plan complete — use task_complete for final summary');
     subtaskId = next.id;
@@ -111,12 +111,12 @@ export const handleTaskAdvance: OpHandler = async (params, ctx) => {
       }
     }
   }
-  if (!target) return err(`task_advance: ERROR subtask "${subtaskId}" not found in plan`);
-  if (target.status === 'done') return err(`task_advance: ERROR subtask "${subtaskId}" already done`);
+  if (!target) return err(`task_advance: subtask "${subtaskId}" not found in plan`);
+  if (target.status === 'done') return ok(`task_advance: subtask "${subtaskId}" already done — advance to a different one or task_complete`);
 
   const summary = typeof params.summary === 'string' ? (params.summary as string).trim() : '';
   if (summary.length < 50) {
-    return err('task_advance: ERROR summary required (min 50 chars) - describe what was accomplished and key findings');
+    return err('task_advance: summary required (min 50 chars) — describe what was accomplished and key findings');
   }
 
   // Advance gate: warn when advancing without BB findings in this phase
@@ -124,12 +124,12 @@ export const handleTaskAdvance: OpHandler = async (params, ctx) => {
   const hadFindings = bm.hadSubstantiveBbWrite || bm.hadBbWrite;
   let advanceWarning = '';
   if (!hadFindings) {
-    advanceWarning = 'WARNING: Advancing without BB findings or edits in this phase. Knowledge will be lost on dehydration. Write bb:finding:{target} before advancing, or ensure summary: captures all findings.\n';
+    advanceWarning = 'WARNING: advancing without BB findings or edits in this phase — knowledge won\'t persist without findings or summary.\n';
   }
 
   const { unloaded, freedTokens } = ctx.store().advanceSubtask(subtaskId, summary);
   return ok(
-    `${advanceWarning}task_advance: ${subtaskId}(active) | ${unloaded} chunks archived (${(freedTokens / 1000).toFixed(1)}k tokens freed, recallable by hash)`,
+    `${advanceWarning}task_advance: ${subtaskId}(active) | ${unloaded} chunks archived (${(freedTokens / 1000).toFixed(1)}k tokens freed)`,
     [],
     -freedTokens,
   );
@@ -151,20 +151,18 @@ export const handleTaskStatus: OpHandler = async (_params, ctx) => {
 // ---------------------------------------------------------------------------
 
 export const handleUnload: OpHandler = async (params, ctx) => {
-  const rawHashes = normalizeHashRefsToStrings(params.hashes);
-  if (!rawHashes.length) {
-    return err(
-      'unload: ERROR no hashes supplied. Retention calls (pi/pu/dro/ulo/pc/bb:delete) require real h:refs from the CURRENT HASH MANIFEST. Prior-round retention steps are stripped of args in history (ephemeral by design) — do not template their shape.',
-    );
+  const rawFromParams = normalizeHashRefsToStrings(params.hashes);
+  const { refs: expanded, notes } = resolveRefsOrStepIds(params, ctx, rawFromParams);
+  if (!expanded.length) {
+    return err('unload: retention op missing refs — provide h: refs or step-id.');
   }
 
-  const { expanded, notes } = ctx.expandSetRefsInHashes(rawHashes);
   const confirmWildcard = params.confirmWildcard === true;
   const { freed, count, pinnedKept } = ctx.store().unloadChunks(expanded, { confirmWildcard });
   if (count === 0 && pinnedKept === 0) {
     const noteSuffix = notes.length > 0 ? ` | ${notes.join('; ')}` : '';
     return err(
-      `unload: ERROR no matching refs in manifest${noteSuffix}. Check the HASH MANIFEST before retrying; evicted refs can't be unloaded.`,
+      `unload: no matching refs in manifest${noteSuffix}. Check the HASH MANIFEST before retrying; evicted refs can't be unloaded.`,
     );
   }
   let line = `unload: ${count} chunks freed (${(freed / 1000).toFixed(1)}k tokens)`;
@@ -178,14 +176,12 @@ export const handleUnload: OpHandler = async (params, ctx) => {
 // ---------------------------------------------------------------------------
 
 export const handleCompact: OpHandler = async (params, ctx) => {
-  const rawHashes = normalizeHashRefsToStrings(params.hashes);
-  if (!rawHashes.length) {
-    return err(
-      'compact: ERROR no hashes supplied. Retention calls (pi/pu/dro/ulo/pc/bb:delete) require real h:refs from the CURRENT HASH MANIFEST. Prior-round retention steps are stripped of args in history (ephemeral by design) — do not template their shape.',
-    );
+  const rawFromParams = normalizeHashRefsToStrings(params.hashes);
+  const { refs: expanded, notes } = resolveRefsOrStepIds(params, ctx, rawFromParams);
+  if (!expanded.length) {
+    return err('compact: retention op missing refs — provide h: refs or step-id.');
   }
 
-  const { expanded, notes } = ctx.expandSetRefsInHashes(rawHashes);
   const confirmWildcard = params.confirmWildcard === true;
   const tier = (params.tier as 'pointer' | 'sig' | undefined) ?? 'pointer';
 
@@ -293,7 +289,7 @@ export const handleStage: OpHandler = async (params, ctx) => {
     const total = ctx.store().getStagedTokenCount();
     const line = failed.length > 0
       ? `stage_batch: ${staged.length} staged, ${failed.length} failed [${failed.slice(0, 3).join(', ')}${failed.length > 3 ? '...' : ''}]. Total: ${(total / 1000).toFixed(1)}k`
-      : `stage_batch: ${staged.length} refs staged (${totalTokens}tk). Total: ${(total / 1000).toFixed(1)}k. Visible next round.`;
+      : `stage_batch: ${staged.length} refs staged (${totalTokens}tk). Total: ${(total / 1000).toFixed(1)}k`;
     return ok(line, [], totalTokens);
   }
 
@@ -302,7 +298,7 @@ export const handleStage: OpHandler = async (params, ctx) => {
     const result = ctx.store().stageSnippet(key, rawContent, label || 'inline', undefined, undefined, undefined, 'snapshot');
     if (!result.ok) return err(`stage: ${result.error}`);
     const total = ctx.store().getStagedTokenCount();
-    return ok(`staged [${key}] (${result.tokens}tk). Total staged: ${(total / 1000).toFixed(1)}k. Visible in staged next round.`, [], result.tokens);
+    return ok(`staged [${key}] (${result.tokens}tk). Total staged: ${(total / 1000).toFixed(1)}k`, [], result.tokens);
   }
 
   if (!rawHash || !lines) return err('stage: requires (hash + lines) or (content + label)');
@@ -385,7 +381,7 @@ export const handleStage: OpHandler = async (params, ctx) => {
   const stageResult = ctx.store().stageSnippet(stageKey, resolvedContent, sourcePath || 'unknown', lines, cleanHash, undefined, 'derived');
   if (!stageResult.ok) return err(`stage: ${stageResult.error}`);
   const stageTotal = ctx.store().getStagedTokenCount();
-  return ok(`staged ${stageKey} lines:${lines} ctx:${contextLines} (${stageResult.tokens}tk, ${sourcePath || 'unknown'}). Total: ${(stageTotal / 1000).toFixed(1)}k. Visible next round.`, [], stageResult.tokens);
+  return ok(`staged ${stageKey} lines:${lines} ctx:${contextLines} (${stageResult.tokens}tk, ${sourcePath || 'unknown'}). Total: ${(stageTotal / 1000).toFixed(1)}k`, [], stageResult.tokens);
 };
 
 // ---------------------------------------------------------------------------
@@ -493,23 +489,34 @@ export const handleDrop: OpHandler = async (params, ctx) => {
     rawHashes = collected;
   } else {
     rawHashes = normalizeHashRefsToStrings(params.hashes);
-    if (!rawHashes.length) {
-      return err(
-        'drop: ERROR no hashes supplied. Retention calls (pi/pu/dro/ulo/pc/bb:delete) require real h:refs, a scope (dormant|archived), or in:rN.refs dataflow. Prior-round retention steps are stripped of args in history (ephemeral by design) — do not template their shape.',
-      );
-    }
   }
 
-  const { expanded, notes } = ctx.expandSetRefsInHashes(rawHashes);
+  // Scope drops already emitted concrete h:refs above; explicit-hash drops
+  // run through the shared step-id + set-selector resolver for parity with
+  // other retention ops.
+  const isScopeDrop = scope === 'dormant' || scope === 'archived';
+  let expanded: string[];
+  let notes: string[];
+  if (isScopeDrop) {
+    const r = ctx.expandSetRefsInHashes(rawHashes);
+    expanded = r.expanded;
+    notes = r.notes;
+  } else {
+    const helper = resolveRefsOrStepIds(params, ctx, rawHashes);
+    if (!helper.refs.length) {
+      return err('drop: retention op missing refs — provide h: refs, a scope (dormant|archived), or step-id.');
+    }
+    expanded = helper.refs;
+    notes = helper.notes;
+  }
+
   const droppedDetail = collectChunkDetails(expanded, ctx.store);
   const { dropped, freedTokens } = ctx.store().dropChunks(expanded, { confirmWildcard: true });
-  // Explicit-hash drops (no scope) that matched nothing should err loudly.
-  // Scope drops with zero matches already returned ok('nothing to drop') above,
-  // which is fine — the model supplied a valid scope request, not a stub.
+  // Explicit-hash drops that matched nothing should err loudly.
   if (dropped === 0 && scope === undefined) {
     const noteSuffix = notes.length > 0 ? ` | ${notes.join('; ')}` : '';
     return err(
-      `drop: ERROR no matching refs in manifest${noteSuffix}. Check the HASH MANIFEST before retrying; refs that aren't listed are already released.`,
+      `drop: no matching refs in manifest${noteSuffix}. Check the HASH MANIFEST before retrying; refs that aren't listed are already released.`,
     );
   }
   let line = `drop: ${dropped} chunks permanently dropped (${(freedTokens / 1000).toFixed(1)}k freed, manifest entries kept)`;
@@ -552,6 +559,54 @@ function recoverDataflowIn(params: Record<string, unknown>, ctx: HandlerContext)
   if (!output?.refs?.length) return [];
   materializeFileRefsContentIfNeeded(output, ctx.store());
   return output.refs;
+}
+
+/**
+ * Shared helper for retention ops (pin / unpin / drop / compact / unload /
+ * recall). Resolves a raw ref list into concrete `h:` hashes, expanding:
+ *   - `in:` dataflow strings in `params.in` (misplaced binding syntax)
+ *   - Bare step-ids (e.g. `pu r1`) to that step's output refs
+ *   - Set selectors (`h:@pinned`, `h:@edited`, etc.) via
+ *     `ctx.expandSetRefsInHashes`
+ *
+ * Returns `{ refs, notes }` where `refs` is the expanded list and `notes`
+ * carries any binding-expansion hints (e.g. `r1 → h:abc, h:def`) for the
+ * model's step summary. Keeps handler parity so `pu r1`, `dro r1`,
+ * `pc r1` are all first-class without each handler reinventing the logic.
+ */
+function resolveRefsOrStepIds(
+  params: Record<string, unknown>,
+  ctx: HandlerContext,
+  rawFromParams: string[],
+): { refs: string[]; notes: string[] } {
+  let rawHashes = rawFromParams;
+  if (!rawHashes.length) {
+    rawHashes = recoverDataflowIn(params, ctx);
+  }
+  if (!rawHashes.length) return { refs: [], notes: [] };
+
+  const { expanded, notes } = ctx.expandSetRefsInHashes(rawHashes);
+
+  // Materialize any file_refs from prior steps so refs resolve in the store.
+  ctx.forEachStepOutput?.((_, out) => {
+    materializeFileRefsContentIfNeeded(out, ctx.store());
+  });
+
+  // Resolve bare step-ids (e.g. `r1`) to their output refs. Hash-prefixed
+  // tokens pass through unchanged.
+  const resolved = expanded.flatMap(ref => {
+    const token = typeof ref === 'string' ? ref : String(ref);
+    if (token.startsWith('h:')) return [token];
+    const stepOutput = ctx.getStepOutput?.(token);
+    if (stepOutput?.refs?.length) {
+      materializeFileRefsContentIfNeeded(stepOutput, ctx.store());
+      notes.push(`${token} \u2192 ${stepOutput.refs.join(', ')}`);
+      return stepOutput.refs;
+    }
+    return [token];
+  });
+
+  return { refs: resolved, notes };
 }
 
 /**
@@ -609,40 +664,18 @@ function materializeFileRefsContentIfNeeded(out: StepOutput, store: ContextStore
 
 export const handlePin: OpHandler = async (params, ctx) => {
   const bindingWarnHashes = typeof params._binding_warning_hashes === 'string' ? params._binding_warning_hashes : '';
-  let rawHashes = normalizeHashRefsToStrings(params.hashes ?? params.refs);
-  if (!rawHashes.length) {
-    rawHashes = recoverDataflowIn(params, ctx);
-  }
-  if (!rawHashes.length) {
+  const rawFromParams = normalizeHashRefsToStrings(params.hashes ?? params.refs);
+  const { refs: resolved, notes } = resolveRefsOrStepIds(params, ctx, rawFromParams);
+  if (!resolved.length) {
     if (bindingWarnHashes) {
       return err(
         `pin: ERROR ${bindingWarnHashes} If the prior step was a search/read that returned no new refs (deduped or empty), re-run it or pin a different step that has h:refs.`,
       );
     }
     return err(
-      'pin: ERROR no hashes supplied. Retention calls (pi/pu/dro/ulo/pc/bb:delete) require real h:refs or in:rN.refs dataflow. Prior-round retention steps are stripped of args in history (ephemeral by design) — do not template their shape. Reads auto-pin, so `pi` is only for non-read artifacts (search/verify/exec results).',
+      'pin: retention op missing refs — provide h: refs or step-id. Reads auto-pin, so `pi` is only for non-read artifacts (search/verify/exec results).',
     );
   }
-
-  const { expanded, notes } = ctx.expandSetRefsInHashes(rawHashes);
-
-  // Materialize any file_refs from prior steps so refs resolve in the store (same batch as read.lines).
-  ctx.forEachStepOutput?.((_, out) => {
-    materializeFileRefsContentIfNeeded(out, ctx.store());
-  });
-
-  // Resolve step IDs to their output chunk hashes (pin-by-step-ID support)
-  const resolved = expanded.flatMap(ref => {
-    const token = typeof ref === 'string' ? ref : String(ref);
-    if (token.startsWith('h:')) return [token];
-    const stepOutput = ctx.getStepOutput?.(token);
-    if (stepOutput?.refs?.length) {
-      materializeFileRefsContentIfNeeded(stepOutput, ctx.store());
-      notes.push(`${token} \u2192 ${stepOutput.refs.join(', ')}`);
-      return stepOutput.refs;
-    }
-    return [token];
-  });
 
   const pinShape = (params.shape as string) || undefined;
   const { count, alreadyPinned } = ctx.store().pinChunks(resolved, pinShape);
@@ -675,42 +708,30 @@ export const handlePin: OpHandler = async (params, ctx) => {
 };
 
 export const handleUnpin: OpHandler = async (params, ctx) => {
-  let rawHashes = normalizeHashRefsToStrings(params.hashes);
-  if (!rawHashes.length) rawHashes = recoverDataflowIn(params, ctx);
-  if (!rawHashes.length) {
-    return err(
-      'unpin: ERROR no hashes supplied. Retention calls (pi/pu/dro/ulo/pc/bb:delete) require real h:refs from the CURRENT HASH MANIFEST or in:rN.refs dataflow. Prior-round retention steps are stripped of args in history (ephemeral by design) — do not template their shape.',
-    );
+  const rawFromParams = normalizeHashRefsToStrings(params.hashes);
+  const { refs: resolved, notes } = resolveRefsOrStepIds(params, ctx, rawFromParams);
+  if (!resolved.length) {
+    return err('unpin: retention op missing refs — provide h: refs or step-id.');
   }
 
-  const { expanded, notes } = ctx.expandSetRefsInHashes(rawHashes);
-  const { count, alreadyUnpinned, unknown } = ctx.store().unpinChunks(expanded);
+  const { count, alreadyUnpinned, unknown } = ctx.store().unpinChunks(resolved);
   if (count === 0) {
     const noteSuffix = notes.length > 0 ? ` | ${notes.join('; ')}` : '';
-    // Discriminate zero-match causes — each implies a different model action:
-    //  * alreadyUnpinned > 0 → idempotent no-op; nothing to fix.
-    //  * unknown > 0        → refs don't resolve. Often the model passed the
-    //                         cite hash (edit content_hash) instead of the
-    //                         retention hash (view.shortHash). FileView fence
-    //                         shows both: first slot `h:<RET>` is the unpin
-    //                         target, `cite:@h:<CITE>` is for edits.
+    // Idempotent no-op: everything passed in was already released.
     if (alreadyUnpinned > 0 && unknown === 0) {
       return ok(`unpin: 0 unpinned (${alreadyUnpinned} already unpinned — no-op)${noteSuffix}`);
     }
     if (unknown > 0 && alreadyUnpinned === 0) {
       return err(
-        `unpin: ERROR ${unknown} ref${unknown === 1 ? '' : 's'} did not resolve to any FileView or chunk${noteSuffix}. Check the HASH MANIFEST. FileView fence format: \`h:<RET> cite:@h:<CITE>\` — unpin targets the first slot (retention), NOT \`cite:@h:<CITE>\` (that's for edit content_hash).`,
+        `unpin: ${unknown} ref${unknown === 1 ? '' : 's'} did not resolve — check the HASH MANIFEST.${noteSuffix}`,
       );
     }
     if (unknown > 0 && alreadyUnpinned > 0) {
       return err(
-        `unpin: ERROR ${unknown} unknown ref${unknown === 1 ? '' : 's'}, ${alreadyUnpinned} already unpinned${noteSuffix}. Unknown refs don't match any FileView or chunk — likely wrong hash identity (did you pass \`cite:@h:<CITE>\` instead of \`h:<RET>\`?). Check the HASH MANIFEST.`,
+        `unpin: ${unknown} unknown ref${unknown === 1 ? '' : 's'}, ${alreadyUnpinned} already unpinned — check the HASH MANIFEST.${noteSuffix}`,
       );
     }
-    // Defensive: unpinChunks returned 0/0/0 — request was empty after expansion.
-    return err(
-      `unpin: ERROR no matching pinned refs in manifest${noteSuffix}. Check the HASH MANIFEST for pin state — refs listed as unpinned or absent can't be unpinned again. Prior-round unpin receipts are not callable.`,
-    );
+    return err(`unpin: no matching pinned refs in manifest${noteSuffix}.`);
   }
   let line = `unpin: ${count} chunk${count > 1 ? 's' : ''} unpinned`;
   if (alreadyUnpinned > 0) line += ` (${alreadyUnpinned} already unpinned)`;
@@ -724,18 +745,17 @@ export const handleUnpin: OpHandler = async (params, ctx) => {
 // ---------------------------------------------------------------------------
 
 export const handleRecall: OpHandler = async (params, ctx) => {
-  let rawHashes = normalizeHashRefsToStrings(params.hashes);
-  if (!rawHashes.length) rawHashes = recoverDataflowIn(params, ctx);
-  if (!rawHashes.length) return err('recall: ERROR missing hashes param');
+  const rawFromParams = normalizeHashRefsToStrings(params.hashes);
+  const { refs: expanded, notes } = resolveRefsOrStepIds(params, ctx, rawFromParams);
+  if (!expanded.length) return err('recall: retention op missing refs — provide h: refs or step-id.');
 
-  const { expanded, notes } = ctx.expandSetRefsInHashes(rawHashes);
   const lines: string[] = [];
   if (notes.length > 0) lines.push(`recall: ${notes.join('; ')}`);
 
   for (const h of expanded) {
     const content = ctx.store().getChunkContent(h);
     if (!content) {
-      lines.push(`recall:${h}: NOT_FOUND (evicted or unknown)`);
+      lines.push(`recall:${h}: ref unavailable — re-read to restore`);
       continue;
     }
     let recallContent = content;

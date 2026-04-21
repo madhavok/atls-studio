@@ -77,7 +77,7 @@ export const handleEngramEdit: OpHandler = async (params, ctx) => {
   if (result.ok) {
     const msg = result.metadataOnly
       ? `engram_edit: h:${result.newHash} (metadata updated in-place)`
-      : `engram_edit: h:${result.newHash} (content mutated, old hash forwards)`;
+      : `engram_edit: h:${result.newHash}`;
     return ok(msg, result.newHash ? [`h:${result.newHash}`] : []);
   }
   return err(`engram_edit: ERROR ${result.error}`);
@@ -86,12 +86,12 @@ export const handleEngramEdit: OpHandler = async (params, ctx) => {
 export const handleAnnotate: OpHandler = async (params, ctx) => {
   const hash = params.hash as string;
   const note = params.note as string;
-  if (!hash) return err('annotate: ERROR missing hash param');
-  if (!note) return err('annotate: ERROR missing note param');
+  if (!hash) return err('annotate: missing hash param');
+  if (!note) return err('annotate: missing note param');
 
   const store = ctx.store();
   if (isChunkSuspect(store)(hash)) {
-    return err('annotate: ERROR ref is suspect (file changed externally); re-read before editing');
+    return err('annotate: ref changed — re-read and retry');
   }
   const result = store.addAnnotation(hash, note);
   if (result.ok) {
@@ -111,7 +111,7 @@ export const handleLink: OpHandler = async (params, ctx) => {
   const to = store.resolveLinkRefToHash(toRaw);
   const suspect = isChunkSuspect(store);
   if (suspect(from) || suspect(to)) {
-    return err('link: ERROR one or more refs are suspect (file changed externally); re-read before editing');
+    return err('link: ref changed — re-read and retry');
   }
   const validRelations = new Set(['caused_by', 'depends_on', 'related_to', 'supersedes', 'refines']);
   const rel = relation && validRelations.has(relation) ? relation : 'related_to';

@@ -147,19 +147,15 @@ describe('spinCircuitBreaker', () => {
   it('is idempotent on repeated calls with the same snapshots (but still advances on repeated diagnosis)', () => {
     // Each evaluateSpin call is treated as a "round tick" — callers are
     // responsible for invoking once per round. Document that behavior.
-    const a = evaluateSpin([snap(1)], { diagnosisOverride: diag('volatile_unpinned', 0.95) });
-    const b = evaluateSpin([snap(1)], { diagnosisOverride: diag('volatile_unpinned', 0.95) });
+    const a = evaluateSpin([snap(1)], { diagnosisOverride: diag('context_loss', 0.95) });
+    const b = evaluateSpin([snap(1)], { diagnosisOverride: diag('context_loss', 0.95) });
     expect(a.tier).toBe('nudge');
     expect(b.tier).toBe('strong');
   });
 
-  it('volatile_unpinned nudge copy contains the pinning directive', () => {
-    const ev = evaluateSpin([snap(1)], {
-      diagnosisOverride: diag('volatile_unpinned', 0.95),
-    });
-    expect(ev.message).toContain('PINNING');
-    expect(ev.message).toContain('pi ');
-  });
+  // `volatile_unpinned` nudge-copy test deleted: the mode was removed
+  // along with its detector in the ref-language unification pass. Intra-
+  // batch auto-persist makes the failure mode impossible by construction.
 
   // -------------------------------------------------------------------------
   // Toggle gates: steeringEnabled / mutedModes / mutedTiers

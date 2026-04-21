@@ -123,13 +123,10 @@ function fingerprintView(view: FileView): string {
 // Estimator
 // ---------------------------------------------------------------------------
 
-const SHORT_REV_LEN = 6;
-
-/** Token cost of the `=== path h:<retention> cite:@h:<cite> (N lines) [pinned] ===` header line. */
+/** Token cost of the `=== path h:<retention> (N lines) [pinned] ===` header line. */
 function estimateHeaderTokens(view: FileView): number {
   const pinSuffix = view.pinned ? ' [pinned]' : '';
-  const cite = view.sourceRevision.replace(/^h:/, '').slice(0, SHORT_REV_LEN);
-  const header = `=== ${view.filePath} h:${view.shortHash} cite:@h:${cite} (${view.totalLines} lines)${pinSuffix} ===`;
+  const header = `=== ${view.filePath} h:${view.shortHash} (${view.totalLines} lines)${pinSuffix} ===`;
   return countTokensSync(header);
 }
 

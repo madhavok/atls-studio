@@ -1,25 +1,15 @@
 /**
  * Rendering layer for the Unified FileView.
  *
- * Produces the `=== path h:<RETENTION> cite:@h:<CITE> (N lines) === ... ===`
- * block that replaces flat file-backed chunks in WORKING MEMORY. Pure
- * function — takes a FileView + current round + lookup for filled regions,
- * returns a string.
+ * Produces the `=== path h:<RET> (N lines) === ... ===` block that replaces
+ * flat file-backed chunks in WORKING MEMORY. Pure function — takes a
+ * FileView + current round + lookup for filled regions, returns a string.
  *
- * The fence carries TWO distinct hash identities:
- *   - `h:<view.shortHash>`   — RETENTION ref. Use for pu / pc / dro / pi and
- *                              any other op that acts on the view itself.
- *                              Derived from (path, sourceRevision) via
- *                              `computeFileViewHashParts` in fileViewStore.
- *   - `cite:@h:<revision6>`  — CITATION ref. Use as `content_hash` (or
- *                              embedded in `f:h:…`) for edits. This is the
- *                              source revision prefix the backend uses to
- *                              rebase line edits (plan Section 10).
- *
- * These two tokens are different hex by construction; passing the cite hash
- * to a retention op (or vice versa) yields "no matching pinned refs".
- *
- * See docs/ — plan: Unified FileView (Sections 5 + 9).
+ * One ref per work object: the fence emits a single retention hash
+ * (`h:<view.shortHash>`). Retention ops (`pi`/`pu`/`pc`/`dro`) and edit
+ * citations both accept this ref — the runtime's `injectSnapshotHashes`
+ * swaps the retention hash for the view's current `sourceRevision` when
+ * it lands in a `content_hash` slot. The model never needs to pick a slot.
  */
 import type { FileView, FilledRegion } from './fileViewStore';
 
@@ -27,16 +17,6 @@ import type { FileView, FilledRegion } from './fileViewStore';
 const FENCE_TOP = '===';
 const FENCE_BOT = '===';
 
-/**
- * Short hash tag for the block header's citation slot. Uses the file's
- * sourceRevision — this is the content_hash the model cites for edits, per
- * the edit-rebasing compatibility constraint (plan Section 10). The
- * retention ref (`view.shortHash`) is emitted separately in the header.
- */
-function shortRev(revision: string, length = 6): string {
-  const clean = revision.replace(/^h:/, '');
-  return clean.slice(0, length);
-}
 
 /** Parse the 1-based line number from the `N|` prefix of a row. */
 function parseLineNumber(row: string): number | null {
@@ -105,7 +85,7 @@ export interface RenderFileViewOptions {
  * Render a FileView block suitable for injection into WORKING MEMORY.
  *
  * Layout:
- *   === path h:<retention short> cite:@h:<revision short> (N lines) ===
+ *   === path h:<retention short> (N lines) [pinned?] ===
  *   <row>
  *   <row>
  *   ...
@@ -150,7 +130,6 @@ function formatAnnotations(view: FileView): string {
 }
 
 function formatHeader(view: FileView): string {
-  const cite = shortRev(view.sourceRevision);
   const pinSuffix = view.pinned ? ' [pinned]' : '';
   // Auto-promote marker: distinguishes a stitched-region full-body (which
   // may have approximated rows the model never directly read) from an
@@ -158,9 +137,9 @@ function formatHeader(view: FileView): string {
   const promoteSuffix = view.fullBodyOrigin === 'coverage_promote'
     ? ' [fullBody: promoted]'
     : '';
-  // Dual identity: retention ref (view.shortHash) for pu/pc/dro, cite hash
-  // (sourceRevision prefix) for content_hash in edits. See file header doc.
-  return `${FENCE_TOP} ${view.filePath} h:${view.shortHash} cite:@h:${cite} (${view.totalLines} lines)${pinSuffix}${promoteSuffix} ${FENCE_TOP}`;
+  // Single ref per work object. `injectSnapshotHashes` resolves the view's
+  // current sourceRevision when this ref lands in a `content_hash` slot.
+  return `${FENCE_TOP} ${view.filePath} h:${view.shortHash} (${view.totalLines} lines)${pinSuffix}${promoteSuffix} ${FENCE_TOP}`;
 }
 
 function formatBody(view: FileView): string {

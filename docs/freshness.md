@@ -1,12 +1,14 @@
-# Freshness System
+# Freshness System (Runtime Internals)
 
-The freshness system ensures the model never silently reasons about stale content. It tracks file revisions, detects when knowledge is outdated, blocks unsafe operations, and attempts automatic recovery when possible.
+> **Model-facing surface note:** freshness is a **runtime-internal** concern after the ref-language unification. The model does not read `[STALE]` / `[FRESH]` labels, does not pass freshness flags, and does not distinguish `identity_lost` / `stale_hash` / `low_confidence_rebind` internally-taxonomized errors. The runtime auto-refetches pinned diverged views, drops unpinned diverged views silently, and surfaces one of two action strings on unrecoverable failures: `content changed — re-read and retry` (auto-forwardable) or `content cannot auto-rebind — re-read before retry`. The structures below are the machinery; nothing here is a model-facing specification.
+
+The freshness system ensures the runtime never silently serves the model stale content. It tracks file revisions, detects when knowledge is outdated, blocks unsafe operations, and attempts automatic recovery when possible.
 
 ## Why Freshness Matters
 
 Without freshness tracking, an agent that reads a file, edits it, then reasons about the pre-edit content will produce incorrect results — wrong line numbers, patches that don't apply, diffs based on content that no longer exists. This is the single most common failure mode in agentic coding tools.
 
-ATLS addresses this at three levels:
+ATLS addresses this at three levels (all internal):
 
 1. **Snapshot tracking** — Record what was read and when
 2. **Freshness classification** — Know whether knowledge is still valid

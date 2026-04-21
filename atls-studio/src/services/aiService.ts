@@ -4065,10 +4065,10 @@ function buildDynamicContextBlock(
     }
   }
   if (mt.edits.damaged && damagedEdits.length > 0) {
-    parts.push(`<<DAMAGED EDIT: ${damagedEdits.join('; ')}. Content is live in context. Fix the error.>>`);
+    parts.push(`<<DAMAGED EDIT: ${damagedEdits.join('; ')}. Fix the error.>>`);
   }
   if (mt.edits.recent && healthyEdits.length > 0) {
-    parts.push(`<<RECENT EDITS: ${healthyEdits.join(', ')}. ATLS tracks live file state — do not re-read, re-search, or re-stage these files unless verifying a specific change. Use h:refs from edit results directly.>>`);
+    parts.push(`<<RECENT EDITS: ${healthyEdits.join(', ')}. Use edit-result h:refs directly; do not re-read.>>`);
   }
 
   if (mt.edits.escalatedRepair) {
@@ -4087,15 +4087,11 @@ function buildDynamicContextBlock(
   if (tls && tls.mode !== 'ask' && tls.mode !== 'retriever') {
     if (tls.completionBlocked && tls.completionBlocker) {
       const isVerifyStale = /verify\b.*stale|stale.*verif/i.test(tls.completionBlocker);
-      if (isVerifyStale) {
-        if (mt.completion.verifyStale) {
-          parts.push('<<SYSTEM: Verification artifacts are stale. Re-run verification before finishing.>>');
-        }
-      } else {
-        if (mt.completion.continueImpl) {
-          parts.push('<<SYSTEM: Continue any remaining implementation. When complete, run final verification and provide a summary.>>');
-        }
+      if (isVerifyStale && mt.completion.verifyStale) {
+        parts.push('<<SYSTEM: Verification artifacts are stale. Re-run verification before finishing.>>');
       }
+      // Generic "continue implementation" nudge deleted: the model just
+      // received a tool result; no value added by narrating "continue".
     }
   }
 

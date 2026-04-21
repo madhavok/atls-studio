@@ -137,23 +137,16 @@ export const handleBbRead: OpHandler = async (params, ctx) => {
             staleFiles.push(path);
           }
         }
-        if (staleFiles.length > 0) {
-          staleWarning = ` [stale: source changed — ${staleFiles.join(', ')}]`;
-        }
-      }
-      let supersededWarning = '';
-      if (meta.state === 'superseded') {
-        const byHash = meta.supersededBy ? ` by h:${meta.supersededBy.slice(0, 8)}` : '';
-        supersededWarning = ` [superseded${byHash} — not in active reasoning]`;
-      } else if (meta.state === 'historical') {
-        supersededWarning = ' [historical — not authoritative for action]';
+        // Stale-source warning is runtime bookkeeping — the entry is still
+        // served as-is; the model's action is the same as for any dormant
+        // ref. Internal staleness captured in telemetry only; model-facing
+        // surface shows the BB content or `ref unavailable`.
       }
       const tk = countTokensSync(meta.content);
-      const visibleNote = meta.state === 'active' ? ' — visible in ## BLACKBOARD block' : ' — excluded from ## BLACKBOARD';
-      lines.push(`bb_read:${k}: [-> bb:${k}, ${tk}tk${visibleNote}]${staleWarning}${supersededWarning}`);
+      lines.push(`bb_read:${k}: [-> bb:${k}, ${tk}tk]`);
       refs.push(`h:bb:${k}`);
     } else {
-      lines.push(`bb_read:${k}: NOT_FOUND`);
+      lines.push(`bb_read:${k}: ref unavailable — re-read to restore`);
     }
   }
   return ok(lines.join('\n'), refs);
@@ -163,9 +156,7 @@ export const handleBbDelete: OpHandler = async (params, ctx) => {
   let keys = params.keys as string[] | string | undefined;
   if (typeof keys === 'string') keys = [keys];
   if (!keys?.length) {
-    return err(
-      'bb_delete: ERROR no keys supplied. Retention calls (pi/pu/dro/ulo/pc/bb:delete) require real arguments — prior-round retention steps are stripped of args in history (ephemeral by design) and are not callable as shapes.',
-    );
+    return err('bb_delete: missing keys param — provide one or more BB keys.');
   }
 
   let deleted = 0;

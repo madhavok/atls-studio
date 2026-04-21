@@ -642,13 +642,13 @@ export const handleSearchMemory: OpHandler = async (params, ctx) => {
 
   const archivedCount = regionCounts['archived'] ?? 0;
   const dormantCount = regionCounts['dormant'] ?? 0;
-  let recallHint = '';
-  if (archivedCount + dormantCount > 0) {
-    const parts: string[] = [];
-    if (archivedCount > 0) parts.push(`${archivedCount} archived`);
-    if (dormantCount > 0) parts.push(`${dormantCount} dormant`);
-    recallHint = `\n💡 ${parts.join(' + ')} — \`rec h:XXXX\` to restore to working memory`;
-  }
+  const totalDormant = archivedCount + dormantCount;
+  // Internal visibility states (archived vs dormant) collapsed to one
+  // model-facing `dormant` category — the model's action is the same:
+  // `rec h:XXXX` to restore.
+  const recallHint = totalDormant > 0
+    ? `\n${totalDormant} result${totalDormant === 1 ? '' : 's'} dormant — rec h:XXXX to restore if needed`
+    : '';
 
   return {
     kind: 'search_results', ok: true,

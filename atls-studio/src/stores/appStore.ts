@@ -548,7 +548,6 @@ export const DEFAULT_MESSAGE_TOGGLES: MessageToggles = {
       goal_drift: true,
       stuck_in_phase: true,
       tool_confusion: true,
-      volatile_unpinned: true,
       completion_gate: true,
     },
     tiers: { nudge: true, strong: true, halt: false },
@@ -606,7 +605,6 @@ export function mergeMessageToggles(
         goal_drift: isBool(modesSrc.goal_drift) ? modesSrc.goal_drift : defaults.spin.modes.goal_drift,
         stuck_in_phase: isBool(modesSrc.stuck_in_phase) ? modesSrc.stuck_in_phase : defaults.spin.modes.stuck_in_phase,
         tool_confusion: isBool(modesSrc.tool_confusion) ? modesSrc.tool_confusion : defaults.spin.modes.tool_confusion,
-        volatile_unpinned: isBool(modesSrc.volatile_unpinned) ? modesSrc.volatile_unpinned : defaults.spin.modes.volatile_unpinned,
         completion_gate: isBool(modesSrc.completion_gate) ? modesSrc.completion_gate : defaults.spin.modes.completion_gate,
       },
       tiers: {

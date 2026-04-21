@@ -929,18 +929,60 @@ function seedSnapshotTracker(
 }
 
 /**
- * Auto-inject content_hash into change op params from the tracker.
+ * When a content_hash looks like a FileView retention short-hash, swap it for
+ * the view's current sourceRevision. This lets the model pass the single
+ * `h:<RET>` from the fence into any slot (retention OR cite) and lets the
+ * runtime pick the right identity. Returns the replacement hash or undefined
+ * when no view matches.
+ */
+function resolveCiteFromView(
+  candidate: unknown,
+  ctx: HandlerContext,
+): string | undefined {
+  if (typeof candidate !== 'string' || !candidate) return undefined;
+  const bare = candidate.startsWith('h:') ? candidate.slice(2) : candidate;
+  const short = bare.split(':')[0];
+  if (!short || !/^[0-9a-fA-F_]{6,16}$/.test(short)) return undefined;
+  try {
+    const views = ctx.store().fileViews;
+    if (!views) return undefined;
+    for (const view of views.values()) {
+      if (view.shortHash === short
+        || view.shortHash.startsWith(short)
+        || short.startsWith(view.shortHash)
+      ) {
+        return view.sourceRevision;
+      }
+    }
+  } catch {
+    // Non-fatal: fall through to tracker.
+  }
+  return undefined;
+}
+
+/**
+ * Auto-inject content_hash into change op params from the tracker. Also
+ * resolves FileView retention hashes to the view's current source revision
+ * so the model can pass the one ref the fence emits into any slot.
  * Mutates mergedParams in place.
  */
 function injectSnapshotHashes(
   mergedParams: Record<string, unknown>,
   tracker: SnapshotTracker,
+  ctx: HandlerContext,
 ): void {
   const targetFile = (mergedParams.file ?? mergedParams.file_path) as string | undefined;
   if (typeof targetFile === 'string' && !mergedParams.content_hash) {
     const trackedHash = tracker.getHash(targetFile);
     if (trackedHash) {
       mergedParams.content_hash = trackedHash;
+    }
+  } else if (typeof mergedParams.content_hash === 'string') {
+    // Model-supplied content_hash: if it's a FileView retention hash, swap
+    // to the view's current sourceRevision. One-ref-per-work-object contract.
+    const resolved = resolveCiteFromView(mergedParams.content_hash, ctx);
+    if (resolved && resolved !== mergedParams.content_hash) {
+      mergedParams.content_hash = resolved;
     }
   }
   if (Array.isArray(mergedParams.edits)) {
@@ -952,6 +994,11 @@ function injectSnapshotHashes(
         const trackedHash = tracker.getHash(editFile);
         if (trackedHash) {
           entry.content_hash = trackedHash;
+        }
+      } else if (typeof entry.content_hash === 'string') {
+        const resolved = resolveCiteFromView(entry.content_hash, ctx);
+        if (resolved && resolved !== entry.content_hash) {
+          entry.content_hash = resolved;
         }
       }
       return entry;
@@ -1237,7 +1284,20 @@ async function refreshContextAfterEdit(
   for (const ef of editedFiles) {
     const bareHash = ef.newHash.replace(/^h:/, '');
 
-    // 1. Resolve fresh post-edit content and replace the engram
+    // Capture pre-edit view state so we only re-populate `fullBody` for
+    // views the model had fully loaded before the edit. Partially-loaded
+    // views (skeleton + regions only) stay that way — otherwise the edit
+    // would inflate every touched file to full-body in WM even when the
+    // model only needed a few ranges.
+    const hadFullBodyBefore = store.getFileView(ef.filePath)?.fullBody !== undefined;
+
+    // 1. Resolve fresh post-edit content and replace the engram. When the
+    //    view previously had `fullBody`, re-populate it with the
+    //    authoritative post-edit content so the model doesn't have to
+    //    re-read after its own edits. `reconcileFileView` clears
+    //    `fullBody` on revision bump (intentional — line coords can't
+    //    be safely rebased); this step restores it. Net effect: the
+    //    view stays stateful across edit boundaries.
     try {
       const resolved = await invoke<{ content: string; source?: string | null }>(
         'resolve_hash_ref', { rawRef: `h:${bareHash}` },
@@ -1249,6 +1309,27 @@ async function refreshContextAfterEdit(
             origin: 'edit-refresh',
             viewKind: 'latest',
           });
+        // Re-hydrate FileView.fullBody ONLY when the view was fully loaded
+        // before the edit. Idempotent: if no view existed pre-edit (or it
+        // was only partially loaded via skeleton + regions), this is a
+        // no-op and the view rebuilds its filled regions on subsequent
+        // reads as before.
+        if (hadFullBodyBefore) {
+          try {
+            const totalLines = resolved.content.length === 0
+              ? 0
+              : resolved.content.split('\n').length;
+            store.applyFullBodyFromChunk({
+              filePath: ef.filePath,
+              sourceRevision: bareHash,
+              content: resolved.content,
+              chunkHash: bareHash,
+              totalLines,
+            });
+          } catch (e) {
+            console.warn('[executor] FileView full-body refresh failed:', e);
+          }
+        }
       }
     } catch (e) {
       console.warn('[executor] engram refresh failed, marking suspect:', e);
@@ -1518,6 +1599,126 @@ function resolveInBindings(
   return resolved;
 }
 
+// ---------------------------------------------------------------------------
+// Auto-persist intra-batch refs
+// ---------------------------------------------------------------------------
+
+/**
+ * Recursively walk a value and collect any `h:<short>` substrings whose base
+ * hash appears in `producedBaseHashes`. Used to detect later-step references
+ * to this step's output refs inside `with` params.
+ */
+function scanValueForProducedHashes(
+  v: unknown,
+  producedBaseHashes: ReadonlySet<string>,
+  out: Set<string>,
+  depth: number = 0,
+): void {
+  if (depth > 8) return; // Cycle / deep-object guard.
+  if (typeof v === 'string') {
+    const re = /h:([0-9a-fA-F_]{6,16})/g;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(v)) !== null) {
+      const base = m[1].toLowerCase();
+      if (producedBaseHashes.has(base)) out.add(`h:${m[1]}`);
+    }
+    return;
+  }
+  if (Array.isArray(v)) {
+    for (const item of v) scanValueForProducedHashes(item, producedBaseHashes, out, depth + 1);
+    return;
+  }
+  if (v && typeof v === 'object') {
+    for (const val of Object.values(v)) scanValueForProducedHashes(val, producedBaseHashes, out, depth + 1);
+  }
+}
+
+/**
+ * Pin refs from the producing step when any later step consumes them via
+ * `in:` binding, named binding, literal ref, or `h:<short>` substring in
+ * `with` values. Ensures the state machine handles intra-batch persistence
+ * — the model never needs an explicit `pi` for refs used within the same
+ * batch. Cross-round persistence still requires `pi` / `bw`.
+ *
+ * Idempotent: `pinChunks` no-ops on already-pinned refs. Skips retention
+ * ops (they manipulate refs, don't produce new persistable ones). Skips
+ * when the producing step has no refs.
+ */
+function autoPersistIntraBatch(
+  producingStep: { id: string; use: string; out?: string | string[] },
+  outputRefs: readonly string[],
+  futureSteps: readonly import('./types').Step[],
+  namedBindings: ReadonlyMap<string, StepOutput>,
+  ctx: HandlerContext,
+): void {
+  if (outputRefs.length === 0) return;
+  // Retention ops (session.pin/unpin/drop/etc.) either explicitly pin or
+  // explicitly release — their output refs are not "new work state" to
+  // auto-persist.
+  if (producingStep.use.startsWith('session.')) return;
+
+  const producingId = producingStep.id;
+  const producedBaseHashes = new Set<string>();
+  for (const r of outputRefs) {
+    if (typeof r !== 'string' || !r.startsWith('h:')) continue;
+    const base = r.slice(2).split(':')[0];
+    if (base) producedBaseHashes.add(base.toLowerCase());
+  }
+  if (producedBaseHashes.size === 0) return;
+
+  // Named bindings that point at this step's output.
+  const boundNames = new Set<string>();
+  if (producingStep.out) {
+    const names = Array.isArray(producingStep.out) ? producingStep.out : [producingStep.out];
+    for (const n of names) boundNames.add(n);
+  }
+  // Also include names that `namedBindings` already associates with this
+  // step's output (covers request-level `refs[]` pre-registration where the
+  // name maps to a synthetic StepOutput carrying one of our hashes).
+  for (const [name, out] of namedBindings) {
+    for (const r of out.refs) {
+      const base = r.replace(/^h:/, '').split(':')[0];
+      if (base && producedBaseHashes.has(base.toLowerCase())) boundNames.add(name);
+    }
+  }
+
+  const refsToPin = new Set<string>();
+
+  for (const futureStep of futureSteps) {
+    if (futureStep.in) {
+      for (const expr of Object.values(futureStep.in)) {
+        if ('from_step' in expr && expr.from_step === producingId) {
+          for (const r of outputRefs) refsToPin.add(r);
+        } else if ('bind' in expr && boundNames.has(expr.bind)) {
+          for (const r of outputRefs) refsToPin.add(r);
+        } else if ('ref' in expr && typeof expr.ref === 'string') {
+          const base = expr.ref.replace(/^h:/, '').split(':')[0];
+          if (base && producedBaseHashes.has(base.toLowerCase())) refsToPin.add(expr.ref);
+        }
+      }
+    }
+    if (futureStep.with) {
+      scanValueForProducedHashes(futureStep.with, producedBaseHashes, refsToPin);
+    }
+  }
+
+  if (refsToPin.size === 0) return;
+
+  // Strip line-range / shape modifiers before pinning — pin is on the base
+  // identity, not the slice. Retention auto-follows slice refs via `findChunkByRef`.
+  const baseRefs = new Set<string>();
+  for (const r of refsToPin) {
+    const m = r.match(/^h:([0-9a-fA-F_]{6,16})/);
+    if (m) baseRefs.add(`h:${m[1]}`);
+  }
+
+  try {
+    ctx.store().pinChunks([...baseRefs]);
+  } catch (e) {
+    console.warn('[executor] auto-persist intra-batch failed:', e);
+  }
+}
+
 function getArtifact(output: StepOutput): Record<string, unknown> | null {
   if (!output.content || typeof output.content !== 'object' || Array.isArray(output.content)) return null;
   return output.content as Record<string, unknown>;
@@ -1756,8 +1957,8 @@ export async function executeUnifiedBatch(
     if (ctx.isSwarmAgent && isBlockedForSwarm(step.use)) {
       const output: StepOutput = {
         kind: 'raw', ok: false, refs: [],
-        summary: `${step.use}: ERROR blocked for swarm agents (orchestrator owns lifecycle)`,
-        error: 'blocked for swarm agents',
+        summary: `${step.use}: not available to subagents`,
+        error: 'not available to subagents',
       };
       stepOutputs.set(step.id, output);
       recordStepResult(step.id, step.use, output, 0);
@@ -1771,7 +1972,7 @@ export async function executeUnifiedBatch(
     if (!allowed.allowed) {
       const output: StepOutput = {
         kind: 'raw', ok: false, refs: [],
-        summary: `${step.id}: BLOCKED — ${allowed.reason}`,
+        summary: `${step.id}: ${step.use} unavailable in read-only mode`,
         error: allowed.reason,
       };
       stepOutputs.set(step.id, output);
@@ -1787,7 +1988,7 @@ export async function executeUnifiedBatch(
       if (targetFile && !targetFile.startsWith('h:') && !claimNorm.has(targetFile.replace(/\\/g, '/').toLowerCase())) {
         const output: StepOutput = {
           kind: 'raw', ok: false, refs: [],
-          summary: `${step.id}: BLOCKED — file ${targetFile} is outside swarm file claims [${ctx.fileClaims.join(', ')}]`,
+          summary: `${step.id}: ${step.use} rejected — path "${targetFile}" outside this agent's scope [${ctx.fileClaims.join(', ')}]`,
           error: 'file_claim_violation',
         };
         stepOutputs.set(step.id, output);
@@ -1899,7 +2100,7 @@ export async function executeUnifiedBatch(
 
     // Auto-inject content_hash for change ops from the tracker
     if (step.use.startsWith('change.') && snapshotTracker.size > 0) {
-      injectSnapshotHashes(mergedParams, snapshotTracker);
+      injectSnapshotHashes(mergedParams, snapshotTracker, ctx);
     }
 
     // Optional: all line numbers in one change.edit are relative to the same pre-edit snapshot
@@ -1929,9 +2130,9 @@ export async function executeUnifiedBatch(
           if (!snapshotTracker.hasReadCoverage(gatePath, line, end)) {
             const output: StepOutput = {
               kind: 'edit_result', ok: false, refs: [],
-              summary: `${step.id}: edit_outside_read_range — lines ${line}-${end} of ${gatePath} not covered by a prior read.lines. Read the target region first, then retry the edit.`,
-              error: `edit_outside_read_range: lines ${line}-${end} not covered by prior read.lines`,
-              content: { error_class: 'edit_outside_read_range', file: gatePath, line, end_line: end, _next: 'read.lines for the target region, then retry' },
+              summary: `${step.id}: target region not yet read — read lines ${line}-${end} of ${gatePath} first, then retry.`,
+              error: `target region not yet read — read lines ${line}-${end} first`,
+              content: { file: gatePath, line, end_line: end, _next: 'read.lines for the target region, then retry', _internal: { error_class: 'edit_outside_read_range' } },
             };
             stepOutputs.set(step.id, output);
             recordStepResult(step.id, step.use, output, Date.now() - stepStart);
@@ -2231,6 +2432,20 @@ export async function executeUnifiedBatch(
       for (const name of names) {
         namedBindings.set(name, output);
       }
+    }
+
+    // Auto-persist intra-batch: scan later steps for consumers of this step's
+    // output refs and pin matching refs so they survive past round-end. The
+    // state machine handles intra-batch persistence; the model only needs
+    // explicit `pi` / `bw` for cross-round retention.
+    if (output.ok && output.refs.length > 0) {
+      autoPersistIntraBatch(
+        step,
+        output.refs,
+        stepsToRun.slice(i + 1),
+        namedBindings,
+        ctx,
+      );
     }
 
     // Collect refs

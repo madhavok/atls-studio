@@ -535,9 +535,18 @@ function buildSubagentSnapshot(
     `Token budget: ${(tokensUsed / 1000).toFixed(1)}k of ${(tokenBudget / 1000).toFixed(0)}k used | Pin budget: ${(metrics.pinTokens / 1000).toFixed(1)}k of ${(pinBudget / 1000).toFixed(0)}k tokens`,
   );
 
+  // Subagent engram surface: keep the list tight. Prior runs added a full
+  // enumeration with descriptions; a compact one-line-per-ref summary is
+  // enough handoff signal (FileView already renders content when pinned).
   if (metrics.engramLines.length > 0) {
+    const lines = metrics.engramLines;
+    const COMPACT_CAP = 12;
     sections.push('\n## ENGRAMS CREATED');
-    sections.push(metrics.engramLines.join('\n'));
+    if (lines.length <= COMPACT_CAP) {
+      sections.push(lines.join('\n'));
+    } else {
+      sections.push(lines.slice(0, COMPACT_CAP).join('\n') + `\n... +${lines.length - COMPACT_CAP} more (see HASH MANIFEST)`);
+    }
   }
 
   const bbAllowedPrefixes = ROLE_BB_PREFIXES[role];
@@ -562,7 +571,8 @@ function buildSubagentSnapshot(
     sections.push(lastErrors.join('\n'));
   }
 
-  // Only show pre-existing staged paths (new ones are already in ENGRAMS CREATED)
+  // Subagents see their staged paths in the manifest already; keep this
+  // summary terse. Do-not-re-read rule stays, via one-line reference.
   const stagedPaths = Array.from(ctx.stagedSnippets.values())
     .filter(s => s.source && canSteerExecution({ stageState: s.stageState, freshness: s.freshness }))
     .map(s => s.source!)
@@ -570,8 +580,7 @@ function buildSubagentSnapshot(
   if (stagedPaths.length > 0) {
     const shown = stagedPaths.slice(0, SUBAGENT_STAGED_PATHS_CAP);
     const overflow = stagedPaths.length - shown.length;
-    sections.push('\n## ALREADY STAGED (do not re-read)');
-    sections.push(shown.join(', ') + (overflow > 0 ? ` ... and ${overflow} more` : ''));
+    sections.push(`\n## ALREADY STAGED: ${shown.join(', ')}${overflow > 0 ? ` +${overflow} more` : ''} (use existing refs)`);
   }
 
   sections.push('\nContinue your task.');

@@ -9,9 +9,8 @@
  */
 
 import type { ContextChunk, BlackboardEntry, CognitiveRule, EngramAnnotation, Synapse, ManifestEntry, TaskPlan, StagedSnippet, TransitionBridge, MemoryEvent, ReconcileStats, MemoryTelemetrySummary } from '../stores/contextStore';
-import { STAGE_SOFT_CEILING, STAGED_OMITTED_POINTER_TOKENS } from '../stores/contextStore';
+import { STAGED_OMITTED_POINTER_TOKENS } from '../stores/contextStore';
 import type { FileView } from './fileViewStore';
-import { HYGIENE_CHECK_INTERVAL_ROUNDS } from './promptMemory';
 import { formatChunkTag } from '../utils/contextHash';
 import { collectFileViewChunkHashes, renderAllFileViewBlocks } from './fileViewRender';
 import {
@@ -138,14 +137,15 @@ function computeActiveEngramStagedSources(
 }
 
 export function formatSuspectHint(
-  suspectSince?: number,
-  freshness?: string,
+  _suspectSince?: number,
+  _freshness?: string,
   _freshnessCause?: string,
   _origin?: string,
 ): string {
-  if (suspectSince != null || freshness === 'suspect' || freshness === 'changed') {
-    return ' [STALE: re-read before edit]';
-  }
+  // Freshness state is now runtime-internal: pinned diverged views
+  // auto-refetch (surfacing `[edited L..]` next round) and unpinned
+  // diverged views drop silently. The `[STALE: re-read before edit]`
+  // label previously emitted here added noise without changing behavior.
   return '';
 }
 
@@ -198,48 +198,18 @@ export function formatWorkingMemory(input: FormatterInput): string {
   }
   lines.push('');
 
-  if (safetyCompaction) {
-    lines.push('## SAFETY RAIL WARNING');
-    lines.push(`Auto-compacted ${safetyCompaction.count} unpinned chunks, freed ${(safetyCompaction.freedTokens / 1000).toFixed(1)}k (was at ${safetyCompaction.usageBefore.toFixed(0)}%).`);
-    if (safetyCompaction.candidates.length > 0) {
-      lines.push('Candidates for drop (oldest unpinned):');
-      for (const c of safetyCompaction.candidates.slice(0, 3)) {
-        lines.push(`  h:${c.shortHash} ${(c.tokens / 1000).toFixed(1)}k ${c.source || ''} (age: ${c.age})`);
-      }
-    }
-    lines.push('Action: drop completed work, unpin finished files, compact_history if history heavy.');
-    lines.push('');
-  }
-
-  const latestEvent = memoryEvents && memoryEvents.length > 0 ? memoryEvents[memoryEvents.length - 1] : null;
-  const ruleTokens = cognitiveRules ? Array.from(cognitiveRules.values()).reduce((sum, rule) => sum + rule.tokens, 0) : 0;
-  const hasRetention = memoryTelemetry && (memoryTelemetry.readsReused > 0 || memoryTelemetry.resultsCollapsed > 0 || memoryTelemetry.outcomeTransitions > 0);
-  if (reconcileStats || latestEvent || ruleTokens > 0 || stagedTokens > 0 || hasRetention) {
-    lines.push('## MEMORY TELEMETRY');
-    const telemetryParts: string[] = [];
-    if (historyTokens != null && historyTokens > 0) telemetryParts.push(`history:${(historyTokens / 1000).toFixed(1)}k`);
-    if (stagedTokens > 0) telemetryParts.push(`staged:${(stagedTokens / 1000).toFixed(1)}k`);
-    if (ruleTokens > 0) telemetryParts.push(`rules:${(ruleTokens / 1000).toFixed(1)}k`);
-    if (reconcileStats) telemetryParts.push(`reconcile:${reconcileStats.updated} updated/${reconcileStats.invalidated} invalidated/${reconcileStats.preserved} preserved`);
-    if (memoryTelemetry && memoryTelemetry.eventCount > 0) {
-      telemetryParts.push(`events:${memoryTelemetry.eventCount}`);
-    }
-    if (memoryTelemetry) {
-      const retParts: string[] = [];
-      if (memoryTelemetry.readsReused > 0) retParts.push(`reused:${memoryTelemetry.readsReused}`);
-      if (memoryTelemetry.resultsCollapsed > 0) retParts.push(`collapsed:${memoryTelemetry.resultsCollapsed}`);
-      if (memoryTelemetry.outcomeTransitions > 0) retParts.push(`transitions:${memoryTelemetry.outcomeTransitions}`);
-      if (retParts.length > 0) telemetryParts.push(`retention:${retParts.join(',')}`);
-    }
-    if (telemetryParts.length > 0) lines.push(telemetryParts.join(' | '));
-    if (latestEvent) {
-      const eventParts = [`last:${latestEvent.action}`, latestEvent.reason];
-      if (latestEvent.source) eventParts.push(latestEvent.source);
-      if (latestEvent.freedTokens != null && latestEvent.freedTokens > 0) eventParts.push(`freed:${(latestEvent.freedTokens / 1000).toFixed(1)}k`);
-      lines.push(eventParts.join(' | '));
-    }
-    lines.push('');
-  }
+  // `## SAFETY RAIL WARNING` and `## MEMORY TELEMETRY` blocks deleted. The
+  // auto-compaction described by SAFETY RAIL is an action the runtime
+  // already performed; narrating it was runtime self-description. The
+  // MEMORY TELEMETRY block (reconcile stats, retention counts, memory
+  // events) is dev-tool data — none of it carried a work-level action for
+  // the model. Both surfaces live in the AtlsInternals panel for debugging.
+  // Reference the unused inputs so the signature stays stable for callers.
+  void safetyCompaction;
+  void memoryEvents;
+  void reconcileStats;
+  void memoryTelemetry;
+  void cognitiveRules;
 
   // Pin inventory is now in ## HASH MANIFEST (dynamic context block)
 
@@ -482,111 +452,53 @@ export function formatTaggedContext(chunks: Map<string, ContextChunk>): string {
 // Stats & Task Lines
 // ---------------------------------------------------------------------------
 
-/** Mirror contextStore CHAT_TYPES — excluded from engram classification (BP3 is canonical). */
-const CHAT_CHUNK_TYPES = new Set(['msg:user', 'msg:asst']);
-
-/** Dormant engram stub budget (must match getPromptTokens in contextStore). */
-const DORMANT_BASE_TOKENS = 15;
-const DORMANT_FINDING_TOKENS = 20;
-
+/**
+ * CTX banner — diet rendering. Keeps only the fields that inform work-level
+ * decisions: pressure %, pinned count, BB token use. Runtime telemetry
+ * (chunk count, cache hit rate, staged tokens, batch ops/call, engram/dormant
+ * split, round count, freed tokens, history breakdown) moved to the
+ * AtlsInternals dev panel. Pressure nudges collapsed to one at-ceiling line;
+ * the runtime auto-manages everything below the ceiling via ASSESS.
+ *
+ * Signature kept stable for callers that still pass the full telemetry bag;
+ * unused params are accepted and ignored at the banner layer.
+ */
 export function formatStatsLine(
   usedTokens: number,
   maxTokens: number,
-  chunkCount: number,
+  _chunkCount: number,
   pinnedCount: number,
   bbTokens: number,
-  freedTokens: number,
-  cacheHitRate?: number,
-  batchMetrics?: { toolCalls: number; manageOps: number },
-  stagedTokens?: number,
-  historyTokens?: number,
-  historyBreakdown?: string | null,
-  chunks?: Map<string, import('../stores/contextStore').ContextChunk>,
-  roundCount?: number,
+  _freedTokens: number,
+  _cacheHitRate?: number,
+  _batchMetrics?: { toolCalls: number; manageOps: number },
+  _stagedTokens?: number,
+  _historyTokens?: number,
+  _historyBreakdown?: string | null,
+  _chunks?: Map<string, import('../stores/contextStore').ContextChunk>,
+  _roundCount?: number,
 ): string {
   const pct = ((usedTokens / maxTokens) * 100).toFixed(0);
-  const usedK = (usedTokens / 1000).toFixed(0);
-  const maxK = (maxTokens / 1000).toFixed(0);
-  const freedK = (freedTokens / 1000).toFixed(1);
 
-  let line = `<<CTX ${usedK}k/${maxK}k (${pct}%)`;
-  if (roundCount != null && roundCount > 0) line += ` | round:${roundCount}`;
-  line += ` | chunks:${chunkCount}`;
+  let line = `<<CTX ${pct}%`;
   if (pinnedCount > 0) line += ` | pinned:${pinnedCount}`;
   if (bbTokens > 0) line += ` | bb:${(bbTokens / 1000).toFixed(1)}k`;
-  if (freedTokens > 1000) line += ` | freed:${freedK}k`;
-  if (historyTokens != null && historyTokens > 0) {
-    const hk = (historyTokens / 1000).toFixed(0);
-    line += historyBreakdown ? ` | history:${hk}k (${historyBreakdown})` : ` | history:${hk}k`;
-  }
-  if (cacheHitRate != null && cacheHitRate > 0) line += ` | cache:${(cacheHitRate * 100).toFixed(0)}%`;
-  if (stagedTokens != null && stagedTokens > 0) line += ` | staged:${(stagedTokens / 1000).toFixed(1)}k`;
-  if (batchMetrics && batchMetrics.toolCalls > 0) {
-    const ratio = batchMetrics.manageOps / batchMetrics.toolCalls;
-    line += ` | batch:${ratio.toFixed(1)}ops/call`;
-  }
-  if (chunks && chunks.size > 0) {
-    let activeCount = 0, activeTk = 0, dormantCount = 0, dormantTk = 0;
-    for (const c of chunks.values()) {
-      if (CHAT_CHUNK_TYPES.has(c.type)) continue;
-      // HPP-aware: dormant = compacted OR dematerialized in HPP
-      const isDormant = c.compacted || (() => {
-        const ref = getRef(c.hash);
-        return ref != null && !shouldMaterialize(ref);
-      })();
-      if (isDormant) {
-        dormantCount++;
-        const hasFinding = (c.annotations?.length ?? 0) > 0 || !!c.summary;
-        dormantTk += DORMANT_BASE_TOKENS + (hasFinding ? DORMANT_FINDING_TOKENS : 0);
-      } else {
-        activeCount++;
-        activeTk += c.tokens;
-      }
-    }
-    line += ` | engrams:${activeCount}(${(activeTk / 1000).toFixed(1)}k) dormant:${dormantCount}(${(dormantTk / 1000).toFixed(1)}k)`;
-  }
   line += '>>';
 
+  // Single at-ceiling nudge only. Runtime auto-manages pressure below the
+  // hard ceiling via ASSESS + auto-compact. Tiered nudges (50% / 70% /
+  // HYGIENE / LOW BATCH RATIO / staged-heavy / dormant-heavy) were
+  // runtime-internal scheduling leaked as model-facing copy.
   const percentage = (usedTokens / maxTokens) * 100;
-  if (percentage >= 70) {
-    line += ' 70% — consider dropping completed work (session.drop) and compacting history (compact_history). Emergency eviction only at 90%+.';
-  } else if (percentage >= 50) {
-    line += ' consider compacting/dropping completed work — bb_write important findings before they age out';
-  }
-
-  // Batch compliance warning: flag single-op manage calls as wasteful
-  if (batchMetrics && batchMetrics.toolCalls >= 3 && batchMetrics.manageOps / batchMetrics.toolCalls < 2) {
-    line += ' — LOW BATCH RATIO: combine ops into fewer manage calls';
-  }
-
-  if (stagedTokens != null && stagedTokens > STAGE_SOFT_CEILING) {
-    line += ' — staged heavy: unstage completed work';
-  }
-
-  // Turn-based hygiene nudge (skip if already showing 70%+ pressure warning)
-  if (roundCount != null && roundCount > 0 && roundCount % HYGIENE_CHECK_INTERVAL_ROUNDS === 0 && percentage < 70) {
-    line += ' — HYGIENE: budget check due — review BB, drop unused, unstage completed';
-  }
-
-  // Dormant token imbalance nudge (HPP-aware)
-  if (chunks && chunks.size > 0) {
-    let activeTkSum = 0, dormantRawTkSum = 0;
-    for (const c of chunks.values()) {
-      if (CHAT_CHUNK_TYPES.has(c.type)) continue;
-      const isDormant = c.compacted || (() => {
-        const ref = getRef(c.hash);
-        return ref != null && !shouldMaterialize(ref);
-      })();
-      if (isDormant) dormantRawTkSum += c.tokens;
-      else activeTkSum += c.tokens;
-    }
-    if (dormantRawTkSum > activeTkSum && dormantRawTkSum > 2000) {
-      line += ' — dormant engrams heavy: drop or distill to BB';
-    }
+  if (percentage >= HARD_CEILING_PCT) {
+    line += ' — at ceiling: finish current target and task_complete or hand off';
   }
 
   return line;
 }
+
+/** Pressure percent at which the banner surfaces its single at-ceiling nudge. */
+const HARD_CEILING_PCT = 90;
 
 export function formatTaskLine(plan: TaskPlan | null): string {
   if (!plan) return '';

@@ -27,6 +27,7 @@ import { getGeminiCacheSnapshot, restoreGeminiCacheSnapshot, type GeminiCacheSna
 import { classifyStageSnippet, MAX_PERSISTENT_STAGE_ENTRY_TOKENS } from '../services/promptMemory';
 import { emptyRollingSummary } from '../services/historyDistiller';
 import { migrateLegacyFileView } from '../services/fileViewStore';
+import { recordUnrecoverable as manifestRecordUnrecoverable } from '../services/hashManifest';
 import { useSwarmStore } from '../stores/swarmStore';
 import { serializeJournal, restoreJournal } from '../services/freshnessJournal';
 import { diagnoseSpinning } from '../services/spinDetector';
@@ -417,11 +418,26 @@ export async function applyHashFirstFreshness(): Promise<{ preserved: number; su
     // v7+: rebase persisted FileViews. Policy mirrors fileViewStore.reconcileFileView:
     // - disk rev matches    → preserve
     // - diverged            → mark suspect; drop unpinned; keep pinned for auto-refetch
-    // - path missing on disk → drop (content is unrecoverable regardless of pin)
+    // - path missing on disk → drop (content is unrecoverable regardless of pin).
+    //                          For pinned views, record an `[UNRECOVERABLE]`
+    //                          manifest marker so the model sees a re-read
+    //                          prompt instead of silent loss.
     for (const [key, view] of fileViews) {
       const diskRev = resolveRevision(view.filePath);
 
       if (diskRev === 'missing') {
+        if (view.pinned) {
+          try {
+            manifestRecordUnrecoverable(
+              view.shortHash,
+              view.filePath,
+              { kind: 'path_missing', path: view.filePath },
+              0, // turn 0 on restore; refreshed on subsequent round boundaries
+            );
+          } catch {
+            // Non-fatal: marker emission must not block persistence restore.
+          }
+        }
         fileViews.delete(key);
         evictedFileViews++;
         changedSourcePaths.add(view.filePath);

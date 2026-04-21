@@ -111,15 +111,13 @@ function steeringMessage(mode: SpinMode, tier: CircuitBreakerTier, diagnosis: Sp
   const base: Record<SpinMode, string> = {
     none: '',
     context_loss:
-      '<<SYSTEM: SPIN — context loss. You are re-examining files you already processed. Check BB for existing findings. Use rec(h:XXXX) to restore evicted context.>>',
+      '<<SYSTEM: SPIN — context loss. Check BB for findings on files already read; use rec(h:XXXX) to restore evicted context.>>',
     goal_drift:
-      '<<SYSTEM: SPIN — goal drift. Recent actions diverge from the task plan. Review BB status and refocus on the original goal.>>',
+      '<<SYSTEM: SPIN — goal drift. Review BB status and refocus on the original goal.>>',
     stuck_in_phase:
-      '<<SYSTEM: SPIN — stuck in phase. Reads without progress. Write BB findings for what you know, then act.>>',
+      '<<SYSTEM: SPIN — stuck in phase. Write BB findings for what you know, then act.>>',
     tool_confusion:
-      '<<SYSTEM: SPIN — tool confusion. Recent rounds used near-identical tool calls. Declare a specific blocker or try a fundamentally different approach.>>',
-    volatile_unpinned:
-      '<<SYSTEM: CRITICAL — YOU ARE NOT PINNING. Reads/searches returned VOLATILE h:refs but you did NOT pin them in the SAME batch. You MUST add pi in:rN.refs (or pi hashes:h:XXXX) in the SAME batch call as your reads.>>',
+      '<<SYSTEM: SPIN — tool confusion. Try a different approach or declare a specific blocker.>>',
     completion_gate:
       '<<SYSTEM: SPIN — completion blocked. Address the specific requirement or call task_complete with an honest summary.>>',
   };
@@ -127,15 +125,16 @@ function steeringMessage(mode: SpinMode, tier: CircuitBreakerTier, diagnosis: Sp
   const nudge = base[mode] || '<<SYSTEM: SPIN detected — refocus on the current task.>>';
   if (tier === 'nudge') return nudge;
 
+  // Strong / halt tiers: keep only the corrective action. The abort itself
+  // is the outcome at halt-tier; narrating "the tool loop will be halted"
+  // was runtime-state leak.
+  const action = diagnosis.suggestedAction || 'Take the suggested corrective action now.';
   if (tier === 'strong') {
-    return [
-      nudge,
-      `<<SYSTEM: CIRCUIT BREAKER — ${mode} detected on consecutive rounds (confidence ${(diagnosis.confidence * 100).toFixed(0)}%). ${diagnosis.suggestedAction || 'Take the suggested corrective action now.'} If this spin continues the tool loop will be halted.>>`,
-    ].join('\n');
+    return [nudge, `<<SYSTEM: persistent — ${action}>>`].join('\n');
   }
 
   // tier === 'halt'
-  return `<<SYSTEM: CIRCUIT BREAKER HALTED — ${mode} persisted across ${Math.max(3, 1)}+ consecutive rounds. Aborting the tool loop. ${diagnosis.suggestedAction || ''}>>`.trim();
+  return `<<SYSTEM: ${action}>>`;
 }
 
 /**

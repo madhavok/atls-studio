@@ -12,11 +12,10 @@ Everything resolves through **workspace paths** and **h:XXXX** (UHPP). Arrays: c
 Complex values: inline {…} syntax where noted (le, creates).
 Dataflow: in:stepId.path (e.g. in:r1.refs) binds prior step output into this step. **f**, **ps**, **hashes** must be real paths or **h:**… — never paste \`in:r1.refs\` as if it were a path or hash string. Conditional: if:stepId.ok. on_error:stop|continue|rollback
 
-### *** RETENTION — AUTO-PIN ON READS, SAME-BATCH PIN FOR EVERYTHING ELSE ***
-Reads (rs/rl/rc/rf) auto-pin their FileView — the returned \`h:<short>\` survives across rounds automatically. Do not emit \`pi\` after a read.
-Every ref is \`h:<short>\` — FileViews and chunks share the same shape; the runtime resolves which one based on current state. No special prefix needed for views.
-Non-read results (search, verify, exec, git) return VOLATILE h:refs and are DESTROYED after one round unless pinned (\`pi\`) or persisted (\`bw\`) in the SAME q: block as the call. Deferring pin to the next batch loses the ref — you'll have to re-run.
-Release is always explicit: \`pu\` when done with a FileView, \`pc\` to compact, \`dro\` to delete. ASSESS surfaces stale pins for cleanup.
+### RETENTION — one ref, auto-persisted
+Reads (rs/rl/rc/rf) auto-pin their FileView — the returned \`h:<short>\` survives across rounds automatically. Every ref is \`h:<short>\`; the runtime resolves whether it's a view or a chunk.
+Non-read refs (search, verify, exec, git) that a later step in the same batch consumes are auto-persisted. For cross-round persistence, use \`pi\` (by hash or step id: \`pi r1\`) or \`bw\`.
+Release: \`pu\` when done, \`pc\` to compact, \`dro\` to delete. \`pi/pu/pc/dro\` accept hashes or step ids (\`pu r1\`). ASSESS surfaces stale pins for cleanup.
 
 ### q: field — executable steps only
 - \`q\` must contain **only** step lines (format above). Each non-empty line with two or more tokens is parsed and **executed** as a batch step.
@@ -165,37 +164,36 @@ Review: targets with lines -> **rl**; else **rs shape:sig** -> **rl** changed fn
 
 ### Read Pattern (FileView — one hash per file, auto-healing, cheapest first)
 - No line targets yet: **rs shape:sig** — cheap skeleton with [A-B] fold markers, then **rl** those spans. Returns \`h:<short>\` (auto-pinned).
-- Already have path + lines (search, errors, …): **rl sl:A el:B** first — same FileView \`h:<short>\`; add **rs shape:sig** only if you still need a whole-file map.
-- More slices: **rl** again — merges into the same view; still pinned.
-- Full body: **rc type:full** or **rf type:full** only when slicing isn't enough (large multi-region refactor, full control-flow reasoning). Still the same h:<short>, auto-pinned.
-- Release: **pu** on the view's h:<short> when you're done with the target. **pc** to compact. **dro** to delete. ASSESS surfaces stale pins automatically.
-- Edits: cite **cite:@h:XXX** from the block header as **content_hash** (source revision, distinct from the view's retention ref on the same fence); line numbers are current-revision (auto-healed across file edits).
-- Markers: [edited L..-.. this round] = auto-refreshed content, reconsider prior reasoning. [REMOVED was L..-..] = content is gone, re-orient. The view itself never carries stale bodies.
-- Avoid re-reading the same span: the view persists across rounds. Add slices on demand.
+- Already have path + lines: **rl sl:A el:B** — same FileView \`h:<short>\`.
+- More slices: **rl** again — merges into the same view.
+- Full body: **rc type:full** / **rf type:full** only when slicing isn't enough.
+- Release: **pu** when done, **pc** to compact, **dro** to delete. ASSESS surfaces stale pins.
+- Edits: pass the fence ref (\`h:<short>\`) to \`content_hash\` or \`f:h:<short>\`. Runtime resolves the current source revision internally.
+- Markers: \`[edited L..-.. this round]\` — reconsider prior reasoning. \`[REMOVED was L..-..]\` / \`[UNRECOVERABLE: …]\` — re-read if you need that content.
 
-### Tool messages (read literally — not always "bugs")
-- **redundant** (read.file / load / read.lines): Same revision already in context at the given **h:**. Do **not** repeat the same path read; use that **h:** in \`f\`, \`ce\`, or \`pi\`.
-- **Read spin** (\`<<WARN:\` / \`<<NUDGE:\` in the batch summary): Tracked overlap on reads — not a hard stop. Still use **h:refs**, **bw**, or an **edit** rather than re-reading the same region.
+### Tool messages (read literally)
+- **reused** (read.file / load / read.lines): Same content already at the given **h:**. Use that **h:** directly — runtime did not re-read.
+- **Read spin** (\`<<WARN:\` / \`<<NUDGE:\`): Tracked overlap on reads. Use **h:refs**, **bw**, or an **edit** rather than re-reading.
 - **SKIPPED (condition not met)**: A prior \`if:\` step failed — fix upstream.
-- **SKIPPED (file_path not bound)** / **file_paths must resolve**: Fix **in:** bindings or add **ps** / **file_paths** where required (rc, rs, ab, ad, at, ai, etc.).
-- **pin: no matching chunks**: **hashes** must list real **h:**… from tool output, or use step dataflow \`pi in:r1.refs\`. Never put the text \`in:r1.refs\` inside the **hashes** field.
-- **change.edit** "file not found": **f** / **file_path** must be a real workspace path or **h:…** (optional :line span). Invalid: \`in:c1.refs[0]:2-4\` as **f**. After **cc**, use the **path** you created or **h:** from the create result.
-- **edit_outside_read_range**: The edit targets lines not covered by a prior \`rl\` / \`read.lines\`. Read the target region first (same batch is ideal), then retry. When planning multi-region edits on the same file, read ALL target regions upfront before the edit step. Common mistake: manually computing post-insertion line numbers instead of using original coordinates — this produces targets beyond the file's actual length.
-- **annotate.design** (\`nd\`): **Designer mode only** — in agent mode it always errors; skip family tests there.
-- **VOLATILE / WILL BE LOST**: Result has h:refs that EXPIRE after ONE round. You MUST \`pi\` in the SAME batch or \`bw\` to persist. If you see this warning and did not pin, your content is already scheduled for deletion.
-- **status:preview / dry_run** (cm, cd, cf): Preview only — no files written. If validation_issues is empty, re-submit the same plan with dry_run:false. Repeating the same preview may add a \`<<WARN:\` in the batch summary — prefer applying or changing the plan instead of redundant previews.
+- **SKIPPED (file_path not bound)** / **file_paths must resolve**: Fix **in:** bindings or add **ps** / **file_paths**.
+- **pin: no matching refs**: **hashes** must list real **h:**… from tool output, or use a step id directly (\`pi r1\`).
+- **change.edit** "file not found": **f** / **file_path** must be a real workspace path or **h:**… (optional :line span).
+- **target region not yet read**: Read the target region first (same batch is ideal), then retry.
+- **content changed — re-read and retry**: File changed externally; re-read and retry.
+- **annotate.design** (\`nd\`): Designer mode only; skip in agent mode.
+- **status:preview / dry_run** (cm, cd, cf): Preview only. If validation_issues is empty, re-submit the same plan with dry_run:false.
 
 ### Rules
 - f/ps resolve from active workspace root. Subfolder prefix if monorepo (e.g. \`atls-studio/src/foo.ts\`).
 - ps: actual paths or h:refs, not query strings. deletes/restore: paths or h:refs.
 - vb|vt|vl|vk: subprocess uses PATH with ATLS_TOOLCHAIN_PATH prepended. xe runs in PTY (may see different PATH).
 - xe: PowerShell — cmd saved to temp .ps1; prefer xg for git, vb|vt|vl|vk for checks.
-- prefer cheapest tool: one symbol -> sy; types -> vk; file list -> rc(tree); file structure with no lines yet -> rs shape:sig; path + lines known -> rl; avoid rf for mere structure (sig is ~5-10% of file size, rf default smart view is heavier).
+- prefer cheapest tool: one symbol -> sy; types -> vk; file list -> rc(tree); file structure with no lines yet -> rs shape:sig; path + lines known -> rl; avoid rf for mere structure.
 - use dr/dd when cheap research suffices before a bigger reasoning pass.
 
 ## Working Memory — FileView (one hash per file)
-Each file you've read appears as ONE block in WM. The fence carries TWO distinct hashes:
-  === path h:<RET> cite:@h:<CITE> (N lines) [pinned?] ===
+Each file you've read appears as ONE block in WM. The fence emits ONE ref:
+  === path h:<short> (N lines) [pinned?] ===
    1|import ...
   17|const FOO = 1;
   42|export function bar(): T { ... } [42-56]
@@ -203,16 +201,14 @@ Each file you've read appears as ONE block in WM. The fence carries TWO distinct
  206|  doThing();
  207|}
   ===
-- First slot \`h:<RET>\` = RETENTION ref (view.shortHash). Use this for pu/pc/dro/pi — the only token that matches a pinned FileView.
-- Second slot \`cite:@h:<CITE>\` = CITATION hash (source revision). Use this as \`content_hash\` (or \`f:h:<CITE>\`) for edits.
-- The two hex tokens are different by construction; passing cite hash to pu (or retention hash to content_hash) will fail.
+Pass \`h:<short>\` to any op — retention (pu/pc/dro/pi), edits (content_hash, f:h:…), reads. The runtime picks the right identity for each slot; you never select a cite vs retention form.
 Slice notation [A-B] after a folded signature is the exact range for rl (read.lines sl:A el:B). No arithmetic needed.
 Markers:
   [edited L205-213 this round]    auto-refreshed; reconsider prior reasoning
-  [REMOVED was L205-213]          content at that range is gone; re-orient
-  [changed: N regions pending refetch — re-read on demand]
-Retention: reads auto-pin their FileView. pu/pc/dro on the view's h:<RET> (or any chunk ref whose source has that view) acts on the view — unpinning releases it cleanly. Explicit \`pi\` is only needed for non-read artifacts (search/verify results) or to re-pin with a different shape. The chunk hash inside the view is for citation, not retention.
-The view auto-heals across file edits: shifted regions rebase, pinned regions refetch, unpinned stale regions drop silently. You never see [STALE].`;
+  [REMOVED was L205-213]          content at that range is gone; re-read if needed
+  [UNRECOVERABLE: …]              re-read source to refresh, or drop the ref
+Retention: reads auto-pin their FileView. pu/pc/dro on the view's h:<short> acts on the view. Explicit \`pi\` for non-read artifacts (search/verify results) you want across rounds; intra-batch consumers auto-persist.
+The view auto-heals across file edits — shifted regions rebase, pinned regions refetch, unpinned stale regions drop silently.`;
 
 export const SUBAGENT_TOOL_REF = `
 

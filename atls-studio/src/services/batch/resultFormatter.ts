@@ -261,7 +261,7 @@ function tryBuildFileViewMergedPointer(step: StepResult): string | null {
       if (!view || !view.pinned) return null;
       pointers.push(`${file} -> ${hashRef}`);
     }
-    return `read_shaped: merged into FileViews: ${pointers.join('; ')} | see ## FILE VIEWS`;
+    return `read_shaped: ${pointers.join('; ')} | see ## FILE VIEWS`;
   }
 
   // step.use === 'read.lines'
@@ -287,7 +287,13 @@ function tryBuildFileViewMergedPointer(step: StepResult): string | null {
   const tokenTag = typeof step.tokens_delta === 'number' && step.tokens_delta > 0
     ? ` (${step.tokens_delta}tk)`
     : '';
-  return `read_lines: ${file}:${rangeLabel} -> merged into ${hashRef} [${rangeLabel}]${tokenTag} | see ## FILE VIEWS`;
+  // Wording: "added L A-B to <view>" makes clear this was appended to the
+  // existing view, not replaced. The previous `merged into h:X [A-B]` form
+  // was ambiguous — the `[A-B]` suffix on the hash read like "view now
+  // spans A-B" and caused the model to spin re-reading earlier regions
+  // it thought were lost.
+  const bodyStatus = view.fullBody !== undefined ? ' (view has full body)' : '';
+  return `read_lines: ${file} → added L${rangeLabel} to ${hashRef}${tokenTag}${bodyStatus} | see ## FILE VIEWS`;
 }
 
 // ---------------------------------------------------------------------------
@@ -422,60 +428,22 @@ export function formatBatchResult(result: UnifiedBatchResult): string {
       const bbKeys = art?.bbKeys as string[] | undefined;
       if (bbKeys?.length) {
         lines.push(`  BB: ${bbKeys.map(k => `h:bb:${k}`).join(' ')}`);
-        lines.push('  (Blackboard bodies are inlined in the step summary when present.)');
       }
     }
   }
 
   if (result.interruption) {
     const reason = result.interruption.interruption_reason === 'suspect_external_change'
-      ? ' (STALE: external change since verification — re-read required)'
+      ? ' — content changed externally during this batch; re-read and retry'
       : '';
     lines.push(`[ATLS] BATCH INTERRUPTED at ${result.interruption.step_id}: ${result.interruption.summary}${reason}`);
   }
 
-  // Collect base hashes pinned in this batch so we don't nudge the agent to re-pin
-  // refs it already pinned. session.pin emits its resolved hashes on step.refs.
-  const pinnedBaseHashes = new Set<string>();
-  for (const step of result.step_results) {
-    if (step.ok && step.use === 'session.pin' && step.refs?.length) {
-      for (const ref of step.refs) {
-        const base = ref.replace(/^h:/, '').split(':')[0];
-        if (base) pinnedBaseHashes.add(base);
-      }
-    }
-  }
-
-  // Volatile nudge: aggregate refs from read/search/analysis steps, minus anything
-  // already pinned in this batch OR already auto-pinned as a FileView. The
-  // FileView check closes the gap between the "reads auto-pin" prompt contract
-  // and the batch footer — without it, file-backed rs/rl emit a spurious
-  // "PIN NOW" warning for refs the runtime already retained.
-  const READ_SEARCH_OPS = new Set([
-    'read.context', 'read.shaped', 'read.lines', 'read.file',
-    'search.code', 'search.symbol', 'search.usage', 'search.similar',
-    'search.issues', 'search.patterns', 'search.memory',
-    'analyze.deps', 'analyze.calls', 'analyze.structure',
-    'analyze.impact', 'analyze.blast_radius', 'analyze.extract_plan',
-  ]);
-  const isPinnedView = useContextStore.getState().isPinnedFileViewRef;
-  const volatileRefs: string[] = [];
-  for (const step of result.step_results) {
-    if (step.ok && step.refs?.length && READ_SEARCH_OPS.has(step.use)) {
-      for (const ref of step.refs) {
-        if (!ref.startsWith('h:') || volatileRefs.includes(ref)) continue;
-        const base = ref.replace(/^h:/, '').split(':')[0];
-        if (base && pinnedBaseHashes.has(base)) continue;
-        if (isPinnedView(ref)) continue;
-        volatileRefs.push(ref);
-      }
-    }
-  }
-  if (volatileRefs.length > 0) {
-    const shortRefs = volatileRefs.slice(0, 8).join(' ');
-    const overflow = volatileRefs.length > 8 ? ` +${volatileRefs.length - 8} more` : '';
-    lines.push(`⚠ VOLATILE — WILL BE LOST NEXT ROUND. PIN NOW in this batch or write to BB. Add: \`pi ${shortRefs}\`${overflow}`);
-  }
+  // Volatile footer, volatile-ref aggregation, and the auto-suppression
+  // scaffolding that guarded it are deleted. Intra-batch auto-persist in
+  // executor.ts handles the common case where a later step consumes earlier
+  // refs; cross-round persistence remains the model's explicit job via `pi`
+  // or `bw`.
 
   const counts = { pass: 0, warn: 0, fail: 0, toolError: 0, other: 0 };
   for (const step of result.step_results) {

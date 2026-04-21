@@ -489,7 +489,14 @@ export interface ContextStoreApi {
    */
   ensureFileView: (filePath: string, sourceRevision: string) => string;
   /** Look up a FileView by path (normalized forward-slash). */
-  getFileView: (path: string) => { hash: string; filePath: string; sourceRevision: string; pinned: boolean } | undefined;
+  getFileView: (path: string) => {
+    hash: string;
+    filePath: string;
+    sourceRevision: string;
+    pinned: boolean;
+    /** Post-edit refresh checks this to decide whether to re-hydrate the view's fullBody. */
+    fullBody?: string | undefined;
+  } | undefined;
   /**
    * Auto-pin a FileView from a read handler. Idempotent; returns `true` only
    * on first-time auto-pin. See `contextStore.autoPinFileView`.
@@ -511,6 +518,18 @@ export interface ContextStoreApi {
     tokens?: number;
     origin?: 'read' | 'refetch';
     refetchedAtRound?: number;
+  }) => void;
+  /**
+   * Promote a full-file chunk into the FileView's `fullBody` slot. Called by
+   * post-edit refresh so views that were fully loaded before an edit stay
+   * fully loaded after it (view is stateful across edits).
+   */
+  applyFullBodyFromChunk: (params: {
+    filePath: string;
+    sourceRevision: string;
+    content: string;
+    chunkHash: string;
+    totalLines?: number;
   }) => void;
 }
 

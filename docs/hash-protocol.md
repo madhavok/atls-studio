@@ -120,13 +120,25 @@ Read handlers (`read.shaped`, `read.lines`, `read.file`, `read.context`) return 
 
 FileViews are **rendered outside ACTIVE ENGRAMS** in their own `## FILE VIEWS` block (see [prompt-assembly.md](./prompt-assembly.md)); chunks whose hashes back a pinned view are filtered from ACTIVE ENGRAMS to prevent double-render.
 
-Three hash roles coexist for file content — don't confuse them:
+**One ref per file (unified).** The FileView fence emits a single retention hash
+`h:<short>`. The model passes this ref to any slot — retention (`pi/pu/pc/dro`),
+edit citations (`content_hash`, `f:h:<short>:L-M`), or reads. The runtime resolves
+the appropriate identity for each slot: retention ops match the view directly;
+cite slots look up the view's current `sourceRevision` in
+`injectSnapshotHashes` ([`executor.ts`](../atls-studio/src/services/batch/executor.ts))
+and swap the retention hash for the revision hash the backend needs.
 
-| Role | Form | Where it comes from | What it's used for |
-|------|------|---------------------|---------------------|
-| Retention | `h:<short>` (view-derived) | Read handlers' primary ref | `pi` / `pu` / `dro` — one per file |
-| Edit citation | `h:<sourceRevision>` | `@h:XXX` in the FileView block header | `content_hash` on `change.edit`, path refs like `f:h:...:L-M` |
-| Slice / range | `h:<chunkHash>` | Search results, edit `edits_resolved`, diff refs, inline `content:"h:..."` | Citing a specific region or piece of content — not for retention |
+| Role | Where it comes from | Model-facing form |
+|------|---------------------|-------------------|
+| File retention + cite (unified) | Read handlers' primary ref | `h:<short>` — pass anywhere |
+| Slice / range / shape | Search results, edit `edits_resolved`, diff refs, inline `content:"h:..."` | `h:<short>:L-M`, `h:<short>:fn(name)`, etc. |
+
+**Historical-revision edits** — rare. Use temporal refs (`HEAD~1:path`,
+`commit:abc:path`, `tag:v1.0:path`) resolved by
+[`hash_resolver.rs`](../atls-studio/src-tauri/src/hash_resolver.rs) via
+`resolve_temporal_ref`. For normal flows the runtime's current-revision
+resolution is sufficient; temporal refs are an advanced escape hatch,
+not a model-facing concern.
 
 ### Line Ranges
 
@@ -349,7 +361,19 @@ Unresolved refs are left as literal strings with a warning — resolution is len
 
 ---
 
-## Shadow Versions (Hash Forwarding Rollback)
+## Forward Chaining (Internal)
+
+Edits produce a new content hash; the prior hash is recorded in a forward
+map. When the model uses an older `h:` on a subsequent op, the runtime walks
+the chain transparently via `resolveForwardChain` in
+[`hashManifest.ts`](../atls-studio/src/services/hashManifest.ts). The walker
+is cycle-safe (visited set) and depth-capped (16 hops). If the chain
+terminates unresolvable, the manifest surfaces an
+`[UNRECOVERABLE: forward chain terminated]` action marker so the model sees
+a re-read prompt instead of silent loss — the sole model-facing surface of
+the forward system. Old→new row enumeration was retired.
+
+## Shadow Versions (Rollback Storage)
 
 When edits create new file versions, the previous content is preserved as a shadow version in the chat database:
 

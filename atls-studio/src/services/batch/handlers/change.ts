@@ -798,7 +798,97 @@ async function resolveTargetFiles(
   if (hashLookups.size > 0) {
     type BatchResolvedEntry = { source?: string | null; content: string; tokens: number };
     type ResolvedHashEntry = { source?: string | null; content: string };
-    const refs = [...hashLookups.keys()];
+
+    // TS-side FileView lookup pass: retention hashes (`h:<short>` returned
+    // by reads) live in the FileView store, not the Rust hash registry.
+    // Pre-resolve any retention hash that matches a live FileView to its
+    // filePath before we ask the Rust registry, so `f:h:<RET>:L-M` edits
+    // work without the model needing a separate cite-form ref.
+    const fileViewResolved = new Set<string>();
+    const fileViewCiteByRef = new Map<string, string>();
+    try {
+      const fileViews = useContextStore.getState().fileViews;
+      for (const ref of hashLookups.keys()) {
+        const bare = ref.startsWith('h:') ? ref.slice(2) : ref;
+        const shortPart = bare.split(':')[0];
+        if (!shortPart || !/^[0-9a-fA-F_]{6,16}$/.test(shortPart)) continue;
+        for (const view of fileViews.values()) {
+          if (
+            view.shortHash === shortPart
+            || view.shortHash.startsWith(shortPart)
+            || shortPart.startsWith(view.shortHash)
+          ) {
+            targets.add(view.filePath);
+            for (const assign of hashLookups.get(ref) ?? []) assign(view.filePath);
+            fileViewResolved.add(ref);
+            fileViewCiteByRef.set(ref, view.sourceRevision);
+            break;
+          }
+        }
+      }
+    } catch {
+      // Non-fatal: fall back to registry-only resolution below.
+    }
+
+    // Rewrite derived edit_target_hash and content_hash for any entry whose
+    // file/file_path came from a retention ref. The view's sourceRevision
+    // is what the Rust backend's content verification expects; the
+    // retention hash is TS-only. Keys on `edit_target_hash` (set by
+    // deriveEditTargetMeta before assigns rewrote file_path) so we can
+    // match the original retention ref. Also overwrites `content_hash` /
+    // `snapshot_hash` when they've been populated by the canonicalize
+    // fallback in normalizeEditParams with the retention hash.
+    const hashMatchesRetention = (value: unknown): boolean => {
+      if (typeof value !== 'string' || !value.startsWith('h:')) return false;
+      const short = value.slice(2).split(':')[0];
+      if (!short) return false;
+      for (const ref of fileViewCiteByRef.keys()) {
+        const bareRef = ref.startsWith('h:') ? ref.slice(2) : ref;
+        const shortRef = bareRef.split(':')[0];
+        if (shortRef === short || shortRef.startsWith(short) || short.startsWith(shortRef)) return true;
+      }
+      return false;
+    };
+    const rewriteCite = (obj: Record<string, unknown>) => {
+      const etHash = obj.edit_target_hash;
+      if (typeof etHash !== 'string' || !etHash.startsWith('h:')) return;
+      const shortPart = etHash.slice(2).split(':')[0];
+      if (!shortPart) return;
+      let cite: string | undefined;
+      for (const [ref, rev] of fileViewCiteByRef) {
+        const bareRef = ref.startsWith('h:') ? ref.slice(2) : ref;
+        const shortRef = bareRef.split(':')[0];
+        if (shortRef === shortPart || shortRef.startsWith(shortPart) || shortPart.startsWith(shortRef)) {
+          cite = rev;
+          break;
+        }
+      }
+      if (!cite) return;
+      const citeRef = cite.startsWith('h:') ? cite : `h:${cite}`;
+      obj.edit_target_hash = citeRef;
+      // Overwrite content_hash / snapshot_hash when missing OR when they
+      // point at the retention hash (possible when normalizeEditParams
+      // populated them via canonicalizeContentHash fallback from
+      // edit_target_hash before resolveTargetFiles ran).
+      if (obj.content_hash == null || hashMatchesRetention(obj.content_hash)) {
+        obj.content_hash = citeRef;
+      }
+      if (obj.snapshot_hash != null && hashMatchesRetention(obj.snapshot_hash)) {
+        obj.snapshot_hash = citeRef;
+      }
+    };
+    rewriteCite(next);
+    if (Array.isArray(next.edits)) {
+      for (const entry of next.edits as Array<Record<string, unknown>>) {
+        if (entry && typeof entry === 'object') rewriteCite(entry);
+      }
+    }
+
+    const refs = [...hashLookups.keys()].filter(r => !fileViewResolved.has(r));
+    if (refs.length === 0) {
+      return { params: next, targetFiles: [...targets] };
+    }
+
     const resolved = await invoke<Array<BatchResolvedEntry | null>>('batch_resolve_hash_refs', { refs });
     const unresolvedRefs: string[] = [];
     refs.forEach((ref, index) => {
@@ -1611,12 +1701,16 @@ export const handleEdit: OpHandler = async (params, ctx) => {
       preflightResult = preflight;
       automationDecision = automation;
       if (preflight.blocked) {
+        // Collapse three internal preflight taxonomies (identity_lost /
+        // stale_hash / suspect_external_change) to ONE model-facing action
+        // string: "content changed — re-read and retry". Model can't act
+        // differently on the subtypes; differentiating them induced the
+        // classic rebind-retry spin loop. Internal taxonomy stays in
+        // telemetry / memory events for debugging.
         const identityLost = preflight.decisions.some((decision) => decision.classification === 'rebaseable');
+        const internalClass: 'identity_lost' | 'stale_hash' = identityLost ? 'identity_lost' : 'stale_hash';
         const payload = {
           blocked: true,
-          reason: identityLost ? 'identity_lost' : 'suspect_external_change',
-          error_class: identityLost ? 'identity_lost' : 'stale_hash',
-          action_required: preflight.error,
           status: 'blocked',
           decisions: preflight.decisions,
           repro_pack: buildEditReproPack({
@@ -1625,19 +1719,21 @@ export const handleEdit: OpHandler = async (params, ctx) => {
             params: resolved,
             preflight,
             automation,
-            errorClass: identityLost ? 'identity_lost' : 'stale_hash',
+            errorClass: internalClass,
           }),
+          // Internal taxonomy for telemetry only — not prose the model acts on.
+          _internal: { reason: internalClass, error_class: internalClass },
         };
         store.recordMemoryEvent({
           action: 'block',
-          reason: identityLost ? 'identity_lost' : 'suspect_external_change',
+          reason: internalClass,
           refs: targetFiles,
           confidence: preflight.confidence,
           strategy: preflight.strategy,
           factors: preflight.decisions.flatMap((decision) => decision.factors),
         });
         return errWithContent(
-          preflight.error ?? `File changed (${identityLost ? 'identity lost' : 'stale hash'}); re-read with current content_hash from prior edit response`,
+          'content changed — re-read and retry',
           payload,
         );
       }
@@ -1650,10 +1746,11 @@ export const handleEdit: OpHandler = async (params, ctx) => {
           strategy: preflight.strategy,
           factors: preflight.decisions.flatMap((decision) => decision.factors),
         });
-        return errWithContent('Low-confidence rebind detected; re-read required before edit', {
+        // Second bucket: auto-rebind unsafe at current confidence. Model's
+        // action is the same — re-read before retry — so the vocabulary is
+        // the same. Internal distinction stays in telemetry.
+        return errWithContent('content cannot auto-rebind — re-read before retry', {
           blocked: true,
-          reason: 'low_confidence_rebind',
-          error_class: 'low_confidence_rebind',
           status: 'blocked',
           confidence: preflight.confidence,
           strategy: preflight.strategy,
@@ -1666,6 +1763,7 @@ export const handleEdit: OpHandler = async (params, ctx) => {
             automation,
             errorClass: 'low_confidence_rebind',
           }),
+          _internal: { reason: 'low_confidence_rebind', error_class: 'low_confidence_rebind' },
         });
       }
       Object.assign(resolved, preflight.params);
@@ -1711,10 +1809,10 @@ export const handleEdit: OpHandler = async (params, ctx) => {
       if (suspectRefs.length > 0) {
         const payload = {
           blocked: true,
-          reason: 'suspect_engrams',
-          error_class: 'stale_hash',
+          status: 'blocked',
           suspect_refs: suspectRefs,
-          action: "run q: r1 read.context type:full file_paths:... or read.file for those files, then retry",
+          action: 'read.context / read.file for those paths, then retry',
+          _internal: { reason: 'suspect_engrams', error_class: 'stale_hash' },
         };
         useContextStore.getState().recordMemoryEvent({
           action: 'block',
@@ -1722,7 +1820,7 @@ export const handleEdit: OpHandler = async (params, ctx) => {
           refs: suspectRefs,
         });
         return errWithContent(
-          `edit: ERROR [stale_hash] blocked by freshness policy — ${payload.action}`,
+          `edit: content changed — re-read and retry (${payload.action})`,
           payload,
         );
       }
@@ -1846,9 +1944,9 @@ export const handleEdit: OpHandler = async (params, ctx) => {
       const hint = formatLintErrorHint(result);
       summary = `[LINT ERRORS] ${hint} — see lints.top_issues\n${summary}`;
     }
-    if (isMutating && refs.length > 0) {
-      summary += `\n[FRESH] Content is live at ${refs.join(', ')} (auto-pinned if source was pinned). Do NOT re-read — chain from these refs.`;
-    }
+    // `[FRESH]` prose removed: the returned refs ARE the freshness signal.
+    // The model chains from `refs` naturally; narrating "content is live
+    // at h:X" was runtime-state description.
     // Supersede file-bound reasoning artifacts on successful edit
     if (isMutating) {
       for (let i = 0; i < targetFiles.length; i++) {
@@ -1984,7 +2082,7 @@ export const handleRollback: OpHandler = async (params, ctx) => {
   const merged: Record<string, unknown> = { ...params, action: 'rollback' };
   if (!merged.restore && !merged.delete) {
     return err(
-      'rollback requires restore:[{file, hash}] (and optionally delete:[paths]) in step with. Get these from refactor execute _rollback on pause, or pass explicitly.',
+      'rollback: missing restore:[{file, hash}] (and optionally delete:[paths]). Use h:$last_edit or _rollback hashes from a paused change.',
     );
   }
   try {

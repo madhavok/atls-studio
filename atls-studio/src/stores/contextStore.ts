@@ -48,7 +48,7 @@ import { normalizeSessionPlanSubtasksInput } from '../services/batch/paramNorm';
 import { emptyRollingSummary, type RollingSummary } from '../services/historyDistiller';
 import { freshnessTelemetry, incSessionRestoreReconcileCount, incCognitiveRulesExpired, setManifestMetricsAccessor } from '../services/freshnessTelemetry';
 import { recordAutoPinReleasedUnused } from '../services/autoPinTelemetry';
-import { recordForwarding as manifestRecordForwarding, recordEviction as manifestRecordEviction, resolveForward as manifestResolveForward, getManifestMetrics } from '../services/hashManifest';
+import { recordForwarding as manifestRecordForwarding, recordEviction as manifestRecordEviction, resolveForwardChain as manifestResolveForwardChain, recordUnrecoverable as manifestRecordUnrecoverable, getManifestMetrics } from '../services/hashManifest';
 import {
   type FileView,
   type FileViewFreshnessCause,
@@ -1984,12 +1984,31 @@ function findOrPromoteEngram(
   const found = findChunkByRef(chunksMap, ref);
   if (found) return found;
 
-  // Transparent forward-map resolution: if ref matches a forwarded hash, retry with the new hash
+  // Transparent forward-chain resolution: walk the full chain (cycle-safe,
+  // depth-capped) so the model's old `h:OLD` resolves transparently even
+  // across multiple edits. On cycle/max-depth termination, record an
+  // unrecoverable marker so the manifest surfaces `[UNRECOVERABLE: forward
+  // chain terminated]` instead of silently returning null.
   const bareRef = ref.startsWith('h:') ? ref.slice(2) : ref;
-  const forwarded = manifestResolveForward(bareRef.slice(0, SHORT_HASH_LEN));
-  if (forwarded) {
-    const resolved = findChunkByRef(chunksMap, forwarded);
+  const shortRef = bareRef.slice(0, SHORT_HASH_LEN);
+  const chainResult = manifestResolveForwardChain(shortRef);
+  if (chainResult.kind === 'resolved') {
+    const resolved = findChunkByRef(chunksMap, chainResult.shortHash);
     if (resolved) return resolved;
+  } else if (chainResult.kind === 'terminated') {
+    try {
+      const currentTurn = hppGetTurn();
+      manifestRecordUnrecoverable(
+        shortRef,
+        ref,
+        chainResult.reason === 'cycle'
+          ? { kind: 'forward_chain_cycle', lastShortHash: chainResult.lastShortHash }
+          : { kind: 'forward_chain_max_depth', lastShortHash: chainResult.lastShortHash },
+        currentTurn,
+      );
+    } catch {
+      // Non-fatal: recording failures must not block resolution path
+    }
   }
 
   const archived = findChunkByRef(archivedChunks, ref);
