@@ -495,6 +495,23 @@ export interface ContextStoreApi {
    * on first-time auto-pin. See `contextStore.autoPinFileView`.
    */
   autoPinFileView?: (path: string, shape?: string) => boolean;
+  /**
+   * Merge a read's slice body directly into the FileView's filledRegions.
+   * The `rl` handler calls this synchronously so the next round's
+   * `## FILE VIEWS` block renders the body without waiting for a paired
+   * `session.pin` to materialize. Idempotent via `mergeFilledRegion`.
+   */
+  applyFillFromChunk: (params: {
+    filePath: string;
+    sourceRevision: string;
+    startLine: number;
+    endLine: number;
+    content: string;
+    chunkHash: string;
+    tokens?: number;
+    origin?: 'read' | 'refetch';
+    refetchedAtRound?: number;
+  }) => void;
 }
 
 // ---------------------------------------------------------------------------
