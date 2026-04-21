@@ -103,8 +103,7 @@ sg hash:h:XXXX lines:start-end | content:"text" label:"name" — stage snippet (
 ust hash:h:XXXX | label:"name" | hashes:h:H1,h:H2 — unstage (one of hash/label/hashes required)
 ulo hashes:h:HASH1,h:HASH2 — unload engrams from context
 db|st|ch — no required params (debug, stats, compact history)
-nn hash:h:XXXX note:"text" — attach a note (also accepts fields:{digest,summary,type} for metadata edits)
-eng hash:h:XXXX fields:{type:"..."} — alias for nn with structured fields (same handler)
+nn hash:h:XXXX note:"text" and/or fields:{digest,summary,type} — attach a note and/or edit engram metadata
 nk from:h:XXXX to:h:YYYY — link two engrams
 nr hash:h:XXXX type:name — retype an engram
 ns hash:h:XXXX at:N — split engram at line N

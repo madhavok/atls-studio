@@ -1,8 +1,21 @@
 /**
  * intent.search_replace — literal find/replace across files.
  *
- * Searches for old_text, emits capped edit slots with line numbers from search hits,
- * then verifies. Works ONLY for literal text replacement, not semantic transforms.
+ * Searches for old_text, emits per-hit-file text-replace edit slots, then
+ * verifies. Works ONLY for literal text replacement, not semantic transforms.
+ *
+ * Edit shape: `{edits:[{file, old, new}], replace_all:true}` — dispatched to
+ * the backend `replace` op via `resolve_edit_operation` (Rust), which
+ * verifies the `old` substring exists in the file before writing. FTS false
+ * positives (hits where the token appears but the literal string doesn't)
+ * produce `Pattern not found` errors instead of corrupting unrelated lines.
+ *
+ * Historical bug: emitted `line_edits:[{action:'replace', content:new}]`
+ * bound to a single line number from search hits. That replaced the ENTIRE
+ * line at the hit position regardless of whether the line contained `old` —
+ * combined with FTS's token-level matching, it clobbered unrelated code in
+ * files that merely contained any token from the query. The text-replace
+ * shape sidesteps that entirely.
  *
  * Discipline: old_text must be exact. No regex. No AI reasoning about what to change.
  */
@@ -66,22 +79,23 @@ export const resolveSearchReplace: IntentResolver = (
     with: searchWith,
   });
 
-  const replaceSpanLines = Math.max(1, oldText.split('\n').length);
   /** Concrete path (no wildcards): bind file_path in `with`; search may still omit per-hit paths. */
   const isConcreteGlob = Boolean(fileGlob && !fileGlob.includes('*') && !fileGlob.includes('?'));
 
   for (let i = 0; i < maxMatches; i++) {
     const editId = makeStepId(intentId, `edit_${i}`);
 
+    // Text-replace shape: the backend `replace` op verifies `old` exists in
+    // the target file (errors `Pattern not found` otherwise) and replaces
+    // only that substring, leaving surrounding content intact. `replace_all`
+    // matches the intent's semantic — replace every occurrence in each hit
+    // file. `resolve_edit_operation` routes `edits:[{old,new}]` to `replace`
+    // when no line_edits/mode are present. `inheritSingleEditContext` folds
+    // the top-level `file_path` into `edits[0].file`.
     const editWith: Record<string, unknown> = {
-      line_edits: [{
-        action: 'replace',
-        content: newText,
-      }],
+      edits: [{ old: oldText, new: newText }],
+      replace_all: true,
     };
-    if (replaceSpanLines > 1) {
-      editWith.replace_span_lines = replaceSpanLines;
-    }
 
     if (isConcreteGlob) {
       editWith.file_path = fileGlob;
@@ -93,20 +107,19 @@ export const resolveSearchReplace: IntentResolver = (
       with: editWith,
       // Gate each edit slot on the search having real hits so zero-hit
       // searches collapse to a clean "no replacements" rather than
-      // emitting 10 cryptic skipped stubs.
+      // emitting cryptic skipped stubs.
       if: {
         step_content_array_nonempty: { step_id: searchId, path: 'file_paths' },
       },
     };
 
-    if (isConcreteGlob) {
-      editStep.in = {
-        line: { from_step: searchId, path: `content.lines.${i}` },
-      };
-    } else {
+    if (!isConcreteGlob) {
+      // Per-hit file binding. `content.file_paths` may include duplicates if
+      // the same file had multiple hits; the second run on an already-
+      // replaced file returns `Pattern not found` (clean, idempotent — no
+      // corruption), so tolerating a few extra slots is fine.
       editStep.in = {
         file_path: { from_step: searchId, path: `content.file_paths.${i}` },
-        line: { from_step: searchId, path: `content.lines.${i}` },
       };
     }
 

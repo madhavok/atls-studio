@@ -952,12 +952,12 @@ Reducing `T_uncached_dynamic` is the other major lever; input-side caching captu
 | change | 6 | `change.edit`, `change.create`, `change.delete`, `change.refactor`, `change.rollback`, `change.split_module` |
 | verify | 4 | `verify.build`, `verify.test`, `verify.lint`, `verify.typecheck` |
 | session | 23 | `session.plan`, `session.advance`, `session.pin`, `session.stage`, `session.unload`, `session.compact`, `session.bb.*`, `session.compact_history`, ... |
-| annotate | 7 | `annotate.engram`, `annotate.note`, `annotate.link`, `annotate.retype`, `annotate.split`, `annotate.merge`, `annotate.design` |
+| annotate | 6 | `annotate.note` (accepts `note` and/or `fields`), `annotate.link`, `annotate.retype`, `annotate.split`, `annotate.merge`, `annotate.design` |
 | delegate | 4 | `delegate.retrieve`, `delegate.design`, `delegate.code`, `delegate.test` |
 | intent | 11 | `intent.understand`, `intent.edit`, `intent.edit_multi`, `intent.investigate`, `intent.diagnose`, `intent.survey`, `intent.refactor`, `intent.create`, `intent.test`, `intent.search_replace`, `intent.extract` |
 | system | 4 | `system.exec`, `system.git`, `system.workspaces`, `system.help` |
 
-Total: 76 canonical operations, each with a shorthand code (Axis 1). The full inventory and authoritative list lives in the system's operation families source file; this table is illustrative.
+Total: 75 canonical operations, each with a shorthand code (Axis 1). The full inventory and authoritative list lives in the system's operation families source file; this table is illustrative.
 
 ---
 

@@ -16,9 +16,9 @@ describe('opShorthand registry', () => {
     }
   });
 
-  it('covers exactly 77 operations', () => {
-    expect(Object.keys(SHORT_TO_OP)).toHaveLength(77);
-    expect(Object.keys(OP_TO_SHORT)).toHaveLength(77);
+  it('covers exactly 76 operations', () => {
+    expect(Object.keys(SHORT_TO_OP)).toHaveLength(76);
+    expect(Object.keys(OP_TO_SHORT)).toHaveLength(76);
   });
 
   it('has no duplicate short codes', () => {
@@ -55,7 +55,6 @@ describe('normalizeOperationUse', () => {
     expect(normalizeOperationUse('ulo')).toBe('session.unload');
     expect(normalizeOperationUse('dro')).toBe('session.drop');
     expect(normalizeOperationUse('rec')).toBe('session.recall');
-    expect(normalizeOperationUse('eng')).toBe('annotate.engram');
     expect(normalizeOperationUse('srv')).toBe('intent.survey');
     expect(normalizeOperationUse('ifr')).toBe('intent.refactor');
   });

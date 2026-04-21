@@ -4934,17 +4934,25 @@ export const useContextStore = create<ContextStoreState>()(
 
   editEngram: (hashRef: string, fields: { content?: string; digest?: string; summary?: string; type?: ChunkType }) => {
     const state = get();
-    // Views don't carry editable content/digest/summary/type in the engram
-    // sense — their identity is (path, revision). Reject with a specific
-    // message so the agent knows to use change.edit on the file instead.
+    // FileView refs: views are (path, revision) identities, not storage
+    // containers for digest/summary/type. For metadata-only edits we can
+    // route to the chunk backing the view (its sourceRevision) so the
+    // `annotate.note {fields:{...}}` path works on view hashes. Content
+    // changes on a view-backed chunk would desync the view from disk, so
+    // those are still rejected — use change.edit for content.
     const routed = resolveAnyRef(hashRef, state.fileViews, state.chunks);
+    let effectiveRef = hashRef;
     if (routed?.kind === 'view') {
-      return { ok: false, error: `cannot edit FileView (${hashRef}) as an engram; use change.edit on the file to modify content, or annotate.note to attach a note` };
+      if (fields.content !== undefined) {
+        return { ok: false, error: `cannot edit FileView (${hashRef}) content as an engram; use change.edit on the file to modify content` };
+      }
+      const sr = routed.view.sourceRevision;
+      effectiveRef = sr.startsWith('h:') ? sr : `h:${sr}`;
     }
     const newChunks = new Map(state.chunks);
     const found = routed?.kind === 'chunk'
       ? [routed.key, routed.chunk] as [string, ContextChunk]
-      : findOrPromoteEngram(hashRef, newChunks, state.archivedChunks, state.stagedSnippets);
+      : findOrPromoteEngram(effectiveRef, newChunks, state.archivedChunks, state.stagedSnippets);
     if (!found) return { ok: false, error: `engram not found: ${hashRef}` };
     const [, oldChunk] = found;
 

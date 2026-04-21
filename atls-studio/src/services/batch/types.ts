@@ -76,7 +76,6 @@ export type SessionOp =
   | 'session.load';
 
 export type AnnotationOp =
-  | 'annotate.engram'
   | 'annotate.note'
   | 'annotate.link'
   | 'annotate.retype'

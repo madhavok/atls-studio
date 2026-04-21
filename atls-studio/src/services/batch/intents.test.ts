@@ -544,6 +544,18 @@ describe('intent.investigate resolver', () => {
     const readStep = result.steps.find(s => s.use === 'read.shaped');
     expect(readStep?.in?.file_paths).toEqual({ from_step: 'inv1__search', path: 'content.file_paths' });
   });
+
+  it('read.shaped + bb_write gate on step_content_array_nonempty (zero-hit searches skip cleanly)', () => {
+    const result = resolveInvestigate(params, emptyContext());
+    const readStep = result.steps.find(s => s.use === 'read.shaped');
+    expect(readStep?.if).toEqual({
+      step_content_array_nonempty: { step_id: 'inv1__search', path: 'file_paths' },
+    });
+    const bbStep = result.steps.find(s => s.use === 'session.bb.write');
+    expect(bbStep?.if).toEqual({
+      step_content_array_nonempty: { step_id: 'inv1__search', path: 'file_paths' },
+    });
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -1009,16 +1021,17 @@ describe('intent.search_replace resolver', () => {
     expect(editSteps.length).toBe(3);
   });
 
-  it('edit slots bind line from search content.lines', () => {
+  it('edit slots emit text-replace {old,new} shape bound to file_path', () => {
     const result = resolveSearchReplace(params, emptyContext());
     const editStep = result.steps.find(s => s.use === 'change.edit');
-    expect(editStep!.with!.line_edits).toEqual([{
-      action: 'replace',
-      content: 'logger.info',
-    }]);
-    expect(editStep!.in).toMatchObject({
+    // Substring replace — backend verifies `old` exists in the file before
+    // writing and replaces only that substring. FTS false positives return
+    // `Pattern not found` instead of corrupting the hit line.
+    expect(editStep!.with!.edits).toEqual([{ old: 'console.log', new: 'logger.info' }]);
+    expect(editStep!.with!.replace_all).toBe(true);
+    expect(editStep!.with!.line_edits).toBeUndefined();
+    expect(editStep!.in).toEqual({
       file_path: { from_step: 'sr1__search', path: 'content.file_paths.0' },
-      line: { from_step: 'sr1__search', path: 'content.lines.0' },
     });
   });
 
@@ -1054,17 +1067,15 @@ describe('intent.search_replace resolver', () => {
     expect(searchStep!.with!.max_file_paths).toBe(5);
   });
 
-  it('concrete file_glob sets file_path on with and binds only line from search', () => {
+  it('concrete file_glob sets file_path on with and omits the file_path binding', () => {
     const result = resolveSearchReplace(
       { ...params, file_glob: '_test/edit_test.py' },
       emptyContext(),
     );
     const editStep = result.steps.find(s => s.use === 'change.edit');
     expect(editStep!.with!.file_path).toBe('_test/edit_test.py');
-    expect(editStep!.in).toEqual({
-      line: { from_step: 'sr1__search', path: 'content.lines.0' },
-    });
-    expect((editStep!.in as Record<string, unknown> | undefined)?.file_path).toBeUndefined();
+    // Concrete path: no binding needed.
+    expect(editStep!.in).toBeUndefined();
   });
 
   it('verify:false → no verify step', () => {

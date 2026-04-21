@@ -282,7 +282,7 @@ pub(crate) struct UndoEntry {
     pub(crate) previous_content: Option<String>,
     pub(crate) previous_format: Option<FileFormat>,
     pub(crate) flushed_to_disk: bool,
-    created_at: Instant,
+    pub(crate) created_at: Instant,
 }
 
 /// File-keyed undo store. Each file path maps to a stack of UndoEntry

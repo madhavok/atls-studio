@@ -1,5 +1,9 @@
 /**
- * Annotation/engram operation handlers — rule, annotate, link, retype, split, merge, engram_edit, annotate.design.
+ * Annotation/engram operation handlers — rule, annotate, link, retype, split, merge, annotate.design.
+ *
+ * `annotate.note` is the single public annotate verb: it accepts `note`
+ * (free-form) and/or `fields` (metadata). The prior `annotate.engram` was a
+ * thin alias for the same function and has been retired.
  */
 
 import type { OpHandler, StepOutput, ContextStoreApi } from '../types';
@@ -115,14 +119,11 @@ export const handleRule: OpHandler = async (params, ctx) => {
  *   - note     → store.addAnnotation(ref, note)   (free-form, always works)
  *   - fields   → store.editEngram(ref, fields)    (metadata edit in place)
  *
- * `annotate.engram` is a compatibility alias that points at this same
- * handler — from the model's view there's one `annotate` verb that
- * attaches whatever you hand it to a ref. The runtime picks the right
- * backing store based on ref kind.
+ * There is one public op — `annotate.note`. It attaches whatever you hand it
+ * to a ref; the runtime picks the right backing store based on ref kind.
  *
- * FileView refs used to reject metadata edits because views weren't
- * modeled as engrams; we now route them via `viewSourceRevisionForRef`
- * to the underlying chunk, so both shapes "just work" on view refs too.
+ * FileView refs route through `viewSourceRevisionForRef` to the underlying
+ * chunk, so both `note` and `fields` shapes work on view refs.
  */
 export const handleAnnotate: OpHandler = async (params, ctx) => {
   const hash = params.hash as string;
@@ -162,19 +163,6 @@ export const handleAnnotate: OpHandler = async (params, ctx) => {
   }
 
   return ok(`annotate: h:${shortOut(resolved)} — ${parts.join(' | ')}`, outRefs);
-};
-
-/**
- * Compatibility alias: `annotate.engram`. Previous prompts/tools expected
- * a `fields`-only op; we funnel it through the unified `handleAnnotate`
- * so existing call sites keep working without a second code path.
- */
-export const handleEngramEdit: OpHandler = async (params, ctx) => {
-  if (!params.hash) return err('annotate: missing hash param');
-  if (!params.fields || typeof params.fields !== 'object') {
-    return err('annotate: missing fields param');
-  }
-  return handleAnnotate(params, ctx);
 };
 
 export const handleLink: OpHandler = async (params, ctx) => {

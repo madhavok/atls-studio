@@ -1363,9 +1363,19 @@ export function normalizeEditParams(params: Record<string, unknown>): Record<str
     }
   }
 
-  // Case 1b: legacy edits:[{file, old, new}] with line range — promote to line_edits
-  // When the model sends old/new but also carries line targeting (edit_target_range or start_line/end_line),
-  // convert to the canonical line_edits path so the old text is only used as an anchor validation, not a search key.
+  // Case 1b: legacy edits:[{file, old, new}] WITH line range — promote to line_edits.
+  //
+  // Kept intentionally: callers who hold an exact span (edit_target_range /
+  // start_line+end_line) want to replace that span atomically. `old` acts as
+  // a preimage anchor, `new` is the replacement. Case 1b is the right path
+  // for that shape.
+  //
+  // The historical intent.search_replace corruption came from a DIFFERENT
+  // path: it emitted `line_edits:[{action:'replace', content:new}]` directly
+  // against a single line number from FTS hits — skipping `old` entirely, so
+  // hit lines got clobbered regardless of their actual content. That intent
+  // now emits `edits:[{old,new}]` WITHOUT line targeting, which routes to the
+  // backend `replace` op via the Rust dispatcher (substring-safe).
   if (Array.isArray(edits) && edits.length === 1 && !normalizedParams.mode && !hasTopLevelLineEdits) {
     const entry = edits[0];
     const hasOld = typeof entry.old === 'string';

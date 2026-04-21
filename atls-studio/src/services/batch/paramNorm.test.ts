@@ -240,6 +240,43 @@ describe('normalizeStepParams', () => {
     });
   });
 
+  describe('search.issues op-specific', () => {
+    it('normalizes "sf" → "severity" (backend reads `severity`, not `severity_filter`)', () => {
+      const out = normalizeStepParams('search.issues', { sf: 'warn' });
+      expect(out.severity).toBe('warn');
+      expect(out.sf).toBeUndefined();
+      expect(out.severity_filter).toBeUndefined();
+    });
+
+    it('normalizes "mode" → "issue_mode"', () => {
+      const out = normalizeStepParams('search.issues', { mode: 'correctness' });
+      expect(out.issue_mode).toBe('correctness');
+      expect(out.mode).toBeUndefined();
+    });
+  });
+
+  describe('search.patterns op-specific', () => {
+    it('promotes scalar "patterns" → array', () => {
+      const out = normalizeStepParams('search.patterns', { patterns: 'TODO' });
+      expect(out.patterns).toEqual(['TODO']);
+    });
+
+    it('splits comma-separated "patterns" → array', () => {
+      const out = normalizeStepParams('search.patterns', { patterns: 'singleton,factory' });
+      expect(out.patterns).toEqual(['singleton', 'factory']);
+    });
+
+    it('leaves array "patterns" untouched', () => {
+      const out = normalizeStepParams('search.patterns', { patterns: ['a', 'b'] });
+      expect(out.patterns).toEqual(['a', 'b']);
+    });
+
+    it('does not promote scalar patterns for other ops', () => {
+      const out = normalizeStepParams('change.refactor', { patterns: 'TODO' });
+      expect(out.patterns).toBe('TODO');
+    });
+  });
+
   describe('search.symbol op-specific', () => {
     it('normalizes "name" → "symbol_names"', () => {
       const out = normalizeStepParams('search.symbol', { name: 'MyClass' });

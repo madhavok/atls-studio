@@ -365,15 +365,35 @@ describe('query handlers', () => {
     expect(out.ok).toBe(true);
   });
 
-  it('handleSearchSimilar maps type code to find_similar_code', async () => {
+  it('handleSearchSimilar coerces query to pattern for type code', async () => {
     const batch = vi.fn(async () => ({ hits: [] }));
     const ctx = { atlsBatchQuery: batch, store: () => minimalStore() } as any;
-    const out = await handleSearchSimilar({ type: 'code', query: 'auth' }, ctx);
+    const out = await handleSearchSimilar({ type: 'code', query: 'add numbers' }, ctx);
     expect(batch).toHaveBeenCalledWith(
       'find_similar_code',
-      expect.objectContaining({ type: 'code', query: 'auth' }),
+      expect.objectContaining({ type: 'code', pattern: 'add numbers' }),
     );
     expect(out.ok).toBe(true);
+  });
+
+  it('handleSearchSimilar leaves explicit pattern for type code', async () => {
+    const batch = vi.fn(async () => ({ hits: [] }));
+    const ctx = { atlsBatchQuery: batch, store: () => minimalStore() } as any;
+    await handleSearchSimilar({ type: 'code', pattern: 'keep', query: 'ignore' }, ctx);
+    expect(batch).toHaveBeenCalledWith(
+      'find_similar_code',
+      expect.objectContaining({ pattern: 'keep' }),
+    );
+  });
+
+  it('handleSearchSimilar joins array query into multi-line pattern for type code', async () => {
+    const batch = vi.fn(async () => ({ hits: [] }));
+    const ctx = { atlsBatchQuery: batch, store: () => minimalStore() } as any;
+    await handleSearchSimilar({ type: 'code', query: ['line one', 'line two'] }, ctx);
+    expect(batch).toHaveBeenCalledWith(
+      'find_similar_code',
+      expect.objectContaining({ pattern: 'line one\nline two' }),
+    );
   });
 
   it('handleSearchSimilar coerces query to function_names for type function', async () => {
@@ -407,13 +427,23 @@ describe('query handlers', () => {
     );
   });
 
-  it('handleSearchSimilar maps type pattern to find_pattern_implementations', async () => {
+  it('handleSearchSimilar coerces query to patterns[] for type pattern', async () => {
     const batch = vi.fn(async () => ({ hits: [] }));
     const ctx = { atlsBatchQuery: batch, store: () => minimalStore() } as any;
-    await handleSearchSimilar({ type: 'pattern', ids: ['singleton'] }, ctx);
+    await handleSearchSimilar({ type: 'pattern', query: 'singleton' }, ctx);
     expect(batch).toHaveBeenCalledWith(
       'find_pattern_implementations',
-      expect.objectContaining({ type: 'pattern', ids: ['singleton'] }),
+      expect.objectContaining({ patterns: ['singleton'] }),
+    );
+  });
+
+  it('handleSearchSimilar leaves explicit patterns for type pattern', async () => {
+    const batch = vi.fn(async () => ({ hits: [] }));
+    const ctx = { atlsBatchQuery: batch, store: () => minimalStore() } as any;
+    await handleSearchSimilar({ type: 'pattern', patterns: ['factory'], query: 'ignore' }, ctx);
+    expect(batch).toHaveBeenCalledWith(
+      'find_pattern_implementations',
+      expect.objectContaining({ patterns: ['factory'] }),
     );
   });
 

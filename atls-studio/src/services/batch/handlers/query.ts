@@ -341,6 +341,26 @@ export const handleSearchSimilar: OpHandler = async (params, ctx) => {
       const arr = Array.isArray(q) ? q : (typeof q === 'string' && q ? [q] : []);
       if (arr.length) batchParams = { ...batchParams, concepts: arr.filter(Boolean).map(String) };
     }
+    // Backend `find_similar_code` requires `pattern`/`code` (or file+line_range).
+    // Public schema advertises `query` across all subtypes; coerce when caller
+    // omits the canonical param but supplied query text.
+    if (operation === 'find_similar_code' && !params.pattern && !params.code) {
+      const q = params.query;
+      const patternStr = Array.isArray(q)
+        ? q.filter(Boolean).map(String).join('\n')
+        : (typeof q === 'string' ? q : '');
+      if (patternStr) batchParams = { ...batchParams, pattern: patternStr };
+    }
+    // Backend `find_pattern_implementations` reads `patterns` (array); without
+    // it, it silently falls back to 9 preset patterns — dropping the caller's
+    // intent. Coerce `query` → `patterns[]` when canonical is absent.
+    if (operation === 'find_pattern_implementations' && !params.patterns) {
+      const q = params.query;
+      const arr = Array.isArray(q)
+        ? q.filter(Boolean).map(String)
+        : (typeof q === 'string' && q ? [q] : []);
+      if (arr.length) batchParams = { ...batchParams, patterns: arr };
+    }
     const result = await ctx.atlsBatchQuery(operation, batchParams);
     const resultStr = formatResult(result, FORMAT_RESULT_MAX_SEARCH);
     const retained = checkRetention('search.similar', params, resultStr, true, 'search_results', 'find_similar');

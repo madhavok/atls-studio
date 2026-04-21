@@ -55,7 +55,6 @@ const OP_SHORTHAND: &[(&str, &str)] = &[
     ("session.shape", "sh"),
     ("session.load", "ld"),
     ("session.compact_history", "ch"),
-    ("annotate.engram", "eng"),
     ("annotate.note", "nn"),
     ("annotate.link", "nk"),
     ("annotate.retype", "nr"),

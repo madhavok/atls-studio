@@ -23,6 +23,11 @@ function hintForUnknownOp(useRaw: string): string {
   if (/^subtask[.:_-]/i.test(useRaw) || /^subtask$/i.test(useRaw)) {
     return ' — there is no subtask:* operation; use session.advance (sa) with subtask:<id> summary:"<findings>"';
   }
+  // `annotate.engram` / `eng` was retired — `annotate.note` (nn) is the one
+  // annotate verb and already accepts both `note` and `fields`.
+  if (useRaw === 'annotate.engram' || useRaw.toLowerCase() === 'eng') {
+    return ' — `annotate.engram` was retired; use `annotate.note` (nn) with `fields:{...}` for metadata edits (same function).';
+  }
   return '';
 }
 

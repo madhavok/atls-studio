@@ -108,6 +108,13 @@ pub(crate) fn attach_raw_tail(
 }
 
 /// Routes `operation == "edit"` to concrete backend ops (`draft`, `batch_edits`, `delete_files`, etc.).
+///
+/// Text-replace detection: when `edits:[{file, old, new}]` is passed without
+/// `mode` or `line_edits`, route to the `"replace"` backend op. This is the
+/// documented `text_replace` edit_mode; it was silently falling through to
+/// `draft`, which then converted the `old/new` payload into a line-numbered
+/// full-line replacement — corrupting unrelated lines when FTS hits were
+/// token-level rather than literal.
 pub(crate) fn resolve_edit_operation(
     operation: String,
     mut params: serde_json::Value,
@@ -121,6 +128,17 @@ pub(crate) fn resolve_edit_operation(
     let deletes = obj.get("deletes").and_then(|v| v.as_array()).cloned();
     let mode = obj.get("mode").and_then(|v| v.as_str());
     let edits = obj.get("edits").and_then(|v| v.as_array());
+    // Text-replace shape: every entry has old + new and no line_edits.
+    let is_text_replace_shape = edits
+        .map(|arr| {
+            !arr.is_empty()
+                && arr.iter().all(|e| {
+                    e.get("old").and_then(|v| v.as_str()).is_some()
+                        && e.get("new").and_then(|v| v.as_str()).is_some()
+                        && e.get("line_edits").is_none()
+                })
+        })
+        .unwrap_or(false);
     let resolved = if obj.get("undo").is_some() {
         String::from("undo")
     } else if obj.get("revise").is_some() {
@@ -140,6 +158,10 @@ pub(crate) fn resolve_edit_operation(
         String::from("delete_files")
     } else if mode == Some("batch_edits") && edits.map(|e| !e.is_empty()).unwrap_or(false) {
         String::from("batch_edits")
+    } else if mode == Some("replace") && is_text_replace_shape {
+        String::from("replace")
+    } else if mode.is_none() && is_text_replace_shape {
+        String::from("replace")
     } else {
         String::from("draft")
     };

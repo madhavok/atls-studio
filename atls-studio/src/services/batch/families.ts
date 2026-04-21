@@ -110,8 +110,7 @@ export const OPERATION_FAMILIES = {
   annotate: {
     icon: '📝',
     ops: [
-      { op: 'annotate.engram', hint: '(hash, fields:{...})' },
-      { op: 'annotate.note' },
+      { op: 'annotate.note', hint: '(hash, note:"..." and/or fields:{...})' },
       { op: 'annotate.link', hint: '(from:"h:X" to:"h:Y")' },
       { op: 'annotate.retype' },
       { op: 'annotate.split' },

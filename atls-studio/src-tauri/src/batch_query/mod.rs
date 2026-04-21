@@ -12573,37 +12573,67 @@ pub async fn atls_batch_query(
                 let undo_state = app.state::<UndoStoreState>();
                 let mut undo_store = undo_state.entries.lock().await;
 
-                // Try file-path lookup first (exact, then normalized slashes)
-                let undo_norm = undo_ref.replace('\\', "/");
-                let path_key = if undo_store.contains_key(&undo_ref) {
-                    Some(undo_ref.clone())
-                } else if undo_store.contains_key(&undo_norm) {
-                    Some(undo_norm.clone())
-                } else {
-                    undo_store.keys().find(|k| k.replace('\\', "/") == undo_norm).cloned()
+                // Recency sigil (`$last` or `h:$last` or `$last-N`): pick the
+                // Nth most recent entry across ALL files. Matches the agent's
+                // "undo the thing I just did" intent when it doesn't hold a
+                // specific file path or hash.
+                let sigil_ref = {
+                    let s = undo_ref.trim_start_matches("h:");
+                    if s.starts_with("$last") { Some(s) } else { None }
                 };
-                let pop_result: Option<(String, UndoEntry)> = if let Some(key) = path_key {
-                    let stack = undo_store.get_mut(&key).unwrap();
-                    stack.pop().map(|e| (key, e))
-                } else {
-                    // Hash-based lookup: scan all stacks for matching hash
-                    // Use extract_hash_for_edit_ref to handle "[edit result] h:6169ed â†’ path" etc.
-                    let clean_ref = extract_hash_for_edit_ref(&undo_ref);
-                    let mut target: Option<(String, usize)> = None;
+                let pop_result: Option<(String, UndoEntry)> = if let Some(sigil) = sigil_ref {
+                    // `$last` → 0th most recent. `$last-N` → Nth most recent (0-based).
+                    let offset: usize = sigil
+                        .strip_prefix("$last-")
+                        .and_then(|n| n.parse::<usize>().ok())
+                        .unwrap_or(0);
+                    // Gather (file_path, index, created_at) across all stacks, sort by recency.
+                    let mut candidates: Vec<(String, usize, std::time::Instant)> = Vec::new();
                     for (fp, stack) in undo_store.iter() {
-                        for (idx, entry) in stack.iter().enumerate().rev() {
-                            if entry.hash == clean_ref || entry.hash.starts_with(&clean_ref) || clean_ref.starts_with(&entry.hash) {
-                                target = Some((fp.clone(), idx));
-                                break;
-                            }
+                        for (idx, entry) in stack.iter().enumerate() {
+                            candidates.push((fp.clone(), idx, entry.created_at));
                         }
-                        if target.is_some() { break; }
                     }
-                    if let Some((fp, idx)) = target {
+                    candidates.sort_by(|a, b| b.2.cmp(&a.2));
+                    if let Some((fp, idx, _)) = candidates.get(offset).cloned() {
                         let stack = undo_store.get_mut(&fp).unwrap();
                         Some((fp, stack.remove(idx)))
                     } else {
                         None
+                    }
+                } else {
+                    // Try file-path lookup first (exact, then normalized slashes)
+                    let undo_norm = undo_ref.replace('\\', "/");
+                    let path_key = if undo_store.contains_key(&undo_ref) {
+                        Some(undo_ref.clone())
+                    } else if undo_store.contains_key(&undo_norm) {
+                        Some(undo_norm.clone())
+                    } else {
+                        undo_store.keys().find(|k| k.replace('\\', "/") == undo_norm).cloned()
+                    };
+                    if let Some(key) = path_key {
+                        let stack = undo_store.get_mut(&key).unwrap();
+                        stack.pop().map(|e| (key, e))
+                    } else {
+                        // Hash-based lookup: scan all stacks for matching hash
+                        // Use extract_hash_for_edit_ref to handle "[edit result] h:6169ed â†’ path" etc.
+                        let clean_ref = extract_hash_for_edit_ref(&undo_ref);
+                        let mut target: Option<(String, usize)> = None;
+                        for (fp, stack) in undo_store.iter() {
+                            for (idx, entry) in stack.iter().enumerate().rev() {
+                                if entry.hash == clean_ref || entry.hash.starts_with(&clean_ref) || clean_ref.starts_with(&entry.hash) {
+                                    target = Some((fp.clone(), idx));
+                                    break;
+                                }
+                            }
+                            if target.is_some() { break; }
+                        }
+                        if let Some((fp, idx)) = target {
+                            let stack = undo_store.get_mut(&fp).unwrap();
+                            Some((fp, stack.remove(idx)))
+                        } else {
+                            None
+                        }
                     }
                 };
 

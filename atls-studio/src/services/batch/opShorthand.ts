@@ -72,8 +72,7 @@ const SHORT_TO_OP_ENTRIES: ReadonlyArray<readonly [string, OperationKind]> = [
   // not advertised in the default descriptors.
   ['ld',  'session.load'],
   ['ch',  'session.compact_history'],
-  // annotate
-  ['eng', 'annotate.engram'],
+  // annotate (one op: nn / annotate.note — accepts `note` and/or `fields`)
   ['nn',  'annotate.note'],
   ['nk',  'annotate.link'],
   ['nr',  'annotate.retype'],

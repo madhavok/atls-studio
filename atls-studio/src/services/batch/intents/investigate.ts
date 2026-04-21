@@ -60,7 +60,11 @@ export const resolveInvestigate: IntentResolver = (
         use: 'read.shaped',
         with: readWith,
         in: { file_paths: { from_step: searchId, path: 'content.file_paths' } },
-        if: { step_has_refs: searchId },
+        // `step_has_refs` passes on zero-hit searches because search.code
+        // always emits a wrapper result ref — the binding then resolves to
+        // an empty array and read.shaped errors. Gate on real content to
+        // collapse zero-hit searches cleanly. Mirrors intent.search_replace.
+        if: { step_content_array_nonempty: { step_id: searchId, path: 'file_paths' } },
       });
     } else if (filePaths.length > 0) {
       const capped = filePaths.slice(0, INTENT_INVESTIGATE_MAX_FILES);
@@ -88,7 +92,9 @@ export const resolveInvestigate: IntentResolver = (
       use: 'session.bb.write',
       with: { key: bbKey, content: `Investigation: ${query}` },
       in: { derived_from: { from_step: searchId, path: 'refs' } },
-      if: { step_has_refs: searchId },
+      // Gate on real hits (see note above) — zero-hit searches shouldn't
+      // leave a misleading `investigate:<query>` record.
+      if: { step_content_array_nonempty: { step_id: searchId, path: 'file_paths' } },
     });
   }
 

@@ -20,7 +20,7 @@ import {
 } from './handlers/blackboard';
 
 import {
-  handleRule, handleEngramEdit, handleAnnotate, handleLink,
+  handleRule, handleAnnotate, handleLink,
   handleRetype, handleSplit, handleMerge, handleDesignWrite,
 } from './handlers/annotation';
 
@@ -125,8 +125,9 @@ const OP_MAP: ReadonlyMap<OperationKind, OpHandler> = new Map<OperationKind, OpH
   ['session.shape', handleShape],
   ['session.load', handleLoad],
 
-  // annotations
-  ['annotate.engram', handleEngramEdit],
+  // annotations (annotate.note handles both free-form notes and structured
+  // `fields` edits — same function. `annotate.engram` was retired; send
+  // `fields` through `annotate.note` instead).
   ['annotate.note', handleAnnotate],
   ['annotate.link', handleLink],
   ['annotate.retype', handleRetype],

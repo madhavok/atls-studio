@@ -51,7 +51,10 @@ export const GLOBAL_ALIASES: Readonly<Record<string, string>> = {
   le: 'line_edits',
   sl: 'start_line',
   el: 'end_line',
-  sf: 'severity_filter',
+  // Backend `find_issues` reads `severity`, not `severity_filter` — the prior
+  // alias silently dropped `sf:"warn"` etc. Keep the one-char shorthand but
+  // point it at the canonical key the backend actually consumes.
+  sf: 'severity',
   ff: 'focus_files',
 };
 
@@ -90,7 +93,7 @@ const OP_ALIASES: Readonly<Partial<Record<OperationKind, Readonly<Record<string,
     target_file: 'target_file',
   },
   'system.git': { paths: 'files', file_paths: 'files' },
-  // annotate.note expects `note`; models often send `content` (symmetry with bw, eng fields.note).
+  // annotate.note expects `note`; models often send `content` (symmetry with bw).
   'annotate.note': { content: 'note' },
   // session.rule expects rule name `key`; models often send `hash` (engram-addressing habit).
   'session.rule': { hash: 'key' },
@@ -379,6 +382,16 @@ export function normalizeStepParams(
       out.queries = [out.query];
       delete out.query;
     }
+  }
+
+  // Scalar `patterns` → array for search.patterns. Backend `detect_patterns`
+  // reads `patterns` via `.as_array()`; a scalar string silently drops through
+  // to "no filter" and returns results for every pattern. Mirror the comma-
+  // split convention used by file_paths above.
+  if (op === 'search.patterns' && typeof out.patterns === 'string') {
+    out.patterns = out.patterns.includes(',')
+      ? out.patterns.split(',').map((s: string) => s.trim()).filter(Boolean)
+      : [out.patterns];
   }
 
   // key → keys promotion for bb.read / bb.delete; also coerce bare string keys to array

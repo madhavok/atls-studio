@@ -448,9 +448,17 @@ export function flattenCodeSearchHits(result: unknown): CodeSearchHitRow[] {
     callSites?: CodeSearchHitRow['call_sites'],
   ) {
     if (typeof file !== 'string' || !file.trim()) return;
+    const trimmed = file.trim();
+    // Drop ATLS linter scratch files. They're RAII-cleaned on the Rust side
+    // but the FTS index can hold a stale entry briefly after a verify.lint
+    // run, surfacing phantom hits that break subsequent edit fan-out
+    // (intent.search_replace etc.). The files never exist on disk by the
+    // time the downstream step tries to open them.
+    const base = trimmed.split(/[\\/]/).pop() ?? trimmed;
+    if (base.startsWith('__atls_check_')) return;
     const ln = typeof line === 'number' && Number.isFinite(line) && line > 0 ? line : 1;
     const el = typeof endLine === 'number' && Number.isFinite(endLine) && endLine >= ln ? endLine : undefined;
-    const row: CodeSearchHitRow = { file: file.trim(), line: ln, end_line: el };
+    const row: CodeSearchHitRow = { file: trimmed, line: ln, end_line: el };
     if (callSites && callSites.length > 0) row.call_sites = callSites;
     rows.push(row);
   }

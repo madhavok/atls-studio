@@ -293,7 +293,7 @@
         "session.stats", "session.debug", "session.compact_history",
         "session.bb.write", "session.bb.read", "session.bb.delete", "session.bb.list",
         "session.rule", "session.emit", "session.shape", "session.load", "session.complete",
-        "annotate.engram", "annotate.note", "annotate.link", "annotate.retype",
+        "annotate.note", "annotate.link", "annotate.retype",
         "annotate.split", "annotate.merge", "annotate.design",
         "delegate.retrieve", "delegate.design",
         "system.exec", "system.git", "system.help", "system.workspaces"

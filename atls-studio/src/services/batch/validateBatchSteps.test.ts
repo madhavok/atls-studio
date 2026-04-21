@@ -43,4 +43,19 @@ describe('validateBatchSteps', () => {
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.error).toContain('session.advance');
   });
+
+  it('hints at annotate.note for retired annotate.engram', () => {
+    const r = validateBatchSteps([{ id: 'n1', use: 'annotate.engram' }]);
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.error).toContain('unknown operation');
+      expect(r.error).toContain('annotate.note');
+    }
+  });
+
+  it('hints at annotate.note for retired eng shorthand', () => {
+    const r = validateBatchSteps([{ id: 'n1', use: 'eng' }]);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toContain('annotate.note');
+  });
 });
