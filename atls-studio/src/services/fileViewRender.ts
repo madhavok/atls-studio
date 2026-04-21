@@ -152,9 +152,15 @@ function formatAnnotations(view: FileView): string {
 function formatHeader(view: FileView): string {
   const cite = shortRev(view.sourceRevision);
   const pinSuffix = view.pinned ? ' [pinned]' : '';
+  // Auto-promote marker: distinguishes a stitched-region full-body (which
+  // may have approximated rows the model never directly read) from an
+  // intentional full read via read.file / read.context.
+  const promoteSuffix = view.fullBodyOrigin === 'coverage_promote'
+    ? ' [fullBody: promoted]'
+    : '';
   // Dual identity: retention ref (view.shortHash) for pu/pc/dro, cite hash
   // (sourceRevision prefix) for content_hash in edits. See file header doc.
-  return `${FENCE_TOP} ${view.filePath} h:${view.shortHash} cite:@h:${cite} (${view.totalLines} lines)${pinSuffix} ${FENCE_TOP}`;
+  return `${FENCE_TOP} ${view.filePath} h:${view.shortHash} cite:@h:${cite} (${view.totalLines} lines)${pinSuffix}${promoteSuffix} ${FENCE_TOP}`;
 }
 
 function formatBody(view: FileView): string {

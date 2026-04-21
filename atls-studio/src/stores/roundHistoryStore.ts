@@ -170,13 +170,27 @@ export function isMainChatRound(s: RoundSnapshot): boolean {
   return !s.isSubagentRound && !s.isSwarmRound;
 }
 
-/** Cost aggregates for main-chat rounds only (same basis as Cost & I/O chart). */
+/**
+ * Cost aggregates for main-chat rounds only (same basis as the Cost & I/O
+ * chart).
+ *
+ * IMPORTANT: the `snapshots` array is subject to sliding-window truncation
+ * at {@link MAX_SNAPSHOTS}. Consumers that rely on "average over the entire
+ * session" must treat this as an average over the **tail** of recent rounds
+ * once the window fills. The returned `truncated` flag surfaces that fact
+ * so UI callers can annotate the figure (e.g. trailing `~`) rather than
+ * silently presenting a windowed average as a session total.
+ */
 export function computeMainChatRoundCostStats(snapshots: RoundSnapshot[]): {
   mainRoundCount: number;
   mainRoundsCostSum: number;
   avgMainRoundCost: number;
   avgInputCost: number;
   avgOutputCost: number;
+  /** Number of snapshots included in the aggregate (post-filter, pre-window). */
+  includedRounds: number;
+  /** True when the input array is at the sliding-window cap and older rounds were dropped. */
+  truncated: boolean;
 } {
   const main = snapshots.filter(isMainChatRound);
   let sum = 0, inputSum = 0, outputSum = 0;
@@ -190,7 +204,15 @@ export function computeMainChatRoundCostStats(snapshots: RoundSnapshot[]): {
   const avgMainRoundCost = n > 0 ? Math.round((sum / n) * 100) / 100 : 0;
   const avgInputCost = n > 0 ? Math.round((inputSum / n) * 100) / 100 : 0;
   const avgOutputCost = n > 0 ? Math.round((outputSum / n) * 100) / 100 : 0;
-  return { mainRoundCount: n, mainRoundsCostSum, avgMainRoundCost, avgInputCost, avgOutputCost };
+  return {
+    mainRoundCount: n,
+    mainRoundsCostSum,
+    avgMainRoundCost,
+    avgInputCost,
+    avgOutputCost,
+    includedRounds: n,
+    truncated: snapshots.length >= MAX_SNAPSHOTS,
+  };
 }
 
 export const useRoundHistoryStore = create<RoundHistoryState>((set) => ({

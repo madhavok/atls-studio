@@ -29,7 +29,7 @@ export function CostIOSection() {
   const subagentSnapshots = useMemo(() => snapshots.filter((s) => s.isSubagentRound), [snapshots]);
   const swarmSnapshots = useMemo(() => snapshots.filter((s) => s.isSwarmRound), [snapshots]);
 
-  const { mainRoundsCostSum, avgMainRoundCost, avgInputCost, avgOutputCost } = useMemo(
+  const { mainRoundsCostSum, avgMainRoundCost, avgInputCost, avgOutputCost, truncated: roundHistoryTruncated } = useMemo(
     () => computeMainChatRoundCostStats(snapshots),
     [snapshots],
   );
@@ -205,9 +205,13 @@ export function CostIOSection() {
           subtitle="sum of main snapshot costs (chart series)"
         />
         <StatCard
-          label="Avg cost / main round"
+          label={roundHistoryTruncated ? 'Avg cost / main round (~)' : 'Avg cost / main round'}
           value={mainSnapshots.length > 0 ? formatCost(avgMainRoundCost) : '—'}
-          subtitle="main agent only; session total includes subagents"
+          subtitle={
+            roundHistoryTruncated
+              ? 'windowed: avg over last 200 rounds; older dropped'
+              : 'main agent only; session total includes subagents'
+          }
         />
         <StatCard label="Main input" value={fmtK(totalInput)} />
         <StatCard label="Main output" value={fmtK(totalOutput)} />

@@ -574,6 +574,24 @@ export interface Settings {
    * configuration. See `docs/auto-pin-on-read.md`.
    */
   autoPinReads?: boolean;
+  /**
+   * Widen batch-executor rebase to cover all successful `change.*` steps.
+   *
+   * When true (default):
+   *   - `captureHashAliases` runs for every successful `change.*` step (not just
+   *     `change.edit`), so later steps citing the pre-mutation `h:OLD:…` on
+   *     `f` / `file_path` can resolve to the new file path.
+   *   - `rebaseSubsequentSteps` additionally rebases `read.lines` / `read.shaped`
+   *     futures' `lines` / `sl` / `el` and hash-ref suffixes using the same
+   *     `deltaMap` used for change futures.
+   *
+   * When false: legacy behavior — alias capture + rebase only fire for
+   * `change.edit` → `change.*` chains; `read.*` futures are not rebased.
+   *
+   * Intended as an emergency rollback lever for regressions; flip without a
+   * code change. See `src/services/batch/executor.ts`.
+   */
+  rebaseAllChangeOps?: boolean;
 }
 
 /** Per-category severity enables. Key = category, value = enabled severities */
@@ -1517,6 +1535,7 @@ export const useAppStore = create<AppState>((set) => ({
       compressToolResults: false,
       compressEditAcks: false,
       autoPinReads: true,
+      rebaseAllChangeOps: true,
     };
     let parsed: Record<string, unknown> = {};
     try { parsed = saved ? JSON.parse(saved) : {}; } catch { /* corrupt settings — use defaults */ }

@@ -1,10 +1,11 @@
 import { useState, useMemo } from 'react';
 import { useAppStore, type EntryManifestEntry } from '../../../stores/appStore';
 import { countTokensSync } from '../../../utils/tokenCounter';
+import { ENTRY_MANIFEST_DISPLAY_BUDGET } from '../../../constants/contextTokenBudgets';
 
 type SortKey = 'path' | 'tokens' | 'lines' | 'importance' | 'method' | 'tier';
 
-const TOKEN_BUDGET = 5000;
+const TOKEN_BUDGET = ENTRY_MANIFEST_DISPLAY_BUDGET;
 
 const TIER_COLORS: Record<string, string> = {
   full: 'text-green-400',

@@ -22,7 +22,7 @@ import { coerceFilePathsArray, normalizeStepParams } from './paramNorm';
 import { isStepAllowed, getAutoVerifySteps, isStepCountExceeded, evaluateCondition, isBlockedForSwarm } from './policy';
 import { stepOutputToResult } from './resultFormatter';
 import { resetRecallBudget } from './handlers/session';
-import { SnapshotTracker, AwarenessLevel } from './snapshotTracker';
+import { SnapshotTracker, AwarenessLevel, canonicalizeSnapshotHash } from './snapshotTracker';
 import type { LineRegion } from './snapshotTracker';
 import { parseHashRef } from '../../utils/hashRefParsers';
 import { buildIntentContext, resolveIntents, isPressured } from './intents';
@@ -610,18 +610,227 @@ function rebaseHashRefFileKeys(
   }
 }
 
+/**
+ * Rebase read-op hash-ref string keys (`ref`, `hash`) that may carry an A-B
+ * line-range suffix. Kept separate from {@link rebaseHashRefFileKeys} because
+ * change ops do not accept `ref` and read-op `hash` is canonically the hash
+ * identity rather than a file locator.
+ */
+function rebaseReadOpHashRefKeys(
+  params: Record<string, unknown>,
+  deltas: PositionalDelta[],
+): void {
+  for (const key of ['ref', 'hash'] as const) {
+    const v = params[key];
+    if (typeof v !== 'string') continue;
+    const rebased = rebaseHashRefLineRange(v, deltas);
+    if (rebased !== v) params[key] = rebased;
+  }
+}
+
+/**
+ * Rebase a `lines:` range-string (e.g. `"15-50"` or `"15-50,80-120"`) by the
+ * same positional-delta math used for hash-ref line-ranges and line_edits.
+ * Returns the rewritten string or the original when no shift applies.
+ */
+export function rebaseLinesRangeString(value: string, deltas: PositionalDelta[]): string {
+  if (deltas.length === 0) return value;
+  let changed = false;
+  const parts = value.split(',');
+  const rebasedParts: string[] = [];
+  for (const rawPart of parts) {
+    const t = rawPart.trim();
+    if (!t) { rebasedParts.push(rawPart); continue; }
+    const dash = t.indexOf('-');
+    if (dash < 0) {
+      const n = parseInt(t, 10);
+      if (!Number.isFinite(n) || n <= 0) { rebasedParts.push(rawPart); continue; }
+      let shift = 0;
+      for (const d of deltas) {
+        if (d.lineInclusive ? d.line <= n : d.line < n) shift += d.delta;
+      }
+      const next = Math.max(1, n + shift);
+      if (next !== n) changed = true;
+      rebasedParts.push(String(next));
+      continue;
+    }
+    const startStr = t.slice(0, dash);
+    const endStr = t.slice(dash + 1);
+    const start = parseInt(startStr, 10);
+    if (!Number.isFinite(start) || start <= 0) { rebasedParts.push(rawPart); continue; }
+    const end = endStr === '' ? null : parseInt(endStr, 10);
+    if (end != null && !Number.isFinite(end)) { rebasedParts.push(rawPart); continue; }
+
+    let startShift = 0;
+    let endShift = 0;
+    const effectiveEnd = end ?? start;
+    for (const d of deltas) {
+      if (d.lineInclusive ? d.line <= start : d.line < start) startShift += d.delta;
+      if (d.lineInclusive ? d.line <= effectiveEnd : d.line < effectiveEnd) endShift += d.delta;
+    }
+    if (startShift === 0 && endShift === 0) { rebasedParts.push(rawPart); continue; }
+    const newStart = Math.max(1, start + startShift);
+    const newEnd = end == null ? null : Math.max(newStart, end + endShift);
+    changed = true;
+    rebasedParts.push(newEnd == null ? `${newStart}-` : `${newStart}-${newEnd}`);
+  }
+  return changed ? rebasedParts.join(',') : value;
+}
+
+/**
+ * Apply positional deltas to a read-op future's line-range params:
+ *   - `lines` (range string)
+ *   - numeric `start_line` / `end_line` / `sl` / `el` (global aliases in
+ *     [`paramNorm.ts`](../paramNorm.ts); rebase runs BEFORE normalization so
+ *     we honor both the short and long forms).
+ *
+ * Hash-ref suffix on `f`/`file`/`file_path` and on read-only `ref`/`hash`
+ * keys is handled by {@link rebaseHashRefFileKeys} / {@link rebaseReadOpHashRefKeys}.
+ */
+function rebaseReadOpLineParams(
+  params: Record<string, unknown>,
+  deltas: PositionalDelta[],
+): void {
+  if (deltas.length === 0) return;
+  if (typeof params.lines === 'string') {
+    const next = rebaseLinesRangeString(params.lines, deltas);
+    if (next !== params.lines) params.lines = next;
+  }
+  for (const startKey of ['start_line', 'sl'] as const) {
+    for (const endKey of startKey === 'start_line' ? ['end_line'] as const : ['el'] as const) {
+      const sv = params[startKey];
+      const ev = params[endKey];
+      if (typeof sv !== 'number' || sv <= 0) continue;
+      let startShift = 0;
+      for (const d of deltas) {
+        if (d.lineInclusive ? d.line <= sv : d.line < sv) startShift += d.delta;
+      }
+      if (startShift !== 0) params[startKey] = Math.max(1, sv + startShift);
+      if (typeof ev === 'number' && ev > 0) {
+        let endShift = 0;
+        for (const d of deltas) {
+          if (d.lineInclusive ? d.line <= ev : d.line < ev) endShift += d.delta;
+        }
+        if (endShift !== 0) {
+          const newStart = typeof params[startKey] === 'number' ? params[startKey] as number : sv;
+          params[endKey] = Math.max(newStart, ev + endShift);
+        }
+      }
+    }
+  }
+}
+
+/**
+ * Read-op families whose futures participate in the widened rebase pass.
+ * Kept narrow on purpose: change-ops keep the richer line_edits pipeline,
+ * and other ops (search/analyze/verify/etc.) do not carry line coordinates
+ * that the executor can shift without model-visible semantics changing.
+ */
+const READ_REBASE_OPS = new Set<string>(['read.lines', 'read.shaped']);
+
+/** File-locator keys — touched by the existing line-range rebase path for change.edit. */
+const STALE_HASH_REF_KEYS_FILE: ReadonlyArray<string> = ['f', 'file', 'file_path'];
+/** Read-op identity keys — not in the line-range rebase path's key set. */
+const STALE_HASH_REF_KEYS_READ: ReadonlyArray<string> = ['ref', 'hash'];
+
+/**
+ * Rewrite stale `h:OLD[:suffix]` refs on future steps to `h:NEW[:suffix]`
+ * using the pre-invalidation hashAliases (OLD → path) combined with the
+ * tracker's current path → newHash mapping.
+ *
+ * Distinct from the line-range rebase pass: this only rotates the hash
+ * portion so downstream handlers can resolve it after the mutation's
+ * `invalidateAndRerecord` wiped the old hash. Line math (for change.edit)
+ * still runs in {@link rebaseSubsequentSteps}.
+ *
+ * Key filter:
+ * - `all`: rewrites both file-locator keys AND read-op identity keys.
+ *   Used for non-edit change ops (refactor, create, split_module, …) which
+ *   do not emit line_edits, so the line-range rebase pass is a no-op and
+ *   hash substitution is the only way a future `h:OLD` cite becomes valid.
+ * - `readOnly`: rewrites only `ref`/`hash` read-op identity keys.
+ *   Used after change.edit, where the line-range rebase pass already handles
+ *   `f`/`file`/`file_path` on change.* and read.* futures (preserving the
+ *   hash identity per the documented edit → edit contract).
+ */
+function substituteStaleFileRefs(
+  stepsToRun: Array<{ id: string; use: string; with?: Record<string, unknown> }>,
+  startIndex: number,
+  hashAliases: ReadonlyMap<string, string>,
+  tracker: SnapshotTracker,
+  mode: 'all' | 'readOnly',
+): void {
+  if (hashAliases.size === 0) return;
+  const keys = mode === 'all'
+    ? [...STALE_HASH_REF_KEYS_FILE, ...STALE_HASH_REF_KEYS_READ]
+    : STALE_HASH_REF_KEYS_READ;
+  for (let j = startIndex; j < stepsToRun.length; j++) {
+    const future = stepsToRun[j];
+    if (!future.with) continue;
+    substituteStaleHashRefsOnObject(future.with, hashAliases, tracker, keys);
+    // Nested edits[] entries (batch_edits mode). File-locator keys only —
+    // nested edits never carry `ref`/`hash` read-op keys.
+    if (mode === 'all' && Array.isArray(future.with.edits)) {
+      for (const ed of future.with.edits) {
+        if (!ed || typeof ed !== 'object') continue;
+        substituteStaleHashRefsOnObject(
+          ed as Record<string, unknown>,
+          hashAliases,
+          tracker,
+          STALE_HASH_REF_KEYS_FILE,
+        );
+      }
+    }
+  }
+}
+
+/**
+ * In-place hash rotation on a single params record. Mutates `params[key]`
+ * for each key in `keys` whose current value is `h:OLD[:suffix]` where OLD
+ * resolves via `hashAliases` to a file the tracker now holds under a new hash.
+ */
+function substituteStaleHashRefsOnObject(
+  params: Record<string, unknown>,
+  hashAliases: ReadonlyMap<string, string>,
+  tracker: SnapshotTracker,
+  keys: ReadonlyArray<string>,
+): void {
+  for (const key of keys) {
+    const v = params[key];
+    if (typeof v !== 'string' || !v.startsWith('h:')) continue;
+    const bare = canonicalizeSnapshotHash(v);
+    if (!bare) continue;
+    const path = hashAliases.get(bare);
+    if (!path) continue;
+    const newHash = tracker.getHash(path);
+    if (!newHash || newHash === bare) continue;
+    // Preserve any `:suffix` (line ranges, shape modifiers, `source`, …).
+    const stripped = v.slice(2);
+    const colon = stripped.indexOf(':');
+    const suffix = colon >= 0 ? stripped.slice(colon) : '';
+    params[key] = `h:${newHash}${suffix}`;
+  }
+}
+
 function rebaseSubsequentSteps(
   completedParams: Record<string, unknown>,
   stepsToRun: Array<{ id: string; use: string; with?: Record<string, unknown> }>,
   startIndex: number,
   hashAliases: ReadonlyMap<string, string>,
+  opts?: { rebaseReadOps?: boolean },
 ): void {
   const deltaMap = buildPerFileDeltaMap(completedParams);
   if (deltaMap.size === 0) return;
 
+  const rebaseReadOps = opts?.rebaseReadOps !== false;
+
   for (let j = startIndex; j < stepsToRun.length; j++) {
     const future = stepsToRun[j];
-    if (!future.use.startsWith('change.') || !future.with) continue;
+    if (!future.with) continue;
+
+    const isChangeFuture = future.use.startsWith('change.');
+    const isReadFuture = rebaseReadOps && READ_REBASE_OPS.has(future.use);
+    if (!isChangeFuture && !isReadFuture) continue;
 
     // Rebase top-level line_edits AND any h:HASH:A-B ranges on f/file/file_path
     // when the future step targets a file we edited. Hash-ref file keys are
@@ -632,15 +841,33 @@ function rebaseSubsequentSteps(
       const lookupKey = resolveFileKeyForRebaseLookup(futureFile, hashAliases);
       const deltas = lookupKey ? deltaMap.get(lookupKey) : undefined;
       if (deltas) {
-        if (Array.isArray(future.with.line_edits)) {
+        if (isChangeFuture && Array.isArray(future.with.line_edits)) {
           applyDeltasToLineEdits(future.with.line_edits as unknown[], deltas);
         }
         rebaseHashRefFileKeys(future.with, deltas);
+        if (isReadFuture) {
+          rebaseReadOpHashRefKeys(future.with, deltas);
+          rebaseReadOpLineParams(future.with, deltas);
+        }
+      }
+    } else if (isReadFuture) {
+      // Read futures may reference the edited file purely via ref/hash (no
+      // f/file/file_path), e.g. `read.lines ref:"h:OLD:10-20"`. Try to
+      // resolve via hashAliases.
+      for (const key of ['ref', 'hash'] as const) {
+        const v = future.with[key];
+        if (typeof v !== 'string' || !v.startsWith('h:')) continue;
+        const lookupKey = resolveFileKeyForRebaseLookup(v, hashAliases);
+        const deltas = lookupKey ? deltaMap.get(lookupKey) : undefined;
+        if (!deltas) continue;
+        rebaseReadOpHashRefKeys(future.with, deltas);
+        rebaseReadOpLineParams(future.with, deltas);
+        break;
       }
     }
 
-    // Rebase nested edits[] entries (batch_edits mode in a future step)
-    if (Array.isArray(future.with.edits)) {
+    // Rebase nested edits[] entries (batch_edits mode in a future change step)
+    if (isChangeFuture && Array.isArray(future.with.edits)) {
       for (const ed of future.with.edits) {
         if (!ed || typeof ed !== 'object') continue;
         const entry = ed as Record<string, unknown>;
@@ -1410,6 +1637,15 @@ export async function executeUnifiedBatch(
     catch { return false; }
   })();
 
+  // Widened-rebase toggle (P0): when true (default), capture hash aliases
+  // for every successful change.* step and rebase read.lines / read.shaped
+  // futures in the same batch. When false, legacy behavior — alias capture
+  // + rebase only fire for change.edit → change.* chains.
+  const rebaseAllChangeOps = (() => {
+    try { return useAppStore.getState().settings.rebaseAllChangeOps !== false; }
+    catch { return true; }
+  })();
+
   // Seed from persistent awareness cache
   seedSnapshotTracker(snapshotTracker, ctx.store().getAwarenessCache());
 
@@ -1826,18 +2062,53 @@ export async function executeUnifiedBatch(
     // happen BEFORE recordSnapshotFromOutput's invalidateAndRerecord wipes
     // the old hash; otherwise a future step citing h:OLD:A-B on the same
     // file can't be resolved for rebase.
+    //
+    // P0.1: gated on `rebaseAllChangeOps`, capture for any successful
+    // change.* step (not just change.edit). change.refactor / change.create /
+    // change.split_module also trigger invalidateAndRerecord in
+    // recordSnapshotFromOutput below, so their old hashes need the same
+    // pre-invalidation alias snapshot for downstream rebase.
+    const shouldCaptureAliases = output.ok && (
+      rebaseAllChangeOps
+        ? step.use.startsWith('change.')
+        : step.use === 'change.edit'
+    );
     const hashAliasesForRebase: ReadonlyMap<string, string> =
-      step.use === 'change.edit' ? captureHashAliases(snapshotTracker) : new Map();
+      shouldCaptureAliases ? captureHashAliases(snapshotTracker) : new Map();
 
     // Record snapshot hashes from step output
     recordSnapshotFromOutput(step, output, snapshotTracker, ctx, policy);
 
     // Post-edit housekeeping for successful change ops
     if (output.ok && step.use.startsWith('change.')) {
-      // Rebase line numbers in subsequent same-file change steps
+      // P0.1: After the tracker rotates hashes via invalidateAndRerecord,
+      // rewrite stale `h:OLD` cites on future steps.
+      //
+      //   - change.edit (`readOnly`): only read-op identity keys `ref`/`hash`
+      //     are rewritten; the existing rebaseSubsequentSteps pass handles
+      //     `f`/`file`/`file_path` by shifting line ranges while preserving
+      //     the hash identity (the documented edit → edit contract).
+      //   - change.refactor / change.create / change.split_module (`all`):
+      //     these ops do not emit line_edits, so the rebase pass is a no-op
+      //     and hash substitution is the only way a future `h:OLD` cite
+      //     becomes resolvable after the mutation.
+      if (rebaseAllChangeOps && hashAliasesForRebase.size > 0) {
+        substituteStaleFileRefs(
+          stepsToRun,
+          i + 1,
+          hashAliasesForRebase,
+          snapshotTracker,
+          step.use === 'change.edit' ? 'readOnly' : 'all',
+        );
+      }
+      // Rebase line numbers in subsequent same-file change steps. The
+      // line_edits + resolved-body-span pipeline is change.edit-specific;
+      // other change ops only need the hash-alias + read-op rebase pass.
       if (step.use === 'change.edit') {
         backfillResolvedBodySpans(mergedParams, output);
-        rebaseSubsequentSteps(mergedParams, stepsToRun, i + 1, hashAliasesForRebase);
+        rebaseSubsequentSteps(mergedParams, stepsToRun, i + 1, hashAliasesForRebase, {
+          rebaseReadOps: rebaseAllChangeOps,
+        });
         // G3: rebase staged snippet line ranges as fallback before re-resolve
         const deltaMap = buildPerFileDeltaMap(mergedParams);
         for (const [normPath, deltas] of deltaMap) {

@@ -276,6 +276,10 @@ describe('fileViewStore — createFileView + applyFillToView', () => {
     });
     expect(v1.fullBody).toBeDefined();
     expect(v1.fullBodyChunkHash).toBe('hFULL');
+    // P2.1: auto-promotion from applyFillToView must tag origin so the
+    // header can render `[fullBody: promoted]` and downstream consumers can
+    // distinguish stitched regions from an explicit read.
+    expect(v1.fullBodyOrigin).toBe('coverage_promote');
   });
 
   it('applyFullBodyToView sets fullBody directly without region merge', () => {
@@ -284,6 +288,21 @@ describe('fileViewStore — createFileView + applyFillToView', () => {
     expect(v1.fullBody).toBe('the whole file');
     expect(v1.fullBodyChunkHash).toBe('hFULL');
     expect(v1.filledRegions).toEqual([]);
+    // P2.1: explicit full-body reads are tagged 'read', NOT 'coverage_promote'.
+    expect(v1.fullBodyOrigin).toBe('read');
+  });
+
+  it('applyFillToView below auto-promote threshold leaves fullBodyOrigin unset', () => {
+    const v0 = createFileView(fakeSkeleton({ totalLines: 100 }));
+    const v1 = applyFillToView(v0, {
+      start: 1,
+      end: 10,
+      content: Array.from({ length: 10 }, (_, i) => row(i + 1, `line${i + 1}`)).join('\n'),
+      chunkHash: 'hPARTIAL',
+      tokens: 50,
+    });
+    expect(v1.fullBody).toBeUndefined();
+    expect(v1.fullBodyOrigin).toBeUndefined();
   });
 });
 

@@ -74,6 +74,19 @@ export interface FileView {
   /** Chunk hash that owns fullBody, when set */
   fullBodyChunkHash?: string;
   /**
+   * When `fullBody` is set, records HOW it was populated:
+   *   - `'read'`           — an explicit full-body read via {@link applyFullBodyToView}.
+   *   - `'coverage_promote'` — implicit promotion from {@link applyFillToView}
+   *     when accumulated regions crossed {@link COVERAGE_PROMOTE_RATIO}.
+   *
+   * Optional for backwards compatibility with legacy in-memory views; absent
+   * when `fullBody` is undefined. Surfaced in the FILE VIEWS header so the
+   * model can distinguish an intentional full read from a region-stitched
+   * auto-promote (the latter may be stale at edge ranges the heuristic
+   * approximated rather than actually read).
+   */
+  fullBodyOrigin?: 'read' | 'coverage_promote';
+  /**
    * Aggregate identity: `h:<SHORT_HASH_LEN hex>` derived from (filePath, sourceRevision).
    * Shares the chunk-hash namespace — the model sees one format. Lookup routes
    * `h:<short>` to either the fileViews map (views first) or chunks map via
@@ -383,6 +396,7 @@ export function reconcileFileView(
     filledRegions: rebased,
     fullBody: undefined,
     fullBodyChunkHash: undefined,
+    fullBodyOrigin: undefined,
     hash: nextHashParts.hash,
     shortHash: nextHashParts.shortHash,
     freshness: isSameFileEdit && rebased.length > 0 ? 'shifted' : 'fresh',
@@ -484,6 +498,7 @@ export function applyFillToView(
       ...view,
       fullBody: body,
       fullBodyChunkHash: fill.chunkHash,
+      fullBodyOrigin: 'coverage_promote',
       filledRegions: nextRegions,
       hash: refreshed.hash,
       shortHash: refreshed.shortHash,
@@ -513,6 +528,7 @@ export function applyFullBodyToView(
     ...view,
     fullBody,
     fullBodyChunkHash: chunkHash,
+    fullBodyOrigin: 'read',
     hash,
     shortHash,
     lastAccessed: Date.now(),

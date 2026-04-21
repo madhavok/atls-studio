@@ -66,6 +66,27 @@ export function parseModifierChainWithError(
       suggestion: hint,
     };
   }
+  // Line-range diagnostic: when the chain "looks like" a range attempt
+  // (leading digit or minus, embedded dash) but failed validation, surface
+  // the specific reason so the model can self-correct without guessing.
+  const looksLikeRange = /^[-\d]/.test(chain) && chain.includes('-');
+  if (looksLikeRange) {
+    const shapeSep = findShapeSeparator(chain);
+    const linesPart = shapeSep !== null ? chain.slice(0, shapeSep) : chain;
+    const ranges = parseLineRangesWithError(linesPart);
+    if (!ranges.ok) {
+      const suggestion = ranges.reason === 'inverted_range'
+        ? 'ensure start <= end (e.g. "50-100" not "100-50")'
+        : ranges.reason === 'non_positive_start' || ranges.reason === 'non_positive_end'
+          ? 'line numbers are 1-based (no 0 or negative values)'
+          : undefined;
+      return {
+        ok: false,
+        reason: `invalid line range: ${ranges.reason}`,
+        suggestion,
+      };
+    }
+  }
   return { ok: false, reason: 'unrecognized modifier chain' };
 }
 
@@ -136,27 +157,65 @@ export function parseSymbolAnchor(chain: string): HashModifierV2 | null {
   return null;
 }
 
+/**
+ * Strict line-range validation (1-based inclusive). Rejects:
+ *   - non-numeric start/end (`abc`, `abc-def`)
+ *   - zero or negative start (`0-5`, `-3-7`)
+ *   - inverted ranges (`100-50`)
+ *   - negative end (`5--3`)
+ *
+ * Open-ended ranges (`50-`) are allowed; `end = null` means "through EOF".
+ * Callers that need a reason for rejection (e.g. diagnostic UIs) should use
+ * {@link parseLineRangesWithError}; the silent `null` form is preserved for
+ * fast-path callers and guard checks like {@link findShapeSeparator}.
+ */
 export function parseLineRanges(s: string): [number, number | null][] | null {
+  const result = parseLineRangesWithError(s);
+  return result.ok ? result.ranges : null;
+}
+
+export type ParseLineRangesError =
+  | 'empty'
+  | 'non_numeric'
+  | 'non_positive_start'
+  | 'non_positive_end'
+  | 'inverted_range';
+
+export function parseLineRangesWithError(
+  s: string,
+):
+  | { ok: true; ranges: [number, number | null][] }
+  | { ok: false; reason: ParseLineRangesError } {
   const ranges: [number, number | null][] = [];
   for (const part of s.split(',')) {
     const t = part.trim();
     if (!t) continue;
-    const dashPos = t.indexOf('-');
+    const dashPos = t.indexOf('-', t.startsWith('-') ? 1 : 0);
     if (dashPos >= 0) {
       const startStr = t.slice(0, dashPos);
       const endStr = t.slice(dashPos + 1);
       const start = parseInt(startStr, 10);
-      if (isNaN(start)) return null;
-      const end = endStr ? parseInt(endStr, 10) : null;
-      if (endStr && isNaN(end!)) return null;
+      if (isNaN(start)) return { ok: false, reason: 'non_numeric' };
+      if (start < 1) return { ok: false, reason: 'non_positive_start' };
+      if (endStr === '') {
+        ranges.push([start, null]);
+        continue;
+      }
+      const end = parseInt(endStr, 10);
+      if (isNaN(end)) return { ok: false, reason: 'non_numeric' };
+      if (end < 1) return { ok: false, reason: 'non_positive_end' };
+      if (end < start) return { ok: false, reason: 'inverted_range' };
       ranges.push([start, end]);
     } else {
       const line = parseInt(t, 10);
-      if (isNaN(line)) return null;
+      if (isNaN(line)) return { ok: false, reason: 'non_numeric' };
+      if (line < 1) return { ok: false, reason: 'non_positive_start' };
       ranges.push([line, line]);
     }
   }
-  return ranges.length > 0 ? ranges : null;
+  return ranges.length > 0
+    ? { ok: true, ranges }
+    : { ok: false, reason: 'empty' };
 }
 
 export function findShapeSeparator(s: string): number | null {

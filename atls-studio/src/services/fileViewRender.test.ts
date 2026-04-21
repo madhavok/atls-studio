@@ -132,6 +132,26 @@ describe('fileViewRender — renderFileViewBlock', () => {
     expect(text).toContain('[pinned]');
   });
 
+  // P2.1: distinguish an intentional full-body read from coverage auto-promote.
+  it('renders [fullBody: promoted] marker for coverage-promoted views', () => {
+    const v0 = createFileView(sk({ totalLines: 10 }));
+    const promoted = applyFillToView(v0, {
+      start: 1,
+      end: 10,
+      content: Array.from({ length: 10 }, (_, i) => row(i + 1, `line${i + 1}`)).join('\n'),
+      chunkHash: 'hFULL',
+      tokens: 95, // > 0.9 * (10 * 10) = 90 → threshold crossed
+    });
+    const text = renderFileViewBlock({ ...promoted, pinned: true }, { currentRound: 1 });
+    expect(text).toContain('[fullBody: promoted]');
+  });
+
+  it('does NOT render promote marker on an explicit full-body read', () => {
+    const view = applyFullBodyToView(createFileView(sk()), 'whole', 'hFULL');
+    const text = renderFileViewBlock({ ...view, pinned: true }, { currentRound: 1 });
+    expect(text).not.toContain('[fullBody: promoted]');
+  });
+
   it('emits fullBody verbatim when set, ignoring regions/skeleton', () => {
     const view0 = createFileView(sk());
     const view = applyFullBodyToView(view0, 'the\nwhole\nfile', 'hFULL');

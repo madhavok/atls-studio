@@ -12,6 +12,7 @@ import type {
 } from './types';
 import { canSteerExecution } from '../universalFreshness';
 import { normalizeStepParams } from './paramNorm';
+import { workspacePathKeyDefault } from '../../utils/workspacePathKey';
 
 // ---------------------------------------------------------------------------
 // Registry
@@ -31,8 +32,14 @@ export function getIntentResolver(op: IntentOp): IntentResolver | undefined {
 // Context assembly — backward-looking only
 // ---------------------------------------------------------------------------
 
+/**
+ * Shared with {@link snapshotTracker}'s path key so intent-level awareness
+ * (pinnedSources, edit-region coverage) aligns with the tracker keys used
+ * by the executor. See `src/utils/workspacePathKey.ts` for prefix-derivation
+ * rules.
+ */
 function normalizePathKey(p: string): string {
-  return p.replace(/\\/g, '/').toLowerCase();
+  return workspacePathKeyDefault(p);
 }
 
 /** `analyze.*` handlers pass these literal strings as chunk `source` (not file paths). */

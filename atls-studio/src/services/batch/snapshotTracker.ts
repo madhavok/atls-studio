@@ -12,6 +12,7 @@
  */
 
 import { validateSourceIdentity } from '../universalFreshness';
+import { workspacePathKeyDefault } from '../../utils/workspacePathKey';
 
 export type ReadKind = 'canonical' | 'shaped' | 'cached' | 'lines';
 
@@ -49,15 +50,16 @@ export interface RecordOpts {
 
 /**
  * Map path strings to a single tracker key. The model often prefixes repo-relative
- * paths with `atls-studio/` while read.lines results use workspace-relative paths
- * without it (e.g. `docs/foo` vs `atls-studio/docs/foo`). Merge those aliases so
+ * paths with a monorepo workspace name (e.g. `atls-studio/`) while read.lines
+ * results use workspace-relative paths (`src/foo.ts`). Merge those aliases so
  * read coverage and content_hash injection see the same file.
+ *
+ * Prefix list is derived from the live project profile's `workspaces` (see
+ * {@link workspacePathKeyDefault}). Falls back to the legacy `atls-studio/`
+ * default when no profile is loaded so cold-start behavior is unchanged.
  */
 function normalizePathKey(p: string): string {
-  let key = p.replace(/\\/g, '/').trim().toLowerCase();
-  const mono = 'atls-studio/';
-  if (key.startsWith(mono)) key = key.slice(mono.length);
-  return key;
+  return workspacePathKeyDefault(p);
 }
 
 /**

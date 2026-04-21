@@ -1803,7 +1803,11 @@ async function streamChatViaTauri(
   if (_endOfTurnHistory && messages.length > _endOfTurnUiMessageCount) {
     const newMessages = messages.slice(_endOfTurnUiMessageCount);
     const newNormalized = normalizeConversationHistory(newMessages);
-    conversationHistory = [..._endOfTurnHistory, ...newNormalized];
+    // Deep-clone the snapshot so in-place mutations this turn (stub, compact,
+    // deflate, rolling-window splice) cannot corrupt `_endOfTurnHistory`'s
+    // shared object references. Otherwise a mid-turn failure would leave the
+    // cached snapshot with partial mutations on the next turn.
+    conversationHistory = [...structuredClone(_endOfTurnHistory), ...newNormalized];
     historyReusedFromCache = true;
   } else {
     conversationHistory = normalizeConversationHistory(messages);
@@ -1815,7 +1819,11 @@ async function streamChatViaTauri(
       }
     }
   }
-  const priorTurnBoundary = 0;
+  // Pin the frozen prefix: when reusing the end-of-turn snapshot, treat
+  // everything up to the snapshot boundary as immutable. All compression
+  // passes (middleware hygiene, emergency, end-of-turn) scope to this index.
+  // Fresh history path uses 0 — no prior turn to protect.
+  const priorTurnBoundary = historyReusedFromCache ? _endOfTurnBoundary : 0;
 
   await setPromptBudgetEstimates(config, conversationHistory);
 
@@ -3308,6 +3316,10 @@ async function streamChatViaTauri(
         compressToolLoopHistory(conversationHistory, undefined, priorTurnBoundary);
         _endOfTurnHistory = structuredClone(conversationHistory);
         _endOfTurnUiMessageCount = useAppStore.getState().messages.length;
+        // Advance the frozen prefix to cover everything finalized this turn.
+        // Next turn's compressToolLoopHistory uses this as `startIdx` so it
+        // only ever mutates messages appended AFTER this point.
+        _endOfTurnBoundary = conversationHistory.length;
       } catch (e) {
         console.warn('[aiService] End-of-turn history cache failed:', e);
         invalidateHistoryCache();
@@ -4136,13 +4148,21 @@ let _prevBp3Snapshot: Bp3Snapshot | null = null;
 // End-of-turn history cache — preserves compressed prefix across user turns
 // so Anthropic's prefix cache sees byte-identical content (cache READ instead
 // of cache WRITE on the first round of a new turn).
+//
+// Stateful-machine invariant: when `_endOfTurnHistory` is reused on a new
+// turn, `_endOfTurnBoundary` pins the frozen prefix length. Every compression
+// pass in the next turn (emergency, hygiene, end-of-turn) scopes its mutation
+// range to `history[boundary..]`, so prior-turn content is never re-evicted,
+// re-stubbed, or re-deflated.
 // ---------------------------------------------------------------------------
 let _endOfTurnHistory: Array<{ role: string; content: unknown }> | null = null;
 let _endOfTurnUiMessageCount = 0;
+let _endOfTurnBoundary = 0;
 
 function invalidateHistoryCache(): void {
   _endOfTurnHistory = null;
   _endOfTurnUiMessageCount = 0;
+  _endOfTurnBoundary = 0;
 }
 
 // Cached project tree for static prompt injection — stable across rounds for prompt caching

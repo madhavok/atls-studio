@@ -3225,3 +3225,253 @@ describe('inter-step rebase — hash-ref line ranges on f/file/file_path', () =>
     expect(edits?.[1]?.f).toBe('h:abc123:18-20');
   });
 });
+
+// ---------------------------------------------------------------------------
+// P0 regression: alias capture + read-op rebase widened beyond change.edit.
+// Covers change.refactor → change.edit, change.edit → read.lines, and the
+// rebaseAllChangeOps feature-flag rollback path.
+// ---------------------------------------------------------------------------
+
+describe('inter-step hash substitution — widened change.* alias capture (P0.1)', () => {
+  beforeEach(() => {
+    handlers.clear();
+  });
+
+  afterEach(() => {
+    useAppStore.setState((s) => ({ settings: { ...s.settings, rebaseAllChangeOps: true } }));
+  });
+
+  it('rewrites a stale h:OLD cite on a later change.edit after change.refactor rotates the file hash', async () => {
+    const editCalls: Array<Record<string, unknown>> = [];
+    handlers.set('read.lines', async () =>
+      raw('read', { file: 'src/rn.ts', content_hash: 'oldhash', actual_range: [[1, 5]], lines: 5 }),
+    );
+    handlers.set('change.refactor', async () =>
+      raw('renamed', {
+        status: 'success',
+        results: [{ file: 'src/rn.ts', content_hash: 'newhash', h: 'newhash', old_h: 'oldhash' }],
+        _action: 'execute',
+      }),
+    );
+    handlers.set('change.edit', async (params) => {
+      editCalls.push(JSON.parse(JSON.stringify(params)));
+      return raw('applied', { status: 'ok' });
+    });
+
+    await executeUnifiedBatch({
+      version: '1.0',
+      steps: [
+        { id: 'r1', use: 'read.lines', with: { f: 'src/rn.ts', sl: 1, el: 5 } },
+        { id: 'cf', use: 'change.refactor' },
+        // Edit cites the PRE-refactor hash; after the refactor rotates
+        // src/rn.ts oldhash → newhash, the executor should rewrite `f`.
+        { id: 'ce', use: 'change.edit', with: { f: 'h:oldhash:source', line_edits: [{ content: 'x' }] } },
+      ],
+    }, makeCtx());
+
+    const cePayload = editCalls[0];
+    expect(cePayload).toBeDefined();
+    const rewritten = (cePayload.file_path ?? cePayload.file ?? cePayload.f) as string;
+    expect(rewritten).toBe('h:newhash:source');
+  });
+
+  it('rewrites a stale h:OLD cite on a later read.lines ref after change.edit rotates the file hash', async () => {
+    const readCalls: Array<Record<string, unknown>> = [];
+    handlers.set('read.lines', async (params) => {
+      readCalls.push(JSON.parse(JSON.stringify(params)));
+      return raw('read', { file: 'src/a.ts', content_hash: 'afterhash', actual_range: [[1, 3]], lines: 3 });
+    });
+    handlers.set('change.edit', async () =>
+      raw('applied', {
+        status: 'ok',
+        drafts: [{ file: 'src/a.ts', content_hash: 'afterhash', h: 'afterhash', old_h: 'preedit' }],
+        edits_resolved: [{ resolved_line: 2, action: 'replace', lines_affected: 1 }],
+      }),
+    );
+
+    // Seed awareness so the tracker sees 'preedit' for src/a.ts before the edit.
+    await executeUnifiedBatch({
+      version: '1.0',
+      steps: [
+        { id: 'r0', use: 'read.lines', with: { f: 'src/a.ts', sl: 1, el: 3 } },
+      ],
+    }, makeCtx());
+    readCalls.length = 0;
+
+    const ctx = makeCtx();
+    // Pre-seed the awareness cache so the second batch's tracker picks up
+    // 'preedit' for src/a.ts.
+    ctx.store().setAwareness({
+      level: AwarenessLevel.CANONICAL,
+      filePath: 'src/a.ts',
+      snapshotHash: 'preedit',
+      readRegions: [{ start: 1, end: 3 }],
+    });
+    // Stub read.lines to return a content_hash so the tracker rotates.
+    handlers.set('read.lines', async (params) => {
+      readCalls.push(JSON.parse(JSON.stringify(params)));
+      return raw('read', { file: 'src/a.ts', content_hash: 'afterhash', actual_range: [[1, 3]], lines: 3 });
+    });
+
+    await executeUnifiedBatch({
+      version: '1.0',
+      steps: [
+        { id: 'ce', use: 'change.edit', with: { file: 'src/a.ts', line_edits: [{ line: 2, action: 'replace', content: 'x' }] } },
+        { id: 'r1', use: 'read.lines', with: { ref: 'h:preedit:1-3' } },
+      ],
+    }, ctx);
+
+    // The read.lines call after the edit should have had its stale ref
+    // rewritten from h:preedit → h:afterhash by substituteStaleFileRefs.
+    const r1 = readCalls[0];
+    expect(r1?.ref).toBe('h:afterhash:1-3');
+  });
+
+  it('legacy behavior when rebaseAllChangeOps=false: refactor → edit does NOT rewrite stale hash', async () => {
+    useAppStore.setState((s) => ({ settings: { ...s.settings, rebaseAllChangeOps: false } }));
+    const editCalls: Array<Record<string, unknown>> = [];
+    handlers.set('read.lines', async () =>
+      raw('read', { file: 'src/rn.ts', content_hash: 'oldhash', actual_range: [[1, 5]], lines: 5 }),
+    );
+    handlers.set('change.refactor', async () =>
+      raw('renamed', {
+        status: 'success',
+        results: [{ file: 'src/rn.ts', content_hash: 'newhash', h: 'newhash', old_h: 'oldhash' }],
+        _action: 'execute',
+      }),
+    );
+    handlers.set('change.edit', async (params) => {
+      editCalls.push(JSON.parse(JSON.stringify(params)));
+      return raw('applied', { status: 'ok' });
+    });
+
+    await executeUnifiedBatch({
+      version: '1.0',
+      steps: [
+        { id: 'r1', use: 'read.lines', with: { f: 'src/rn.ts', sl: 1, el: 5 } },
+        { id: 'cf', use: 'change.refactor' },
+        { id: 'ce', use: 'change.edit', with: { f: 'h:oldhash:source', line_edits: [{ content: 'x' }] } },
+      ],
+    }, makeCtx());
+
+    const cePayload = editCalls[0];
+    const reffed = (cePayload.file_path ?? cePayload.file ?? cePayload.f) as string;
+    expect(reffed).toBe('h:oldhash:source');
+  });
+});
+
+describe('read-op rebase — change.edit rotates future read.lines coordinates (P0.2)', () => {
+  beforeEach(() => {
+    handlers.clear();
+  });
+
+  afterEach(() => {
+    useAppStore.setState((s) => ({ settings: { ...s.settings, rebaseAllChangeOps: true } }));
+  });
+
+  it('shifts future read.lines `lines:` range by positional deltas from prior edit', async () => {
+    const readCalls: Array<Record<string, unknown>> = [];
+    handlers.set('read.lines', async (params) => {
+      readCalls.push(JSON.parse(JSON.stringify(params)));
+      return raw('read', { file: 'src/x.ts', content_hash: 'h1', actual_range: [[1, 30]], lines: 30 });
+    });
+    handlers.set('change.edit', async () =>
+      raw('applied', {
+        status: 'ok',
+        drafts: [{ file: 'src/x.ts', content_hash: 'h2', h: 'h2', old_h: 'h1' }],
+        edits_resolved: [{ resolved_line: 5, action: 'insert_before', lines_affected: 3 }],
+      }),
+    );
+
+    await executeUnifiedBatch({
+      version: '1.0',
+      steps: [
+        { id: 'r0', use: 'read.lines', with: { f: 'src/x.ts', sl: 1, el: 30 } },
+        {
+          id: 'ce', use: 'change.edit', with: {
+            file: 'src/x.ts',
+            content_hash: 'h1',
+            line_edits: [{ line: 5, action: 'insert_before', content: 'a\nb\nc' }],
+          },
+        },
+        // Future read.lines: stale coordinates; should be shifted by +3 for
+        // the insert_before at line 5.
+        { id: 'r1', use: 'read.lines', with: { f: 'src/x.ts', lines: '20-25' } },
+      ],
+    }, makeCtx());
+
+    // readCalls[0] was the seed r0; readCalls[1] is r1 — that's the one to check.
+    const r1 = readCalls[1];
+    expect(r1?.lines).toBe('23-28');
+  });
+
+  it('shifts future read.lines start_line/end_line numeric pair', async () => {
+    const readCalls: Array<Record<string, unknown>> = [];
+    handlers.set('read.lines', async (params) => {
+      readCalls.push(JSON.parse(JSON.stringify(params)));
+      return raw('read', { file: 'src/y.ts', content_hash: 'h1', actual_range: [[1, 30]], lines: 30 });
+    });
+    handlers.set('change.edit', async () =>
+      raw('applied', {
+        status: 'ok',
+        drafts: [{ file: 'src/y.ts', content_hash: 'h2', h: 'h2', old_h: 'h1' }],
+        edits_resolved: [{ resolved_line: 5, action: 'insert_before', lines_affected: 3 }],
+      }),
+    );
+
+    await executeUnifiedBatch({
+      version: '1.0',
+      steps: [
+        { id: 'r0', use: 'read.lines', with: { f: 'src/y.ts', sl: 1, el: 30 } },
+        {
+          id: 'ce', use: 'change.edit', with: {
+            file: 'src/y.ts',
+            content_hash: 'h1',
+            line_edits: [{ line: 5, action: 'insert_before', content: 'a\nb\nc' }],
+          },
+        },
+        { id: 'r1', use: 'read.lines', with: { f: 'src/y.ts', sl: 20, el: 25 } },
+      ],
+    }, makeCtx());
+
+    const r1 = readCalls[1];
+    // `sl` rebased: 20 + 3 = 23; `el`: 25 + 3 = 28. Alias still `sl`/`el`
+    // because executor rebases BEFORE paramNorm aliases them to start_line/end_line.
+    expect(r1?.sl ?? r1?.start_line).toBe(23);
+    expect(r1?.el ?? r1?.end_line).toBe(28);
+  });
+
+  it('flag off: future read.lines lines: range is NOT shifted', async () => {
+    useAppStore.setState((s) => ({ settings: { ...s.settings, rebaseAllChangeOps: false } }));
+    const readCalls: Array<Record<string, unknown>> = [];
+    handlers.set('read.lines', async (params) => {
+      readCalls.push(JSON.parse(JSON.stringify(params)));
+      return raw('read', { file: 'src/x.ts', content_hash: 'h1', actual_range: [[1, 30]], lines: 30 });
+    });
+    handlers.set('change.edit', async () =>
+      raw('applied', {
+        status: 'ok',
+        drafts: [{ file: 'src/x.ts', content_hash: 'h2', h: 'h2', old_h: 'h1' }],
+        edits_resolved: [{ resolved_line: 5, action: 'insert_before', lines_affected: 3 }],
+      }),
+    );
+
+    await executeUnifiedBatch({
+      version: '1.0',
+      steps: [
+        { id: 'r0', use: 'read.lines', with: { f: 'src/x.ts', sl: 1, el: 30 } },
+        {
+          id: 'ce', use: 'change.edit', with: {
+            file: 'src/x.ts',
+            content_hash: 'h1',
+            line_edits: [{ line: 5, action: 'insert_before', content: 'a\nb\nc' }],
+          },
+        },
+        { id: 'r1', use: 'read.lines', with: { f: 'src/x.ts', lines: '20-25' } },
+      ],
+    }, makeCtx());
+
+    const r1 = readCalls[1];
+    expect(r1?.lines).toBe('20-25');
+  });
+});

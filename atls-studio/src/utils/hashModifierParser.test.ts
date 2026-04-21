@@ -109,6 +109,38 @@ describe('parseLineRanges', () => {
   it('returns null for empty string', () => {
     expect(parseLineRanges('')).toBeNull();
   });
+
+  // P1.1: strict validation — line numbers are 1-based and ranges must be ordered.
+  describe('strict validation', () => {
+    it('rejects inverted ranges', () => {
+      expect(parseLineRanges('100-50')).toBeNull();
+      expect(parseLineRanges('10-5')).toBeNull();
+    });
+
+    it('rejects zero / negative start', () => {
+      expect(parseLineRanges('0')).toBeNull();
+      expect(parseLineRanges('0-5')).toBeNull();
+      expect(parseLineRanges('-3-7')).toBeNull();
+      expect(parseLineRanges('-5')).toBeNull();
+    });
+
+    it('rejects negative end', () => {
+      expect(parseLineRanges('5--3')).toBeNull();
+    });
+
+    it('still accepts open-ended range (start-)', () => {
+      expect(parseLineRanges('50-')).toEqual([[50, null]]);
+    });
+
+    it('still accepts equal start/end', () => {
+      expect(parseLineRanges('42-42')).toEqual([[42, 42]]);
+    });
+
+    it('rejects a whole multi-part list when any part is invalid', () => {
+      expect(parseLineRanges('10-20,100-50')).toBeNull();
+      expect(parseLineRanges('10-20,0-5')).toBeNull();
+    });
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -289,5 +321,55 @@ describe('parseModifierChainWithError', () => {
       expect(result.suggestion).toBeUndefined();
       expect(result.reason).toBe('unrecognized modifier chain');
     }
+  });
+
+  // P1.1: strict range validation surfaces the specific reason so the
+  // model can self-correct instead of getting a generic "unrecognized" error.
+  it('flags inverted line ranges with a helpful suggestion', () => {
+    const result = parseModifierChainWithError('100-50');
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.reason).toMatch(/inverted_range/);
+      expect(result.suggestion).toMatch(/start <= end/);
+    }
+  });
+
+  it('flags zero/negative line numbers with a helpful suggestion', () => {
+    const zero = parseModifierChainWithError('0-5');
+    expect(zero.ok).toBe(false);
+    if (!zero.ok) {
+      expect(zero.reason).toMatch(/non_positive_start/);
+      expect(zero.suggestion).toMatch(/1-based/);
+    }
+
+    const neg = parseModifierChainWithError('-3-7');
+    expect(neg.ok).toBe(false);
+    if (!neg.ok) {
+      expect(neg.reason).toMatch(/non_positive_start/);
+    }
+  });
+
+  it('flags invalid ranges inside a shape suffix chain', () => {
+    const result = parseModifierChainWithError('100-50:dedent');
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.reason).toMatch(/inverted_range/);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// findShapeSeparator — compat guard: rejects chains with invalid line ranges.
+// ---------------------------------------------------------------------------
+
+describe('findShapeSeparator — strict range compat', () => {
+  it('does not find a separator when the line-range part is invalid', () => {
+    expect(findShapeSeparator('0-5:sig')).toBeNull();
+    expect(findShapeSeparator('100-50:sig')).toBeNull();
+  });
+
+  it('still finds the separator for valid line-range chains', () => {
+    expect(findShapeSeparator('15-30:dedent')).toBe(5);
+    expect(findShapeSeparator('10-20,30-40:sig')).toBe(11);
   });
 });

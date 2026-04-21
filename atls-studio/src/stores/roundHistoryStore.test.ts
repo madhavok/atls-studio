@@ -98,16 +98,31 @@ describe('roundHistoryStore', () => {
     expect(r.mainRoundsCostSum).toBe(30);
     expect(r.avgMainRoundCost).toBe(15);
     expect(r.avgMainRoundCost * r.mainRoundCount).toBe(r.mainRoundsCostSum);
+    // P2.4: truncated reflects whether the sliding window is saturated.
+    expect(r.truncated).toBe(false);
+    expect(r.includedRounds).toBe(2);
   });
 
   it('computeMainChatRoundCostStats: empty snapshots', () => {
-    expect(computeMainChatRoundCostStats([])).toEqual({
+    const r = computeMainChatRoundCostStats([]);
+    expect(r).toMatchObject({
       mainRoundCount: 0,
       mainRoundsCostSum: 0,
       avgMainRoundCost: 0,
       avgInputCost: 0,
       avgOutputCost: 0,
+      includedRounds: 0,
+      truncated: false,
     });
+  });
+
+  // P2.4: surface sliding-window truncation so consumers don't silently
+  // treat a 200-round average as a session total once older rounds roll off.
+  it('computeMainChatRoundCostStats: truncated=true once the input reaches MAX_SNAPSHOTS', () => {
+    const full = Array.from({ length: 200 }, (_, i) => ({ ...makeSnapshot(i + 1), costCents: 5 }));
+    const r = computeMainChatRoundCostStats(full);
+    expect(r.truncated).toBe(true);
+    expect(r.includedRounds).toBe(200);
   });
 
   it('stores optional latency telemetry on snapshots', () => {

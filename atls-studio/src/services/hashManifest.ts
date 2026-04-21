@@ -183,16 +183,26 @@ function formatTokens(tokens: number): string {
   return `${tokens}`;
 }
 
+// P2.2: 6-char pinned-shape column. At 3 chars, `imports` and `exports`
+// collided on the same `imp`/`exp` → `im ` / `ex ` stub (first 3 chars
+// after trim), making the manifest useless to distinguish shaped pins
+// for concept/pattern/imports/exports. 6 chars is wide enough for every
+// current shape keyword (`imports`, `exports`, `nocomment`, …) without
+// blowing out the monospace manifest width. Total column: 8 chars
+// (`P:xxxxxx`) so pinned and unpinned rows align.
+const PIN_SHAPE_WIDTH = 6;
+const PIN_COLUMN_WIDTH = 2 + PIN_SHAPE_WIDTH;
+
 function pinFlag(chunk: { pinned?: boolean; pinnedShape?: string }): string {
-  if (!chunk.pinned) return '     ';
-  if (chunk.pinnedShape) return `P:${chunk.pinnedShape.slice(0, 3).padEnd(3)}`;
-  return 'P    ';
+  if (!chunk.pinned) return ' '.repeat(PIN_COLUMN_WIDTH);
+  if (chunk.pinnedShape) return `P:${chunk.pinnedShape.slice(0, PIN_SHAPE_WIDTH).padEnd(PIN_SHAPE_WIDTH)}`;
+  return 'P'.padEnd(PIN_COLUMN_WIDTH);
 }
 
 function pinFlagRef(ref: ChunkRef): string {
-  if (!ref.pinned) return '     ';
-  if (ref.pinnedShape) return `P:${ref.pinnedShape.slice(0, 3).padEnd(3)}`;
-  return 'P    ';
+  if (!ref.pinned) return ' '.repeat(PIN_COLUMN_WIDTH);
+  if (ref.pinnedShape) return `P:${ref.pinnedShape.slice(0, PIN_SHAPE_WIDTH).padEnd(PIN_SHAPE_WIDTH)}`;
+  return 'P'.padEnd(PIN_COLUMN_WIDTH);
 }
 
 function freshnessLabel(chunk: ChunkLike): string {
