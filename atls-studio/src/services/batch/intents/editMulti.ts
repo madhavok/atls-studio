@@ -9,7 +9,7 @@
 
 import type { IntentResolver, IntentResult, IntentContext, Step } from '../types';
 import { AwarenessLevel } from '../snapshotTracker';
-import { makeStepId, isFileStaged, getFileAwareness, computeNextTargets } from '../intents';
+import { makeStepId, isFileStaged, getFileAwareness, computeNextTargets, resolveAwarenessPathBySuffix } from '../intents';
 import { normalizeStepParams } from '../paramNorm';
 
 interface FileEdit {
@@ -49,11 +49,17 @@ export const resolveEditMulti: IntentResolver = (
   const editStepIds: string[] = [];
 
   for (let i = 0; i < edits.length; i++) {
-    const { file_path: filePath, line_edits: lineEdits } = edits[i];
+    const { file_path: rawFilePath, line_edits: lineEdits } = edits[i];
 
-    const awareness = getFileAwareness(context.awareness, filePath);
+    // Resolve workspace-abbreviated paths (`utils/foo.ts`) to the canonical
+    // key stored in awareness (`src/utils/foo.ts`) before making read
+    // decisions. Without this, the macro would re-read an already-loaded
+    // file (or, worse, emit edits whose gate lookup can't find the read).
+    const resolvedPath = resolveAwarenessPathBySuffix(context.awareness, rawFilePath) ?? rawFilePath;
+
+    const awareness = getFileAwareness(context.awareness, resolvedPath);
     const hasAwareness = awareness != null && awareness.level >= AwarenessLevel.SHAPED;
-    const staged = isFileStaged(context.staged, filePath);
+    const staged = isFileStaged(context.staged, resolvedPath);
     const editRange = extractEditRange(lineEdits);
 
     const readId = makeStepId(intentId, `read_${i}`);
@@ -64,14 +70,19 @@ export const resolveEditMulti: IntentResolver = (
     const regionsCoverEdit = hasAwareness && editRange != null && awareness != null
       && awareness.readRegions.some(r => r.start <= editRange.start && r.end >= editRange.end);
 
-    const needsRead = force || (!hasAwareness && !staged && !regionsCoverEdit);
+    // Read when the target region isn't already covered by awareness or a
+    // staged snippet. Previously this also required `!hasAwareness`, which
+    // meant a file that had only been sig-shaped (awareness present, no
+    // line-level regions) would skip the read and then trip the executor's
+    // read-coverage gate at edit time.
+    const needsRead = force || (!staged && !regionsCoverEdit);
 
     if (needsRead && editRange) {
       steps.push({
         id: readId,
         use: 'read.lines',
         with: {
-          file_path: filePath,
+          file_path: resolvedPath,
           start_line: Math.max(1, editRange.start - 5),
           end_line: editRange.end + 5,
         },
@@ -80,14 +91,14 @@ export const resolveEditMulti: IntentResolver = (
       steps.push({
         id: readId,
         use: 'read.shaped',
-        with: { file_paths: [filePath], shape: 'sig' },
+        with: { file_paths: [resolvedPath], shape: 'sig' },
       });
     }
 
     steps.push({
       id: editId,
       use: 'change.edit',
-      with: { file_path: filePath, line_edits: lineEdits },
+      with: { file_path: resolvedPath, line_edits: lineEdits },
     });
     editStepIds.push(editId);
 
@@ -96,7 +107,7 @@ export const resolveEditMulti: IntentResolver = (
         id: retryReadId,
         use: 'read.lines',
         with: {
-          file_path: filePath,
+          file_path: resolvedPath,
           start_line: Math.max(1, editRange.start - 5),
           end_line: editRange.end + 5,
         },
@@ -106,7 +117,7 @@ export const resolveEditMulti: IntentResolver = (
       steps.push({
         id: retryReadId,
         use: 'read.shaped',
-        with: { file_paths: [filePath], shape: 'sig' },
+        with: { file_paths: [resolvedPath], shape: 'sig' },
         if: { not: { step_ok: editId } },
       });
     }
@@ -114,7 +125,7 @@ export const resolveEditMulti: IntentResolver = (
     steps.push({
       id: retryEditId,
       use: 'change.edit',
-      with: { file_path: filePath, line_edits: lineEdits },
+      with: { file_path: resolvedPath, line_edits: lineEdits },
       if: { not: { step_ok: editId } },
     });
   }

@@ -483,8 +483,20 @@ pub(crate) fn should_emit_line_edit_stale_warning(
 /// writes target the correct location.
 pub(crate) fn load_draft_base_content(project_root: &std::path::Path, file: &str) -> Result<(String, String), String> {
     let trimmed = file.trim();
-    if trimmed.is_empty() || trimmed.starts_with("h:") {
-        return Err(format!("Edit target file not found: {}", file));
+    if trimmed.is_empty() {
+        return Err("Edit target is empty".to_string());
+    }
+    // `h:` prefixed refs should have been resolved to a filesystem path
+    // by the TS-side FileView pre-pass (see change.ts). If we receive one
+    // here it means the hash couldn't be resolved — almost always because
+    // it's stale after the model's own prior edit. Say that explicitly;
+    // the old "file not found" message misdirected the model into
+    // hunting for a phantom path problem.
+    if trimmed.starts_with("h:") {
+        return Err(format!(
+            "stale ref {} — use the ref returned by the last edit (each edit yields a new h:…) or re-read the file",
+            file,
+        ));
     }
     let resolved_path = resolve_project_path(project_root, trimmed);
     if let Ok(content) = std::fs::read_to_string(&resolved_path) {

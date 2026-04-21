@@ -74,7 +74,7 @@ export const handleRule: OpHandler = async (params, ctx) => {
     return ok(`rule: ${rules.length} active\n${list}`);
   }
 
-  if (!key) return err('rule: ERROR missing key param');
+  if (!key) return err('rule: missing key param');
 
   if (action === 'delete') {
     const removed = ctx.store().removeRule(key);
@@ -82,7 +82,7 @@ export const handleRule: OpHandler = async (params, ctx) => {
   }
 
   const content = params.content as string;
-  if (!content) return err('rule: ERROR missing content param');
+  if (!content) return err('rule: missing content param');
   const { tokens, warning } = ctx.store().setRule(key, content);
   let line = `rule: set "${key}" (${tokens}tk)`;
   if (warning) line += ` | WARNING: ${warning}`;
@@ -158,59 +158,59 @@ export const handleLink: OpHandler = async (params, ctx) => {
 export const handleRetype: OpHandler = async (params, ctx) => {
   const hash = params.hash as string;
   const newType = params.type as string;
-  if (!hash) return err('retype: ERROR missing hash param');
-  if (!newType) return err('retype: ERROR missing type param');
+  if (!hash) return err('retype: missing hash param');
+  if (!newType) return err('retype: missing type param');
 
   const store = ctx.store();
   if (isChunkSuspect(store)(hash)) {
-    return err('retype: ERROR ref is suspect (file changed externally); re-read before editing');
+    return err('retype: ref changed — re-read and retry');
   }
   const result = store.retypeChunk(hash, newType);
   if (result.ok) return ok(`retype: h:${hash.startsWith('h:') ? hash.slice(2) : hash} → ${newType}`);
-  return err(`retype: ERROR ${result.error}`);
+  return err(`retype: ${result.error}`);
 };
 
 export const handleSplit: OpHandler = async (params, ctx) => {
   const hash = params.hash as string;
   const at = params.at as number;
-  if (!hash) return err('split: ERROR missing hash param');
-  if (at == null || typeof at !== 'number') return err('split: ERROR missing/invalid at param (line number)');
+  if (!hash) return err('split: missing hash param');
+  if (at == null || typeof at !== 'number') return err('split: missing/invalid at param (line number)');
 
   const store = ctx.store();
   if (isChunkSuspect(store)(hash)) {
-    return err('split: ERROR ref is suspect (file changed externally); re-read before editing');
+    return err('split: ref changed — re-read and retry');
   }
   const result = store.splitEngram(hash, at);
   if (result.ok && result.hashes) {
     return ok(`split: h:${result.hashes[0]} + h:${result.hashes[1]} (original archived)`, result.hashes.map(h => `h:${h}`));
   }
-  return err(`split: ERROR ${result.error}`);
+  return err(`split: ${result.error}`);
 };
 
 export const handleMerge: OpHandler = async (params, ctx) => {
   const hashes = params.hashes as string[];
   const summary = params.summary as string | undefined;
-  if (!hashes?.length || hashes.length < 2) return err('merge: ERROR need at least 2 hashes');
+  if (!hashes?.length || hashes.length < 2) return err('merge: need at least 2 hashes');
 
   const store = ctx.store();
   const suspect = isChunkSuspect(store);
   if (hashes.some(h => suspect(h))) {
-    return err('merge: ERROR one or more refs are suspect (file changed externally); re-read before editing');
+    return err('merge: ref changed — re-read and retry');
   }
   const result = store.mergeEngrams(hashes, summary);
   if (result.ok) return ok(`merge: h:${result.newHash} (${hashes.length} engrams merged, originals archived)`, result.newHash ? [`h:${result.newHash}`] : []);
-  return err(`merge: ERROR ${result.error}`);
+  return err(`merge: ${result.error}`);
 };
 
 export const handleDesignWrite: OpHandler = async (params, _ctx) => {
   const { useAppStore } = await import('../../../stores/appStore');
   const appStore = useAppStore.getState();
   if (appStore.chatMode !== 'designer') {
-    return err('annotate.design: ERROR only available in Designer chat mode (switch mode to Designer)');
+    return err('annotate.design: only available in Designer chat mode');
   }
 
   const content = params.content as string;
-  if (!content || typeof content !== 'string') return err('annotate.design: ERROR missing content');
+  if (!content || typeof content !== 'string') return err('annotate.design: missing content');
 
   const append = params.append === true;
   const sessionId = appStore.currentSessionId;

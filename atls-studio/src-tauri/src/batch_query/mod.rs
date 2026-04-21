@@ -9946,7 +9946,7 @@ pub async fn atls_batch_query(
                 let new_name = params
                     .get("new_name")
                     .and_then(|v| v.as_str())
-                    .ok_or("new_name required for rename_symbol")?;
+                    .ok_or("rename: missing new_name — pass the desired identifier (e.g. new_name:'formatOutput')")?;
                 
                 let dry_run = params
                     .get("dry_run")
@@ -11305,7 +11305,7 @@ pub async fn atls_batch_query(
                                         "mode": "draft",
                                         "error": err,
                                         "error_class": "target_read_failed",
-                                        "_next": "Verify the file path still exists, then re-read the file before retrying the edit",
+                                        "_next": "Follow the action in the error message",
                                     }));
                                 }
                             }
@@ -11322,7 +11322,7 @@ pub async fn atls_batch_query(
                                             "mode": "draft",
                                             "error": err,
                                             "error_class": "target_read_failed",
-                                            "_next": "Verify the file path still exists, then re-read the file before retrying the edit",
+                                            "_next": "Follow the action in the error message",
                                         }));
                                     }
                                 },
@@ -11608,7 +11608,7 @@ pub async fn atls_batch_query(
                                     "mode": "draft",
                                     "error": err,
                                     "error_class": "target_read_failed",
-                                    "_next": "Verify the file path still exists, then re-read the file before retrying line_edits",
+                                    "_next": "Follow the action in the error message",
                                 }));
                             }
                         },
@@ -13453,7 +13453,7 @@ pub async fn atls_batch_query(
                     } else if !skipped.is_empty() {
                         format!("{} created, {} skipped (already exist). Use overwrite:true to replace", created.len(), skipped.len())
                     } else if lint_summary.as_ref().map(|s| s.by_severity.get("error").unwrap_or(&0) > &0).unwrap_or(false) {
-                        "Files created but lint errors found. Review lints.top_issues".to_string()
+                        "created with lint errors — the file is on disk; fix lint issues if the errors matter for your task".to_string()
                     } else {
                         "Files created successfully".to_string()
                     }
@@ -14431,7 +14431,7 @@ pub async fn atls_batch_query(
                                     errors.push(serde_json::json!({
                                         "file": file_path,
                                         "hash": hash,
-                                        "error": "Hash not found in registry or undo store"
+                                        "error": "hash not in registry — it may have been released, or was never a real content hash; pass the h: ref returned by the edit you want to undo"
                                     }));
                                 }
                             }
@@ -14480,11 +14480,11 @@ pub async fn atls_batch_query(
                         "files_deleted": deleted.len(),
                         "files_failed": errors.len()
                     },
-                    "_rollback_applied": format!("Applied {} restore and {} delete entries.", restored.len(), deleted.len()),
+                    "_rollback_applied": format!("{} restored, {} deleted", restored.len(), deleted.len()),
                     "_next": if errors.is_empty() {
-                        "All files restored and created files deleted. Run q: v1 verify.typecheck to validate."
+                        "rollback done — run verify.typecheck to confirm"
                     } else {
-                        "Some files could not be restored. Check errors array."
+                        "partial rollback — inspect errors[] and retry unresolved entries"
                     }
                 }))
             }

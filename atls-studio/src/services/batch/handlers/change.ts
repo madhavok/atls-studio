@@ -1101,6 +1101,13 @@ function formatEditErrorSummary(payload: Record<string, unknown>): string {
   if (errorClass === 'syntax_error_after_edit') {
     return `edit: ROLLED BACK [syntax_error] ${message} — file is unchanged. Count braces in replacement content and retry.`;
   }
+  // target_read_failed's message is already self-describing (stale ref vs.
+  // file not found) — the generic "_next" would just be noise. Drop the
+  // error_class prefix for that case so the model sees the action string
+  // directly rather than hunting through boilerplate.
+  if (errorClass === 'target_read_failed') {
+    return `edit: ${message}`;
+  }
   return `edit: ERROR${errorClass ? ` [${errorClass}]` : ''} ${message}${next ? ` — ${next}` : ''}`;
 }
 

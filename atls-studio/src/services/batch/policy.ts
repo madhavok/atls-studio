@@ -113,6 +113,20 @@ export function evaluateCondition(
     const output = stepOutputs.get(cond.step_has_refs);
     return (output?.refs?.length ?? 0) > 0;
   }
+  if ('step_content_array_nonempty' in cond) {
+    const { step_id, path } = (cond as { step_content_array_nonempty: { step_id: string; path: string } }).step_content_array_nonempty;
+    const output = stepOutputs.get(step_id);
+    const content = output?.content as Record<string, unknown> | undefined;
+    if (!content || typeof content !== 'object') return false;
+    // Walk dotted path (e.g. `content.file_paths`). Mirrors dataflow binder.
+    const segments = path.split('.').filter(s => s.length > 0);
+    let cur: unknown = content;
+    for (const seg of segments) {
+      if (cur == null || typeof cur !== 'object') return false;
+      cur = (cur as Record<string, unknown>)[seg];
+    }
+    return Array.isArray(cur) && cur.length > 0;
+  }
   if ('ref_exists' in cond) {
     const refHash = (cond as { ref_exists: string }).ref_exists;
     // Check all step outputs for a matching ref (prefix match)

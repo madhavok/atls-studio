@@ -269,7 +269,19 @@ function ingestStandardContextItems(
 export const handleLoad: OpHandler = async (params, ctx) => {
   const filePaths = (params.file_paths as string[] | undefined) ?? [];
   const loadType = (params.type as string) || 'smart';
-  if (!filePaths.length) return err('load: ERROR missing file_paths param');
+  if (!filePaths.length) {
+    // Disambiguate against session.recall: models sometimes reach for
+    // `session.load hash:h:X` expecting it to rehydrate a chunk from
+    // memory. Point them at the correct op rather than a generic
+    // "missing param".
+    const hasHashLike = typeof params.hash === 'string'
+      || typeof params.hashes === 'string'
+      || Array.isArray(params.hashes);
+    if (hasHashLike) {
+      return err('load: reads files from disk, not hash refs. Use session.recall to rehydrate a chunk, or pass file_paths:[…] to load a file.');
+    }
+    return err('load: missing file_paths param');
+  }
   for (const fp of filePaths) {
     const pathErr = validatePathParam(fp, 'load: file_path');
     if (pathErr) return err(pathErr);
@@ -360,7 +372,7 @@ export const handleRead: OpHandler = async (params, ctx) => {
   const wantHistory = params.history === true;
   const readShape = params.shape as string | undefined;
   const readBind = params.bind as string[] | undefined;
-  if (!rawFilePaths.length) return err('read: ERROR missing file_paths param');
+  if (!rawFilePaths.length) return err('read: missing file_paths param');
   for (const fp of rawFilePaths) {
     const pathErr = validatePathParam(fp, 'read: file_path');
     if (pathErr) return err(pathErr);
@@ -900,7 +912,7 @@ export const handleReadShaped: OpHandler = async (params, ctx) => {
   }
   const shape = params.shape as string;
   const shapedBind = params.bind as string[] | undefined;
-  if (!pathsForShaped.length) return err('read_shaped: ERROR missing file_paths param');
+  if (!pathsForShaped.length) return err('read_shaped: missing file_paths param');
   if (!shape) return err('read_shaped: ERROR missing shape param (e.g. "sig", "42-80:dedent", "fn(name)")');
   for (const fp of pathsForShaped) {
     const pathErr = validatePathParam(fp, 'read_shaped: file_path');

@@ -168,7 +168,16 @@ export type ConditionExpr =
   | { ref_exists: string }
   | { all_steps_ok: string[] }
   | { or: ConditionExpr[] }
-  | { not: ConditionExpr };
+  | { not: ConditionExpr }
+  /**
+   * True when the named step's `output.content[path]` resolves to a
+   * non-empty array. Used by `intent.search_replace` to distinguish
+   * "search returned 0 hits" from "search produced a result ref" —
+   * `step_has_refs` passes in both cases because the search.code wrapper
+   * is always materialized as a chunk, so the empty-hits path used to
+   * trigger a misleading bb.write + verify.
+   */
+  | { step_content_array_nonempty: { step_id: string; path: string } };
 
 // ---------------------------------------------------------------------------
 // Execution Policy

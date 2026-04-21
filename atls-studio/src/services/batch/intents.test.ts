@@ -1022,17 +1022,21 @@ describe('intent.search_replace resolver', () => {
     });
   });
 
-  it('verify conditioned on search having refs', () => {
+  it('verify conditioned on search producing file_paths hits', () => {
     const result = resolveSearchReplace(params, emptyContext());
     const verifyStep = result.steps.find(s => s.use === 'verify.build');
-    expect(verifyStep!.if).toEqual({ step_has_refs: 'sr1__search' });
+    expect(verifyStep!.if).toEqual({
+      step_content_array_nonempty: { step_id: 'sr1__search', path: 'file_paths' },
+    });
   });
 
-  it('edit slots conditioned on search having refs', () => {
+  it('edit slots conditioned on search producing file_paths hits', () => {
     const result = resolveSearchReplace(params, emptyContext());
     const editSteps = result.steps.filter(s => s.use === 'change.edit');
     for (const step of editSteps) {
-      expect(step.if).toEqual({ step_has_refs: 'sr1__search' });
+      expect(step.if).toEqual({
+        step_content_array_nonempty: { step_id: 'sr1__search', path: 'file_paths' },
+      });
     }
   });
 

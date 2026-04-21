@@ -169,6 +169,32 @@ export class SnapshotTracker {
   }
 
   /**
+   * Resolve a possibly-abbreviated path (e.g. `utils/foo.ts` for a tracker
+   * key `src/utils/foo.ts`) to its canonical tracker key by suffix match.
+   * Returns the input unchanged when an exact key already exists. When
+   * multiple keys match the suffix, returns undefined (ambiguous — caller
+   * falls back to the raw path).
+   *
+   * Motivation: model-facing tools (change.edit, intent.edit_multi) let
+   * the model pass workspace-rooted paths. The read backend resolves
+   * them to full relative paths; the tracker stores those. Without this
+   * reverse lookup, the edit gate searches for `utils/foo.ts` and
+   * doesn't find it even though the read just populated `src/utils/foo.ts`.
+   */
+  resolvePathByTailSuffix(filePath: string): string | undefined {
+    const key = normalizePathKey(filePath);
+    if (!key) return undefined;
+    if (this.snapshots.has(key)) return filePath;
+    const suffix = key.startsWith('/') ? key : `/${key}`;
+    const matches: string[] = [];
+    for (const [k, v] of this.snapshots) {
+      if (k === key) return v.filePath;
+      if (k.endsWith(suffix)) matches.push(v.filePath);
+    }
+    return matches.length === 1 ? matches[0] : undefined;
+  }
+
+  /**
    * First file path whose tracked snapshot hash matches (e.g. resolve content_hash to path).
    * If multiple files share a hash, the first map insertion order wins.
    */

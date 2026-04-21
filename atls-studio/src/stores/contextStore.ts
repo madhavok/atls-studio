@@ -4160,6 +4160,13 @@ export const useContextStore = create<ContextStoreState>()(
       for (const [key, chunk] of state.chunks) {
         const chunkViewKind = chunk.viewKind ?? defaultViewKindForChunk(chunk.type);
         if (!isFileBackedType(chunk.type) || chunkViewKind !== 'latest' || !sourceMatchesTargets(chunk.source, targets)) continue;
+        // `result` chunks are immutable query outputs — the content IS the
+        // thing-that-happened (search hits at T, verify output, exec log).
+        // A file change doesn't invalidate the record of what a query
+        // returned; marking these suspect wrongly blocks annotate.merge /
+        // annotate.link on fresh search refs whose source files were
+        // edited earlier in the same batch.
+        if (chunk.type === 'result') continue;
         if (chunk.suspectSince != null) {
           if (!shouldUpdateCause(chunk.freshnessCause)) continue;
           newChunks.set(key, { ...chunk, freshnessCause: effectiveCause, suspectKind: effectiveSuspectKind });
@@ -4183,6 +4190,9 @@ export const useContextStore = create<ContextStoreState>()(
       for (const [key, chunk] of state.archivedChunks) {
         const chunkViewKind = chunk.viewKind ?? defaultViewKindForChunk(chunk.type);
         if (!isFileBackedType(chunk.type) || chunkViewKind !== 'latest' || !sourceMatchesTargets(chunk.source, targets)) continue;
+        // See comment in the `state.chunks` loop: result chunks are
+        // immutable query outputs and aren't invalidated by file edits.
+        if (chunk.type === 'result') continue;
         if (chunk.suspectSince != null) {
           if (!shouldUpdateCause(chunk.freshnessCause)) continue;
           newArchived.set(key, { ...chunk, freshnessCause: effectiveCause, suspectKind: effectiveSuspectKind });

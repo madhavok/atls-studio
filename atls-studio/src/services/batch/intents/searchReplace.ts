@@ -91,7 +91,12 @@ export const resolveSearchReplace: IntentResolver = (
       id: editId,
       use: 'change.edit',
       with: editWith,
-      if: { step_has_refs: searchId },
+      // Gate each edit slot on the search having real hits so zero-hit
+      // searches collapse to a clean "no replacements" rather than
+      // emitting 10 cryptic skipped stubs.
+      if: {
+        step_content_array_nonempty: { step_id: searchId, path: 'file_paths' },
+      },
     };
 
     if (isConcreteGlob) {
@@ -108,18 +113,27 @@ export const resolveSearchReplace: IntentResolver = (
     steps.push(editStep);
   }
 
+  // Gate bb_write + verify on the search actually producing hits — not
+  // just on the step producing a wrapper result ref. `step_has_refs`
+  // passes when search.code returns zero hits (the empty-result chunk is
+  // still emitted as a ref), which previously led to a misleading
+  // bb.write claiming the rename happened + a verify on no-op edits.
+  const hasHits = {
+    step_content_array_nonempty: { step_id: searchId, path: 'file_paths' },
+  };
+
   steps.push({
     id: makeStepId(intentId, 'bb_write'),
     use: 'session.bb.write',
     with: { key: bbKey, content: `Replaced "${oldText.slice(0, 40)}" with "${newText.slice(0, 40)}"` },
-    if: { step_has_refs: searchId },
+    if: hasHits,
   });
 
   if (verify) {
     steps.push({
       id: makeStepId(intentId, 'verify'),
       use: 'verify.build',
-      if: { step_has_refs: searchId },
+      if: hasHits,
     });
   }
 

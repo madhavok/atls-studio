@@ -281,6 +281,34 @@ export function getFileAwareness(
   return awareness.get(normalizePathKey(filePath));
 }
 
+/**
+ * Resolve a potentially workspace-abbreviated path (e.g. `utils/foo.ts`) to
+ * the canonical path stored in awareness (`src/utils/foo.ts`) by unique
+ * suffix match. Returns the input unchanged when an exact key exists; the
+ * matched canonical path when a single awareness entry ends in the input
+ * path; or undefined when the suffix is ambiguous.
+ *
+ * Intent macros use this to align their emitted sub-steps with the tracker
+ * keys used by the executor, so `intent.edit_multi` targeting
+ * `utils/foo.ts` works after a prior read resolved and stored the file
+ * under `src/utils/foo.ts`.
+ */
+export function resolveAwarenessPathBySuffix(
+  awareness: IntentContext['awareness'],
+  filePath: string,
+): string | undefined {
+  const key = normalizePathKey(filePath);
+  if (!key) return undefined;
+  if (awareness.has(key)) return filePath;
+  const suffix = key.startsWith('/') ? key : `/${key}`;
+  const matches: string[] = [];
+  for (const k of awareness.keys()) {
+    if (k === key) return key;
+    if (k.endsWith(suffix)) matches.push(k);
+  }
+  return matches.length === 1 ? matches[0] : undefined;
+}
+
 /** Estimate file size from awareness readRegions. */
 export function estimateFileLines(awareness: IntentContext['awareness'], filePath: string): number {
   const entry = getFileAwareness(awareness, filePath);

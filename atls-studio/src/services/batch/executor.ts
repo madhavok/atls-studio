@@ -1024,6 +1024,15 @@ function resolveGatePathForTracker(
   if (!raw.startsWith('h:') && tracker.getIdentity(raw)) return raw;
   const fromRaw = tracker.findFilePathForSnapshotHash(raw);
   if (fromRaw) return fromRaw;
+  // Tail-match fallback: the model may pass `utils/foo.ts` for a tracker
+  // entry keyed at `src/utils/foo.ts`. Without this, the read-coverage
+  // gate fires "target region not yet read" on a read that already
+  // happened under the resolved path. Only used when the suffix is
+  // unambiguous (a single tracker entry ends in the given tail).
+  if (!raw.startsWith('h:')) {
+    const bySuffix = tracker.resolvePathByTailSuffix(raw);
+    if (bySuffix) return bySuffix;
+  }
   return raw;
 }
 

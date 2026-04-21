@@ -507,13 +507,28 @@ export function parseBatchLines(q: string): { version: '1.0'; steps: Record<stri
       // written `in:r1.refs`, promote to `step.in`, and surface a warning so
       // handlers can return a targeted hint instead of an opaque "bad hashes"
       // failure.
+      //
+      // Only rewrite when the payload is a *single* dataflow spec. Anything
+      // else (commas, multiple `in:` segments, arbitrary suffixes) is too
+      // ambiguous to recover losslessly; bail out with `_parseWarnings`
+      // and leave the `hashes:` value intact so downstream validation
+      // rejects it with a real error instead of a phantom partial bind.
       if (key === 'hashes' && rawVal.startsWith('in:')) {
         const dataflow = rawVal.slice(3);
-        if (/\.(refs|ok)$/.test(dataflow) || !dataflow.includes(':')) {
+        const lossy = dataflow.includes(',') || dataflow.includes(' in:');
+        if (!lossy && (/\.(refs|ok)$/.test(dataflow) || !dataflow.includes(':'))) {
           step.in = expandDataflow(dataflow);
           const warnings = (step._parseWarnings as string[] | undefined) ?? [];
           warnings.push(
             `malformed \`hashes:in:${dataflow}\` rewritten to \`in:${dataflow}\` — use \`in:STEP.refs\` for dataflow, \`hashes:[h:...]\` for literal hashes`,
+          );
+          step._parseWarnings = warnings;
+          continue;
+        }
+        if (lossy) {
+          const warnings = (step._parseWarnings as string[] | undefined) ?? [];
+          warnings.push(
+            `invalid \`hashes:in:${dataflow}\` — multi-step dataflow can't be inlined; use literal \`hashes:[h:…,h:…]\` with refs copied from each step's output`,
           );
           step._parseWarnings = warnings;
           continue;
