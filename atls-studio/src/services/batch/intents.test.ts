@@ -1002,7 +1002,10 @@ describe('intent.search_replace resolver', () => {
     const result = resolveSearchReplace(params, emptyContext());
     const ops = result.steps.map(s => s.use);
     expect(ops).toContain('search.code');
-    expect(ops.filter(o => o === 'change.edit').length).toBe(10);
+    // Default max_matches is 50 — wider net so literal targets outside the
+    // FTS top-10 still get candidates. Extra slots no-op cleanly on files
+    // without the pattern (backend returns Pattern not found).
+    expect(ops.filter(o => o === 'change.edit').length).toBe(50);
     expect(ops).toContain('session.bb.write');
     expect(ops).toContain('verify.build');
   });

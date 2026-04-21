@@ -124,6 +124,46 @@ function extractPerHitStructured(result: unknown, maxHits: number): {
 
 const LITERAL_FALLBACK_MAX = 50;
 
+/**
+ * Drop code_search result entries that point at ATLS linter scratch files
+ * (`__atls_check_*.ts`). These are created by verify.lint pre-write syntax
+ * checks and RAII-cleaned on the Rust side, but the FTS index can briefly
+ * hold stale entries that leak into `search.code` consumers — both the
+ * structured `content.file_paths` bindings (covered by flattenCodeSearchHits)
+ * AND the raw result chunk serialized via formatResult (covered here).
+ *
+ * Walks the backend shape `{results: [{query?, results: [...] | hits: [...]
+ * | groups: [...], ...}]}` plus tiered `{high: [...], medium: [...]}` and
+ * compact `{r: [...]}` variants. Mutates in place.
+ */
+function scrubScratchHitsFromResult(result: unknown): void {
+  const isScratchFile = (v: unknown): boolean => {
+    if (typeof v !== 'string') return false;
+    const base = v.replace(/\\/g, '/').split('/').pop() ?? '';
+    return base.startsWith('__atls_check_');
+  };
+  const filterArr = (arr: unknown[]): unknown[] =>
+    arr.filter((h) => {
+      if (!h || typeof h !== 'object') return true;
+      const o = h as Record<string, unknown>;
+      const file = o.file ?? o.f ?? o.path ?? o.file_path;
+      if (isScratchFile(file)) return false;
+      // Recurse into nested hit lists (groups / tiered blocks).
+      for (const k of ['results', 'hits', 'matches', 'r', 'high', 'medium', 'groups']) {
+        const v = o[k];
+        if (Array.isArray(v)) o[k] = filterArr(v);
+      }
+      return true;
+    });
+  if (!result || typeof result !== 'object') return;
+  const obj = result as Record<string, unknown>;
+  if (Array.isArray(obj.results)) obj.results = filterArr(obj.results);
+  for (const k of ['hits', 'matches', 'high', 'medium', 'groups']) {
+    const v = obj[k];
+    if (Array.isArray(v)) obj[k] = filterArr(v);
+  }
+}
+
 /** When FTS yields no structured hits, find 1-based line numbers by substring scan (scoped search / intent.search_replace). */
 function literalHitsFromContent(filePath: string, content: string, query: string): CodeSearchHitRow[] {
   const rows: CodeSearchHitRow[] = [];
@@ -193,6 +233,10 @@ export const handleSearchCode: OpHandler = async (params, ctx) => {
     const searchParams: Record<string, unknown> = { queries };
     if (filePaths?.length) searchParams.file_paths = filePaths;
     const result = await ctx.atlsBatchQuery('code_search', searchParams);
+    // Scrub before summary/format/chunk so downstream consumers never see
+    // stale linter-scratch hits. Structured-content filter in
+    // flattenCodeSearchHits is a second line of defense.
+    scrubScratchHitsFromResult(result);
     const summary = extractSearchSummary(result, queries);
     const resultStr = formatResult(result, FORMAT_RESULT_MAX_SEARCH);
 

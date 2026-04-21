@@ -4935,21 +4935,50 @@ export const useContextStore = create<ContextStoreState>()(
   editEngram: (hashRef: string, fields: { content?: string; digest?: string; summary?: string; type?: ChunkType }) => {
     const state = get();
     // FileView refs: views are (path, revision) identities, not storage
-    // containers for digest/summary/type. For metadata-only edits we can
-    // route to the chunk backing the view (its sourceRevision) so the
-    // `annotate.note {fields:{...}}` path works on view hashes. Content
-    // changes on a view-backed chunk would desync the view from disk, so
-    // those are still rejected — use change.edit for content.
+    // containers for digest/summary/type. For metadata-only edits we route
+    // to the chunk backing the view (its fullBodyChunkHash, or a synthetic
+    // chunk built from the view's content) so `annotate.note {fields:{...}}`
+    // works on view hashes. Content changes on view-backed state would
+    // desync the view from disk, so those are still rejected — use
+    // change.edit for content.
     const routed = resolveAnyRef(hashRef, state.fileViews, state.chunks);
     let effectiveRef = hashRef;
+    const newChunks = new Map(state.chunks);
     if (routed?.kind === 'view') {
       if (fields.content !== undefined) {
         return { ok: false, error: `cannot edit FileView (${hashRef}) content as an engram; use change.edit on the file to modify content` };
       }
-      const sr = routed.view.sourceRevision;
-      effectiveRef = sr.startsWith('h:') ? sr : `h:${sr}`;
+      const view = routed.view;
+      // Prefer an existing chunk pointer when the view has one.
+      const chunkHash = view.fullBodyChunkHash;
+      if (chunkHash) {
+        effectiveRef = chunkHash.startsWith('h:') ? chunkHash : `h:${chunkHash}`;
+      } else {
+        // Skeleton-only view: synthesize a metadata-only chunk keyed by the
+        // view's sourceRevision. Gives metadata edits a real storage target
+        // without waiting for a full-body read to materialize the chunk.
+        const sourceRev = view.sourceRevision;
+        const bareSr = sourceRev.startsWith('h:') ? sourceRev.slice(2) : sourceRev;
+        effectiveRef = `h:${bareSr}`;
+        if (!findChunkByRef(newChunks, effectiveRef)) {
+          const content = view.fullBody ?? view.skeletonRows.join('\n');
+          const tokens = countTokensSync(content);
+          const synthetic: ContextChunk = {
+            hash: bareSr,
+            shortHash: bareSr.slice(0, SHORT_HASH_LEN),
+            type: 'file',
+            content,
+            tokens,
+            source: view.filePath,
+            sourceRevision: sourceRev,
+            viewKind: 'derived',
+            createdAt: new Date(),
+            lastAccessed: Date.now(),
+          };
+          newChunks.set(bareSr, synthetic);
+        }
+      }
     }
-    const newChunks = new Map(state.chunks);
     const found = routed?.kind === 'chunk'
       ? [routed.key, routed.chunk] as [string, ContextChunk]
       : findOrPromoteEngram(effectiveRef, newChunks, state.archivedChunks, state.stagedSnippets);

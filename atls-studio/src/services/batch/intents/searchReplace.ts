@@ -23,7 +23,14 @@
 import type { IntentResolver, IntentResult, IntentContext, Step } from '../types';
 import { makeStepId, computeNextTargets } from '../intents';
 
-const DEFAULT_MAX_MATCHES = 10;
+// Tuned for literal find/replace across a project: FTS can rank a freshly
+// created low-frequency file below the top-10 even when it's the only
+// literal match. Since the backend `replace` op errors cheaply on files
+// that don't contain `old_text` (`Pattern not found`, no disk write), a
+// wider net is safe — spurious hits are filtered by the backend. 50 keeps
+// us well below any per-batch step-count ceiling.
+const DEFAULT_MAX_MATCHES = 50;
+const MAX_MATCHES_CEILING = 100;
 
 export const resolveSearchReplace: IntentResolver = (
   params: Record<string, unknown>,
@@ -34,7 +41,7 @@ export const resolveSearchReplace: IntentResolver = (
   const newText = (params.new_text as string) ?? '';
   const fileGlob = (params.file_glob as string) ?? undefined;
   const maxMatches = typeof params.max_matches === 'number'
-    ? Math.min(params.max_matches, 20)
+    ? Math.min(params.max_matches, MAX_MATCHES_CEILING)
     : DEFAULT_MAX_MATCHES;
   const verify = params.verify !== false;
   const force = params.force === true;
