@@ -29,6 +29,44 @@ function hintForUnknownOp(useRaw: string): string {
 /** Minimal shape for validation (matches `Step` and loose JSON from tool args). */
 export type BatchStepLike = { id?: unknown; use?: unknown };
 
+/** Minimal shape for envelope-level validation (tool_use input as received). */
+export type BatchEnvelopeLike = Record<string, unknown> & {
+  steps?: unknown;
+  q?: unknown;
+  _stubbed?: unknown;
+  _compressed?: unknown;
+};
+
+/**
+ * Validate the batch tool_use envelope before step-level validation runs.
+ *
+ * Rejects inputs that would otherwise slip through as a silent 0-step batch:
+ *  - `_stubbed` / `_compressed` sentinels: these are post-hoc history-compression
+ *    artifacts (see stubBatchToolUseInputs in historyCompressor.ts). When the
+ *    model echoes them as a new tool call (template calcification), the batch
+ *    was historically accepted as empty-and-ok. Reject with a steering error
+ *    pointing back to BATCH_TOOL_REF.
+ *  - Empty steps array with no `q` string: nothing to execute; almost certainly
+ *    a malformed or calcified call.
+ */
+export function validateBatchEnvelope(input: BatchEnvelopeLike): ValidateBatchStepsResult {
+  if (input._stubbed !== undefined || input._compressed !== undefined) {
+    return {
+      ok: false,
+      error: 'empty/stubbed envelope; emit real steps (see BATCH_TOOL_REF). `_stubbed`/`_compressed` are post-hoc compression markers, not a callable shape.',
+    };
+  }
+  const hasSteps = Array.isArray(input.steps) && input.steps.length > 0;
+  const hasQ = typeof input.q === 'string' && input.q.trim().length > 0;
+  if (!hasSteps && !hasQ) {
+    return {
+      ok: false,
+      error: 'empty batch envelope; provide `steps` array or `q:` DSL block (see BATCH_TOOL_REF).',
+    };
+  }
+  return { ok: true };
+}
+
 /**
  * Validate raw step objects before intent expansion. Returns first error or ok.
  */

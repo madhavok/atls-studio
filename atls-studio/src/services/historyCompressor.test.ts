@@ -949,6 +949,9 @@ describe('extractToolDescription (batch stub)', () => {
   it('preserves stub summary including change preview marker', () => {
     const stub =
       '2 steps: change×1 | change:preview(dry_run)';
-    expect(extractToolDescription('batch', { _stubbed: stub, version: '1.0' })).toBe(`batch:${stub}`);
+    // Fixture matches current compressor output shape: {_stubbed, _compressed: true}.
+    // `version` was dropped in the stub-calcification fix — the old shape looked
+    // too much like a legal batch envelope and the model copied it verbatim.
+    expect(extractToolDescription('batch', { _stubbed: stub, _compressed: true })).toBe(`batch:${stub}`);
   });
 });

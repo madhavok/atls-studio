@@ -696,9 +696,12 @@ export function stubBatchToolUseInputs(
     if (inputTokens < BATCH_INPUT_STUB_THRESHOLD) continue;
 
     const stub = formatBatchToolUseStubSummary(steps as Array<Record<string, unknown>>);
+    // Deliberately drop `version` so the stubbed shape is not a legal-looking
+    // batch envelope; `_compressed: true` is a distinct sentinel the runtime
+    // guard uses to reject it if the model ever echoes it as a new tool call.
     block.input = {
       _stubbed: stub,
-      version: block.input.version ?? '1.0',
+      _compressed: true,
     } as any;
     stubbed++;
   }

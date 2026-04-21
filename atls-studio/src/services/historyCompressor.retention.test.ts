@@ -272,6 +272,36 @@ describe('compactRetentionOps — integration with stub + deflate', () => {
     expect(stepsCompacted).toBe(0);
   });
 
+  it('stubbed input shape is {_stubbed, _compressed: true} — no `version` key (anti-calcification)', () => {
+    // Regression guard for stub-shape template calcification. A stub that
+    // carries `version: '1.0'` looks like a legal batch envelope and the
+    // model was observed copying it verbatim as its next tool call. Drop
+    // `version`, add a distinct `_compressed: true` sentinel the runtime
+    // guard recognizes.
+    const steps: Array<Record<string, unknown>> = [];
+    for (let i = 0; i < 15; i++) {
+      steps.push({
+        id: `u${i}`,
+        use: 'session.unpin',
+        with: { hashes: [`h:fv:hash${i}aaaaaaaaaaaaaaaa`, `h:fv:hash${i}bbbbbbbbbbbbbbbb`] },
+      });
+    }
+    const history: Msg[] = [
+      { role: 'user', content: 'go' },
+      mkAssistant(steps),
+    ];
+    const stubbed = stubBatchToolUseInputs(history);
+    expect(stubbed).toBe(1);
+    const input = (history[1].content as Array<{ input?: Record<string, unknown> }>)[0].input;
+    expect(input).toBeDefined();
+    expect(typeof input?._stubbed).toBe('string');
+    expect(input?._compressed).toBe(true);
+    expect(input?.version).toBeUndefined();
+    expect(input?.steps).toBeUndefined();
+    // Exact key set: only _stubbed and _compressed.
+    expect(Object.keys(input as Record<string, unknown>).sort()).toEqual(['_compressed', '_stubbed']);
+  });
+
   it('compacts sub-threshold retention batches that stub skipped', () => {
     // Small batch that stays under BATCH_INPUT_STUB_THRESHOLD (80tk).
     const history: Msg[] = [

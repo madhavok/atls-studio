@@ -205,7 +205,7 @@ describe('turn-boundary: deep-clone reuse pattern isolates the snapshot', () => 
         role: 'assistant',
         content: [
           { type: 'text', text: 'reasoning' },
-          { type: 'tool_use', id: 'tu_1', name: 'batch', input: { _stubbed: '2 steps: rs×1, sc×1', version: '1.0' } },
+          { type: 'tool_use', id: 'tu_1', name: 'batch', input: { _stubbed: '2 steps: rs×1, sc×1', _compressed: true } },
         ],
       },
       {
@@ -245,12 +245,12 @@ describe('turn-boundary: deep-clone reuse pattern isolates the snapshot', () => 
     // corrupted when the active history is mutated in place. This test
     // documents the failure mode the fix prevents.
     const endOfTurnHistory: Array<{ role: string; content: unknown }> = [
-      { role: 'assistant', content: [{ type: 'tool_use', id: 'tu_1', input: { version: '1.0' } }] },
+      { role: 'assistant', content: [{ type: 'tool_use', id: 'tu_1', input: { steps: [] } }] },
     ];
     const conversationHistory = [...endOfTurnHistory, { role: 'user', content: 'new' }];
 
     const block = (conversationHistory[0].content as Array<Record<string, unknown>>)[0];
-    block.input = { _stubbed: 'mutated', version: '1.0' };
+    block.input = { _stubbed: 'mutated', _compressed: true };
 
     const leakedBlock = (endOfTurnHistory[0].content as Array<Record<string, unknown>>)[0];
     // Without structuredClone, the shared reference leaks the mutation.

@@ -1211,13 +1211,17 @@ export async function executeSubagent(
 
       // Stub batch tool_use inputs in the assistant content so the next round
       // doesn't carry full step arrays (the results are the canonical record).
+      // Shape matches stubBatchToolUseInputs in historyCompressor.ts: drop
+      // `version` so the stub doesn't look like a legal batch envelope the
+      // model could echo back; `_compressed: true` is the sentinel the runtime
+      // guard rejects if it ever reaches executeUnifiedBatch.
       for (const block of assistantContent) {
         const b = block as { type?: string; input?: Record<string, unknown> };
         if (b.type === 'tool_use' && b.input && Array.isArray(b.input.steps)) {
           const steps = b.input.steps as Array<Record<string, unknown>>;
           b.input = {
             _stubbed: formatBatchToolUseStubSummary(steps),
-            version: b.input.version ?? '1.0',
+            _compressed: true,
           } as any;
         }
       }

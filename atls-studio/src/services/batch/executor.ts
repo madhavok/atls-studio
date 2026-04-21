@@ -26,7 +26,7 @@ import { SnapshotTracker, AwarenessLevel, canonicalizeSnapshotHash } from './sna
 import type { LineRegion } from './snapshotTracker';
 import { parseHashRef } from '../../utils/hashRefParsers';
 import { buildIntentContext, resolveIntents, isPressured } from './intents';
-import { validateBatchSteps } from './validateBatchSteps';
+import { validateBatchSteps, validateBatchEnvelope } from './validateBatchSteps';
 import { useRetentionStore } from '../../stores/retentionStore';
 import { useAppStore } from '../../stores/appStore';
 import { invoke } from '@tauri-apps/api/core';
@@ -1585,6 +1585,32 @@ export async function executeUnifiedBatch(
   onStepComplete?: OnBatchStepComplete,
 ): Promise<UnifiedBatchResult> {
   const batchStart = Date.now();
+
+  // Envelope validation (runs before step-level validation): rejects
+  // stubbed/compressed shells (post-hoc history-compression artifacts the
+  // model may template-calcify) and empty envelopes with neither `steps`
+  // nor `q`. See validateBatchEnvelope for rationale.
+  const envelopeValidation = validateBatchEnvelope(
+    request as unknown as Record<string, unknown>,
+  );
+  if (!envelopeValidation.ok) {
+    const msg = `batch: ERROR ${envelopeValidation.error}`;
+    return {
+      ok: false,
+      summary: msg,
+      step_results: [
+        {
+          id: '__batch_envelope__',
+          use: 'session.stats',
+          ok: false,
+          error: envelopeValidation.error,
+          summary: msg,
+          duration_ms: 0,
+        },
+      ],
+      duration_ms: Date.now() - batchStart,
+    };
+  }
 
   const validation = validateBatchSteps(request.steps ?? []);
   if (!validation.ok) {
