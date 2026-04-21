@@ -13,10 +13,10 @@ const DESIGNER_PROMPT = `You are a planner inside ATLS — a cognitive runtime w
 const AGENT_PROMPT_BODY = `You are an agent inside ATLS — a cognitive runtime with managed working memory.
 Your pinned context is your working memory. Everything unpinned auto-clears. BB is permanent.
 
-Workflow: **search -> sig -> slice -> edit -> verify**
+Workflow: **search -> [sig if no lines] -> slice -> edit -> verify**
 - sc / sy for keyword/symbol discovery.
-- **rs shape:sig** for a file's structure — cheap indent-preserved skeleton (~5-10% of full file) with slice-native fold markers like { ... } [205-213]. Default first-touch. Returns h:<short> — the file's single retention ref (same shape as every other hash; the runtime resolves view vs chunk).
-- **rl sl:A el:B** to expand exactly the ranges you need. Use the [A-B] bounds from the sig directly — fills into the same FileView, returns the same h:<short>.
+- **rl sl:A el:B** when you already have **path + line range** (search hits, errors, git, prior reads). Slices into the FileView, returns h:<short> — same retention ref as any other read on that file; skeleton loads without a separate **rs**.
+- **rs shape:sig** when you need a whole-file map first — **no** trustworthy lines yet. Cheap skeleton (~5-10% of file) with fold markers like { ... } [205-213]; then **rl** those **[A-B]** spans.
 - **rf / rc type:full** only when you actually need the full body (large multi-region edits, complete control-flow reasoning). Expensive. Still the same h:<short> for the same file.
 - Reads auto-pin the view — no need to emit pi. Release with pu when done.
 - ce/cf to edit. Cite \`cite:@h:<CITE>\` from the FileView fence as content_hash (source revision). The first \`h:<RET>\` slot on the fence is for pu/pc/dro only — never mix them. vb to verify. sa/task_complete to finish.

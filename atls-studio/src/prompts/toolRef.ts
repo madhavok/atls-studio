@@ -48,9 +48,9 @@ rc type:full|tree ps:path1,path2 depth?:N glob?:pattern line_range?:start-end ma
   type:full = whole-file body. type:tree = directory listing (not file content).
   Any file read returns ONE retention ref per file: h:<short> — the FileView identity. Auto-pinned; unpin (pu) when you're done.
 rl hash:h:XXXX lines:15-50 | f:path sl:N el:N context_lines?:0-5
-  Line slices fill into the file's live FileView at their source position. The returned ref is the SAME h:<short> as any prior rs/rf/rc on that file — multiple rl calls merge into the same view identity. Auto-pinned. For sc/sy (search/symbol) result hashes, lines are into the formatted result text (engram body), not a source file — use f:+sl/el when you need real file lines.
+  Prefer when you already have line bounds (search hits, sig [A-B] folds, errors, git). Line slices fill into the file's live FileView at their source position. The returned ref is the SAME h:<short> as any prior rs/rf/rc on that file — multiple rl calls merge into the same view identity. Auto-pinned. For sc/sy (search/symbol) result hashes, lines are into the formatted result text (engram body), not a source file — use f:+sl/el when you need real file lines.
 rs ps:path1,path2 shape:sig|fold|grep|dedent|nocomment|exclude|concept|pattern|if|snap|refs|highlight max_files?:N
-  shape:sig is the CHEAPEST first-touch — indent-preserved signature skeleton (code) / heading outline (markdown), ~5-10% of full size, with slice-native [A-B] fold/section markers. Use this BEFORE rf / rc type:full. shape: is required. Returns h:<short> (auto-pinned); subsequent rl into the same file uses the same ref.
+  shape:sig — use when opening a file without slice coordinates yet: indent-preserved skeleton (code) / heading outline (markdown), ~5-10% of full size, with [A-B] fold markers. If search/tools already gave path + lines, skip to **rl** instead. Still prefer **sig** over **rf** / **rc type:full** when you only need structure. shape: is required. Returns h:<short> (auto-pinned); subsequent rl into the same file uses the same ref.
 rf ps:path1,path2 type?:full — smart view (symbols + imports + related + issues) by default; type:full for the whole body. HEAVIER than rs shape:sig; reach for it only when you need the dependency graph, issues list, or full content. Returns h:<short> (auto-pinned), same as rs/rl for the same file.
 sc qs:term1,term2 ps?:path1,path2 limit?:N compact?:true
 sy sn:name1,name2 limit?:N
@@ -155,17 +155,18 @@ qs/queries, le/line_edits, sl/start_line, el/end_line, sf/severity_filter, ff/fo
 key/keys, cmd also auto-resolved
 
 ### Task Recipes (follow the matching recipe)
-Bug hunt: si -> rs shape:sig top 3-5 suspects -> rl slices at [A-B] folds + bw finding per fn -> fix confirmed -> task_complete
-Feature: rs shape:sig targets -> spl -> rl slices at [A-B] folds -> ce per subtask -> task_complete
+Bug hunt: si -> top 3-5 suspects: **rl** when hits include file lines, else **rs shape:sig** then **rl** at [A-B] folds + bw finding per fn -> fix confirmed -> task_complete
+Feature: **rl** targets with known lines, else **rs shape:sig** -> spl -> **rl** slices at [A-B] folds -> ce per subtask -> task_complete
 Refactor: ax -> spl -> cf per extraction -> vb -> fix from h:ref if failed -> task_complete
 Refactor (split): ax -> cm dry_run:true -> cm dry_run:false -> vb -> task_complete
 Investigation: iv -> bw structured findings per target -> task_complete with report
-Review: rs shape:sig targets -> rl changed fns at [A-B] folds -> bw review finding per fn -> task_complete
+Review: targets with lines -> **rl**; else **rs shape:sig** -> **rl** changed fns at [A-B] folds -> bw review finding per fn -> task_complete
 (Reads auto-pin; no explicit pi step in these recipes. pu finished targets before moving on.)
 
 ### Read Pattern (FileView — one hash per file, auto-healing, cheapest first)
-- First touch: **rs shape:sig** — cheap indent-preserved skeleton with [A-B] fold markers. Returns \`h:<short>\` — the file's single retention ref (auto-pinned). FileView block appears in WM; folded bodies show as "{ ... } [A-B]".
-- Slice: **rl sl:A el:B** — uses the [A-B] bounds from the sig directly. Fills into the same view. Returns the SAME h:<short>; already pinned.
+- No line targets yet: **rs shape:sig** — cheap skeleton with [A-B] fold markers, then **rl** those spans. Returns \`h:<short>\` (auto-pinned).
+- Already have path + lines (search, errors, …): **rl sl:A el:B** first — same FileView \`h:<short>\`; add **rs shape:sig** only if you still need a whole-file map.
+- More slices: **rl** again — merges into the same view; still pinned.
 - Full body: **rc type:full** or **rf type:full** only when slicing isn't enough (large multi-region refactor, full control-flow reasoning). Still the same h:<short>, auto-pinned.
 - Release: **pu** on the view's h:<short> when you're done with the target. **pc** to compact. **dro** to delete. ASSESS surfaces stale pins automatically.
 - Edits: cite **cite:@h:XXX** from the block header as **content_hash** (source revision, distinct from the view's retention ref on the same fence); line numbers are current-revision (auto-healed across file edits).
@@ -189,7 +190,7 @@ Review: rs shape:sig targets -> rl changed fns at [A-B] folds -> bw review findi
 - ps: actual paths or h:refs, not query strings. deletes/restore: paths or h:refs.
 - vb|vt|vl|vk: subprocess uses PATH with ATLS_TOOLCHAIN_PATH prepended. xe runs in PTY (may see different PATH).
 - xe: PowerShell — cmd saved to temp .ps1; prefer xg for git, vb|vt|vl|vk for checks.
-- prefer cheapest tool: one symbol -> sy; types -> vk; file list -> rc(tree); file structure -> rs shape:sig (NOT rf — sig is ~5-10% of file size, rf defaults to smart which is heavier).
+- prefer cheapest tool: one symbol -> sy; types -> vk; file list -> rc(tree); file structure with no lines yet -> rs shape:sig; path + lines known -> rl; avoid rf for mere structure (sig is ~5-10% of file size, rf default smart view is heavier).
 - use dr/dd when cheap research suffices before a bigger reasoning pass.
 
 ## Working Memory — FileView (one hash per file)

@@ -44,10 +44,12 @@ Edit hash chaining: after a successful edit, the file is at h:NEW (from edits_re
 Self-diagnosis: if context feels wrong (missing refs, stale slices, spin loops), run \`st\` (stats) or \`db\` (debug) before re-reading.
 
 ### READ PATTERNS — FileView (cheapest first)
-Every read of a file lands in ONE live FileView block per path. The read returns **one** retention ref — \`h:<short>\` — regardless of shape or range, and **auto-pins** it so the view stays rendering across rounds. Subsequent reads of the same file merge into the same view and keep the same \`h:<short>\` identity. FileView refs and chunk refs share the same \`h:<short>\` shape; the runtime resolves either. Progression is cost-ordered — do not skip ahead:
+Every read of a file lands in ONE live FileView block per path. The read returns **one** retention ref — \`h:<short>\` — regardless of shape or range, and **auto-pins** it so the view stays rendering across rounds. Subsequent reads of the same file merge into the same view and keep the same \`h:<short>\` identity. FileView refs and chunk refs share the same \`h:<short>\` shape; the runtime resolves either.
 
-1. **rs shape:sig ps:path** — indent-preserved signature skeleton (code) / heading outline (markdown), ~5-10% of file size. Folded bodies or sections render as \`{ ... } [A-B]\` or \`## H [A-B]\`; pass that range straight to rl. **Default first-touch.**
-2. **rl sl:A el:B f:path** — fills the exact range into the same FileView in file order. Multiple rl calls merge into the existing view.
+**Route reads:** Opening a file **without** trustworthy line ranges → **rs shape:sig** first (cheap whole-file map, ~5-10% of size; folds show \`{ ... } [A-B]\` / \`## H [A-B]\` for the next **rl**). **With** path + lines from **sc/sy**, stack traces, git, errors, or prior context → **rl** directly — saves a round; file-backed **rl** still opens the FileView and loads the skeleton. Stay cost-ordered: do not reach **rf type:full** / **rc type:full** when **sig + rl** suffices.
+
+1. **rs shape:sig ps:path** — indent-preserved signature skeleton (code) / heading outline (markdown). Use when you lack slice coordinates.
+2. **rl sl:A el:B f:path** — fills the exact range into the same FileView in file order. Use with coordinates from sig folds **or** from search/tools. Multiple rl calls merge into the existing view.
 3. **rf ps:path** — smart view (symbols, imports, related_files, issues). Richer than sig, heavier. Use when you need the dependency graph or issue list for a file, not when you just want to see its structure.
 4. **rf type:full / rc type:full** — the whole file body. Only when you actually need every line (large multi-region refactor, full control-flow reasoning).
 
@@ -85,7 +87,7 @@ BB read paths: **sm** = semantic search across regions (active/archived/bb); **b
 Templates: **tpl:NAME** entries are pre-seeded BB scaffolds, excluded from pin budget. Reference via h:bb:tpl:NAME inside bw content to structure output. Available: analysis, refactor, task, diff, issue, scope, status, complete.
 
 ### WORKFLOW ROUTING
-- Large file (>500L): rs shape:sig → FileView skeleton appears with folded [A-B] ranges → rl on the ranges you need → pin the view or any slice → edit cites \`cite:@h:<CITE>\` from the fence → verify.
+- Large file (>500L): no line hints yet → **rs shape:sig** then **rl** on **[A-B]** folds; lines already known → **rl** first → edit cites \`cite:@h:<CITE>\` from the fence → verify.
 - Cross-file symbol move -> cf(extract). Localized change -> ce.
 - Persist a plan to BB when it would not survive a compaction round, or for cross-cutting refactors with >=3 verification gates. Advance phases with sa(summary:"...").
 - **task_complete auto-verify**: runs verify.build exactly once when mutations occurred AND no prior vb has passed. Skips otherwise. On auto-verify failure, injects errors and continues — you must fix and re-complete.
@@ -95,7 +97,7 @@ Every read should move toward a finding or edit — not just accumulate context.
 - After examining any target (file, function, module), write exactly one bb:finding before reading the next.
 - Findings are "clear", "bug", or "inconclusive" — all three are valid. Progress notes are not findings.
 - 5+ targets read without any BB findings = you are spinning. STOP reading and write findings for what you have.
-- Pure discovery rounds (search + rs(sig) + pin, no findings) are fine early in a task. Once you start reading function bodies (rl), produce findings as you go.
+- Pure discovery rounds (search + **rs(sig)** + pin, no findings) are fine early in a task. Once you start reading function bodies (**rl**, whether direct from search hits or via sig folds), produce findings as you go.
 
 Retention-op output contract: pi, pu, dro, ulo, pc, bb:delete produce **no tool_result line on success**. Confirmation lives in the next round's HASH MANIFEST — retained refs show pinned, released refs disappear. Only failures surface (\`[FAIL] (session.unpin): ERROR no matching refs…\`) and mean you targeted something not in the manifest. Your own prior retention tool_use is stripped of args in history (ephemeral by design) — never template its shape, never re-emit a prior retention call. Check the manifest first; refs that aren't listed are already released.
 
