@@ -307,7 +307,7 @@ describe('fileViewStore — createFileView + applyFillToView', () => {
 });
 
 describe('fileViewStore — chunk eviction prunes regions', () => {
-  it('onConstituentChunkRemoved drops region when sole owner', () => {
+  it('onConstituentChunkRemoved drops region when sole owner (unpinned)', () => {
     const v = applyFillToView(createFileView(fakeSkeleton()), {
       start: 42,
       end: 56,
@@ -317,6 +317,37 @@ describe('fileViewStore — chunk eviction prunes regions', () => {
     });
     const v2 = onConstituentChunkRemoved(v, 'hABC');
     expect(v2.filledRegions).toEqual([]);
+  });
+
+  it('onConstituentChunkRemoved retains sole-owner region content when pinned (chunkHashes detached)', () => {
+    const v0 = createFileView(fakeSkeleton(), { pinned: true });
+    const v = applyFillToView(v0, {
+      start: 42,
+      end: 56,
+      content: row(42, 'fn bar'),
+      chunkHash: 'hABC',
+      tokens: 5,
+    });
+    const v2 = onConstituentChunkRemoved(v, 'hABC');
+    expect(v2.filledRegions).toHaveLength(1);
+    expect(v2.filledRegions[0].chunkHashes).toEqual([]);
+    expect(v2.filledRegions[0].content).toContain('fn bar');
+  });
+
+  it('onConstituentChunkRemoved clears fullBody when unpinned and fullBodyChunkHash matches', () => {
+    const v0 = createFileView(fakeSkeleton());
+    const v1 = applyFullBodyToView(v0, 'whole file', 'hFULL');
+    const v2 = onConstituentChunkRemoved(v1, 'hFULL');
+    expect(v2.fullBody).toBeUndefined();
+    expect(v2.fullBodyChunkHash).toBeUndefined();
+  });
+
+  it('onConstituentChunkRemoved keeps fullBody when pinned and fullBodyChunkHash matches', () => {
+    const v0 = createFileView(fakeSkeleton(), { pinned: true });
+    const v1 = applyFullBodyToView(v0, 'whole file', 'hFULL');
+    const v2 = onConstituentChunkRemoved(v1, 'hFULL');
+    expect(v2.fullBody).toBe('whole file');
+    expect(v2.fullBodyChunkHash).toBeUndefined();
   });
 
   it('keeps region but drops the hash when shared', () => {

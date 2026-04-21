@@ -728,6 +728,33 @@ export const handleReadLines: OpHandler = async (params, ctx) => {
       fvRef = rlStore.ensureFileView(rlFile, rlContentHash);
       rlStore.ensureFileViewSkeleton(rlFile, rlContentHash).catch(() => {});
       autoPinViewAfterRead(ctx, rlFile);
+
+      // Merge the slice body into the FileView's filledRegions in the SAME
+      // round. Without this, the next round's `## FILE VIEWS` block renders
+      // only the sig skeleton — Rule B in resultFormatter has already
+      // stripped the body from the tool_result, so the content would be
+      // lost entirely until a paired `session.pin` materializes it via
+      // `materializeFileRefsContentIfNeeded`. The fill is idempotent; if
+      // `session.pin` later triggers materialize, mergeFilledRegion dedupes.
+      if (actualRange && actualRange.length > 0) {
+        const first = actualRange[0];
+        const last = actualRange[actualRange.length - 1];
+        const startLine = first?.[0] ?? null;
+        const endLine = last?.[1] ?? last?.[0] ?? null;
+        if (startLine != null && endLine != null) {
+          const sliceChunkHash = hashContentSync(rlContent).slice(0, SHORT_HASH_LEN);
+          rlStore.applyFillFromChunk({
+            filePath: rlFile,
+            sourceRevision: rlContentHash,
+            startLine,
+            endLine,
+            content: rlContent,
+            chunkHash: sliceChunkHash,
+            tokens: tk,
+            origin: 'read',
+          });
+        }
+      }
     }
     const primaryRef = fvRef ?? sliceRef;
     const rlRefs = [primaryRef];

@@ -221,10 +221,37 @@ describe('FileView wire — reconcileSourceRevision', () => {
 describe('FileView wire — dropChunks routing', () => {
   beforeEach(resetStore);
 
-  it('dropChunks on a slice ref removes the whole FileView and its backing chunks', () => {
-    // Under the single-retention-ref model, dropping any chunk for a file
-    // drops the whole view — the ref the model emits controls the file as
-    // one unit, matching how session.drop used to work pre-FileView.
+  it('dropChunks on a pinned FileView ref drops WM chunks but keeps the view and line content', () => {
+    const store = useContextStore.getState();
+    const rev = 'r-drop-pin';
+    const shortHash = store.addChunk(
+      rowLine(10, 'a'),
+      'smart',
+      'src/drop-pin.ts',
+      undefined, undefined, 'cafebabe12345678',
+      {
+        sourceRevision: rev,
+        readSpan: { filePath: 'src/drop-pin.ts', sourceRevision: rev, startLine: 10, endLine: 10 },
+      },
+    );
+    store.setFileViewPinned('src/drop-pin.ts', true);
+
+    useContextStore.getState().dropChunks([shortHash]);
+
+    const view = useContextStore.getState().getFileView('src/drop-pin.ts');
+    expect(view).toBeDefined();
+    expect(view!.pinned).toBe(true);
+    expect(view!.filledRegions).toHaveLength(1);
+    expect(view!.filledRegions[0].chunkHashes).toEqual([]);
+    expect(view!.filledRegions[0].content).toMatch(/^\s*10\|/);
+
+    const stillPresent = Array.from(useContextStore.getState().chunks.values())
+      .some(c => c.shortHash === shortHash);
+    expect(stillPresent).toBe(false);
+  });
+
+  it('dropChunks on a slice ref removes the whole FileView and its backing chunks (unpinned)', () => {
+    // Unpinned: dropping any chunk for a file removes the FileView row (retention released).
     const store = useContextStore.getState();
     const rev = 'r-drop';
     const shortHash = store.addChunk(
@@ -275,6 +302,36 @@ describe('FileView wire — dropChunks routing', () => {
     const view = useContextStore.getState().getFileView('src/prune.ts');
     expect(view).toBeDefined();
     expect(view!.filledRegions).toHaveLength(0);
+    expect(Array.from(useContextStore.getState().chunks.values()).some(c => c.shortHash === shortHash)).toBe(false);
+  });
+
+  it('TTL-archived chunks on a pinned FileView retain region content (detached chunk hashes)', async () => {
+    const store = useContextStore.getState();
+    const rev = 'r-prune-pin';
+    const shortHash = store.addChunk(
+      rowLine(10, 'a'),
+      'smart',
+      'src/prune-pin.ts',
+      undefined, undefined, 'babecafe12345678',
+      {
+        sourceRevision: rev,
+        ttl: 1,
+        readSpan: { filePath: 'src/prune-pin.ts', sourceRevision: rev, startLine: 10, endLine: 10 },
+      },
+    );
+    store.setFileViewPinned('src/prune-pin.ts', true);
+    expect(useContextStore.getState().getFileView('src/prune-pin.ts')!.filledRegions).toHaveLength(1);
+
+    await store.refreshRoundEnd({
+      paths: ['src/prune-pin.ts'],
+      getRevisionForPath: async () => rev,
+    });
+
+    const view = useContextStore.getState().getFileView('src/prune-pin.ts');
+    expect(view).toBeDefined();
+    expect(view!.filledRegions).toHaveLength(1);
+    expect(view!.filledRegions[0].chunkHashes).toEqual([]);
+    expect(view!.filledRegions[0].content).toMatch(/^\s*10\|/);
     expect(Array.from(useContextStore.getState().chunks.values()).some(c => c.shortHash === shortHash)).toBe(false);
   });
 });

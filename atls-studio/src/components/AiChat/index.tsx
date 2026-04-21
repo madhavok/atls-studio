@@ -682,7 +682,7 @@ const ContextMetrics = memo(function ContextMetrics() {
     selectedModel,
     provider === 'anthropic' ? cumulativeUncachedPortion : cumulativeInputSaved,
     0,
-    provider === 'anthropic' ? cumulativeCacheReadPortion : cumulativeCacheReadPortion,
+    provider === 'anthropic' ? cumulativeCacheReadPortion : 0,
     0,
   ).totalCostCents;
 

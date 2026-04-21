@@ -230,11 +230,22 @@ export function mergeFilledRegion(
   return kept;
 }
 
+export interface DropRegionByChunkOptions {
+  /**
+   * When true, a region whose only backing chunk is removed **keeps** its line
+   * `content` with `chunkHashes` cleared (detached from WM). When false
+   * (default), sole-owner regions are removed (prior behavior).
+   */
+  retainSoleOwnerContent?: boolean;
+}
+
 /** Remove the region that covers `chunkHash` (or drop the hash from a shared region). */
 export function dropRegionByChunk(
   regions: FilledRegion[],
   chunkHash: string,
+  options?: DropRegionByChunkOptions,
 ): FilledRegion[] {
+  const retainSole = options?.retainSoleOwnerContent ?? false;
   const out: FilledRegion[] = [];
   for (const r of regions) {
     if (!r.chunkHashes.includes(chunkHash)) {
@@ -242,7 +253,10 @@ export function dropRegionByChunk(
       continue;
     }
     if (r.chunkHashes.length === 1) {
-      // Sole source — drop entire region.
+      if (retainSole) {
+        out.push({ ...r, chunkHashes: [] });
+      }
+      // Else: sole source — drop entire region.
       continue;
     }
     // Shared region: drop the hash, keep content as-is.
@@ -435,18 +449,48 @@ export function applyRefetchCap<T>(
 
 /**
  * Called when a constituent chunk TTL-expires or is evicted — drop any
- * region(s) backed by this hash. Returns the new region list.
+ * region(s) backed by this hash. **Pinned** views retain region **content** when
+ * the sole backing chunk is removed (`chunkHashes` cleared); unpinned views
+ * thin as before. **fullBody** owned by the evicted chunk: pinned keeps body,
+ * clears `fullBodyChunkHash`; unpinned clears full body.
  */
 export function onConstituentChunkRemoved(
   view: FileView,
   chunkHash: string,
 ): FileView {
-  const nextRegions = dropRegionByChunk(view.filledRegions, chunkHash);
-  if (nextRegions === view.filledRegions) return view;
+  const nextRegions = dropRegionByChunk(view.filledRegions, chunkHash, {
+    retainSoleOwnerContent: view.pinned,
+  });
+
+  let fullBody = view.fullBody;
+  let fullBodyChunkHash = view.fullBodyChunkHash;
+  let fullBodyOrigin = view.fullBodyOrigin;
+
+  if (view.fullBody !== undefined && view.fullBodyChunkHash === chunkHash) {
+    if (view.pinned) {
+      fullBodyChunkHash = undefined;
+    } else {
+      fullBody = undefined;
+      fullBodyChunkHash = undefined;
+      fullBodyOrigin = undefined;
+    }
+  }
+
+  const regionsChanged = nextRegions !== view.filledRegions;
+  const fullBodyChanged =
+    fullBody !== view.fullBody
+    || fullBodyChunkHash !== view.fullBodyChunkHash
+    || fullBodyOrigin !== view.fullBodyOrigin;
+
+  if (!regionsChanged && !fullBodyChanged) return view;
+
   const nextHashParts = computeFileViewHashParts(view.filePath, view.sourceRevision);
   return {
     ...view,
     filledRegions: nextRegions,
+    fullBody,
+    fullBodyChunkHash,
+    fullBodyOrigin,
     hash: nextHashParts.hash,
     shortHash: nextHashParts.shortHash,
     lastAccessed: Date.now(),

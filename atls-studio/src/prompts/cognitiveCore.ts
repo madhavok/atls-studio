@@ -59,7 +59,7 @@ FileView fence carries TWO hashes — do not conflate them:
   \`=== path h:<RET> cite:@h:<CITE> (N lines) [pinned?] ===\`
 - **h:<RET>** (first slot) = retention ref. Pass to **pu**, **pc**, **dro**, **pi** — the only token that matches a pinned FileView. Different hex from cite by construction.
 - **cite:@h:<CITE>** (second slot) = source revision. Pass as \`content_hash\` or embed in \`f:h:<CITE>\` for edits. Line numbers in the view are current-revision (auto-healed).
-Using cite:@h: for pu (or h:<RET> for content_hash) produces "no matching pinned refs" / stale_hash. The HASH MANIFEST lists FileViews under their retention ref (type: fileview).
+Using cite:@h: for pu (or h:<RET> for content_hash) produces "no matching pinned refs" / stale_hash. The HASH MANIFEST lists FileViews under their retention ref; the type column uses **fv** (short for FileView — not a batch op shorthand).
 
 rc type:tree = directory listing (not file content).
 
@@ -70,7 +70,7 @@ Other read primitives:
 - h:XXXX:LL-LL in text renders as expandable code pills. Use h:refs, never paste raw code.
 
 ### HASH MANIFEST
-At round top, the manifest indexes every hash: hash, pin state, visibility (active/demat/arch), type, source, tokens, freshness.
+At round top, the manifest indexes every hash: hash, pin state, visibility (active/demat/arch), type (**fv** = FileView retention row; other rows show types such as demat, arch, file, smart, …), source, tokens, freshness.
 Forward rows (h:OLD -> h:NEW) reconcile prior-round refs. **Always substitute h:NEW for h:OLD in future calls** — the system auto-forwards, but explicit h:NEW is clearer and avoids ambiguity.
 Suspect entries mean the source file changed externally — re-read before editing.
 h:@dematerialized and h:@dormant set-refs still work for filtering by pool.

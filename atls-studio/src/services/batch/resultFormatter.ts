@@ -206,13 +206,14 @@ function capStepSummary(text: string, stepUse: string, step: StepResult): string
 // by a live pinned FileView, emit a one-line pointer instead of the raw body.
 // The FileView block in working memory becomes the single source of truth.
 //
-// Timing note: the `rl` handler creates the view via `ensureFileView` and
-// auto-pins it, but the actual merge of the read body into `filledRegions`
-// happens AFTER this formatter runs (via `addChunk(readSpan)` from
-// `materializeFileRefsContentIfNeeded` or `refreshRoundEnd`). By the time the
-// model sees the next round's manifest, the fill has landed. We therefore
-// gate on `view.pinned` — a sufficient signal that (a) the fill path is
-// wired and (b) the model will retain the view — and trust the async merge.
+// Timing note: the `rl` handler now lands the slice body into `filledRegions`
+// synchronously via `applyFillFromChunk` right after `ensureFileView` /
+// `autoPinViewAfterRead`, so the merge is already complete by the time this
+// formatter runs. We still gate on `view.pinned` — that is the retention
+// signal the model acts on and the condition under which the view block will
+// render the merged body next round. (Historically the fill was deferred to
+// `materializeFileRefsContentIfNeeded` via an eventual `session.pin`, which
+// meant bare `rl` batches silently lost their body — see the `rl-fill` fix.)
 // ---------------------------------------------------------------------------
 
 function formatRange(r: [number, number | null]): string {
@@ -446,7 +447,10 @@ export function formatBatchResult(result: UnifiedBatchResult): string {
   }
 
   // Volatile nudge: aggregate refs from read/search/analysis steps, minus anything
-  // already pinned in this batch.
+  // already pinned in this batch OR already auto-pinned as a FileView. The
+  // FileView check closes the gap between the "reads auto-pin" prompt contract
+  // and the batch footer — without it, file-backed rs/rl emit a spurious
+  // "PIN NOW" warning for refs the runtime already retained.
   const READ_SEARCH_OPS = new Set([
     'read.context', 'read.shaped', 'read.lines', 'read.file',
     'search.code', 'search.symbol', 'search.usage', 'search.similar',
@@ -454,6 +458,7 @@ export function formatBatchResult(result: UnifiedBatchResult): string {
     'analyze.deps', 'analyze.calls', 'analyze.structure',
     'analyze.impact', 'analyze.blast_radius', 'analyze.extract_plan',
   ]);
+  const isPinnedView = useContextStore.getState().isPinnedFileViewRef;
   const volatileRefs: string[] = [];
   for (const step of result.step_results) {
     if (step.ok && step.refs?.length && READ_SEARCH_OPS.has(step.use)) {
@@ -461,6 +466,7 @@ export function formatBatchResult(result: UnifiedBatchResult): string {
         if (!ref.startsWith('h:') || volatileRefs.includes(ref)) continue;
         const base = ref.replace(/^h:/, '').split(':')[0];
         if (base && pinnedBaseHashes.has(base)) continue;
+        if (isPinnedView(ref)) continue;
         volatileRefs.push(ref);
       }
     }

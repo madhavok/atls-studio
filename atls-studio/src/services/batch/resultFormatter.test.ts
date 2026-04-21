@@ -540,3 +540,153 @@ describe('resultFormatter Rule B — FileView-merge pointer', () => {
     expect(out).toContain('merged into');
   });
 });
+
+// ---------------------------------------------------------------------------
+// VOLATILE footer — auto-pin contract
+// The footer must not nudge the model to `pi` refs that are already retained
+// by a pinned FileView (auto-pinned by reads) or by a `session.pin` step in
+// the same batch. Tree / engram chunk refs with no FileView must still warn.
+// ---------------------------------------------------------------------------
+
+describe('resultFormatter VOLATILE footer — auto-pin contract', () => {
+  beforeEach(() => {
+    useContextStore.getState().resetSession();
+  });
+
+  const VOLATILE_MARK = '⚠ VOLATILE';
+
+  function mkReadStep(id: string, ref: string, file?: string): StepResult {
+    return {
+      id,
+      use: 'read.lines',
+      ok: true,
+      duration_ms: 1,
+      summary: 'read_lines: merged into FileViews: ... | see ## FILE VIEWS',
+      refs: [ref],
+      artifacts: file ? { file, hash: ref, actual_range: [[1, 10]] } : { hash: ref },
+    };
+  }
+
+  it('suppresses VOLATILE footer when read ref resolves to an auto-pinned FileView', () => {
+    const filePath = 'atls-studio/src/autopinned.ts';
+    const store = useContextStore.getState();
+    const revision = 'rev-autopinned';
+    const ref = store.ensureFileView(filePath, revision);
+    // Mirror the auto-pin-on-read path (autoPinFileView).
+    const pinned = store.autoPinFileView(filePath, 'sig');
+    expect(pinned).toBe(true);
+
+    const result: UnifiedBatchResult = {
+      ok: true,
+      duration_ms: 1,
+      step_results: [mkReadStep('r1', ref, filePath)],
+    };
+
+    const out = formatBatchResult(result);
+    expect(out).not.toContain(VOLATILE_MARK);
+    expect(out).not.toContain('PIN NOW');
+  });
+
+  it('emits VOLATILE footer for chunk refs with no FileView (tree / engram reads)', () => {
+    // No FileView created: this is the tree-listing / engram chunk path.
+    const chunkRef = 'h:abcdef';
+    const result: UnifiedBatchResult = {
+      ok: true,
+      duration_ms: 1,
+      step_results: [
+        {
+          id: 'r1',
+          use: 'read.context',
+          ok: true,
+          duration_ms: 1,
+          summary: 'read: . → h:abcdef (3000tk)',
+          refs: [chunkRef],
+        },
+      ],
+    };
+
+    const out = formatBatchResult(result);
+    expect(out).toContain(VOLATILE_MARK);
+    expect(out).toContain(`pi ${chunkRef}`);
+  });
+
+  it('still emits VOLATILE footer when the matching FileView exists but is unpinned', () => {
+    // autoPinReads=false legacy path: view exists but pinned=false.
+    const filePath = 'atls-studio/src/unpinned.ts';
+    const store = useContextStore.getState();
+    const revision = 'rev-unpinned';
+    const ref = store.ensureFileView(filePath, revision);
+    store.setFileViewPinned(filePath, false);
+
+    const result: UnifiedBatchResult = {
+      ok: true,
+      duration_ms: 1,
+      step_results: [mkReadStep('r1', ref, filePath)],
+    };
+
+    const out = formatBatchResult(result);
+    expect(out).toContain(VOLATILE_MARK);
+    expect(out).toContain(`pi ${ref}`);
+  });
+
+  it('suppresses VOLATILE footer when session.pin in the same batch covers the ref (regression)', () => {
+    const chunkRef = 'h:123456';
+    const result: UnifiedBatchResult = {
+      ok: true,
+      duration_ms: 1,
+      step_results: [
+        {
+          id: 'r1',
+          use: 'search.code',
+          ok: true,
+          duration_ms: 1,
+          summary: 'search: match',
+          refs: [chunkRef],
+        },
+        {
+          id: 'p1',
+          use: 'session.pin',
+          ok: true,
+          duration_ms: 1,
+          summary: 'pin: 1 chunk pinned',
+          refs: [chunkRef],
+        },
+      ],
+    };
+
+    const out = formatBatchResult(result);
+    expect(out).not.toContain(VOLATILE_MARK);
+  });
+
+  it('mixed batch: pinned FileView read skips footer, unpinned chunk ref still listed', () => {
+    const filePath = 'atls-studio/src/mixed.ts';
+    const store = useContextStore.getState();
+    const revision = 'rev-mixed';
+    const viewRef = store.ensureFileView(filePath, revision);
+    store.autoPinFileView(filePath, 'sig');
+
+    const chunkRef = 'h:beadfe';
+    const result: UnifiedBatchResult = {
+      ok: true,
+      duration_ms: 1,
+      step_results: [
+        mkReadStep('r1', viewRef, filePath),
+        {
+          id: 'r2',
+          use: 'read.context',
+          ok: true,
+          duration_ms: 1,
+          summary: 'read: tree → h:beadfe',
+          refs: [chunkRef],
+        },
+      ],
+    };
+
+    const out = formatBatchResult(result);
+    expect(out).toContain(VOLATILE_MARK);
+    expect(out).toContain(`pi ${chunkRef}`);
+    // The pinned-view ref must NOT appear in the pin list.
+    expect(out).not.toContain(`pi ${viewRef}`);
+    expect(out).not.toMatch(new RegExp(`pi [^\\n]*${viewRef.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&')}`));
+  });
+});

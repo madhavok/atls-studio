@@ -13,7 +13,6 @@
  */
 
 import type { ChunkRef } from './hashProtocol';
-import type { FreshnessCause } from './batch/types';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -183,6 +182,17 @@ function formatTokens(tokens: number): string {
   return `${tokens}`;
 }
 
+/** Fixed width for manifest type column (aligns with pin column layout). */
+const MANIFEST_TYPE_WIDTH = 6;
+
+/**
+ * Map internal chunk type to manifest column label. `fileview` → `fv` (FileView retention rows).
+ */
+export function formatManifestType(type: string): string {
+  if (type === 'fileview') return 'fv'.padEnd(MANIFEST_TYPE_WIDTH);
+  return type.slice(0, MANIFEST_TYPE_WIDTH).padEnd(MANIFEST_TYPE_WIDTH);
+}
+
 // P2.2: 6-char pinned-shape column. At 3 chars, `imports` and `exports`
 // collided on the same `imp`/`exp` → `im ` / `ex ` stub (first 3 chars
 // after trim), making the manifest useless to distinguish shaped pins
@@ -272,7 +282,7 @@ export function formatHashManifest(input: FormatInput): string {
 
   for (const chunk of activeChunks) {
     const src = truncSource(chunk.source || chunk.type, SRC_MAX);
-    const typ = chunk.type.padEnd(6);
+    const typ = formatManifestType(chunk.type);
     const pin = pinFlag(chunk);
     const tk = formatTokens(chunk.tokens).padStart(5);
     const fr = freshnessLabel(chunk);
@@ -283,9 +293,10 @@ export function formatHashManifest(input: FormatInput): string {
   for (const ref of dematRefs) {
     const src = truncSource(ref.source || ref.type, SRC_MAX);
     const pin = pinFlagRef(ref);
+    const typ = 'demat'.padEnd(MANIFEST_TYPE_WIDTH);
     const tk = formatTokens(ref.tokens).padStart(5);
     const fr = freshnessLabelRef(ref);
-    lines.push(`h:${ref.shortHash} ${pin} demat  ${src.padEnd(SRC_MAX)} ${tk}  ${fr}`);
+    lines.push(`h:${ref.shortHash} ${pin} ${typ} ${src.padEnd(SRC_MAX)} ${tk}  ${fr}`);
   }
 
   for (const ref of archivedRefs) {

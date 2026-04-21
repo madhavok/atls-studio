@@ -995,6 +995,16 @@ interface ContextStoreState {
   /** Get a live FileView by file path. Normalized forward-slash lookup. */
   getFileView: (path: string) => FileView | undefined;
   /**
+   * Returns true when `ref` (full or shaped `h:<short>` form) resolves to a
+   * FileView whose `pinned === true`. Used by the batch-result formatter to
+   * suppress the generic VOLATILE footer for auto-pinned file-backed reads —
+   * the explicit `session.pin` in-batch check already covers manual pins, but
+   * reads that auto-pin their view (see `autoPinFileView`) need an additional
+   * same-round retention signal to avoid contradicting the "reads auto-pin"
+   * prompt contract. Safe for non-view refs (returns false).
+   */
+  isPinnedFileViewRef: (ref: string) => boolean;
+  /**
    * Insert or merge a filled region into the FileView for `path` at `sourceRevision`.
    * Used after any read that produces line-range content. Creates the view on demand.
    * Skeleton rows default to empty until PR3 wires getFileSkeleton into the pipeline.
@@ -2966,13 +2976,18 @@ export const useContextStore = create<ContextStoreState>()(
         subtaskId: chunk.subtaskId,
       });
 
-      // Drop a FileView by path key: removes the view entry and all active /
-      // archived chunks that back it. Returns true if the view existed.
-      const dropViewByKey = (fvKey: string): boolean => {
+      // Drop a FileView by path key: removes the view entry (unless pinned) and
+      // all active / archived chunks that back it. Pinned views keep the
+      // `fileViews` row; region/full-body retention follows prune + pin-aware
+      // `onConstituentChunkRemoved`. Returns true if the view existed.
+      const dropViewByKey = (fvKey: string, opts?: { removeViewEntry?: boolean }): boolean => {
+        const removeViewEntry = opts?.removeViewEntry ?? true;
         const view = newFileViews.get(fvKey);
         if (!view) return false;
-        newFileViews.delete(fvKey);
-        fileViewsChanged = true;
+        if (removeViewEntry) {
+          newFileViews.delete(fvKey);
+          fileViewsChanged = true;
+        }
         // Collect backing chunk hashes from filled regions + fullBody.
         const backingHashes = new Set<string>();
         for (const region of view.filledRegions) {
@@ -3058,7 +3073,8 @@ export const useContextStore = create<ContextStoreState>()(
           trackRefCollision(h, newFileViews, newChunks);
           const viewHit = findViewByRef(newFileViews, h);
           if (viewHit) {
-            dropViewByKey(viewHit[0]);
+            const [fvKey, fv] = viewHit;
+            dropViewByKey(fvKey, { removeViewEntry: !fv.pinned });
             continue;
           }
 
@@ -3070,7 +3086,8 @@ export const useContextStore = create<ContextStoreState>()(
           const srcPath = inWorking?.[1].source ?? inArchive?.[1].source;
           if (srcPath) {
             const fvKey = fvNormalizePath(srcPath);
-            if (newFileViews.has(fvKey) && dropViewByKey(fvKey)) continue;
+            const fv = newFileViews.get(fvKey);
+            if (fv && dropViewByKey(fvKey, { removeViewEntry: !fv.pinned })) continue;
           }
           // Non-file chunk — drop at chunk level.
           if (inWorking) {
@@ -6715,6 +6732,12 @@ export const useContextStore = create<ContextStoreState>()(
 
   getFileView: (path) => {
     return get().fileViews.get(fvNormalizePath(path));
+  },
+
+  isPinnedFileViewRef: (ref) => {
+    if (!ref) return false;
+    const hit = findViewByRef(get().fileViews, ref);
+    return hit != null && hit[1].pinned === true;
   },
 
   applyFillFromChunk: ({ filePath, sourceRevision, startLine, endLine, content, chunkHash, tokens, origin, refetchedAtRound }) => {

@@ -271,3 +271,104 @@ describe('auto-pin on read — unused-pin telemetry', () => {
     expect(peekAutoPinMetrics().releasedUnused).toBe(0);
   });
 });
+
+// ---------------------------------------------------------------------------
+// read.lines FileView fill — slice body must land in filledRegions in the
+// SAME round. Without this, the next round's `## FILE VIEWS` block renders
+// only the sig skeleton (imports + fold) and the model misreads the absence
+// as "task_complete auto-compacted" even though the content was never there.
+// ---------------------------------------------------------------------------
+
+describe('read.lines FileView fill — slice body merges into filledRegions', () => {
+  beforeEach(() => {
+    resetAll();
+    setAutoPin(true);
+  });
+
+  it('fills a single region with the body, matching the returned range', async () => {
+    const body = '  2|const demo = 1;\n  3|const other = 2;';
+    const ctx = makeCtx({
+      atlsBatchQuery: vi.fn().mockResolvedValue({
+        file: 'src/fill-one.ts',
+        h: 'h:fill1111',
+        content_hash: 'fill1111000000000000000000000000',
+        target_range: [[2, 3]],
+        actual_range: [[2, 3]],
+        context_lines: 2,
+        content: body,
+      }),
+    });
+
+    const result = await handleReadLines(
+      { hash: 'h:fill1111000000000000000000000000', lines: '2-3' },
+      ctx,
+    );
+    expect(result.ok).toBe(true);
+
+    const view = useContextStore.getState().fileViews.get('src/fill-one.ts');
+    expect(view).toBeDefined();
+    expect(view!.pinned).toBe(true);
+    expect(view!.filledRegions).toHaveLength(1);
+    expect(view!.filledRegions[0].start).toBe(2);
+    expect(view!.filledRegions[0].end).toBe(3);
+    expect(view!.filledRegions[0].content).toBe(body);
+    expect(view!.filledRegions[0].origin).toBe('read');
+    expect(view!.filledRegions[0].tokens).toBeGreaterThan(0);
+    expect(view!.filledRegions[0].chunkHashes.length).toBe(1);
+  });
+
+  it('two consecutive reads of the same file merge into one view with two regions', async () => {
+    const body1 = '  1|import a from "a";\n  2|import b from "b";';
+    const body2 = ' 50|function demo() {\n 51|  return 1;\n 52|}';
+
+    const ctx1 = makeCtx({
+      atlsBatchQuery: vi.fn().mockResolvedValue({
+        file: 'src/fill-two.ts',
+        h: 'h:fill2222',
+        content_hash: 'fill2222000000000000000000000000',
+        target_range: [[1, 2]],
+        actual_range: [[1, 2]],
+        context_lines: 2,
+        content: body1,
+      }),
+    });
+    const ctx2 = makeCtx({
+      atlsBatchQuery: vi.fn().mockResolvedValue({
+        file: 'src/fill-two.ts',
+        h: 'h:fill2222',
+        content_hash: 'fill2222000000000000000000000000',
+        target_range: [[50, 52]],
+        actual_range: [[50, 52]],
+        context_lines: 2,
+        content: body2,
+      }),
+    });
+
+    const r1 = await handleReadLines(
+      { hash: 'h:fill2222000000000000000000000000', lines: '1-2' },
+      ctx1,
+    );
+    const r2 = await handleReadLines(
+      { hash: 'h:fill2222000000000000000000000000', lines: '50-52' },
+      ctx2,
+    );
+    expect(r1.ok).toBe(true);
+    expect(r2.ok).toBe(true);
+
+    const view = useContextStore.getState().fileViews.get('src/fill-two.ts');
+    expect(view).toBeDefined();
+    expect(view!.pinned).toBe(true);
+    expect(view!.filledRegions).toHaveLength(2);
+
+    const sorted = [...view!.filledRegions].sort((a, b) => a.start - b.start);
+    expect(sorted[0].start).toBe(1);
+    expect(sorted[0].end).toBe(2);
+    expect(sorted[0].content).toBe(body1);
+    expect(sorted[1].start).toBe(50);
+    expect(sorted[1].end).toBe(52);
+    expect(sorted[1].content).toBe(body2);
+    // Both regions keep the view's single retention identity.
+    expect(r1.refs?.[0]).toBe(r2.refs?.[0]);
+  });
+
+});

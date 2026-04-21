@@ -11,6 +11,7 @@ import {
   getEvictionMap,
   resetManifestState,
   formatHashManifest,
+  formatManifestType,
   getManifestMetrics,
   type ForwardEntry,
 } from './hashManifest';
@@ -104,6 +105,7 @@ describe('hashManifest', () => {
       expect(output).toContain('## HASH MANIFEST');
       expect(output).toContain('turn 1');
       expect(output).toContain('all fresh');
+      expect(output).not.toContain('_Legend:');
     });
 
     it('renders active chunks with pin flags and freshness', () => {
@@ -126,6 +128,25 @@ describe('hashManifest', () => {
       expect(output).toContain('suspect (watcher_event)');
       expect(output).toContain('3 active');
       expect(output).toContain('1 suspect');
+      expect(output).not.toContain('_Legend:');
+    });
+
+    it('maps fileview type column to fv', () => {
+      const output = formatHashManifest({
+        activeChunks: [
+          { shortHash: 'a1b2c3', type: 'fileview', source: 'src/app.tsx', tokens: 529, pinned: true, pinnedShape: 'sig', freshness: 'fresh' },
+        ],
+        dematRefs: [],
+        archivedRefs: [],
+        turn: 5,
+      });
+      expect(output).toMatch(/h:a1b2c3\s+P:sig\s+fv\s+/);
+      expect(output).not.toContain('fileview');
+    });
+
+    it('formatManifestType maps fileview to fv width', () => {
+      expect(formatManifestType('fileview')).toBe('fv    ');
+      expect(formatManifestType('file')).toBe('file  ');
     });
 
     it('renders dematerialized and archived refs', () => {
@@ -140,6 +161,7 @@ describe('hashManifest', () => {
       expect(output).toContain('h:bbb222');
       expect(output).toContain('arch');
       expect(output).toContain('rec to restore');
+      expect(output).not.toContain('_Legend:');
     });
 
     it('renders superseded-by-slices marker when chunk carries supersededBy', () => {
@@ -196,6 +218,7 @@ describe('hashManifest', () => {
       expect(output).toContain('h:gone33');
       expect(output).toContain('evict');
       expect(output).toContain('reconcile');
+      expect(output).not.toContain('_Legend:');
     });
   });
 
