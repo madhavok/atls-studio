@@ -23,6 +23,8 @@ import { isStepAllowed, getAutoVerifySteps, isStepCountExceeded, evaluateConditi
 import { stepOutputToResult } from './resultFormatter';
 import { resetRecallBudget } from './handlers/session';
 import { SnapshotTracker, AwarenessLevel, canonicalizeSnapshotHash } from './snapshotTracker';
+import { recordForwarding as manifestRecordForwarding } from '../hashManifest';
+import { getTurn as hppGetTurn } from '../hashProtocol';
 import type { LineRegion } from './snapshotTracker';
 import { parseHashRef } from '../../utils/hashRefParsers';
 import { buildIntentContext, resolveIntents, isPressured } from './intents';
@@ -1065,8 +1067,21 @@ function recordSnapshotFromOutput(
     // Also pre-register the revision advance cause so the file watcher's
     // reconcileSourceRevision picks up 'same_file_prior_edit' instead of
     // defaulting to 'external_file_change'.
+    //
+    // Crucially, populate the hash-manifest forward map here: the prior
+    // canonical hash (visible in past tool-output transcripts) must
+    // resolve to the new one so a later reference to `h:OLD` walks to
+    // `h:NEW` transparently. Without this, the model keeps picking old
+    // hashes out of its own history and hitting a stale-ref error even
+    // though the runtime knows exactly where the file moved.
     const store = ctx.store();
     const sid = ctx.sessionId ?? undefined;
+    const turnNumber = (() => { try { return hppGetTurn(); } catch { return 0; } })();
+    const registerForward = (fp: string, newShort: string, prior?: string) => {
+      if (!prior || prior === newShort) return;
+      try { manifestRecordForwarding(prior, newShort, fp, 'same_file_prior_edit', turnNumber); }
+      catch (e) { console.warn('[executor] recordForwarding failed:', e); }
+    };
     const sources = [artifact.results, artifact.drafts, artifact.batch];
     for (const arr of sources) {
       if (!Array.isArray(arr)) continue;
@@ -1076,7 +1091,8 @@ function recordSnapshotFromOutput(
         const fp = SnapshotTracker.extractFilePath(rec);
         const sh = SnapshotTracker.extractHash(rec);
         if (fp && sh) {
-          snapshotTracker.invalidateAndRerecord(fp, sh);
+          const { priorShortHash } = snapshotTracker.invalidateAndRerecord(fp, sh);
+          registerForward(fp, canonicalizeSnapshotHash(sh), priorShortHash);
           store.recordRevisionAdvance(fp, sh, 'same_file_prior_edit', sid);
         }
       }
@@ -1085,7 +1101,8 @@ function recordSnapshotFromOutput(
     const topFp = SnapshotTracker.extractFilePath(artifact);
     const topSh = SnapshotTracker.extractHash(artifact);
     if (topFp && topSh) {
-      snapshotTracker.invalidateAndRerecord(topFp, topSh);
+      const { priorShortHash } = snapshotTracker.invalidateAndRerecord(topFp, topSh);
+      registerForward(topFp, canonicalizeSnapshotHash(topSh), priorShortHash);
       store.recordRevisionAdvance(topFp, topSh, 'same_file_prior_edit', sid);
     }
   } else {

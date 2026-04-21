@@ -13,6 +13,7 @@ import { SHORT_HASH_LEN } from '../../../utils/contextHash';
 import { parseHashRef } from '../../../utils/hashRefParsers';
 import { formatResult } from '../../../utils/toon';
 import { canonicalizeSnapshotHash } from '../snapshotTracker';
+import { resolveForwardChain as manifestResolveForwardChain } from '../../hashManifest';
 
 function ok(summary: string, refs: string[] = [], content?: unknown): StepOutput {
   return { kind: 'edit_result', ok: true, refs, summary, content };
@@ -804,26 +805,56 @@ async function resolveTargetFiles(
     // Pre-resolve any retention hash that matches a live FileView to its
     // filePath before we ask the Rust registry, so `f:h:<RET>:L-M` edits
     // work without the model needing a separate cite-form ref.
+    //
+    // When the short hash isn't a live view, consult the hash-manifest
+    // forward chain: the model frequently references a retention hash
+    // from an earlier turn (tool-transcript residue) after its own
+    // edits have rotated the view's identity. Walking the chain to the
+    // current view keeps edits working without forcing a re-read.
     const fileViewResolved = new Set<string>();
     const fileViewCiteByRef = new Map<string, string>();
+    const findViewByShort = (
+      views: Iterable<{ shortHash: string; filePath: string; sourceRevision: string }>,
+      shortPart: string,
+    ): { filePath: string; sourceRevision: string } | undefined => {
+      for (const view of views) {
+        if (
+          view.shortHash === shortPart
+          || view.shortHash.startsWith(shortPart)
+          || shortPart.startsWith(view.shortHash)
+        ) {
+          return { filePath: view.filePath, sourceRevision: view.sourceRevision };
+        }
+      }
+      return undefined;
+    };
     try {
       const fileViews = useContextStore.getState().fileViews;
+      const viewValues = Array.from(fileViews.values());
       for (const ref of hashLookups.keys()) {
         const bare = ref.startsWith('h:') ? ref.slice(2) : ref;
         const shortPart = bare.split(':')[0];
         if (!shortPart || !/^[0-9a-fA-F_]{6,16}$/.test(shortPart)) continue;
-        for (const view of fileViews.values()) {
-          if (
-            view.shortHash === shortPart
-            || view.shortHash.startsWith(shortPart)
-            || shortPart.startsWith(view.shortHash)
-          ) {
-            targets.add(view.filePath);
-            for (const assign of hashLookups.get(ref) ?? []) assign(view.filePath);
-            fileViewResolved.add(ref);
-            fileViewCiteByRef.set(ref, view.sourceRevision);
-            break;
+        let hit = findViewByShort(viewValues, shortPart);
+        if (!hit) {
+          // Stale-ref recovery: walk the manifest forward chain. If the
+          // tail of the chain matches a live view we treat the ref as if
+          // the model had supplied the current hash — this is the core
+          // of the "one ref per work object" promise for edits.
+          try {
+            const walk = manifestResolveForwardChain(shortPart);
+            if (walk.kind === 'resolved') {
+              hit = findViewByShort(viewValues, walk.shortHash);
+            }
+          } catch {
+            // Non-fatal: fall through to registry-only resolution below.
           }
+        }
+        if (hit) {
+          targets.add(hit.filePath);
+          for (const assign of hashLookups.get(ref) ?? []) assign(hit.filePath);
+          fileViewResolved.add(ref);
+          fileViewCiteByRef.set(ref, hit.sourceRevision);
         }
       }
     } catch {

@@ -233,10 +233,17 @@ export class SnapshotTracker {
    * Used after a mutation step to ensure subsequent steps see the
    * post-mutation hash and pass the canonical read gate.
    * Clears readRegions and shapeHash since the file content changed.
+   *
+   * Returns the prior canonical hash (short form) when one existed so
+   * callers can register a forward map entry (old → new). Without this
+   * return value, past tool-output hashes in the conversation transcript
+   * become dangling references after an edit.
    */
-  invalidateAndRerecord(filePath: string, newHash: string): void {
+  invalidateAndRerecord(filePath: string, newHash: string): { priorShortHash?: string } {
     const key = normalizePathKey(filePath);
     const bare = canonicalizeSnapshotHash(newHash);
+    const prior = this.snapshots.get(key);
+    const priorShortHash = prior?.canonicalHash ?? prior?.snapshotHash;
     this.snapshots.delete(key);
     this.snapshots.set(key, {
       filePath,
@@ -245,6 +252,13 @@ export class SnapshotTracker {
       readAt: Date.now(),
       readKind: 'canonical',
     });
+    // Don't return the prior hash when it's the same as the new — the
+    // caller would register `oldShort → oldShort` and confuse the
+    // forward walker. Common on idempotent re-records.
+    if (priorShortHash && priorShortHash !== bare) {
+      return { priorShortHash };
+    }
+    return {};
   }
 
   /**

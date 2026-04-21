@@ -4,6 +4,7 @@
 
 import type { OpHandler, StepOutput, ContextStoreApi } from '../types';
 import { SHORT_HASH_LEN } from '../../../utils/contextHash';
+import { resolveForwardChain as manifestResolveForwardChain } from '../../hashManifest';
 
 function ok(summary: string, refs: string[] = []): StepOutput {
   return { kind: 'session', ok: true, refs, summary };
@@ -31,16 +32,34 @@ function viewSourceRevisionForRef(ref: string, store: ContextStoreApi): string |
   if (!short || !/^[0-9a-fA-F_]{6,16}$/.test(short)) return undefined;
   const views = store.fileViews;
   if (!views) return undefined;
+  const toFullRef = (sr: string) => (sr.startsWith('h:') ? sr : `h:${sr}`);
   for (const view of views.values()) {
     if (
       view.shortHash === short
       || view.shortHash.startsWith(short)
       || short.startsWith(view.shortHash)
     ) {
-      return view.sourceRevision.startsWith('h:')
-        ? view.sourceRevision
-        : `h:${view.sourceRevision}`;
+      return toFullRef(view.sourceRevision);
     }
+  }
+  // Stale-ref recovery: if the short isn't a live view, walk the
+  // hash-manifest forward chain. Annotate/link refs copied from past
+  // tool output after an edit should route to the current view.
+  try {
+    const walk = manifestResolveForwardChain(short);
+    if (walk.kind === 'resolved') {
+      for (const view of views.values()) {
+        if (
+          view.shortHash === walk.shortHash
+          || view.shortHash.startsWith(walk.shortHash)
+          || walk.shortHash.startsWith(view.shortHash)
+        ) {
+          return toFullRef(view.sourceRevision);
+        }
+      }
+    }
+  } catch {
+    // Non-fatal: fall back to "not a view ref".
   }
   return undefined;
 }
@@ -89,45 +108,73 @@ export const handleRule: OpHandler = async (params, ctx) => {
   return ok(line);
 };
 
-export const handleEngramEdit: OpHandler = async (params, ctx) => {
-  const hash = params.hash as string;
-  const fields = params.fields as Record<string, unknown> | undefined;
-  if (!hash) return err('engram_edit: missing hash param');
-  if (!fields || typeof fields !== 'object') return err('engram_edit: missing fields param');
-
-  const store = ctx.store();
-  // FileView refs point at file content, not engram metadata. Auto-route
-  // to the backing chunk (sourceRevision) so annotate.engram on a rl/rf
-  // ref edits the underlying chunk's metadata in place.
-  const resolved = viewSourceRevisionForRef(hash, store) ?? hash;
-  if (isChunkSuspect(store)(resolved)) {
-    return err('engram_edit: ref changed externally — re-read before editing');
-  }
-  const result = store.editEngram(resolved, fields);
-  if (result.ok) {
-    const msg = result.metadataOnly
-      ? `engram_edit: h:${result.newHash} (metadata updated in-place)`
-      : `engram_edit: h:${result.newHash}`;
-    return ok(msg, result.newHash ? [`h:${result.newHash}`] : []);
-  }
-  return err(`engram_edit: ${result.error}`);
-};
-
+/**
+ * Unified annotation handler: accepts a free-form `note` and/or structured
+ * `fields` (digest/summary/type) on any ref — chunks, FileViews, or staged
+ * snippets. Internally routes:
+ *   - note     → store.addAnnotation(ref, note)   (free-form, always works)
+ *   - fields   → store.editEngram(ref, fields)    (metadata edit in place)
+ *
+ * `annotate.engram` is a compatibility alias that points at this same
+ * handler — from the model's view there's one `annotate` verb that
+ * attaches whatever you hand it to a ref. The runtime picks the right
+ * backing store based on ref kind.
+ *
+ * FileView refs used to reject metadata edits because views weren't
+ * modeled as engrams; we now route them via `viewSourceRevisionForRef`
+ * to the underlying chunk, so both shapes "just work" on view refs too.
+ */
 export const handleAnnotate: OpHandler = async (params, ctx) => {
   const hash = params.hash as string;
-  const note = params.note as string;
+  const note = params.note as string | undefined;
+  const fields = params.fields as Record<string, unknown> | undefined;
   if (!hash) return err('annotate: missing hash param');
-  if (!note) return err('annotate: missing note param');
+  if (!note && (!fields || typeof fields !== 'object')) {
+    return err('annotate: pass `note` (string) and/or `fields` (metadata edits)');
+  }
 
   const store = ctx.store();
-  if (isChunkSuspect(store)(hash)) {
+  const resolved = viewSourceRevisionForRef(hash, store) ?? hash;
+  if (isChunkSuspect(store)(resolved)) {
     return err('annotate: ref changed — re-read and retry');
   }
-  const result = store.addAnnotation(hash, note);
-  if (result.ok) {
-    return ok(`annotate: added to h:${hash.startsWith('h:') ? hash.slice(2) : hash} (id: ${result.id})`);
+
+  const outRefs: string[] = [];
+  const parts: string[] = [];
+  const shortOut = (h: string) => (h.startsWith('h:') ? h.slice(2) : h);
+
+  if (note) {
+    const annotateResult = store.addAnnotation(resolved, note);
+    if (!annotateResult.ok) return err(`annotate: ${annotateResult.error}`);
+    parts.push(`note:${annotateResult.id}`);
   }
-  return err(`annotate: ${result.error}`);
+
+  if (fields && typeof fields === 'object') {
+    const editResult = store.editEngram(resolved, fields);
+    if (!editResult.ok) return err(`annotate: ${editResult.error}`);
+    if (editResult.newHash) {
+      const ref = `h:${editResult.newHash}`;
+      outRefs.push(ref);
+      parts.push(editResult.metadataOnly ? `fields (metadata in-place)` : `fields → ${ref}`);
+    } else {
+      parts.push('fields applied');
+    }
+  }
+
+  return ok(`annotate: h:${shortOut(resolved)} — ${parts.join(' | ')}`, outRefs);
+};
+
+/**
+ * Compatibility alias: `annotate.engram`. Previous prompts/tools expected
+ * a `fields`-only op; we funnel it through the unified `handleAnnotate`
+ * so existing call sites keep working without a second code path.
+ */
+export const handleEngramEdit: OpHandler = async (params, ctx) => {
+  if (!params.hash) return err('annotate: missing hash param');
+  if (!params.fields || typeof params.fields !== 'object') {
+    return err('annotate: missing fields param');
+  }
+  return handleAnnotate(params, ctx);
 };
 
 export const handleLink: OpHandler = async (params, ctx) => {

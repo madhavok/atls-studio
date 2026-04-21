@@ -55,6 +55,65 @@ describe('annotation handlers', () => {
     const store = { addAnnotation: vi.fn() };
     const out = await handleAnnotate({} as never, makeCtx(store as never));
     expect(out.ok).toBe(false);
-    expect(out.summary).toMatch(/annotate: ERROR missing hash/);
+    expect(out.summary).toMatch(/annotate: missing hash/);
+  });
+
+  it('annotate requires either note or fields', async () => {
+    const store = { addAnnotation: vi.fn(), editEngram: vi.fn() };
+    const out = await handleAnnotate({ hash: 'h:abc123' } as never, makeCtx(store as never));
+    expect(out.ok).toBe(false);
+    expect(out.summary).toMatch(/note.*and\/or.*fields/);
+  });
+
+  it('annotate with note only calls addAnnotation', async () => {
+    const addAnnotation = vi.fn().mockReturnValue({ ok: true, id: 'ann_x' });
+    const store = {
+      addAnnotation,
+      editEngram: vi.fn(),
+      chunks: new Map(),
+      archivedChunks: new Map(),
+      fileViews: undefined,
+    };
+    const out = await handleAnnotate({ hash: 'h:abc123', note: 'hello' } as never, makeCtx(store as never));
+    expect(out.ok).toBe(true);
+    expect(addAnnotation).toHaveBeenCalledWith('h:abc123', 'hello');
+    expect(store.editEngram).not.toHaveBeenCalled();
+  });
+
+  it('annotate with fields only calls editEngram', async () => {
+    const editEngram = vi.fn().mockReturnValue({ ok: true, newHash: 'abc123def', metadataOnly: true });
+    const store = {
+      addAnnotation: vi.fn(),
+      editEngram,
+      chunks: new Map(),
+      archivedChunks: new Map(),
+      fileViews: undefined,
+    };
+    const out = await handleAnnotate(
+      { hash: 'h:abc123', fields: { type: 'note' } } as never,
+      makeCtx(store as never),
+    );
+    expect(out.ok).toBe(true);
+    expect(editEngram).toHaveBeenCalledWith('h:abc123', { type: 'note' });
+    expect(store.addAnnotation).not.toHaveBeenCalled();
+  });
+
+  it('annotate with both note and fields runs both', async () => {
+    const addAnnotation = vi.fn().mockReturnValue({ ok: true, id: 'ann_y' });
+    const editEngram = vi.fn().mockReturnValue({ ok: true, newHash: 'abc', metadataOnly: true });
+    const store = {
+      addAnnotation,
+      editEngram,
+      chunks: new Map(),
+      archivedChunks: new Map(),
+      fileViews: undefined,
+    };
+    const out = await handleAnnotate(
+      { hash: 'h:abc123', note: 'hi', fields: { summary: 's' } } as never,
+      makeCtx(store as never),
+    );
+    expect(out.ok).toBe(true);
+    expect(addAnnotation).toHaveBeenCalled();
+    expect(editEngram).toHaveBeenCalled();
   });
 });

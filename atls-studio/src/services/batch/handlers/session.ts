@@ -8,6 +8,7 @@ import { PROTECTED_RECENT_ROUNDS } from '../../promptMemory';
 import { parseHashRef } from '../../../utils/hashRefParsers';
 import { invoke } from '@tauri-apps/api/core';
 import { normalizeHashRefsToStrings, normalizeSessionPlanSubtasksInput } from '../paramNorm';
+import { resolveForwardChain as manifestResolveForwardChain } from '../../hashManifest';
 
 /**
  * Resolve a retention short-hash against the FileView store. Returns the
@@ -22,17 +23,36 @@ function resolveFileViewRef(
 ): { filePath: string; sourceRevision: string } | undefined {
   const shortPart = cleanHash.split(':')[0];
   if (!shortPart || !/^[0-9a-fA-F_]{6,16}$/.test(shortPart)) return undefined;
-  try {
-    const views = ctx.store().fileViews;
-    if (!views) return undefined;
-    for (const view of views.values()) {
+  const matchView = (views: Iterable<{ shortHash: string; filePath: string; sourceRevision: string }>, short: string) => {
+    for (const view of views) {
       if (
-        view.shortHash === shortPart
-        || view.shortHash.startsWith(shortPart)
-        || shortPart.startsWith(view.shortHash)
+        view.shortHash === short
+        || view.shortHash.startsWith(short)
+        || short.startsWith(view.shortHash)
       ) {
         return { filePath: view.filePath, sourceRevision: view.sourceRevision };
       }
+    }
+    return undefined;
+  };
+  try {
+    const views = ctx.store().fileViews;
+    if (!views) return undefined;
+    const viewList = Array.from(views.values());
+    const direct = matchView(viewList, shortPart);
+    if (direct) return direct;
+    // Stale-ref recovery: walk the manifest forward chain. Retention
+    // handlers (stage/pin/drop/…) frequently receive refs the model
+    // pulled from transcript history after its own prior edits. If the
+    // chain tail matches a live view, the ref is effectively current.
+    try {
+      const walk = manifestResolveForwardChain(shortPart);
+      if (walk.kind === 'resolved') {
+        const forwarded = matchView(viewList, walk.shortHash);
+        if (forwarded) return forwarded;
+      }
+    } catch {
+      // Non-fatal.
     }
   } catch {
     // Non-fatal: caller falls back to chunk/registry lookup.
