@@ -9,6 +9,37 @@ import { parseHashRef } from '../../../utils/hashRefParsers';
 import { invoke } from '@tauri-apps/api/core';
 import { normalizeHashRefsToStrings, normalizeSessionPlanSubtasksInput } from '../paramNorm';
 
+/**
+ * Resolve a retention short-hash against the FileView store. Returns the
+ * view's filePath + sourceRevision when one matches, or undefined. The view's
+ * `sourceRevision` is what the Rust backend understands for content reads;
+ * the retention hash is TS-only. Used by handlers (stage, retention ops)
+ * that accept any `h:<ref>` and need to route FileView refs to their file.
+ */
+function resolveFileViewRef(
+  cleanHash: string,
+  ctx: HandlerContext,
+): { filePath: string; sourceRevision: string } | undefined {
+  const shortPart = cleanHash.split(':')[0];
+  if (!shortPart || !/^[0-9a-fA-F_]{6,16}$/.test(shortPart)) return undefined;
+  try {
+    const views = ctx.store().fileViews;
+    if (!views) return undefined;
+    for (const view of views.values()) {
+      if (
+        view.shortHash === shortPart
+        || view.shortHash.startsWith(shortPart)
+        || shortPart.startsWith(view.shortHash)
+      ) {
+        return { filePath: view.filePath, sourceRevision: view.sourceRevision };
+      }
+    }
+  } catch {
+    // Non-fatal: caller falls back to chunk/registry lookup.
+  }
+  return undefined;
+}
+
 /** If ref is `h:HASH:7-10` / `h:HASH:1-3,5-7`, extract line spec for staged snippet metadata (drift rebase). */
 function lineSpecFromHashRef(rawRef: string): string | undefined {
   const p = parseHashRef(rawRef);
@@ -54,7 +85,7 @@ function parseSubtaskString(raw: string): { id: string; title: string } {
 
 export const handleTaskPlan: OpHandler = async (params, ctx) => {
   const goal = params.goal as string;
-  if (!goal) return err('task_plan: ERROR missing goal');
+  if (!goal) return err('task_plan: missing goal');
 
   const rawSubtasks = normalizeSessionPlanSubtasksInput(params.subtasks);
   type SubStatus = 'pending' | 'active' | 'done' | 'blocked';
@@ -84,12 +115,16 @@ export const handleTaskAdvance: OpHandler = async (params, ctx) => {
   const plan = ctx.store().taskPlan;
   if (!plan) return err('task_advance: plan not started — call session.plan first');
 
+  const planProgress = (): string => {
+    const done = plan.subtasks.filter(s => s.status === 'done').length;
+    return `${done}/${plan.subtasks.length} done`;
+  };
   if (!subtaskId) {
     const { subtasks } = plan;
     const currentIdx = subtasks.findIndex(s => s.status === 'active');
-    if (currentIdx < 0) return err('task_advance: no active subtask — call session.status to inspect');
+    if (currentIdx < 0) return err(`task_advance: no active subtask (${planProgress()}) — call session.status to inspect`);
     const next = subtasks[currentIdx + 1];
-    if (!next) return err('task_advance: plan complete — use task_complete for final summary');
+    if (!next) return err(`task_advance: plan complete (${planProgress()}) — use task_complete for final summary`);
     subtaskId = next.id;
   }
 
@@ -111,12 +146,20 @@ export const handleTaskAdvance: OpHandler = async (params, ctx) => {
       }
     }
   }
-  if (!target) return err(`task_advance: subtask "${subtaskId}" not found in plan`);
-  if (target.status === 'done') return ok(`task_advance: subtask "${subtaskId}" already done — advance to a different one or task_complete`);
+  if (!target) return err(`task_advance: subtask "${subtaskId}" not found in plan (${planProgress()})`);
+  if (target.status === 'done') return ok(`task_advance: subtask "${subtaskId}" already done (${planProgress()}) — advance to a different one or task_complete`);
 
   const summary = typeof params.summary === 'string' ? (params.summary as string).trim() : '';
   if (summary.length < 50) {
-    return err('task_advance: summary required (min 50 chars) — describe what was accomplished and key findings');
+    // Self-discriminating: tell the model what's about to happen so they
+    // can judge whether extending the summary will complete the plan or
+    // just advance to the next subtask.
+    const nextIdx = plan.subtasks.findIndex(s => s.id === subtaskId);
+    const afterNext = plan.subtasks[nextIdx + 1];
+    const hint = afterNext
+      ? `next: ${afterNext.id}(${afterNext.title})`
+      : `this is the final subtask — task_complete will be required after`;
+    return err(`task_advance: summary too short (got ${summary.length}, need ≥50 chars) for subtask "${subtaskId}" — ${hint}`);
   }
 
   // Advance gate: warn when advancing without BB findings in this phase
@@ -230,7 +273,7 @@ export const handleCompact: OpHandler = async (params, ctx) => {
   if (compacted === 0) {
     const noteSuffix = notes.length > 0 ? ` | ${notes.join('; ')}` : '';
     return err(
-      `compact: ERROR no matching refs compacted${noteSuffix}. Check the HASH MANIFEST — refs that are already compacted or absent can't be compacted again.`,
+      `compact: no refs to compact${noteSuffix} — they're already compact or released.`,
     );
   }
   const tierLabel = tier === 'sig' ? ' (sig tier)' : '';
@@ -260,8 +303,18 @@ export const handleStage: OpHandler = async (params, ctx) => {
     for (const ref of hashList) {
       const rawRef = ref.startsWith('h:') ? ref : `h:${ref}`;
       try {
+        // FileView retention refs are TS-only; rewrite to the view's
+        // sourceRevision before asking the Rust registry so a retention
+        // hash stages identically to a chunk hash. `resolve_hash_ref` for a
+        // file-scoped ref returns the file body; we then stage the full
+        // body under the view's retention ref as the stage key.
+        const bareCandidate = rawRef.slice(2);
+        const viewHit = resolveFileViewRef(bareCandidate, ctx);
+        const effectiveRef = viewHit
+          ? (viewHit.sourceRevision.startsWith('h:') ? viewHit.sourceRevision : `h:${viewHit.sourceRevision}`)
+          : rawRef;
         const resolved = await invoke<{ content: string; source?: string | null }>('resolve_hash_ref', {
-          rawRef,
+          rawRef: effectiveRef,
           sessionId: ctx.sessionId ?? null,
         });
         if (resolved?.content) {
@@ -270,7 +323,7 @@ export const handleStage: OpHandler = async (params, ctx) => {
           const result = ctx.store().stageSnippet(
             stageKey,
             resolved.content,
-            resolved.source || rawRef,
+            resolved.source || viewHit?.filePath || rawRef,
             lineSpec,
             undefined,
             undefined,
@@ -302,13 +355,24 @@ export const handleStage: OpHandler = async (params, ctx) => {
   }
 
   if (!rawHash || !lines) return err('stage: requires (hash + lines) or (content + label)');
-  const cleanHash = rawHash.startsWith('h:') ? rawHash.slice(2) : rawHash;
+  let cleanHash = rawHash.startsWith('h:') ? rawHash.slice(2) : rawHash;
   const stageKey = label || `${rawHash.startsWith('h:') ? rawHash : `h:${cleanHash}`}:${lines}:ctx(${contextLines})`;
 
   const ctxState = ctx.store();
   let sourcePath: string | undefined;
   let chunkIsRaw = false;
   let inMemoryContent: string | undefined;
+
+  // Accept FileView retention hashes in the same slot as regular chunk refs.
+  // Views live in `fileViews`, not `chunks`; resolve to the view's file +
+  // sourceRevision so the backend read_lines call below works identically
+  // to a chunk-backed stage. This mirrors the FileView pre-pass in
+  // change.ts so the single ref the model sees works across all slots.
+  const viewRef = resolveFileViewRef(cleanHash, ctx);
+  if (viewRef) {
+    sourcePath = viewRef.filePath;
+    cleanHash = viewRef.sourceRevision.replace(/^h:/, '');
+  }
 
   for (const chunks of [ctxState.archivedChunks, ctxState.chunks]) {
     for (const chunk of chunks.values()) {
@@ -669,11 +733,11 @@ export const handlePin: OpHandler = async (params, ctx) => {
   if (!resolved.length) {
     if (bindingWarnHashes) {
       return err(
-        `pin: ERROR ${bindingWarnHashes} If the prior step was a search/read that returned no new refs (deduped or empty), re-run it or pin a different step that has h:refs.`,
+        `pin: ${bindingWarnHashes} If the prior step was a search/read that returned no new refs (deduped or empty), re-run it or pin a different step that has h:refs.`,
       );
     }
     return err(
-      'pin: retention op missing refs — provide h: refs or step-id. Reads auto-pin, so `pi` is only for non-read artifacts (search/verify/exec results).',
+      'pin: missing refs — provide h:refs or step-id. Reads auto-pin, so `pi` is only for non-read artifacts (search/verify/exec results).',
     );
   }
 
@@ -683,7 +747,7 @@ export const handlePin: OpHandler = async (params, ctx) => {
   // wrong instead of silently trusting a fake `ok`. "already pinned" is still
   // a success outcome (idempotent pin on a real ref), so it returns ok.
   if (count === 0 && alreadyPinned === 0) {
-    let msg = `pin: ERROR no matching chunks for ${resolved.length} ref${resolved.length === 1 ? '' : 's'}. Check the HASH MANIFEST — refs that aren't listed are released and can't be pinned.`;
+    let msg = `pin: no matching chunks for ${resolved.length} ref${resolved.length === 1 ? '' : 's'} — they may be released or already pinned.`;
     const suspicious = resolved.filter((t) => !isPlausibleHashBaseSegment(baseHashFromRefToken(t)));
     if (suspicious.length > 0) {
       const sample = suspicious[0]!;
@@ -753,7 +817,8 @@ export const handleRecall: OpHandler = async (params, ctx) => {
   if (notes.length > 0) lines.push(`recall: ${notes.join('; ')}`);
 
   for (const h of expanded) {
-    const content = ctx.store().getChunkContent(h);
+    const chunkInfo = ctx.store().getChunkForHashRef(h);
+    const content = chunkInfo?.content ?? ctx.store().getChunkContent(h);
     if (!content) {
       lines.push(`recall:${h}: ref unavailable — re-read to restore`);
       continue;
@@ -768,7 +833,13 @@ export const handleRecall: OpHandler = async (params, ctx) => {
     }
     _recallBudgetUsed += recallContent.length;
     ctx.store().touchChunk(h);
-    lines.push(`recall:${h}: ${recallContent}`);
+    // Type header so the model can tell what kind of chunk it pulled back
+    // (file vs. batch summary vs. search result vs. …). Silent echo of a
+    // giant batch-summary chunk used to be indistinguishable from real
+    // file content, which caused unproductive re-reads downstream.
+    const kind = chunkInfo?.chunkType ?? 'chunk';
+    const src = chunkInfo?.source ? ` source:${chunkInfo.source}` : '';
+    lines.push(`recall:${h} (${kind}, ${recallContent.length} chars${src}):\n${recallContent}`);
   }
   return ok(lines.join('\n'), expanded);
 };
@@ -827,25 +898,22 @@ export const handleSessionDebug: OpHandler = async (_params, ctx) => {
         .join(', ')}${chunkCount > 5 ? ` ... +${chunkCount - 5} more` : ''}`
     : '';
 
-  // Batch-failure telemetry: surface repeated misuse patterns (count >= threshold)
-  // ahead of single-shot noise so the agent sees its own persistent blind spots.
+  // Batch-failure telemetry: surface only *repeated* misuse (count >= threshold)
+  // so persistent blind spots are visible without re-echoing one-off error
+  // prose the model already saw inline (and which would undo the
+  // anti-spin vocabulary cleanup elsewhere). Clip snippets hard — debug
+  // is a diagnostic, not an error replay.
+  const FAIL_SNIPPET_CAP = 80;
+  const clip = (s: string): string => (s.length > FAIL_SNIPPET_CAP ? s.slice(0, FAIL_SNIPPET_CAP - 1) + '…' : s);
   const failureSummary = getBatchFailureSummary();
   let failureBlock = '';
   if (failureSummary.length > 0) {
     const crossing = failureSummary.filter(e => e.count >= BATCH_FAILURE_THRESHOLD);
-    const rest = failureSummary.filter(e => e.count < BATCH_FAILURE_THRESHOLD);
-    const topLines: string[] = [];
-    for (const e of crossing.slice(0, 5)) {
-      topLines.push(`  [REPEATED x${e.count}] ${e.op}: ${e.errorSnippet}`);
-    }
-    for (const e of rest.slice(0, 3)) {
-      topLines.push(`  [x${e.count}] ${e.op}: ${e.errorSnippet}`);
-    }
-    if (topLines.length > 0) {
-      const header = crossing.length > 0
-        ? `\nBatch failures (${failureSummary.length} classes, ${crossing.length} repeated):`
-        : `\nBatch failures (${failureSummary.length} classes):`;
-      failureBlock = `${header}\n${topLines.join('\n')}`;
+    if (crossing.length > 0) {
+      const topLines = crossing.slice(0, 5).map(
+        e => `  [x${e.count}] ${e.op}: ${clip(e.errorSnippet)}`,
+      );
+      failureBlock = `\nRepeated failures (${crossing.length} classes):\n${topLines.join('\n')}`;
     }
   }
 
@@ -877,11 +945,20 @@ export const handleSessionDiagnose: OpHandler = async (_params, _ctx) => {
 
   const parts: string[] = [];
 
-  if (diagnosis.spinning) {
+  // Only surface "SPIN DETECTED" when we're meaningfully confident. Low-
+  // confidence matches (≤50%) used to fire on deliberate, planned tool
+  // sweeps (e.g. "edit → search without BB update" over a 3-round window)
+  // and pushed the model toward corrective actions it didn't need. Lower
+  // confidence still gets reported as a weak signal so a model explicitly
+  // running diagnose can see what's borderline.
+  const SPIN_DIAGNOSE_THRESHOLD = 0.5;
+  if (diagnosis.spinning && diagnosis.confidence >= SPIN_DIAGNOSE_THRESHOLD) {
     parts.push(`SPIN DETECTED: ${diagnosis.mode} (confidence: ${(diagnosis.confidence * 100).toFixed(0)}%)`);
     parts.push(`Trigger: round ${diagnosis.triggerRound}`);
     parts.push(`Evidence:\n${diagnosis.evidence.map(e => `  - ${e}`).join('\n')}`);
     parts.push(`Action: ${diagnosis.suggestedAction}`);
+  } else if (diagnosis.spinning) {
+    parts.push(`No spin detected. (weak signal: ${diagnosis.mode} at ${(diagnosis.confidence * 100).toFixed(0)}% — below action threshold)`);
   } else {
     parts.push('No spin detected.');
   }

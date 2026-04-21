@@ -564,6 +564,14 @@ fn lint_typescript_tsc(path: &str, content: &str, options: &LintOptions, max_err
 
     // Place the temp file INSIDE tsc_cwd so we can pass just the filename
     // to tsc — no absolute path, no quoting issues across shells.
+    //
+    // Opportunistic sweep of orphaned `__atls_check_*` files before
+    // allocating our own. RAII scopeguard below normally cleans up; a
+    // crashed/killed parent process would leave stragglers in the project
+    // tree forever without this (they break `change.refactor` by showing
+    // up as phantom files, and pollute the untracked-file set).
+    sweep_orphaned_linter_temps(&tsc_cwd);
+
     let temp_filename = format!("__atls_check_{}.{}", std::process::id(), ext);
     let temp_file = tsc_cwd.join(&temp_filename);
 
@@ -843,6 +851,30 @@ impl Drop for FileCleanup {
 }
 fn scopeguard_file(path: &Path) -> FileCleanup {
     FileCleanup(path.to_path_buf())
+}
+
+/// Remove `__atls_check_*` stragglers left behind by crashed / killed
+/// parent processes. Files owned by the current process are the only ones
+/// we skip (RAII will clean those up normally). We do a bounded scan of
+/// the immediate directory only — deep recursion would be too costly for
+/// a pre-write hook and temp files are always written to the scanned dir.
+fn sweep_orphaned_linter_temps(dir: &Path) {
+    let self_pid = std::process::id().to_string();
+    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(s) = name.to_str() else { continue };
+        if !s.starts_with("__atls_check_") {
+            continue;
+        }
+        // Extract the PID segment (`__atls_check_<PID>.<ext>`) and skip our own.
+        let mid = &s["__atls_check_".len()..];
+        let pid = mid.split('.').next().unwrap_or("");
+        if pid == self_pid {
+            continue;
+        }
+        let _ = std::fs::remove_file(entry.path());
+    }
 }
 
 /// Recursively collect ERROR nodes from tree-sitter parse tree

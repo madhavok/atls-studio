@@ -28,3 +28,6 @@ blob-report
 *.njsproj
 *.sln
 *.sw?
+
+# ATLS linter temp files (RAII-cleaned under normal exit; orphans swept on next run)
+__atls_check_*

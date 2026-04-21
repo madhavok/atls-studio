@@ -19,6 +19,32 @@ function baseHashFromRef(ref: string): string {
   return rest.includes(':') ? rest.split(':')[0]! : rest;
 }
 
+/**
+ * If `ref` is a FileView retention hash, return the view's `sourceRevision`
+ * (the real content hash backing the view) so annotation handlers can pass
+ * it to chunk-based stores. Returns undefined for non-view refs; callers
+ * fall through to normal resolution.
+ */
+function viewSourceRevisionForRef(ref: string, store: ContextStoreApi): string | undefined {
+  if (!ref || !ref.startsWith('h:')) return undefined;
+  const short = baseHashFromRef(ref).slice(0, SHORT_HASH_LEN);
+  if (!short || !/^[0-9a-fA-F_]{6,16}$/.test(short)) return undefined;
+  const views = store.fileViews;
+  if (!views) return undefined;
+  for (const view of views.values()) {
+    if (
+      view.shortHash === short
+      || view.shortHash.startsWith(short)
+      || short.startsWith(view.shortHash)
+    ) {
+      return view.sourceRevision.startsWith('h:')
+        ? view.sourceRevision
+        : `h:${view.sourceRevision}`;
+    }
+  }
+  return undefined;
+}
+
 /** Block when chunk is suspect — annotation ops mutate in-place and cannot relocate. */
 function isChunkSuspect(store: ContextStoreApi): (hash: string) => boolean {
   return (hash: string) => {
@@ -66,21 +92,25 @@ export const handleRule: OpHandler = async (params, ctx) => {
 export const handleEngramEdit: OpHandler = async (params, ctx) => {
   const hash = params.hash as string;
   const fields = params.fields as Record<string, unknown> | undefined;
-  if (!hash) return err('engram_edit: ERROR missing hash param');
-  if (!fields || typeof fields !== 'object') return err('engram_edit: ERROR missing fields param');
+  if (!hash) return err('engram_edit: missing hash param');
+  if (!fields || typeof fields !== 'object') return err('engram_edit: missing fields param');
 
   const store = ctx.store();
-  if (isChunkSuspect(store)(hash)) {
-    return err('engram_edit: ERROR ref is suspect (file changed externally); re-read before editing');
+  // FileView refs point at file content, not engram metadata. Auto-route
+  // to the backing chunk (sourceRevision) so annotate.engram on a rl/rf
+  // ref edits the underlying chunk's metadata in place.
+  const resolved = viewSourceRevisionForRef(hash, store) ?? hash;
+  if (isChunkSuspect(store)(resolved)) {
+    return err('engram_edit: ref changed externally — re-read before editing');
   }
-  const result = store.editEngram(hash, fields);
+  const result = store.editEngram(resolved, fields);
   if (result.ok) {
     const msg = result.metadataOnly
       ? `engram_edit: h:${result.newHash} (metadata updated in-place)`
       : `engram_edit: h:${result.newHash}`;
     return ok(msg, result.newHash ? [`h:${result.newHash}`] : []);
   }
-  return err(`engram_edit: ERROR ${result.error}`);
+  return err(`engram_edit: ${result.error}`);
 };
 
 export const handleAnnotate: OpHandler = async (params, ctx) => {
@@ -97,18 +127,23 @@ export const handleAnnotate: OpHandler = async (params, ctx) => {
   if (result.ok) {
     return ok(`annotate: added to h:${hash.startsWith('h:') ? hash.slice(2) : hash} (id: ${result.id})`);
   }
-  return err(`annotate: ERROR ${result.error}`);
+  return err(`annotate: ${result.error}`);
 };
 
 export const handleLink: OpHandler = async (params, ctx) => {
   const fromRaw = params.from as string;
   const toRaw = params.to as string;
   const relation = params.relation as string;
-  if (!fromRaw || !toRaw) return err('link: ERROR missing from/to params');
+  if (!fromRaw || !toRaw) return err('link: missing from/to params');
 
   const store = ctx.store();
-  const from = store.resolveLinkRefToHash(fromRaw);
-  const to = store.resolveLinkRefToHash(toRaw);
+  // Route FileView refs to their backing content chunk (sourceRevision).
+  // Views aren't linkable entities on their own — the chunk underneath is.
+  // Falls through for BB, path, or regular chunk refs.
+  const fromResolved = viewSourceRevisionForRef(fromRaw, store) ?? fromRaw;
+  const toResolved = viewSourceRevisionForRef(toRaw, store) ?? toRaw;
+  const from = store.resolveLinkRefToHash(fromResolved);
+  const to = store.resolveLinkRefToHash(toResolved);
   const suspect = isChunkSuspect(store);
   if (suspect(from) || suspect(to)) {
     return err('link: ref changed — re-read and retry');
@@ -117,7 +152,7 @@ export const handleLink: OpHandler = async (params, ctx) => {
   const rel = relation && validRelations.has(relation) ? relation : 'related_to';
   const result = store.addSynapse(from, to, rel);
   if (result.ok) return ok(`link: synapse ${from} → ${to} (${rel})`);
-  return err(`link: ERROR ${result.error}`);
+  return err(`link: ${result.error}`);
 };
 
 export const handleRetype: OpHandler = async (params, ctx) => {
