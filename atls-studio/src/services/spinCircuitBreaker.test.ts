@@ -160,4 +160,94 @@ describe('spinCircuitBreaker', () => {
     expect(ev.message).toContain('PINNING');
     expect(ev.message).toContain('pi ');
   });
+
+  // -------------------------------------------------------------------------
+  // Toggle gates: steeringEnabled / mutedModes / mutedTiers
+  // -------------------------------------------------------------------------
+
+  it('steeringEnabled=false returns tier "none" and no message even when spinning', () => {
+    const ev = evaluateSpin([snap(1)], {
+      diagnosisOverride: diag('context_loss', 0.95),
+      steeringEnabled: false,
+    });
+    expect(ev.tier).toBe('none');
+    expect(ev.message).toBeUndefined();
+    expect(ev.shouldHalt).toBe(false);
+    expect(ev.diagnosis.spinning).toBe(true);
+  });
+
+  it('steeringEnabled=false does not advance the FSM — re-enabling starts at "nudge"', () => {
+    evaluateSpin([snap(1)], { diagnosisOverride: diag('goal_drift', 0.9), steeringEnabled: false });
+    evaluateSpin([snap(2)], { diagnosisOverride: diag('goal_drift', 0.9), steeringEnabled: false });
+    const ev = evaluateSpin([snap(3)], { diagnosisOverride: diag('goal_drift', 0.9) });
+    expect(ev.tier).toBe('nudge');
+    expect(ev.consecutiveSameMode).toBe(1);
+  });
+
+  it('mutedModes suppresses only the targeted mode and decays its streak', () => {
+    const muted = new Set(['context_loss'] as const);
+    evaluateSpin([snap(1)], { diagnosisOverride: diag('context_loss', 0.9), mutedModes: muted });
+    evaluateSpin([snap(2)], { diagnosisOverride: diag('context_loss', 0.9), mutedModes: muted });
+    const ev = evaluateSpin([snap(3)], {
+      diagnosisOverride: diag('context_loss', 0.9),
+      mutedModes: muted,
+    });
+    expect(ev.tier).toBe('none');
+    expect(ev.message).toBeUndefined();
+  });
+
+  it('mutedModes for a different mode does not affect an unmuted mode', () => {
+    const muted = new Set(['goal_drift'] as const);
+    evaluateSpin([snap(1)], { diagnosisOverride: diag('context_loss', 0.9), mutedModes: muted });
+    const ev = evaluateSpin([snap(2)], {
+      diagnosisOverride: diag('context_loss', 0.9),
+      mutedModes: muted,
+    });
+    expect(ev.tier).toBe('strong');
+    expect(ev.message).toContain('CIRCUIT BREAKER');
+  });
+
+  it('unmuting a mode after suppressed hits starts fresh (cannot latch into strong)', () => {
+    const muted = new Set(['context_loss'] as const);
+    evaluateSpin([snap(1)], { diagnosisOverride: diag('context_loss', 0.9), mutedModes: muted });
+    evaluateSpin([snap(2)], { diagnosisOverride: diag('context_loss', 0.9), mutedModes: muted });
+    // User unmutes between rounds
+    const ev = evaluateSpin([snap(3)], { diagnosisOverride: diag('context_loss', 0.9) });
+    expect(ev.tier).toBe('nudge');
+    expect(ev.consecutiveSameMode).toBe(1);
+  });
+
+  it('mutedTiers drops the message and shouldHalt but preserves FSM state', () => {
+    const mutedNudge = new Set(['nudge'] as const);
+    // First detection → tier=nudge, but muted: no message.
+    const a = evaluateSpin([snap(1)], {
+      diagnosisOverride: diag('tool_confusion', 0.9),
+      mutedTiers: mutedNudge,
+    });
+    expect(a.tier).toBe('nudge');
+    expect(a.message).toBeUndefined();
+    expect(a.consecutiveSameMode).toBe(1);
+
+    // Second detection → strong tier is NOT muted, so message flows through
+    // and streak is continuous (not reset by the prior mute).
+    const b = evaluateSpin([snap(2)], {
+      diagnosisOverride: diag('tool_confusion', 0.9),
+      mutedTiers: mutedNudge,
+    });
+    expect(b.tier).toBe('strong');
+    expect(b.message).toContain('CIRCUIT BREAKER');
+    expect(b.consecutiveSameMode).toBe(2);
+  });
+
+  it('mutedTiers=halt suppresses halt message and shouldHalt without changing FSM', () => {
+    const mutedHalt = new Set(['halt'] as const);
+    const opts = { haltEnabled: true, mutedTiers: mutedHalt } as const;
+    evaluateSpin([snap(1)], { diagnosisOverride: diag('goal_drift', 0.9), ...opts });
+    evaluateSpin([snap(2)], { diagnosisOverride: diag('goal_drift', 0.9), ...opts });
+    const ev = evaluateSpin([snap(3)], { diagnosisOverride: diag('goal_drift', 0.9), ...opts });
+    expect(ev.tier).toBe('halt');
+    expect(ev.shouldHalt).toBe(false);
+    expect(ev.message).toBeUndefined();
+    expect(ev.consecutiveSameMode).toBe(3);
+  });
 });

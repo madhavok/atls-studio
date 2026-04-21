@@ -269,7 +269,8 @@ import {
   extractSteeringBlocks, extractHashRefs,
   recordReadDiversity,
 } from './spinDiagnostics';
-import { evaluateSpin, resetSpinCircuitBreaker } from './spinCircuitBreaker';
+import { evaluateSpin, resetSpinCircuitBreaker, type CircuitBreakerTier } from './spinCircuitBreaker';
+import type { SpinMode } from './spinDetector';
 import { evaluateAssess, resetAssessContext } from './assessContext';
 import { drainAutoPinMetrics, resetAutoPinTelemetry } from './autoPinTelemetry';
 import { collectFileViewChunkHashes } from './fileViewRender';
@@ -1931,12 +1932,33 @@ async function streamChatViaTauri(
       // Runs independently of the (optional) haltEnabled gate so nudge/strong
       // tiers always fire. Halt only triggers when the feature flag is on
       // AND we're in a non-ask/non-retriever mode with enough round history.
+      //
+      // Scope: the FSM filters to main rounds internally; subagent spin state
+      // is isolated in `subagentService.ts`. These toggles therefore only
+      // affect the main chat — do not re-audit for subagent leakage.
       let cbEvaluation: ReturnType<typeof evaluateSpin> | undefined;
       if (mode !== 'ask' && mode !== 'retriever' && round >= 2) {
         const snapshots = useRoundHistoryStore.getState().snapshots;
         if (snapshots.length >= 3) {
-          const haltEnabled = useAppStore.getState().settings.spinCircuitBreakerHaltEnabled === true;
-          cbEvaluation = evaluateSpin(snapshots, { haltEnabled });
+          const spinToggles = useAppStore.getState().settings.messageToggles.spin;
+          if (spinToggles.enabled) {
+            const mutedModes = new Set<SpinMode>(
+              (Object.entries(spinToggles.modes) as Array<[SpinMode, boolean]>)
+                .filter(([, on]) => !on)
+                .map(([m]) => m),
+            );
+            const mutedTiers = new Set<CircuitBreakerTier>(
+              (Object.entries(spinToggles.tiers) as Array<[CircuitBreakerTier, boolean]>)
+                .filter(([, on]) => !on)
+                .map(([t]) => t),
+            );
+            cbEvaluation = evaluateSpin(snapshots, {
+              steeringEnabled: true,
+              mutedModes,
+              mutedTiers,
+              haltEnabled: spinToggles.tiers.halt === true,
+            });
+          }
         }
       }
 
@@ -4018,6 +4040,11 @@ function buildDynamicContextBlock(
   // -------------------------------------------------------------------------
   // STEERING — edit awareness, repair escalation, context pressure
   // -------------------------------------------------------------------------
+  // Each `<<...>>` injection below is gated by a user-facing toggle in
+  // `settings.messageToggles` (see Spin Trace Interventions panel). Toggles
+  // are read once per call so a rapid UI flip cannot tear within one round.
+
+  const mt = useAppStore.getState().settings.messageToggles;
 
   const bbEntriesRaw = useContextStore.getState().listBlackboardEntries();
   const bbEntries = bbEntriesRaw.filter(e => canSteerExecution({ state: e.state }));
@@ -4037,18 +4064,20 @@ function buildDynamicContextBlock(
       healthyEdits.push(`${basename} (${e.preview})`);
     }
   }
-  if (damagedEdits.length > 0) {
+  if (mt.edits.damaged && damagedEdits.length > 0) {
     parts.push(`<<DAMAGED EDIT: ${damagedEdits.join('; ')}. Content is live in context. Fix the error.>>`);
   }
-  if (healthyEdits.length > 0) {
+  if (mt.edits.recent && healthyEdits.length > 0) {
     parts.push(`<<RECENT EDITS: ${healthyEdits.join(', ')}. ATLS tracks live file state — do not re-read, re-search, or re-stage these files unless verifying a specific change. Use h:refs from edit results directly.>>`);
   }
 
-  const escalatedRepairs = bbEntries
-    .filter(e => e.key.startsWith('repair:') && e.state === 'active' && parseInt(e.preview, 10) >= 2)
-    .map(e => `${e.key.slice(7)} (${e.preview} attempts)`);
-  if (escalatedRepairs.length > 0) {
-    parts.push(`<<ESCALATED REPAIR: ${escalatedRepairs.join(', ')}. Multiple failed repairs. Full scope in context. Review holistically before editing.>>`);
+  if (mt.edits.escalatedRepair) {
+    const escalatedRepairs = bbEntries
+      .filter(e => e.key.startsWith('repair:') && e.state === 'active' && parseInt(e.preview, 10) >= 2)
+      .map(e => `${e.key.slice(7)} (${e.preview} attempts)`);
+    if (escalatedRepairs.length > 0) {
+      parts.push(`<<ESCALATED REPAIR: ${escalatedRepairs.join(', ')}. Multiple failed repairs. Full scope in context. Review holistically before editing.>>`);
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -4059,9 +4088,13 @@ function buildDynamicContextBlock(
     if (tls.completionBlocked && tls.completionBlocker) {
       const isVerifyStale = /verify\b.*stale|stale.*verif/i.test(tls.completionBlocker);
       if (isVerifyStale) {
-        parts.push('<<SYSTEM: Verification artifacts are stale. Re-run verification before finishing.>>');
+        if (mt.completion.verifyStale) {
+          parts.push('<<SYSTEM: Verification artifacts are stale. Re-run verification before finishing.>>');
+        }
       } else {
-        parts.push('<<SYSTEM: Continue any remaining implementation. When complete, run final verification and provide a summary.>>');
+        if (mt.completion.continueImpl) {
+          parts.push('<<SYSTEM: Continue any remaining implementation. When complete, run final verification and provide a summary.>>');
+        }
       }
     }
   }
@@ -4071,9 +4104,11 @@ function buildDynamicContextBlock(
   // Consumes the tier + message already computed in the tool loop before
   // this block was built, so diagnosis runs once per round (not twice) and
   // escalation state stays consistent between the loop's abort decision and
-  // the prompt injection.
+  // the prompt injection. The `mt.spin.enabled` master switch already
+  // causes the loop to skip `evaluateSpin`, so `tls.spinCircuitBreaker`
+  // will be null in that case — this belt-and-suspenders guard stays cheap.
   // -------------------------------------------------------------------------
-  if (tls?.spinCircuitBreaker && tls.spinCircuitBreaker.message) {
+  if (mt.spin.enabled && tls?.spinCircuitBreaker && tls.spinCircuitBreaker.message) {
     parts.push(tls.spinCircuitBreaker.message);
   }
 
@@ -4081,7 +4116,7 @@ function buildDynamicContextBlock(
   // ASSESS — pinned-WM hygiene nudge. Emitted right after spin (corrective
   // first, hygiene second). Both can fire in the same round.
   // -------------------------------------------------------------------------
-  if (tls?.assessContext?.message) {
+  if (mt.assess && tls?.assessContext?.message) {
     parts.push(tls.assessContext.message);
   }
 

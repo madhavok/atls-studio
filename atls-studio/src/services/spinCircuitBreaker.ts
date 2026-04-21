@@ -59,6 +59,25 @@ export interface EvaluateSpinOptions {
    */
   haltEnabled?: boolean;
   /**
+   * Master switch for steering injection. When false, every detection is
+   * treated as a miss for the state machine (streak decays), the returned
+   * tier is `none`, `message` is undefined, and `shouldHalt` is false. The
+   * raw diagnosis still flows through so UI can display it. Default `true`.
+   */
+  steeringEnabled?: boolean;
+  /**
+   * Modes whose detections should be suppressed. Behaves like `steeringEnabled`
+   * off for the matching mode: streak resets so re-enabling the mode later
+   * cannot latch into `strong` / `halt`.
+   */
+  mutedModes?: ReadonlySet<SpinMode>;
+  /**
+   * Tiers whose steering message should be dropped. Unlike mode muting, this
+   * preserves the state machine — the next unmuted tier can continue
+   * escalation. Typical use: disable `nudge` but keep `strong` / `halt`.
+   */
+  mutedTiers?: ReadonlySet<CircuitBreakerTier>;
+  /**
    * Defensive override for tests / advanced callers. When set, replaces the
    * diagnosis `diagnoseSpinning` would produce for this call.
    */
@@ -130,6 +149,9 @@ export function evaluateSpin(
 ): CircuitBreakerEvaluation {
   const minConfidence = opts.minConfidence ?? 0.7;
   const haltEnabled = opts.haltEnabled ?? false;
+  const steeringEnabled = opts.steeringEnabled ?? true;
+  const mutedModes = opts.mutedModes;
+  const mutedTiers = opts.mutedTiers;
 
   const diagnosis = opts.diagnosisOverride ?? diagnoseSpinning(snapshots);
   const mainRounds = snapshots.filter(s => !s.isSubagentRound && !s.isSwarmRound);
@@ -139,11 +161,17 @@ export function evaluateSpin(
     state = { turnId: latestTurnId, currentMode: 'none', consecutiveSameMode: 0 };
   }
 
-  const hit = diagnosis.spinning && diagnosis.confidence >= minConfidence;
+  const rawHit = diagnosis.spinning && diagnosis.confidence >= minConfidence;
+  // Mode-level suppression: treat as a miss so the FSM decays. Prevents a
+  // silent streak from jumping to strong / halt if the user re-enables the
+  // mode mid-turn.
+  const modeMuted = rawHit && !!mutedModes && mutedModes.has(diagnosis.mode);
+  const hit = rawHit && steeringEnabled && !modeMuted;
 
   if (!hit) {
     // Decay: no hit this round resets the streak so transient detections don't
-    // latch into a halt after a quiet round.
+    // latch into a halt after a quiet round. Same branch handles
+    // master-off (`!steeringEnabled`) and per-mode muting.
     state.currentMode = 'none';
     state.consecutiveSameMode = 0;
     return {
@@ -170,11 +198,17 @@ export function evaluateSpin(
     tier = 'nudge';
   }
 
+  // Tier-level mute: drop the message and suppress halt without touching
+  // FSM state so the next unmuted tier continues the escalation.
+  const tierMuted = !!mutedTiers && mutedTiers.has(tier);
+  const message = tierMuted ? undefined : steeringMessage(diagnosis.mode, tier, diagnosis);
+  const shouldHalt = tier === 'halt' && !tierMuted;
+
   return {
     tier,
     diagnosis,
-    message: steeringMessage(diagnosis.mode, tier, diagnosis),
-    shouldHalt: tier === 'halt',
+    message,
+    shouldHalt,
     consecutiveSameMode: state.consecutiveSameMode,
   };
 }

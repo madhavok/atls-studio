@@ -11,6 +11,7 @@ import {
   normalizeProjectHistory,
 } from './projectHistory';
 import type { PersistedMemorySnapshot } from '../services/chatDb';
+import type { SpinMode } from '../services/spinDetector';
 
 export type { ProjectHistoryEntry };
 
@@ -489,6 +490,145 @@ const DEFAULT_AGENT_PROGRESS: AgentProgress = {
 // AI provider type (matches aiService)
 export type AIProvider = 'anthropic' | 'openai' | 'google' | 'vertex' | 'lmstudio';
 
+/**
+ * Per-category gates for every `<<...>>` intervention message the app injects
+ * into the model prompt (or surfaces in batch summaries as tool output).
+ *
+ * All default to `true` except `spin.tiers.halt`, which stays `false` so halt
+ * behavior continues to require an explicit opt-in (matches the legacy
+ * {@link Settings.spinCircuitBreakerHaltEnabled} flag). Disabling spin or
+ * completion banners can let the model spin longer — this is the user's call.
+ *
+ * The SpinTrace UI in [`AtlsInternals`](../components/AtlsInternals) renders
+ * these toggles; [`aiService.ts`](../services/aiService.ts) and
+ * [`batch/executor.ts`](../services/batch/executor.ts) read them at the
+ * injection sites. See `docs/intervention-toggles.md` in plan notes.
+ */
+export interface MessageToggles {
+  spin: {
+    /** Master switch; when false, `evaluateSpin` is skipped entirely. */
+    enabled: boolean;
+    /** Per-mode gate. Muted mode decays the tier FSM so re-enabling cannot latch into strong/halt. */
+    modes: Record<Exclude<SpinMode, 'none'>, boolean>;
+    /** Per-tier gate. Muted tier drops the message but preserves the FSM so escalation continues. */
+    tiers: { nudge: boolean; strong: boolean; halt: boolean };
+  };
+  /** ASSESS pinned-working-memory hygiene nudge. */
+  assess: boolean;
+  /** Completion-blocker variants emitted in `buildDynamicContextBlock`. */
+  completion: { verifyStale: boolean; continueImpl: boolean };
+  /** Edit-status banners (`<<DAMAGED EDIT>>` / `<<RECENT EDITS>>` / `<<ESCALATED REPAIR>>`). */
+  edits: { damaged: boolean; recent: boolean; escalatedRepair: boolean };
+  /** `<<WARN: ... dry-run previewed Nx ...>>` injected into batch summaries. */
+  batchReadSpinWarn: boolean;
+}
+
+/**
+ * Deep-partial of {@link MessageToggles} accepted by
+ * {@link AppState.updateMessageToggles}. Only the keys present in the patch
+ * are overwritten; sibling keys are preserved.
+ */
+export interface MessageTogglesPatch {
+  spin?: {
+    enabled?: boolean;
+    modes?: Partial<MessageToggles['spin']['modes']>;
+    tiers?: Partial<MessageToggles['spin']['tiers']>;
+  };
+  assess?: boolean;
+  completion?: Partial<MessageToggles['completion']>;
+  edits?: Partial<MessageToggles['edits']>;
+  batchReadSpinWarn?: boolean;
+}
+
+export const DEFAULT_MESSAGE_TOGGLES: MessageToggles = {
+  spin: {
+    enabled: true,
+    modes: {
+      context_loss: true,
+      goal_drift: true,
+      stuck_in_phase: true,
+      tool_confusion: true,
+      volatile_unpinned: true,
+      completion_gate: true,
+    },
+    tiers: { nudge: true, strong: true, halt: false },
+  },
+  assess: true,
+  completion: { verifyStale: true, continueImpl: true },
+  edits: { damaged: true, recent: true, escalatedRepair: true },
+  batchReadSpinWarn: true,
+};
+
+function isBool(v: unknown): v is boolean {
+  return typeof v === 'boolean';
+}
+
+/**
+ * Deep-merge a persisted (possibly partial or stale) messageToggles payload
+ * into the current defaults. Preserves any sibling defaults the user has not
+ * overridden so newly added gates opt-in automatically on upgrade.
+ *
+ * `legacyHalt` is the deprecated {@link Settings.spinCircuitBreakerHaltEnabled}.
+ * It wins only when the new-path value is absent.
+ */
+export function mergeMessageToggles(
+  defaults: MessageToggles,
+  raw: unknown,
+  legacyHalt?: boolean,
+): MessageToggles {
+  const src = (typeof raw === 'object' && raw !== null && !Array.isArray(raw))
+    ? (raw as Record<string, unknown>)
+    : {};
+  const spinSrc = (typeof src.spin === 'object' && src.spin !== null && !Array.isArray(src.spin))
+    ? (src.spin as Record<string, unknown>)
+    : {};
+  const modesSrc = (typeof spinSrc.modes === 'object' && spinSrc.modes !== null && !Array.isArray(spinSrc.modes))
+    ? (spinSrc.modes as Record<string, unknown>)
+    : {};
+  const tiersSrc = (typeof spinSrc.tiers === 'object' && spinSrc.tiers !== null && !Array.isArray(spinSrc.tiers))
+    ? (spinSrc.tiers as Record<string, unknown>)
+    : {};
+  const completionSrc = (typeof src.completion === 'object' && src.completion !== null && !Array.isArray(src.completion))
+    ? (src.completion as Record<string, unknown>)
+    : {};
+  const editsSrc = (typeof src.edits === 'object' && src.edits !== null && !Array.isArray(src.edits))
+    ? (src.edits as Record<string, unknown>)
+    : {};
+
+  const haltFromSrc = isBool(tiersSrc.halt) ? tiersSrc.halt : undefined;
+  const halt = haltFromSrc ?? (isBool(legacyHalt) ? legacyHalt : defaults.spin.tiers.halt);
+
+  return {
+    spin: {
+      enabled: isBool(spinSrc.enabled) ? spinSrc.enabled : defaults.spin.enabled,
+      modes: {
+        context_loss: isBool(modesSrc.context_loss) ? modesSrc.context_loss : defaults.spin.modes.context_loss,
+        goal_drift: isBool(modesSrc.goal_drift) ? modesSrc.goal_drift : defaults.spin.modes.goal_drift,
+        stuck_in_phase: isBool(modesSrc.stuck_in_phase) ? modesSrc.stuck_in_phase : defaults.spin.modes.stuck_in_phase,
+        tool_confusion: isBool(modesSrc.tool_confusion) ? modesSrc.tool_confusion : defaults.spin.modes.tool_confusion,
+        volatile_unpinned: isBool(modesSrc.volatile_unpinned) ? modesSrc.volatile_unpinned : defaults.spin.modes.volatile_unpinned,
+        completion_gate: isBool(modesSrc.completion_gate) ? modesSrc.completion_gate : defaults.spin.modes.completion_gate,
+      },
+      tiers: {
+        nudge: isBool(tiersSrc.nudge) ? tiersSrc.nudge : defaults.spin.tiers.nudge,
+        strong: isBool(tiersSrc.strong) ? tiersSrc.strong : defaults.spin.tiers.strong,
+        halt,
+      },
+    },
+    assess: isBool(src.assess) ? src.assess : defaults.assess,
+    completion: {
+      verifyStale: isBool(completionSrc.verifyStale) ? completionSrc.verifyStale : defaults.completion.verifyStale,
+      continueImpl: isBool(completionSrc.continueImpl) ? completionSrc.continueImpl : defaults.completion.continueImpl,
+    },
+    edits: {
+      damaged: isBool(editsSrc.damaged) ? editsSrc.damaged : defaults.edits.damaged,
+      recent: isBool(editsSrc.recent) ? editsSrc.recent : defaults.edits.recent,
+      escalatedRepair: isBool(editsSrc.escalatedRepair) ? editsSrc.escalatedRepair : defaults.edits.escalatedRepair,
+    },
+    batchReadSpinWarn: isBool(src.batchReadSpinWarn) ? src.batchReadSpinWarn : defaults.batchReadSpinWarn,
+  };
+}
+
 // Settings
 export interface Settings {
   // Provider enable/disable (empty = all enabled)
@@ -542,12 +682,18 @@ export interface Settings {
   /** Override entry manifest depth for subagent system prompt; omit to use entryManifestDepth */
   subagentEntryManifestDepth?: 'off' | 'paths' | 'sigs' | 'paths_sigs';
   /**
-   * When true, the spin circuit-breaker may escalate from `strong` to `halt`
-   * (hard abort of the tool loop on three consecutive same-mode detections).
-   * Defaults to false so the behavior can ship behind a flag; the `nudge` and
-   * `strong` tiers still fire regardless of this setting.
+   * @deprecated Superseded by {@link MessageToggles.spin.tiers.halt}. Kept for
+   * one release so existing localStorage payloads do not silently flip the
+   * halt behavior. On load, if the new path is missing, the loader copies
+   * this value into `messageToggles.spin.tiers.halt`.
    */
   spinCircuitBreakerHaltEnabled?: boolean;
+  /**
+   * Per-category toggles for every `<<...>>` intervention message the app
+   * injects into the model prompt (or surfaces in batch summaries). See
+   * {@link MessageToggles}. Defaults: all `true` except halt (`false`).
+   */
+  messageToggles: MessageToggles;
   /**
    * Input-side tool-result compression. When true, `formatResult` routes
    * serialized tool output through the dictionary + ditto + key-abbreviation
@@ -813,6 +959,8 @@ interface AppState {
   settings: Settings;
   setSettings: (settings: Partial<Settings>) => void;
   updateSettings: (settings: Partial<Settings>) => void;
+  /** Deep-merge a partial `messageToggles` patch into current settings. Persists. */
+  updateMessageToggles: (patch: MessageTogglesPatch) => void;
   availableModels: ModelInfo[];
   setAvailableModels: (models: ModelInfo[]) => void;
   modelsLoading: boolean;
@@ -1536,6 +1684,7 @@ export const useAppStore = create<AppState>((set) => ({
       compressEditAcks: false,
       autoPinReads: true,
       rebaseAllChangeOps: true,
+      messageToggles: DEFAULT_MESSAGE_TOGGLES,
     };
     let parsed: Record<string, unknown> = {};
     try { parsed = saved ? JSON.parse(saved) : {}; } catch { /* corrupt settings — use defaults */ }
@@ -1551,12 +1700,23 @@ export const useAppStore = create<AppState>((set) => ({
     const extendedByModelSpread = typeof ecm === 'object' && ecm !== null && !Array.isArray(ecm)
       ? (ecm as Record<string, boolean>)
       : {};
+    // Deep-merge messageToggles so existing installs pick up newly added gates
+    // automatically (mirrors the modelFilters pattern above). Accepts partial
+    // shapes without dropping sibling defaults.
+    const messageToggles = mergeMessageToggles(
+      DEFAULT_MESSAGE_TOGGLES,
+      parsed.messageToggles,
+      typeof parsed.spinCircuitBreakerHaltEnabled === 'boolean'
+        ? parsed.spinCircuitBreakerHaltEnabled
+        : undefined,
+    );
     return {
       ...defaults,
       ...parsed,
       modelFilters: { ...defaults.modelFilters, ...modelFiltersSpread },
       extendedContext: { ...defaults.extendedContext, ...extendedContextSpread },
       extendedContextByModelId: { ...defaults.extendedContextByModelId, ...extendedByModelSpread },
+      messageToggles,
     };
   })(),
   setSettings: (newSettings) => set((state) => {
@@ -1567,6 +1727,30 @@ export const useAppStore = create<AppState>((set) => ({
   }),
   updateSettings: (newSettings) => set((state) => {
     const merged = { ...state.settings, ...newSettings };
+    localStorage.setItem('atls-studio-settings', JSON.stringify(merged));
+    return { settings: merged };
+  }),
+  updateMessageToggles: (patch) => set((state) => {
+    const cur = state.settings.messageToggles;
+    const nextMessageToggles: MessageToggles = {
+      spin: {
+        enabled: patch.spin?.enabled ?? cur.spin.enabled,
+        modes: { ...cur.spin.modes, ...(patch.spin?.modes ?? {}) },
+        tiers: { ...cur.spin.tiers, ...(patch.spin?.tiers ?? {}) },
+      },
+      assess: patch.assess ?? cur.assess,
+      completion: { ...cur.completion, ...(patch.completion ?? {}) },
+      edits: { ...cur.edits, ...(patch.edits ?? {}) },
+      batchReadSpinWarn: patch.batchReadSpinWarn ?? cur.batchReadSpinWarn,
+    };
+    // Mirror halt into the deprecated legacy flag so downstream code that
+    // still reads `spinCircuitBreakerHaltEnabled` during the migration window
+    // stays consistent. Removed when the legacy field is retired.
+    const merged: Settings = {
+      ...state.settings,
+      messageToggles: nextMessageToggles,
+      spinCircuitBreakerHaltEnabled: nextMessageToggles.spin.tiers.halt,
+    };
     localStorage.setItem('atls-studio-settings', JSON.stringify(merged));
     return { settings: merged };
   }),

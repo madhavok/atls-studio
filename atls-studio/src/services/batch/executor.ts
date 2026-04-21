@@ -1672,6 +1672,16 @@ export async function executeUnifiedBatch(
     catch { return true; }
   })();
 
+  // Batch read-spin WARN/NUDGE surface toggle. When false, the read-spin
+  // counters in contextStore still advance (so state stays consistent if the
+  // user re-enables the toggle) but no `<<WARN:`/`<<NUDGE:` string is
+  // surfaced in the batch summary. Controlled via
+  // `settings.messageToggles.batchReadSpinWarn`.
+  const batchReadSpinWarnEnabled = (() => {
+    try { return useAppStore.getState().settings.messageToggles.batchReadSpinWarn !== false; }
+    catch { return true; }
+  })();
+
   // Seed from persistent awareness cache
   seedSnapshotTracker(snapshotTracker, ctx.store().getAwarenessCache());
 
@@ -2254,7 +2264,8 @@ export async function executeUnifiedBatch(
       if (spinEntries.length > 0 && step.use !== 'read.shaped') {
         const br = ctx.store().recordFileReadSpin(spinEntries);
         // Read-spin is tracked in the store and surfaced via spin_breaker / UI; it does not hard-block steps.
-        if (br) spinBreaker = br;
+        // Counters advance regardless; only the user-facing WARN/NUDGE string is gated.
+        if (br && batchReadSpinWarnEnabled) spinBreaker = br;
       }
     }
     if (output.ok && step.use === 'session.bb.write') {
@@ -2278,7 +2289,7 @@ export async function executeUnifiedBatch(
     // Track consecutive dry-run previews — warn in summary only (no step blocking)
     if (output.ok && step.use.startsWith('change.') && isDryRunPreview(output)) {
       dryRunPreviewCount += 1;
-      if (dryRunPreviewCount >= 2) {
+      if (dryRunPreviewCount >= 2 && batchReadSpinWarnEnabled) {
         spinBreaker = `<<WARN: ${step.use} dry-run previewed ${dryRunPreviewCount}x. Execute with dry_run:false to apply; avoid redundant previews.>>`;
       }
     } else if (output.ok && step.use.startsWith('change.')) {
