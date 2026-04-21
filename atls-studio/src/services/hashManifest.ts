@@ -132,8 +132,15 @@ export function clearEviction(shortHash: string): void {
 }
 
 /**
- * Prune forward/eviction entries older than `maxAge` turns with no
- * reference in `recentHashes`. Called at the start of each render pass.
+ * Prune forward/eviction/unrecoverable entries older than `maxAge` turns
+ * with no reference in `recentHashes`. Called at the start of each
+ * render pass.
+ *
+ * Unrecoverable entries are treated the same as forward/eviction rows —
+ * they're diagnostic state, not live retention. If the model ignores
+ * the `[UNRECOVERABLE: …]` action marker (doesn't drop or re-read) it
+ * still ages out on its own so a stale restore-time entry doesn't
+ * haunt the manifest for the rest of the process lifetime.
  */
 export function pruneStaleEntries(currentTurn: number, maxAgeTurns: number, recentHashes?: Set<string>): void {
   for (const [key, entry] of forwardMap) {
@@ -144,6 +151,11 @@ export function pruneStaleEntries(currentTurn: number, maxAgeTurns: number, rece
   for (const [key, entry] of evictionMap) {
     if (currentTurn - entry.turn > maxAgeTurns && (!recentHashes || !recentHashes.has(key))) {
       evictionMap.delete(key);
+    }
+  }
+  for (const [key, entry] of unrecoverableMap) {
+    if (currentTurn - entry.turn > maxAgeTurns && (!recentHashes || !recentHashes.has(key))) {
+      unrecoverableMap.delete(key);
     }
   }
 }

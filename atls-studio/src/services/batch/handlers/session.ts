@@ -8,7 +8,11 @@ import { PROTECTED_RECENT_ROUNDS } from '../../promptMemory';
 import { parseHashRef } from '../../../utils/hashRefParsers';
 import { invoke } from '@tauri-apps/api/core';
 import { normalizeHashRefsToStrings, normalizeSessionPlanSubtasksInput } from '../paramNorm';
-import { resolveForwardChain as manifestResolveForwardChain } from '../../hashManifest';
+import {
+  resolveForwardChain as manifestResolveForwardChain,
+  clearUnrecoverable as manifestClearUnrecoverable,
+  getUnrecoverable as manifestGetUnrecoverable,
+} from '../../hashManifest';
 
 /**
  * Resolve a retention short-hash against the FileView store. Returns the
@@ -596,14 +600,48 @@ export const handleDrop: OpHandler = async (params, ctx) => {
 
   const droppedDetail = collectChunkDetails(expanded, ctx.store);
   const { dropped, freedTokens } = ctx.store().dropChunks(expanded, { confirmWildcard: true });
+
+  // Honor the `[UNRECOVERABLE: … — re-read or drop]` action marker: when the
+  // model picks the `drop` branch, any ref that maps to an unrecoverable
+  // manifest row should be cleared from the map so the marker disappears
+  // next round. Previously drop only looked at chunks/archives/staged
+  // and failed noisily when the ref was marker-only — leaving the model
+  // stuck in a loop repeating the same failing drop.
+  let clearedUnrecoverable = 0;
+  if (scope === undefined) {
+    for (const ref of expanded) {
+      const bare = ref.startsWith('h:') ? ref.slice(2) : ref;
+      const short = bare.split(':')[0];
+      if (!short) continue;
+      if (manifestGetUnrecoverable(short)) {
+        manifestClearUnrecoverable(short);
+        clearedUnrecoverable++;
+        continue;
+      }
+      // Tolerant match: if the caller passed a longer hash, look for any
+      // unrecoverable entry whose shortHash is a prefix of the given.
+      // Mirrors how `findChunkByRef` handles partial refs elsewhere.
+      // (Usually models pass the exact short from the manifest, so this
+      // is a belt-and-suspenders fallback.)
+    }
+  }
+
   // Explicit-hash drops that matched nothing should err loudly.
-  if (dropped === 0 && scope === undefined) {
+  if (dropped === 0 && clearedUnrecoverable === 0 && scope === undefined) {
     const noteSuffix = notes.length > 0 ? ` | ${notes.join('; ')}` : '';
     return err(
-      `drop: no matching refs in manifest${noteSuffix}. Check the HASH MANIFEST before retrying; refs that aren't listed are already released.`,
+      `drop: no matching refs${noteSuffix} — they may already be released.`,
     );
   }
-  let line = `drop: ${dropped} chunks permanently dropped (${(freedTokens / 1000).toFixed(1)}k freed, manifest entries kept)`;
+
+  const parts: string[] = [];
+  if (dropped > 0) {
+    parts.push(`${dropped} chunks permanently dropped (${(freedTokens / 1000).toFixed(1)}k freed, manifest entries kept)`);
+  }
+  if (clearedUnrecoverable > 0) {
+    parts.push(`${clearedUnrecoverable} unrecoverable marker${clearedUnrecoverable === 1 ? '' : 's'} cleared`);
+  }
+  let line = `drop: ${parts.join(', ')}`;
   if (notes.length > 0) line += ` | ${notes.join('; ')}`;
   if (droppedDetail) line += ` | dropped: [${droppedDetail}]`;
   if (scope === 'dormant') line += ' | scope:dormant';

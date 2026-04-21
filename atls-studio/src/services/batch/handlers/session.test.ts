@@ -470,6 +470,34 @@ describe('handleDrop', () => {
     expect(result.ok).toBe(true);
     expect(result.summary).toMatch(/0 archived/);
   });
+
+  it('honors UNRECOVERABLE action marker: explicit-hash drop clears marker and returns ok', async () => {
+    const { recordUnrecoverable, clearUnrecoverable, getUnrecoverable } = await import('../../hashManifest');
+    recordUnrecoverable(
+      'deadbeef',
+      'src/missing.ts',
+      { kind: 'path_missing', path: 'src/missing.ts' },
+      0,
+    );
+    expect(getUnrecoverable('deadbeef')).toBeDefined();
+
+    const ctx = createMockCtx() as unknown as Parameters<typeof handleDrop>[1];
+    const result = await handleDrop({ hashes: 'h:deadbeef' }, ctx);
+
+    expect(result.ok).toBe(true);
+    expect(result.summary).toMatch(/unrecoverable marker/);
+    expect(getUnrecoverable('deadbeef')).toBeUndefined();
+
+    // Cleanup in case test pollution reaches another test.
+    clearUnrecoverable('deadbeef');
+  });
+
+  it('explicit-hash drop on unknown ref errs when neither chunk nor unrecoverable match', async () => {
+    const ctx = createMockCtx() as unknown as Parameters<typeof handleDrop>[1];
+    const result = await handleDrop({ hashes: 'h:nosuch0' }, ctx);
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatch(/no matching refs/);
+  });
 });
 
 describe('handleStats', () => {
@@ -1038,7 +1066,7 @@ describe('retention handlers — ephemeral output defense', () => {
       createMockCtx() as unknown as Parameters<typeof handleDrop>[1],
     );
     expect(result.ok).toBe(false);
-    expect(result.error).toMatch(/no matching refs in manifest/);
+    expect(result.error).toMatch(/no matching refs/);
   });
 
   it('handleUnload errs when no hashes supplied', async () => {
