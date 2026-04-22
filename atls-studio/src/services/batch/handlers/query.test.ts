@@ -235,6 +235,45 @@ describe('query handlers', () => {
     expect(out.summary).toMatch(/MANIFEST:.*ManifestHit/);
   });
 
+  it('handleSearchCode scrubs __atls_check_* scratch hits from results', async () => {
+    const ctx = {
+      atlsBatchQuery: vi.fn(async () => ({
+        results: [{
+          query: 'q',
+          results: [
+            { file: 'src/real.ts', line: 3 },
+            { file: '__atls_check_12345.ts', line: 1 },
+            { file: 'src/other.ts', line: 7 },
+          ],
+        }],
+      })),
+      store: () => minimalStore(),
+    } as any;
+
+    const out = await handleSearchCode({ queries: ['VERSION'] }, ctx);
+    expect(out.ok).toBe(true);
+    expect(out.content?.file_paths).toEqual(['src/real.ts', 'src/other.ts']);
+    expect(out.content?.file_paths).not.toContain('__atls_check_12345.ts');
+  });
+
+  it('handleSearchSimilar scrubs __atls_check_* scratch hits from find_similar_code results', async () => {
+    const batch = vi.fn(async () => ({
+      results: [
+        { file: 'src/real.ts', name: 'add', line: 1, similarity: 0.42 },
+        { file: '__atls_check_40764.ts', name: 'add', line: 1, similarity: 0.78 },
+      ],
+      count: 2,
+    }));
+    const ctx = { atlsBatchQuery: batch, store: () => minimalStore() } as any;
+    const out = await handleSearchSimilar({ type: 'code', query: 'add numbers' }, ctx);
+    expect(out.ok).toBe(true);
+    // The scrubber mutates the result object passed into formatResult —
+    // verify the __atls_check_ entry was removed before serialization.
+    const batchResult = await batch.mock.results[0].value;
+    expect(batchResult.results).toHaveLength(1);
+    expect(batchResult.results[0].file).toBe('src/real.ts');
+  });
+
   it('handleSearchCode suppresses manifest note when caller scoped with file_paths', async () => {
     // Scoped search = agent explicitly wants FTS within the named file.
     // The manifest only carries signatures, not body text — deflecting to

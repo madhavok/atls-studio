@@ -125,16 +125,22 @@ function extractPerHitStructured(result: unknown, maxHits: number): {
 const LITERAL_FALLBACK_MAX = 50;
 
 /**
- * Drop code_search result entries that point at ATLS linter scratch files
+ * Drop search-result entries that point at ATLS linter scratch files
  * (`__atls_check_*.ts`). These are created by verify.lint pre-write syntax
- * checks and RAII-cleaned on the Rust side, but the FTS index can briefly
- * hold stale entries that leak into `search.code` consumers — both the
- * structured `content.file_paths` bindings (covered by flattenCodeSearchHits)
- * AND the raw result chunk serialized via formatResult (covered here).
+ * checks and RAII-cleaned on the Rust side, but the FTS / symbol / similar
+ * indexes can briefly hold stale entries that leak into any search.* result
+ * shape. Called by every search handler before formatResult / chunking so
+ * neither the rendered text nor the structured content bindings see scratch
+ * hits.
  *
- * Walks the backend shape `{results: [{query?, results: [...] | hits: [...]
- * | groups: [...], ...}]}` plus tiered `{high: [...], medium: [...]}` and
- * compact `{r: [...]}` variants. Mutates in place.
+ * Covers backend shapes:
+ *   - code_search: `{results: [{query?, results|hits|groups: [...]}]}`
+ *   - find_similar_code: `{results: [{file, line, ...}]}`
+ *   - find_symbol / symbol_usage / find_issues / detect_patterns: same
+ *     top-level `results[]` with per-entry `file` / `path`.
+ *   - tiered `{high, medium}` and compact `{r}` variants.
+ *
+ * Mutates in place.
  */
 function scrubScratchHitsFromResult(result: unknown): void {
   const isScratchFile = (v: unknown): boolean => {
@@ -234,8 +240,8 @@ export const handleSearchCode: OpHandler = async (params, ctx) => {
     if (filePaths?.length) searchParams.file_paths = filePaths;
     const result = await ctx.atlsBatchQuery('code_search', searchParams);
     // Scrub before summary/format/chunk so downstream consumers never see
-    // stale linter-scratch hits. Structured-content filter in
-    // flattenCodeSearchHits is a second line of defense.
+    // stale linter-scratch hits. `flattenCodeSearchHits` is a second line of
+    // defense for the structured-content bindings path.
     scrubScratchHitsFromResult(result);
     const summary = extractSearchSummary(result, queries);
     const resultStr = formatResult(result, FORMAT_RESULT_MAX_SEARCH);
@@ -305,6 +311,7 @@ export const handleSearchSymbol: OpHandler = async (params, ctx) => {
 
   try {
     const result = await ctx.atlsBatchQuery('find_symbol', { symbol_names: queries, query: queries[0] });
+    scrubScratchHitsFromResult(result);
     const resultStr = formatResult(result, FORMAT_RESULT_MAX_SEARCH);
     const resultFilePaths = extractFilePathsFromSearchResult(result);
     const resultLines = extractLinesFromSearchResult(result);
@@ -337,6 +344,7 @@ export const handleSearchUsage: OpHandler = async (params, ctx) => {
 
   try {
     const result = await ctx.atlsBatchQuery('symbol_usage', { symbol_names: symbolNames });
+    scrubScratchHitsFromResult(result);
     const summary = extractSymbolSummary(result, symbolNames);
     const resultStr = formatResult(result, FORMAT_RESULT_MAX_SEARCH);
     const resultFilePaths = extractFilePathsFromSearchResult(result);
@@ -406,6 +414,7 @@ export const handleSearchSimilar: OpHandler = async (params, ctx) => {
       if (arr.length) batchParams = { ...batchParams, patterns: arr };
     }
     const result = await ctx.atlsBatchQuery(operation, batchParams);
+    scrubScratchHitsFromResult(result);
     const resultStr = formatResult(result, FORMAT_RESULT_MAX_SEARCH);
     const retained = checkRetention('search.similar', params, resultStr, true, 'search_results', 'find_similar');
     if (retained.reused) return retained.output;
@@ -429,6 +438,7 @@ export const handleSearchSimilar: OpHandler = async (params, ctx) => {
 export const handleSearchIssues: OpHandler = async (params, ctx) => {
   try {
     const result = await ctx.atlsBatchQuery('find_issues', params);
+    scrubScratchHitsFromResult(result);
     const resultStr = formatResult(result, FORMAT_RESULT_MAX_SEARCH);
     const retained = checkRetention('search.issues', params, resultStr, true, 'search_results', 'find_issues');
     if (retained.reused) return retained.output;
@@ -452,6 +462,7 @@ export const handleSearchIssues: OpHandler = async (params, ctx) => {
 export const handleSearchPatterns: OpHandler = async (params, ctx) => {
   try {
     const result = await ctx.atlsBatchQuery('detect_patterns', params);
+    scrubScratchHitsFromResult(result);
     const resultStr = formatResult(result, FORMAT_RESULT_MAX_SEARCH);
     const retained = checkRetention('search.patterns', params, resultStr, true, 'search_results', 'detect_patterns');
     if (retained.reused) return retained.output;
