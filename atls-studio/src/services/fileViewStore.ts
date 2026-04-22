@@ -668,7 +668,16 @@ export function applyEditToFileView(
 ): FileView {
   const { sourceRevision, newBody, deltas, round } = inputs;
 
-  const newLines = newBody.length === 0 ? [] : newBody.split('\n');
+  // Split into lines with Rust-compatible counting semantics: files ending
+  // in `\n` report N lines, not N+1. JS `split('\n')` returns a trailing
+  // empty string for trailing-newline files — drop it so `totalLines`
+  // matches `current_content.lines().count()` on the backend and the
+  // `lines:` field emitted by `change.edit` drafts. Without this the fence
+  // header reads +1 after every own-edit refresh.
+  const rawLines = newBody.length === 0 ? [] : newBody.split('\n');
+  const newLines = rawLines.length > 0 && rawLines[rawLines.length - 1] === ''
+    ? rawLines.slice(0, -1)
+    : rawLines;
   const totalLines = newLines.length;
 
   /**

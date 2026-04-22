@@ -1390,6 +1390,103 @@ describe('FileView stable identity across own-edits', () => {
     ]);
   });
 
+  it('applyEditToFileView drops trailing empty line — totalLines matches Rust .lines().count()', () => {
+    // Regression: files normalized from disk end with `\n`, which makes JS
+    // `split('\n')` return a trailing empty string. Counting that empty as
+    // a real line made the fence header read +1 vs the backend's
+    // `current_content.lines().count()` (visible in change.edit drafts as
+    // `lines:N`). Live symptom: `(206 lines)` for a 205-line file right
+    // after any own-edit refresh.
+    const store = useContextStore.getState();
+    const path = 'trailing-nl.txt';
+    const rev1 = 'revtn1';
+    // Body WITH trailing newline — 3 real content lines, total file "lines" = 3.
+    const body1 = 'alpha\nbeta\ngamma\n';
+    store.addChunk(
+      body1, 'raw', path, undefined, undefined, rev1,
+      {
+        sourceRevision: rev1,
+        viewKind: 'latest',
+        readSpan: { filePath: path, sourceRevision: rev1, contextType: 'full' },
+      },
+    );
+    useContextStore.getState().setFileViewPinned(path, true);
+    // Seed a dense 3-row skeleton so `wasDense` triggers the full-body
+    // regen path (the one used for plain-text files in live runs).
+    useContextStore.setState(state => {
+      const next = new Map(state.fileViews);
+      const v = next.get(path);
+      if (v) next.set(path, {
+        ...v,
+        skeletonRows: ['   1|alpha', '   2|beta', '   3|gamma'],
+        totalLines: 3,
+      });
+      return { fileViews: next };
+    });
+
+    // Replace line 2 in-place (same line count). Body stays 3 lines + trailing \n.
+    const body2 = 'alpha\nBETA\ngamma\n';
+    const rev2 = 'revtn2';
+    useContextStore.getState().applyEditToFileView({
+      filePath: path,
+      sourceRevision: rev2,
+      newBody: body2,
+      deltas: [],
+      round: 1,
+    });
+
+    const v = useContextStore.getState().getFileView(path)!;
+    // 3 content lines, not 4. This is what Rust reports via
+    // `current_content.lines().count()` and what editors display.
+    expect(v.totalLines).toBe(3);
+    expect(v.skeletonRows).toEqual([
+      '   1|alpha',
+      '   2|BETA',
+      '   3|gamma',
+    ]);
+  });
+
+  it('applyEditToFileView without trailing newline still counts correctly', () => {
+    // Companion to the trailing-newline test: bodies that DON'T end in `\n`
+    // stay N lines too. No trailing empty to strip, no change from prior
+    // behavior.
+    const store = useContextStore.getState();
+    const path = 'no-trailing-nl.txt';
+    const rev1 = 'revntn1';
+    const body1 = 'alpha\nbeta\ngamma'; // no trailing \n
+    store.addChunk(
+      body1, 'raw', path, undefined, undefined, rev1,
+      {
+        sourceRevision: rev1,
+        viewKind: 'latest',
+        readSpan: { filePath: path, sourceRevision: rev1, contextType: 'full' },
+      },
+    );
+    useContextStore.getState().setFileViewPinned(path, true);
+    useContextStore.setState(state => {
+      const next = new Map(state.fileViews);
+      const v = next.get(path);
+      if (v) next.set(path, {
+        ...v,
+        skeletonRows: ['   1|alpha', '   2|beta', '   3|gamma'],
+        totalLines: 3,
+      });
+      return { fileViews: next };
+    });
+
+    const body2 = 'alpha\nBETA\ngamma';
+    useContextStore.getState().applyEditToFileView({
+      filePath: path,
+      sourceRevision: 'revntn2',
+      newBody: body2,
+      deltas: [],
+      round: 1,
+    });
+
+    const v = useContextStore.getState().getFileView(path)!;
+    expect(v.totalLines).toBe(3);
+  });
+
   it('applyFillFromChunk at a new revision keeps the same shortHash', () => {
     // The rebuild-at-new-revision branch used to rotate the shortHash and
     // push the old one onto the chain. With path-derived identity there's
