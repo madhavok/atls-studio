@@ -1761,7 +1761,9 @@ export const handleEdit: OpHandler = async (params, ctx) => {
         // differently on the subtypes; differentiating them induced the
         // classic rebind-retry spin loop. Internal taxonomy stays in
         // telemetry / memory events for debugging.
-        const identityLost = preflight.decisions.some((decision) => decision.classification === 'rebaseable');
+        const identityLost = preflight.decisions.some(
+          (d) => d.classification === 'suspect' || (d.factors?.includes('identity_lost') ?? false),
+        );
         const internalClass: 'identity_lost' | 'stale_hash' = identityLost ? 'identity_lost' : 'stale_hash';
         const payload = {
           blocked: true,

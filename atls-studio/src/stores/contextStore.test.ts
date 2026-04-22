@@ -1114,7 +1114,7 @@ describe('memory telemetry', () => {
     });
   });
 
-  it('includes telemetry aggregates in formatted working memory (event count only, no engine internals)', () => {
+  it('does not surface memory telemetry in formatted working memory (internals panel only)', () => {
     const store = useContextStore.getState();
     store.recordMemoryEvent({
       action: 'retry',
@@ -1129,7 +1129,8 @@ describe('memory telemetry', () => {
     });
 
     const formatted = store.getWorkingMemoryFormatted();
-    expect(formatted).toContain('events:2');
+    expect(formatted).not.toMatch(/events:\d+/);
+    expect(formatted).not.toContain('MEMORY TELEMETRY');
     expect(formatted).not.toContain('rebinds:');
     expect(formatted).not.toContain('blocks:');
     expect(formatted).not.toContain('retries:');

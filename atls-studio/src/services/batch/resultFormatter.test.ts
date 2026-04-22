@@ -434,7 +434,7 @@ describe('resultFormatter Rule B — FileView-merge pointer', () => {
     };
 
     const out = formatBatchResult(result);
-    expect(out).toContain('merged into');
+    expect(out).toContain('added L15-25');
     expect(out).toContain(ref);
     expect(out).toContain('see ## FILE VIEWS');
     expect(out).not.toContain('full body, many tokens');
@@ -464,7 +464,7 @@ describe('resultFormatter Rule B — FileView-merge pointer', () => {
     };
 
     const out = formatBatchResult(result);
-    expect(out).not.toContain('merged into');
+    expect(out).not.toContain('see ## FILE VIEWS');
     expect(out).toContain('content body');
   });
 
@@ -485,7 +485,7 @@ describe('resultFormatter Rule B — FileView-merge pointer', () => {
     };
 
     const out = formatBatchResult(result);
-    expect(out).not.toContain('merged into');
+    expect(out).not.toContain('added L');
     expect(out).toContain('engram body preserved');
   });
 
@@ -510,7 +510,7 @@ describe('resultFormatter Rule B — FileView-merge pointer', () => {
     };
 
     const out = formatBatchResult(result);
-    expect(out).not.toContain('merged into');
+    expect(out).not.toContain('see ## FILE VIEWS');
     expect(out).toContain('ERROR something');
   });
 
@@ -537,15 +537,12 @@ describe('resultFormatter Rule B — FileView-merge pointer', () => {
 
     // Output should be dramatically smaller than the raw summary
     expect(afterTk).toBeLessThan(beforeTk / 4);
-    expect(out).toContain('merged into');
+    expect(out).toContain('added L15-25');
   });
 });
 
 // ---------------------------------------------------------------------------
-// VOLATILE footer — auto-pin contract
-// The footer must not nudge the model to `pi` refs that are already retained
-// by a pinned FileView (auto-pinned by reads) or by a `session.pin` step in
-// the same batch. Tree / engram chunk refs with no FileView must still warn.
+// Batch footer: legacy VOLATILE nudge removed (intra-batch auto-persist).
 // ---------------------------------------------------------------------------
 
 describe('resultFormatter VOLATILE footer — auto-pin contract', () => {
@@ -587,8 +584,7 @@ describe('resultFormatter VOLATILE footer — auto-pin contract', () => {
     expect(out).not.toContain('PIN NOW');
   });
 
-  it('emits VOLATILE footer for chunk refs with no FileView (tree / engram reads)', () => {
-    // No FileView created: this is the tree-listing / engram chunk path.
+  it('does not emit VOLATILE footer for chunk refs with no FileView (tree / engram reads)', () => {
     const chunkRef = 'h:abcdef';
     const result: UnifiedBatchResult = {
       ok: true,
@@ -606,12 +602,11 @@ describe('resultFormatter VOLATILE footer — auto-pin contract', () => {
     };
 
     const out = formatBatchResult(result);
-    expect(out).toContain(VOLATILE_MARK);
-    expect(out).toContain(`pi ${chunkRef}`);
+    expect(out).not.toContain(VOLATILE_MARK);
+    expect(out).toContain('read: . → h:abcdef');
   });
 
-  it('still emits VOLATILE footer when the matching FileView exists but is unpinned', () => {
-    // autoPinReads=false legacy path: view exists but pinned=false.
+  it('does not emit VOLATILE footer when the matching FileView exists but is unpinned', () => {
     const filePath = 'atls-studio/src/unpinned.ts';
     const store = useContextStore.getState();
     const revision = 'rev-unpinned';
@@ -625,8 +620,8 @@ describe('resultFormatter VOLATILE footer — auto-pin contract', () => {
     };
 
     const out = formatBatchResult(result);
-    expect(out).toContain(VOLATILE_MARK);
-    expect(out).toContain(`pi ${ref}`);
+    expect(out).not.toContain(VOLATILE_MARK);
+    expect(out).toContain('read_lines: merged into FileViews');
   });
 
   it('suppresses VOLATILE footer when session.pin in the same batch covers the ref (regression)', () => {
@@ -658,7 +653,7 @@ describe('resultFormatter VOLATILE footer — auto-pin contract', () => {
     expect(out).not.toContain(VOLATILE_MARK);
   });
 
-  it('mixed batch: pinned FileView read skips footer, unpinned chunk ref still listed', () => {
+  it('mixed batch: no VOLATILE nudge; step lines preserved', () => {
     const filePath = 'atls-studio/src/mixed.ts';
     const store = useContextStore.getState();
     const revision = 'rev-mixed';
@@ -683,10 +678,8 @@ describe('resultFormatter VOLATILE footer — auto-pin contract', () => {
     };
 
     const out = formatBatchResult(result);
-    expect(out).toContain(VOLATILE_MARK);
-    expect(out).toContain(`pi ${chunkRef}`);
-    // The pinned-view ref must NOT appear in the pin list.
-    expect(out).not.toContain(`pi ${viewRef}`);
-    expect(out).not.toMatch(new RegExp(`pi [^\\n]*${viewRef.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&')}`));
+    expect(out).not.toContain(VOLATILE_MARK);
+    expect(out).toContain('read: tree → h:beadfe');
+    expect(out).not.toContain(`pi ${chunkRef}`);
   });
 });

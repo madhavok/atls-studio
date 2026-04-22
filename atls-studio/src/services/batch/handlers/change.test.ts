@@ -619,8 +619,9 @@ describe('freshness safety', () => {
     );
 
     expect(out.ok).toBe(false);
-    expect((out.content as { error_class?: string })?.error_class).toBe('identity_lost');
-    expect((out.content as { repro_pack?: { error_class?: string } })?.repro_pack?.error_class).toBe('identity_lost');
+    const content = out.content as { _internal?: { error_class?: string }; repro_pack?: { error_class?: string } };
+    expect(content._internal?.error_class).toBe('identity_lost');
+    expect(content.repro_pack?.error_class).toBe('identity_lost');
     expect(useContextStore.getState().stagedSnippets.get('stage:lost')?.lastRebind).toMatchObject({
       strategy: 'blocked',
       confidence: 'none',

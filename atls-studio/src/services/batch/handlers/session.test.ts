@@ -306,8 +306,8 @@ describe('handlePin', () => {
     // Zero-match retention ops now err loudly instead of silently returning ok
     // (prevents the templated-stub spin).
     expect(result.ok).toBe(false);
-    expect(result.error).toContain('pin: ERROR no matching chunks');
-    expect(result.error).toContain('from_step');
+    expect(result.error).toContain('pin: no matching chunks');
+    expect(result.error).toMatch(/from_step|r1/);
     expect(result.error).toContain('h:r1');
   });
 
@@ -387,7 +387,7 @@ describe('handlePin', () => {
 
     const result = await handlePin({ in: 'r99.refs' }, ctx);
     expect(result.ok).toBe(false);
-    expect(result.error).toMatch(/no hashes supplied/);
+    expect(result.error).toMatch(/missing refs/);
   });
 
   it('includes executor binding warning when hashes resolved to nothing from from_step', async () => {
@@ -439,7 +439,7 @@ describe('handleDrop', () => {
     const ctx = createMockCtx() as unknown as Parameters<typeof handleDrop>[1];
     const result = await handleDrop({}, ctx);
     expect(result.ok).toBe(false);
-    expect(result.error).toMatch(/no hashes supplied/);
+    expect(result.error).toMatch(/retention op missing refs/);
   });
 
   it('scope:archived drops archived chunks without explicit hashes', async () => {
@@ -555,7 +555,7 @@ describe('handleTaskAdvance advance gate', () => {
 
     expect(result.ok).toBe(true);
     expect(result.summary).toContain('WARNING');
-    expect(result.summary).toContain('Advancing without BB findings');
+    expect(result.summary).toMatch(/advancing without BB findings/i);
   });
 
   it('does not warn when BB write happened before advance', async () => {
@@ -647,7 +647,7 @@ describe('handleTaskAdvance errors', () => {
       createMockCtx() as any,
     );
     expect(r.ok).toBe(false);
-    expect(r.error).toMatch(/no active plan/);
+    expect(r.error).toMatch(/plan not started/);
   });
 
   it('errors when no active subtask', async () => {
@@ -687,7 +687,7 @@ describe('handleTaskAdvance errors', () => {
     expect(r.error).toMatch(/not found/);
   });
 
-  it('errors when subtask already done', async () => {
+  it('returns ok when explicit subtask already done (idempotent)', async () => {
     useContextStore.getState().setTaskPlan({
       goal: 'g',
       subtasks: [
@@ -700,8 +700,8 @@ describe('handleTaskAdvance errors', () => {
       { subtask: 'a', summary: 'z'.repeat(60) },
       createMockCtx() as any,
     );
-    expect(r.ok).toBe(false);
-    expect(r.error).toMatch(/already done/);
+    expect(r.ok).toBe(true);
+    expect(r.summary).toMatch(/already done/);
   });
 
   it('errors when summary too short', async () => {
@@ -715,7 +715,7 @@ describe('handleTaskAdvance errors', () => {
     });
     const r = await handleTaskAdvance({ summary: 'short' }, createMockCtx() as any);
     expect(r.ok).toBe(false);
-    expect(r.error).toMatch(/min 50 chars/);
+    expect(r.error).toMatch(/need ≥50 chars|need .*50/);
   });
 });
 
@@ -735,7 +735,7 @@ describe('handleUnload / handleCompact', () => {
   it('handleUnload errors when hashes missing', async () => {
     const r = await handleUnload({}, createMockCtx() as any);
     expect(r.ok).toBe(false);
-    expect(r.error).toMatch(/no hashes supplied/);
+    expect(r.error).toMatch(/retention op missing refs/);
   });
 
   it('handleCompact compacts chunks (pointer tier)', async () => {
@@ -766,7 +766,7 @@ describe('handleUnload / handleCompact', () => {
   it('handleCompact errors when hashes missing', async () => {
     const r = await handleCompact({}, createMockCtx() as any);
     expect(r.ok).toBe(false);
-    expect(r.error).toMatch(/no hashes supplied/);
+    expect(r.error).toMatch(/retention op missing refs/);
   });
 });
 
@@ -840,7 +840,7 @@ describe('handleUnpin', () => {
   it('errors when hashes missing', async () => {
     const r = await handleUnpin({}, createMockCtx() as any);
     expect(r.ok).toBe(false);
-    expect(r.error).toMatch(/no hashes supplied/);
+    expect(r.error).toMatch(/retention op missing refs/);
   });
 
   it('recovers dataflow from params.in string', async () => {
@@ -1010,9 +1010,7 @@ describe('retention handlers — ephemeral output defense', () => {
       createMockCtx() as unknown as Parameters<typeof handleUnpin>[1],
     );
     expect(result.ok).toBe(false);
-    expect(result.error).toMatch(/no hashes supplied/);
-    expect(result.error).toMatch(/MANIFEST|manifest/);
-    expect(result.error).toMatch(/ephemeral/i);
+    expect(result.error).toMatch(/unpin: retention op missing refs/);
   });
 
   it('handleUnpin errs with "did not resolve" when refs are unknown', async () => {
@@ -1022,8 +1020,7 @@ describe('retention handlers — ephemeral output defense', () => {
     );
     expect(result.ok).toBe(false);
     expect(result.error).toMatch(/did not resolve/);
-    // Hints at wrong hash identity (cite vs retention).
-    expect(result.error).toMatch(/cite:@h:|retention/);
+    expect(result.error).toMatch(/HASH MANIFEST/);
   });
 
   it('handleUnpin returns ok no-op when refs are already unpinned', async () => {
@@ -1047,8 +1044,7 @@ describe('retention handlers — ephemeral output defense', () => {
       createMockCtx() as unknown as Parameters<typeof handlePin>[1],
     );
     expect(result.ok).toBe(false);
-    expect(result.error).toMatch(/no hashes supplied/);
-    expect(result.error).toMatch(/ephemeral/i);
+    expect(result.error).toMatch(/pin: missing refs/);
   });
 
   it('handleDrop errs when no hashes and no scope supplied', async () => {
@@ -1057,7 +1053,7 @@ describe('retention handlers — ephemeral output defense', () => {
       createMockCtx() as unknown as Parameters<typeof handleDrop>[1],
     );
     expect(result.ok).toBe(false);
-    expect(result.error).toMatch(/no hashes supplied/);
+    expect(result.error).toMatch(/retention op missing refs/);
   });
 
   it('handleDrop errs when explicit hashes resolve to zero matches', async () => {
@@ -1075,7 +1071,7 @@ describe('retention handlers — ephemeral output defense', () => {
       createMockCtx() as unknown as Parameters<typeof handleUnload>[1],
     );
     expect(result.ok).toBe(false);
-    expect(result.error).toMatch(/no hashes supplied/);
+    expect(result.error).toMatch(/retention op missing refs/);
   });
 
   it('handleCompact errs when no hashes supplied', async () => {
@@ -1084,6 +1080,6 @@ describe('retention handlers — ephemeral output defense', () => {
       createMockCtx() as unknown as Parameters<typeof handleCompact>[1],
     );
     expect(result.ok).toBe(false);
-    expect(result.error).toMatch(/no hashes supplied/);
+    expect(result.error).toMatch(/retention op missing refs/);
   });
 });

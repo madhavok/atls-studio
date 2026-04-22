@@ -267,12 +267,11 @@ describe('context handlers snapshot authority', () => {
 
     expect(atls).not.toHaveBeenCalled();
     expect(result.ok).toBe(true);
-    expect(result.summary).toContain('engram:h:');
+    expect(result.summary).toMatch(/^read_lines: h:[0-9a-f]+:/);
     expect(result.summary).toContain('hit one');
     expect(result.summary).toContain('hit two');
-    expect(result.summary).toContain('search');
     const c = result.content as Record<string, unknown>;
-    expect(String(c.file)).toMatch(/^engram:h:/);
+    expect(String(c.file)).toMatch(/^h:[0-9a-f]+$/);
     expect(typeof c.content_hash).toBe('string');
     expect(String(c.content_hash).length).toBeGreaterThan(0);
     expect(result.refs?.[0]).toMatch(/^h:[0-9a-f]+:1-2$/i);
@@ -393,7 +392,7 @@ describe('context handlers validation and errors', () => {
     const short = useContextStore.getState().addChunk('one\ntwo', 'search', 'q');
     const r = await handleReadLines({ hash: `h:${short}`, lines: 'garbage-range' }, ctx);
     expect(r.ok).toBe(false);
-    expect(r.error).toMatch(/invalid lines spec/);
+    expect(r.error).toMatch(/invalid range spec/);
   });
 
   it('handleReadLines surfaces backend File-not-found instead of generic "requires hash"', async () => {

@@ -47,16 +47,12 @@ function row(n: number, c: string): string {
 }
 
 describe('fileViewRender — renderFileViewBlock', () => {
-  it('renders header with dual hash identity (retention + cite), skeleton rows, and closing fence', () => {
+  it('renders header with retention hash, skeleton rows, and closing fence', () => {
     const view = createFileView(sk());
     const text = renderFileViewBlock(view, { currentRound: 1 });
     const { shortHash } = computeFileViewHashParts('src/foo.ts', 'rev123abc');
-    // Retention ref = view.shortHash (derived from path + revision) —
-    // the token pu/pc/dro must receive.
+    // Single ref per FileView — `injectSnapshotHashes` resolves sourceRevision for cite slots.
     expect(text).toContain(`=== src/foo.ts h:${shortHash}`);
-    // Citation hash = sourceRevision prefix — the token for content_hash in edits.
-    expect(text).toContain('cite:@h:rev123');
-    // Retention and cite must be different hex by construction.
     expect(shortHash).not.toBe('rev123');
     expect(text).toContain('(100 lines)');
     expect(text.startsWith('=== ')).toBe(true);

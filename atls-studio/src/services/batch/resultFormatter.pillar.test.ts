@@ -147,8 +147,7 @@ describe('pillar gate — 3-slice successful read merged into pinned FileView', 
     // Reconstruct the "before" text (raw body included) for comparison.
     const beforeText = result.step_results.map(s =>
       `[OK] ${s.id} (${s.use}): ${s.summary} (${s.duration_ms}ms)`
-    ).join('\n') + '\n⚠ VOLATILE — WILL BE LOST NEXT ROUND. PIN NOW in this batch or write to BB. Add: `pi ' + ref + '`'
-    + '\n[ATLS] 3 steps: 3 pass (247ms) | ok';
+    ).join('\n') + '\n[ATLS] 3 steps: 3 pass (247ms) | ok';
 
     const afterText = formatBatchResult(result);
     const beforeTk = countTokensSync(beforeText);
@@ -157,8 +156,7 @@ describe('pillar gate — 3-slice successful read merged into pinned FileView', 
     // Rule B target: >= 75% token reduction on 3-slice merged-read fixture.
     expect(afterTk).toBeLessThanOrEqual(beforeTk * 0.25);
 
-    // Pointer form appears for every step
-    expect(afterText.match(/merged into/g)?.length).toBe(3);
+    expect((afterText.match(/see ## FILE VIEWS/g) || []).length).toBe(3);
 
     // And the batch result is not archive-worthy — Rule C skips the engram.
     expect(isContentArchiveWorthy(afterText, 'batch')).toBe(false);

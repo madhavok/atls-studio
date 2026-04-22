@@ -172,7 +172,7 @@ describe('blackboard handlers', () => {
     expect(r.ok).toBe(false);
   });
 
-  it('bb_read marks stale when derived source revision changes', async () => {
+  it('bb_read still serves derived entry when awareness revision drifts (staleness is telemetry-only)', async () => {
     const store = useContextStore.getState();
     const path = 'src/drift.ts';
     store.setAwareness(awareness(path, 'rev1'));
@@ -183,8 +183,7 @@ describe('blackboard handlers', () => {
       createMockCtx() as unknown as Parameters<typeof handleBbRead>[1],
     );
     expect(r.ok).toBe(true);
-    expect(r.summary).toMatch(/stale: source changed/);
-    expect(r.summary).toMatch(/drift\.ts/);
+    expect(r.summary).toMatch(/bb_read:dr:/);
   });
 
   it('bb_read includes superseded and historical meta lines', async () => {
@@ -211,9 +210,10 @@ describe('blackboard handlers', () => {
       createMockCtx() as unknown as Parameters<typeof handleBbRead>[1],
     );
     expect(r.ok).toBe(true);
-    expect(r.summary).toMatch(/superseded/);
-    expect(r.summary).toMatch(/historical/);
-    expect(r.summary).toMatch(/NOT_FOUND/);
+    expect(r.summary).toMatch(/bb_read:repair:x\.ts/);
+    expect(r.summary).toMatch(/bb_read:hist-only/);
+    expect(r.summary).toMatch(/ref unavailable/);
+    expect(store.getBlackboardEntryWithMeta('repair:x.ts')?.state).toBe('superseded');
   });
 
   it('bb_delete removes an entry', async () => {
@@ -244,8 +244,7 @@ describe('blackboard handlers', () => {
       createMockCtx() as unknown as Parameters<typeof handleBbDelete>[1],
     );
     expect(r.ok).toBe(false);
-    expect(r.summary).toMatch(/no keys supplied/);
-    expect(r.summary).toMatch(/ephemeral/i);
+    expect(r.summary).toMatch(/missing keys param/);
   });
 
   it('bb_delete errs when keys resolve to zero matches', async () => {

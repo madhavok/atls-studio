@@ -180,7 +180,7 @@ describe('subagentService', () => {
       for (const role of roles) {
         const prompt = buildSubagentPrompt(role);
         expect(prompt).toContain('2-read rule');
-        expect(prompt).toContain('BLOCKED = done');
+        expect(prompt).toMatch(/Search once, act|No tool-chaining/i);
       }
     });
 
@@ -228,7 +228,7 @@ describe('subagentService', () => {
       const prompt = buildSubagentPrompt('retriever', { bbKey: 'retriever:findings' });
       expect(prompt).toContain('## FINDINGS (REQUIRED)');
       expect(prompt).toContain('retriever:findings');
-      expect(prompt).toContain('delegate step summary inlines');
+      expect(prompt).toContain('bw key:"retriever:findings"');
       expect(prompt).toContain('**Retriever:**');
     });
   });

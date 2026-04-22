@@ -102,9 +102,7 @@ describe('hashManifest', () => {
         archivedRefs: [],
         turn: 1,
       });
-      expect(output).toContain('## HASH MANIFEST');
-      expect(output).toContain('turn 1');
-      expect(output).toContain('all fresh');
+      expect(output).toBe('## HASH MANIFEST (turn 1)');
       expect(output).not.toContain('_Legend:');
     });
 
@@ -119,15 +117,13 @@ describe('hashManifest', () => {
         archivedRefs: [],
         turn: 5,
       });
+      expect(output).toContain('## HASH MANIFEST (turn 5 | 2 pinned)');
       expect(output).toContain('h:abc123');
       expect(output).toContain('P');
       expect(output).toContain('src/foo.ts');
       expect(output).toContain('1.2k');
-      expect(output).toContain('fresh');
       expect(output).toContain('P:sig');
-      expect(output).toContain('suspect (watcher_event)');
-      expect(output).toContain('3 active');
-      expect(output).toContain('1 suspect');
+      expect(output).toMatch(/h:ghi789.*active$/m);
       expect(output).not.toContain('_Legend:');
     });
 
@@ -157,14 +153,13 @@ describe('hashManifest', () => {
         turn: 3,
       });
       expect(output).toContain('h:aaa111');
-      expect(output).toContain('demat');
+      expect(output).toMatch(/h:aaa111.*dormant$/m);
       expect(output).toContain('h:bbb222');
-      expect(output).toContain('arch');
-      expect(output).toContain('rec to restore');
+      expect(output).toContain('dormant | rec to restore');
       expect(output).not.toContain('_Legend:');
     });
 
-    it('renders superseded-by-slices marker when chunk carries supersededBy', () => {
+    it('does not surface supersededBy on manifest rows (resolved by forward walker)', () => {
       const output = formatHashManifest({
         activeChunks: [
           { shortHash: 'abc123', type: 'file', source: 'src/big.ts', tokens: 4200, pinned: false, freshness: 'fresh',
@@ -175,10 +170,10 @@ describe('hashManifest', () => {
         turn: 7,
       });
       expect(output).toContain('h:abc123');
-      expect(output).toContain('| superseded by slices: h:aaa111, h:bbb222');
+      expect(output).not.toContain('superseded by');
     });
 
-    it('caps supersededBy hash list with a `+N more` overflow marker', () => {
+    it('does not surface long supersededBy lists on manifest rows', () => {
       const output = formatHashManifest({
         activeChunks: [
           { shortHash: 'abc123', type: 'file', source: 'src/big.ts', tokens: 4200, freshness: 'fresh',
@@ -188,7 +183,8 @@ describe('hashManifest', () => {
         archivedRefs: [],
         turn: 7,
       });
-      expect(output).toContain('h:h1, h:h2, h:h3 +2 more');
+      expect(output).toContain('h:abc123');
+      expect(output).not.toContain('h:h1, h:h2');
     });
 
     it('omits marker when supersededBy is undefined (forward-compat with old snapshots)', () => {
@@ -203,7 +199,7 @@ describe('hashManifest', () => {
       expect(output).not.toContain('superseded by');
     });
 
-    it('renders forward and eviction rows', () => {
+    it('does not render forward/eviction rows (internal maps only)', () => {
       recordForwarding('old111', 'new222', 'src/edited.ts', 'edit-refresh', 4);
       recordEviction('gone33', 'src/deleted.ts', 'reconcile', 3);
 
@@ -213,11 +209,9 @@ describe('hashManifest', () => {
         archivedRefs: [],
         turn: 5,
       });
-      expect(output).toContain('h:old111 -> h:new222');
-      expect(output).toContain('edit-refresh');
-      expect(output).toContain('h:gone33');
-      expect(output).toContain('evict');
-      expect(output).toContain('reconcile');
+      expect(output).toBe('## HASH MANIFEST (turn 5)');
+      expect(output).not.toContain('h:old111');
+      expect(output).not.toContain('h:gone33');
       expect(output).not.toContain('_Legend:');
     });
   });

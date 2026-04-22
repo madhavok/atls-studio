@@ -85,8 +85,8 @@ describe('spinCircuitBreaker', () => {
     evaluateSpin([snap(1)], { diagnosisOverride: diag('goal_drift', 0.75) });
     const ev = evaluateSpin([snap(2)], { diagnosisOverride: diag('goal_drift', 0.75) });
     expect(ev.tier).toBe('strong');
-    expect(ev.message).toContain('CIRCUIT BREAKER');
-    expect(ev.message).toContain('goal_drift');
+    expect(ev.message).toContain('<<SYSTEM: persistent');
+    expect(ev.message).toMatch(/goal drift/i);
     expect(ev.shouldHalt).toBe(false);
   });
 
@@ -99,7 +99,7 @@ describe('spinCircuitBreaker', () => {
     });
     expect(ev.tier).toBe('halt');
     expect(ev.shouldHalt).toBe(true);
-    expect(ev.message).toContain('CIRCUIT BREAKER HALTED');
+    expect(ev.message).toContain('<<SYSTEM: Handle tool_confusion>>');
   });
 
   it('suppresses "halt" tier to "strong" when haltEnabled=false (default)', () => {
@@ -200,7 +200,7 @@ describe('spinCircuitBreaker', () => {
       mutedModes: muted,
     });
     expect(ev.tier).toBe('strong');
-    expect(ev.message).toContain('CIRCUIT BREAKER');
+    expect(ev.message).toContain('<<SYSTEM: persistent');
   });
 
   it('unmuting a mode after suppressed hits starts fresh (cannot latch into strong)', () => {
@@ -231,7 +231,7 @@ describe('spinCircuitBreaker', () => {
       mutedTiers: mutedNudge,
     });
     expect(b.tier).toBe('strong');
-    expect(b.message).toContain('CIRCUIT BREAKER');
+    expect(b.message).toContain('<<SYSTEM: persistent');
     expect(b.consecutiveSameMode).toBe(2);
   });
 

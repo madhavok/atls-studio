@@ -499,7 +499,7 @@ describe('executeUnifiedBatch auto-stage repeat read and verify stop', () => {
       },
       ctx,
     );
-    expect(result.step_results[0]?.error).toBe('blocked for swarm agents');
+    expect(result.step_results[0]?.error).toBe('not available to subagents');
   });
 });
 
@@ -616,8 +616,10 @@ describe('executeUnifiedBatch read-range gate (line edits)', () => {
     expect(editSpy).not.toHaveBeenCalled();
     expect(result.ok).toBe(false);
     const step = result.step_results.find(s => s.id === 'edit');
-    expect(step?.error).toContain('edit_outside_read_range');
-    expect((step?.artifacts as Record<string, unknown> | undefined)?.error_class).toBe('edit_outside_read_range');
+    expect(step?.error).toContain('target region not yet read');
+    expect((step?.artifacts as { _internal?: { error_class?: string } } | undefined)?._internal?.error_class).toBe(
+      'edit_outside_read_range',
+    );
   });
 
   it('rejects spanning edit when middle lines were never read (gap between regions)', async () => {

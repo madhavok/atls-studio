@@ -153,8 +153,7 @@ describe('formatWorkingMemory — FileView block rendering', () => {
 
     expect(output).toContain('## FILE VIEWS');
     expect(output).toContain('src/toon.ts');
-    // Fence format: `=== path h:<retention> cite:@h:<cite> ...`
-    expect(output).toMatch(/=== .*src\/toon\.ts h:[0-9a-f]{6} cite:@h:/);
+    expect(output).toMatch(/=== .*src\/toon\.ts h:[0-9a-f]{6}/);
   });
 
   it('filters out file-backed chunks that a pinned FileView already covers', () => {
@@ -208,8 +207,8 @@ describe('formatWorkingMemory — FileView block rendering', () => {
 describe('formatSuspectHint / formatTaskLine (golden)', () => {
   it('formatSuspectHint matches stable literals', () => {
     expect(formatSuspectHint(undefined, undefined)).toMatchInlineSnapshot('""');
-    expect(formatSuspectHint(Date.now(), undefined)).toMatchInlineSnapshot('" [STALE: re-read before edit]"');
-    expect(formatSuspectHint(undefined, 'suspect')).toMatchInlineSnapshot('" [STALE: re-read before edit]"');
+    expect(formatSuspectHint(Date.now(), undefined)).toMatchInlineSnapshot('""');
+    expect(formatSuspectHint(undefined, 'suspect')).toMatchInlineSnapshot('""');
   });
 
   it('formatTaskLine matches stable multi-line plan text', () => {

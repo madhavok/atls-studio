@@ -321,7 +321,10 @@ describe('edit_outside_read_range with bracket-stress regions', () => {
     expect(editSpy).not.toHaveBeenCalled();
     expect(result.ok).toBe(false);
     const step = result.step_results.find(s => s.id === 'edit');
-    expect(step?.error).toContain('edit_outside_read_range');
+    expect(step?.error).toContain('target region not yet read');
+    expect((step?.artifacts as { _internal?: { error_class?: string } } | undefined)?._internal?.error_class).toBe(
+      'edit_outside_read_range',
+    );
   });
 
   it('allows edit when read region covers the target line', async () => {
