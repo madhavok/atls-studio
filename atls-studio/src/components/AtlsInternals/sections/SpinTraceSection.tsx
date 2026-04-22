@@ -18,6 +18,15 @@ const MODE_LABELS: Record<SpinMode, string> = {
   none: 'None',
 };
 
+const MODE_DESCRIPTIONS: Record<SpinMode, string> = {
+  context_loss: 'Re-reading files already in working memory',
+  goal_drift: 'Drifting away from the stated task goal',
+  stuck_in_phase: 'Repeating the same phase without progress',
+  tool_confusion: 'Calling wrong tools or misusing tool params',
+  completion_gate: 'Failing to finish despite work being done',
+  none: '',
+};
+
 const MODE_COLORS: Record<SpinMode, string> = {
   context_loss: 'text-red-400',
   goal_drift: 'text-orange-400',
@@ -163,6 +172,7 @@ function InterventionsPanel() {
                   <ToggleRow
                     key={m}
                     label={MODE_LABELS[m]}
+                    description={MODE_DESCRIPTIONS[m]}
                     value={mt.spin.modes[m]}
                     onChange={(v) => patch({ spin: { modes: { [m]: v } } })}
                     disabled={!mt.spin.enabled}
