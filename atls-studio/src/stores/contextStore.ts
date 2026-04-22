@@ -53,11 +53,13 @@ import {
   type FileView,
   type FileViewFreshnessCause,
   type IncomingFill,
+  type ReconcilePositionalDelta,
   applyFillToView,
   applyFullBodyToView,
   clearRemovedMarker as fvClearRemovedMarker,
   computeFileViewHash,
   createFileView,
+  matchesViewRef,
   onConstituentChunkRemoved,
   reconcileFileView,
 } from '../services/fileViewStore';
@@ -990,7 +992,15 @@ interface ContextStoreState {
    * so recreated files do not reuse stale hashes or snapshot metadata.
    */
   evictChunksForDeletedPaths: (paths: string[]) => { chunks: number; staged: number };
-  reconcileSourceRevision: (path: string, currentRevision: string, cause?: FreshnessCause) => ReconcileStats;
+  reconcileSourceRevision: (
+    path: string,
+    currentRevision: string,
+    cause?: FreshnessCause,
+    opts?: {
+      postEditResolved?: boolean;
+      positionalDeltas?: ReconcilePositionalDelta[];
+    },
+  ) => ReconcileStats;
   // ----- FileView (Unified FileView plan — PR2) ----------------------------
   /** Get a live FileView by file path. Normalized forward-slash lookup. */
   getFileView: (path: string) => FileView | undefined;
@@ -1030,8 +1040,34 @@ interface ContextStoreState {
   }) => void;
   /** Drop any FileView regions backed by these chunk hashes (TTL / eviction callback). */
   pruneFileViewsForChunks: (chunkHashes: string[]) => number;
-  /** Reconcile all FileViews for a path against a new revision. Called from reconcileSourceRevision. */
-  reconcileFileViewsForPath: (path: string, currentRevision: string, cause: FileViewFreshnessCause, round: number) => void;
+  /**
+   * Reconcile all FileViews for a path against a new revision. Called from
+   * `reconcileSourceRevision`. Pass `postEditResolved: true` when the caller
+   * has already resolved authoritative post-edit content and will immediately
+   * refill the view's regions / fullBody (see `refreshContextAfterEdit` in
+   * batch/executor.ts). That hint suppresses `pendingRefetches` for the
+   * `same_file_prior_edit` cause — the content is about to land, so a
+   * `[changed: N pending refetch]` marker would just nudge the model into a
+   * redundant re-read.
+   *
+   * Pass `positionalDeltas` when `cause === 'same_file_prior_edit'` to
+   * rebase region coordinates with per-position precision — regions above
+   * the edit anchor stay put, regions below shift by the net delta. Without
+   * this, a single scalar `freshnessJournal.lineDelta` applies uniformly
+   * to every region, which corrupts slice views for edits that only shift
+   * part of the file. See `ReconcileInputs.positionalDeltas` in
+   * fileViewStore.ts.
+   */
+  reconcileFileViewsForPath: (
+    path: string,
+    currentRevision: string,
+    cause: FileViewFreshnessCause,
+    round: number,
+    opts?: {
+      postEditResolved?: boolean;
+      positionalDeltas?: ReconcilePositionalDelta[];
+    },
+  ) => void;
   /** Clear a [REMOVED was L..L..] marker after the agent re-reads that range. */
   clearFileViewRemovedMarker: (path: string, start: number, end: number) => void;
   /** Toggle pinned flag on a FileView by path. Used by session.pin in PR4. */
@@ -1817,8 +1853,38 @@ function findChunkByRef<T extends { hash: string; shortHash: string }>(
 // ---------------------------------------------------------------------------
 
 /**
+ * Append `priorShort` to a view's forwarding chain with dedupe + self-skip.
+ *
+ * - Skips when `priorShort` equals the new short (no revision bump happened).
+ * - Skips when `priorShort` is already the tail of the existing chain
+ *   (re-entering the same path shouldn't grow it).
+ *
+ * Used by `applyFillFromChunk` / `applyFullBodyFromChunk` rebuild branches
+ * and by `reconcileFileView` (via its own local helper). Keeps the chain
+ * bounded by the actual number of distinct revisions the view has seen.
+ */
+function appendPriorShort(
+  existing: string[] | undefined,
+  priorShort: string | undefined,
+  newShort: string,
+): string[] | undefined {
+  if (!priorShort || priorShort === newShort) return existing;
+  if (existing && existing.length > 0 && existing[existing.length - 1] === priorShort) {
+    return existing;
+  }
+  return existing ? [...existing, priorShort] : [priorShort];
+}
+
+/**
  * Look up a FileView by short-hash ref. Returns the [filePath, view] pair on
  * match, or null. Iterates the views map (typically <100 entries per session).
+ *
+ * Checks each view's CURRENT `shortHash` first, then walks its
+ * `previousShortHashes` forwarding chain. Revision bumps (edits, watcher,
+ * session restore) change a view's `(filePath, sourceRevision)`-derived
+ * shortHash; the chain keeps stale refs from earlier transcript rounds
+ * routing to the same logical view instead of going dead. See
+ * `matchesViewRef` / `FileView.previousShortHashes` in fileViewStore.ts.
  */
 function findViewByRef(
   views: Map<string, FileView>,
@@ -1826,8 +1892,17 @@ function findViewByRef(
 ): [string, FileView] | null {
   if (!ref || ref.startsWith('h:bb:') || ref.startsWith('bb:')) return null;
   const normalized = refToBaseHash(ref);
+  // Two-pass: prefer a view whose CURRENT shortHash matches before falling
+  // back to the forwarding chain. Keeps direct lookups on the hot path and
+  // avoids a historical chain-hit accidentally winning over a fresh view.
   for (const [filePath, view] of views) {
     if (view.shortHash === normalized || view.shortHash.startsWith(normalized) || normalized.startsWith(view.shortHash)) {
+      return [filePath, view];
+    }
+  }
+  for (const [filePath, view] of views) {
+    if (!view.previousShortHashes || view.previousShortHashes.length === 0) continue;
+    if (matchesViewRef(view, normalized)) {
       return [filePath, view];
     }
   }
@@ -3760,7 +3835,15 @@ export const useContextStore = create<ContextStoreState>()(
     return { updated, invalidated, evicted };
   },
 
-  reconcileSourceRevision: (path: string, currentRevision: string, cause?: FreshnessCause) => {
+  reconcileSourceRevision: (
+    path: string,
+    currentRevision: string,
+    cause?: FreshnessCause,
+    opts?: {
+      postEditResolved?: boolean;
+      positionalDeltas?: ReconcilePositionalDelta[];
+    },
+  ) => {
     const effectiveCause = cause ?? consumeRevisionAdvanceCause(path) ?? 'external_file_change';
     const isSessionRestore = effectiveCause === 'session_restore';
     const isSameFilePriorEdit = effectiveCause === 'same_file_prior_edit';
@@ -3877,7 +3960,10 @@ export const useContextStore = create<ContextStoreState>()(
         : effectiveCause === 'external_file_change'
           ? 'external_file_change'
           : 'unknown';
-    get().reconcileFileViewsForPath(path, currentRevision, fvCause, round);
+    get().reconcileFileViewsForPath(path, currentRevision, fvCause, round, {
+      postEditResolved: opts?.postEditResolved,
+      positionalDeltas: opts?.positionalDeltas,
+    });
 
     return stats;
   },
@@ -6851,6 +6937,14 @@ export const useContextStore = create<ContextStoreState>()(
         // Fill at a newer revision than the stored view — the reconcile path
         // should have fired first. Rebuild the view cleanly rather than
         // mixing revisions.
+        //
+        // Preserve the retention-hash forwarding chain: the prior view's
+        // `shortHash` becomes a historical ref so transcript cites from
+        // before this rebuild still resolve via `findViewByRef` /
+        // `resolveCiteFromView`. Bypassing this loses the chain and is what
+        // made the model "spin" re-reading files after own-edits.
+        const priorShort = view.shortHash;
+        const priorPrev = view.previousShortHashes;
         view = createFileView(
           {
             path: key,
@@ -6862,6 +6956,10 @@ export const useContextStore = create<ContextStoreState>()(
           },
           { pinned: view.pinned },
         );
+        view = {
+          ...view,
+          previousShortHashes: appendPriorShort(priorPrev, priorShort, view.shortHash),
+        };
       }
       const fill: IncomingFill = {
         start: startLine,
@@ -6886,6 +6984,10 @@ export const useContextStore = create<ContextStoreState>()(
       const next = new Map(state.fileViews);
       let view = next.get(key);
       if (!view || view.sourceRevision !== sourceRevision) {
+        // Preserve the retention-hash forwarding chain when rebuilding across
+        // a revision bump — see matching note in `applyFillFromChunk`.
+        const priorShort = view?.shortHash;
+        const priorPrev = view?.previousShortHashes;
         view = createFileView(
           {
             path: key,
@@ -6897,6 +6999,12 @@ export const useContextStore = create<ContextStoreState>()(
           },
           { pinned: view?.pinned ?? false },
         );
+        if (priorShort) {
+          view = {
+            ...view,
+            previousShortHashes: appendPriorShort(priorPrev, priorShort, view.shortHash),
+          };
+        }
       }
       next.set(key, applyFullBodyToView(view, content, chunkHash));
       return { fileViews: next };
@@ -6993,7 +7101,7 @@ export const useContextStore = create<ContextStoreState>()(
     return touched;
   },
 
-  reconcileFileViewsForPath: (path, currentRevision, cause, round) => {
+  reconcileFileViewsForPath: (path, currentRevision, cause, round, opts) => {
     let shiftedCount = 0;
     let hasPendingRefetch = false;
     set(state => {
@@ -7004,6 +7112,8 @@ export const useContextStore = create<ContextStoreState>()(
         currentRevision,
         cause,
         round,
+        postEditResolved: opts?.postEditResolved,
+        positionalDeltas: opts?.positionalDeltas,
       });
       if (!outcome.updated) return {};
       if (outcome.view.freshness === 'shifted') {

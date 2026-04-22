@@ -24,8 +24,11 @@ import { stepOutputToResult } from './resultFormatter';
 import { resetRecallBudget } from './handlers/session';
 import { SnapshotTracker, AwarenessLevel, canonicalizeSnapshotHash } from './snapshotTracker';
 import { recordForwarding as manifestRecordForwarding } from '../hashManifest';
-import { computeFileViewHashParts } from '../fileViewStore';
+import { computeFileViewHashParts, matchesViewRef } from '../fileViewStore';
 import { getTurn as hppGetTurn } from '../hashProtocol';
+import { hashContentSync, SHORT_HASH_LEN, sliceContentByLines } from '../../utils/contextHash';
+import { countTokensSync } from '../../utils/tokenCounter';
+import { useRoundHistoryStore } from '../../stores/roundHistoryStore';
 import type { LineRegion } from './snapshotTracker';
 import { parseHashRef } from '../../utils/hashRefParsers';
 import { buildIntentContext, resolveIntents, isPressured } from './intents';
@@ -1010,6 +1013,14 @@ function seedSnapshotTracker(
  * `h:<RET>` from the fence into any slot (retention OR cite) and lets the
  * runtime pick the right identity. Returns the replacement hash or undefined
  * when no view matches.
+ *
+ * Consults each view's forwarding chain (`previousShortHashes`) in addition
+ * to the current `shortHash`, so a stale retention ref the model carries
+ * from a prior round (before an own-edit bumped the revision-derived short)
+ * still resolves to the view's current `sourceRevision`. Matches the
+ * resolution policy of `findViewByRef`: direct current-short match wins
+ * before any chain hit so a brand-new view is not accidentally shadowed by
+ * a historical entry.
  */
 function resolveCiteFromView(
   candidate: unknown,
@@ -1022,11 +1033,21 @@ function resolveCiteFromView(
   try {
     const views = ctx.store().fileViews;
     if (!views) return undefined;
+    // Pass 1: direct current-short match (hot path).
     for (const view of views.values()) {
       if (view.shortHash === short
         || view.shortHash.startsWith(short)
         || short.startsWith(view.shortHash)
       ) {
+        return view.sourceRevision;
+      }
+    }
+    // Pass 2: forwarding chain. Lets stale refs from prior rounds rewrite
+    // to the current sourceRevision without the model having to copy the
+    // new retention short.
+    for (const view of views.values()) {
+      if (!view.previousShortHashes || view.previousShortHashes.length === 0) continue;
+      if (matchesViewRef(view, short)) {
         return view.sourceRevision;
       }
     }
@@ -1365,60 +1386,131 @@ function applyLineDelta(lineSpec: string, delta: number): string {
  * Post-edit context refresh — resolve fresh content from the new hash.
  *
  * Freshness is priority 0. The system performed the edit, the system has the
- * new hash, the system resolves the truth. addChunk with the same source
- * triggers hash forwarding (old engram auto-compacted, new one installed as
- * fresh with correct line numbers). Staged snippets are re-resolved from the
- * new hash rather than unstaged.
+ * new hash, the system resolves the truth. The pipeline is:
+ *
+ *   1. `addChunk(newHash)` — triggers hash forwarding (old engram
+ *      auto-compacted, new one installed as fresh with correct line numbers).
+ *   2. `reconcileSourceRevision(path, newHash, 'same_file_prior_edit',
+ *      { postEditResolved: true })` — advances the FileView's sourceRevision
+ *      to the new hash, rebases `filledRegions` via `freshnessJournal.lineDelta`,
+ *      recomputes the retention short and records the previous short on the
+ *      forwarding chain. `postEditResolved: true` suppresses `pendingRefetches`
+ *      so the view does NOT render `[changed: N pending refetch]` — we already
+ *      have the content and will refill below.
+ *   3. **Re-slice** each surviving region from `resolved.content` at its
+ *      rebased line coordinates via `applyFillFromChunk(origin: 'refetch',
+ *      refetchedAtRound)`. `reconcileFileView`'s line-delta rebase preserves
+ *      line NUMBERS but leaves the pre-edit BYTES in the region; the edit may
+ *      have changed those bytes. Re-slicing from the new body produces the
+ *      authoritative post-edit content at the authoritative post-edit
+ *      coordinates. Surfaces as `[edited L..-.. this round]`.
+ *   4. **Per-view re-hydration policy** — if the view had `fullBody` before
+ *      the edit, `applyFullBodyFromChunk` with the new content. Otherwise do
+ *      nothing: slice views stay slice views. Never auto-promote a partial
+ *      view to fullBody just because the runtime has the bytes; the view's
+ *      shape is chosen by the reader.
+ *   5. Staged snippets re-resolve from the new hash (unchanged from before).
+ *
+ * Net effect: the next round's `## FILE VIEWS` block shows the updated file
+ * at the same coordinates the model was looking at, with post-edit content —
+ * no re-read needed. The `FileView is stateful across edits` contract is now
+ * delivered by the runtime for both fullBody AND slice-only views.
  *
  * markEngramsSuspect is only used as a fallback when resolution fails.
  */
 async function refreshContextAfterEdit(
   artifact: Record<string, unknown>,
   ctx: HandlerContext,
+  opts?: { deltaMap?: ReadonlyMap<string, PositionalDelta[]> },
 ): Promise<void> {
   const editedFiles = collectEditedFiles(artifact);
   if (editedFiles.length === 0) return;
 
   const store = ctx.store();
+  const currentRound = (() => {
+    try { return useRoundHistoryStore.getState().snapshots.length; } catch { return 0; }
+  })();
 
   for (const ef of editedFiles) {
     const bareHash = ef.newHash.replace(/^h:/, '');
 
-    // Capture pre-edit view state so we only re-populate `fullBody` for
-    // views the model had fully loaded before the edit. Partially-loaded
-    // views (skeleton + regions only) stay that way — otherwise the edit
-    // would inflate every touched file to full-body in WM even when the
-    // model only needed a few ranges.
-    const hadFullBodyBefore = store.getFileView(ef.filePath)?.fullBody !== undefined;
+    // Pre-edit view shape determines the post-edit re-hydration policy:
+    //   wasFullBody  → applyFullBodyFromChunk with the resolved new content
+    //   slice-only   → re-slice each filledRegion from the new body below
+    // Never auto-promote a partial view to fullBody just because we have
+    // the bytes; view shape is the reader's choice.
+    const preView = store.getFileView(ef.filePath);
+    const wasFullBody = preView?.fullBody !== undefined;
+    // Snapshot filledRegions BEFORE reconcile. `reconcileFileView` may drop
+    // regions that rebase below line 1; we only re-slice the survivors, and
+    // we use the rebased coords (post-reconcile) against the new body.
+    const hadFilledRegions = (preView?.filledRegions?.length ?? 0) > 0;
 
-    // 1. Resolve fresh post-edit content and replace the engram. When the
-    //    view previously had `fullBody`, re-populate it with the
-    //    authoritative post-edit content so the model doesn't have to
-    //    re-read after its own edits. `reconcileFileView` clears
-    //    `fullBody` on revision bump (intentional — line coords can't
-    //    be safely rebased); this step restores it. Net effect: the
-    //    view stays stateful across edit boundaries.
+    // Per-position deltas from the completed step's line_edits. When
+    // available, `reconcileSourceRevision` rebases each region with
+    // line-level precision — regions above the edit anchor stay put,
+    // regions below shift by the net delta. Without this, a single scalar
+    // `freshnessJournal.lineDelta` applies uniformly to EVERY region, which
+    // corrupts slice views for any edit that only shifts part of the file
+    // (e.g. an insert at line 59 should NOT shift a region at lines 1-30).
+    const positionalDeltas = opts?.deltaMap
+      ? resolveDeltasForFile(opts.deltaMap, ef.filePath)
+      : undefined;
+
     try {
       const resolved = await invoke<{ content: string; source?: string | null }>(
         'resolve_hash_ref', { rawRef: `h:${bareHash}` },
       );
       if (resolved?.content) {
+        // 1. Engram replacement (hash forwarding handles old->new for chunks).
         store.addChunk(resolved.content, 'file', ef.filePath,
           undefined, undefined, bareHash, {
             sourceRevision: bareHash,
             origin: 'edit-refresh',
             viewKind: 'latest',
           });
-        // Re-hydrate FileView.fullBody ONLY when the view was fully loaded
-        // before the edit. Idempotent: if no view existed pre-edit (or it
-        // was only partially loaded via skeleton + regions), this is a
-        // no-op and the view rebuilds its filled regions on subsequent
-        // reads as before.
-        if (hadFullBodyBefore) {
+
+        // 2. Advance the FileView: sourceRevision + short + region rebase +
+        //    forwarding chain. `postEditResolved: true` suppresses
+        //    pendingRefetches — we're about to refill from resolved.content.
+        //    `positionalDeltas` gives the reconcile per-position precision
+        //    so multi-edit batches don't corrupt slice coordinates.
+        try {
+          store.reconcileSourceRevision(
+            ef.filePath,
+            bareHash,
+            'same_file_prior_edit',
+            {
+              postEditResolved: true,
+              ...(positionalDeltas ? { positionalDeltas } : {}),
+            },
+          );
+        } catch (e) {
+          console.warn('[executor] FileView post-edit reconcile failed:', e);
+        }
+
+        const totalLines = resolved.content.length === 0
+          ? 0
+          : resolved.content.split('\n').length;
+
+        // 3. Re-slice surviving regions from the new body at rebased coords.
+        //    Only for slice views — a fullBody view gets handled in step 4
+        //    and its regions (if any) are coincident with fullBody anyway.
+        if (hadFilledRegions && !wasFullBody) {
+          refillSliceRegionsFromNewBody(
+            store,
+            ef.filePath,
+            bareHash,
+            resolved.content,
+            totalLines,
+            currentRound,
+          );
+        }
+
+        // 4. Per-view re-hydration policy: wasFullBody stays full. Slices
+        //    stay slices (step 3 refilled them from the new body).
+        if (wasFullBody) {
           try {
-            const totalLines = resolved.content.length === 0
-              ? 0
-              : resolved.content.split('\n').length;
             store.applyFullBodyFromChunk({
               filePath: ef.filePath,
               sourceRevision: bareHash,
@@ -1438,7 +1530,7 @@ async function refreshContextAfterEdit(
       }
     }
 
-    // 2. Refresh staged snippets from the new hash
+    // 5. Refresh staged snippets from the new hash
     const snippets = store.getStagedSnippetsForRefresh(ef.filePath);
     for (const snippet of snippets) {
       try {
@@ -1467,6 +1559,85 @@ async function refreshContextAfterEdit(
         console.warn(`[executor] snippet refresh failed for ${snippet.key}:`, e);
         store.unstageSnippet(snippet.key);
       }
+    }
+  }
+}
+
+/**
+ * Look up positional deltas for a specific file in the batch's per-file
+ * delta map. `buildPerFileDeltaMap` keys on the rebase-normalized path
+ * (`normalizePathForRebase`), which may differ from the edited-file path
+ * in monorepo setups; try the normalized form, the raw form, and a
+ * forward-slash lowercased variant. Returns undefined when no entry
+ * matches — the reconcile will fall back to the scalar journal lineDelta.
+ */
+function resolveDeltasForFile(
+  deltaMap: ReadonlyMap<string, PositionalDelta[]>,
+  filePath: string,
+): PositionalDelta[] | undefined {
+  const norm = normalizePathForRebase(filePath);
+  const lower = filePath.replace(/\\/g, '/').toLowerCase();
+  return deltaMap.get(norm)
+    ?? deltaMap.get(filePath)
+    ?? deltaMap.get(lower)
+    ?? undefined;
+}
+
+/**
+ * Re-extract each surviving filled region from the resolved post-edit body at
+ * its rebased line coordinates and push it back through `applyFillFromChunk`
+ * with `origin: 'refetch'`. `mergeFilledRegion` dedupes and overwrites in
+ * place, so calling this after `reconcileSourceRevision` replaces the
+ * line-delta-shifted (but still pre-edit content) rows with authoritative
+ * post-edit bytes.
+ *
+ * Why we re-slice even though reconcile already ran: `shiftRowsByLine` only
+ * rewrites the `N|` prefix; the region's stored bytes are still the pre-edit
+ * bytes. If the edit overlapped the region, those bytes are now wrong. With
+ * `resolved.content` in hand we can write the true post-edit content at the
+ * true post-edit line numbers.
+ *
+ * Regions whose rebased coordinates fall outside the new file's line count
+ * are skipped; `reconcileFileView` already surfaces them as `[REMOVED]` when
+ * rebase pushed them below line 1. Regions clipped by the new line total
+ * (rare — file shrunk below original region end) are truncated to the file.
+ */
+function refillSliceRegionsFromNewBody(
+  store: ReturnType<HandlerContext['store']>,
+  filePath: string,
+  newHash: string,
+  newContent: string,
+  totalLines: number,
+  currentRound: number,
+): void {
+  const view = store.getFileView(filePath);
+  if (!view || view.filledRegions.length === 0) return;
+  if (!newContent) return;
+
+  for (const region of view.filledRegions) {
+    const start = Math.max(1, region.start);
+    const end = Math.min(totalLines || region.end, region.end);
+    if (end < start) continue; // region fell outside new file bounds
+
+    const slice = sliceContentByLines(newContent, `${start}-${end}`);
+    if (!slice) continue;
+
+    try {
+      store.applyFillFromChunk({
+        filePath,
+        sourceRevision: newHash,
+        startLine: start,
+        endLine: end,
+        content: slice,
+        // Deterministic per-slice hash so repeat reconciles idempotently merge
+        // via the existing mergeFilledRegion dedupe (keyed on chunkHashes).
+        chunkHash: hashContentSync(`${newHash}|${start}-${end}|${slice}`).slice(0, SHORT_HASH_LEN),
+        tokens: countTokensSync(slice),
+        origin: 'refetch',
+        refetchedAtRound: currentRound,
+      });
+    } catch (e) {
+      console.warn('[executor] FileView region refill failed:', filePath, start, end, e);
     }
   }
 }
@@ -2443,6 +2614,12 @@ export async function executeUnifiedBatch(
       // Rebase line numbers in subsequent same-file change steps. The
       // line_edits + resolved-body-span pipeline is change.edit-specific;
       // other change ops only need the hash-alias + read-op rebase pass.
+      //
+      // `postEditDeltaMap` is hoisted out of the change.edit branch so the
+      // FileView refresh below can consume it. Non-change.edit ops don't
+      // emit line_edits, so the map is empty for them — passing an empty
+      // map is a no-op at the reconcile site.
+      let postEditDeltaMap: Map<string, PositionalDelta[]> | undefined;
       if (step.use === 'change.edit') {
         if (hashAliasesForRebase.size > 0 && pathToPreMutationCite.size > 0) {
           rewriteFileViewRetentionRefsToCite(
@@ -2457,8 +2634,8 @@ export async function executeUnifiedBatch(
           rebaseReadOps: rebaseAllChangeOps,
         });
         // G3: rebase staged snippet line ranges as fallback before re-resolve
-        const deltaMap = buildPerFileDeltaMap(mergedParams);
-        for (const [normPath, deltas] of deltaMap) {
+        postEditDeltaMap = buildPerFileDeltaMap(mergedParams);
+        for (const [normPath, deltas] of postEditDeltaMap) {
           const netDelta = deltas.reduce((sum, d) => sum + d.delta, 0);
           if (netDelta !== 0) ctx.store().rebaseStagedLineNumbers(normPath, netDelta);
         }
@@ -2469,7 +2646,7 @@ export async function executeUnifiedBatch(
         // across edits — the model doesn't need a fresh read.lines if FileView
         // already carries the post-edit content at these coordinates.
         if (slimAckEnabled && preEditTrackerRegions && preEditTrackerRegions.size > 0) {
-          for (const [normPath, deltas] of deltaMap) {
+          for (const [normPath, deltas] of postEditDeltaMap) {
             const pre = preEditTrackerRegions.get(normPath);
             if (!pre) continue;
             const rebasedRegions = rebaseRegionsByDeltas(pre.regions, deltas);
@@ -2521,10 +2698,19 @@ export async function executeUnifiedBatch(
       registerOwnWrite([...batchEditedPaths]);
       // Evict cached verify/exec/analysis results so they re-run against the updated files
       useRetentionStore.getState().evictMutationSensitive();
-      // Refresh engram/snippet content with real post-edit content (awaited for correctness)
+      // Refresh engram/snippet content with real post-edit content (awaited
+      // for correctness). Pass `postEditDeltaMap` so FileView region rebase
+      // uses per-position precision — regions above an edit anchor stay
+      // put, regions below shift by the net delta at that anchor. Without
+      // this, a single scalar `freshnessJournal.lineDelta` applies
+      // uniformly to every region, which corrupts slice views for edits
+      // that only shift part of the file.
       if (output.content && typeof output.content === 'object' && !Array.isArray(output.content)) {
-        await refreshContextAfterEdit(output.content as Record<string, unknown>, ctx)
-          .catch(e => console.warn('[executor] content refresh error:', e));
+        await refreshContextAfterEdit(
+          output.content as Record<string, unknown>,
+          ctx,
+          postEditDeltaMap ? { deltaMap: postEditDeltaMap } : undefined,
+        ).catch(e => console.warn('[executor] content refresh error:', e));
       }
 
       // Impact-driven section-level auto-staging: query change_impact for

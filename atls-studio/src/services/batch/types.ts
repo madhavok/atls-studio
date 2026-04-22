@@ -397,7 +397,21 @@ export interface ContextStoreApi {
   invalidateStaleHashes: (hashes: string[]) => void;
   markEngramsSuspect: (sourcePaths?: string[], cause?: FreshnessCause, suspectKind?: 'content' | 'structural' | 'unknown') => number;
   clearSuspect: (hashRefOrSource: string) => number;
-  reconcileSourceRevision: (path: string, currentRevision: string, cause?: FreshnessCause) => { source: string; revision: string; total: number; updated: number; invalidated: number; preserved: number; at: number };
+  reconcileSourceRevision: (
+    path: string,
+    currentRevision: string,
+    cause?: FreshnessCause,
+    opts?: {
+      postEditResolved?: boolean;
+      /**
+       * Per-edit positional deltas; enables precise FileView region rebase
+       * when the cause is `same_file_prior_edit`. Structural type matches
+       * `ReconcilePositionalDelta` from fileViewStore — keeping it inline
+       * here avoids a types-file import cycle.
+       */
+      positionalDeltas?: Array<{ line: number; delta: number; lineInclusive?: boolean }>;
+    },
+  ) => { source: string; revision: string; total: number; invalidated: number; updated: number; preserved: number; at: number };
   recordRevisionAdvance: (path: string, newRevision: string, cause: FreshnessCause, editSessionId?: string) => void;
   recordRebindOutcomes: (outcomes: Array<{ ref: string; source?: string } & RebindOutcome>) => void;
   recordMemoryEvent: (event: { action: string; reason: string; refs?: string[]; source?: string; oldRevision?: string; newRevision?: string; freedTokens?: number; pressurePct?: number; confidence?: RebaseConfidence; strategy?: RebaseStrategy; factors?: RebaseEvidence[]; at?: number }) => void;
@@ -499,11 +513,25 @@ export interface ContextStoreApi {
   /** Look up a FileView by path (normalized forward-slash). */
   getFileView: (path: string) => {
     hash: string;
+    shortHash: string;
     filePath: string;
     sourceRevision: string;
     pinned: boolean;
     /** Post-edit refresh checks this to decide whether to re-hydrate the view's fullBody. */
     fullBody?: string | undefined;
+    /**
+     * Post-edit refill walks these to re-slice each surviving region from the
+     * new body at its (post-reconcile) coordinates. Minimal structural type —
+     * must remain a subset of `FileView.filledRegions[number]`.
+     */
+    filledRegions: Array<{
+      start: number;
+      end: number;
+      content: string;
+      chunkHashes: string[];
+    }>;
+    /** Retention-hash forwarding chain; read by resolver helpers. */
+    previousShortHashes?: string[];
   } | undefined;
   /**
    * Auto-pin a FileView from a read handler. Idempotent; returns `true` only

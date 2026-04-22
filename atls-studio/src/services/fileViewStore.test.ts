@@ -26,8 +26,10 @@ const {
   clearRemovedMarker,
   composeFullBodyFromRegions,
   computeFileViewHash,
+  computeFileViewHashParts,
   createFileView,
   dropRegionByChunk,
+  matchesViewRef,
   mergeFilledRegion,
   onConstituentChunkRemoved,
   parseRowsByLine,
@@ -647,5 +649,333 @@ describe('fileViewStore — helpers', () => {
     expect(map.size).toBe(2);
     expect(map.get(1)).toContain('|a');
     expect(map.get(3)).toContain('|c');
+  });
+});
+
+describe('fileViewStore — postEditResolved hint', () => {
+  beforeEach(() => {
+    clearFreshnessJournal();
+  });
+
+  afterEach(() => {
+    clearFreshnessJournal();
+  });
+
+  it('suppresses pendingRefetches when caller promises to refill (same_file_prior_edit, no journal delta)', () => {
+    // Pinned view, content-change branch, NO freshness journal. Without the
+    // hint this would queue a pendingRefetch and render
+    // `[changed: N pending refetch — re-read on demand]`. With the hint the
+    // region is kept at its pre-edit coords as a placeholder for the caller
+    // to re-slice against the new body, and NO pendingRefetch is emitted.
+    const v0 = applyFillToView(
+      { ...createFileView(fakeSkeleton()), pinned: true },
+      {
+        start: 42,
+        end: 56,
+        content: row(42, 'fn bar'),
+        chunkHash: 'h',
+        tokens: 5,
+      },
+    );
+    const { view, refetchRequests } = reconcileFileView(v0, {
+      currentRevision: 'rev2',
+      cause: 'same_file_prior_edit',
+      round: 3,
+      postEditResolved: true,
+    });
+    expect(refetchRequests).toEqual([]);
+    expect(view.pendingRefetches).toBeUndefined();
+    expect(view.filledRegions.length).toBe(1);
+    expect(view.filledRegions[0].start).toBe(42);
+    expect(view.filledRegions[0].end).toBe(56);
+    expect(view.sourceRevision).toBe('rev2');
+  });
+
+  it('hint does NOT interfere with journal-delta rebase (regions still shift)', () => {
+    recordFreshnessJournal({
+      source: 'src/foo.ts',
+      previousRevision: 'rev1',
+      currentRevision: 'rev2',
+      lineDelta: 5,
+      recordedAt: Date.now(),
+    });
+    const v0 = applyFillToView(
+      { ...createFileView(fakeSkeleton()), pinned: true },
+      { start: 42, end: 56, content: row(42, 'fn bar'), chunkHash: 'h', tokens: 5 },
+    );
+    const { view, refetchRequests } = reconcileFileView(v0, {
+      currentRevision: 'rev2',
+      cause: 'same_file_prior_edit',
+      round: 3,
+      postEditResolved: true,
+    });
+    expect(refetchRequests).toEqual([]);
+    expect(view.pendingRefetches).toBeUndefined();
+    expect(view.filledRegions[0].start).toBe(47);
+    expect(view.filledRegions[0].end).toBe(61);
+  });
+
+  it('hint is IGNORED for external_file_change — external changes still queue refetches', () => {
+    const v0 = applyFillToView(
+      { ...createFileView(fakeSkeleton()), pinned: true },
+      { start: 42, end: 56, content: row(42, 'fn bar'), chunkHash: 'h', tokens: 5 },
+    );
+    const { view, refetchRequests } = reconcileFileView(v0, {
+      currentRevision: 'rev2',
+      cause: 'external_file_change',
+      round: 3,
+      postEditResolved: true, // should be ignored — we don't have the content
+    });
+    expect(refetchRequests.length).toBe(1);
+    expect(view.pendingRefetches?.length).toBe(1);
+  });
+});
+
+describe('fileViewStore — per-position delta rebase', () => {
+  beforeEach(() => {
+    clearFreshnessJournal();
+  });
+
+  afterEach(() => {
+    clearFreshnessJournal();
+  });
+
+  function mkSliceView(regionStart: number, regionEnd: number) {
+    return applyFillToView(createFileView(fakeSkeleton({ revision: 'rev1' })), {
+      start: regionStart,
+      end: regionEnd,
+      content: [row(regionStart, 'a'), row(regionEnd, 'b')].join('\n'),
+      chunkHash: `h-${regionStart}-${regionEnd}`,
+      tokens: 5,
+    });
+  }
+
+  it('region strictly ABOVE the edit anchor does NOT shift', () => {
+    // Edit at line 59 inserting 30 lines. Region spans 1-30. The scalar-
+    // lineDelta path would shift EVERY region by +30 — this per-position
+    // path leaves regions above the anchor put.
+    const v0 = mkSliceView(1, 30);
+    const { view } = reconcileFileView(v0, {
+      currentRevision: 'rev2',
+      cause: 'same_file_prior_edit',
+      round: 1,
+      positionalDeltas: [{ line: 59, delta: 30 }],
+    });
+    expect(view.filledRegions).toHaveLength(1);
+    expect(view.filledRegions[0].start).toBe(1);
+    expect(view.filledRegions[0].end).toBe(30);
+  });
+
+  it('region strictly BELOW the edit anchor shifts by the net delta', () => {
+    // Edit at line 59 insert +30. Region spans 100-150. Both edges are
+    // below the anchor, so both shift by +30.
+    const v0 = mkSliceView(100, 150);
+    const { view } = reconcileFileView(v0, {
+      currentRevision: 'rev2',
+      cause: 'same_file_prior_edit',
+      round: 1,
+      positionalDeltas: [{ line: 59, delta: 30 }],
+    });
+    expect(view.filledRegions).toHaveLength(1);
+    expect(view.filledRegions[0].start).toBe(130);
+    expect(view.filledRegions[0].end).toBe(180);
+  });
+
+  it('region SPANNING the edit anchor expands to absorb the delta', () => {
+    // Edit at line 59 insert +30. Region spans 40-100 (covers the anchor).
+    // start (40) is above anchor → no shift. end (100) is below → +30.
+    // Net effect: the region stretches from 40 to 130.
+    const v0 = mkSliceView(40, 100);
+    const { view } = reconcileFileView(v0, {
+      currentRevision: 'rev2',
+      cause: 'same_file_prior_edit',
+      round: 1,
+      positionalDeltas: [{ line: 59, delta: 30 }],
+    });
+    expect(view.filledRegions).toHaveLength(1);
+    expect(view.filledRegions[0].start).toBe(40);
+    expect(view.filledRegions[0].end).toBe(130);
+  });
+
+  it('multiple deltas cumulate correctly per-region', () => {
+    // Two edits: +5 at line 10, +10 at line 200. Region at 100-150 sits
+    // between the two anchors — should shift by +5 (only the first edit
+    // is above it) but NOT +15.
+    const v0 = mkSliceView(100, 150);
+    const { view } = reconcileFileView(v0, {
+      currentRevision: 'rev2',
+      cause: 'same_file_prior_edit',
+      round: 1,
+      positionalDeltas: [
+        { line: 10, delta: 5 },
+        { line: 200, delta: 10 },
+      ],
+    });
+    expect(view.filledRegions[0].start).toBe(105);
+    expect(view.filledRegions[0].end).toBe(155);
+  });
+
+  it('deletion below region (negative delta) still leaves region put when above', () => {
+    // Region at 1-20, delete 5 lines at line 50. Region is above the
+    // delete — it should stay at 1-20.
+    const v0 = mkSliceView(1, 20);
+    const { view } = reconcileFileView(v0, {
+      currentRevision: 'rev2',
+      cause: 'same_file_prior_edit',
+      round: 1,
+      positionalDeltas: [{ line: 50, delta: -5 }],
+    });
+    expect(view.filledRegions[0].start).toBe(1);
+    expect(view.filledRegions[0].end).toBe(20);
+  });
+
+  it('rebase failure when net shift pushes start below 1', () => {
+    // Region at 3-10, delete 20 lines at line 1 (full-file deletion
+    // starting at top). Start+end both shift by -20 → below line 1.
+    const v0 = mkSliceView(3, 10);
+    const { view, rebaseFailures } = reconcileFileView(v0, {
+      currentRevision: 'rev2',
+      cause: 'same_file_prior_edit',
+      round: 1,
+      positionalDeltas: [{ line: 1, delta: -20 }],
+    });
+    expect(view.filledRegions).toHaveLength(0);
+    expect(rebaseFailures).toEqual([{ start: 3, end: 10 }]);
+  });
+
+  it('lineInclusive delta shifts a region whose start EQUALS the anchor', () => {
+    // insert_before at line 50 → lineInclusive:true. Region at 50-60 has
+    // its start EQUAL to the anchor; with lineInclusive it shifts by +5.
+    const v0 = mkSliceView(50, 60);
+    const { view } = reconcileFileView(v0, {
+      currentRevision: 'rev2',
+      cause: 'same_file_prior_edit',
+      round: 1,
+      positionalDeltas: [{ line: 50, delta: 5, lineInclusive: true }],
+    });
+    expect(view.filledRegions[0].start).toBe(55);
+    expect(view.filledRegions[0].end).toBe(65);
+  });
+
+  it('positional deltas take precedence over freshnessJournal scalar', () => {
+    // Populate the journal with a scalar +100 (garbage value). With
+    // positional deltas provided, reconcile should IGNORE the journal.
+    recordFreshnessJournal({
+      source: 'src/foo.ts',
+      previousRevision: 'rev1',
+      currentRevision: 'rev2',
+      lineDelta: 100,
+      recordedAt: Date.now(),
+    });
+    const v0 = mkSliceView(50, 60);
+    const { view } = reconcileFileView(v0, {
+      currentRevision: 'rev2',
+      cause: 'same_file_prior_edit',
+      round: 1,
+      positionalDeltas: [{ line: 40, delta: 3 }],
+    });
+    // Per-position: line 40 < start 50, so shift by +3 (NOT +100).
+    expect(view.filledRegions[0].start).toBe(53);
+    expect(view.filledRegions[0].end).toBe(63);
+  });
+
+  it('no positional deltas + no journal + postEditResolved keeps region as placeholder', () => {
+    // No journal entry, no positional deltas, but postEditResolved:true
+    // (runtime will refill from new body). Region stays at original
+    // coordinates as a placeholder.
+    const v0 = mkSliceView(50, 60);
+    const { view, refetchRequests } = reconcileFileView(v0, {
+      currentRevision: 'rev2',
+      cause: 'same_file_prior_edit',
+      round: 1,
+      postEditResolved: true,
+    });
+    expect(view.filledRegions[0].start).toBe(50);
+    expect(view.filledRegions[0].end).toBe(60);
+    expect(refetchRequests).toEqual([]);
+    expect(view.pendingRefetches).toBeUndefined();
+  });
+});
+
+describe('fileViewStore — retention-hash forwarding chain', () => {
+  beforeEach(() => {
+    clearFreshnessJournal();
+  });
+
+  afterEach(() => {
+    clearFreshnessJournal();
+  });
+
+  it('reconcile records the old shortHash in previousShortHashes on revision bump', () => {
+    const v0 = createFileView(fakeSkeleton({ revision: 'revA' }));
+    const oldShort = v0.shortHash;
+    expect(v0.previousShortHashes).toBeUndefined();
+
+    const { view } = reconcileFileView(v0, {
+      currentRevision: 'revB',
+      cause: 'same_file_prior_edit',
+      round: 1,
+    });
+    expect(view.shortHash).not.toBe(oldShort);
+    expect(view.previousShortHashes).toEqual([oldShort]);
+  });
+
+  it('reconcile preserves an existing chain and appends when the short changes again', () => {
+    const v0 = createFileView(fakeSkeleton({ revision: 'revA' }));
+    const oldAShort = v0.shortHash;
+    const { view: vB } = reconcileFileView(v0, {
+      currentRevision: 'revB',
+      cause: 'same_file_prior_edit',
+      round: 1,
+    });
+    const oldBShort = vB.shortHash;
+    const { view: vC } = reconcileFileView(vB, {
+      currentRevision: 'revC',
+      cause: 'same_file_prior_edit',
+      round: 2,
+    });
+    expect(vC.previousShortHashes).toEqual([oldAShort, oldBShort]);
+  });
+
+  it('reconcile does not push when the shortHash is unchanged (no-op revisions)', () => {
+    const v0 = createFileView(fakeSkeleton({ revision: 'revA' }));
+    const { view, updated } = reconcileFileView(v0, {
+      currentRevision: 'revA',
+      cause: 'unknown',
+      round: 1,
+    });
+    expect(updated).toBe(false);
+    expect(view.previousShortHashes).toBeUndefined();
+  });
+
+  it('matchesViewRef resolves the current shortHash', () => {
+    const v = createFileView(fakeSkeleton({ revision: 'rX' }));
+    expect(matchesViewRef(v, v.shortHash)).toBe(true);
+  });
+
+  it('matchesViewRef resolves a historical shortHash via the forwarding chain', () => {
+    const v0 = createFileView(fakeSkeleton({ revision: 'rA' }));
+    const oldShort = v0.shortHash;
+    const { view } = reconcileFileView(v0, {
+      currentRevision: 'rB',
+      cause: 'same_file_prior_edit',
+      round: 1,
+    });
+    expect(matchesViewRef(view, view.shortHash)).toBe(true);
+    expect(matchesViewRef(view, oldShort)).toBe(true);
+  });
+
+  it('matchesViewRef rejects an unrelated short', () => {
+    const v = createFileView(fakeSkeleton({ revision: 'rA' }));
+    // Deliberately derive a short from an unrelated (path, revision).
+    const foreign = computeFileViewHashParts('src/other.ts', 'rA').shortHash;
+    expect(matchesViewRef(v, foreign)).toBe(false);
+  });
+
+  it('matchesViewRef handles prefix matches symmetrically', () => {
+    const v = createFileView(fakeSkeleton({ revision: 'rA' }));
+    const full = v.shortHash;
+    // 4-char prefix should still match (findViewByRef's relaxed rule).
+    expect(matchesViewRef(v, full.slice(0, 4))).toBe(true);
   });
 });

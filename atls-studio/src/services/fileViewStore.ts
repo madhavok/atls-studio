@@ -6,11 +6,47 @@
  *   - Interval-merge logic: {@link mergeFilledRegion}
  *   - Coverage auto-promote: {@link shouldAutoPromoteToFullBody}
  *   - Auto-heal reconcile: {@link reconcileFileView}
+ *   - Retention-hash forwarding chain: {@link matchesViewRef}
  *
  * All functions are pure — they take current state + inputs and return new state.
  * Zustand integration lives in contextStore.ts and invokes these helpers.
  *
- * See docs/ — plan: Unified FileView.
+ * ## Post-edit statefulness contract
+ *
+ * FileView is **stateful across own-edits** — the runtime (executor's
+ * `refreshContextAfterEdit`) refills the view with authoritative post-edit
+ * content at rebased coordinates before the next prompt render, so the model
+ * does not re-read files it just edited. Delivery is split:
+ *
+ *   1. {@link reconcileFileView} with `postEditResolved: true` — advances
+ *      `sourceRevision`, rebases line numbers via `freshnessJournal`,
+ *      appends the old `shortHash` to `previousShortHashes`, and skips
+ *      `pendingRefetches` (the caller is about to refill).
+ *   2. The runtime then re-slices each surviving region from the resolved
+ *      new body and calls `applyFillFromChunk(origin: 'refetch',
+ *      refetchedAtRound)` — `mergeFilledRegion` dedupes/overwrites so
+ *      regions end up with true post-edit bytes at true post-edit lines.
+ *   3. `wasFullBody` views get `applyFullBodyFromChunk` with the new
+ *      content; slice views stay slice views (no auto-promotion on own-
+ *      edit).
+ *
+ * Callers who do NOT have authoritative post-edit content (external file
+ * changes, session restore) omit `postEditResolved` — pinned views then
+ * queue `pendingRefetches` so the caller can refetch asynchronously.
+ *
+ * ## Retention-hash forwarding chain
+ *
+ * The retention `shortHash` is `(filePath, sourceRevision)`-derived, so it
+ * changes on every revision bump. `FileView.previousShortHashes` records
+ * the historical shortHashes of this view (in order), and {@link
+ * matchesViewRef} / `findViewByRef` in contextStore walk the chain so
+ * stale transcript refs like `pu h:<oldShort>` still resolve to the same
+ * logical view after own-edits advance the revision. Lifetime is
+ * indefinite — entries live until the view itself is dropped.
+ *
+ * See docs/engrams.md — the "FileView — the unified file-content surface"
+ * section (esp. "Post-edit statefulness" and "Retention-hash forwarding
+ * chain").
  */
 import { hashContentSync, SHORT_HASH_LEN } from '../utils/contextHash';
 import { countTokensSync } from '../utils/tokenCounter';
@@ -121,6 +157,27 @@ export interface FileView {
    * `## FILE VIEWS` block header. Parallels `ContextChunk.annotations`.
    */
   annotations?: EngramAnnotation[];
+  /**
+   * Short-hash forwarding chain for this view. The view's retention `shortHash`
+   * is `(filePath, sourceRevision)`-derived, so it **changes** on every
+   * revision bump. Historical refs the model cites from earlier rounds
+   * (`pu h:<oldShort>`, `ce f:h:<oldShort>:…`, etc.) would otherwise stop
+   * resolving the moment an own-edit advances the revision.
+   *
+   * Every time the view's `shortHash` changes, the previous value is appended
+   * here. Lookup helpers (`findViewByRef`, `resolveAnyRef`,
+   * `resolveCiteFromView`) walk this chain in addition to the direct
+   * `shortHash` match so stale transcript refs keep routing to the same
+   * logical view.
+   *
+   * Lifetime: **indefinite — entries live until the view is dropped** (via
+   * `dro`, `pruneFileViewsForChunks`, session clear, or `dropChunks` on the
+   * constituent hashes). Memory cost is bounded by the per-view edit count
+   * which is already bounded by WM pressure. Serialized with the view in
+   * session snapshots so a restored session does not lose the ability to
+   * resolve transcript refs.
+   */
+  previousShortHashes?: string[];
 }
 
 export interface PendingRefetch {
@@ -301,6 +358,24 @@ export function composeFullBodyFromRegions(view: Pick<FileView, 'filledRegions'>
 // Auto-heal reconcile
 // ---------------------------------------------------------------------------
 
+/**
+ * Per-edit positional delta — same shape as `PositionalDelta` in
+ * batch/executor.ts. Duplicated here (as a structural type) so the pure
+ * fileViewStore module doesn't take a reverse-dependency on executor.
+ *
+ * A region rebase interprets each delta as "at `line`, N lines were
+ * inserted/removed (N = delta)". `lineInclusive` (insert_before / prepend)
+ * shifts targets at `line` itself; otherwise only targets strictly below
+ * `line` shift. Sum the deltas whose anchors apply to each region edge
+ * (`start` and `end`) independently — that's the same per-position math
+ * `rebaseRegionsByDeltas` uses for snapshotTracker readRegions.
+ */
+export interface ReconcilePositionalDelta {
+  line: number;
+  delta: number;
+  lineInclusive?: boolean;
+}
+
 export interface ReconcileInputs {
   /** New content_hash for the file */
   currentRevision: string;
@@ -310,6 +385,41 @@ export interface ReconcileInputs {
   round: number;
   /** Fresh skeleton for the new revision (caller is responsible for building) */
   newSkeleton?: FileSkeleton;
+  /**
+   * When true, the caller has already resolved authoritative post-edit
+   * content and will immediately refill the view's regions / fullBody from
+   * it (see `refreshContextAfterEdit` in executor.ts). In that case the
+   * reconcile pass must NOT populate `pendingRefetches` — there is nothing
+   * for the refetch cap worker to fetch; the content is already about to
+   * land. Without this hint, pinned views would render
+   * `[changed: N pending refetch — re-read on demand]` for edits the
+   * runtime fully resolved, nudging the model into a redundant re-read.
+   *
+   * Only relevant for `cause: 'same_file_prior_edit'`. Ignored for
+   * `external_file_change` and `session_restore` — those still need the
+   * refetch queue because the runtime does not have the content.
+   */
+  postEditResolved?: boolean;
+  /**
+   * Per-edit positional deltas from the mutation that triggered this
+   * reconcile. When provided (typically by `refreshContextAfterEdit`
+   * passing the `buildPerFileDeltaMap` result), region coordinates rebase
+   * with PER-POSITION precision — regions above the edit anchor stay put,
+   * regions below shift by the net delta at that anchor. This is the same
+   * math used by `rebaseRegionsByDeltas` / `applyDeltasToLineEdits` for
+   * tracker readRegions and future line_edits.
+   *
+   * Without this, only a single scalar `freshnessJournal.lineDelta` is
+   * available and gets applied UNIFORMLY to every region — which is wrong
+   * for edits that only shift part of the file. That's the bug that made
+   * same-batch multi-edit chains corrupt the view and sent the model back
+   * to re-reading.
+   *
+   * Applies only when `cause === 'same_file_prior_edit'`. For other causes
+   * (external change, session restore) we don't have deltas by construction
+   * — the caller didn't make the edit.
+   */
+  positionalDeltas?: ReconcilePositionalDelta[];
 }
 
 export interface ReconcileOutcome {
@@ -337,7 +447,7 @@ export function reconcileFileView(
   view: FileView,
   inputs: ReconcileInputs,
 ): ReconcileOutcome {
-  const { currentRevision, cause, round, newSkeleton } = inputs;
+  const { currentRevision, cause, round, newSkeleton, postEditResolved, positionalDeltas } = inputs;
 
   // Revision unchanged → only bump observedRevision; no region work.
   if (view.sourceRevision === currentRevision) {
@@ -353,30 +463,82 @@ export function reconcileFileView(
   }
 
   const isSameFileEdit = cause === 'same_file_prior_edit';
-  const journalEntry = getFreshnessJournal(view.filePath);
-  const lineDelta = journalEntry?.lineDelta;
+  const hasPositionalDeltas = isSameFileEdit && Array.isArray(positionalDeltas) && positionalDeltas.length > 0;
+  // Scalar fallback: only when we don't have positional-delta precision AND
+  // there's a journal entry. External changes / session restore never have
+  // deltas by construction — the caller didn't make the edit.
+  const journalEntry = !hasPositionalDeltas ? getFreshnessJournal(view.filePath) : undefined;
+  const scalarLineDelta = journalEntry?.lineDelta;
 
   const rebased: FilledRegion[] = [];
   const refetchRequests: PendingRefetch[] = [];
   const rebaseFailures: Array<{ start: number; end: number }> = [];
 
   for (const region of view.filledRegions) {
-    if (isSameFileEdit && lineDelta != null && lineDelta !== 0) {
-      // Shifted: rebase line numbers, keep content — rows still describe the
-      // same source text, just at new line numbers after the edit.
+    if (hasPositionalDeltas) {
+      // Per-position rebase: sum deltas whose anchor applies to `start` and
+      // `end` INDEPENDENTLY. A region strictly above every edit anchor does
+      // not shift; a region strictly below shifts by the cumulative delta;
+      // a region that spans an edit gets its start and end shifted by
+      // different amounts (expand/contract).
+      //
+      // Same math as `rebaseRegionsByDeltas` in batch/executor.ts. The
+      // content is DELIBERATELY NOT shifted here: the caller
+      // (`refreshContextAfterEdit`) will re-slice each region from the
+      // resolved post-edit body at the new coordinates immediately after
+      // reconcile returns, so any intermediate renumbering would be thrown
+      // away.
+      let startShift = 0;
+      let endShift = 0;
+      for (const d of positionalDeltas!) {
+        if (d.lineInclusive ? d.line <= region.start : d.line < region.start) startShift += d.delta;
+        if (d.lineInclusive ? d.line <= region.end : d.line < region.end) endShift += d.delta;
+      }
+      const newStart = region.start + startShift;
+      const newEnd = region.end + endShift;
+      if (newEnd < newStart || newStart < 1) {
+        rebaseFailures.push({ start: region.start, end: region.end });
+        continue;
+      }
+      rebased.push({
+        ...region,
+        start: newStart,
+        end: newEnd,
+        // Content will be overwritten by the caller's refill; keep the
+        // pre-edit bytes as a stable placeholder so any reader that touches
+        // the region BEFORE the refill runs at least sees textually-valid
+        // rows. The refill's `mergeFilledRegion` overwrite will replace
+        // them with authoritative bytes on the next round render.
+        content: region.content,
+      });
+      continue;
+    }
+
+    if (isSameFileEdit && scalarLineDelta != null && scalarLineDelta !== 0) {
+      // Legacy path: scalar lineDelta (no positional precision). Still used
+      // by external-to-this-path callers that only populated the journal.
+      // Applies uniformly to every region — caller accepts that limitation.
       const shifted: FilledRegion = {
         ...region,
-        start: region.start + lineDelta,
-        end: region.end + lineDelta,
-        // Rewrite the N| prefix on each row to reflect the new lines.
-        content: shiftRowsByLine(region.content, lineDelta),
+        start: region.start + scalarLineDelta,
+        end: region.end + scalarLineDelta,
+        content: shiftRowsByLine(region.content, scalarLineDelta),
       };
       if (shifted.start < 1) {
-        // Rebase pushed the region below line 1 — treat as gone.
         rebaseFailures.push({ start: region.start, end: region.end });
         continue;
       }
       rebased.push(shifted);
+      continue;
+    }
+
+    if (isSameFileEdit && postEditResolved) {
+      // Runtime has authoritative post-edit content and will re-apply it
+      // immediately after reconcile (see `refreshContextAfterEdit`). Keep
+      // the region in the list at its pre-edit coordinates as a placeholder
+      // so the caller can re-slice at those coords against the new body.
+      // Do NOT queue a pendingRefetch: there is nothing to fetch.
+      rebased.push(region);
       continue;
     }
 
@@ -400,6 +562,13 @@ export function reconcileFileView(
   const clearedFullBody = view.fullBody !== undefined;
 
   const nextHashParts = computeFileViewHashParts(view.filePath, currentRevision);
+  // Record the old shortHash in the forwarding chain so historical refs from
+  // prior rounds (in transcripts, BB entries, etc.) still route to this view.
+  // Only push when the shortHash actually changed — identical revisions or
+  // no-op reconciles skip to avoid chain bloat.
+  const nextPreviousShortHashes = view.shortHash === nextHashParts.shortHash
+    ? view.previousShortHashes
+    : appendPreviousShortHash(view.previousShortHashes, view.shortHash);
   const nextView: FileView = {
     ...view,
     sourceRevision: currentRevision,
@@ -413,6 +582,7 @@ export function reconcileFileView(
     fullBodyOrigin: undefined,
     hash: nextHashParts.hash,
     shortHash: nextHashParts.shortHash,
+    previousShortHashes: nextPreviousShortHashes,
     freshness: isSameFileEdit && rebased.length > 0 ? 'shifted' : 'fresh',
     freshnessCause: cause,
     pendingRefetches: refetchRequests.length > 0 ? refetchRequests : undefined,
@@ -429,6 +599,22 @@ export function reconcileFileView(
     refetchRequests,
     rebaseFailures,
   };
+}
+
+/**
+ * Append `oldShort` to a view's forwarding chain. Idempotent — re-appending
+ * the same value is a no-op (tail check), so repeat reconciles at the same
+ * revision don't grow the chain. Returns a new array (immutable).
+ */
+function appendPreviousShortHash(
+  existing: string[] | undefined,
+  oldShort: string,
+): string[] {
+  if (!oldShort) return existing ?? [];
+  if (existing && existing.length > 0 && existing[existing.length - 1] === oldShort) {
+    return existing;
+  }
+  return existing ? [...existing, oldShort] : [oldShort];
 }
 
 /**
@@ -643,6 +829,34 @@ export function migrateLegacyFileView(view: FileView): FileView {
   const expected = computeFileViewHashParts(view.filePath, view.sourceRevision);
   if (view.hash === expected.hash && view.shortHash === expected.shortHash) return view;
   return { ...view, hash: expected.hash, shortHash: expected.shortHash };
+}
+
+/**
+ * Does `candidateShort` point at this view — either directly (current
+ * `shortHash`) or via the forwarding chain (a previous `shortHash` from
+ * before one or more revision bumps)?
+ *
+ * Matches the same "short ≥ 6 hex, prefix OK in either direction" rule used
+ * by `findViewByRef` in contextStore so retention callers behave identically
+ * whether they hit the current or a historical ref.
+ */
+export function matchesViewRef(view: FileView, candidateShort: string): boolean {
+  if (!candidateShort) return false;
+  if (shortHashMatches(view.shortHash, candidateShort)) return true;
+  const previous = view.previousShortHashes;
+  if (!previous) return false;
+  for (const prev of previous) {
+    if (shortHashMatches(prev, candidateShort)) return true;
+  }
+  return false;
+}
+
+function shortHashMatches(viewShort: string, candidate: string): boolean {
+  if (!viewShort || !candidate) return false;
+  if (viewShort === candidate) return true;
+  if (viewShort.startsWith(candidate)) return true;
+  if (candidate.startsWith(viewShort)) return true;
+  return false;
 }
 
 /** Parse `N|CONTENT` rows into a line→row map. Skips malformed rows. */

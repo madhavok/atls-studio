@@ -669,3 +669,377 @@ describe('annotation routing — FileView hashes attach to the view', () => {
     expect(r.error ?? '').toMatch(/engram not found/);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Post-edit statefulness — runtime-authoritative refill without re-read
+// ---------------------------------------------------------------------------
+
+describe('FileView post-edit statefulness (slice view)', () => {
+  beforeEach(resetStore);
+
+  it('reconcileSourceRevision({postEditResolved:true}) rebases regions without queuing pendingRefetches', () => {
+    const store = useContextStore.getState();
+    const rev1 = 'revP1';
+    // Seed a pinned slice view — matches the common rl/auto-pin case.
+    store.addChunk(
+      [rowLine(42, 'fn bar() {'), rowLine(43, '  return 1;'), rowLine(44, '}')].join('\n'),
+      'smart',
+      'src/post.ts',
+      undefined, undefined, 'chk-p1',
+      {
+        sourceRevision: rev1,
+        readSpan: { filePath: 'src/post.ts', sourceRevision: rev1, startLine: 42, endLine: 44 },
+      },
+    );
+    store.setFileViewPinned('src/post.ts', true);
+
+    // Edit shifted lines by +5. Journal delta populated (as change.edit
+    // handler would do on a successful mutation).
+    recordFreshnessJournal({
+      source: 'src/post.ts',
+      previousRevision: rev1,
+      currentRevision: 'revP2',
+      lineDelta: 5,
+      recordedAt: Date.now(),
+    });
+
+    // Executor path emulated: advance revision with postEditResolved hint.
+    useContextStore.getState().reconcileSourceRevision(
+      'src/post.ts',
+      'revP2',
+      'same_file_prior_edit',
+      { postEditResolved: true },
+    );
+
+    const view = useContextStore.getState().getFileView('src/post.ts');
+    expect(view).toBeDefined();
+    expect(view!.sourceRevision).toBe('revP2');
+    // Region rebased by +5, NOT queued for refetch.
+    expect(view!.filledRegions).toHaveLength(1);
+    expect(view!.filledRegions[0].start).toBe(47);
+    expect(view!.filledRegions[0].end).toBe(49);
+    expect(view!.pendingRefetches).toBeUndefined();
+  });
+
+  it('without postEditResolved, a same_file_prior_edit without journal delta keeps region as placeholder (no silent loss)', () => {
+    // This is the "pinned + content-change + no journal delta" branch.
+    // The runtime does not have a lineDelta; historically the old path
+    // queued a pendingRefetch. With postEditResolved:true the placeholder
+    // is retained — the caller (refreshContextAfterEdit) will re-slice.
+    const store = useContextStore.getState();
+    const rev1 = 'revQ1';
+    store.addChunk(
+      rowLine(10, 'x'),
+      'smart',
+      'src/noJournal.ts',
+      undefined, undefined, 'chk-q1',
+      {
+        sourceRevision: rev1,
+        readSpan: { filePath: 'src/noJournal.ts', sourceRevision: rev1, startLine: 10, endLine: 10 },
+      },
+    );
+    store.setFileViewPinned('src/noJournal.ts', true);
+
+    useContextStore.getState().reconcileSourceRevision(
+      'src/noJournal.ts',
+      'revQ2',
+      'same_file_prior_edit',
+      { postEditResolved: true },
+    );
+
+    const view = useContextStore.getState().getFileView('src/noJournal.ts');
+    expect(view!.sourceRevision).toBe('revQ2');
+    expect(view!.filledRegions).toHaveLength(1);
+    expect(view!.filledRegions[0].start).toBe(10);
+    expect(view!.pendingRefetches).toBeUndefined();
+  });
+
+  it('positional deltas rebase regions with per-position precision (above=unchanged, below=shifted)', () => {
+    // This is the scenario the user flagged: a same-batch edit at line 59
+    // shifts only the regions BELOW line 59; regions above should stay
+    // put. The scalar lineDelta path would have shifted ALL regions
+    // uniformly, corrupting slice views.
+    const store = useContextStore.getState();
+    const rev1 = 'revPD1';
+    // Seed two slice regions: one above the upcoming edit anchor, one below.
+    store.addChunk(
+      [rowLine(10, 'top A'), rowLine(20, 'top B')].join('\n'),
+      'smart',
+      'src/posdelta.ts',
+      undefined, undefined, 'chk-top',
+      {
+        sourceRevision: rev1,
+        readSpan: { filePath: 'src/posdelta.ts', sourceRevision: rev1, startLine: 10, endLine: 20 },
+      },
+    );
+    store.addChunk(
+      [rowLine(100, 'bot A'), rowLine(120, 'bot B')].join('\n'),
+      'smart',
+      'src/posdelta.ts',
+      undefined, undefined, 'chk-bot',
+      {
+        sourceRevision: rev1,
+        readSpan: { filePath: 'src/posdelta.ts', sourceRevision: rev1, startLine: 100, endLine: 120 },
+      },
+    );
+    store.setFileViewPinned('src/posdelta.ts', true);
+
+    // Pass per-position deltas: +30 at line 59 (the edit anchor).
+    useContextStore.getState().reconcileSourceRevision(
+      'src/posdelta.ts',
+      'revPD2',
+      'same_file_prior_edit',
+      {
+        postEditResolved: true,
+        positionalDeltas: [{ line: 59, delta: 30 }],
+      },
+    );
+
+    const view = useContextStore.getState().getFileView('src/posdelta.ts');
+    expect(view).toBeDefined();
+    expect(view!.sourceRevision).toBe('revPD2');
+    expect(view!.filledRegions).toHaveLength(2);
+    const sorted = [...view!.filledRegions].sort((a, b) => a.start - b.start);
+    // Top region (10-20): above anchor → NOT shifted.
+    expect(sorted[0].start).toBe(10);
+    expect(sorted[0].end).toBe(20);
+    // Bottom region (100-120): below anchor → shifted by +30.
+    expect(sorted[1].start).toBe(130);
+    expect(sorted[1].end).toBe(150);
+  });
+
+  it('applyFillFromChunk at the new revision replaces pre-edit content in the region (authoritative post-edit bytes)', () => {
+    // Mirrors the `refillSliceRegionsFromNewBody` path in executor.ts: after
+    // reconcile advances the view, the executor re-slices each surviving
+    // region from the resolved post-edit body and calls applyFillFromChunk
+    // with origin:'refetch'. The region ends up with new bytes at the
+    // rebased coords.
+    const store = useContextStore.getState();
+    const rev1 = 'revR1';
+    store.addChunk(
+      [rowLine(42, 'old line 42'), rowLine(43, 'old line 43')].join('\n'),
+      'smart',
+      'src/bytes.ts',
+      undefined, undefined, 'chk-r1',
+      {
+        sourceRevision: rev1,
+        readSpan: { filePath: 'src/bytes.ts', sourceRevision: rev1, startLine: 42, endLine: 43 },
+      },
+    );
+    store.setFileViewPinned('src/bytes.ts', true);
+    recordFreshnessJournal({
+      source: 'src/bytes.ts',
+      previousRevision: rev1,
+      currentRevision: 'revR2',
+      lineDelta: 0,
+      recordedAt: Date.now(),
+    });
+
+    // Simulate executor flow: reconcile + re-slice with origin:'refetch'.
+    useContextStore.getState().reconcileSourceRevision(
+      'src/bytes.ts',
+      'revR2',
+      'same_file_prior_edit',
+      { postEditResolved: true },
+    );
+    useContextStore.getState().applyFillFromChunk({
+      filePath: 'src/bytes.ts',
+      sourceRevision: 'revR2',
+      startLine: 42,
+      endLine: 43,
+      content: [rowLine(42, 'new line 42'), rowLine(43, 'new line 43')].join('\n'),
+      chunkHash: 'chk-r2',
+      tokens: 5,
+      origin: 'refetch',
+      refetchedAtRound: 7,
+    });
+
+    const view = useContextStore.getState().getFileView('src/bytes.ts');
+    expect(view!.sourceRevision).toBe('revR2');
+    expect(view!.filledRegions).toHaveLength(1);
+    expect(view!.filledRegions[0].content).toContain('new line 42');
+    expect(view!.filledRegions[0].content).toContain('new line 43');
+    expect(view!.filledRegions[0].content).not.toContain('old line 42');
+    expect(view!.filledRegions[0].origin).toBe('refetch');
+    expect(view!.filledRegions[0].refetchedAtRound).toBe(7);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Retention-hash forwarding chain — pre-edit shortHash still resolves
+// ---------------------------------------------------------------------------
+
+describe('FileView retention-hash forwarding across own-edits', () => {
+  beforeEach(resetStore);
+
+  it('reconcileSourceRevision records the old shortHash on the view', () => {
+    const store = useContextStore.getState();
+    const rev1 = 'revF1';
+    store.addChunk(
+      rowLine(10, 'x'),
+      'smart',
+      'src/fwd.ts',
+      undefined, undefined, 'chk-f1',
+      {
+        sourceRevision: rev1,
+        readSpan: { filePath: 'src/fwd.ts', sourceRevision: rev1, startLine: 10, endLine: 10 },
+      },
+    );
+    const before = useContextStore.getState().getFileView('src/fwd.ts')!;
+    const oldShort = before.shortHash;
+
+    recordFreshnessJournal({
+      source: 'src/fwd.ts',
+      previousRevision: rev1,
+      currentRevision: 'revF2',
+      lineDelta: 0,
+      recordedAt: Date.now(),
+    });
+    useContextStore.getState().reconcileSourceRevision(
+      'src/fwd.ts',
+      'revF2',
+      'same_file_prior_edit',
+      { postEditResolved: true },
+    );
+
+    const after = useContextStore.getState().getFileView('src/fwd.ts')!;
+    expect(after.shortHash).not.toBe(oldShort);
+    expect(after.previousShortHashes).toContain(oldShort);
+  });
+
+  it('dropChunks via a historical retention ref routes to the correct view', () => {
+    // Agent transcript contained `h:<oldShort>` from before the edit;
+    // after the edit the view's current short is different. The historical
+    // ref should still find the view for pu / pc / dro.
+    //
+    // Note: pinned views survive dropChunks by design (existing contract —
+    // backing chunks are dropped but the pinned view row stays). We test
+    // both the pinned-check routing and the unpinned drop routing.
+    const store = useContextStore.getState();
+    const rev1 = 'revG1';
+    store.addChunk(
+      rowLine(10, 'x'),
+      'smart',
+      'src/stale.ts',
+      undefined, undefined, 'chk-g1',
+      {
+        sourceRevision: rev1,
+        readSpan: { filePath: 'src/stale.ts', sourceRevision: rev1, startLine: 10, endLine: 10 },
+      },
+    );
+    const before = useContextStore.getState().getFileView('src/stale.ts')!;
+    const oldRef = `h:${before.shortHash}`;
+    store.setFileViewPinned('src/stale.ts', true);
+
+    recordFreshnessJournal({
+      source: 'src/stale.ts',
+      previousRevision: rev1,
+      currentRevision: 'revG2',
+      lineDelta: 0,
+      recordedAt: Date.now(),
+    });
+    useContextStore.getState().reconcileSourceRevision(
+      'src/stale.ts',
+      'revG2',
+      'same_file_prior_edit',
+      { postEditResolved: true },
+    );
+
+    // Historical ref is pinned-check-able — forwarding walks the chain.
+    expect(useContextStore.getState().isPinnedFileViewRef(oldRef)).toBe(true);
+
+    // Unpin, then drop via historical ref: the view should tear down.
+    useContextStore.getState().setFileViewPinned('src/stale.ts', false);
+    useContextStore.getState().dropChunks([oldRef]);
+    expect(useContextStore.getState().getFileView('src/stale.ts')).toBeUndefined();
+  });
+
+  it('previousShortHashes persists across multiple revision bumps (chain of 2)', () => {
+    const store = useContextStore.getState();
+    store.addChunk(
+      rowLine(10, 'x'),
+      'smart',
+      'src/chain.ts',
+      undefined, undefined, 'chk-h1',
+      {
+        sourceRevision: 'revH1',
+        readSpan: { filePath: 'src/chain.ts', sourceRevision: 'revH1', startLine: 10, endLine: 10 },
+      },
+    );
+    const v0 = useContextStore.getState().getFileView('src/chain.ts')!;
+    const shortAtH1 = v0.shortHash;
+
+    recordFreshnessJournal({
+      source: 'src/chain.ts',
+      previousRevision: 'revH1',
+      currentRevision: 'revH2',
+      lineDelta: 0,
+      recordedAt: Date.now(),
+    });
+    useContextStore.getState().reconcileSourceRevision(
+      'src/chain.ts', 'revH2', 'same_file_prior_edit',
+      { postEditResolved: true },
+    );
+    const v1 = useContextStore.getState().getFileView('src/chain.ts')!;
+    const shortAtH2 = v1.shortHash;
+
+    recordFreshnessJournal({
+      source: 'src/chain.ts',
+      previousRevision: 'revH2',
+      currentRevision: 'revH3',
+      lineDelta: 0,
+      recordedAt: Date.now(),
+    });
+    useContextStore.getState().reconcileSourceRevision(
+      'src/chain.ts', 'revH3', 'same_file_prior_edit',
+      { postEditResolved: true },
+    );
+    const v2 = useContextStore.getState().getFileView('src/chain.ts')!;
+
+    expect(v2.sourceRevision).toBe('revH3');
+    expect(v2.previousShortHashes).toEqual([shortAtH1, shortAtH2]);
+    // Both historical refs still resolve.
+    expect(useContextStore.getState().getFileView('src/chain.ts')!.shortHash).not.toBe(shortAtH1);
+    const state = useContextStore.getState();
+    expect(state.isPinnedFileViewRef(`h:${shortAtH1}`)).toBe(false); // not pinned yet
+    state.setFileViewPinned('src/chain.ts', true);
+    expect(state.isPinnedFileViewRef(`h:${shortAtH1}`)).toBe(true);
+    expect(state.isPinnedFileViewRef(`h:${shortAtH2}`)).toBe(true);
+  });
+
+  it('applyFillFromChunk rebuild-at-new-revision preserves the forwarding chain', () => {
+    // When the view is force-rebuilt (applyFillFromChunk seeing a newer
+    // revision than stored), the prior shortHash still lands in
+    // previousShortHashes so transcripts don't lose routability.
+    const store = useContextStore.getState();
+    store.addChunk(
+      rowLine(10, 'x'),
+      'smart',
+      'src/rebuild.ts',
+      undefined, undefined, 'chk-r1',
+      {
+        sourceRevision: 'revRb1',
+        readSpan: { filePath: 'src/rebuild.ts', sourceRevision: 'revRb1', startLine: 10, endLine: 10 },
+      },
+    );
+    const before = useContextStore.getState().getFileView('src/rebuild.ts')!;
+    const oldShort = before.shortHash;
+
+    // New revision via fill path without going through reconcile first.
+    useContextStore.getState().applyFillFromChunk({
+      filePath: 'src/rebuild.ts',
+      sourceRevision: 'revRb2',
+      startLine: 20,
+      endLine: 20,
+      content: rowLine(20, 'y'),
+      chunkHash: 'chk-r2',
+      tokens: 1,
+      origin: 'refetch',
+      refetchedAtRound: 1,
+    });
+    const after = useContextStore.getState().getFileView('src/rebuild.ts')!;
+    expect(after.sourceRevision).toBe('revRb2');
+    expect(after.shortHash).not.toBe(oldShort);
+    expect(after.previousShortHashes).toContain(oldShort);
+  });
+});
