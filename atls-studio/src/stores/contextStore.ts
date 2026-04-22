@@ -57,6 +57,7 @@ import {
   applyFillToView,
   applyFullBodyToView,
   clearRemovedMarker as fvClearRemovedMarker,
+  applyEditToFileView,
   computeFileViewHash,
   createFileView,
   matchesViewRef,
@@ -1000,6 +1001,18 @@ interface ContextStoreState {
     opts?: {
       postEditResolved?: boolean;
       positionalDeltas?: ReconcilePositionalDelta[];
+      /**
+       * When true, `reconcileSourceRevision` skips the FileView reconcile
+       * pass (chunks/staged snippets still reconcile). The caller is expected
+       * to update the view via `applyEditToFileView` with authoritative
+       * post-edit bytes + deltas — the deterministic path used by
+       * `refreshContextAfterEdit`. Without this flag, the reconcile would
+       * clear `fullBody` and rebase regions using only the journal delta,
+       * which `applyEditToFileView` would then overwrite anyway. Skipping
+       * avoids the redundant pass and removes a class of state-thrash bugs
+       * where the intermediate "cleared" render could leak to the prompt.
+       */
+      skipViewReconcile?: boolean;
     },
   ) => ReconcileStats;
   // ----- FileView (Unified FileView plan — PR2) ----------------------------
@@ -1039,6 +1052,25 @@ interface ContextStoreState {
     chunkHash: string;
     totalLines?: number;
   }) => void;
+  /**
+   * Deterministic own-edit refresh. Takes authoritative post-edit bytes +
+   * the positional deltas the executor already computed from `line_edits`
+   * and splices skeleton rows, refills filled regions, and (when present)
+   * swaps in the new fullBody — all in one pure pass. Returns true when a
+   * view existed and was updated.
+   *
+   * This is the single source of truth for post-own-edit view state.
+   * `refreshContextAfterEdit` calls it after every successful `change.*`
+   * step. Does NOT queue pendingRefetches — the content is already in
+   * hand.
+   */
+  applyEditToFileView: (params: {
+    filePath: string;
+    sourceRevision: string;
+    newBody: string;
+    deltas: ReconcilePositionalDelta[];
+    round: number;
+  }) => boolean;
   /** Drop any FileView regions backed by these chunk hashes (TTL / eviction callback). */
   pruneFileViewsForChunks: (chunkHashes: string[]) => number;
   /**
@@ -3843,6 +3875,7 @@ export const useContextStore = create<ContextStoreState>()(
     opts?: {
       postEditResolved?: boolean;
       positionalDeltas?: ReconcilePositionalDelta[];
+      skipViewReconcile?: boolean;
     },
   ) => {
     const effectiveCause = cause ?? consumeRevisionAdvanceCause(path) ?? 'external_file_change';
@@ -3953,18 +3986,22 @@ export const useContextStore = create<ContextStoreState>()(
 
     // Unified FileView auto-heal: reconcile the matching FileView under the same cause.
     // Round number comes from roundHistoryStore — used for ephemeral marker bookkeeping.
-    const round = useRoundHistoryStore.getState().snapshots.length;
-    const fvCause: FileViewFreshnessCause = effectiveCause === 'same_file_prior_edit'
-      ? 'same_file_prior_edit'
-      : effectiveCause === 'session_restore'
-        ? 'session_restore'
-        : effectiveCause === 'external_file_change'
-          ? 'external_file_change'
-          : 'unknown';
-    get().reconcileFileViewsForPath(path, currentRevision, fvCause, round, {
-      postEditResolved: opts?.postEditResolved,
-      positionalDeltas: opts?.positionalDeltas,
-    });
+    // Skipped when the caller owns the view update path (e.g. own-edit
+    // refresh via `applyEditToFileView` already has authoritative bytes).
+    if (!opts?.skipViewReconcile) {
+      const round = useRoundHistoryStore.getState().snapshots.length;
+      const fvCause: FileViewFreshnessCause = effectiveCause === 'same_file_prior_edit'
+        ? 'same_file_prior_edit'
+        : effectiveCause === 'session_restore'
+          ? 'session_restore'
+          : effectiveCause === 'external_file_change'
+            ? 'external_file_change'
+            : 'unknown';
+      get().reconcileFileViewsForPath(path, currentRevision, fvCause, round, {
+        postEditResolved: opts?.postEditResolved,
+        positionalDeltas: opts?.positionalDeltas,
+      });
+    }
 
     return stats;
   },
@@ -7026,6 +7063,20 @@ export const useContextStore = create<ContextStoreState>()(
       next.set(key, applyFullBodyToView(view, content, chunkHash));
       return { fileViews: next };
     });
+  },
+
+  applyEditToFileView: ({ filePath, sourceRevision, newBody, deltas, round }) => {
+    let didUpdate = false;
+    set(state => {
+      const key = fvNormalizePath(filePath);
+      const view = state.fileViews.get(key);
+      if (!view) return {};
+      const next = new Map(state.fileViews);
+      next.set(key, applyEditToFileView(view, { sourceRevision, newBody, deltas, round }));
+      didUpdate = true;
+      return { fileViews: next };
+    });
+    return didUpdate;
   },
 
   ensureFileView: (filePath, sourceRevision) => {

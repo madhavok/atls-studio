@@ -26,8 +26,6 @@ import { SnapshotTracker, AwarenessLevel, canonicalizeSnapshotHash } from './sna
 import { recordForwarding as manifestRecordForwarding } from '../hashManifest';
 import { computeFileViewHashParts, matchesViewRef } from '../fileViewStore';
 import { getTurn as hppGetTurn } from '../hashProtocol';
-import { hashContentSync, SHORT_HASH_LEN, sliceContentByLines } from '../../utils/contextHash';
-import { countTokensSync } from '../../utils/tokenCounter';
 import { useRoundHistoryStore } from '../../stores/roundHistoryStore';
 import type { LineRegion } from './snapshotTracker';
 import { parseHashRef } from '../../utils/hashRefParsers';
@@ -123,6 +121,14 @@ export interface PositionalDelta {
    * When false/undefined (insert_after, replace, delete, …), shifts where `line > anchor`.
    */
   lineInclusive?: boolean;
+  /**
+   * For `delete` edits only: number of OLD lines consumed starting at `line`.
+   * FileView rebase ({@link applyEditToFileView}) drops rows / regions whose
+   * coordinate falls in `[line, line + consumes - 1]` rather than shifting
+   * them into a collision with a surviving neighbor. Undefined for
+   * replace/insert_* — those shift coordinates but don't remove old rows.
+   */
+  consumes?: number;
 }
 
 /** Shallow-clone each line_edit object so intra-step rebase cannot mutate `step.with`. */
@@ -249,7 +255,13 @@ function computePositionalDeltas(lineEdits: unknown): PositionalDelta[] {
     const originalLine = line > 0 ? line - cumulativeDelta : 0;
     if (d !== 0 && originalLine > 0) {
       const lineInclusive = action === 'insert_before' || action === 'prepend';
-      deltas.push({ line: originalLine, delta: d, lineInclusive });
+      // `consumes` marks lines the edit REMOVES from the old file. Rows /
+      // regions whose old coordinate falls in [line, line+consumes-1] drop
+      // on rebase rather than shifting into a collision. Populated only for
+      // `delete` — replace/insert_* leave it undefined so rows in the
+      // target range survive with content re-derived from the new body.
+      const consumes = action === 'delete' ? effectiveLineSpanCount(e) : undefined;
+      deltas.push({ line: originalLine, delta: d, lineInclusive, ...(consumes ? { consumes } : {}) });
     }
     cumulativeDelta += d;
   }
@@ -438,33 +450,182 @@ function applyIntraStepSnapshotRebaseIfNeeded(params: Record<string, unknown>): 
  * Build a per-file positional delta map from completed step params.
  * Handles both single-file (top-level line_edits) and multi-file
  * (batch_edits mode with edits[]) payloads.
+ *
+ * When `artifact` is provided, `edits_resolved[i].resolved_line` backfills
+ * any `line_edits[i].line` that's missing. This matters because the
+ * `change.edit` handler injects `line` from hash-ref line anchors
+ * (`f:h:HASH:N`) / top-level `params.line` only into its locally-normalized
+ * `resolved.line_edits` array — the original `mergedParams.line_edits` the
+ * executor sees still lacks `line`, so the rebase math silently fell back to
+ * zero deltas. Without backfill, an edit like `ce f:h:X:4 le:[{action:"insert_after",content:"..."}]`
+ * produces an empty delta map — the FileView can update total lines but
+ * can't shift skeleton rows or filled regions, which regresses the
+ * sparse-sig statefulness contract. The backend always reports the
+ * resolved line in `edits_resolved` by construction; read it directly.
  */
-function buildPerFileDeltaMap(
+export function buildPerFileDeltaMap(
   completedParams: Record<string, unknown>,
+  artifact?: Record<string, unknown>,
 ): Map<string, PositionalDelta[]> {
   const map = new Map<string, PositionalDelta[]>();
 
   const topFile = extractEditTargetFile(completedParams);
   if (topFile && Array.isArray(completedParams.line_edits)) {
-    const deltas = computePositionalDeltas(completedParams.line_edits);
-    if (deltas.length > 0) map.set(normalizePathForRebase(topFile), deltas);
+    const topResolved = artifact ? extractTopLevelEditsResolved(artifact) : undefined;
+    const backfilled = backfillLinesFromResolved(
+      completedParams.line_edits as unknown[],
+      topResolved,
+    );
+    const deltas = computePositionalDeltas(backfilled);
+    if (deltas.length > 0) {
+      // Key by BOTH the raw source param AND the artifact's resolved path.
+      // `resolveDeltasForFile` looks up by the edited file path from the
+      // artifact (e.g. `fv-debug.ts`); when the request used a hash-ref
+      // shape (`f: "h:ab09b8:4"`), only the hash-ref key would land without
+      // this dual-keying and downstream rebase would miss. Both keys point
+      // to the same array — idempotent, no double-apply risk.
+      map.set(normalizePathForRebase(topFile), deltas);
+      const resolvedPath = artifact ? extractTopLevelResolvedPath(artifact) : undefined;
+      if (resolvedPath) {
+        const resolvedKey = normalizePathForRebase(resolvedPath);
+        if (!map.has(resolvedKey)) map.set(resolvedKey, deltas);
+      }
+    }
   }
 
   if (completedParams.mode === 'batch_edits' && Array.isArray(completedParams.edits)) {
+    const resolvedByFile = artifact ? extractBatchEditsResolved(artifact) : undefined;
+    const resolvedPathByRawKey = artifact ? extractBatchResolvedPaths(artifact) : undefined;
     for (const ed of completedParams.edits) {
       if (!ed || typeof ed !== 'object') continue;
       const entry = ed as Record<string, unknown>;
       const file = extractEditTargetFile(entry);
       if (!file || !Array.isArray(entry.line_edits)) continue;
       const key = normalizePathForRebase(file);
-      const deltas = computePositionalDeltas(entry.line_edits);
+      const resolvedForFile = resolvedByFile?.get(key)
+        ?? resolvedByFile?.get(resolvedPathByRawKey?.get(key) ?? '');
+      const backfilled = backfillLinesFromResolved(
+        entry.line_edits as unknown[],
+        resolvedForFile,
+      );
+      const deltas = computePositionalDeltas(backfilled);
       if (deltas.length === 0) continue;
       const existing = map.get(key);
       if (existing) existing.push(...deltas);
       else map.set(key, deltas);
+      // Also key by the resolved path so hash-ref requests route correctly.
+      const resolvedPath = resolvedPathByRawKey?.get(key);
+      if (resolvedPath) {
+        const resolvedKey = normalizePathForRebase(resolvedPath);
+        if (resolvedKey !== key && !map.has(resolvedKey)) {
+          map.set(resolvedKey, deltas);
+        }
+      }
     }
   }
 
+  return map;
+}
+
+/** Clone each le entry and inject `line` from resolutions[i].resolved_line when missing. */
+function backfillLinesFromResolved(
+  lineEdits: unknown[],
+  resolutions: unknown[] | undefined,
+): unknown[] {
+  if (!Array.isArray(lineEdits) || lineEdits.length === 0) return [];
+  if (!Array.isArray(resolutions) || resolutions.length === 0) return lineEdits.slice();
+  return lineEdits.map((le, i) => {
+    if (!le || typeof le !== 'object') return le;
+    const e = { ...(le as Record<string, unknown>) };
+    if (typeof e.line === 'number' && e.line > 0) return e; // already set, keep it
+    if (e.symbol != null) return e; // symbol-based target, line stays 0
+    const res = resolutions[i];
+    if (!res || typeof res !== 'object') return e;
+    const rl = (res as Record<string, unknown>).resolved_line;
+    if (typeof rl === 'number' && rl > 0) {
+      e.line = rl;
+    }
+    return e;
+  });
+}
+
+/** Extract the single-file top-level `edits_resolved` array from a draft artifact. */
+function extractTopLevelEditsResolved(artifact: Record<string, unknown>): unknown[] | undefined {
+  const top = artifact.edits_resolved;
+  if (Array.isArray(top)) return top;
+  // draft artifacts store resolutions nested: `drafts[0].edits_resolved` on single-file payloads.
+  const drafts = artifact.drafts;
+  if (Array.isArray(drafts) && drafts.length === 1 && drafts[0] && typeof drafts[0] === 'object') {
+    const nested = (drafts[0] as Record<string, unknown>).edits_resolved;
+    if (Array.isArray(nested)) return nested;
+  }
+  return undefined;
+}
+
+/** Build a per-file `edits_resolved` lookup for batch_edits artifacts keyed by `normalizePathForRebase`. */
+function extractBatchEditsResolved(artifact: Record<string, unknown>): Map<string, unknown[]> {
+  const map = new Map<string, unknown[]>();
+  for (const key of ['drafts', 'batch', 'results'] as const) {
+    const arr = artifact[key];
+    if (!Array.isArray(arr)) continue;
+    for (const entry of arr) {
+      if (!entry || typeof entry !== 'object') continue;
+      const rec = entry as Record<string, unknown>;
+      const file = SnapshotTracker.extractFilePath(rec);
+      const resolutions = rec.edits_resolved;
+      if (file && Array.isArray(resolutions)) {
+        map.set(normalizePathForRebase(file), resolutions);
+      }
+    }
+  }
+  return map;
+}
+
+/**
+ * Extract the resolved file path from a single-file draft artifact.
+ * Handlers rewrite hash-ref inputs (`f:"h:HASH:N"`) to real paths before
+ * writing — `drafts[0].file` carries the resolved path. Used to dual-key
+ * the delta map so downstream lookups by edited file path find the entry
+ * regardless of what the model originally passed.
+ */
+function extractTopLevelResolvedPath(artifact: Record<string, unknown>): string | undefined {
+  const top = SnapshotTracker.extractFilePath(artifact);
+  if (top) return top;
+  const drafts = artifact.drafts;
+  if (Array.isArray(drafts) && drafts.length >= 1 && drafts[0] && typeof drafts[0] === 'object') {
+    return SnapshotTracker.extractFilePath(drafts[0] as Record<string, unknown>);
+  }
+  const results = artifact.results;
+  if (Array.isArray(results) && results.length >= 1 && results[0] && typeof results[0] === 'object') {
+    return SnapshotTracker.extractFilePath(results[0] as Record<string, unknown>);
+  }
+  return undefined;
+}
+
+/**
+ * For batch_edits: map each input `edits[i]` raw-param key to the resolved
+ * path the handler wrote to disk. The model's raw `f: "h:HASH"` key
+ * doesn't match the resolved `drafts[j].file` — we bridge by matching
+ * positional order where possible, falling back to identity when paths
+ * are already resolved.
+ */
+function extractBatchResolvedPaths(artifact: Record<string, unknown>): Map<string, string> {
+  const map = new Map<string, string>();
+  for (const key of ['drafts', 'batch', 'results'] as const) {
+    const arr = artifact[key];
+    if (!Array.isArray(arr)) continue;
+    for (const entry of arr) {
+      if (!entry || typeof entry !== 'object') continue;
+      const rec = entry as Record<string, unknown>;
+      const resolved = SnapshotTracker.extractFilePath(rec);
+      if (!resolved) continue;
+      // For batch entries, the `edit_target_ref` (raw input) survives
+      // round-trip in some backend responses; bridge raw→resolved when
+      // available. Otherwise the resolved path is its own key (identity).
+      const rawRef = typeof rec.edit_target_ref === 'string' ? rec.edit_target_ref : resolved;
+      map.set(normalizePathForRebase(rawRef), resolved);
+    }
+  }
   return map;
 }
 
@@ -823,9 +984,9 @@ function rebaseSubsequentSteps(
   stepsToRun: Array<{ id: string; use: string; with?: Record<string, unknown> }>,
   startIndex: number,
   hashAliases: ReadonlyMap<string, string>,
-  opts?: { rebaseReadOps?: boolean },
+  opts?: { rebaseReadOps?: boolean; artifact?: Record<string, unknown> },
 ): void {
-  const deltaMap = buildPerFileDeltaMap(completedParams);
+  const deltaMap = buildPerFileDeltaMap(completedParams, opts?.artifact);
   if (deltaMap.size === 0) return;
 
   const rebaseReadOps = opts?.rebaseReadOps !== false;
@@ -1383,40 +1544,37 @@ function applyLineDelta(lineSpec: string, delta: number): string {
 }
 
 /**
- * Post-edit context refresh — resolve fresh content from the new hash.
+ * Post-edit context refresh — resolve fresh content from the new hash and
+ * splice it deterministically into the FileView.
  *
- * Freshness is priority 0. The system performed the edit, the system has the
- * new hash, the system resolves the truth. The pipeline is:
+ * Every `change.edit` reports per-edit coordinates (`edits_resolved[]`) and
+ * the executor already computes `PositionalDelta[]` from the request's
+ * `line_edits` (see `buildPerFileDeltaMap`). Combined with
+ * `resolve_hash_ref('h:<newHash>')` giving us the authoritative post-edit
+ * body, there is no reason to route the view through a reconcile→clear-
+ * fullBody→applyFullBodyFromChunk→re-slice dance — we have exact inputs,
+ * apply them exactly.
  *
- *   1. `addChunk(newHash)` — triggers hash forwarding (old engram
- *      auto-compacted, new one installed as fresh with correct line numbers).
- *   2. `reconcileSourceRevision(path, newHash, 'same_file_prior_edit',
- *      { postEditResolved: true })` — advances the FileView's sourceRevision
- *      to the new hash, rebases `filledRegions` via `freshnessJournal.lineDelta`,
- *      recomputes the retention short and records the previous short on the
- *      forwarding chain. `postEditResolved: true` suppresses `pendingRefetches`
- *      so the view does NOT render `[changed: N pending refetch]` — we already
- *      have the content and will refill below.
- *   3. **Re-slice** each surviving region from `resolved.content` at its
- *      rebased line coordinates via `applyFillFromChunk(origin: 'refetch',
- *      refetchedAtRound)`. `reconcileFileView`'s line-delta rebase preserves
- *      line NUMBERS but leaves the pre-edit BYTES in the region; the edit may
- *      have changed those bytes. Re-slicing from the new body produces the
- *      authoritative post-edit content at the authoritative post-edit
- *      coordinates. Surfaces as `[edited L..-.. this round]`.
- *   4. **Per-view re-hydration policy** — if the view had `fullBody` before
- *      the edit, `applyFullBodyFromChunk` with the new content. Otherwise do
- *      nothing: slice views stay slice views. Never auto-promote a partial
- *      view to fullBody just because the runtime has the bytes; the view's
- *      shape is chosen by the reader.
- *   5. Staged snippets re-resolve from the new hash (unchanged from before).
+ * Pipeline:
  *
- * Net effect: the next round's `## FILE VIEWS` block shows the updated file
- * at the same coordinates the model was looking at, with post-edit content —
- * no re-read needed. The `FileView is stateful across edits` contract is now
- * delivered by the runtime for both fullBody AND slice-only views.
+ *   1. `addChunk(newHash)` installs the new content as the latest file-
+ *      backed chunk. Hash forwarding auto-compacts the old chunk.
+ *   2. `reconcileSourceRevision(..., { skipViewReconcile: true, … })`
+ *      reconciles chunks + staged snippets only — the FileView is handled
+ *      in step 3 with authoritative bytes. Skipping the view reconcile
+ *      removes a transient "cleared fullBody" state that could leak into
+ *      a render if the refresh observer fires at the wrong moment.
+ *   3. `applyEditToFileView(…)` splices the view in one pass: skeleton
+ *      rows re-derive from `newBody` at rebased coordinates, filled
+ *      regions rebase + refill, and `fullBody` (when the view had one)
+ *      updates to `newBody`. The view stays in the same shape the
+ *      reader chose — slice views stay slice, full views stay full.
+ *   4. Staged snippets re-resolve from the new hash.
  *
- * markEngramsSuspect is only used as a fallback when resolution fails.
+ * Net effect: next round's `## FILE VIEWS` block shows the updated file
+ * at the correct coordinates with authoritative post-edit content. No
+ * re-read needed. `markEngramsSuspect` is the only fallback when
+ * `resolve_hash_ref` fails.
  */
 async function refreshContextAfterEdit(
   artifact: Record<string, unknown>,
@@ -1434,35 +1592,20 @@ async function refreshContextAfterEdit(
   for (const ef of editedFiles) {
     const bareHash = ef.newHash.replace(/^h:/, '');
 
-    // Pre-edit view shape determines the post-edit re-hydration policy:
-    //   wasFullBody  → applyFullBodyFromChunk with the resolved new content
-    //   slice-only   → re-slice each filledRegion from the new body below
-    // Never auto-promote a partial view to fullBody just because we have
-    // the bytes; view shape is the reader's choice.
-    const preView = store.getFileView(ef.filePath);
-    const wasFullBody = preView?.fullBody !== undefined;
-    // Snapshot filledRegions BEFORE reconcile. `reconcileFileView` may drop
-    // regions that rebase below line 1; we only re-slice the survivors, and
-    // we use the rebased coords (post-reconcile) against the new body.
-    const hadFilledRegions = (preView?.filledRegions?.length ?? 0) > 0;
-
-    // Per-position deltas from the completed step's line_edits. When
-    // available, `reconcileSourceRevision` rebases each region with
-    // line-level precision — regions above the edit anchor stay put,
-    // regions below shift by the net delta. Without this, a single scalar
-    // `freshnessJournal.lineDelta` applies uniformly to EVERY region, which
-    // corrupts slice views for any edit that only shifts part of the file
-    // (e.g. an insert at line 59 should NOT shift a region at lines 1-30).
-    const positionalDeltas = opts?.deltaMap
-      ? resolveDeltasForFile(opts.deltaMap, ef.filePath)
-      : undefined;
+    // Per-anchor shifts introduced by this edit. `buildPerFileDeltaMap`
+    // keys on `normalizePathForRebase`; monorepo layouts can pass raw or
+    // lowercased paths, so try each. Empty array is a valid no-op — means
+    // the edit didn't shift lines (e.g. single-line replace).
+    const deltas = opts?.deltaMap
+      ? (resolveDeltasForFile(opts.deltaMap, ef.filePath) ?? [])
+      : [];
 
     try {
       const resolved = await invoke<{ content: string; source?: string | null }>(
         'resolve_hash_ref', { rawRef: `h:${bareHash}` },
       );
       if (resolved?.content) {
-        // 1. Engram replacement (hash forwarding handles old->new for chunks).
+        // 1. Install the new chunk as the latest file-backed content.
         store.addChunk(resolved.content, 'file', ef.filePath,
           undefined, undefined, bareHash, {
             sourceRevision: bareHash,
@@ -1470,57 +1613,32 @@ async function refreshContextAfterEdit(
             viewKind: 'latest',
           });
 
-        // 2. Advance the FileView: sourceRevision + short + region rebase +
-        //    forwarding chain. `postEditResolved: true` suppresses
-        //    pendingRefetches — we're about to refill from resolved.content.
-        //    `positionalDeltas` gives the reconcile per-position precision
-        //    so multi-edit batches don't corrupt slice coordinates.
+        // 2. Reconcile chunks + staged snippets only. The view is handled
+        //    below with authoritative bytes; skipping the view reconcile
+        //    avoids the transient fullBody-cleared state.
         try {
           store.reconcileSourceRevision(
             ef.filePath,
             bareHash,
             'same_file_prior_edit',
-            {
-              postEditResolved: true,
-              ...(positionalDeltas ? { positionalDeltas } : {}),
-            },
+            { postEditResolved: true, skipViewReconcile: true },
           );
         } catch (e) {
-          console.warn('[executor] FileView post-edit reconcile failed:', e);
+          console.warn('[executor] post-edit chunk reconcile failed:', e);
         }
 
-        const totalLines = resolved.content.length === 0
-          ? 0
-          : resolved.content.split('\n').length;
-
-        // 3. Re-slice surviving regions from the new body at rebased coords.
-        //    Only for slice views — a fullBody view gets handled in step 4
-        //    and its regions (if any) are coincident with fullBody anyway.
-        if (hadFilledRegions && !wasFullBody) {
-          refillSliceRegionsFromNewBody(
-            store,
-            ef.filePath,
-            bareHash,
-            resolved.content,
-            totalLines,
-            currentRound,
-          );
-        }
-
-        // 4. Per-view re-hydration policy: wasFullBody stays full. Slices
-        //    stay slices (step 3 refilled them from the new body).
-        if (wasFullBody) {
-          try {
-            store.applyFullBodyFromChunk({
-              filePath: ef.filePath,
-              sourceRevision: bareHash,
-              content: resolved.content,
-              chunkHash: bareHash,
-              totalLines,
-            });
-          } catch (e) {
-            console.warn('[executor] FileView full-body refresh failed:', e);
-          }
+        // 3. Deterministic FileView refresh: splice skeleton + regions +
+        //    fullBody using the per-anchor deltas and the new body bytes.
+        try {
+          store.applyEditToFileView({
+            filePath: ef.filePath,
+            sourceRevision: bareHash,
+            newBody: resolved.content,
+            deltas,
+            round: currentRound,
+          });
+        } catch (e) {
+          console.warn('[executor] FileView edit refresh failed:', e);
         }
       }
     } catch (e) {
@@ -1530,7 +1648,7 @@ async function refreshContextAfterEdit(
       }
     }
 
-    // 5. Refresh staged snippets from the new hash
+    // 4. Refresh staged snippets from the new hash.
     const snippets = store.getStagedSnippetsForRefresh(ef.filePath);
     for (const snippet of snippets) {
       try {
@@ -1568,8 +1686,7 @@ async function refreshContextAfterEdit(
  * delta map. `buildPerFileDeltaMap` keys on the rebase-normalized path
  * (`normalizePathForRebase`), which may differ from the edited-file path
  * in monorepo setups; try the normalized form, the raw form, and a
- * forward-slash lowercased variant. Returns undefined when no entry
- * matches — the reconcile will fall back to the scalar journal lineDelta.
+ * forward-slash lowercased variant.
  */
 function resolveDeltasForFile(
   deltaMap: ReadonlyMap<string, PositionalDelta[]>,
@@ -1581,65 +1698,6 @@ function resolveDeltasForFile(
     ?? deltaMap.get(filePath)
     ?? deltaMap.get(lower)
     ?? undefined;
-}
-
-/**
- * Re-extract each surviving filled region from the resolved post-edit body at
- * its rebased line coordinates and push it back through `applyFillFromChunk`
- * with `origin: 'refetch'`. `mergeFilledRegion` dedupes and overwrites in
- * place, so calling this after `reconcileSourceRevision` replaces the
- * line-delta-shifted (but still pre-edit content) rows with authoritative
- * post-edit bytes.
- *
- * Why we re-slice even though reconcile already ran: `shiftRowsByLine` only
- * rewrites the `N|` prefix; the region's stored bytes are still the pre-edit
- * bytes. If the edit overlapped the region, those bytes are now wrong. With
- * `resolved.content` in hand we can write the true post-edit content at the
- * true post-edit line numbers.
- *
- * Regions whose rebased coordinates fall outside the new file's line count
- * are skipped; `reconcileFileView` already surfaces them as `[REMOVED]` when
- * rebase pushed them below line 1. Regions clipped by the new line total
- * (rare — file shrunk below original region end) are truncated to the file.
- */
-function refillSliceRegionsFromNewBody(
-  store: ReturnType<HandlerContext['store']>,
-  filePath: string,
-  newHash: string,
-  newContent: string,
-  totalLines: number,
-  currentRound: number,
-): void {
-  const view = store.getFileView(filePath);
-  if (!view || view.filledRegions.length === 0) return;
-  if (!newContent) return;
-
-  for (const region of view.filledRegions) {
-    const start = Math.max(1, region.start);
-    const end = Math.min(totalLines || region.end, region.end);
-    if (end < start) continue; // region fell outside new file bounds
-
-    const slice = sliceContentByLines(newContent, `${start}-${end}`);
-    if (!slice) continue;
-
-    try {
-      store.applyFillFromChunk({
-        filePath,
-        sourceRevision: newHash,
-        startLine: start,
-        endLine: end,
-        content: slice,
-        // Deterministic per-slice hash so repeat reconciles idempotently merge
-        // via the existing mergeFilledRegion dedupe (keyed on chunkHashes).
-        chunkHash: hashContentSync(`${newHash}|${start}-${end}|${slice}`).slice(0, SHORT_HASH_LEN),
-        tokens: countTokensSync(slice),
-        origin: 'refetch',
-        refetchedAtRound: currentRound,
-      });
-    } catch (e) {
-      console.warn('[executor] FileView region refill failed:', filePath, start, end, e);
-    }
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -2630,11 +2688,15 @@ export async function executeUnifiedBatch(
           );
         }
         backfillResolvedBodySpans(mergedParams, output);
+        const artifactForDeltas = (output.content && typeof output.content === 'object' && !Array.isArray(output.content))
+          ? output.content as Record<string, unknown>
+          : undefined;
         rebaseSubsequentSteps(mergedParams, stepsToRun, i + 1, hashAliasesForRebase, {
           rebaseReadOps: rebaseAllChangeOps,
+          artifact: artifactForDeltas,
         });
         // G3: rebase staged snippet line ranges as fallback before re-resolve
-        postEditDeltaMap = buildPerFileDeltaMap(mergedParams);
+        postEditDeltaMap = buildPerFileDeltaMap(mergedParams, artifactForDeltas);
         for (const [normPath, deltas] of postEditDeltaMap) {
           const netDelta = deltas.reduce((sum, d) => sum + d.delta, 0);
           if (netDelta !== 0) ctx.store().rebaseStagedLineNumbers(normPath, netDelta);

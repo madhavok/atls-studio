@@ -409,7 +409,14 @@ export interface ContextStoreApi {
        * `ReconcilePositionalDelta` from fileViewStore — keeping it inline
        * here avoids a types-file import cycle.
        */
-      positionalDeltas?: Array<{ line: number; delta: number; lineInclusive?: boolean }>;
+      positionalDeltas?: Array<{ line: number; delta: number; lineInclusive?: boolean; consumes?: number }>;
+      /**
+       * When true, reconcile chunks + staged snippets only; skip the
+       * FileView reconcile pass. Caller owns the view update path (e.g.
+       * `applyEditToFileView` with authoritative post-edit bytes). Avoids
+       * a transient fullBody-cleared state between reconcile and refill.
+       */
+      skipViewReconcile?: boolean;
     },
   ) => { source: string; revision: string; total: number; invalidated: number; updated: number; preserved: number; at: number };
   recordRevisionAdvance: (path: string, newRevision: string, cause: FreshnessCause, editSessionId?: string) => void;
@@ -567,6 +574,22 @@ export interface ContextStoreApi {
     chunkHash: string;
     totalLines?: number;
   }) => void;
+  /**
+   * Deterministic FileView refresh after an own-edit. Splices skeleton rows
+   * at rebased coordinates, refills filled regions from `newBody`, and
+   * updates `fullBody` when the view had one pre-edit — all in one pure
+   * pass. `deltas` carries per-anchor shifts (`consumes` marks delete
+   * ranges). Used by `refreshContextAfterEdit` as the single source of
+   * truth for post-edit view state. Returns true when a view existed and
+   * was updated.
+   */
+  applyEditToFileView: (params: {
+    filePath: string;
+    sourceRevision: string;
+    newBody: string;
+    deltas: Array<{ line: number; delta: number; lineInclusive?: boolean; consumes?: number }>;
+    round: number;
+  }) => boolean;
 }
 
 // ---------------------------------------------------------------------------

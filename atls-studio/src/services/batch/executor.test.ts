@@ -25,7 +25,7 @@ vi.mock('./handlers/session', () => ({
   resetRecallBudget: () => {},
 }));
 
-import { executeUnifiedBatch, rebaseRegionsByDeltas, rebaseHashRefLineRange } from './executor';
+import { executeUnifiedBatch, rebaseRegionsByDeltas, rebaseHashRefLineRange, buildPerFileDeltaMap } from './executor';
 import type { PositionalDelta } from './executor';
 import { computeFileViewHashParts } from '../fileViewStore';
 import { AwarenessLevel } from './snapshotTracker';
@@ -3521,5 +3521,126 @@ describe('read-op rebase — change.edit rotates future read.lines coordinates (
 
     const r1 = readCalls[1];
     expect(r1?.lines).toBe('20-25');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// buildPerFileDeltaMap — edits_resolved backfill for hash-ref input shapes
+// ---------------------------------------------------------------------------
+
+describe('buildPerFileDeltaMap — edits_resolved backfill', () => {
+  it('returns empty deltas when le lacks line and no artifact is provided', () => {
+    // Regression lock: the `f:h:HASH:N` shape at `change.edit`'s request
+    // level means the executor's snapshot of `mergedParams.line_edits` has
+    // no `line` field (it's injected by `change.edit`'s internal
+    // `resolveEditOperation` into a fresh array). Without artifact backfill
+    // the delta map comes out empty and the FileView refresh sees zero
+    // shifts — sparse-sig skeletons stop rebasing on insert/delete.
+    const params = {
+      file: 'src/foo.ts',
+      line_edits: [{ action: 'insert_after', content: 'const x = 1;' }],
+    };
+    const map = buildPerFileDeltaMap(params);
+    expect(map.size).toBe(0);
+  });
+
+  it('backfills line from artifact.edits_resolved when le lacks line', () => {
+    // Same request, but now the artifact from the completed step carries
+    // `edits_resolved: [{resolved_line: 4, action: "insert_after", lines_affected: 2}]`.
+    // buildPerFileDeltaMap should pull `line: 4` from there and produce the
+    // correct +2 delta so downstream rebase (and FileView splice) works.
+    const params = {
+      file: 'src/foo.ts',
+      line_edits: [{ action: 'insert_after', content: 'const x = 1;\nconst y = 2;' }],
+    };
+    const artifact = {
+      drafts: [{ file: 'src/foo.ts', content_hash: 'h2', h: 'h2' }],
+      edits_resolved: [{ resolved_line: 4, action: 'insert_after', lines_affected: 2 }],
+    };
+    const map = buildPerFileDeltaMap(params, artifact);
+    const deltas = map.get('src/foo.ts');
+    expect(deltas).toEqual([{ line: 4, delta: 2, lineInclusive: false }]);
+  });
+
+  it('backfills batch_edits from per-file drafts[].edits_resolved', () => {
+    // batch_edits path: resolutions live nested inside each drafts[] entry,
+    // one array per edited file.
+    const params = {
+      mode: 'batch_edits',
+      edits: [
+        {
+          file: 'src/a.ts',
+          line_edits: [{ action: 'delete' }], // line missing — supplied via hash-ref
+        },
+        {
+          file: 'src/b.ts',
+          line_edits: [{ action: 'insert_before', content: 'new' }],
+        },
+      ],
+    };
+    const artifact = {
+      drafts: [
+        {
+          file: 'src/a.ts',
+          content_hash: 'hA2',
+          h: 'hA2',
+          edits_resolved: [{ resolved_line: 10, action: 'delete', lines_affected: 1 }],
+        },
+        {
+          file: 'src/b.ts',
+          content_hash: 'hB2',
+          h: 'hB2',
+          edits_resolved: [{ resolved_line: 3, action: 'insert_before', lines_affected: 1 }],
+        },
+      ],
+    };
+    const map = buildPerFileDeltaMap(params, artifact);
+    expect(map.get('src/a.ts')).toEqual([
+      { line: 10, delta: -1, lineInclusive: false, consumes: 1 },
+    ]);
+    expect(map.get('src/b.ts')).toEqual([
+      { line: 3, delta: 1, lineInclusive: true },
+    ]);
+  });
+
+  it('preserves explicit line when le already has one (backfill is no-op)', () => {
+    // When the model supplied `line` directly, we must NOT overwrite with
+    // resolved_line — they'd agree in the simple case but the explicit form
+    // is authoritative for the request.
+    const params = {
+      file: 'src/keep.ts',
+      line_edits: [{ line: 5, action: 'replace', content: 'new', end_line: 5 }],
+    };
+    const artifact = {
+      edits_resolved: [{ resolved_line: 5, action: 'replace', lines_affected: 1 }],
+    };
+    const map = buildPerFileDeltaMap(params, artifact);
+    // Zero delta for same-length replace; net result is an empty map (correct).
+    expect(map.size).toBe(0);
+  });
+
+  it('dual-keys by raw source param AND resolved path for hash-ref inputs', () => {
+    // The live bug: `ce f:"h:ab09b8:4" le:[{action:"insert_after",content:"..."}]`
+    // leaves `mergedParams.f = "h:ab09b8:4"` — extractEditTargetFile returns
+    // that raw hash-ref, so the delta map got keyed by "h:ab09b8:4" and
+    // downstream `resolveDeltasForFile("fv-debug.ts", …)` missed. Result:
+    // FileView got empty deltas → sparse sig skeleton never rebased.
+    //
+    // Fix: also key by the artifact's resolved path (drafts[0].file) so
+    // lookups by edited-file path land on the same delta array.
+    const params = {
+      f: 'h:ab09b8:4',
+      line_edits: [{ action: 'insert_after', content: 'const y = 2;\nconst z = 3;' }],
+    };
+    const artifact = {
+      drafts: [{ file: 'fv-debug.ts', content_hash: 'h2', h: 'h:h2', old_h: 'h:ab09b8' }],
+      edits_resolved: [{ resolved_line: 4, action: 'insert_after', lines_affected: 2 }],
+    };
+    const map = buildPerFileDeltaMap(params, artifact);
+    // The raw-ref key lands (legacy / intra-batch rebase consumers).
+    expect(map.get('h:ab09b8:4')).toEqual([{ line: 4, delta: 2, lineInclusive: false }]);
+    // The resolved-path key ALSO lands — this is what `resolveDeltasForFile`
+    // looks up from `collectEditedFiles` (which pulls file paths from drafts).
+    expect(map.get('fv-debug.ts')).toEqual([{ line: 4, delta: 2, lineInclusive: false }]);
   });
 });

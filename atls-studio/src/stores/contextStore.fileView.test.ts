@@ -1015,6 +1015,379 @@ describe('FileView stable identity across own-edits', () => {
     expect(useContextStore.getState().isPinnedFileViewRef(`h:${stableShort}`)).toBe(true);
   });
 
+  it('REPRO transcript flow: rf(full) then N sequential edits — fullBody reflects latest content', () => {
+    // Transcript scenario: create file → rf type:full → 3 sequential edits
+    // (replace, delete, insert_after) → multi-region edit. Final view should
+    // render post-edit content. The transcript showed ORIGINAL content
+    // instead — this test pins down whether the store-level contract holds.
+    const store = useContextStore.getState();
+    const path = 'test-edit-ops.txt';
+    const revInit = 'revinit1';
+    const bodyInit = [
+      'Line 1: Hello World',
+      'Line 2: This is a test file',
+      'Line 3: For testing edit operations',
+      'Line 4: Replace me',
+      'Line 5: Delete me',
+      'Line 6: Keep me',
+      'Line 7: Insert after me',
+      'Line 8: Final line',
+    ].join('\n');
+
+    // Simulate rf type:full: addChunk with readSpan contextType='full'.
+    // This is what ingestStandardContextItems does for `rf type:full` reads.
+    store.addChunk(
+      bodyInit, 'raw', path, undefined, undefined, revInit,
+      {
+        sourceRevision: revInit,
+        viewKind: 'latest',
+        readSpan: { filePath: path, sourceRevision: revInit, contextType: 'full' },
+      },
+    );
+    // Then auto-pin like autoPinViewAfterRead does.
+    useContextStore.getState().setFileViewPinned(path, true);
+
+    // Simulate a seeded skeleton (ensureFileViewSkeleton runs async after
+    // read; for plain-text files sig may return the whole file as rows).
+    // This is the path where the bug shows up — if fullBody gets cleared
+    // and not restored, the render falls back to these skeleton rows.
+    const skeletonRows = bodyInit.split('\n').map((l, i) => `${String(i + 1).padStart(4)}|${l}`);
+    useContextStore.setState(state => {
+      const next = new Map(state.fileViews);
+      const view = next.get(path);
+      if (view) next.set(path, { ...view, skeletonRows, totalLines: 8 });
+      return { fileViews: next };
+    });
+
+    const v0 = useContextStore.getState().getFileView(path)!;
+    expect(v0.fullBody).toBe(bodyInit);
+    expect(v0.skeletonRows.length).toBe(8);
+
+    // Executor's refreshContextAfterEdit flow — one deterministic call
+    // per edit with the positional deltas the executor already computed
+    // from line_edits. No fullBody-clear-then-restore dance, no reconcile.
+    const applyEdit = (newRev: string, newBody: string, deltas: Array<{ line: number; delta: number; lineInclusive?: boolean; consumes?: number }>): void => {
+      useContextStore.getState().addChunk(
+        newBody, 'file', path, undefined, undefined, newRev,
+        { sourceRevision: newRev, origin: 'edit-refresh', viewKind: 'latest' },
+      );
+      useContextStore.getState().reconcileSourceRevision(
+        path, newRev, 'same_file_prior_edit',
+        { postEditResolved: true, skipViewReconcile: true },
+      );
+      useContextStore.getState().applyEditToFileView({
+        filePath: path,
+        sourceRevision: newRev,
+        newBody,
+        deltas,
+        round: 1,
+      });
+    };
+
+    // Round 4 batch: e1 replace L4, e2 delete L5, e3 insert_after L7.
+    //   e1: replace in-place (0 delta)
+    const bodyAfterE1 = bodyInit.replace('Line 4: Replace me', 'Line 4: I have been REPLACED!');
+    applyEdit('rev-e1', bodyAfterE1, []);
+    const v1 = useContextStore.getState().getFileView(path)!;
+    expect(v1.fullBody).toBe(bodyAfterE1);
+
+    //   e2: delete L5 (-1 delta at anchor 5; consumes: 1 → row at L5 drops)
+    const bodyAfterE2 = bodyAfterE1.split('\n').filter(l => l !== 'Line 5: Delete me').join('\n');
+    applyEdit('rev-e2', bodyAfterE2, [{ line: 5, delta: -1, consumes: 1 }]);
+    const v2 = useContextStore.getState().getFileView(path)!;
+    expect(v2.fullBody).toBe(bodyAfterE2);
+
+    //   e3: insert_after request targets the current L6 ("Line 7: Insert after me",
+    //   post-e2 state). Executor emits {line: 6, delta: +1, lineInclusive: false}.
+    const bodyAfterE3 = (() => {
+      const rows = bodyAfterE2.split('\n');
+      const idx = rows.indexOf('Line 7: Insert after me');
+      rows.splice(idx + 1, 0, 'Line 7.5: I was INSERTED after line 7');
+      return rows.join('\n');
+    })();
+    applyEdit('rev-e3', bodyAfterE3, [{ line: 6, delta: +1 }]);
+    const v3 = useContextStore.getState().getFileView(path)!;
+    expect(v3.fullBody).toBe(bodyAfterE3);
+
+    // Round 5 multi-region edit e4: replace current L1, L6, L8 all in-place
+    // (0 net delta). By now the post-e3 file has different CONTENT at
+    // those lines than the original — replace by index, not by content.
+    const bodyAfterE4 = (() => {
+      const rows = bodyAfterE3.split('\n');
+      rows[0] = 'Line 1: CHANGED A'; // L1
+      rows[5] = 'Line 6: CHANGED B'; // L6
+      rows[7] = 'Line 8: CHANGED C'; // L8
+      return rows.join('\n');
+    })();
+    applyEdit('rev-e4', bodyAfterE4, []);
+    const v4 = useContextStore.getState().getFileView(path)!;
+    expect(v4.fullBody).toBe(bodyAfterE4);
+
+    // Skeleton also tracked post-edit state — splice keeps it fresh.
+    // Final skeleton rows derive from bodyAfterE4, 1-indexed.
+    const finalLines = bodyAfterE4.split('\n');
+    expect(v4.skeletonRows.length).toBe(finalLines.length);
+    v4.skeletonRows.forEach((row, i) => {
+      expect(row).toBe(`${String(i + 1).padStart(4)}|${finalLines[i]}`);
+    });
+    // Identity stability (path-derived) — shortHash never rotates.
+    expect(v4.shortHash).toBe(v0.shortHash);
+  });
+
+  it('sparse sig skeleton survives edit — rows stay put, inserts don\'t add rows', () => {
+    // Code-file flow: sig shape gives a sparse skeleton (one row per
+    // signature + fold marker). An edit inside a body must not corrupt the
+    // skeleton — signatures keep their line numbers (shifted), folds
+    // rebase, nothing new gets synthesized.
+    const store = useContextStore.getState();
+    const path = 'src/foo.ts';
+    const revInit = 'revsigskel';
+    const bodyInit = [
+      'import { x } from "./x";', // L1
+      '',                          // L2
+      'export function alpha(): number {', // L3
+      '  return 1;',               // L4
+      '}',                         // L5
+      '',                          // L6
+      'export function beta(): string {', // L7
+      '  return "b";',             // L8
+      '}',                         // L9
+    ].join('\n');
+    // Sparse skeleton: imports + 2 signatures with fold markers.
+    const sparseSkeleton = [
+      '   1|import { x } from "./x";',
+      '   3|export function alpha(): number { ... } [3-5]',
+      '   7|export function beta(): string { ... } [7-9]',
+    ];
+
+    store.addChunk(
+      bodyInit, 'raw', path, undefined, undefined, revInit,
+      {
+        sourceRevision: revInit,
+        viewKind: 'latest',
+        readSpan: { filePath: path, sourceRevision: revInit, contextType: 'full' },
+      },
+    );
+    useContextStore.getState().setFileViewPinned(path, true);
+    useContextStore.setState(state => {
+      const next = new Map(state.fileViews);
+      const v = next.get(path);
+      if (v) next.set(path, { ...v, skeletonRows: sparseSkeleton, totalLines: 9, fullBody: undefined });
+      return { fileViews: next };
+    });
+
+    // Edit: insert_after L4 with 2 new lines (inside alpha body).
+    // Post-edit body has 11 lines. alpha's fold should expand to [3-7];
+    // beta's fold shifts to [9-11]. Skeleton row count stays 3 (sparse).
+    const bodyAfterEdit = [
+      'import { x } from "./x";',
+      '',
+      'export function alpha(): number {',
+      '  return 1;',
+      '  const y = 2;',
+      '  const z = 3;',
+      '}',
+      '',
+      'export function beta(): string {',
+      '  return "b";',
+      '}',
+    ].join('\n');
+    const rev2 = 'revsigskel2';
+    useContextStore.getState().addChunk(
+      bodyAfterEdit, 'file', path, undefined, undefined, rev2,
+      { sourceRevision: rev2, origin: 'edit-refresh', viewKind: 'latest' },
+    );
+    useContextStore.getState().reconcileSourceRevision(
+      path, rev2, 'same_file_prior_edit',
+      { postEditResolved: true, skipViewReconcile: true },
+    );
+    useContextStore.getState().applyEditToFileView({
+      filePath: path,
+      sourceRevision: rev2,
+      newBody: bodyAfterEdit,
+      deltas: [{ line: 4, delta: +2 }], // insert_after L4 adds 2 lines
+      round: 1,
+    });
+
+    const v = useContextStore.getState().getFileView(path)!;
+    // Sparse skeleton stays 3 rows (no synthesis of new signature rows).
+    expect(v.skeletonRows.length).toBe(3);
+    expect(v.skeletonRows[0]).toBe('   1|import { x } from "./x";');
+    // alpha's fold rebased: signature line unchanged (L3), fold end shifts +2 → [3-7].
+    expect(v.skeletonRows[1]).toContain('   3|');
+    expect(v.skeletonRows[1]).toContain('[3-7]');
+    // beta's signature shifts L7 → L9; fold [7-9] → [9-11].
+    expect(v.skeletonRows[2]).toContain('   9|');
+    expect(v.skeletonRows[2]).toContain('[9-11]');
+    expect(v.totalLines).toBe(11);
+  });
+
+  it('E2E sparse-sig insert via f:h:HASH:N hash-ref shape — deltas backfill from edits_resolved, skeleton rebases', async () => {
+    // This is the bug observed live: rs shape:sig → ce f:h:HASH:4 le:[{action:"insert_after",content:"..."}]
+    // The le entry lacks `line` (it's on the hash-ref). mergedParams.line_edits the executor sees
+    // stays without `line`, so buildPerFileDeltaMap used to emit zero deltas → skeleton didn't
+    // rebase → alpha's fold stayed stale at [3-5] and beta's signature line stayed at 7.
+    //
+    // This test drives buildPerFileDeltaMap with the EXACT shape the executor receives after
+    // the change.edit handler runs (artifact contains edits_resolved; mergedParams.line_edits
+    // still lacks `line`). The fix backfills from artifact.edits_resolved[i].resolved_line.
+    const { buildPerFileDeltaMap } = await import('../services/batch/executor');
+
+    const store = useContextStore.getState();
+    const path = 'src/sparsesig.ts';
+    const revInit = 'revsparse1';
+    const bodyInit = [
+      'import { x } from "./x";',          // L1
+      '',                                   // L2
+      'export function alpha(): number {', // L3
+      '  return 1;',                        // L4
+      '}',                                  // L5
+      '',                                   // L6
+      'export function beta(): string {',  // L7
+      '  return "b";',                      // L8
+      '}',                                  // L9
+    ].join('\n');
+    const sparseSkeleton = [
+      '   1|import { x } from "./x";',
+      '   3|export function alpha(): number { ... } [3-5]',
+      '   7|export function beta(): string { ... } [7-9]',
+    ];
+    store.addChunk(
+      bodyInit, 'raw', path, undefined, undefined, revInit,
+      {
+        sourceRevision: revInit,
+        viewKind: 'latest',
+        readSpan: { filePath: path, sourceRevision: revInit, contextType: 'full' },
+      },
+    );
+    useContextStore.getState().setFileViewPinned(path, true);
+    useContextStore.setState(state => {
+      const next = new Map(state.fileViews);
+      const v = next.get(path);
+      if (v) next.set(path, { ...v, skeletonRows: sparseSkeleton, totalLines: 9, fullBody: undefined });
+      return { fileViews: next };
+    });
+
+    // mergedParams as the executor sees them — the `f:h:HASH:4` hash-ref
+    // shape means `line_edits[0].line` is ABSENT at this layer. Only after
+    // the change.edit handler's `resolveEditOperation` runs does `line: 4`
+    // get injected into its own local copy — but that doesn't flow back.
+    const mergedParams = {
+      file: path,
+      line_edits: [
+        { action: 'insert_after', content: '  const y = 2;\n  const z = 3;' },
+      ],
+    };
+    // The artifact from the completed backend call — includes edits_resolved
+    // with the resolved_line the Rust backend computed.
+    const artifact = {
+      drafts: [{ file: path, content_hash: 'rev2', h: 'h:rev2' }],
+      edits_resolved: [{ resolved_line: 4, action: 'insert_after', lines_affected: 2 }],
+    };
+
+    const deltaMap = buildPerFileDeltaMap(mergedParams, artifact);
+    const deltas = deltaMap.get(path);
+    // WITHOUT the fix: deltas === undefined → skeleton doesn't shift → bug.
+    // WITH the fix: deltas === [{line:4, delta:+2, lineInclusive:false}] → skeleton shifts.
+    expect(deltas).toBeDefined();
+    expect(deltas).toEqual([{ line: 4, delta: 2, lineInclusive: false }]);
+
+    // Now run the full post-edit refresh with those deltas — this is what
+    // refreshContextAfterEdit does when it calls applyEditToFileView.
+    const bodyAfterEdit = [
+      'import { x } from "./x";',
+      '',
+      'export function alpha(): number {',
+      '  return 1;',
+      '  const y = 2;',
+      '  const z = 3;',
+      '}',
+      '',
+      'export function beta(): string {',
+      '  return "b";',
+      '}',
+    ].join('\n');
+    useContextStore.getState().addChunk(
+      bodyAfterEdit, 'file', path, undefined, undefined, 'rev2',
+      { sourceRevision: 'rev2', origin: 'edit-refresh', viewKind: 'latest' },
+    );
+    useContextStore.getState().reconcileSourceRevision(
+      path, 'rev2', 'same_file_prior_edit',
+      { postEditResolved: true, skipViewReconcile: true },
+    );
+    useContextStore.getState().applyEditToFileView({
+      filePath: path,
+      sourceRevision: 'rev2',
+      newBody: bodyAfterEdit,
+      deltas: deltas ?? [],
+      round: 1,
+    });
+
+    const v = useContextStore.getState().getFileView(path)!;
+    expect(v.totalLines).toBe(11);
+    expect(v.skeletonRows.length).toBe(3);
+    expect(v.skeletonRows[0]).toBe('   1|import { x } from "./x";');
+    // alpha fold: [3-5] → [3-7] after the +2 insert inside the body.
+    expect(v.skeletonRows[1]).toContain('   3|');
+    expect(v.skeletonRows[1]).toContain('[3-7]');
+    // beta signature: L7 → L9; fold [7-9] → [9-11].
+    expect(v.skeletonRows[2]).toMatch(/^ {3}9\|/);
+    expect(v.skeletonRows[2]).toContain('[9-11]');
+  });
+
+  it('delete drops the row at the deleted line AND shifts rows below', () => {
+    // Pin-down test for the `consumes` field on delete deltas — rows at
+    // the deleted line must drop, not stay in place and collide with the
+    // shifted-up neighbor. This is the core bug the splice path fixes.
+    const store = useContextStore.getState();
+    const path = 'delete-one.txt';
+    const rev1 = 'revdel1';
+    const body1 = ['alpha', 'beta', 'gamma', 'delta'].join('\n');
+    store.addChunk(
+      body1, 'raw', path, undefined, undefined, rev1,
+      {
+        sourceRevision: rev1,
+        viewKind: 'latest',
+        readSpan: { filePath: path, sourceRevision: rev1, contextType: 'full' },
+      },
+    );
+    useContextStore.getState().setFileViewPinned(path, true);
+    const denseSkel = body1.split('\n').map((l, i) => `${String(i + 1).padStart(4)}|${l}`);
+    useContextStore.setState(state => {
+      const next = new Map(state.fileViews);
+      const v = next.get(path);
+      if (v) next.set(path, { ...v, skeletonRows: denseSkel, totalLines: 4 });
+      return { fileViews: next };
+    });
+
+    // Delete L2 ("beta"). Result: ['alpha', 'gamma', 'delta']
+    const body2 = ['alpha', 'gamma', 'delta'].join('\n');
+    const rev2 = 'revdel2';
+    useContextStore.getState().addChunk(
+      body2, 'file', path, undefined, undefined, rev2,
+      { sourceRevision: rev2, origin: 'edit-refresh', viewKind: 'latest' },
+    );
+    useContextStore.getState().reconcileSourceRevision(
+      path, rev2, 'same_file_prior_edit',
+      { postEditResolved: true, skipViewReconcile: true },
+    );
+    useContextStore.getState().applyEditToFileView({
+      filePath: path,
+      sourceRevision: rev2,
+      newBody: body2,
+      deltas: [{ line: 2, delta: -1, consumes: 1 }],
+      round: 1,
+    });
+
+    const v = useContextStore.getState().getFileView(path)!;
+    expect(v.totalLines).toBe(3);
+    expect(v.skeletonRows).toEqual([
+      '   1|alpha',
+      '   2|gamma',
+      '   3|delta',
+    ]);
+  });
+
   it('applyFillFromChunk at a new revision keeps the same shortHash', () => {
     // The rebuild-at-new-revision branch used to rotate the shortHash and
     // push the old one onto the chain. With path-derived identity there's

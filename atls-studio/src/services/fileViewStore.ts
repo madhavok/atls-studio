@@ -13,26 +13,25 @@
  *
  * ## Post-edit statefulness contract
  *
- * FileView is **stateful across own-edits** — the runtime (executor's
- * `refreshContextAfterEdit`) refills the view with authoritative post-edit
- * content at rebased coordinates before the next prompt render, so the model
- * does not re-read files it just edited. Delivery is split:
+ * FileView is **stateful across own-edits**. Every `change.edit` reports
+ * `edits_resolved[]` (resolved_line + action + lines_affected) and the
+ * executor computes `PositionalDelta[]` from the request's `line_edits`;
+ * combined with `resolve_hash_ref('h:<newHash>')` giving the authoritative
+ * post-edit body, the view can be refreshed in ONE deterministic pass:
  *
- *   1. {@link reconcileFileView} with `postEditResolved: true` — advances
- *      `sourceRevision`, rebases line numbers via `freshnessJournal`,
- *      appends the old `shortHash` to `previousShortHashes`, and skips
- *      `pendingRefetches` (the caller is about to refill).
- *   2. The runtime then re-slices each surviving region from the resolved
- *      new body and calls `applyFillFromChunk(origin: 'refetch',
- *      refetchedAtRound)` — `mergeFilledRegion` dedupes/overwrites so
- *      regions end up with true post-edit bytes at true post-edit lines.
- *   3. `wasFullBody` views get `applyFullBodyFromChunk` with the new
- *      content; slice views stay slice views (no auto-promotion on own-
- *      edit).
+ *   {@link applyEditToFileView} — splices skeleton rows at shifted
+ *   coordinates, rebases + refills filled regions from the new body,
+ *   and updates `fullBody` when the view had one pre-edit. Dense
+ *   skeletons (plain text / line-per-line) regenerate from `newBody`;
+ *   sparse skeletons (code sig / fold) rebase existing rows and their
+ *   fold markers without synthesizing new signatures. `consumes` on
+ *   the delta marks deletion ranges so deleted-line rows drop instead
+ *   of colliding with the shifted-up neighbor.
  *
  * Callers who do NOT have authoritative post-edit content (external file
- * changes, session restore) omit `postEditResolved` — pinned views then
- * queue `pendingRefetches` so the caller can refetch asynchronously.
+ * changes, session restore) go through {@link reconcileFileView} — it
+ * clears `fullBody` and queues `pendingRefetches` on pinned views so the
+ * caller can refetch asynchronously.
  *
  * ## Stable identity (path-derived)
  *
@@ -376,6 +375,16 @@ export interface ReconcilePositionalDelta {
   line: number;
   delta: number;
   lineInclusive?: boolean;
+  /**
+   * Number of OLD lines consumed (removed) by this edit starting at `line`.
+   * When set and > 0, rows / regions whose old line falls in
+   * `[line, line + consumes - 1]` are DROPPED rather than shifted. This is
+   * what distinguishes `delete N lines` (dropped) from `replace N lines with M`
+   * (content changes but line numbers stay). Populated only for `delete` —
+   * `replace`, `insert_*`, and `replace_body` leave it undefined so rows in
+   * the target range survive and get their content re-derived from `newBody`.
+   */
+  consumes?: number;
 }
 
 export interface ReconcileInputs {
@@ -601,6 +610,235 @@ export function reconcileFileView(
     refetchRequests,
     rebaseFailures,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Deterministic own-edit refresh — apply post-edit bytes at exact line coords
+// ---------------------------------------------------------------------------
+
+/**
+ * Inputs for {@link applyEditToFileView}. The caller (executor's
+ * `refreshContextAfterEdit`) supplies authoritative post-edit content plus
+ * the positional deltas derived from `line_edits`, so the view updates
+ * deterministically — no reconcile/clear/restore round trip.
+ */
+export interface ApplyEditInputs {
+  /** New `content_hash` (source revision) for the file after the edit. */
+  sourceRevision: string;
+  /** Authoritative post-edit body bytes (from `resolve_hash_ref`). */
+  newBody: string;
+  /**
+   * Per-anchor shifts introduced by the edit (same shape used by
+   * `rebaseRegionsByDeltas` / `applyDeltasToLineEdits`). Lines above the
+   * anchor stay put; lines at/below shift by the cumulative delta.
+   * Empty array is valid — means content-only edit (e.g. single-line replace).
+   */
+  deltas: ReconcilePositionalDelta[];
+  /** Round number for marker bookkeeping on refilled regions. */
+  round: number;
+}
+
+/**
+ * Deterministic FileView refresh for a same-file edit.
+ *
+ * Contract (the user's mental model): for every `line_edit` we already know
+ * which line moved and by how much — translate that directly into the view.
+ * No fullBody-clear-then-restore dance, no pendingRefetches queue, no
+ * positional-delta plumbing through reconcileFileView.
+ *
+ * Shape of the transform:
+ *   1. Each skeleton row's line number rebase by the deltas. Rows whose
+ *      rebased line falls outside the new body drop; survivors re-derive
+ *      their content from `newBody` at the new coords. Embedded fold
+ *      markers `[A-B]` rebase by the same deltas so folded signature
+ *      boundaries track the shift.
+ *   2. Each `filledRegion` rebase + refill from `newBody`. Content is
+ *      re-sliced at the new coords so the region carries post-edit bytes
+ *      (no stale snapshot). `origin: 'refetch'` + `refetchedAtRound` drive
+ *      the ephemeral `[edited L..-.. this round]` marker.
+ *   3. `fullBody` follows the reader's choice — if the view had one before
+ *      the edit, it's replaced with `newBody`; if not, it stays undefined.
+ *
+ * Pure function. No side effects, no freshness-journal reads — the caller
+ * owns all observable state.
+ */
+export function applyEditToFileView(
+  view: FileView,
+  inputs: ApplyEditInputs,
+): FileView {
+  const { sourceRevision, newBody, deltas, round } = inputs;
+
+  const newLines = newBody.length === 0 ? [] : newBody.split('\n');
+  const totalLines = newLines.length;
+
+  /**
+   * Compute `{ newLine, dropped }` for an old line number by walking the
+   * edit deltas once. Drops when the line falls into any delete's consumed
+   * range [edit.line, edit.line + edit.consumes - 1]. Inserts and replaces
+   * with `consumes` unset only shift — rows in a replace range survive at
+   * the same (possibly shifted) line number with content from `newBody`.
+   */
+  const mapLine = (oldLine: number, inclusive: boolean): { newLine: number; dropped: boolean } => {
+    let shift = 0;
+    for (const d of deltas) {
+      if (d.consumes && d.consumes > 0) {
+        const rangeEnd = d.line + d.consumes - 1;
+        if (oldLine >= d.line && oldLine <= rangeEnd) {
+          return { newLine: -1, dropped: true };
+        }
+        if (oldLine > rangeEnd) shift += d.delta;
+        // else: oldLine < d.line → unaffected by this delete.
+      } else {
+        if (inclusive ? d.line <= oldLine : d.line < oldLine) shift += d.delta;
+      }
+    }
+    return { newLine: oldLine + shift, dropped: false };
+  };
+
+  const padLine = (n: number): string => String(n).padStart(4);
+
+  // ---- Skeleton rows ----
+  // Dense skeleton (one row per source line — plain text / fallback path):
+  // regenerate from newBody line-by-line. The mapping-by-delta path can't
+  // synthesize rows for INSERTED lines; dense shape needs every line to
+  // have a row. Detection: old skeleton had one row per old-line count.
+  let nextSkeleton: string[];
+  const wasDense =
+    view.totalLines > 0 && view.skeletonRows.length === view.totalLines;
+  if (wasDense) {
+    nextSkeleton = newLines.map((content, i) => `${padLine(i + 1)}|${content}`);
+  } else {
+    // Sparse skeleton (code `sig` / `fold`): rebase existing rows, drop
+    // deleted, shift others. Don't synthesize new rows for inserted lines
+    // — those aren't signatures unless the caller later reruns sig
+    // extraction.
+    nextSkeleton = [];
+    for (const row of view.skeletonRows) {
+      const oldLine = parseSkeletonLineNumber(row);
+      if (oldLine == null) {
+        // Non-numbered row (rare — e.g. a section header). Pass through.
+        nextSkeleton.push(row);
+        continue;
+      }
+      const mapped = mapLine(oldLine, /* inclusive */ false);
+      if (mapped.dropped) continue;
+      const { newLine } = mapped;
+      if (newLine < 1 || newLine > totalLines) continue; // shifted outside new body
+
+      // Preserve fold markers if present; rebase their bounds.
+      const fold = parseFoldSuffix(row);
+      const contentAtNewLine = newLines[newLine - 1] ?? '';
+      if (fold) {
+        const foldStartMapped = mapLine(fold.start, /* inclusive */ false);
+        const foldEndMapped = mapLine(fold.end, /* inclusive */ false);
+        const foldStart = foldStartMapped.dropped
+          ? -1
+          : Math.max(1, foldStartMapped.newLine);
+        const foldEnd = foldEndMapped.dropped
+          ? -1
+          : Math.min(totalLines, foldEndMapped.newLine);
+        if (foldStart > 0 && foldEnd >= foldStart) {
+          const bodyNoFold = stripFoldSuffix(contentAtNewLine);
+          nextSkeleton.push(
+            `${padLine(newLine)}|${bodyNoFold} [${foldStart}-${foldEnd}]`,
+          );
+          continue;
+        }
+      }
+      nextSkeleton.push(`${padLine(newLine)}|${contentAtNewLine}`);
+    }
+  }
+
+  // ---- Filled regions ----
+  const nextRegions: FilledRegion[] = [];
+  const rebaseFailures: Array<{ start: number; end: number }> = [];
+  for (const region of view.filledRegions) {
+    const startMapped = mapLine(region.start, /* inclusive */ false);
+    const endMapped = mapLine(region.end, /* inclusive */ false);
+    // If either endpoint was deleted, surface a [REMOVED] marker and drop.
+    if (startMapped.dropped || endMapped.dropped
+        || endMapped.newLine < startMapped.newLine
+        || startMapped.newLine < 1 || endMapped.newLine > totalLines) {
+      rebaseFailures.push({ start: region.start, end: region.end });
+      continue;
+    }
+    const newStart = startMapped.newLine;
+    const newEnd = endMapped.newLine;
+    // Refill content from the post-edit body at rebased coordinates.
+    const parts: string[] = [];
+    for (let n = newStart; n <= newEnd; n++) {
+      parts.push(`${padLine(n)}|${newLines[n - 1] ?? ''}`);
+    }
+    const refilled = parts.join('\n');
+    nextRegions.push({
+      ...region,
+      start: newStart,
+      end: newEnd,
+      content: refilled,
+      origin: 'refetch',
+      refetchedAtRound: round,
+      tokens: countTokensSync(refilled),
+    });
+  }
+
+  // ---- Full body ----
+  // Preserve the reader's shape choice: only keep fullBody if it was set
+  // before. Updating it to the post-edit bytes gives sig-view readers a
+  // faithful regeneration on disk while full-view readers stay full.
+  const hadFullBody = view.fullBody !== undefined;
+  const nextFullBody = hadFullBody ? newBody : undefined;
+  const nextFullBodyChunkHash = hadFullBody ? sourceRevision : undefined;
+  const nextFullBodyOrigin = hadFullBody ? view.fullBodyOrigin ?? 'read' : undefined;
+
+  const { hash, shortHash } = computeFileViewHashParts(view.filePath, sourceRevision);
+  const nextPreviousShortHashes = view.shortHash === shortHash
+    ? view.previousShortHashes
+    : appendPreviousShortHash(view.previousShortHashes, view.shortHash);
+
+  return {
+    ...view,
+    sourceRevision,
+    observedRevision: sourceRevision,
+    totalLines,
+    skeletonRows: nextSkeleton,
+    filledRegions: nextRegions,
+    fullBody: nextFullBody,
+    fullBodyChunkHash: nextFullBodyChunkHash,
+    fullBodyOrigin: nextFullBodyOrigin,
+    hash,
+    shortHash,
+    previousShortHashes: nextPreviousShortHashes,
+    freshness: 'fresh',
+    freshnessCause: 'same_file_prior_edit',
+    pendingRefetches: undefined,
+    removedMarkers: rebaseFailures.length > 0
+      ? [...(view.removedMarkers ?? []), ...rebaseFailures]
+      : view.removedMarkers,
+    lastAccessed: Date.now(),
+  };
+}
+
+/** Parse `N|CONTENT` prefix and return the 1-based line number. */
+function parseSkeletonLineNumber(row: string): number | null {
+  const m = /^\s*(\d+)\|/.exec(row);
+  if (!m) return null;
+  const n = parseInt(m[1], 10);
+  return Number.isFinite(n) ? n : null;
+}
+
+/** Parse a trailing `[A-B]` fold marker; returns null when absent. */
+function parseFoldSuffix(row: string): { start: number; end: number } | null {
+  const m = /\[(\d+)-(\d+)\]\s*$/.exec(row);
+  if (!m) return null;
+  const start = parseInt(m[1], 10);
+  const end = parseInt(m[2], 10);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) return null;
+  return { start, end };
+}
+
+/** Strip a trailing `[A-B]` fold marker from a row's content body (preserves prefix). */
+function stripFoldSuffix(content: string): string {
+  return content.replace(/\s*\[\d+-\d+\]\s*$/, '');
 }
 
 /**
