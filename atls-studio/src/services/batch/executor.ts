@@ -24,6 +24,7 @@ import { stepOutputToResult } from './resultFormatter';
 import { resetRecallBudget } from './handlers/session';
 import { SnapshotTracker, AwarenessLevel, canonicalizeSnapshotHash } from './snapshotTracker';
 import { recordForwarding as manifestRecordForwarding } from '../hashManifest';
+import { computeFileViewHashParts } from '../fileViewStore';
 import { getTurn as hppGetTurn } from '../hashProtocol';
 import type { LineRegion } from './snapshotTracker';
 import { parseHashRef } from '../../utils/hashRefParsers';
@@ -893,6 +894,11 @@ function rebaseSubsequentSteps(
  * hash the model is most likely to cite in a subsequent step is still
  * resolvable. Includes both `snapshotHash` and (when present) `canonicalHash`
  * so shaped reads which produce derived hashes still resolve to the file.
+ *
+ * Also maps **FileView retention** short hashes (`computeFileViewHashParts(path,
+ * revision).shortHash`) → path. After UHPP, fences emit that retention `h:<RET>`
+ * while the tracker records cite `content_hash`; without this entry,
+ * `resolveFileKeyForRebaseLookup` misses and intra-batch line rebasing skips.
  */
 function captureHashAliases(tracker: SnapshotTracker): Map<string, string> {
   const aliases = new Map<string, string>();
@@ -901,8 +907,76 @@ function captureHashAliases(tracker: SnapshotTracker): Map<string, string> {
     if (id.canonicalHash && id.canonicalHash !== id.snapshotHash) {
       aliases.set(id.canonicalHash, id.filePath);
     }
+    const rev = id.canonicalHash ?? id.snapshotHash;
+    if (rev && id.filePath) {
+      try {
+        const { shortHash } = computeFileViewHashParts(id.filePath, rev);
+        if (shortHash) aliases.set(shortHash, id.filePath);
+      } catch {
+        // best-effort — malformed path/revision should not break alias capture
+      }
+    }
   }
   return aliases;
+}
+
+/** Pre-`invalidateAndRerecord` cite snapshot per file (normalized path → bare hash). */
+function capturePathToPreMutationCite(tracker: SnapshotTracker): Map<string, string> {
+  const m = new Map<string, string>();
+  for (const [, id] of tracker.entries()) {
+    m.set(normalizePathForRebase(id.filePath), id.snapshotHash);
+  }
+  return m;
+}
+
+/**
+ * Rewrite `f`/`file`/`file_path` values that use a FileView **retention** short
+ * hash to the pre-mutation **cite** hash (same line/shape suffix). Retention
+ * ids are not registered in the Rust forward map; cite ids are. Line-range
+ * rebasing (`rebaseSubsequentSteps`) still keys off the cite hash like before
+ * UHPP.
+ */
+function rewriteFileViewRetentionRefsToCite(
+  stepsToRun: Array<{ id: string; use: string; with?: Record<string, unknown> }>,
+  startIndex: number,
+  hashAliases: ReadonlyMap<string, string>,
+  pathToPreMutationCite: ReadonlyMap<string, string>,
+): void {
+  const keys = ['f', 'file', 'file_path'] as const;
+  const rewriteObject = (obj: Record<string, unknown>) => {
+    for (const key of keys) {
+      const v = obj[key];
+      if (typeof v !== 'string' || !v.startsWith('h:')) continue;
+      const bare = canonicalizeSnapshotHash(v);
+      if (!bare) continue;
+      const path = hashAliases.get(bare);
+      if (!path) continue;
+      const oldCite = pathToPreMutationCite.get(normalizePathForRebase(path));
+      if (!oldCite || bare === oldCite) continue;
+      let viewShort: string;
+      try {
+        viewShort = computeFileViewHashParts(path, oldCite).shortHash;
+      } catch {
+        continue;
+      }
+      if (bare !== viewShort) continue;
+      const stripped = v.slice(2);
+      const colon = stripped.indexOf(':');
+      const suffix = colon >= 0 ? stripped.slice(colon) : '';
+      obj[key] = `h:${oldCite}${suffix}`;
+    }
+  };
+
+  for (let j = startIndex; j < stepsToRun.length; j++) {
+    const future = stepsToRun[j];
+    if (!future.with || !future.use.startsWith('change.')) continue;
+    rewriteObject(future.with);
+    if (Array.isArray(future.with.edits)) {
+      for (const ed of future.with.edits) {
+        if (ed && typeof ed === 'object') rewriteObject(ed as Record<string, unknown>);
+      }
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -2338,6 +2412,8 @@ export async function executeUnifiedBatch(
     );
     const hashAliasesForRebase: ReadonlyMap<string, string> =
       shouldCaptureAliases ? captureHashAliases(snapshotTracker) : new Map();
+    const pathToPreMutationCite: ReadonlyMap<string, string> =
+      shouldCaptureAliases ? capturePathToPreMutationCite(snapshotTracker) : new Map();
 
     // Record snapshot hashes from step output
     recordSnapshotFromOutput(step, output, snapshotTracker, ctx, policy);
@@ -2368,6 +2444,14 @@ export async function executeUnifiedBatch(
       // line_edits + resolved-body-span pipeline is change.edit-specific;
       // other change ops only need the hash-alias + read-op rebase pass.
       if (step.use === 'change.edit') {
+        if (hashAliasesForRebase.size > 0 && pathToPreMutationCite.size > 0) {
+          rewriteFileViewRetentionRefsToCite(
+            stepsToRun,
+            i + 1,
+            hashAliasesForRebase,
+            pathToPreMutationCite,
+          );
+        }
         backfillResolvedBodySpans(mergedParams, output);
         rebaseSubsequentSteps(mergedParams, stepsToRun, i + 1, hashAliasesForRebase, {
           rebaseReadOps: rebaseAllChangeOps,

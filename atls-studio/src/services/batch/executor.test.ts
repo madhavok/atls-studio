@@ -27,6 +27,7 @@ vi.mock('./handlers/session', () => ({
 
 import { executeUnifiedBatch, rebaseRegionsByDeltas, rebaseHashRefLineRange } from './executor';
 import type { PositionalDelta } from './executor';
+import { computeFileViewHashParts } from '../fileViewStore';
 import { AwarenessLevel } from './snapshotTracker';
 import { useAppStore } from '../../stores/appStore';
 import { isBlockedForSwarm } from './policy';
@@ -3143,6 +3144,51 @@ describe('inter-step rebase — hash-ref line ranges on f/file/file_path', () =>
     const e2Call = editCalls[1];
     expect(e2Call).toBeDefined();
     expect(e2Call.file_path ?? e2Call.file ?? e2Call.f).toBe('h:abc123:14-16');
+  });
+
+  it('shifts future step f:"h:RETENTION:A-B" (FileView ref) to cite hash + rebased lines', async () => {
+    const cite = 'abc123';
+    const { shortHash: retentionShort } = computeFileViewHashParts('src/foo.ts', cite);
+    expect(retentionShort).not.toBe(cite);
+
+    const editCalls: Array<Record<string, unknown>> = [];
+    handlers.set('change.edit', async (params) => {
+      editCalls.push(JSON.parse(JSON.stringify(params)));
+      return raw('applied', {
+        status: 'ok',
+        drafts: [{ file: 'src/foo.ts', content_hash: 'hash-after', h: 'hash-after', old_h: cite }],
+        edits_resolved: [{ resolved_line: 6, action: 'replace', lines_affected: 7 }],
+      });
+    });
+
+    const ctx = makeCtx();
+    handlers.set('read.lines', async () =>
+      raw('read', { file: 'src/foo.ts', content_hash: cite, actual_range: [[1, 20]], lines: 20 }),
+    );
+
+    await executeUnifiedBatch({
+      version: '1.0',
+      steps: [
+        { id: 'r1', use: 'read.lines', with: { f: 'src/foo.ts', sl: 1, el: 20 } },
+        {
+          id: 'e1', use: 'change.edit', with: {
+            file: 'src/foo.ts',
+            content_hash: cite,
+            line_edits: [{ line: 6, end_line: 10, action: 'replace', content: Array(7).fill('x').join('\n') }],
+          },
+        },
+        {
+          id: 'e2', use: 'change.edit', with: {
+            f: `h:${retentionShort}:12-14`,
+            line_edits: [{ content: 'new body' }],
+          },
+        },
+      ],
+    }, ctx);
+
+    const e2Call = editCalls[1];
+    expect(e2Call).toBeDefined();
+    expect(e2Call.file_path ?? e2Call.file ?? e2Call.f).toBe(`h:${cite}:14-16`);
   });
 
   it('does not shift when hash does not resolve to an edited file', async () => {
