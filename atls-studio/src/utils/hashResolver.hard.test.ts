@@ -794,6 +794,28 @@ describe('recency ref resolution', () => {
     expect((result as Record<string, unknown>).body).toBe('h:$last-5');
   });
 
+  it('undo: "h:$last" routes to the EDIT recency stack (not the generic one)', () => {
+    // The generic stack mixes every chunk (searches, reads, annotates) —
+    // pointing `undo` at that picks up whatever was touched last, not the
+    // last actual edit. Undo is edit-scoped, so field-aware resolution
+    // redirects plain `$last` to the edit stack when the field is `undo`.
+    setRecencyResolver(() => 'GENERIC-WRONG');
+    setEditRecencyResolver(() => 'EDIT-RIGHT');
+
+    expect(resolveRecencyInString('h:$last', 'undo')).toBe('h:EDIT-RIGHT');
+    // Other fields keep generic-stack semantics.
+    expect(resolveRecencyInString('h:$last', 'body')).toBe('h:GENERIC-WRONG');
+    // Explicit $last_edit still works regardless of field.
+    expect(resolveRecencyInString('h:$last_edit', 'body')).toBe('h:EDIT-RIGHT');
+  });
+
+  it('undo: "h:$last-N" routes to the EDIT recency stack with offset', () => {
+    setRecencyResolver(() => 'GENERIC-WRONG');
+    setEditRecencyResolver((offset) => `EDIT-${offset}`);
+
+    expect(resolveRecencyInString('h:$last-2', 'undo')).toBe('h:EDIT-2');
+  });
+
   it('resolveRecencyInString preserves modifier chain on h:$last:60-80', () => {
     setRecencyResolver((offset) => offset === 0 ? 'aabb1122' : null);
     const result = resolveRecencyInString('h:$last:60-80');

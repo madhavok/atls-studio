@@ -88,7 +88,18 @@ export function setStageRecencyResolver(fn: (offset: number) => string | null): 
   _resolveStageRecencyRef = fn;
 }
 
-export function resolveRecencyInString(text: string): string {
+/**
+ * Fields where a plain `h:$last` ref should prefer the EDIT recency stack
+ * over the generic "any chunk" stack. Undo semantically wants "the thing
+ * I just edited" — resolving against the generic stack picks up the most
+ * recent chunk (often a search result), which is rarely a valid undo
+ * target. Callers that explicitly say `$last_edit` still hit the edit
+ * stack; callers that want the generic stack explicitly pass a non-
+ * edit-scoped field or bypass resolution.
+ */
+const EDIT_SCOPED_LAST_FIELDS = new Set(['undo']);
+
+export function resolveRecencyInString(text: string, fieldName?: string): string {
   const trimmed = text.trim();
   const m = /^(h:\$)(last_edit|last_read|last_stage|last)(?:-(\d+))?(?=:|$)/.exec(trimmed);
   if (!m) return text;
@@ -96,8 +107,14 @@ export function resolveRecencyInString(text: string): string {
   const offset = m[3] ? parseInt(m[3], 10) : 0;
   const fullRef = `${m[1]}${m[2]}${m[3] !== undefined ? `-${m[3]}` : ''}`;
 
+  // Field-scoped override: `undo: "h:$last"` should target the edit stack,
+  // not the generic recency stack that mixes in search/read/annotate chunks.
+  const kind = m[2] === 'last' && fieldName && EDIT_SCOPED_LAST_FIELDS.has(fieldName)
+    ? 'last_edit'
+    : m[2];
+
   let resolver: ((o: number) => string | null) | null = null;
-  switch (m[2]) {
+  switch (kind) {
     case 'last_edit':
       resolver = _resolveEditRecencyRef;
       break;
@@ -621,8 +638,10 @@ async function _resolveInner(
   if (params === null || params === undefined) return params;
   if (typeof params === 'string') {
     if (passthroughLiteral) return params;
-    // HPP v4: resolve recency refs (h:$last-N) before any other parsing
-    const resolved = resolveRecencyInString(params);
+    // HPP v4: resolve recency refs (h:$last-N) before any other parsing.
+    // Pass parentKey so field-scoped sigils (e.g. `undo: "h:$last"` → edit
+    // stack) pick the right recency resolver.
+    const resolved = resolveRecencyInString(params, parentKey);
     if (parentKey && PASSTHROUGH_REF_FIELDS.has(parentKey)) return resolved;
 
     if (setLookup) {
@@ -697,8 +716,10 @@ async function _resolveInner(
   for (const [key, val] of Object.entries(obj)) {
     const childSkipInline = skipInline || LITERAL_CONTENT_ARRAYS.has(key);
     if (typeof val === 'string') {
-      // HPP v4: resolve recency refs (h:$last-N) in object values (e.g. undo:"h:$last")
-      const resolvedVal = resolveRecencyInString(val);
+      // HPP v4: resolve recency refs (h:$last-N) in object values (e.g. undo:"h:$last").
+      // Pass `key` so `undo: "h:$last"` routes to the edit stack (the generic
+      // stack mixes in search/read chunks and rarely hits a valid undo entry).
+      const resolvedVal = resolveRecencyInString(val, key);
       if (PASSTHROUGH_REF_FIELDS.has(key)) {
         result[key] = resolvedVal;
         continue;
