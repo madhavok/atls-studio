@@ -10,6 +10,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useContextStore } from './contextStore';
 import { recordFreshnessJournal, clearFreshnessJournal } from '../services/freshnessJournal';
+// Static import — dynamic `await import()` can time out under heavy
+// parallel vitest load on Windows when the executor module's transitive
+// deps spool up (large graph). Static import fixes the timeout flake.
+import { buildPerFileDeltaMap } from '../services/batch/executor';
 
 vi.mock('../services/hashProtocol', async () => {
   const actual: Record<string, unknown> = await vi.importActual('../services/hashProtocol');
@@ -1222,7 +1226,7 @@ describe('FileView stable identity across own-edits', () => {
     expect(v.totalLines).toBe(11);
   });
 
-  it('E2E sparse-sig insert via f:h:HASH:N hash-ref shape — deltas backfill from edits_resolved, skeleton rebases', async () => {
+  it('E2E sparse-sig insert via f:h:HASH:N hash-ref shape — deltas backfill from edits_resolved, skeleton rebases', () => {
     // This is the bug observed live: rs shape:sig → ce f:h:HASH:4 le:[{action:"insert_after",content:"..."}]
     // The le entry lacks `line` (it's on the hash-ref). mergedParams.line_edits the executor sees
     // stays without `line`, so buildPerFileDeltaMap used to emit zero deltas → skeleton didn't
@@ -1231,8 +1235,6 @@ describe('FileView stable identity across own-edits', () => {
     // This test drives buildPerFileDeltaMap with the EXACT shape the executor receives after
     // the change.edit handler runs (artifact contains edits_resolved; mergedParams.line_edits
     // still lacks `line`). The fix backfills from artifact.edits_resolved[i].resolved_line.
-    const { buildPerFileDeltaMap } = await import('../services/batch/executor');
-
     const store = useContextStore.getState();
     const path = 'src/sparsesig.ts';
     const revInit = 'revsparse1';

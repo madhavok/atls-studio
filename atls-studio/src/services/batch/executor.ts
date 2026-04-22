@@ -103,6 +103,60 @@ function extractEditTargetFile(params: Record<string, unknown>): string | undefi
 }
 
 /**
+ * Resolve a mix of raw paths and `h:HASH[:...]` hash-refs into the set of
+ * file paths that should be registered as own-writes.
+ *
+ * For hash-refs we try TWO resolution strategies in order:
+ *   1. Match the bare hash against snapshot-tracker entries' full
+ *      `snapshotHash` / `canonicalHash` (covers cite-hash inputs).
+ *   2. Match against per-entry FileView retention short hashes
+ *      (`computeFileViewHashParts(path, rev).shortHash`) — covers the
+ *      `h:<retention>` shape the model gets from the view fence.
+ * The raw input is also registered as-is for defense-in-depth. Both
+ * strategies are read-only on the tracker; order-preserving dedup.
+ *
+ * Why this matters: `isOwnWrite(path)` is how the `canonical_revision_changed`
+ * listener decides whether to skip reconcile for paths we edited ourselves.
+ * If the pre-register stores only `"h:HASH:A-B"` but the watcher event
+ * delivers the resolved path `"src/foo.ts"`, the lookup misses → reconcile
+ * runs → view's `fullBody` gets cleared mid-batch. The post-handler
+ * registration (line ~2796) is too late to cover the race window.
+ */
+function resolveOwnWritePaths(
+  candidates: string[],
+  tracker: SnapshotTracker,
+): string[] {
+  const out = new Set<string>();
+  for (const raw of candidates) {
+    if (!raw) continue;
+    out.add(raw);
+    if (!raw.startsWith('h:')) continue;
+    // Strip `:line` / `:A-B` / shape modifiers — only the bare hash matters.
+    const body = raw.slice(2);
+    const colon = body.indexOf(':');
+    const bare = colon >= 0 ? body.slice(0, colon) : body;
+    if (!bare) continue;
+    for (const [, id] of tracker.entries()) {
+      // Strategy 1: full-hash / canonical-hash match (cite-hash inputs).
+      if (id.snapshotHash === bare || id.canonicalHash === bare) {
+        out.add(id.filePath);
+        continue;
+      }
+      // Strategy 2: retention-short match (FileView fence inputs).
+      const rev = id.canonicalHash ?? id.snapshotHash;
+      if (!rev) continue;
+      try {
+        const { shortHash } = computeFileViewHashParts(id.filePath, rev);
+        if (shortHash === bare) out.add(id.filePath);
+      } catch {
+        // Malformed path/revision — ignore.
+      }
+    }
+  }
+  return [...out];
+}
+
+/**
  * Count lines in content matching Rust's `.lines()` behavior:
  * trailing newline does NOT produce an extra empty line.
  */
@@ -2591,14 +2645,33 @@ export async function executeUnifiedBatch(
       continue;
     }
 
-    // G22: pre-register own writes before handler invocation to close the watcher TOCTOU gap
+    // G22: pre-register own writes before handler invocation to close the
+    // watcher TOCTOU gap. The Rust backend emits `canonical_revision_changed`
+    // during the edit command; its TS listener runs `isOwnWrite(path)` to
+    // skip reconcile for paths we edited ourselves. Without pre-registration
+    // the event can land BEFORE the post-handler `registerOwnWrite` below,
+    // causing the listener to reconcile the file — which clears `fullBody`
+    // on the FileView and defeats the statefulness contract even for
+    // successful edits.
+    //
+    // extractEditTargetFile returns the raw source param (e.g.
+    // `"h:HASH:A-B"` for hash-ref inputs). That raw string doesn't match
+    // the path Rust emits in the event, so we resolve hash-refs to their
+    // actual file path via the snapshot tracker before registering. Both
+    // forms get registered for defense-in-depth — the post-handler
+    // registration on line ~2796 will re-register using the artifact's
+    // resolved path if anything was missed.
     if (step.use.startsWith('change.')) {
       const preTargetFile = extractEditTargetFile(mergedParams);
-      if (preTargetFile) registerOwnWrite([preTargetFile]);
+      if (preTargetFile) {
+        registerOwnWrite(resolveOwnWritePaths([preTargetFile], snapshotTracker));
+      }
       if (Array.isArray(mergedParams.edits)) {
         const preTargets = (mergedParams.edits as Array<Record<string, unknown>>)
           .map(e => extractEditTargetFile(e)).filter((f): f is string => !!f);
-        if (preTargets.length > 0) registerOwnWrite(preTargets);
+        if (preTargets.length > 0) {
+          registerOwnWrite(resolveOwnWritePaths(preTargets, snapshotTracker));
+        }
       }
     }
 
