@@ -3619,6 +3619,64 @@ describe('buildPerFileDeltaMap — edits_resolved backfill', () => {
     expect(map.size).toBe(0);
   });
 
+  it('replace with hash-ref:L-M backfills end_line so delta uses real span', () => {
+    // Live-bug regression: model passes `f:"h:HASH:112-116"` with 6-line
+    // content. Request's le entry has only `action: replace, content: "6 lines"`
+    // — no `line` / `end_line`. Without end_line backfill, the delta
+    // calculator defaults span=1 → delta = contentLines(6) - 1 = +5, which
+    // is wrong (real delta is +1). Subsequent steps then shift by +5
+    // instead of +1 and land at the wrong file coordinates.
+    const params = {
+      file: 'src/hit.ts',
+      line_edits: [{
+        action: 'replace',
+        content: 'a\nb\nc\nd\ne\nf', // 6 lines
+      }],
+    };
+    const artifact = {
+      drafts: [{ file: 'src/hit.ts', content_hash: 'h2', h: 'h:h2' }],
+      // Rust reports resolved_line + lines_affected (pre-span for replace).
+      edits_resolved: [{ resolved_line: 112, action: 'replace', lines_affected: 5 }],
+    };
+    const map = buildPerFileDeltaMap(params, artifact);
+    const deltas = map.get('src/hit.ts');
+    // Correct delta = contentLines(6) - span(5) = +1, not +5.
+    expect(deltas).toEqual([{ line: 112, delta: 1, lineInclusive: false }]);
+  });
+
+  it('delete backfills end_line so consumes-range drops exactly the deleted lines', () => {
+    // Multi-line delete via hash-ref: f:"h:HASH:5-8" le:[{action:"delete"}]
+    // lines_affected=4 from Rust; backfill end_line=8 so span computes
+    // correctly. Delta should be -4 with consumes:4.
+    const params = {
+      file: 'src/del.ts',
+      line_edits: [{ action: 'delete' }],
+    };
+    const artifact = {
+      drafts: [{ file: 'src/del.ts', content_hash: 'h2' }],
+      edits_resolved: [{ resolved_line: 5, action: 'delete', lines_affected: 4 }],
+    };
+    const map = buildPerFileDeltaMap(params, artifact);
+    const deltas = map.get('src/del.ts');
+    expect(deltas).toEqual([{ line: 5, delta: -4, lineInclusive: false, consumes: 4 }]);
+  });
+
+  it('insert_after does NOT backfill end_line (irrelevant for insert math)', () => {
+    // Inserts add content, don't replace a span. delta = contentLines,
+    // independent of end_line. Adding end_line would be harmless but
+    // semantically wrong — pin down that we only inject it for span actions.
+    const params = {
+      file: 'src/ins.ts',
+      line_edits: [{ action: 'insert_after', content: 'x\ny' }], // 2 lines
+    };
+    const artifact = {
+      edits_resolved: [{ resolved_line: 3, action: 'insert_after', lines_affected: 2 }],
+    };
+    const map = buildPerFileDeltaMap(params, artifact);
+    const deltas = map.get('src/ins.ts');
+    expect(deltas).toEqual([{ line: 3, delta: 2, lineInclusive: false }]);
+  });
+
   it('dual-keys by raw source param AND resolved path for hash-ref inputs', () => {
     // The live bug: `ce f:"h:ab09b8:4" le:[{action:"insert_after",content:"..."}]`
     // leaves `mergedParams.f = "h:ab09b8:4"` — extractEditTargetFile returns

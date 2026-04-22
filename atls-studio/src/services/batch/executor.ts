@@ -527,7 +527,21 @@ export function buildPerFileDeltaMap(
   return map;
 }
 
-/** Clone each le entry and inject `line` from resolutions[i].resolved_line when missing. */
+/**
+ * Clone each le entry and inject coordinates from `resolutions[i]` when the
+ * request-level le is missing them. Fills BOTH `line` (from
+ * `resolved_line`) AND, for `replace` / `replace_body` / `delete`,
+ * `end_line` (from `resolved_line + lines_affected - 1`).
+ *
+ * Why both: `computeSingleEditNetDelta` for `replace` returns
+ * `contentLines - span`, where `span = effectiveLineSpanCount(e)` reads
+ * `end_line`. Without `end_line` it defaults to 1, so a replace over 5
+ * pre-edit lines with 6 new lines of content shows delta=+5 instead of
+ * +1 — multi-step rebase then shifts subsequent steps by the wrong
+ * amount, landing them in the wrong place and corrupting the file. For
+ * inserts, `end_line` is irrelevant (insert delta = contentLines), so we
+ * skip backfilling there.
+ */
 function backfillLinesFromResolved(
   lineEdits: unknown[],
   resolutions: unknown[] | undefined,
@@ -537,13 +551,35 @@ function backfillLinesFromResolved(
   return lineEdits.map((le, i) => {
     if (!le || typeof le !== 'object') return le;
     const e = { ...(le as Record<string, unknown>) };
-    if (typeof e.line === 'number' && e.line > 0) return e; // already set, keep it
-    if (e.symbol != null) return e; // symbol-based target, line stays 0
     const res = resolutions[i];
     if (!res || typeof res !== 'object') return e;
-    const rl = (res as Record<string, unknown>).resolved_line;
-    if (typeof rl === 'number' && rl > 0) {
+    const r = res as Record<string, unknown>;
+    const rl = r.resolved_line;
+    const la = r.lines_affected;
+    const resAction = typeof r.action === 'string' ? r.action : undefined;
+    const hasExplicitLine = typeof e.line === 'number' && e.line > 0;
+    const hasSymbol = e.symbol != null;
+
+    if (!hasExplicitLine && !hasSymbol && typeof rl === 'number' && rl > 0) {
       e.line = rl;
+    }
+
+    // Backfill end_line for span-based actions (replace / replace_body /
+    // delete) when it's missing AND the resolution carries
+    // `lines_affected` representing the pre-edit span. Without this,
+    // `effectiveLineSpanCount` falls back to 1 and the delta math for
+    // replace is wrong by (span - 1), which silently shifts subsequent
+    // edits in the same batch by the wrong amount.
+    const action = typeof e.action === 'string'
+      ? e.action
+      : (resAction ?? 'replace');
+    const isSpanAction = action === 'replace' || action === 'replace_body' || action === 'delete';
+    const hasExplicitEnd = typeof e.end_line === 'number' && e.end_line > 0;
+    if (isSpanAction && !hasExplicitEnd && typeof la === 'number' && la > 0) {
+      const startLine = typeof e.line === 'number' && e.line > 0 ? e.line : rl;
+      if (typeof startLine === 'number' && startLine > 0) {
+        e.end_line = startLine + la - 1;
+      }
     }
     return e;
   });
