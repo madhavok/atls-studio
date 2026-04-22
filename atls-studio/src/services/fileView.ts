@@ -134,7 +134,14 @@ export async function getFileSkeleton(
   const composed = rows.join('\n');
   const tokens = rows.length > 0 ? countTokensSync(composed) : 0;
 
-  const totalLines = bodyTotalLines ?? maxLineNumber(rows);
+  // Source-file total lines. Defensive: take the max of backend-reported
+  // `total_lines` and the largest line number / fold-end visible in the
+  // skeleton. Protects the FileView from Rust shape responses that
+  // historically returned the shaped output row count (e.g. sig → 8) as
+  // `total_lines` — a dense skeleton for an 8-row sparse sig would mis-mark
+  // `wasDense` during edit-refresh and blow the view's line denominator.
+  const rowsMax = maxLineNumber(rows);
+  const totalLines = Math.max(bodyTotalLines ?? 0, rowsMax);
 
   const skeleton: FileSkeleton = {
     path: key,
@@ -229,11 +236,24 @@ function stripHashPrefix(hash: string): string {
   return hash.replace(/^h:/, '');
 }
 
+/**
+ * Lower bound on the source file's total line count derived from skeleton
+ * rows. Considers both the `N|` row prefix AND any trailing `[start-end]`
+ * fold markers — the fold's `end` is the last source line of the folded
+ * declaration's body, so it tightens the bound for sparse sig skeletons
+ * where the last row is a top-level function wrapping most of the file.
+ *
+ * Example: `107|export function AtlsInternals() { ... } [107-296]` → 296,
+ * not 107. Used by `getFileSkeleton` as a fallback when the backend hasn't
+ * reported `total_lines` for the shape response.
+ */
 function maxLineNumber(rows: string[]): number {
   let max = 0;
   for (const row of rows) {
     const n = parseLineNumber(row);
     if (n != null && n > max) max = n;
+    const fold = parseFoldMarker(row);
+    if (fold != null && fold.end > max) max = fold.end;
   }
   return max;
 }

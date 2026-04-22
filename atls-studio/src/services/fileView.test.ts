@@ -349,4 +349,40 @@ describe('fileView — getFileSkeleton', () => {
     }
     expect(skeletonCacheSize()).toBeLessThanOrEqual(100);
   });
+
+  // Regression: the Rust shape resolver historically reported
+  // `total_lines = shaped.lines().count()` for sig/fold shapes — the count
+  // of sig rows, NOT the source file's total line count. A sparse 8-row sig
+  // skeleton for a 296-line file would leak `totalLines = 8` into the
+  // FileView, rendering `(8 lines)` fence headers and mis-detecting
+  // `wasDense` during edit-refresh.
+  //
+  // Defensive floor: `getFileSkeleton` now reports the max of the backend's
+  // `total_lines` and the largest line / fold-end visible in the rows. This
+  // keeps the view's denominator honest even if a shape response ever
+  // regresses to the old output-row-count semantics.
+  it('totalLines uses fold-end bound when sig response underreports total_lines', async () => {
+    const invoker = makeInvoker({
+      sig: [
+        '  24|interface SectionDef { ... } [24-29]',
+        '  53|function loadOrder(): string[] { ... } [53-69]',
+        ' 107|export function AtlsInternals() { ... } [107-296]',
+      ].join('\n'),
+      imports: '',
+      totalLines: 3, // bug: backend returns sig row count instead of source total
+    });
+    const sk = await getFileSkeleton('src/atls-internals.tsx', 'rev1', { invoker });
+    // Fold [107-296] pins the lower bound to 296 despite the stale backend count.
+    expect(sk.totalLines).toBe(296);
+  });
+
+  it('totalLines trusts correct backend total_lines over row max', async () => {
+    const invoker = makeInvoker({
+      sig: '  42|fn bar(): T { ... } [42-56]',
+      imports: '   1|import "a";',
+      totalLines: 500, // genuinely reported source total — row max is only 56
+    });
+    const sk = await getFileSkeleton('src/foo.ts', 'rev1', { invoker });
+    expect(sk.totalLines).toBe(500);
+  });
 });

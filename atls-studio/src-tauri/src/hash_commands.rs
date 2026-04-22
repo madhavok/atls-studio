@@ -580,12 +580,18 @@ pub async fn resolve_hash_ref(
             } else {
                 None
             };
+            // `total_lines` reports the source file's total lines so FileView
+            // skeletons (imports + sig + fold) compute denominators against
+            // the whole file, not the shaped summary. Without this, callers
+            // like TS `getFileSkeleton` treated sig row count (~8) as the
+            // file's total lines — rendering `(8 lines)` headers for files
+            // with hundreds of lines and regressing edit-refresh rebase.
             Ok(resolved_hash_content(
                 href.hash.clone(),
                 selector.clone(),
                 source,
-                shaped.clone(),
-                shaped.lines().count(),
+                shaped,
+                entry.line_count,
                 lang,
                 Some(hash_protocol::shape_label(shape)),
                 hl,
@@ -625,8 +631,8 @@ pub async fn resolve_hash_ref(
                 href.hash.clone(),
                 selector.clone(),
                 source,
-                shaped.clone(),
-                shaped.lines().count(),
+                shaped,
+                entry.line_count,
                 lang,
                 Some(hash_protocol::shape_label(shape)),
                 hl,
@@ -650,8 +656,8 @@ pub async fn resolve_hash_ref(
                 href.hash.clone(),
                 selector.clone(),
                 source,
-                content.clone(),
-                content.lines().count(),
+                content,
+                entry.line_count,
                 lang,
                 shape_label,
                 None,
