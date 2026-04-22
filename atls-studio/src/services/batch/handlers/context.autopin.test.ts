@@ -11,7 +11,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useContextStore } from '../../../stores/contextStore';
 import { useAppStore } from '../../../stores/appStore';
-import { handleRead, handleReadLines, handleReadShaped } from './context';
+import { handleLoad, handleRead, handleReadLines, handleReadShaped } from './context';
 import {
   peekAutoPinMetrics,
   resetAutoPinTelemetry,
@@ -371,4 +371,79 @@ describe('read.lines FileView fill — slice body merges into filledRegions', ()
     expect(r1.refs?.[0]).toBe(r2.refs?.[0]);
   });
 
+});
+
+// ---------------------------------------------------------------------------
+// Canonical file path — read.file (handleLoad) + read.shaped should key the
+// FileView on the backend's resolved path, not the model's raw input. Without
+// this, a bare-path read and a workspace-prefixed read on the same file
+// produce two FileView entries with different retention shortHashes, and
+// intra-batch hash-ref edits (f:"h:OLD:A-B") miss the fresh view.
+// ---------------------------------------------------------------------------
+
+describe('canonical file path — FileView key prefers backend resolved path over model input', () => {
+  beforeEach(() => {
+    resetAll();
+    setAutoPin(true);
+  });
+
+  it('read.file (handleLoad) keys the view on backend items[0].file when the model input is bare', async () => {
+    // Model sends a bare path; backend resolves it through workspace
+    // inference and returns the prefixed canonical form. The view MUST
+    // be keyed on the canonical form so a subsequent read.lines with
+    // either path shape hits the same view.
+    const canonical = 'atls-studio/src/components/Foo.tsx';
+    const bare = 'src/components/Foo.tsx';
+
+    const ctx = makeCtx({
+      atlsBatchQuery: vi.fn().mockResolvedValue({
+        results: [{
+          file: canonical,
+          content_hash: 'abc123abc123abc1',
+          content: 'const a = 1;\nconst b = 2;',
+          lines: 2,
+          truncated: false,
+        }],
+      }),
+    });
+
+    const result = await handleLoad(
+      { file_paths: [bare], type: 'full' },
+      ctx,
+    );
+
+    expect(result.ok).toBe(true);
+    // View lives at the CANONICAL key.
+    const canonicalView = useContextStore.getState().fileViews.get(canonical.toLowerCase());
+    expect(canonicalView).toBeDefined();
+    expect(canonicalView!.pinned).toBe(true);
+    // No stale view at the bare key.
+    const bareView = useContextStore.getState().fileViews.get(bare.toLowerCase());
+    expect(bareView).toBeUndefined();
+  });
+
+  it('read.file falls back to model input when backend omits file in response', async () => {
+    // Defensive: if for any reason items[0].file is missing, we still
+    // create a view keyed on the model's input rather than leaving it
+    // unkeyed. Single-key contract preserved.
+    const input = 'src/no-backend-file.ts';
+    const ctx = makeCtx({
+      atlsBatchQuery: vi.fn().mockResolvedValue({
+        results: [{
+          content_hash: 'nobk12345678abcd',
+          content: 'x',
+          lines: 1,
+        }],
+      }),
+    });
+
+    const result = await handleLoad(
+      { file_paths: [input], type: 'full' },
+      ctx,
+    );
+    expect(result.ok).toBe(true);
+    const view = useContextStore.getState().fileViews.get(input.toLowerCase());
+    expect(view).toBeDefined();
+    expect(view!.pinned).toBe(true);
+  });
 });

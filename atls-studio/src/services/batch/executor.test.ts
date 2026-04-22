@@ -3702,3 +3702,117 @@ describe('buildPerFileDeltaMap — edits_resolved backfill', () => {
     expect(map.get('fv-debug.ts')).toEqual([{ line: 4, delta: 2, lineInclusive: false }]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Hash-ref view-retention-short rewrite — full-revision preflight comparison
+// ---------------------------------------------------------------------------
+
+describe('injectSnapshotHashes — rewrites h:<retention-short>:suffix on f/file/file_path', () => {
+  beforeAll(() => {
+    handlers.set('change.edit', async (params: Record<string, unknown>) => {
+      return raw('applied', {
+        status: 'ok',
+        drafts: [{ file: 'src/target.ts', content_hash: 'hash-after', h: 'hash-after', old_h: 'revFulla' }],
+        edits_resolved: [{ resolved_line: 5, action: 'replace', lines_affected: 3 }],
+      });
+    });
+  });
+
+  /** ctx variant that exposes a `fileViews` Map so `resolveCiteFromView` can match. */
+  function makeCtxWithFileViews(fileViews: Map<string, { filePath: string; shortHash: string; sourceRevision: string; previousShortHashes?: string[] }>) {
+    const base = makeCtx();
+    return {
+      ...base,
+      store: () => ({
+        ...base.store(),
+        fileViews,
+      }),
+    } as typeof base;
+  }
+
+  it('rewrites f:"h:<retention-short>:A-B" to f:"h:<full-source-revision>:A-B" before handler dispatch', async () => {
+    // The live bug (AtlsInternals transcript R4): model reads with `rf type:full`
+    // → gets back `h:<retention-short>` (6-char path-derived hash). Then edits
+    // with `f:"h:<short>:A-B"`. The handler's `canonicalizeContentHash` cuts
+    // at the first colon → 6-char short. Preflight compares that 6-char
+    // against the full 16-char disk hash → mismatch → "content changed —
+    // re-read and retry". But the view is FRESH — the 6-char short is just
+    // the retention ref, not a stale cite.
+    //
+    // Fix: in `injectSnapshotHashes`, if `f` / `file` / `file_path` is a
+    // hash-ref whose SHORT resolves to a live FileView, rewrite the hash
+    // part to the view's full sourceRevision. Suffix (line range, shape
+    // modifier) preserved verbatim. `deriveEditTargetMeta` then sets
+    // edit_target_hash to the full hash, and preflight hash comparison
+    // works properly.
+    const fullRev = 'revFulla1234b567cd89ef';
+    const { shortHash } = computeFileViewHashParts('src/target.ts', fullRev);
+    expect(shortHash).not.toBe(fullRev); // they must differ
+    const fileViews = new Map<string, { filePath: string; shortHash: string; sourceRevision: string }>();
+    fileViews.set('src/target.ts', { filePath: 'src/target.ts', shortHash, sourceRevision: fullRev });
+
+    const editCalls: Array<Record<string, unknown>> = [];
+    handlers.set('change.edit', async (params: Record<string, unknown>) => {
+      editCalls.push(JSON.parse(JSON.stringify(params)));
+      return raw('applied', {
+        status: 'ok',
+        drafts: [{ file: 'src/target.ts', content_hash: 'revPost2', h: 'revPost2', old_h: fullRev }],
+        edits_resolved: [{ resolved_line: 2, action: 'replace', lines_affected: 1 }],
+      });
+    });
+
+    await executeUnifiedBatch({
+      version: '1.0',
+      steps: [
+        {
+          id: 'e1', use: 'change.edit', with: {
+            f: `h:${shortHash}:2-2`,
+            le: [{ content: 'const y = 99;' }],
+          },
+        },
+      ],
+    }, makeCtxWithFileViews(fileViews));
+
+    expect(editCalls).toHaveLength(1);
+    const call = editCalls[0];
+    // `f` (or its aliased form) should now carry the FULL sourceRevision,
+    // not the retention short.
+    const fValue = (call.f ?? call.file ?? call.file_path) as string;
+    expect(fValue).toBeTruthy();
+    expect(fValue.includes(`:${fullRev}:`) || fValue.startsWith(`h:${fullRev}:`)).toBe(true);
+    expect(fValue.includes(`h:${shortHash}:`)).toBe(false);
+    // Line-range suffix preserved.
+    expect(fValue.endsWith(':2-2')).toBe(true);
+  });
+
+  it('preserves non-view hash-refs — no rewrite when ref does not resolve to a view', async () => {
+    // Empty view map — nothing to resolve against.
+    const fileViews = new Map<string, { filePath: string; shortHash: string; sourceRevision: string }>();
+
+    const editCalls: Array<Record<string, unknown>> = [];
+    handlers.set('change.edit', async (params: Record<string, unknown>) => {
+      editCalls.push(JSON.parse(JSON.stringify(params)));
+      return raw('applied', {
+        status: 'ok',
+        drafts: [{ file: 'src/other.ts', content_hash: 'h2', h: 'h2' }],
+        edits_resolved: [{ resolved_line: 5, action: 'replace', lines_affected: 1 }],
+      });
+    });
+
+    await executeUnifiedBatch({
+      version: '1.0',
+      steps: [
+        {
+          id: 'e1', use: 'change.edit', with: {
+            f: 'h:beefdead:5',
+            le: [{ content: 'x' }],
+          },
+        },
+      ],
+    }, makeCtxWithFileViews(fileViews));
+
+    const call = editCalls[0];
+    // Unchanged — no view matched.
+    expect((call.f ?? call.file ?? call.file_path)).toBe('h:beefdead:5');
+  });
+});

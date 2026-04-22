@@ -1309,6 +1309,37 @@ function resolveCiteFromView(
 }
 
 /**
+ * Rewrite a hash-ref `h:<retention short>[:suffix]` to `h:<full source
+ * revision>[:suffix]` when the short resolves to a live FileView. The
+ * suffix (line range, shape modifier) is preserved verbatim. Returns the
+ * rewritten string or the original when no view matches.
+ *
+ * Why this matters for preflight: `change.edit` handlers call
+ * `canonicalizeContentHash` which just strips `h:` and cuts at the first
+ * colon — so `h:9b8348:1-148` becomes `"9b8348"` (6 chars). Preflight
+ * then compares that 6-char short against the full 16-char disk hash and
+ * always mismatches, blocking the edit with "content changed — re-read
+ * and retry" even though the view is fresh. Rewriting the `f` shape to
+ * carry the full sourceRevision before the handler runs means
+ * `canonicalizeContentHash` emits a full-length hash and the preflight
+ * comparison works correctly.
+ */
+function rewriteHashRefViewShortToSourceRev(
+  value: string,
+  ctx: HandlerContext,
+): string {
+  if (!value.startsWith('h:')) return value;
+  const body = value.slice(2);
+  const colonIdx = body.indexOf(':');
+  const shortPart = colonIdx >= 0 ? body.slice(0, colonIdx) : body;
+  const suffix = colonIdx >= 0 ? body.slice(colonIdx) : '';
+  if (!shortPart || !/^[0-9a-fA-F_]{6,16}$/.test(shortPart)) return value;
+  const resolved = resolveCiteFromView(`h:${shortPart}`, ctx);
+  if (!resolved || resolved === shortPart) return value;
+  return `h:${resolved}${suffix}`;
+}
+
+/**
  * Auto-inject content_hash into change op params from the tracker. Also
  * resolves FileView retention hashes to the view's current source revision
  * so the model can pass the one ref the fence emits into any slot.
@@ -1319,6 +1350,18 @@ function injectSnapshotHashes(
   tracker: SnapshotTracker,
   ctx: HandlerContext,
 ): void {
+  // Rewrite hash-ref file keys carrying a view retention short into the
+  // view's full sourceRevision BEFORE deriveEditTargetMeta runs. Without
+  // this, the handler's canonicalHash derivation keeps the 6-char short
+  // and the preflight hash comparison mismatches against the 16-char disk
+  // hash — spuriously blocking valid edits with "content changed".
+  for (const key of ['f', 'file', 'file_path'] as const) {
+    const v = mergedParams[key];
+    if (typeof v === 'string' && v.startsWith('h:')) {
+      const rewritten = rewriteHashRefViewShortToSourceRev(v, ctx);
+      if (rewritten !== v) mergedParams[key] = rewritten;
+    }
+  }
   const targetFile = (mergedParams.file ?? mergedParams.file_path) as string | undefined;
   if (typeof targetFile === 'string' && !mergedParams.content_hash) {
     const trackedHash = tracker.getHash(targetFile);
@@ -1337,6 +1380,14 @@ function injectSnapshotHashes(
     mergedParams.edits = mergedParams.edits.map((edit) => {
       if (!edit || typeof edit !== 'object') return edit;
       const entry = edit as Record<string, unknown>;
+      // Same view-retention-short rewrite on nested edits[].
+      for (const key of ['f', 'file', 'file_path'] as const) {
+        const v = entry[key];
+        if (typeof v === 'string' && v.startsWith('h:')) {
+          const rewritten = rewriteHashRefViewShortToSourceRev(v, ctx);
+          if (rewritten !== v) entry[key] = rewritten;
+        }
+      }
       const editFile = (entry.file ?? entry.file_path) as string | undefined;
       if (typeof editFile === 'string' && !entry.content_hash) {
         const trackedHash = tracker.getHash(editFile);
@@ -2517,8 +2568,14 @@ export async function executeUnifiedBatch(
       mergedParams = { ...mergedParams, refactor_validation_mode: request.policy.refactor_validation_mode };
     }
 
-    // Auto-inject content_hash for change ops from the tracker
-    if (step.use.startsWith('change.') && snapshotTracker.size > 0) {
+    // Auto-inject content_hash + rewrite FileView retention shorts on
+    // change ops. The tracker-size gate used to skip this path entirely
+    // when the tracker was empty, but the view-retention-short rewrite
+    // needs to run even without tracker entries (pure rf-then-edit flow
+    // can populate a FileView without a canonical tracker read record).
+    // Internal branches already no-op when their particular input is
+    // absent, so running unconditionally here is safe.
+    if (step.use.startsWith('change.')) {
       injectSnapshotHashes(mergedParams, snapshotTracker, ctx);
     }
 

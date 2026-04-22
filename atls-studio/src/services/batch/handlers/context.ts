@@ -303,12 +303,28 @@ export const handleLoad: OpHandler = async (params, ctx) => {
     const backendHash = items.length === 1 && typeof items[0]?.content_hash === 'string'
       ? items[0].content_hash as string : undefined;
 
+    // Canonical file path for single-file loads: prefer the backend's
+    // resolved path when available (accounts for workspace prefix inference
+    // like `src/foo.ts` → `atls-studio/src/foo.ts`). Falls back to the
+    // model's input when the backend didn't return one. This MUST match
+    // what `ingestStandardContextItems` uses for the multi-file branch
+    // and what `handleReadLines` uses — otherwise a bare-input read and a
+    // prefixed-input read create two FileView entries for the same file,
+    // each with a different retention shortHash. See the R3/R5 drift in
+    // the AtlsInternals drag-and-drop transcript: `h:9b8348` (bare) vs
+    // `h:50c2b0` (prefixed) — same file, fragmented state.
+    const canonicalFilePath = (
+      items.length === 1 && items[0] && typeof items[0] === 'object'
+        ? (items[0] as Record<string, unknown>).file as string | undefined
+        : undefined
+    ) ?? filePaths[0];
+
     if (filePaths.length === 1 && backendHash) {
-      const reused = ctx.store().findReusableRead({ filePath: filePaths[0], sourceRevision: backendHash, contextType: loadType });
+      const reused = ctx.store().findReusableRead({ filePath: canonicalFilePath, sourceRevision: backendHash, contextType: loadType });
       if (reused) {
         useRetentionStore.getState().incrementReadsReused();
         // Redundant read → silent success. Runtime already has the content.
-        lines.push(`load: ${filePaths[0]} → h:${reused} (reused, same rev)`);
+        lines.push(`load: ${canonicalFilePath} → h:${reused} (reused, same rev)`);
         return { kind: 'file_refs', ok: true, refs: [`h:${reused}`], summary: lines.join('\n'), tokens: 0 };
       }
     }
@@ -343,19 +359,19 @@ export const handleLoad: OpHandler = async (params, ctx) => {
       };
     }
 
-    const hash = ctx.store().addChunk(resultStr, isFull ? 'raw' : 'smart', filePaths.join(', '), symbols, undefined, backendHash, {
-      ...(backendHash && filePaths.length === 1 ? { readSpan: { filePath: filePaths[0], sourceRevision: backendHash, contextType: loadType } } : {}),
+    const hash = ctx.store().addChunk(resultStr, isFull ? 'raw' : 'smart', canonicalFilePath, symbols, undefined, backendHash, {
+      ...(backendHash && filePaths.length === 1 ? { readSpan: { filePath: canonicalFilePath, sourceRevision: backendHash, contextType: loadType } } : {}),
     });
     const tokens = countTokensSync(resultStr);
     // Single-file load: primary ref is the FileView. Multi-file falls through the
     // for-loop above, which also returns view refs per file.
     let primaryRef = `h:${hash}`;
     if (filePaths.length === 1 && backendHash) {
-      primaryRef = ctx.store().ensureFileView(filePaths[0], backendHash);
-      ctx.store().ensureFileViewSkeleton(filePaths[0], backendHash).catch(() => {});
-      autoPinViewAfterRead(ctx, filePaths[0]);
+      primaryRef = ctx.store().ensureFileView(canonicalFilePath, backendHash);
+      ctx.store().ensureFileViewSkeleton(canonicalFilePath, backendHash).catch(() => {});
+      autoPinViewAfterRead(ctx, canonicalFilePath);
     }
-    lines.push(`load: ${filePaths.join(', ')} → ${primaryRef} (${(tokens / 1000).toFixed(1)}k tk)`);
+    lines.push(`load: ${canonicalFilePath} → ${primaryRef} (${(tokens / 1000).toFixed(1)}k tk)`);
     return { kind: 'file_refs', ok: true, refs: [primaryRef], summary: lines.join('\n'), tokens };
   } catch (loadErr) {
     return err(`load: ERROR ${loadErr instanceof Error ? loadErr.message : String(loadErr)}`);
@@ -963,8 +979,19 @@ export const handleReadShaped: OpHandler = async (params, ctx) => {
     }
     for (const item of shapedItems) {
       const content = item.kind === 'content' ? item.content : null;
-      const source = item.kind === 'content' ? item.source : item.path;
       const fullEntry = item.kind === 'path' ? backendFullByPath.get(item.path) : undefined;
+      // Canonical source: prefer the backend's resolved file path so bare
+      // inputs (`src/foo.ts`) and workspace-prefixed inputs
+      // (`atls-studio/src/foo.ts`) produce the SAME FileView key. Without
+      // this, a bare rs and a prefixed rl on the same file create two
+      // view entries with different retention shortHashes — fragmenting
+      // state and causing spurious "content changed" preflight blocks on
+      // the stale short. See the R3/R5 drift in the AtlsInternals
+      // transcript: `h:9b8348` (bare) vs `h:50c2b0` (prefixed).
+      const backendFile = fullEntry && typeof fullEntry.file === 'string' ? fullEntry.file : undefined;
+      const source = item.kind === 'content'
+        ? item.source
+        : (backendFile ?? item.path);
       const result = await _processShapedFile(
         ctx,
         source,
