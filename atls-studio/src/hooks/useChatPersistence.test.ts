@@ -798,7 +798,11 @@ describe('applyHashFirstFreshness — FileView rebase', () => {
     expect(result.changedPaths).toContain('src/diverged.ts');
   });
 
-  it('drops unpinned FileView when disk revision diverged', async () => {
+  it('keeps unpinned FileView when disk revision diverged (marks suspect instead of dropping)', async () => {
+    // Path-derived identity means the view's retention ref stays valid across
+    // sessions even when content has drifted. Dropping the view would erase
+    // filled regions that are still correct at the persisted revision —
+    // strictly worse than keeping them visible with a suspect marker.
     useContextStore.getState().addChunk(
       rowLine(10, 'y'),
       'smart',
@@ -818,23 +822,63 @@ describe('applyHashFirstFreshness — FileView rebase', () => {
     });
 
     await applyHashFirstFreshness();
-    expect(useContextStore.getState().getFileView('src/unpinned.ts')).toBeUndefined();
+    const view = useContextStore.getState().getFileView('src/unpinned.ts');
+    expect(view).toBeDefined();
+    expect(view!.freshness).toBe('suspect');
+    expect(view!.freshnessCause).toBe('session_restore');
+    // filledRegions content survives — the model's transcript ref still points
+    // at a live view row; the next same-file read reconciles to the new rev.
+    expect(view!.filledRegions).toHaveLength(1);
   });
 
-  it('evicts FileView when backing path missing on disk (null-valued resolver entry)', async () => {
+  it('keeps PINNED FileView when backing path missing on disk (pin contract: never evict a pinned view on restore)', async () => {
+    // "pinned = always fresh" includes "always there". Path missing at
+    // restore time (partial workspace load, different CWD, file not yet
+    // synced) must not wipe a pinned view out of working memory. An
+    // [UNRECOVERABLE: path missing] manifest marker is emitted so the model
+    // sees an action prompt; the view itself stays as a suspect placeholder.
     pin('src/gone.ts', 'rev-g');
     setBulkRevisionResolver(async (paths: string[]) => {
       const m = new Map<string, string | null>();
-      // Null-valued but present entry → resolveRevision returns 'missing' →
-      // view is evicted regardless of pin (content unrecoverable).
       for (const p of paths) m.set(p.toLowerCase(), null);
       return m;
     });
 
     const result = await applyHashFirstFreshness();
-    expect(useContextStore.getState().getFileView('src/gone.ts')).toBeUndefined();
-    expect(result.evictedFileViews).toBeGreaterThanOrEqual(1);
+    const view = useContextStore.getState().getFileView('src/gone.ts');
+    expect(view).toBeDefined();
+    expect(view!.pinned).toBe(true);
+    expect(view!.freshness).toBe('suspect');
+    expect(view!.freshnessCause).toBe('session_restore');
+    expect(result.staleFileViews).toBeGreaterThanOrEqual(1);
     expect(result.changedPaths).toContain('src/gone.ts');
+  });
+
+  it('drops UNPINNED FileView when backing path missing on disk (no retention contract to honor)', async () => {
+    // Only unpinned views get evicted on path-missing. The model never asked
+    // to keep these beyond the session that read them.
+    useContextStore.getState().addChunk(
+      rowLine(10, 'z'),
+      'smart',
+      'src/gone-unpinned.ts',
+      undefined, undefined, 'h-gone-unpin',
+      {
+        sourceRevision: 'rev-gone',
+        readSpan: { filePath: 'src/gone-unpinned.ts', sourceRevision: 'rev-gone', startLine: 10, endLine: 10 },
+      },
+    );
+    expect(useContextStore.getState().getFileView('src/gone-unpinned.ts')).toBeDefined();
+
+    setBulkRevisionResolver(async (paths: string[]) => {
+      const m = new Map<string, string | null>();
+      for (const p of paths) m.set(p.toLowerCase(), null);
+      return m;
+    });
+
+    const result = await applyHashFirstFreshness();
+    expect(useContextStore.getState().getFileView('src/gone-unpinned.ts')).toBeUndefined();
+    expect(result.evictedFileViews).toBeGreaterThanOrEqual(1);
+    expect(result.changedPaths).toContain('src/gone-unpinned.ts');
   });
 });
 

@@ -415,13 +415,26 @@ export async function applyHashFirstFreshness(): Promise<{ preserved: number; su
       }
     }
 
-    // v7+: rebase persisted FileViews. Policy mirrors fileViewStore.reconcileFileView:
-    // - disk rev matches    → preserve
-    // - diverged            → mark suspect; drop unpinned; keep pinned for auto-refetch
-    // - path missing on disk → drop (content is unrecoverable regardless of pin).
-    //                          For pinned views, record an `[UNRECOVERABLE]`
-    //                          manifest marker so the model sees a re-read
-    //                          prompt instead of silent loss.
+    // v7+: rebase persisted FileViews. **Pinned views never get deleted on
+    // restore** — that's the whole point of a pin. The fresh runtime can
+    // mark them suspect and surface `[UNRECOVERABLE: path missing]` markers,
+    // but the view itself (path identity + filled regions + pin state) stays
+    // so the model's transcript refs keep resolving. Deletion was the old
+    // "dormant after reload" bug — identity is path-derived now, so the
+    // retention ref survives even when the content is stale.
+    //
+    // Policy:
+    // - disk rev matches      → preserve (unchanged)
+    // - disk rev diverged     → mark suspect (session_restore cause); keep
+    //                           pinned AND unpinned alike so transcript refs
+    //                           resolve. The next same-file read reconciles.
+    // - resolver returned null → can't decide yet; mark suspect, keep view.
+    // - path missing on disk
+    //     pinned              → keep view + mark suspect + unrecoverable marker.
+    //                           Model sees a "re-read or drop" prompt instead
+    //                           of silent loss.
+    //     unpinned            → drop (no retention contract to honor; content
+    //                           is gone and model never asked to keep it).
     for (const [key, view] of fileViews) {
       const diskRev = resolveRevision(view.filePath);
 
@@ -437,9 +450,16 @@ export async function applyHashFirstFreshness(): Promise<{ preserved: number; su
           } catch {
             // Non-fatal: marker emission must not block persistence restore.
           }
+          // Keep the pinned view. The path may come back (partial workspace
+          // load, untracked file, different CWD); the model's transcript
+          // still cites this ref. Suspect freshness signals the staleness;
+          // the unrecoverable marker is the explicit action prompt.
+          fileViews.set(key, { ...view, freshness: 'suspect', freshnessCause: 'session_restore', lastAccessed: now });
+          staleFileViews++;
+        } else {
+          fileViews.delete(key);
+          evictedFileViews++;
         }
-        fileViews.delete(key);
-        evictedFileViews++;
         changedSourcePaths.add(view.filePath);
         continue;
       }
@@ -456,13 +476,15 @@ export async function applyHashFirstFreshness(): Promise<{ preserved: number; su
         continue;
       }
 
-      if (view.pinned) {
-        fileViews.set(key, { ...view, freshness: 'suspect', freshnessCause: 'session_restore', lastAccessed: now });
-        staleFileViews++;
-      } else {
-        fileViews.delete(key);
-        staleFileViews++;
-      }
+      // Content diverged from persisted revision. Keep both pinned AND
+      // unpinned views: path-derived identity means the retention ref is
+      // still the valid one for this path, and the suspect marker tells
+      // the runtime to refetch on next access. Deleting unpinned views
+      // here used to erase filled regions that were still correct at the
+      // persisted revision — strictly worse than keeping them visible
+      // with a stale marker.
+      fileViews.set(key, { ...view, freshness: 'suspect', freshnessCause: 'session_restore', lastAccessed: now });
+      staleFileViews++;
       changedSourcePaths.add(view.filePath);
     }
 
