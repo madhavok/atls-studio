@@ -3949,12 +3949,15 @@ function _extractRecentReasoning(): string {
 
 /**
  * Build the dynamic context block for injection into the last user message.
- * 
+ *
  * This content was previously in the system prompt's dynamic suffix but
  * is now in the messages array so the system prompt stays 100% static
  * for provider prefix caching (BP1).
+ *
+ * Exported for focused regression tests (e.g. the HASH MANIFEST filter
+ * that suppresses file-backed chunks covered by pinned FileViews).
  */
-function buildDynamicContextBlock(
+export function buildDynamicContextBlock(
   workspaceContext?: WorkspaceContext,
   projectTree?: string,
   isFirstTurn?: boolean,
@@ -3969,21 +3972,49 @@ function buildDynamicContextBlock(
     pruneStaleEntries(currentTurn, 5);
     const ctxState = useContextStore.getState();
     const allRefs = getAllRefs();
+
+    // File-backed chunks whose source matches a pinned FileView are
+    // represented by the view itself — they must NOT show up as separate
+    // manifest rows. If we leave them in, the model sees the fresh pinned
+    // `fv` row AND one-or-more `dorm`/active rows for the same file path
+    // (e.g. after `vb` compacts the post-edit file chunk) and interprets
+    // the extra rows as staleness, triggering a redundant re-read.
+    //
+    // Policy matches `contextFormatter.ts` for `## ACTIVE ENGRAMS`: suppress
+    // file-backed `viewKind: 'latest'` chunks whose normalized source path
+    // matches a PINNED view. Unpinned views don't render, so their chunks
+    // still show normally.
+    const pinnedViewPaths = new Set<string>();
+    for (const v of ctxState.fileViews.values()) {
+      if (v.pinned) pinnedViewPaths.add(v.filePath.replace(/\\/g, '/').toLowerCase());
+    }
+    const FILE_BACKED = new Set(['file', 'smart', 'raw', 'tree']);
+    const isCoveredByPinnedView = (source: string | undefined, type: string, viewKind: string | undefined): boolean => {
+      if (!source || !FILE_BACKED.has(type)) return false;
+      if (viewKind && viewKind !== 'latest') return false;
+      return pinnedViewPaths.has(source.replace(/\\/g, '/').toLowerCase());
+    };
+
     const activeChunks: Array<{ shortHash: string; type: string; source?: string; tokens: number; pinned?: boolean; pinnedShape?: string; compacted?: boolean; freshness?: string; freshnessCause?: string; suspectSince?: number; supersededBy?: { hashes: string[]; note: string } }> = [];
     const dematRefs: typeof allRefs = [];
     for (const ref of allRefs) {
       if (ref.visibility === 'materialized') {
         const chunk = ctxState.chunks.get(ref.hash);
-        if (chunk && chunk.type !== 'msg:user' && chunk.type !== 'msg:asst') {
-          activeChunks.push({
-            shortHash: chunk.shortHash, type: chunk.type, source: chunk.source,
-            tokens: chunk.tokens, pinned: chunk.pinned, pinnedShape: chunk.pinnedShape,
-            compacted: chunk.compacted, freshness: chunk.freshness as string | undefined,
-            freshnessCause: chunk.freshnessCause as string | undefined, suspectSince: chunk.suspectSince,
-            supersededBy: chunk.supersededBy,
-          });
-        }
+        if (!chunk || chunk.type === 'msg:user' || chunk.type === 'msg:asst') continue;
+        if (isCoveredByPinnedView(chunk.source, chunk.type, chunk.viewKind)) continue;
+        activeChunks.push({
+          shortHash: chunk.shortHash, type: chunk.type, source: chunk.source,
+          tokens: chunk.tokens, pinned: chunk.pinned, pinnedShape: chunk.pinnedShape,
+          compacted: chunk.compacted, freshness: chunk.freshness as string | undefined,
+          freshnessCause: chunk.freshnessCause as string | undefined, suspectSince: chunk.suspectSince,
+          supersededBy: chunk.supersededBy,
+        });
       } else if (ref.visibility === 'referenced') {
+        // Dematerialized refs carry the same risk: a post-edit file chunk
+        // that got compacted + dematerialized (e.g. by `vb`) would show up
+        // as `dormant | rec to restore` next to the pinned view for the
+        // same path. Filter by source + type the same way.
+        if (isCoveredByPinnedView(ref.source, ref.type, undefined)) continue;
         dematRefs.push(ref);
       }
     }
@@ -4011,7 +4042,11 @@ function buildDynamicContextBlock(
         supersededBy: undefined,
       });
     }
-    const archivedRefs = getArchivedHppRefs();
+    // Archived refs also filter — a compacted/evicted file chunk for a
+    // pinned view's path should not render as `rec to restore` when the
+    // view already carries the content.
+    const archivedRefs = getArchivedHppRefs()
+      .filter(r => !isCoveredByPinnedView(r.source, r.type, undefined));
     const manifestBlock = formatHashManifest({ activeChunks, dematRefs, archivedRefs, turn: currentTurn });
     parts.push(manifestBlock);
   }
