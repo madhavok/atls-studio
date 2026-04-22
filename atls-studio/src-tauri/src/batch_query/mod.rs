@@ -12576,17 +12576,10 @@ pub async fn atls_batch_query(
                 // Recency sigil (`$last` or `h:$last` or `$last-N`): pick the
                 // Nth most recent entry across ALL files. Matches the agent's
                 // "undo the thing I just did" intent when it doesn't hold a
-                // specific file path or hash.
-                let sigil_ref = {
-                    let s = undo_ref.trim_start_matches("h:");
-                    if s.starts_with("$last") { Some(s) } else { None }
-                };
-                let pop_result: Option<(String, UndoEntry)> = if let Some(sigil) = sigil_ref {
-                    // `$last` → 0th most recent. `$last-N` → Nth most recent (0-based).
-                    let offset: usize = sigil
-                        .strip_prefix("$last-")
-                        .and_then(|n| n.parse::<usize>().ok())
-                        .unwrap_or(0);
+                // specific file path or hash. Parsing factored into
+                // `parse_undo_last_sigil` for unit coverage.
+                let sigil_offset = parse_undo_last_sigil(&undo_ref);
+                let pop_result: Option<(String, UndoEntry)> = if let Some(offset) = sigil_offset {
                     // Gather (file_path, index, created_at) across all stacks, sort by recency.
                     let mut candidates: Vec<(String, usize, std::time::Instant)> = Vec::new();
                     for (fp, stack) in undo_store.iter() {

@@ -168,6 +168,26 @@ pub(crate) fn resolve_edit_operation(
     (resolved, serde_json::Value::Object(std::mem::take(obj)))
 }
 
+/// Parse a `$last` recency sigil out of an undo-ref string.
+///
+/// Returns `Some(offset)` where 0 is the most recent entry across all files:
+/// - `"$last"` or `"h:$last"` → `Some(0)`
+/// - `"$last-N"` or `"h:$last-N"` → `Some(N)` for any valid non-negative N
+/// - Anything else (file path, raw hash, `$last_edit` / non-numeric suffix) → `None`
+///
+/// Callers pass the result into the undo-store stack walk when Some, or fall
+/// through to the file-path / hash-prefix lookup when None.
+pub(crate) fn parse_undo_last_sigil(undo_ref: &str) -> Option<usize> {
+    let s = undo_ref.trim_start_matches("h:");
+    if s == "$last" {
+        Some(0)
+    } else if let Some(rest) = s.strip_prefix("$last-") {
+        rest.parse::<usize>().ok()
+    } else {
+        None
+    }
+}
+
 /// Extract raw hash for undo/revise/flush lookup from various formats the model may pass.
 /// Handles: "h:6169ed", "[edit result] h:6169ed → path", "6169ed", "6169ed_edit", etc.
 /// Returns the hash suitable for matching entry.hash (which has no "h:" prefix).
@@ -823,5 +843,81 @@ mod edit_dispatch_tests {
             json!({"mode": "batch_edits", "edits": [{"f": 1}]}),
         );
         assert_eq!(op, "batch_edits");
+    }
+
+    #[test]
+    fn edit_text_replace_shape_routes_to_replace() {
+        // edits:[{file,old,new}] with no mode, no line_edits → `replace`
+        let (op, _) = resolve_edit_operation(
+            "edit".into(),
+            json!({"edits": [{"file": "a.ts", "old": "x", "new": "y"}]}),
+        );
+        assert_eq!(op, "replace");
+    }
+
+    #[test]
+    fn edit_text_replace_explicit_mode_routes_to_replace() {
+        let (op, _) = resolve_edit_operation(
+            "edit".into(),
+            json!({"mode": "replace", "edits": [{"file": "a.ts", "old": "x", "new": "y"}]}),
+        );
+        assert_eq!(op, "replace");
+    }
+
+    #[test]
+    fn edit_old_new_with_line_edits_stays_draft() {
+        // Any entry carrying line_edits disqualifies the text-replace route.
+        let (op, _) = resolve_edit_operation(
+            "edit".into(),
+            json!({"edits": [{"file": "a.ts", "old": "x", "new": "y", "line_edits": [{"line": 1, "action": "replace"}]}]}),
+        );
+        assert_eq!(op, "draft");
+    }
+}
+
+#[cfg(test)]
+mod undo_sigil_tests {
+    use super::parse_undo_last_sigil;
+
+    #[test]
+    fn plain_dollar_last() {
+        assert_eq!(parse_undo_last_sigil("$last"), Some(0));
+    }
+
+    #[test]
+    fn prefixed_dollar_last() {
+        assert_eq!(parse_undo_last_sigil("h:$last"), Some(0));
+    }
+
+    #[test]
+    fn dollar_last_with_offset() {
+        assert_eq!(parse_undo_last_sigil("$last-3"), Some(3));
+        assert_eq!(parse_undo_last_sigil("h:$last-10"), Some(10));
+    }
+
+    #[test]
+    fn dollar_last_zero_offset() {
+        assert_eq!(parse_undo_last_sigil("$last-0"), Some(0));
+    }
+
+    #[test]
+    fn non_sigil_returns_none() {
+        assert_eq!(parse_undo_last_sigil("src/foo.ts"), None);
+        assert_eq!(parse_undo_last_sigil("h:abc123"), None);
+        assert_eq!(parse_undo_last_sigil(""), None);
+    }
+
+    #[test]
+    fn unknown_suffix_returns_none() {
+        // Only $last / $last-N are supported; $last_edit etc. fall through.
+        assert_eq!(parse_undo_last_sigil("$last_edit"), None);
+        assert_eq!(parse_undo_last_sigil("h:$last_edit"), None);
+        assert_eq!(parse_undo_last_sigil("$lastly"), None);
+    }
+
+    #[test]
+    fn non_numeric_offset_returns_none() {
+        assert_eq!(parse_undo_last_sigil("$last-abc"), None);
+        assert_eq!(parse_undo_last_sigil("$last-"), None);
     }
 }

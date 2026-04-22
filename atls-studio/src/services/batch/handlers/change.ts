@@ -1706,6 +1706,12 @@ function resolveEditOperation(params: Record<string, unknown>): { operation: str
         return entry;
       });
     }
+    // `edits:[{file,old,new}]` without line metadata stays on the `draft`
+    // path (not the standalone `replace` op): draft has undo tracking,
+    // freshness preflight, and lint-on-write, and treats `old` as a content
+    // anchor that must match before write — so FTS false positives get
+    // rejected as `anchor_not_found` without touching disk. Routing to the
+    // bare `replace` op would trade all three for a leaner path.
     return { operation: 'draft', resolved };
   }
   return { operation: 'draft', resolved };
