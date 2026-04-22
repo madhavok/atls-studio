@@ -23,6 +23,7 @@ const OP_SHORTHAND: &[(&str, &str)] = &[
     ("analyze.impact", "ai"),
     ("analyze.blast_radius", "ab"),
     ("analyze.extract_plan", "ax"),
+    ("analyze.graph", "ag"),
     ("change.edit", "ce"),
     ("change.create", "cc"),
     ("change.delete", "cd"),
@@ -46,6 +47,7 @@ const OP_SHORTHAND: &[(&str, &str)] = &[
     ("session.recall", "rec"),
     ("session.stats", "st"),
     ("session.debug", "db"),
+    ("session.diagnose", "dg"),
     ("session.bb.write", "bw"),
     ("session.bb.read", "br"),
     ("session.bb.delete", "bd"),
@@ -109,7 +111,7 @@ fn full_shorthand_token_audit() {
         assert!(seen_short.insert(*short), "duplicate short code {:?}", short);
         assert!(seen_full.insert(*full), "duplicate full op {:?}", full);
     }
-    assert_eq!(OP_SHORTHAND.len(), 75);
+    assert_eq!(OP_SHORTHAND.len(), 76);
     eprintln!("\n=== full_shorthand_token_audit: per-operation strings ===\n");
     eprintln!(
         "{:<28} {:>5} | {:>6} {:>6} {:>6} | {:>6} {:>6} {:>6} | {:>4} {:>4} {:>4}",
@@ -143,7 +145,7 @@ fn full_shorthand_token_audit() {
             tf[0] as i32 - ts[0] as i32, tf[1] as i32 - ts[1] as i32, tf[2] as i32 - ts[2] as i32
         );
     }
-    eprintln!("\n--- Sum over 75 op tokens (name only) ---");
+    eprintln!("\n--- Sum over 76 op tokens (name only) ---");
     eprintln!("Claude:  full={} short={} delta={}", sum_full[0], sum_short[0], sum_full[0] - sum_short[0]);
     eprintln!("OpenAI:  full={} short={} delta={}", sum_full[1], sum_short[1], sum_full[1] - sum_short[1]);
     eprintln!("Google*: full={} short={} delta={}", sum_full[2], sum_short[2], sum_full[2] - sum_short[2]);
