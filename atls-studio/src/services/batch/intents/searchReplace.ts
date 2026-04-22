@@ -23,13 +23,14 @@
 import type { IntentResolver, IntentResult, IntentContext, Step } from '../types';
 import { makeStepId, computeNextTargets } from '../intents';
 
-// Tuned for literal find/replace across a project: FTS can rank a freshly
-// created low-frequency file below the top-10 even when it's the only
-// literal match. Since the backend `replace` op errors cheaply on files
-// that don't contain `old_text` (`Pattern not found`, no disk write), a
-// wider net is safe — spurious hits are filtered by the backend. 50 keeps
-// us well below any per-batch step-count ceiling.
-const DEFAULT_MAX_MATCHES = 50;
+// Tuned for literal find/replace across a project: each slot targets one
+// UNIQUE hit file (see `content.unique_file_paths` binding below), not a
+// per-hit slot, so 20 slots cover most realistic refactors. Unique-file
+// binding also avoids the old "file has 5 hits → slot 0 replaces all, slots
+// 1-4 then get Pattern not found" noise. Backend's `replace` op still
+// handles FTS false positives cheaply (no disk write), so raising via
+// `max_matches` up to the ceiling is safe.
+const DEFAULT_MAX_MATCHES = 20;
 const MAX_MATCHES_CEILING = 100;
 
 export const resolveSearchReplace: IntentResolver = (
@@ -114,19 +115,21 @@ export const resolveSearchReplace: IntentResolver = (
       with: editWith,
       // Gate each edit slot on the search having real hits so zero-hit
       // searches collapse to a clean "no replacements" rather than
-      // emitting cryptic skipped stubs.
+      // emitting cryptic skipped stubs. Gate against the deduped list
+      // so the presence/absence signal matches the binding source.
       if: {
-        step_content_array_nonempty: { step_id: searchId, path: 'file_paths' },
+        step_content_array_nonempty: { step_id: searchId, path: 'unique_file_paths' },
       },
     };
 
     if (!isConcreteGlob) {
-      // Per-hit file binding. `content.file_paths` may include duplicates if
-      // the same file had multiple hits; the second run on an already-
-      // replaced file returns `Pattern not found` (clean, idempotent — no
-      // corruption), so tolerating a few extra slots is fine.
+      // Per-unique-file binding: `content.unique_file_paths` has first-
+      // occurrence order with duplicates removed, so each slot targets a
+      // distinct file. Combined with `replace_all:true`, one slot per file
+      // is sufficient — no wasted "Pattern not found" retries on files that
+      // the previous slot already rewrote.
       editStep.in = {
-        file_path: { from_step: searchId, path: `content.file_paths.${i}` },
+        file_path: { from_step: searchId, path: `content.unique_file_paths.${i}` },
       };
     }
 
@@ -138,8 +141,9 @@ export const resolveSearchReplace: IntentResolver = (
   // passes when search.code returns zero hits (the empty-result chunk is
   // still emitted as a ref), which previously led to a misleading
   // bb.write claiming the rename happened + a verify on no-op edits.
+  // Check the deduped list to match the edit-slot binding source.
   const hasHits = {
-    step_content_array_nonempty: { step_id: searchId, path: 'file_paths' },
+    step_content_array_nonempty: { step_id: searchId, path: 'unique_file_paths' },
   };
 
   steps.push({

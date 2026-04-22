@@ -1002,10 +1002,11 @@ describe('intent.search_replace resolver', () => {
     const result = resolveSearchReplace(params, emptyContext());
     const ops = result.steps.map(s => s.use);
     expect(ops).toContain('search.code');
-    // Default max_matches is 50 — wider net so literal targets outside the
-    // FTS top-10 still get candidates. Extra slots no-op cleanly on files
-    // without the pattern (backend returns Pattern not found).
-    expect(ops.filter(o => o === 'change.edit').length).toBe(50);
+    // Default max_matches is 20 UNIQUE FILES — each slot binds to a deduped
+    // hit file via `content.unique_file_paths.${i}`. Combined with
+    // replace_all:true, one slot per file handles every occurrence in that
+    // file, so the old 50-slot per-hit fan-out is unnecessary.
+    expect(ops.filter(o => o === 'change.edit').length).toBe(20);
     expect(ops).toContain('session.bb.write');
     expect(ops).toContain('verify.build');
   });
@@ -1024,34 +1025,36 @@ describe('intent.search_replace resolver', () => {
     expect(editSteps.length).toBe(3);
   });
 
-  it('edit slots emit text-replace {old,new} shape bound to file_path', () => {
+  it('edit slots emit text-replace {old,new} shape bound to unique_file_paths', () => {
     const result = resolveSearchReplace(params, emptyContext());
     const editStep = result.steps.find(s => s.use === 'change.edit');
     // Substring replace — backend verifies `old` exists in the file before
     // writing and replaces only that substring. FTS false positives return
-    // `Pattern not found` instead of corrupting the hit line.
+    // `Pattern not found` instead of corrupting the hit line. Binding against
+    // `unique_file_paths` dedupes per-file so duplicate hits don't fan out
+    // to wasted slots.
     expect(editStep!.with!.edits).toEqual([{ old: 'console.log', new: 'logger.info' }]);
     expect(editStep!.with!.replace_all).toBe(true);
     expect(editStep!.with!.line_edits).toBeUndefined();
     expect(editStep!.in).toEqual({
-      file_path: { from_step: 'sr1__search', path: 'content.file_paths.0' },
+      file_path: { from_step: 'sr1__search', path: 'content.unique_file_paths.0' },
     });
   });
 
-  it('verify conditioned on search producing file_paths hits', () => {
+  it('verify conditioned on search producing unique_file_paths hits', () => {
     const result = resolveSearchReplace(params, emptyContext());
     const verifyStep = result.steps.find(s => s.use === 'verify.build');
     expect(verifyStep!.if).toEqual({
-      step_content_array_nonempty: { step_id: 'sr1__search', path: 'file_paths' },
+      step_content_array_nonempty: { step_id: 'sr1__search', path: 'unique_file_paths' },
     });
   });
 
-  it('edit slots conditioned on search producing file_paths hits', () => {
+  it('edit slots conditioned on search producing unique_file_paths hits', () => {
     const result = resolveSearchReplace(params, emptyContext());
     const editSteps = result.steps.filter(s => s.use === 'change.edit');
     for (const step of editSteps) {
       expect(step.if).toEqual({
-        step_content_array_nonempty: { step_id: 'sr1__search', path: 'file_paths' },
+        step_content_array_nonempty: { step_id: 'sr1__search', path: 'unique_file_paths' },
       });
     }
   });

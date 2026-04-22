@@ -273,10 +273,24 @@ export const handleSearchCode: OpHandler = async (params, ctx) => {
       }
     }
 
+    // `file_paths`/`lines`/`end_lines` are per-hit and parallel, so
+    // callers that need hit-aligned data (line-scoped edits) keep working.
+    // `unique_file_paths` is the deduped per-file view — consumers that
+    // operate at file granularity (intent.search_replace text-replace) bind
+    // against this to avoid emitting duplicate edit slots when one file has
+    // multiple FTS hits. First-occurrence order preserved.
+    const seenForUnique = new Set<string>();
+    const uniqueFilePaths: string[] = [];
+    for (const fp of perHit.file_paths) {
+      if (seenForUnique.has(fp)) continue;
+      seenForUnique.add(fp);
+      uniqueFilePaths.push(fp);
+    }
     const structuredContent = {
       file_paths: perHit.file_paths,
       lines: perHit.lines,
       end_lines: perHit.end_lines,
+      unique_file_paths: uniqueFilePaths,
     };
     const cappedNote = perHit.capped && typeof maxPaths === 'number' && maxPaths > 0
       ? ` — hits capped to ${maxPaths}`

@@ -235,6 +235,31 @@ describe('query handlers', () => {
     expect(out.summary).toMatch(/MANIFEST:.*ManifestHit/);
   });
 
+  it('handleSearchCode emits unique_file_paths deduped by first occurrence', async () => {
+    const ctx = {
+      atlsBatchQuery: vi.fn(async () => ({
+        results: [{
+          query: 'q',
+          results: [
+            { file: 'src/a.ts', line: 1 },
+            { file: 'src/a.ts', line: 10 },
+            { file: 'src/b.ts', line: 5 },
+            { file: 'src/a.ts', line: 20 },
+            { file: 'src/c.ts', line: 3 },
+          ],
+        }],
+      })),
+      store: () => minimalStore(),
+    } as any;
+
+    const out = await handleSearchCode({ queries: ['q'] }, ctx);
+    expect(out.ok).toBe(true);
+    // Per-hit list preserves duplicates.
+    expect(out.content?.file_paths).toEqual(['src/a.ts', 'src/a.ts', 'src/b.ts', 'src/a.ts', 'src/c.ts']);
+    // unique_file_paths is dedup with first-occurrence order.
+    expect((out.content as Record<string, unknown>)?.unique_file_paths).toEqual(['src/a.ts', 'src/b.ts', 'src/c.ts']);
+  });
+
   it('handleSearchCode scrubs __atls_check_* scratch hits from results', async () => {
     const ctx = {
       atlsBatchQuery: vi.fn(async () => ({
