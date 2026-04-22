@@ -1738,3 +1738,59 @@ describe('addChunk async token reconcile', () => {
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+// resetSession clears module-level state holders (no cross-session bleed)
+// ---------------------------------------------------------------------------
+
+describe('resetSession clears cross-session module state', () => {
+  it('clears hashManifest forward / eviction / unrecoverable maps', async () => {
+    const {
+      recordForwarding,
+      recordEviction,
+      recordUnrecoverable,
+      hasForward,
+      getForwardMap,
+      getEvictionMap,
+      getUnrecoverableMap,
+    } = await import('../services/hashManifest');
+
+    // Populate state as if a prior session had accumulated entries.
+    recordForwarding('oldhash', 'newhash', 'src/foo.ts', 'same_file_prior_edit', 1);
+    recordEviction('evicted1', 'src/bar.ts', 'stale_hash', 1);
+    recordUnrecoverable('ghost1', 'src/ghost.ts', { kind: 'path_missing', path: 'src/ghost.ts' }, 1);
+
+    expect(hasForward('oldhash')).toBe(true);
+    expect(getEvictionMap().size).toBeGreaterThan(0);
+    expect(getUnrecoverableMap().size).toBeGreaterThan(0);
+
+    useContextStore.getState().resetSession();
+
+    // All three maps must be cleared — otherwise the new session would
+    // inherit the prior session's [UNRECOVERABLE] markers, stale forward
+    // routes, and eviction rows.
+    expect(hasForward('oldhash')).toBe(false);
+    expect(getForwardMap().size).toBe(0);
+    expect(getEvictionMap().size).toBe(0);
+    expect(getUnrecoverableMap().size).toBe(0);
+  });
+
+  it('clears the freshnessJournal', async () => {
+    const { recordFreshnessJournal, getFreshnessJournal } = await import('../services/freshnessJournal');
+
+    recordFreshnessJournal({
+      source: 'src/session-a.ts',
+      previousRevision: 'revA1',
+      currentRevision: 'revA2',
+      lineDelta: 5,
+      recordedAt: Date.now(),
+    });
+    expect(getFreshnessJournal('src/session-a.ts')).toBeDefined();
+
+    useContextStore.getState().resetSession();
+
+    // A freshly reset session starts with an empty journal. Session restore
+    // re-populates via `restoreJournal` when the loaded snapshot carries one.
+    expect(getFreshnessJournal('src/session-a.ts')).toBeUndefined();
+  });
+});

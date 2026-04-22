@@ -48,7 +48,7 @@ import { normalizeSessionPlanSubtasksInput } from '../services/batch/paramNorm';
 import { emptyRollingSummary, type RollingSummary } from '../services/historyDistiller';
 import { freshnessTelemetry, incSessionRestoreReconcileCount, incCognitiveRulesExpired, setManifestMetricsAccessor } from '../services/freshnessTelemetry';
 import { recordAutoPinReleasedUnused } from '../services/autoPinTelemetry';
-import { recordForwarding as manifestRecordForwarding, recordEviction as manifestRecordEviction, resolveForwardChain as manifestResolveForwardChain, recordUnrecoverable as manifestRecordUnrecoverable, getManifestMetrics } from '../services/hashManifest';
+import { recordForwarding as manifestRecordForwarding, recordEviction as manifestRecordEviction, resolveForwardChain as manifestResolveForwardChain, recordUnrecoverable as manifestRecordUnrecoverable, getManifestMetrics, resetManifestState } from '../services/hashManifest';
 import {
   type FileView,
   type FileViewFreshnessCause,
@@ -256,6 +256,7 @@ import type {
   RebaseStrategy,
   RebindOutcome,
 } from '../services/freshnessJournal';
+import { clearFreshnessJournal } from '../services/freshnessJournal';
 // Freshness taxonomy types — import for use, re-export for consumers
 import type { FreshnessState, FreshnessCause, EngramOrigin, VerifyArtifact, TaskCompleteRecord } from '../services/batch/types';
 export type { FreshnessState, FreshnessCause, EngramOrigin, VerifyArtifact, TaskCompleteRecord };
@@ -6131,9 +6132,25 @@ export const useContextStore = create<ContextStoreState>()(
   
   /**
    * Reset for new session — clears everything including blackboard and HPP state.
+   *
+   * Also clears every module-level state holder so a new (or freshly-loaded)
+   * session does not inherit entries from the prior session:
+   *
+   * - `resetProtocol` — HPP `refs` / `shortHashIndex` / `divergedRefs` / turn
+   *   counter / eviction heap.
+   * - `resetManifestState` — `forwardMap` / `evictionMap` / `unrecoverableMap`
+   *   in [`hashManifest.ts`](../services/hashManifest.ts). Without this clear
+   *   the next session inherits stale `[UNRECOVERABLE: ...]` markers,
+   *   forwarded-hash routes, and eviction rows from the previous one.
+   * - `clearFreshnessJournal` — the per-path journal in
+   *   [`freshnessJournal.ts`](../services/freshnessJournal.ts). Session
+   *   restore immediately re-populates via `restoreJournal` when the snapshot
+   *   carries one; a fresh new session starts empty instead of inheriting.
    */
   resetSession: () => {
     resetProtocol();
+    resetManifestState();
+    clearFreshnessJournal();
     useRoundHistoryStore.getState().reset();
     _resetRetention();
     const seededBb = new Map<string, BlackboardEntry>();
