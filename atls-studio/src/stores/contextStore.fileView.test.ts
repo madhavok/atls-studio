@@ -869,10 +869,10 @@ describe('FileView post-edit statefulness (slice view)', () => {
 // Retention-hash forwarding chain — pre-edit shortHash still resolves
 // ---------------------------------------------------------------------------
 
-describe('FileView retention-hash forwarding across own-edits', () => {
+describe('FileView stable identity across own-edits', () => {
   beforeEach(resetStore);
 
-  it('reconcileSourceRevision records the old shortHash on the view', () => {
+  it('reconcileSourceRevision preserves the shortHash across revision bumps (stable pin)', () => {
     const store = useContextStore.getState();
     const rev1 = 'revF1';
     store.addChunk(
@@ -886,7 +886,7 @@ describe('FileView retention-hash forwarding across own-edits', () => {
       },
     );
     const before = useContextStore.getState().getFileView('src/fwd.ts')!;
-    const oldShort = before.shortHash;
+    const stableShort = before.shortHash;
 
     recordFreshnessJournal({
       source: 'src/fwd.ts',
@@ -903,8 +903,14 @@ describe('FileView retention-hash forwarding across own-edits', () => {
     );
 
     const after = useContextStore.getState().getFileView('src/fwd.ts')!;
-    expect(after.shortHash).not.toBe(oldShort);
-    expect(after.previousShortHashes).toContain(oldShort);
+    // The same retention ref the model pinned in round N still matches the
+    // view in round N+1 — no chain walk, no dormancy. sourceRevision moved
+    // internally for backend resolution; the model-visible identity did not.
+    expect(after.shortHash).toBe(stableShort);
+    expect(after.sourceRevision).toBe('revF2');
+    // Chain stays empty for path-derived identity; only migrated legacy
+    // views populate it.
+    expect(after.previousShortHashes).toBeUndefined();
   });
 
   it('dropChunks via a historical retention ref routes to the correct view', () => {
@@ -954,7 +960,12 @@ describe('FileView retention-hash forwarding across own-edits', () => {
     expect(useContextStore.getState().getFileView('src/stale.ts')).toBeUndefined();
   });
 
-  it('previousShortHashes persists across multiple revision bumps (chain of 2)', () => {
+  it('shortHash stays stable across any number of sequential edits', () => {
+    // This is the property that makes "pinned = always fresh" work. The
+    // model's transcript cites `h:<short>` in round 1; that same short is
+    // still the live view ref in round 100 regardless of how many edits
+    // happened between. No dormancy accumulation, no forwarding chain
+    // lookup on the hot path.
     const store = useContextStore.getState();
     store.addChunk(
       rowLine(10, 'x'),
@@ -966,8 +977,7 @@ describe('FileView retention-hash forwarding across own-edits', () => {
         readSpan: { filePath: 'src/chain.ts', sourceRevision: 'revH1', startLine: 10, endLine: 10 },
       },
     );
-    const v0 = useContextStore.getState().getFileView('src/chain.ts')!;
-    const shortAtH1 = v0.shortHash;
+    const stableShort = useContextStore.getState().getFileView('src/chain.ts')!.shortHash;
 
     recordFreshnessJournal({
       source: 'src/chain.ts',
@@ -981,7 +991,7 @@ describe('FileView retention-hash forwarding across own-edits', () => {
       { postEditResolved: true },
     );
     const v1 = useContextStore.getState().getFileView('src/chain.ts')!;
-    const shortAtH2 = v1.shortHash;
+    expect(v1.shortHash).toBe(stableShort);
 
     recordFreshnessJournal({
       source: 'src/chain.ts',
@@ -997,20 +1007,19 @@ describe('FileView retention-hash forwarding across own-edits', () => {
     const v2 = useContextStore.getState().getFileView('src/chain.ts')!;
 
     expect(v2.sourceRevision).toBe('revH3');
-    expect(v2.previousShortHashes).toEqual([shortAtH1, shortAtH2]);
-    // Both historical refs still resolve.
-    expect(useContextStore.getState().getFileView('src/chain.ts')!.shortHash).not.toBe(shortAtH1);
-    const state = useContextStore.getState();
-    expect(state.isPinnedFileViewRef(`h:${shortAtH1}`)).toBe(false); // not pinned yet
-    state.setFileViewPinned('src/chain.ts', true);
-    expect(state.isPinnedFileViewRef(`h:${shortAtH1}`)).toBe(true);
-    expect(state.isPinnedFileViewRef(`h:${shortAtH2}`)).toBe(true);
+    expect(v2.shortHash).toBe(stableShort);
+    expect(v2.previousShortHashes).toBeUndefined();
+
+    // The original pin ref is the only one needed — it still matches.
+    useContextStore.getState().setFileViewPinned('src/chain.ts', true);
+    expect(useContextStore.getState().isPinnedFileViewRef(`h:${stableShort}`)).toBe(true);
   });
 
-  it('applyFillFromChunk rebuild-at-new-revision preserves the forwarding chain', () => {
-    // When the view is force-rebuilt (applyFillFromChunk seeing a newer
-    // revision than stored), the prior shortHash still lands in
-    // previousShortHashes so transcripts don't lose routability.
+  it('applyFillFromChunk at a new revision keeps the same shortHash', () => {
+    // The rebuild-at-new-revision branch used to rotate the shortHash and
+    // push the old one onto the chain. With path-derived identity there's
+    // nothing to rotate; the same short is the right answer at every
+    // revision for this path.
     const store = useContextStore.getState();
     store.addChunk(
       rowLine(10, 'x'),
@@ -1023,9 +1032,8 @@ describe('FileView retention-hash forwarding across own-edits', () => {
       },
     );
     const before = useContextStore.getState().getFileView('src/rebuild.ts')!;
-    const oldShort = before.shortHash;
+    const stableShort = before.shortHash;
 
-    // New revision via fill path without going through reconcile first.
     useContextStore.getState().applyFillFromChunk({
       filePath: 'src/rebuild.ts',
       sourceRevision: 'revRb2',
@@ -1039,7 +1047,8 @@ describe('FileView retention-hash forwarding across own-edits', () => {
     });
     const after = useContextStore.getState().getFileView('src/rebuild.ts')!;
     expect(after.sourceRevision).toBe('revRb2');
-    expect(after.shortHash).not.toBe(oldShort);
-    expect(after.previousShortHashes).toContain(oldShort);
+    expect(after.shortHash).toBe(stableShort);
+    // Chain stays empty — nothing to forward through.
+    expect(after.previousShortHashes).toBeUndefined();
   });
 });

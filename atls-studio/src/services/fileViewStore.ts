@@ -34,19 +34,21 @@
  * changes, session restore) omit `postEditResolved` — pinned views then
  * queue `pendingRefetches` so the caller can refetch asynchronously.
  *
- * ## Retention-hash forwarding chain
+ * ## Stable identity (path-derived)
  *
- * The retention `shortHash` is `(filePath, sourceRevision)`-derived, so it
- * changes on every revision bump. `FileView.previousShortHashes` records
- * the historical shortHashes of this view (in order), and {@link
- * matchesViewRef} / `findViewByRef` in contextStore walk the chain so
- * stale transcript refs like `pu h:<oldShort>` still resolve to the same
- * logical view after own-edits advance the revision. Lifetime is
- * indefinite — entries live until the view itself is dropped.
+ * The retention `shortHash` is `filePath`-derived — stable across every
+ * revision of the file. A pin in round 1 remains valid in round 100
+ * regardless of how many edits happened between. `sourceRevision` rolls
+ * internally for backend resolution; the model-visible ref does not.
+ *
+ * `FileView.previousShortHashes` survives as a session-restore migration
+ * path: legacy snapshots persisted revision-scoped shortHashes, and
+ * `migrateLegacyFileView` pushes those onto the chain so transcript cites
+ * from those sessions keep resolving. New views never populate it.
  *
  * See docs/engrams.md — the "FileView — the unified file-content surface"
- * section (esp. "Post-edit statefulness" and "Retention-hash forwarding
- * chain").
+ * section (esp. "Post-edit statefulness" and "Stable identity across
+ * revisions").
  */
 import { hashContentSync, SHORT_HASH_LEN } from '../utils/contextHash';
 import { countTokensSync } from '../utils/tokenCounter';
@@ -792,16 +794,28 @@ export function clearRemovedMarker(
 
 /**
  * Build a deterministic short ref (`h:<SHORT_HASH_LEN hex>`) identity — stable
- * per `(filePath, revision)`. Shares the chunk-hash namespace; the runtime
- * disambiguates via `resolveAnyRef` in contextStore (views first, chunks
- * fallback).
+ * per **filePath**, across every revision. The view IS the file at that path;
+ * revisions come and go, but the retention ref the model sees does not.
  *
- * Identity does NOT depend on filled regions or fullBody: the view IS the file
- * at this revision, regardless of how much the agent has materialized. This is
- * what makes the ref stable as the view grows; identity changes only on
- * revision bumps (source edits) or path changes.
+ * Why this is path-derived (not path+revision):
+ * - Pinned = always fresh. A pinned view's `h:<short>` stays valid across any
+ *   number of edits. `sourceRevision` rolls internally; the short does not.
+ * - No transcript thrash. A transcript from round 1 citing `h:bfb7e0` still
+ *   resolves to the same view in round 100 — no forwarding chain walk, no
+ *   dormant manifest rows from stale shorts, no re-read spiral.
+ * - Simpler lookups. `findViewByRef` is a single-pass exact match. No
+ *   `previousShortHashes` chain traversal in the hot path.
+ *
+ * The `revision` parameter is accepted for backward compatibility with
+ * existing call sites (and migration logic in {@link migrateLegacyFileView})
+ * but deliberately IGNORED in the hash input. The chunk namespace still
+ * carries its own revision-derived shorts separately.
+ *
+ * Collision surface: `SHORT_HASH_LEN=6` (24 bits) with N open views keeps the
+ * birthday-bound well under 1% for realistic session sizes. Already tracked
+ * via `refCollisions` in contextStore.
  */
-export function computeFileViewHash(filePath: string, revision: string): string {
+export function computeFileViewHash(filePath: string, revision?: string): string {
   return computeFileViewHashParts(filePath, revision).hash;
 }
 
@@ -809,26 +823,53 @@ export function computeFileViewHash(filePath: string, revision: string): string 
  * Same as {@link computeFileViewHash} but returns both the full ref and the
  * raw short-hash portion, so callers can populate FileView.shortHash without
  * re-slicing.
+ *
+ * Path-derived: `revision` is ignored (see {@link computeFileViewHash}).
+ * Kept in the signature so every legacy call site compiles without edits.
  */
 export function computeFileViewHashParts(
   filePath: string,
-  revision: string,
+  revision?: string,
 ): { hash: string; shortHash: string } {
-  const parts = [normalizePath(filePath), revision].join('|');
-  const shortHash = hashContentSync(parts).slice(0, SHORT_HASH_LEN);
+  void revision;
+  const shortHash = hashContentSync(normalizePath(filePath)).slice(0, SHORT_HASH_LEN);
   return { hash: `h:${shortHash}`, shortHash };
 }
 
 /**
- * Restore migration: legacy snapshots persisted FileViews with `h:fv:<16hex>`
- * hashes and no `shortHash` field. The unified namespace retires the prefix;
- * recompute the view's hash deterministically so restored sessions keep
- * working against the current runtime. No-op when already current.
+ * Restore migration: bring a persisted FileView up to the current identity
+ * scheme. Handles two eras:
+ *
+ *   1. **Pre-unify** (`h:fv:<16hex>` prefix, no `shortHash` field) — legacy
+ *      snapshots from before `d617604` (the namespace unification).
+ *   2. **Revision-scoped** (`(path, revision)`-derived `shortHash`) — the
+ *      intermediate period between `d617604` and the switch to path-derived
+ *      identity. The old shortHash is revision-scoped; after reload the
+ *      view needs the new path-derived short, but any transcript ref the
+ *      model still carries uses the old revision-scoped form.
+ *
+ * In case (2) the legacy shortHash is appended to `previousShortHashes` so
+ * transcript refs like `pu h:<oldShort>` continue to resolve to this view
+ * via `findViewByRef`'s forwarding-chain fallback. Idempotent: re-running
+ * on an already-current view is a no-op.
  */
 export function migrateLegacyFileView(view: FileView): FileView {
-  const expected = computeFileViewHashParts(view.filePath, view.sourceRevision);
+  const expected = computeFileViewHashParts(view.filePath);
   if (view.hash === expected.hash && view.shortHash === expected.shortHash) return view;
-  return { ...view, hash: expected.hash, shortHash: expected.shortHash };
+  // Pre-unify snapshots carried `h:fv:<16hex>` with no short — no transcript
+  // cite chain to preserve, just rewrite. Revision-scoped snapshots carried
+  // a short we want to keep resolvable; push it into previousShortHashes.
+  const legacyShort = view.shortHash;
+  const isPreUnify = !legacyShort || legacyShort.length === 0;
+  const nextPrev = isPreUnify
+    ? view.previousShortHashes
+    : appendPreviousShortHash(view.previousShortHashes, legacyShort);
+  return {
+    ...view,
+    hash: expected.hash,
+    shortHash: expected.shortHash,
+    previousShortHashes: nextPrev,
+  };
 }
 
 /**

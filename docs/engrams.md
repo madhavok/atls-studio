@@ -155,9 +155,9 @@ interface FileView {
   filledRegions: FilledRegion[]; // sorted, non-overlapping ranges
   fullBody?: string;           // set if a full read landed or coverage auto-promoted
   fullBodyChunkHash?: string;
-  hash: string;                // h:<SHORT_HASH_LEN hex> — stable per (filePath, sourceRevision); shares namespace with chunks
+  hash: string;                // h:<SHORT_HASH_LEN hex> — stable per filePath across every revision; shares namespace with chunks
   shortHash: string;           // hex portion of hash, for O(1) prefix lookup
-  previousShortHashes?: string[]; // retention-hash forwarding chain — see below
+  previousShortHashes?: string[]; // legacy-migration forwarding chain — empty for new views; see below
   pinned: boolean;             // lifecycle gate — see "FileView lifecycle" below
   pinnedShape?: string;
   removedMarkers?: Array<{ start: number; end: number }>; // rebase failures
@@ -225,7 +225,7 @@ When the sum of `filledRegion.tokens` crosses `COVERAGE_PROMOTE_RATIO` (default 
 After an own-edit, the runtime takes ownership of the FileView's next state instead of leaving it to the model's next read. `refreshContextAfterEdit` (see [`executor.ts`](../atls-studio/src/services/batch/executor.ts)) runs this sequence for every file the edit touched:
 
 1. **`addChunk(newHash)`** replaces the backing engram. Hash forwarding auto-compacts the old chunk and installs the new one.
-2. **`reconcileSourceRevision(path, newHash, 'same_file_prior_edit', { postEditResolved: true })`** advances the view's `sourceRevision`, rebases `filledRegions` via `freshnessJournal.lineDelta`, recomputes the retention short, and records the previous short on the view's forwarding chain (`previousShortHashes`). The `postEditResolved` hint **suppresses `pendingRefetches`**: a `[changed: N pending refetch — re-read on demand]` marker would nudge a re-read the runtime is about to make unnecessary.
+2. **`reconcileSourceRevision(path, newHash, 'same_file_prior_edit', { postEditResolved: true, positionalDeltas })`** advances the view's `sourceRevision` internally, rebases `filledRegions` via the per-position delta array (regions above the edit anchor stay put; regions below shift by the net delta; regions that span the anchor expand or contract). The `postEditResolved` hint **suppresses `pendingRefetches`**: a `[changed: N pending refetch — re-read on demand]` marker would nudge a re-read the runtime is about to make unnecessary. The retention `shortHash` **does not change** — it is path-derived, stable across every revision for the life of the view.
 3. **Per-region re-slice from the new body.** For each surviving region, the runtime slices `resolved.content` at its rebased `[start, end]` and calls `applyFillFromChunk(origin: 'refetch', refetchedAtRound)`. `mergeFilledRegion` dedupes, so the region ends up with **authoritative post-edit bytes at authoritative post-edit line numbers**. Surfaces as the existing `[edited L..-.. this round]` marker on the next render.
 4. **Per-view re-hydration policy:** if the view had `fullBody` before the edit, `applyFullBodyFromChunk` with the new content keeps it full. If the view was slice-only, step 3 has already refilled the regions — the view stays a slice view. **Never auto-promote a partial view to `fullBody` on an own-edit just because the runtime has the bytes**; view shape is the reader's choice.
 
@@ -237,18 +237,24 @@ Net effect: the next round's `## FILE VIEWS` block shows the updated file at the
 - **`session_restore`** — same situation on disk reconciliation after a chat reload.
 - **Rebase failures** (`lineDelta` pushes a region below line 1 or outside the new file) — `[REMOVED]` fires unchanged.
 
-### Retention-hash forwarding chain
+### Stable identity across revisions
 
-The view's retention `shortHash` is derived from `(filePath, sourceRevision)`, so it **changes on every revision bump**. Without forwarding, historical refs the model cited in earlier rounds — `pu h:<oldShort>`, `ce f:h:<oldShort>:A-B`, any BB or transcript mention — stop resolving the moment an own-edit advances the revision.
+The view's retention `shortHash` is derived from the **filePath alone** (`hashContentSync(normPath).slice(0, SHORT_HASH_LEN)` in `computeFileViewHashParts`). It does **not** rotate per revision. The view IS the file at that path — revisions come and go, but the retention ref the model sees does not.
 
-Each `FileView` carries a `previousShortHashes: string[]` chain. On every revision bump (reconcile, or the `applyFillFromChunk` / `applyFullBodyFromChunk` force-rebuild branches when they see a newer `sourceRevision`), the current `shortHash` is appended before it's replaced. Lookups walk the chain:
+This is what makes **"pinned = always fresh"** work: a transcript cite from round 1 (`pu h:bfb7e0`, `ce f:h:bfb7e0:A-B`) still resolves to the same view in round 100 regardless of how many edits landed between. No manifest dormancy pile-up from stale shortHashes, no forwarding-chain walk on the hot path, no post-edit re-read spiral.
+
+`sourceRevision` still tracks the file's current content hash **internally** — read/edit handlers forward it to the backend for content resolution — but it is never the model's retention identity.
+
+Collision surface: 6-hex shorts give 24 bits of path-space; with N open views in a session the birthday-bound stays well under 1% at realistic sizes. Tracked via `refCollisions` in contextStore; a 6→8 bump is a one-line change if the counter starts firing.
+
+**`previousShortHashes` — legacy-migration forwarding chain.** New views never populate it (identity never changes, so there's nothing to forward). It exists for session restore from snapshots that used the older revision-scoped shortHash: `migrateLegacyFileView` pushes the legacy short onto the chain so transcript cites from those persisted sessions still resolve after restore. Lookup helpers walk the chain as a fallback:
 
 - **`findViewByRef`** (in [`contextStore.ts`](../atls-studio/src/stores/contextStore.ts)) — two-pass: current `shortHash` matches win first, then the forwarding chain. Keeps a brand-new view from being shadowed by a historical entry on another view.
 - **`resolveAnyRef`** — same routing via `findViewByRef`.
-- **`resolveCiteFromView`** (in [`executor.ts`](../atls-studio/src/services/batch/executor.ts)) — the `content_hash` auto-rewrite path; a stale retention short still resolves to the view's **current** `sourceRevision` for edit dispatch.
-- **`matchesViewRef`** (in [`fileViewStore.ts`](../atls-studio/src/services/fileViewStore.ts)) — the pure helper used by all of the above; also exposed for tests.
+- **`resolveCiteFromView`** (in [`executor.ts`](../atls-studio/src/services/batch/executor.ts)) — `content_hash` auto-rewrite; rewrites a retention short to the view's **current** `sourceRevision` for the backend.
+- **`matchesViewRef`** (in [`fileViewStore.ts`](../atls-studio/src/services/fileViewStore.ts)) — the pure helper.
 
-**Lifetime is indefinite — entries live until the view is dropped** (via `dro`, `pruneFileViewsForChunks`, session clear, or the normalized-path key disappearing). The chain is bounded by the number of distinct revisions the view has observed, which is already bounded by WM pressure. The chain serializes with the view in session snapshots so restored sessions keep transcript refs resolvable.
+Entries live until the view is dropped (via `dro`, `pruneFileViewsForChunks`, session clear, or the normalized-path key disappearing). Serialized with the view in session snapshots.
 
 ## Memory Regions
 

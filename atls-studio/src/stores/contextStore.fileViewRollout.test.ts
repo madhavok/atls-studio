@@ -445,8 +445,16 @@ describe('FileView rollout — single retention hash trace replay', () => {
     const ref3 = useContextStore.getState().getFileView('src/stable.ts')!.hash;
     expect(ref3).toBe(ref1);
 
-    // Only a revision bump changes identity.
+    // Path-derived identity: even a revision bump does NOT change the ref.
+    // The view IS the file at that path — sourceRevision rolls internally
+    // for backend resolution, but the model-visible retention ref stays
+    // stable across every edit. This is what makes "pinned = always fresh"
+    // work: no transcript-ref thrash, no dormancy pile-up.
     const ref4 = store.ensureFileView('src/stable.ts', 'different-rev');
-    expect(ref4).not.toBe(ref1);
+    expect(ref4).toBe(ref1);
+
+    // Only a DIFFERENT path yields a different ref.
+    const ref5 = store.ensureFileView('src/other.ts', 'different-rev');
+    expect(ref5).not.toBe(ref1);
   });
 });

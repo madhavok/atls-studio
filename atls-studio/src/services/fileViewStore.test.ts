@@ -604,18 +604,21 @@ describe('fileViewStore — hash identity', () => {
     expect(a).toBe(b);
   });
 
-  it('hash is stable per (path, revision) — unchanged by fills or fullBody', () => {
-    // This is the property that lets the view's `h:<short>` be a valid single
-    // retention ref: identity does not drift as the view progressively fills.
-    const base = computeFileViewHash('src/foo.ts', 'rev1');
-    // Same inputs should yield the same hash — no region/fullBody arg in the
-    // new signature at all.
+  it('hash is stable per path — unchanged by fills, fullBody, or revision bump', () => {
+    // Path-derived identity: the view IS the file at that path. Revisions
+    // roll internally (sourceRevision) but the retention ref the model sees
+    // stays the same forever. This is what makes a pinned view's `h:<short>`
+    // a durable transcript ref across any number of edits — no dormancy
+    // pile-up, no forwarding-chain walk needed.
+    const base = computeFileViewHash('src/foo.ts');
     expect(computeFileViewHash('src/foo.ts', 'rev1')).toBe(base);
+    expect(computeFileViewHash('src/foo.ts', 'rev2')).toBe(base);
+    expect(computeFileViewHash('src/foo.ts', 'completely-different-revision')).toBe(base);
   });
 
-  it('hash changes on revision bump', () => {
-    const a = computeFileViewHash('src/foo.ts', 'rev1');
-    const b = computeFileViewHash('src/foo.ts', 'rev2');
+  it('distinct paths yield distinct hashes', () => {
+    const a = computeFileViewHash('src/foo.ts');
+    const b = computeFileViewHash('src/bar.ts');
     expect(a).not.toBe(b);
   });
 });
@@ -897,7 +900,7 @@ describe('fileViewStore — per-position delta rebase', () => {
   });
 });
 
-describe('fileViewStore — retention-hash forwarding chain', () => {
+describe('fileViewStore — stable path-derived identity across revisions', () => {
   beforeEach(() => {
     clearFreshnessJournal();
   });
@@ -906,7 +909,10 @@ describe('fileViewStore — retention-hash forwarding chain', () => {
     clearFreshnessJournal();
   });
 
-  it('reconcile records the old shortHash in previousShortHashes on revision bump', () => {
+  it('shortHash does NOT change on revision bump (pinned = always fresh, stable ref)', () => {
+    // Core property: view identity is per-PATH, not per-(path, revision).
+    // Edits bump sourceRevision internally but the retention ref the model
+    // sees is the same on every round. No forwarding chain needed.
     const v0 = createFileView(fakeSkeleton({ revision: 'revA' }));
     const oldShort = v0.shortHash;
     expect(v0.previousShortHashes).toBeUndefined();
@@ -916,28 +922,35 @@ describe('fileViewStore — retention-hash forwarding chain', () => {
       cause: 'same_file_prior_edit',
       round: 1,
     });
-    expect(view.shortHash).not.toBe(oldShort);
-    expect(view.previousShortHashes).toEqual([oldShort]);
+    // Identity preserved across revision bump.
+    expect(view.shortHash).toBe(oldShort);
+    expect(view.hash).toBe(v0.hash);
+    // `sourceRevision` still tracks the new revision for backend resolution.
+    expect(view.sourceRevision).toBe('revB');
+    // No forwarding chain needed — same short, no entry to add.
+    expect(view.previousShortHashes).toBeUndefined();
   });
 
-  it('reconcile preserves an existing chain and appends when the short changes again', () => {
+  it('shortHash stays stable across any number of sequential revision bumps', () => {
     const v0 = createFileView(fakeSkeleton({ revision: 'revA' }));
-    const oldAShort = v0.shortHash;
+    const stableShort = v0.shortHash;
     const { view: vB } = reconcileFileView(v0, {
       currentRevision: 'revB',
       cause: 'same_file_prior_edit',
       round: 1,
     });
-    const oldBShort = vB.shortHash;
     const { view: vC } = reconcileFileView(vB, {
       currentRevision: 'revC',
       cause: 'same_file_prior_edit',
       round: 2,
     });
-    expect(vC.previousShortHashes).toEqual([oldAShort, oldBShort]);
+    expect(vB.shortHash).toBe(stableShort);
+    expect(vC.shortHash).toBe(stableShort);
+    expect(vC.previousShortHashes).toBeUndefined();
+    expect(vC.sourceRevision).toBe('revC');
   });
 
-  it('reconcile does not push when the shortHash is unchanged (no-op revisions)', () => {
+  it('reconcile no-op when revision unchanged', () => {
     const v0 = createFileView(fakeSkeleton({ revision: 'revA' }));
     const { view, updated } = reconcileFileView(v0, {
       currentRevision: 'revA',
@@ -953,29 +966,27 @@ describe('fileViewStore — retention-hash forwarding chain', () => {
     expect(matchesViewRef(v, v.shortHash)).toBe(true);
   });
 
-  it('matchesViewRef resolves a historical shortHash via the forwarding chain', () => {
+  it('matchesViewRef still walks the forwarding chain for legacy migrated views', () => {
+    // The chain is empty for new views (path-derived identity doesn't need
+    // it), but migrateLegacyFileView still pushes the old revision-scoped
+    // short onto the chain so transcript refs from persisted sessions keep
+    // resolving. Simulate that here.
     const v0 = createFileView(fakeSkeleton({ revision: 'rA' }));
-    const oldShort = v0.shortHash;
-    const { view } = reconcileFileView(v0, {
-      currentRevision: 'rB',
-      cause: 'same_file_prior_edit',
-      round: 1,
-    });
-    expect(matchesViewRef(view, view.shortHash)).toBe(true);
-    expect(matchesViewRef(view, oldShort)).toBe(true);
+    const fakeLegacy = 'deadbe';
+    const withChain = { ...v0, previousShortHashes: [fakeLegacy] };
+    expect(matchesViewRef(withChain, v0.shortHash)).toBe(true);
+    expect(matchesViewRef(withChain, fakeLegacy)).toBe(true);
   });
 
   it('matchesViewRef rejects an unrelated short', () => {
     const v = createFileView(fakeSkeleton({ revision: 'rA' }));
-    // Deliberately derive a short from an unrelated (path, revision).
-    const foreign = computeFileViewHashParts('src/other.ts', 'rA').shortHash;
+    const foreign = computeFileViewHashParts('src/other.ts').shortHash;
     expect(matchesViewRef(v, foreign)).toBe(false);
   });
 
   it('matchesViewRef handles prefix matches symmetrically', () => {
     const v = createFileView(fakeSkeleton({ revision: 'rA' }));
     const full = v.shortHash;
-    // 4-char prefix should still match (findViewByRef's relaxed rule).
     expect(matchesViewRef(v, full.slice(0, 4))).toBe(true);
   });
 });
