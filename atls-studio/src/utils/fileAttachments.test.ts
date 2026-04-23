@@ -6,7 +6,7 @@ vi.mock('@tauri-apps/api/core', () => ({
   invoke: (...args: unknown[]) => invokeMock(...args),
 }));
 
-const { formatAttachmentForLLM, processFileAttachment } = await import('./fileAttachments');
+const { formatAttachmentForLLM, processFileAttachment, processImageBytes } = await import('./fileAttachments');
 
 describe('formatAttachmentForLLM', () => {
   it('formats code attachment with fence and language', () => {
@@ -82,5 +82,56 @@ describe('processFileAttachment', () => {
     expect(att.type).toBe('unknown');
     expect(invokeMock).toHaveBeenCalledWith('read_file_as_base64', { path: '/p/a.ts' });
     logErr.mockRestore();
+  });
+
+  it('image path carries compressed dimensions into metadata', async () => {
+    invokeMock.mockResolvedValueOnce({
+      data: 'AAA',
+      media_type: 'image/jpeg',
+      original_size: 2_000_000,
+      compressed_size: 50_000,
+      compressed_dimensions: { width: 1568, height: 882 },
+    });
+    const att = await processFileAttachment('/p/big.png', 'big.png');
+    expect(att.type).toBe('image');
+    expect(att.metadata?.width).toBe(1568);
+    expect(att.metadata?.height).toBe(882);
+  });
+});
+
+describe('processImageBytes', () => {
+  beforeEach(() => {
+    invokeMock.mockReset();
+  });
+
+  it('invokes compress_image_bytes with the decoded base64 payload', async () => {
+    invokeMock.mockResolvedValueOnce({
+      data: 'CCCC',
+      media_type: 'image/jpeg',
+      original_size: 3_000_000,
+      compressed_size: 60_000,
+      compressed_dimensions: { width: 1568, height: 1048 },
+    });
+    const att = await processImageBytes('paste.png', 'data:image/png;base64,SGVsbG8=', 'image/png');
+    expect(invokeMock).toHaveBeenCalledWith('compress_image_bytes', { dataBase64: 'SGVsbG8=' });
+    expect(att.type).toBe('image');
+    expect(att.metadata?.media_type).toBe('image/jpeg');
+    expect(att.metadata?.width).toBe(1568);
+    expect(att.content).toContain('data:image/jpeg;base64,');
+  });
+
+  it('passes SVG data URLs through without invoking Rust', async () => {
+    const svgDataUrl = 'data:image/svg+xml;base64,PHN2Zy8+';
+    const att = await processImageBytes('icon.svg', svgDataUrl, 'image/svg+xml');
+    expect(invokeMock).not.toHaveBeenCalled();
+    expect(att.type).toBe('image');
+    expect(att.content).toBe(svgDataUrl);
+    expect(att.metadata?.media_type).toBe('image/svg+xml');
+  });
+
+  it('propagates Rust errors so callers can toast+fallback', async () => {
+    invokeMock.mockRejectedValueOnce(new Error('unsupported codec'));
+    await expect(processImageBytes('photo.heic', 'data:image/heic;base64,QUJD', 'image/heic'))
+      .rejects.toThrow('unsupported codec');
   });
 });

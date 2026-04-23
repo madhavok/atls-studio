@@ -48,9 +48,16 @@ async function processCodeFile(filePath: string, fileName: string): Promise<File
 
 async function processImageFile(filePath: string, fileName: string): Promise<FileAttachment> {
   const result = await invoke<CompressedImageResult>('compress_and_read_image', { path: filePath });
-  const content = result.base64
-    ?? `data:${result.media_type};base64,${result.data}`;
+  return buildImageAttachment(fileName, filePath, result);
+}
 
+/** Shared assembler so both file-path and in-memory-bytes paths produce identical shapes. */
+function buildImageAttachment(
+  fileName: string,
+  filePath: string,
+  result: CompressedImageResult,
+): FileAttachment {
+  const content = result.base64 ?? `data:${result.media_type};base64,${result.data}`;
   return {
     type: 'image',
     name: fileName,
@@ -60,8 +67,36 @@ async function processImageFile(filePath: string, fileName: string): Promise<Fil
       media_type: result.media_type,
       original_size: result.original_size,
       compressed_size: result.compressed_size,
+      width: result.compressed_dimensions?.width,
+      height: result.compressed_dimensions?.height,
     },
   };
+}
+
+/**
+ * Compress raw image bytes (from clipboard paste or HTML5 drop) via Rust.
+ * - SVG is passed through unchanged (vector, already compact).
+ * - Unsupported codecs (HEIC, TIFF, corrupt) throw — callers should fall back
+ *   to a raw data URL so the user's paste still works.
+ */
+export async function processImageBytes(
+  fileName: string,
+  dataUrl: string,
+  mimeHint?: string,
+): Promise<FileAttachment> {
+  const hint = (mimeHint ?? '').toLowerCase();
+  if (hint.includes('svg') || dataUrl.startsWith('data:image/svg')) {
+    return {
+      type: 'image',
+      name: fileName,
+      path: '',
+      content: dataUrl,
+      metadata: { media_type: 'image/svg+xml' },
+    };
+  }
+  const b64 = dataUrl.includes(',') ? dataUrl.split(',', 2)[1] ?? '' : dataUrl;
+  const result = await invoke<CompressedImageResult>('compress_image_bytes', { dataBase64: b64 });
+  return buildImageAttachment(fileName, '', result);
 }
 
 async function processFallbackFile(filePath: string, fileName: string): Promise<FileAttachment> {

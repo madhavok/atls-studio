@@ -1,5 +1,5 @@
 import React, { memo, useCallback, useEffect, useMemo, useRef, useState, useTransition } from 'react';
-import { processFileAttachment, formatAttachmentForLLM } from '../../utils/fileAttachments';
+import { processFileAttachment, processImageBytes, formatAttachmentForLLM } from '../../utils/fileAttachments';
 import { useAppStore, Message, ToolCall, MessageToolCall, MessageSegment, MessagePart, StreamPart, getMessageParts } from '../../stores/appStore';
 import { useContextStore } from '../../stores/contextStore';
 import { appendTextToSegments as _appendText, appendReasoningToSegments as _appendReasoning, closeBlockById as _closeBlock, upsertToolSegment as _upsertTool, resetStreamingState, clearStreamingState, type StreamingRefs } from './streamingHelpers';
@@ -2530,6 +2530,27 @@ function addProcessedAttachment(
   }
 }
 
+/**
+ * Compress-and-ingest a pasted/dropped image.
+ * Falls back to raw data URL + user toast when the Rust compressor rejects the codec
+ * (HEIC, TIFF without features, corrupt) so the user's paste still lands in chat.
+ */
+async function ingestPastedImage(name: string, dataUrl: string, mimeHint?: string): Promise<void> {
+  const store = useAttachmentStore.getState();
+  try {
+    const attachment = await processImageBytes(name, dataUrl, mimeHint);
+    addProcessedAttachment(store, name, '', attachment);
+  } catch (err) {
+    console.warn('[AiChat] compress_image_bytes failed, falling back to raw paste:', err);
+    store.addImageFromDataUrl(name, dataUrl);
+    useAppStore.getState().addToast({
+      type: 'warning',
+      message: `${name}: unsupported image format, pasted uncompressed. Re-paste as PNG/JPEG for smaller tokens.`,
+      duration: 6000,
+    });
+  }
+}
+
 /** Attachment chips displayed above the input textarea */
 function AttachmentChips() {
   const attachments = useAttachmentStore(state => state.attachments);
@@ -3007,7 +3028,7 @@ export function AiChat() {
           const reader = new FileReader();
           reader.onload = () => {
             const dataUrl = reader.result as string;
-            store.addImageFromDataUrl(file.name, dataUrl);
+            void ingestPastedImage(file.name, dataUrl, file.type);
           };
           reader.onerror = () => console.error('FileReader failed for image drop:', file.name, reader.error);
           reader.readAsDataURL(file);
@@ -3028,17 +3049,18 @@ export function AiChat() {
   const handlePaste = useCallback((e: React.ClipboardEvent) => {
     const items = e.clipboardData?.items;
     if (!items) return;
-    
+
     for (const item of Array.from(items)) {
       if (item.type.startsWith('image/')) {
         e.preventDefault();
         const file = item.getAsFile();
         if (!file) continue;
+        const ext = file.type.split('/')[1] || 'png';
+        const name = `pasted-image-${Date.now()}.${ext}`;
         const reader = new FileReader();
         reader.onload = () => {
           const dataUrl = reader.result as string;
-          const name = `pasted-image-${Date.now()}.${file.type.split('/')[1] || 'png'}`;
-          useAttachmentStore.getState().addImageFromDataUrl(name, dataUrl);
+          void ingestPastedImage(name, dataUrl, file.type);
         };
         reader.onerror = () => console.error('FileReader failed for pasted image:', reader.error);
         reader.readAsDataURL(file);
@@ -3108,7 +3130,7 @@ export function AiChat() {
 
     // Build LLM context from attachments using formatAttachmentForLLM
     let fileContextBlock = '';
-    const imageBlocks: Array<{ type: 'image'; source: { type: 'base64'; media_type: string; data: string } }> = [];
+    const imageBlocks: Array<{ type: 'image'; source: { type: 'base64'; media_type: string; data: string }; _dimensions?: { width: number; height: number } }> = [];
     const attachmentSnapshot = hasAttachments ? [...currentAttachments] : undefined;
 
     for (const att of currentAttachments) {
@@ -3130,10 +3152,19 @@ export function AiChat() {
           }
         }
       } else if (att.type === 'image' && att.base64 && att.mediaType) {
-        imageBlocks.push({
+        const block: { type: 'image'; source: { type: 'base64'; media_type: string; data: string }; _dimensions?: { width: number; height: number } } = {
           type: 'image',
           source: { type: 'base64', media_type: att.mediaType, data: att.base64 },
-        });
+        };
+        // Carry dimensions through as a non-API sidecar so the token estimator
+        // can compute provider vision cost without touching base64 length.
+        // Stripped before transport in the Rust streaming layer if needed.
+        const w = att.metadata?.width;
+        const h = att.metadata?.height;
+        if (typeof w === 'number' && typeof h === 'number') {
+          block._dimensions = { width: w, height: h };
+        }
+        imageBlocks.push(block);
       }
     }
 

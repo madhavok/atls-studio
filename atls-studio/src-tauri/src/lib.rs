@@ -3305,6 +3305,7 @@ pub fn run() {
             file_ops::read_file_as_base64,
             chat_attachments::read_file_signatures,
             chat_attachments::compress_and_read_image,
+            chat_attachments::compress_image_bytes,
             // File watcher (auto-refresh)
             file_watcher::start_file_watcher,
             file_watcher::stop_file_watcher,

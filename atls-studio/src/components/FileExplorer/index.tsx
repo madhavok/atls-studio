@@ -6,6 +6,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { useAppStore, FileNode, type WorkspaceEntry } from '../../stores/appStore';
 import { useAttachmentStore, setInternalDragPayload, consumeInternalDragPayload } from '../../stores/attachmentStore';
+import { processFileAttachment } from '../../utils/fileAttachments';
 import { useAtls } from '../../hooks/useAtls';
 import { getTerminalStore } from '../../stores/terminalStore';
 import {
@@ -562,9 +563,17 @@ function FileTree({ nodes, level = 0, onContextMenu, allVisiblePaths, inlineEdit
                   for (const item of payload) {
                     if (item.type === 'directory') continue;
                     if (isImageFile(item.name)) {
-                      invoke<{ data: string; media_type: string }>('read_file_as_base64', { path: item.path })
-                        .then(result => store.addImageAttachment(item.name, item.path, result.data, result.media_type))
-                        .catch(err => console.error('Failed to read image:', err));
+                      processFileAttachment(item.path, item.name)
+                        .then(att => {
+                          if (att.type === 'image') {
+                            const b64 = att.content?.split(',')[1] || '';
+                            const mediaType = att.metadata?.media_type || 'image/png';
+                            store.addImageAttachment(item.name, item.path, b64, mediaType, att.metadata);
+                          } else {
+                            store.addFileAttachment(item.name, item.path, att.content, att.type, att.metadata);
+                          }
+                        })
+                        .catch(err => console.error('Failed to process image:', err));
                     } else {
                       store.addFileAttachment(item.name, item.path);
                     }
@@ -1112,12 +1121,16 @@ export function FileExplorer() {
       const name = p.split(/[/\\]/).pop() || p;
       if (isImageFile(name)) {
         try {
-          const result = await invoke<{ data: string; media_type: string }>('read_file_as_base64', { path: p });
-          useAttachmentStore.getState().addImageAttachment(
-            name, p, result.data, result.media_type
-          );
+          const att = await processFileAttachment(p, name);
+          if (att.type === 'image') {
+            const b64 = att.content?.split(',')[1] || '';
+            const mediaType = att.metadata?.media_type || 'image/png';
+            useAttachmentStore.getState().addImageAttachment(name, p, b64, mediaType, att.metadata);
+          } else {
+            useAttachmentStore.getState().addFileAttachment(name, p, att.content, att.type, att.metadata);
+          }
         } catch (e) {
-          console.error('Failed to read image:', e, p);
+          console.error('Failed to process image:', e, p);
         }
       } else {
         addFileAttachment(name, p);

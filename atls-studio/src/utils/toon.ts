@@ -603,7 +603,64 @@ export function serializeMessageContentForTokens(content: unknown): string {
       parts.push(text);
       continue;
     }
+    if (type === 'image') {
+      // Vision blocks: emit a short marker only. The base64 `data` field is NOT
+      // text and must not be tokenized. Callers that need the provider's true
+      // vision cost should add `estimateImageContentTokens(content)`.
+      const source = b.source as Record<string, unknown> | undefined;
+      const mediaType = typeof source?.media_type === 'string' ? source.media_type : 'image';
+      parts.push(`[image ${mediaType}]`);
+      continue;
+    }
     parts.push(serializeForTokenEstimate(block));
   }
   return parts.join('\n');
+}
+
+/**
+ * Per-image vision-token cost estimator.
+ * - Anthropic: `ceil((w*h)/750)` (official formula).
+ * - OpenAI high-detail: `85 + 170 * ceil(w/512) * ceil(h/512)`.
+ * - Other / unknown: falls back to the Anthropic formula (conservative midpoint).
+ * Dimensions default to our max output (1568x1568) when missing, which is an upper
+ * bound for the chat-attachment compress pipeline.
+ */
+export function estimateSingleImageTokens(
+  width: number,
+  height: number,
+  provider?: string,
+): number {
+  const w = Math.max(1, Math.floor(width));
+  const h = Math.max(1, Math.floor(height));
+  const p = (provider ?? '').toLowerCase();
+  if (p === 'openai') {
+    const tiles = Math.ceil(w / 512) * Math.ceil(h / 512);
+    return 85 + 170 * tiles;
+  }
+  return Math.ceil((w * h) / 750);
+}
+
+/**
+ * Sum the vision-token cost for all image blocks in a message content value.
+ * Returns 0 when the content has no image blocks (strings, tool calls, etc.).
+ * Pair with `serializeMessageContentForTokens + countTokensSync` for a complete
+ * per-message token estimate (the serializer drops image `data` as of this fix).
+ */
+export function estimateImageContentTokens(content: unknown, provider?: string): number {
+  if (!Array.isArray(content)) return 0;
+  let total = 0;
+  for (const block of content) {
+    if (!block || typeof block !== 'object') continue;
+    const b = block as Record<string, unknown>;
+    if (b.type !== 'image') continue;
+    const source = b.source as Record<string, unknown> | undefined;
+    // Dimensions can live on the block (`_dimensions`) or on the source.
+    const dims =
+      (b._dimensions as Record<string, unknown> | undefined) ??
+      (source?.dimensions as Record<string, unknown> | undefined);
+    const w = typeof dims?.width === 'number' ? dims.width : 1568;
+    const h = typeof dims?.height === 'number' ? dims.height : 1568;
+    total += estimateSingleImageTokens(w, h, provider);
+  }
+  return total;
 }

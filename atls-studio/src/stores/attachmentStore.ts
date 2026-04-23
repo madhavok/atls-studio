@@ -36,6 +36,11 @@ export interface AttachmentMetadata {
   source_lines?: number;
   original_size?: number;
   compressed_size?: number;
+  /** MIME type of the stored payload (images) */
+  media_type?: string;
+  /** Dimensions of the compressed payload (images) — used by the vision-cost estimator */
+  width?: number;
+  height?: number;
 }
 
 export interface ChatAttachment {

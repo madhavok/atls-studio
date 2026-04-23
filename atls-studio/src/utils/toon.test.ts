@@ -5,6 +5,9 @@ import {
   toTOON,
   formatResult,
   serializeForTokenEstimate,
+  serializeMessageContentForTokens,
+  estimateImageContentTokens,
+  estimateSingleImageTokens,
   FORMAT_RESULT_MAX_DEFAULT,
   FORMAT_RESULT_MAX_SEARCH,
   FORMAT_RESULT_MAX_GIT,
@@ -448,5 +451,65 @@ describe('expandBatchQ', () => {
   it('passes through args without q field', () => {
     const args = { foo: 'bar' };
     expect(expandBatchQ(args)).toBe(args);
+  });
+});
+
+describe('image content serialization & token estimation', () => {
+  const bigBase64 = 'A'.repeat(10_000); // simulated 10KB base64 payload
+
+  it('serializeMessageContentForTokens drops image `data` field', () => {
+    const content = [
+      { type: 'text', text: 'look at this' },
+      { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: bigBase64 } },
+    ];
+    const out = serializeMessageContentForTokens(content);
+    // The marker is present, the base64 payload is NOT.
+    expect(out).toContain('[image image/jpeg]');
+    expect(out).not.toContain(bigBase64);
+    expect(out.length).toBeLessThan(200);
+  });
+
+  it('estimateSingleImageTokens applies Anthropic formula by default', () => {
+    // 1568*1568 / 750 = 3278
+    expect(estimateSingleImageTokens(1568, 1568)).toBe(Math.ceil((1568 * 1568) / 750));
+    // 1920*1080 / 750 ≈ 2765
+    expect(estimateSingleImageTokens(1920, 1080)).toBe(Math.ceil((1920 * 1080) / 750));
+  });
+
+  it('estimateSingleImageTokens uses tile math for OpenAI', () => {
+    // 1024x1024 → 2x2 = 4 tiles → 85 + 170*4 = 765
+    expect(estimateSingleImageTokens(1024, 1024, 'openai')).toBe(85 + 170 * 4);
+  });
+
+  it('estimateImageContentTokens sums image blocks and ignores text', () => {
+    const content = [
+      { type: 'text', text: 'hi' },
+      {
+        type: 'image',
+        source: { type: 'base64', media_type: 'image/jpeg', data: 'x' },
+        _dimensions: { width: 1920, height: 1080 },
+      },
+      {
+        type: 'image',
+        source: { type: 'base64', media_type: 'image/webp', data: 'y' },
+        _dimensions: { width: 1024, height: 1024 },
+      },
+    ];
+    const expected =
+      estimateSingleImageTokens(1920, 1080) + estimateSingleImageTokens(1024, 1024);
+    expect(estimateImageContentTokens(content)).toBe(expected);
+  });
+
+  it('estimateImageContentTokens returns 0 for non-arrays and image-free arrays', () => {
+    expect(estimateImageContentTokens('hello')).toBe(0);
+    expect(estimateImageContentTokens([{ type: 'text', text: 'plain' }])).toBe(0);
+    expect(estimateImageContentTokens(undefined)).toBe(0);
+  });
+
+  it('estimateImageContentTokens falls back to 1568x1568 default when dimensions missing', () => {
+    const content = [
+      { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: 'z' } },
+    ];
+    expect(estimateImageContentTokens(content)).toBe(estimateSingleImageTokens(1568, 1568));
   });
 });

@@ -1212,6 +1212,7 @@ pub async fn stream_chat_anthropic(
                     match obj.get("type").and_then(|t| t.as_str()) {
                         Some("tool_result") => { obj.remove("name"); }
                         Some("tool_use") => { obj.remove("thoughtSignature"); }
+                        Some("image") => { obj.remove("_dimensions"); }
                         _ => {}
                     }
                 }
