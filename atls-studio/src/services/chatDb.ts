@@ -17,7 +17,6 @@ import { extractFirstTextFromMessage, getMessageParts } from '../stores/appStore
 import type { ContextChunk, ChunkType, BlackboardEntry, CognitiveRule, ManifestEntry, ReconcileStats, StagedSnippet, TaskPlan, TransitionBridge, MemoryEvent, AwarenessCacheEntry } from '../stores/contextStore';
 import type { GeminiCacheSnapshot } from './aiService';
 import type { RoundSnapshot } from '../stores/roundHistoryStore';
-import type { RollingSummary } from './historyDistiller';
 import type { VerifyArtifact } from './batch/types';
 import type { FreshnessJournalEntry } from './freshnessJournal';
 import type { FileView } from './fileViewStore';
@@ -1135,7 +1134,7 @@ export interface PersistedCostChat {
 }
 
 export interface PersistedMemorySnapshot {
-  version: 2 | 3 | 4 | 5 | 6 | 7;
+  version: 2 | 3 | 4 | 5 | 6 | 7 | 8;
   savedAt: string;
   chunks: ContextChunk[];
   archivedChunks: ContextChunk[];
@@ -1160,8 +1159,19 @@ export interface PersistedMemorySnapshot {
   cacheMetrics?: PersistedCacheMetrics;
   roundHistorySnapshots?: RoundSnapshot[];
   costChat?: PersistedCostChat;
-  /** v5+: distilled rolling history (API-only; not in chat messages) */
-  rollingSummary?: RollingSummary;
+  /** v5-v7 (legacy, discarded on load in v8): distilled rolling history. */
+  rollingSummary?: {
+    decisions: string[];
+    filesChanged: string[];
+    userPreferences: string[];
+    workDone: string[];
+    findings?: string[];
+    errors: string[];
+    currentGoal: string;
+    nextSteps?: string[];
+    blockers?: string[];
+    distilledAt?: number;
+  };
   /** v6+: verification history, awareness cache, coverage, and spin state */
   verifyArtifacts?: Array<[string, VerifyArtifact]>;
   awarenessCache?: Array<[string, AwarenessCacheEntry]>;

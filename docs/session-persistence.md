@@ -58,18 +58,19 @@ Serialized memory state uses a `version` field on [`PersistedMemorySnapshot`](..
 |--------|------|
 | **2–3** | Earlier snapshot layouts; still loadable. Core fields: chunks, archive, staged, blackboard, task plan, hash stacks, etc. |
 | **4** | Adds session-scoped UI/runtime extras: optional `promptMetrics`, `cacheMetrics`, `roundHistorySnapshots`, `costChat` (see `applyV4SessionExtras` in [`useChatPersistence.ts`](../atls-studio/src/hooks/useChatPersistence.ts)). |
-| **5** | Everything in v4 plus optional **`rollingSummary`** — the distilled **rolling history** facts used for the API-only `[Rolling Summary]` message ([history-compression.md](./history-compression.md)). |
-| **6** | Current write format. Everything in v5 plus `verifyArtifacts`, `awarenessCache`, `cumulativeCoveragePaths`, `fileReadSpinByPath`, `fileReadSpinRanges`, `freshnessJournal`, `spinDiagnosisSummary`, `batchMetrics.hadSubstantiveBbWrite`, and an optional `geminiCache` snapshot. Most fields are rehydrated to stores on load; see asymmetries below. |
+| **5** | Everything in v4 plus optional **`rollingSummary`** — the distilled rolling-history facts used for the API-only `[Rolling Summary]` message. **Deprecated in v8.** |
+| **6** | Everything in v5 plus `verifyArtifacts`, `awarenessCache`, `cumulativeCoveragePaths`, `fileReadSpinByPath`, `fileReadSpinRanges`, `freshnessJournal`, `spinDiagnosisSummary`, `batchMetrics.hadSubstantiveBbWrite`, and an optional `geminiCache` snapshot. |
+| **7** | Everything in v6 plus an optional `fileViews` map — per-session persisted FileViews (no cross-session pin leak). |
+| **8** | Current write format. Everything in v7 **minus** `rollingSummary` — the distillation mechanism was removed because durable cross-round state is already carried by BB / hash manifest / FileViews / `ru` rules. v5-v7 snapshots still load: the field is read and discarded. |
 
-### v6 rehydration asymmetries
+### Rehydration asymmetries
 
-Not every v6 field round-trips symmetrically through `loadSession`. Known gaps:
+Not every field round-trips symmetrically through `loadSession`. Known gaps:
 
 - **`spinDiagnosisSummary`** is serialized on write but currently not re-read into any store on load — the field is retained on disk for debugging and forward-compat but doesn't feed spin detection until the next round builds a fresh summary.
 - **`batchMetrics.hadSubstantiveBbWrite`** is normalized on load but requires the batch-metrics store to be present; missing metrics default to `false`.
 - **`geminiCache`**: when present, is re-applied after `applyHashFirstFreshness` so the Gemini static-prefix cache state survives restore.
-
-If a snapshot has no `rollingSummary` (older save) or is below v5, restore clears rolling summary to empty; v4+ extras still apply when `version` is 4, 5, or 6.
+- **`rollingSummary` (v5-v7 only)**: read and discarded on v8 load paths — the distillation mechanism was removed.
 
 ### Freshness of persisted verify artifacts
 

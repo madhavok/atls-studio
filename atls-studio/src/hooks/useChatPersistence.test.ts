@@ -13,7 +13,6 @@ import {
 } from './useChatPersistence';
 import { recordFreshnessJournal, getFreshnessJournal, clearFreshnessJournal, serializeJournal, restoreJournal } from '../services/freshnessJournal';
 import type { PersistedMemorySnapshot } from '../services/chatDb';
-import { emptyRollingSummary } from '../services/historyDistiller';
 
 const DUMMY_GEMINI_CACHE = {
   version: '1',
@@ -62,8 +61,8 @@ describe('memory snapshot helpers', () => {
 
     const snapshot = serializeMemorySnapshot(useContextStore.getState(), DUMMY_GEMINI_CACHE);
 
-    expect(snapshot.version).toBe(7);
-    expect(snapshot.rollingSummary).toBeDefined();
+    expect(snapshot.version).toBe(8);
+    expect(snapshot.rollingSummary).toBeUndefined();
     expect(snapshot.promptMetrics).toBeDefined();
     expect(snapshot.cacheMetrics).toBeDefined();
     expect(snapshot.costChat).toBeDefined();
@@ -144,7 +143,7 @@ describe('memory snapshot helpers', () => {
 
     const snapshot = serializeMemorySnapshot(useContextStore.getState(), DUMMY_GEMINI_CACHE);
 
-    expect(snapshot.version).toBe(7);
+    expect(snapshot.version).toBe(8);
     expect(snapshot.verifyArtifacts).toHaveLength(1);
     expect(snapshot.verifyArtifacts![0]![0]).toBe('va-1');
     expect(snapshot.awarenessCache).toHaveLength(1);
@@ -673,13 +672,13 @@ describe('FileView persistence — per-session isolation + restart round-trip', 
     useContextStore.getState().setFileViewPinned(path, true);
   }
 
-  it('v7 snapshot serializes + restores a pinned FileView by path', () => {
+  it('v8 snapshot serializes + restores a pinned FileView by path', () => {
     seedPinnedFileView('src/fv-rt.ts', 'rev-fv');
     const viewBefore = useContextStore.getState().getFileView('src/fv-rt.ts');
     expect(viewBefore?.pinned).toBe(true);
 
     const snapshot = serializeMemorySnapshot(useContextStore.getState(), DUMMY_GEMINI_CACHE);
-    expect(snapshot.version).toBe(7);
+    expect(snapshot.version).toBe(8);
     expect(snapshot.fileViews).toBeDefined();
     expect(snapshot.fileViews!.length).toBe(1);
 
@@ -947,17 +946,6 @@ describe('applyV4SessionExtras', () => {
         sessionHitRate: 0,
       },
     });
-    useContextStore.getState().setRollingSummary({
-      decisions: ['keep'],
-      filesChanged: [],
-      userPreferences: [],
-      workDone: [],
-      findings: [],
-      errors: [],
-      currentGoal: 'x',
-      nextSteps: [],
-      blockers: [],
-    });
   });
 
   it('no-ops for snapshot versions below 4', () => {
@@ -965,7 +953,6 @@ describe('applyV4SessionExtras', () => {
     applyV4SessionExtras(snap);
     expect(useRoundHistoryStore.getState().snapshots).toEqual([]);
     expect(useCostStore.getState().chatCostCents).toBe(0);
-    expect(useContextStore.getState().rollingSummary.decisions).toEqual(['keep']);
   });
 
   it('merges prompt metrics, cache metrics, round history, and chat cost for v4', () => {
@@ -1020,6 +1007,7 @@ describe('applyV4SessionExtras', () => {
     }));
 
     expect(useAppStore.getState().promptMetrics.modePromptTokens).toBe(10);
+    // `rollingSavings` is legacy zero-valued but still flows through persistence.
     expect(useAppStore.getState().promptMetrics.rollingSavings).toBe(5);
     expect(useAppStore.getState().cacheMetrics.sessionCacheWrites).toBe(2);
     expect(useRoundHistoryStore.getState().snapshots).toHaveLength(1);
@@ -1053,30 +1041,26 @@ describe('applyV4SessionExtras', () => {
     expect(useAppStore.getState().promptMetrics.rolledRounds).toBe(0);
   });
 
-  it('v4 clears rolling summary to empty template', () => {
-    applyV4SessionExtras(baseSnapshot({}));
-    const rs = useContextStore.getState().rollingSummary;
-    expect(rs).toEqual(emptyRollingSummary());
-  });
-
-  it('v6 restores rolling summary including defaulted findings', () => {
-    applyV4SessionExtras(baseSnapshot({
-      version: 6,
-      rollingSummary: {
-        decisions: ['d1'],
-        filesChanged: ['a.ts'],
-        userPreferences: [],
-        workDone: [],
-        findings: [],
-        errors: [],
-        currentGoal: 'g',
-        nextSteps: ['n1'],
-        blockers: [],
-      },
-    }));
-    const rs = useContextStore.getState().rollingSummary;
-    expect(rs.decisions).toEqual(['d1']);
-    expect(rs.findings).toEqual([]);
-    expect(rs.nextSteps).toEqual(['n1']);
+  it('v5-v7 snapshots with a rollingSummary payload load without error (field discarded)', () => {
+    // Regression: v5-v7 snapshots in the wild carry a `rollingSummary` object.
+    // The v8 load path reads and discards the field rather than failing. There
+    // is no longer any `rollingSummary` state on the context store, so the only
+    // assertion here is that the load does not throw.
+    expect(() => {
+      applyV4SessionExtras(baseSnapshot({
+        version: 6,
+        rollingSummary: {
+          decisions: ['d1'],
+          filesChanged: ['a.ts'],
+          userPreferences: [],
+          workDone: [],
+          findings: [],
+          errors: [],
+          currentGoal: 'g',
+          nextSteps: ['n1'],
+          blockers: [],
+        },
+      }));
+    }).not.toThrow();
   });
 });

@@ -13,6 +13,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { buildDynamicContextBlock } from './aiService';
 import { useContextStore } from '../stores/contextStore';
 import { hashContentSync } from '../utils/contextHash';
+import { materialize, dematerialize } from './hashProtocol';
 
 function resetStore() {
   useContextStore.getState().resetSession();
@@ -112,5 +113,147 @@ describe('HASH MANIFEST — pinned-FileView coverage filter', () => {
     // in the manifest for routing even though they don't render in WM).
     // The row must be present regardless of the filter.
     expect(block).toContain(`h:${view!.shortHash}`);
+  });
+});
+
+/**
+ * Self-referential batch-envelope filter — see `isBatchEnvelopeRow` in
+ * buildDynamicContextBlock. History compression's tool_use and tool_result
+ * deflation creates `call`/`result` chunks whose "source" is the model's own
+ * batch envelope (`batch`, `batch:...`, `result:toolu_...`). Surfacing these
+ * as engrams is self-referential telemetry — the runtime logging its own
+ * actions into the memory it's trying to economize. They're suppressed from
+ * the manifest (hashes still resolvable by HPP).
+ */
+describe('HASH MANIFEST — batch-envelope self-ref filter', () => {
+  beforeEach(resetStore);
+
+  /**
+   * Seed a chunk and register it in HPP as materialized.
+   * `addChunk` returns the short hash; we locate the full chunk by short hash.
+   */
+  function seedMaterialized(content: string, type: 'call' | 'result' | 'search' | 'smart', source: string): { fullHash: string; shortHash: string } {
+    const shortHash = useContextStore.getState().addChunk(content, type, source);
+    const chunk = Array.from(useContextStore.getState().chunks.values()).find(c => c.shortHash === shortHash)!;
+    materialize(chunk.hash, chunk.type, chunk.source, chunk.tokens, chunk.content.split('\n').length, chunk.digest || '', chunk.shortHash);
+    return { fullHash: chunk.hash, shortHash };
+  }
+
+  function seedDematerialized(content: string, type: 'call' | 'result' | 'search' | 'smart', source: string): { fullHash: string; shortHash: string } {
+    const refs = seedMaterialized(content, type, source);
+    dematerialize(refs.fullHash);
+    return refs;
+  }
+
+  it('suppresses a dematerialized `call` chunk with source "batch"', () => {
+    const { shortHash } = seedDematerialized('1 steps: session×1', 'call', 'batch');
+    const block = buildDynamicContextBlock();
+    expect(block).not.toContain(`h:${shortHash}`);
+  });
+
+  it('suppresses a dematerialized `call` chunk with source "batch:..." (extractToolDescription shape)', () => {
+    const { shortHash } = seedDematerialized(
+      '{"_stubbed":"1 steps: session×1","_compressed":true}',
+      'call',
+      'batch:1 steps: session×1',
+    );
+    const block = buildDynamicContextBlock();
+    expect(block).not.toContain(`h:${shortHash}`);
+  });
+
+  it('suppresses a dematerialized `result` chunk with source "result:toolu_..." (deflate fallback)', () => {
+    const { shortHash } = seedDematerialized('[OK] c1 ...', 'result', 'result:toolu_abc123');
+    const block = buildDynamicContextBlock();
+    expect(block).not.toContain(`h:${shortHash}`);
+  });
+
+  it('suppresses a dematerialized `result` chunk with source "batch:..." (buildCompressionDescription shape)', () => {
+    const { shortHash } = seedDematerialized(
+      '[OK] r1 (read.context): ...\n[ATLS] 1 steps: 1 pass | ok',
+      'result',
+      'batch:read.context:src/foo.ts',
+    );
+    const block = buildDynamicContextBlock();
+    expect(block).not.toContain(`h:${shortHash}`);
+  });
+
+  it('does NOT suppress non-batch `result` chunks (e.g. search results)', () => {
+    // A real search result chunk with a legitimate query-based source should
+    // still render. Only batch envelopes are filtered.
+    const { shortHash } = seedDematerialized('hit 1: src/app.ts:42', 'search', 'query:auth');
+    const block = buildDynamicContextBlock();
+    expect(block).toContain(`h:${shortHash}`);
+  });
+
+  it('does NOT suppress a `call` chunk whose source merely contains "batch" but does not start with it', () => {
+    // Word-boundary anchored at start — `preflight-batch` is not filtered.
+    const { shortHash } = seedDematerialized('payload', 'call', 'preflight-batch:rules');
+    const block = buildDynamicContextBlock();
+    expect(block).toContain(`h:${shortHash}`);
+  });
+
+  it('also filters `call` chunks in the materialized branch (not just dematRefs)', () => {
+    // Materialize a `call` chunk without dematerializing — it sits in the
+    // activeChunks branch. The filter should still suppress it.
+    const { shortHash } = seedMaterialized(
+      '1 steps: read×1',
+      'call',
+      'batch:read.context:src/a.ts',
+    );
+    const block = buildDynamicContextBlock();
+    expect(block).not.toContain(`h:${shortHash}`);
+  });
+});
+
+/**
+ * Template bodies (`tpl:*`) are seeded into BB at session init but documented
+ * once in the static system prompt. Emitting all eight bodies into every
+ * dynamic-tail BB block is ~0.3k tokens of redundancy per turn.
+ */
+describe('BLACKBOARD — tpl:* bodies are not re-emitted in dynamic tail', () => {
+  beforeEach(resetStore);
+
+  it('emits no tpl:* lines even though templates are seeded', () => {
+    // resetSession in beforeEach already seeds all eight tpl:* templates.
+    const bb = useContextStore.getState().blackboardEntries;
+    expect([...bb.keys()].some(k => k.startsWith('tpl:'))).toBe(true);
+
+    const block = buildDynamicContextBlock();
+    // No `tpl:` preamble lines should land in the assembled block.
+    const tplLines = block.split('\n').filter(l => /^tpl:/.test(l));
+    expect(tplLines).toHaveLength(0);
+  });
+
+  it('still emits non-tpl BB entries (regression guard)', () => {
+    useContextStore.getState().setBlackboardEntry('finding:auth', 'root cause is X');
+    const block = buildDynamicContextBlock();
+    expect(block).toContain('finding:auth: root cause is X');
+  });
+});
+
+/**
+ * INTERNALS_TAB_ID is the sentinel for the ATLS Internals dev panel —
+ * NOT a workspace path. buildContextTOON must omit `file:` when this is
+ * the active tab so the model doesn't see `Ctx:{file:__atls_internals__}`
+ * as a real target.
+ */
+describe('Ctx: TOON — INTERNALS_TAB_ID is not surfaced as a file', () => {
+  beforeEach(resetStore);
+
+  it('omits `file` when activeFile is the internals sentinel', () => {
+    const block = buildDynamicContextBlock({
+      activeFile: '__atls_internals__',
+      cursorLine: 42,
+    } as any);
+    expect(block).not.toContain('__atls_internals__');
+    // Line number is editor state that belongs to the missing file — drop it too.
+    expect(block).not.toMatch(/\bln:\s*42/);
+  });
+
+  it('surfaces `file` for a real path (regression guard)', () => {
+    const block = buildDynamicContextBlock({
+      activeFile: 'src/widget/panel.tsx',
+    } as any);
+    expect(block).toContain('src/widget/panel.tsx');
   });
 });

@@ -289,7 +289,7 @@ Persistent session knowledge — plans, analysis results, decisions, extracted p
 
 Blackboard entries are referenced as `h:bb:key` and appear in the dynamic block of the prompt, separate from working memory.
 
-**Long-horizon facts**: When rounds age out of the verbatim history window, the distiller can record **findings** (and other fields) in the rolling summary — an API-only `[Rolling Summary]` block distinct from dormant per-engram digests. See [history-compression.md](./history-compression.md).
+**Long-horizon facts**: Aged-out rounds are evicted from the verbatim history window; their durable content is already in the **blackboard** (findings / decisions), **hash manifest** (artifact index), **FileViews** (code state), and **`ru` rules** (policy). The runtime no longer synthesizes a rolling summary — those primitives already carry the state authoritatively. See [history-compression.md](./history-compression.md).
 
 ## Emergency Eviction
 

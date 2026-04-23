@@ -313,7 +313,7 @@ Successful edits register paths as **own writes** so the file watcher does not e
 
 ---
 
-**History compression**: Mostly orthogonal to per-file reconciliation, but **`deflateToolResults` / history compression** skips deflating onto **stale** engrams when the source file revision no longer matches — avoiding silent reuse of outdated WM hashes. The **rolling verbatim window** and distilled `[Rolling Summary]` still cap transcript size; see [history-compression.md](./history-compression.md).
+**History compression**: Mostly orthogonal to per-file reconciliation, but **`deflateToolResults` / history compression** skips deflating onto **stale** engrams when the source file revision no longer matches — avoiding silent reuse of outdated WM hashes. The **rolling verbatim window** caps transcript size via eviction (no distillation); see [history-compression.md](./history-compression.md).
 
 ## Source Files (Quick Reference)
 

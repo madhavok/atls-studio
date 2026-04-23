@@ -139,7 +139,7 @@ The middleware runs at the start of each round (after round 0), compressing resu
 
 Additional compression paths:
 - **`deflateToolResults`**: runs immediately after tool execution, before the next model call
-- **Rolling summary**: older history beyond the protected window gets a rolling summary in the state preamble
+- **Rolling-window eviction**: older tool-loop rounds beyond `ROLLING_WINDOW_ROUNDS` (20) are spliced out; durable cross-round state is carried by BB / hash manifest / FileViews / `ru` rules, not by a synthesized summary
 - **Retention-op compaction**: `pi`, `pu`, `dro` calls have their arguments stripped after execution (ephemeral output)
 - **Emergency compression**: when provider reports token overshoot, aggressive compression kicks in
 
@@ -253,7 +253,7 @@ Neither stack alone is sufficient. Together they keep a 200k-window session prod
 
 - [output-compression.md](output-compression.md) — The six axes of emission compression
 - [prompt-assembly.md](prompt-assembly.md) — Cache breakpoints, prompt structure, and assembly flow
-- [history-compression.md](history-compression.md) — Hash-reference deflation, rolling summary, and retention-op compaction
+- [history-compression.md](history-compression.md) — Hash-reference deflation, rolling-window eviction, and retention-op compaction
 - [whitepaper.md](whitepaper.md) — Section 3.4: The complementary input stack
 - [input-compression-merit.md](input-compression-merit.md) — Merit assessment of input-side dictionary compression proposal
 

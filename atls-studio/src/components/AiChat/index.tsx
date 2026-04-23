@@ -642,9 +642,10 @@ const ContextMetrics = memo(function ContextMetrics() {
   // now. `inputCompressionSavings` (tool-result encoder toggle) is a distinct
   // input-compression track — show it alongside so the toggle surfaces a signal.
   const inputCompressionSavings = pm.inputCompressionSavings ?? 0;
+  // `rollingSavings` retained as zero-valued legacy on `PromptMetrics` so
+  // persisted snapshots still round-trip; no longer summed here.
   const perRoundSavings =
     pm.compressionSavings
-    + (pm.rollingSavings ?? 0)
     + freedTokens
     + inputCompressionSavings;
   // cumulativeInputSaved is now a delta-accumulated monotonic total (see
@@ -857,14 +858,6 @@ const ContextMetrics = memo(function ContextMetrics() {
                     title={`History/tool-result compression savings (current window): ${pm.compressionSavings.toLocaleString()} tokens across ${pm.compressionCount.toLocaleString()} item(s).`}
                   >
                     compression {formatTokens(pm.compressionSavings)} ({pm.compressionCount} items)
-                  </span>
-                )}
-                {(pm.rollingSavings ?? 0) > 0 && (
-                  <span
-                    className="cursor-help"
-                    title={`Tokens removed by rolling summary / distillation: ${(pm.rollingSavings ?? 0).toLocaleString()} from ${(pm.rolledRounds ?? 0).toLocaleString()} round(s) folded in.`}
-                  >
-                    rolling {formatTokens(pm.rollingSavings ?? 0)} ({pm.rolledRounds ?? 0} rounds distilled)
                   </span>
                 )}
                 {freedTokens > 0 && (

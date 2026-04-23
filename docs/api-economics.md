@@ -80,7 +80,7 @@ The UI and dev tooling expose **logical** cache expectations from [`logicalCache
 - **BP3 (history)**: Treats a **cache read** as likely when the conversation prefix before the last user message is unchanged except for **appending** new messages (verified by comparing JSON-serialized prefix hashes, with sub-prefix hash comparison to detect append-only growth). A **miss** is expected after round-0 compression, in-place edits to earlier messages, or a shrinking prefix.
 - **BP-static**: Compared via the assembled static prompt cache key.
 
-These are **heuristic expectations** aligned with Anthropic's prefix rules; they help explain behavior and debug surprises. **Billing** follows provider-reported `cache_read_input_tokens` / `cache_creation_input_tokens` from each API response. The synthetic `[Rolling Summary]` prepended to the provider message list is part of the assembled history; see [prompt-assembly.md](./prompt-assembly.md) and [history-compression.md](./history-compression.md).
+These are **heuristic expectations** aligned with Anthropic's prefix rules; they help explain behavior and debug surprises. **Billing** follows provider-reported `cache_read_input_tokens` / `cache_creation_input_tokens` from each API response. See [prompt-assembly.md](./prompt-assembly.md) and [history-compression.md](./history-compression.md) for assembly and rolling-window eviction.
 
 ## What Would Fix This
 
@@ -117,7 +117,7 @@ ATLS implements several strategies to minimize uncached costs within current API
 | **Staged content dedup** | Active engrams replace staged file content with `[content in active engram]` pointers | Avoids double-counting overlapping content |
 | **Batch shorthands** | Operation codes (`ce`, `rl`, `sc`) and parameter aliases (`ps`, `sn`, `qs`) reduce tool-call output tokens | Estimate: ~20-40% reduction per batch step (not measured against baseline) |
 | **Token budgets per region** | WM 38k, BB 4.8k, staged 4.5k (hard cap 64k), history 24k, workspace 7k — see [`promptMemory.ts`](../atls-studio/src/services/promptMemory.ts) | Caps worst-case dynamic block |
-| **Rolling summary** | History beyond budget distilled into a 1.65k-token summary (`ROLLING_SUMMARY_MAX_TOKENS`) unshifted onto the message list | Bounds history growth across long sessions |
+| **Rolling-window eviction** | Oldest tool-loop rounds beyond `ROLLING_WINDOW_ROUNDS` (20) are spliced out; durable state lives in BB / hash manifest / FileViews / `ru` rules rather than a synthesized summary | Bounds history growth across long sessions without perturbing the cache prefix |
 | **Assistant-side tool_use stubbing** | `stubBatchToolUseInputs` replaces past batch tool_use inputs > 80 tokens with a compact `_stubbed` summary | Shrinks the assistant transcript the next round re-reads; see [history-compression.md](./history-compression.md) |
 | **Model-directed WM management** | Prompted to drop/compact/unpin proactively; runtime steering nudges on spin detection | Keeps dynamic block within budget |
 | **Reasoning recap** (infrastructure only, not wired) | `_extractRecentReasoning` / `REASONING_RECAP_MAX_CHARS=1500` in [`aiService.ts`](../atls-studio/src/services/aiService.ts) | Would inject trailing ~1500 chars of assistant reasoning after history compression. Currently has no call sites; listed for completeness. |

@@ -317,9 +317,14 @@ export interface PromptMetrics {
   // Monotonic session counter: total input tokens not sent due to history/tool-result compression.
   compressionSavings: number;
   compressionCount: number;
-  /** Monotonic session counter: tokens not sent because old rounds were removed into rolling summary. */
+  /**
+   * Legacy (distilled rolling-summary savings). Always 0 — the distillation
+   * mechanism was removed; the field stays on the interface so persisted
+   * snapshots, UI components, and test fixtures that still reference it do
+   * not need churning. See `historyCompressor.applyRollingHistoryWindow`.
+   */
   rollingSavings: number;
-  /** Rounds distilled into rolling summary this session */
+  /** Legacy (distilled round count). Always 0 — see `rollingSavings`. */
   rolledRounds: number;
   roundCount: number;
   /**
@@ -342,7 +347,7 @@ export interface PromptMetrics {
   /** Cache composition estimates (for CacheCompositionSection) */
   bp2ToolDefTokens?: number;
   bp3PriorTurnsTokens?: number;
-  /** Orphaned compressed rolling summary pointers removed */
+  /** Legacy (orphaned rolling-summary pointers removed). Always 0. */
   orphanSummaryRemovals: number;
   /**
    * Input-side tool-result compression savings (distinct from
@@ -915,8 +920,6 @@ interface AppState {
   incFileViewCounter: (key: 'fileViewReuseCount' | 'autoHealShiftedCount' | 'autoRefetchCount' | 'autoRefetchSkippedByCap' | 'staleReadRounds', delta?: number) => void;
   /** Set the current FileView count (observational snapshot). */
   setFileViewCount: (count: number) => void;
-  addRollingSavings: (tokensSaved: number, roundsRolled: number) => void;
-  addOrphanRemovals: (count: number) => void;
   /**
    * Internal: prior-round snapshot of the monotonic savings counters.
    * Used by `recordRound` to compute per-round deltas. Reset via
@@ -1513,19 +1516,6 @@ export const useAppStore = create<AppState>((set) => ({
   })),
   setFileViewCount: (count) => set((state) => ({
     promptMetrics: { ...state.promptMetrics, fileViewCount: count },
-  })),
-  addRollingSavings: (tokensSaved, roundsRolled) => set((state) => ({
-    promptMetrics: {
-      ...state.promptMetrics,
-      rollingSavings: state.promptMetrics.rollingSavings + tokensSaved,
-      rolledRounds: state.promptMetrics.rolledRounds + roundsRolled,
-    },
-  })),
-  addOrphanRemovals: (count) => set((state) => ({
-    promptMetrics: {
-      ...state.promptMetrics,
-      orphanSummaryRemovals: state.promptMetrics.orphanSummaryRemovals + count,
-    },
   })),
   _lastRoundSavingsSnapshot: undefined,
   resetSavingsSnapshot: () => set({ _lastRoundSavingsSnapshot: undefined }),

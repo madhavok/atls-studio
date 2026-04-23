@@ -4,12 +4,8 @@ import type { PromptMetrics } from '../stores/appStore';
  *  All prior rounds deflate to hash pointers — the model pins what it needs. */
 export const PROTECTED_RECENT_ROUNDS = 1;
 
-/** Verbatim tool-loop rounds kept before older rounds roll into summary */
+/** Verbatim tool-loop rounds kept before older rounds are evicted (no longer distilled). */
 export const ROLLING_WINDOW_ROUNDS = 20;
-
-/** Max tokens for the formatted rolling summary message.
- *  Calibrated against real BPE tokenizer (heuristic undercounted text by ~10%). */
-export const ROLLING_SUMMARY_MAX_TOKENS = 1650;
 
 /** Calibrated against real BPE tokenizer counts.
  *  History is a mix of code (~1.0x), JSON (~1.26x), and hash refs (~0.77x).

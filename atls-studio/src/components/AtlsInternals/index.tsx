@@ -16,7 +16,7 @@ import { ReconcileFreshnessSection } from './sections/ReconcileFreshnessSection'
 import { IndexDbSection } from './sections/IndexDbSection';
 import { SpinTraceSection } from './sections/SpinTraceSection';
 
-export const INTERNALS_TAB_ID = '__atls_internals__';
+export { INTERNALS_TAB_ID } from '../../constants/atlsInternals';
 
 const LS_ORDER_KEY = 'atls-internals-order';
 const LS_COLLAPSED_KEY = 'atls-internals-collapsed';

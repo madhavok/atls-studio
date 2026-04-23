@@ -376,14 +376,43 @@ describe('assessContext — triggers', () => {
     filledTokens: 3000,
   });
 
-  it('fires on user-turn boundary (round===0) when pinned tokens exceed threshold', () => {
+  it('fires on user-turn boundary (round===0) when pinned tokens exceed threshold AND ctxPct meets the min gate', () => {
     const ev = evaluateAssess(makeInput({
       round: 0,
       fileViews: asMap('filePath', [view()]),
-      ctxUsedTokens: 20_000, // well below mid-loop CTX threshold
+      ctxUsedTokens: 60_000, // 30% — above minCtxPctForFire (20), below mid-loop CTX (80)
     }));
     expect(ev.fired).toBe(true);
     expect(ev.message).toMatch(/<<ASSESS:/);
+  });
+
+  it('does NOT fire on boundary when ctxPct is below the hard lower gate (default 20%)', () => {
+    // Regression: previously fired at e.g. 10% CTX when candidate pins totaled
+    // ≥ boundaryMinTokens. That mis-cues the model with "bloating WM" framing
+    // when the runtime has enormous headroom. The min-gate suppresses it.
+    const ev = evaluateAssess(makeInput({
+      round: 0,
+      fileViews: asMap('filePath', [view()]),
+      ctxUsedTokens: 20_000, // 10% of 200k
+    }));
+    expect(ev.fired).toBe(false);
+  });
+
+  it('fires even below the min-gate when a pin survived an edit while idle (hasNewForward)', () => {
+    // Edit-forward signal is meaningful regardless of absolute CTX — a pinned
+    // view that got silently forwarded without access is load-bearing evidence.
+    const path = 'src/a.ts';
+    // Seed baseline observation at revA so the next pass can detect the forward.
+    selectCandidates(makeInput({
+      round: 1,
+      fileViews: asMap('filePath', [makeView({ path, hash: 'h:fv:a', revision: 'revA', lastAccessed: NOW - 5 * DEFAULT_ROUND_MS, filledTokens: 3000 })]),
+    }));
+    const ev = evaluateAssess(makeInput({
+      round: 2,
+      fileViews: asMap('filePath', [makeView({ path, hash: 'h:fv:a', revision: 'revB', lastAccessed: NOW - 5 * DEFAULT_ROUND_MS, filledTokens: 3000 })]),
+      ctxUsedTokens: 10_000, // 5% — below min-gate
+    }));
+    expect(ev.fired).toBe(true);
   });
 
   it('does NOT fire on user-turn boundary when total candidate tokens < boundaryMinTokens', () => {

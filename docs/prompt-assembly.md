@@ -20,7 +20,6 @@ ATLS constructs the LLM prompt by cleanly separating **chat** (the event log) fr
 │                                     cache_control ──┤       │
 ├─────────────────────────────────────────────────────────────┤
 │ CACHED: Conversation history (append-only, clean)    BP3    │
-│   [Rolling Summary] (if present; unshift-ed onto history)   │
 │   All prior user / assistant / tool_result turns            │
 │   (no state embedded — just what happened)                  │
 │                            PRIOR_TURN_BOUNDARY ──┤          │
@@ -51,9 +50,9 @@ Session state — task/plan, blackboard, staged snippets, working memory, steeri
 
 The state block is **never stored** in `conversationHistory` — it's rebuilt fresh every round and never retained.
 
-### Rolling summary
+### Rolling history window (eviction-only)
 
-When the context store holds distilled facts from the [rolling history window](./history-compression.md), `aiService.ts` ~1758-1763 calls `conversationHistory.unshift(formatSummaryMessage(trimmed))` — the summary message lands at the **front of the history array** (inside BP3), not merged with the state block. Non-Gemini paths include it in the cached prefix; Gemini skips boundary markers entirely. BP3 hashes and cache behavior are modeled by [`logicalCacheMetrics.ts`](../atls-studio/src/services/logicalCacheMetrics.ts).
+Older-round **distillation** (`historyDistiller` / `[Rolling Summary]` message) was removed. Durable cross-round state lives in the blackboard, hash manifest, FileViews, and `ru` rules — all of which survive round eviction and are authoritative. [`applyRollingHistoryWindow`](../atls-studio/src/services/historyCompressor.ts) now only splices the oldest round when the window is exceeded. See [history-compression.md](history-compression.md).
 
 ### `priorTurnBoundary` within the main chat path
 
@@ -256,4 +255,4 @@ Each mode uses a different combination of system prompt, tool reference, and con
 
 - [input-compression.md](input-compression.md) — The ten-layer input compression stack, including cache-aware layout (Layer 6) and token budgets (Layer 7)
 - [output-compression.md](output-compression.md) — The six axes of emission compression
-- [history-compression.md](history-compression.md) — Hash-reference deflation and rolling summary compression
+- [history-compression.md](history-compression.md) — Hash-reference deflation and rolling-window eviction

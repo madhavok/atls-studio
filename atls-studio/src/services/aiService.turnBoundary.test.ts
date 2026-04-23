@@ -26,13 +26,8 @@ vi.mock('../stores/contextStore', () => ({
     getState: () => ({
       pruneStagedSnippets: vi.fn(() => ({ freed: 0, removed: 0, reliefAction: 'none' as const })),
       resetSession: vi.fn(),
-      setRollingSummary: vi.fn(),
       chunks: new Map(),
       addChunk: vi.fn(() => 'h:deadbeef'),
-      rollingSummary: {
-        decisions: [], filesChanged: [], userPreferences: [], workDone: [],
-        findings: [], errors: [], currentGoal: '', nextSteps: [], blockers: [],
-      },
     }),
   },
 }));
@@ -40,7 +35,6 @@ vi.mock('../stores/appStore', () => ({
   useAppStore: {
     getState: () => ({
       setPromptMetrics: vi.fn(),
-      addRollingSavings: vi.fn(),
       addCompressionSavings: vi.fn(),
       promptMetrics: { roundCount: 0 },
       settings: {
@@ -60,7 +54,6 @@ const { COMPACT_HISTORY_TURN_THRESHOLD } = await import('./promptMemory');
 function mockAppStateWithRounds(roundCount: number) {
   return {
     setPromptMetrics: vi.fn(),
-    addRollingSavings: vi.fn(),
     addCompressionSavings: vi.fn(),
     promptMetrics: { roundCount },
     settings: {

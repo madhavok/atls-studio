@@ -103,6 +103,17 @@ export interface EvaluateAssessOptions {
   midLoopCtxThreshold?: number;
   /** On the user-turn boundary path, pinned tokens sum below this = no fire. Default 1000. */
   boundaryMinTokens?: number;
+  /**
+   * Hard lower gate — suppress ASSESS entirely when overall CTX utilization
+   * is below this percent, regardless of pin token counts. Default 20.
+   *
+   * Rationale: the boundary path previously fired at `ctxPct >= 0%` as long
+   * as candidate pins totaled ≥ `boundaryMinTokens`. That mis-cues the model
+   * at e.g. `<<CTX 10%>>` with enormous headroom, emitting a "bloating WM"
+   * block that reads as crisis copy. Below 20% the runtime has no memory
+   * pressure story; pinned-material hygiene is not load-bearing.
+   */
+  minCtxPctForFire?: number;
 }
 
 export const DEFAULT_ROUND_MS = 30_000;
@@ -400,6 +411,7 @@ export function evaluateAssess(
 ): AssessEvaluation {
   const midLoopCtxThreshold = opts.midLoopCtxThreshold ?? 80;
   const boundaryMinTokens = opts.boundaryMinTokens ?? 1000;
+  const minCtxPctForFire = opts.minCtxPctForFire ?? 20;
   const ctxPct = input.ctxMaxTokens > 0
     ? (input.ctxUsedTokens / input.ctxMaxTokens) * 100
     : 0;
@@ -415,8 +427,17 @@ export function evaluateAssess(
     return { fired: false, firedKey: dedupe.lastFiredKey, candidates: [], ctxPct };
   }
 
+  // Hard lower gate: below `minCtxPctForFire` (default 20%), the runtime
+  // has no memory-pressure story and the "bloating WM" framing mis-cues the
+  // model. Suppress both boundary and mid-loop paths entirely. The separate
+  // `hasNewForward` mid-loop trigger (a pinned view survived an edit while
+  // idle) is still meaningful, so we let that through even at low ctxPct.
   const isUserTurnBoundary = input.round === 0;
   const hasNewForward = candidates.some(c => c.kind === 'fileview' && c.survivedEditsWhileIdle > 0);
+  if (ctxPct < minCtxPctForFire && !hasNewForward) {
+    return { fired: false, firedKey: dedupe.lastFiredKey, candidates, ctxPct };
+  }
+
   const boundaryEligible = isUserTurnBoundary
     && candidates.reduce((s, c) => s + c.tokens, 0) >= boundaryMinTokens;
   const midLoopEligible = !isUserTurnBoundary

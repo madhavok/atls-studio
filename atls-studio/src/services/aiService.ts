@@ -142,6 +142,7 @@ import { GEMINI_REINFORCEMENT, GEMINI_RECENCY_BOOST } from '../prompts/providerO
 import { advanceTurn, dematerialize, getAllRefs, getRef, shouldMaterialize, getTurn, setRoundRefreshHook, getArchivedRefs as getArchivedHppRefs } from './hashProtocol';
 import { formatHashManifest, pruneStaleEntries, getForwardMap, getEvictionMap } from './hashManifest';
 import { estimateFileViewTokens } from './fileViewTokens';
+import { INTERNALS_TAB_ID } from '../constants/atlsInternals';
 import { useRoundHistoryStore, type VerificationConfidence } from '../stores/roundHistoryStore';
 import {
   executeUnifiedBatch,
@@ -212,7 +213,6 @@ import {
   BLACKBOARD_BUDGET_TOKENS,
   STAGED_BUDGET_TOKENS,
   CONVERSATION_HISTORY_BUDGET_TOKENS,
-  ROLLING_SUMMARY_MAX_TOKENS,
   WORKSPACE_CONTEXT_BUDGET_TOKENS,
   WM_BUDGET_TOKENS,
   PHASE_ROUND_BUDGET,
@@ -226,7 +226,6 @@ import {
   type PromptReliefAction,
 } from './promptMemory';
 import { compressToolLoopHistory, compactRetentionOps, deflateToolResults, stubBatchToolUseInputs, estimateHistoryTokens, estimateHistoryTokensAsync } from './historyCompressor';
-import { formatSummaryMessage, isRollingSummaryEmpty, trimSummaryToTokenBudget } from './historyDistiller';
 import { createGuardrailCallbacks, runBeforeRoundMiddlewares, setPromptBudgetEstimates } from './chatMiddleware';
 import { createTauriChatStream } from './chatTransport';
 
@@ -1812,13 +1811,9 @@ async function streamChatViaTauri(
     historyReusedFromCache = true;
   } else {
     conversationHistory = normalizeConversationHistory(messages);
-    const rs = useContextStore.getState().rollingSummary;
-    if (!isRollingSummaryEmpty(rs)) {
-      const trimmed = trimSummaryToTokenBudget(rs, ROLLING_SUMMARY_MAX_TOKENS);
-      if (!isRollingSummaryEmpty(trimmed)) {
-        conversationHistory.unshift(formatSummaryMessage(trimmed));
-      }
-    }
+    // Rolling-summary injection removed: durable cross-round state lives in
+    // BB, the hash manifest, FileViews, and `ru` rules. The verbatim window
+    // (`applyRollingHistoryWindow`) still bounds total history size.
   }
   // Pin the frozen prefix: when reusing the end-of-turn snapshot, treat
   // everything up to the snapshot boundary as immutable. All compression
@@ -2547,11 +2542,9 @@ async function streamChatViaTauri(
           : roundCostCents;
         const verifyArtifacts = Array.from(useContextStore.getState().verifyArtifacts.values());
         const latestVerifyArtifact = verifyArtifacts.length > 0 ? verifyArtifacts[verifyArtifacts.length - 1] : undefined;
-        const rsSnap = useContextStore.getState().rollingSummary;
-        const trimmedRs = trimSummaryToTokenBudget(rsSnap, ROLLING_SUMMARY_MAX_TOKENS);
-        const rollingSummaryTokens = isRollingSummaryEmpty(trimmedRs)
-          ? 0
-          : countTokensSync(formatSummaryMessage(trimmedRs).content);
+        // Rolling-summary distillation removed — this field stays zero-valued
+        // on snapshots for forwards-compatibility with the RoundSnapshot shape.
+        const rollingSummaryTokens = 0;
         const costBreakdown = calculateCostBreakdown(config.provider as CostProvider, config.model, roundInputTokens, roundOutputTokens, roundCacheReadTokens, roundCacheWriteTokens);
         // Billing-grade cache savings = what we'd have paid with zero cache
         // tokens minus what we actually paid. Anthropic: uncached input alone
@@ -3824,8 +3817,12 @@ function buildContextTOON(context: WorkspaceContext, minimal = false): string {
     }
   }
 
-  // Per-turn editor state (always included)
-  if (context.activeFile) {
+  // Per-turn editor state (always included).
+  // `activeFile === INTERNALS_TAB_ID` means the ATLS Internals dev panel
+  // is focused — NOT a real repo path. Surfacing it to the model as
+  // `file:__atls_internals__` is leaked editor state that looks like a
+  // workspace file and mis-cues tool targeting.
+  if (context.activeFile && context.activeFile !== INTERNALS_TAB_ID) {
     ctx.file = context.activeFile;
     if (context.cursorLine) ctx.ln = context.cursorLine;
   }
@@ -3916,7 +3913,7 @@ function _extractRecentReasoning(): string {
     scanned++;
     if (typeof msg.content === 'string') {
       const t = msg.content.trim();
-      if (t && !isCompressedRef(t) && !t.startsWith('[Rolling Summary]')) {
+      if (t && !isCompressedRef(t)) {
         textChunks.unshift(t);
       }
     } else if (Array.isArray(msg.content)) {
@@ -3995,6 +3992,22 @@ export function buildDynamicContextBlock(
       return pinnedViewPaths.has(source.replace(/\\/g, '/').toLowerCase());
     };
 
+    // Self-referential batch receipts: `call` chunks created by
+    // `compressToolLoopHistory` (tool_use input compression) and `result`
+    // chunks created by `deflateToolResults` are labeled with the batch
+    // envelope (`batch`, `batch:...`, `result:toolu_...`). Their content is
+    // either a stub summary or batch-shell scaffolding — both derivable
+    // from the running transcript. Suppress from the manifest so the model
+    // doesn't see its own past tool calls rematerialized as engrams. The
+    // hashes stay resolvable by HPP (manifest is display only); retention
+    // ops (session.unload/drop/compact) still work by h:ref.
+    const isBatchEnvelopeRow = (source: string | undefined, type: string): boolean => {
+      if (!source) return false;
+      if (type === 'call') return /^batch\b/.test(source);
+      if (type === 'result') return /^batch\b/.test(source) || /^result:toolu_/.test(source);
+      return false;
+    };
+
     const activeChunks: Array<{ shortHash: string; type: string; source?: string; tokens: number; pinned?: boolean; pinnedShape?: string; compacted?: boolean; freshness?: string; freshnessCause?: string; suspectSince?: number; supersededBy?: { hashes: string[]; note: string } }> = [];
     const dematRefs: typeof allRefs = [];
     for (const ref of allRefs) {
@@ -4002,6 +4015,7 @@ export function buildDynamicContextBlock(
         const chunk = ctxState.chunks.get(ref.hash);
         if (!chunk || chunk.type === 'msg:user' || chunk.type === 'msg:asst') continue;
         if (isCoveredByPinnedView(chunk.source, chunk.type, chunk.viewKind)) continue;
+        if (isBatchEnvelopeRow(chunk.source, chunk.type)) continue;
         activeChunks.push({
           shortHash: chunk.shortHash, type: chunk.type, source: chunk.source,
           tokens: chunk.tokens, pinned: chunk.pinned, pinnedShape: chunk.pinnedShape,
@@ -4015,6 +4029,7 @@ export function buildDynamicContextBlock(
         // as `dormant | rec to restore` next to the pinned view for the
         // same path. Filter by source + type the same way.
         if (isCoveredByPinnedView(ref.source, ref.type, undefined)) continue;
+        if (isBatchEnvelopeRow(ref.source, ref.type)) continue;
         dematRefs.push(ref);
       }
     }
@@ -4046,7 +4061,8 @@ export function buildDynamicContextBlock(
     // pinned view's path should not render as `rec to restore` when the
     // view already carries the content.
     const archivedRefs = getArchivedHppRefs()
-      .filter(r => !isCoveredByPinnedView(r.source, r.type, undefined));
+      .filter(r => !isCoveredByPinnedView(r.source, r.type, undefined))
+      .filter(r => !isBatchEnvelopeRow(r.source, r.type));
     const manifestBlock = formatHashManifest({ activeChunks, dematRefs, archivedRefs, turn: currentTurn });
     parts.push(manifestBlock);
   }
@@ -4058,6 +4074,11 @@ export function buildDynamicContextBlock(
   const taskLine = useContextStore.getState().getTaskLine();
   const contextStatsLine = useContextStore.getState().getStatsLine();
   const cm = useAppStore.getState().cacheMetrics;
+  // `cache:N%` = session-wide prefix-cache read share. Counterintuitive behavior
+  // to document once: dropping volatile dynamic refs (dro/pc/ASSESS cleanup)
+  // usually RAISES this number, because the stable prefix (BP1 system prompt +
+  // BP3 frozen history) grows relative to the mutating dynamic tail. A rising
+  // cache% after eviction is a sign the runtime is doing its job, not a bug.
   const cacheTag = cm.sessionRequests > 0 ? ` | cache:${(cm.sessionHitRate * 100).toFixed(0)}%` : '';
   const header = taskLine
     ? `${taskLine}\n${contextStatsLine}${cacheTag}`
@@ -4424,6 +4445,11 @@ function _appendBoundaryMarker(msg: {role: string; content: unknown}): void {
 /**
  * Build the blackboard block for the dynamic (uncached) user message.
  * Moved out of BP3 — BB entries mutate nearly every round.
+ *
+ * Template bodies (`tpl:*`) are omitted: the static system prompt in
+ * `cognitiveCore.ts` already names all eight templates and documents
+ * `h:bb:tpl:NAME` resolution. Re-emitting ~0.3k of template markup each
+ * round is redundant — the runtime telling the model twice.
  */
 function _buildBlackboardBlock(): string {
   const ctxState = useContextStore.getState();
@@ -4431,6 +4457,7 @@ function _buildBlackboardBlock(): string {
   const bbLines: string[] = ['## BLACKBOARD'];
   ctxState.blackboardEntries.forEach((entry, key) => {
     if (key.startsWith('edit:')) return;
+    if (key.startsWith('tpl:')) return;
     if (!canSteerExecution({ state: entry.state })) return;
     bbLines.push(`${key}: ${entry.content}`);
   });

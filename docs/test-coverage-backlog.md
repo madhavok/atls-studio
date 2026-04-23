@@ -79,6 +79,6 @@ Most modules embed `#[cfg(test)]` tests, including: `ai_execute`, `ai_models`, `
 
 For **`aiService`**, orchestrator, **`swarmChat`**, and **`chatDb` / `geminiCache` / `modelFetcher`**, see service-level `*.test.ts` under [`atls-studio/src/services`](../atls-studio/src/services) and [`docs/swarm-orchestration.md`](swarm-orchestration.md).
 
-**History pipeline coverage (implemented):** [`historyCompressor.test.ts`](../atls-studio/src/services/historyCompressor.test.ts), [`historyDistiller.test.ts`](../atls-studio/src/services/historyDistiller.test.ts), [`historySerializationTokens.test.ts`](../atls-studio/src/services/historySerializationTokens.test.ts) — covers deflation, rolling summary distillation, and tool_use stub token accounting.
+**History pipeline coverage (implemented):** [`historyCompressor.test.ts`](../atls-studio/src/services/historyCompressor.test.ts), [`historySerializationTokens.test.ts`](../atls-studio/src/services/historySerializationTokens.test.ts) — covers deflation, rolling-window eviction, and tool_use stub token accounting.
 
 Batch intent logic: [`intents.test.ts`](../atls-studio/src/services/batch/intents.test.ts). Barrel-only modules may stay untested directly.

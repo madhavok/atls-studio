@@ -39,7 +39,7 @@ This document describes every major subsystem and the nested responsibilities in
 ├──────────────────────────────────────────────────────────────────┤
 │ Managed memory runtime                                           │
 │ contextStore · hashProtocol · hashManifest · freshnessTelemetry  │
-│ historyCompressor · historyDistiller · roundHistoryStore         │
+│ historyCompressor · roundHistoryStore                            │
 ├──────────────────────────────────────────────────────────────────┤
 │ Prompt and tool runtime                                          │
 │ contextHash · promptMemory · tokenCounter · contextFormatter     │
@@ -57,7 +57,7 @@ This document describes every major subsystem and the nested responsibilities in
 | UI and application shell | `src/components/*`, `src/stores/appStore.ts` | chat/session model, workspace model, agent control plane, prompt metrics view |
 | AI service layer | `src/services/aiService.ts`, `src/services/geminiCache.ts`, `src/services/swarmChat.ts`, `src/services/modelFetcher.ts`, `src/services/uhppExpansion.ts`, `src/services/toolHelpers.ts` | provider adapters, Tauri proxy, Gemini rolling cache, HPP hydration, UHPP expansion, tool-call helpers |
 | Swarm orchestrator | `src/services/orchestrator.ts`, `src/stores/swarmStore.ts` | task decomposition, file claims, agent coordination, research digest, synthesis |
-| Managed memory runtime | `src/stores/contextStore.ts`, `src/services/hashProtocol.ts`, `src/services/hashManifest.ts`, `src/services/freshnessTelemetry.ts`, `src/services/historyCompressor.ts`, `src/services/historyDistiller.ts` | engram registry, staging, blackboard, task planning, freshness/reconcile, auto-management, hash forwarding, history deflation + tool_use stubbing, rolling summaries |
+| Managed memory runtime | `src/stores/contextStore.ts`, `src/services/hashProtocol.ts`, `src/services/hashManifest.ts`, `src/services/freshnessTelemetry.ts`, `src/services/historyCompressor.ts` | engram registry, staging, blackboard, task planning, freshness/reconcile, auto-management, hash forwarding, history deflation + tool_use stubbing, rolling-window eviction |
 | Prompt construction | `src/utils/contextHash.ts`, `src/services/promptMemory.ts`, `src/utils/tokenCounter.ts`, `src/services/contextFormatter.ts` | digests and ref formatting, prompt-budget policy, provider-aware token counting, WM formatting |
 | Batch and tool execution | `src/utils/toon.ts`, `src/services/batch/executor.ts`, `src/services/batch/opMap.ts`, `src/services/batch/intents.ts`, `src/services/batch/snapshotTracker.ts`, `src/services/batch/policy.ts`, `src/services/batch/paramNorm.ts`, `src/services/batch/resultFormatter.ts`, `src/services/batch/validateBatchSteps.ts` | TOON serialization, step dispatch, policy enforcement, intent expansion, read-range awareness, line rebasing |
 | History and verification telemetry | `src/stores/roundHistoryStore.ts` | round snapshots, verification confidence, cost summaries |
@@ -429,16 +429,18 @@ Freshness telemetry is a lightweight instrumentation layer that tracks how often
 
 The telemetry data is surfaced in `AtlsInternals` and in the session diagnostics block.
 
-### 9. History Distiller Subsystem
+### 9. Rolling History Window (eviction-only)
 
-Primary module: `atls-studio/src/services/historyDistiller.ts`
+Primary module: `atls-studio/src/services/historyCompressor.ts` (`applyRollingHistoryWindow`)
 
-The history distiller prevents the chat context window from filling with verbatim tool results from many turns ago. It maintains a `RollingSummary` that condenses older turns into a compact narrative:
+Older rounds outside the protected chat window are **evicted** from verbatim history, not distilled. Durable cross-round state is already carried authoritatively by:
 
-- `RollingSummary` — the summary type: holds compressed content, covered turn range, and token count
-- `emptyRollingSummary()` — factory for a zero-state summary used at session start
+- **Blackboard** — keyed findings
+- **Hash manifest** — artifact index
+- **FileViews** — auto-healing code state
+- **`ru` rules** — policy
 
-`contextStore` holds the current `RollingSummary` and passes it to the context formatter when assembling the prompt's history block. Turns that fall outside the protected chat window are distilled rather than materialized verbatim, which keeps the effective token cost of long sessions bounded.
+Synthesizing a parallel summary from assistant prose would be redundant at best and could perturb the BP3 prefix cache, so the mechanism was removed. The window still bounds total history size; tool-pairing integrity is preserved via synthetic `tool_result` placeholders when an assistant `tool_use` loses its paired user message.
 
 ---
 
@@ -902,7 +904,7 @@ The detector subsystem provides reusable pattern-matching over parsed codebases 
 10. **Hash refs** → `hashProtocol.materialize` → `contextStore` chunk registration
 11. **History compression** → large outputs deflated to `h:XXXX` refs by `resultFormatter`
 12. **Round end** → `advanceTurn` dematerializes unreferenced refs → `refreshRoundEnd` reconcile
-13. **Next turn** → `contextFormatter.formatWorkingMemory` + rolling summary → prompt assembly
+13. **Next turn** → `contextFormatter.formatWorkingMemory` → prompt assembly
 
 ---
 
@@ -915,7 +917,7 @@ The detector subsystem provides reusable pattern-matching over parsed codebases 
 ├─────────────────────────────────────────┤
 │          History (append-only)           │
 │   Deflated tool results (hash ptrs)      │
-│   Rolling summary for oldest turns       │
+│   Oldest rounds evicted past window      │
 ├─────────────────────────────────────────┤
 │          Dynamic Block (uncached)        │
 │   BB + dormant + staged + active +       │
@@ -934,7 +936,7 @@ The detector subsystem provides reusable pattern-matching over parsed codebases 
 - HPP refs map: hard cap at `HPP_REFS_MAX_ENTRIES = 8000` entries
 - Auto-eviction at 90% memory pressure
 - History compression reduces tool outputs to hash references
-- Rolling summaries (`historyDistiller`) for turns outside the protected chat window
+- Rolling-window eviction (`applyRollingHistoryWindow`) splices the oldest rounds beyond `ROLLING_WINDOW_ROUNDS` (20); durable state lives in BB / hash manifest / FileViews / `ru` rules
 
 ---
 
@@ -947,7 +949,7 @@ The detector subsystem provides reusable pattern-matching over parsed codebases 
 | Ref visibility or turn-based lifecycle | `src/services/hashProtocol.ts` |
 | Hash forwarding after edits | `src/services/hashManifest.ts` |
 | Freshness and reconcile telemetry | `src/services/freshnessTelemetry.ts` |
-| Rolling chat history compression | `src/services/historyDistiller.ts` |
+| Rolling chat history eviction | `src/services/historyCompressor.ts` (`applyRollingHistoryWindow`) |
 | Digest formatting or hash/ref presentation | `src/utils/contextHash.ts` |
 | Prompt WM block and context assembly | `src/services/contextFormatter.ts` |
 | Prompt budgets and stage-admission policy | `src/services/promptMemory.ts` |

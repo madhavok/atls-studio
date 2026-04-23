@@ -45,7 +45,6 @@ import { useRoundHistoryStore } from './roundHistoryStore';
 import { formatAge } from '../utils/formatHelpers';
 import { canonicalizeSnapshotHash } from '../services/batch/snapshotTracker';
 import { normalizeSessionPlanSubtasksInput } from '../services/batch/paramNorm';
-import { emptyRollingSummary, type RollingSummary } from '../services/historyDistiller';
 import { freshnessTelemetry, incSessionRestoreReconcileCount, incCognitiveRulesExpired, setManifestMetricsAccessor } from '../services/freshnessTelemetry';
 import { recordAutoPinReleasedUnused } from '../services/autoPinTelemetry';
 import { recordForwarding as manifestRecordForwarding, recordEviction as manifestRecordEviction, resolveForwardChain as manifestResolveForwardChain, recordUnrecoverable as manifestRecordUnrecoverable, getManifestMetrics, resetManifestState } from '../services/hashManifest';
@@ -335,6 +334,14 @@ export interface ContextChunk {
   /** Files this chunk semantically depends on (call graphs, analyses, summaries).
    *  1-hop invalidation: when a derivedFromSource changes, this chunk becomes suspect. */
   derivedFromSources?: string[];
+  /**
+   * For `type: 'search'` chunks: unique file paths the search returned.
+   * Populated by the search.code handler so the runtime can auto-drop a
+   * search chunk once the model has directly read its hit(s) — the search
+   * summary is derivable from the read content and keeping it compounds
+   * dormant noise. Opt-in: absent = don't auto-drop.
+   */
+  searchPaths?: string[];
   /**
    * Optional marker indicating this full-file engram has been replaced by
    * narrower views (line-range slices or shaped sub-engrams). Populated when
@@ -949,9 +956,6 @@ interface ContextStoreState {
   fileReadSpinByPath: Record<string, number>;
   /** Normalized path -> set of rangeKeys seen since last write/BB (for nudge). */
   fileReadSpinRanges: Record<string, string[]>;
-  /** Distilled facts for API-only rolling summary (not in chat UI messages) */
-  rollingSummary: RollingSummary;
-  setRollingSummary: (summary: RollingSummary) => void;
   memoryEvents: MemoryEvent[];
   _roundStartEventIndex: number;
 
@@ -976,12 +980,25 @@ interface ContextStoreState {
   task: TaskPlan | null;
   
   // Actions
-  addChunk: (content: string, type: ChunkType, source?: string, symbols?: DigestSymbol[], summary?: string, backendHash?: string, opts?: { subtaskIds?: string[]; boundDuringPlanning?: boolean; fullHash?: string; sourceRevision?: string; viewKind?: EngramViewKind; editSessionId?: string; origin?: EngramOrigin; readSpan?: ReadSpan; ttl?: number; compositeSourceRevisions?: Record<string, string>; derivedFromSources?: string[] }) => string;
+  addChunk: (content: string, type: ChunkType, source?: string, symbols?: DigestSymbol[], summary?: string, backendHash?: string, opts?: { subtaskIds?: string[]; boundDuringPlanning?: boolean; fullHash?: string; sourceRevision?: string; viewKind?: EngramViewKind; editSessionId?: string; origin?: EngramOrigin; readSpan?: ReadSpan; ttl?: number; compositeSourceRevisions?: Record<string, string>; derivedFromSources?: string[]; searchPaths?: string[] }) => string;
   findReusableRead: (span: ReadSpan) => string | null;
   touchChunk: (hash: string) => void;
   compactChunks: (hashes: string[], opts?: { confirmWildcard?: boolean; tier?: 'pointer' | 'sig'; sigContentByRef?: Map<string, string> }) => { compacted: number; freedTokens: number };
   unloadChunks: (hashes: string[], opts?: { confirmWildcard?: boolean }) => { freed: number; count: number; pinnedKept: number };
   dropChunks: (hashes: string[], opts?: { confirmWildcard?: boolean }) => { dropped: number; freedTokens: number };
+  /**
+   * Drop unpinned `type: 'search'` chunks whose recorded `searchPaths` are
+   * fully covered by the path just read. Conservative rule for the first
+   * pass: only drop single-hit searches whose sole hit normalizes to the
+   * read path. Multi-hit searches stay until the model reads all paths
+   * (follow-on work would track per-path coverage).
+   *
+   * Skips chunks cited by active BB findings — the summary may still be
+   * load-bearing even if the file has been read.
+   *
+   * @returns number of search chunks dropped
+   */
+  dropSupersededSearches: (readPath: string) => number;
   pinChunks: (hashes: string[], shape?: string) => { count: number; alreadyPinned: number; skippedFullFile: number };
   unpinChunks: (hashes: string[]) => { count: number; alreadyUnpinned: number; unknown: number };
   findPinnedFileEngram: (filePath: string) => string | null;
@@ -2385,8 +2402,6 @@ export const useContextStore = create<ContextStoreState>()(
   _roundCoveragePaths: new Set<string>(),
   fileReadSpinByPath: {},
   fileReadSpinRanges: {},
-  rollingSummary: emptyRollingSummary(),
-  setRollingSummary: (summary) => set({ rollingSummary: summary }),
   memoryEvents: [],
   _roundStartEventIndex: 0,
   reconcileStats: null,
@@ -2431,7 +2446,7 @@ export const useContextStore = create<ContextStoreState>()(
    * Tags chunk with current activeSubtaskId.
    * Returns the shortHash for display/reference.
    */
-  addChunk: (content: string, type: ChunkType, source?: string, symbols?: DigestSymbol[], summary?: string, backendHash?: string, opts?: { subtaskIds?: string[]; boundDuringPlanning?: boolean; fullHash?: string; sourceRevision?: string; viewKind?: EngramViewKind; editSessionId?: string; origin?: EngramOrigin; readSpan?: ReadSpan; ttl?: number; compositeSourceRevisions?: Record<string, string>; derivedFromSources?: string[] }) => {
+  addChunk: (content: string, type: ChunkType, source?: string, symbols?: DigestSymbol[], summary?: string, backendHash?: string, opts?: { subtaskIds?: string[]; boundDuringPlanning?: boolean; fullHash?: string; sourceRevision?: string; viewKind?: EngramViewKind; editSessionId?: string; origin?: EngramOrigin; readSpan?: ReadSpan; ttl?: number; compositeSourceRevisions?: Record<string, string>; derivedFromSources?: string[]; searchPaths?: string[] }) => {
     const hash = backendHash || hashContentSync(content);
     const shortHash = hash.slice(0, SHORT_HASH_LEN);
     const tokens = countTokensSync(content);
@@ -2477,6 +2492,7 @@ export const useContextStore = create<ContextStoreState>()(
       readSpan: opts?.readSpan,
       ...(opts?.compositeSourceRevisions ? { compositeSourceRevisions: { ...opts.compositeSourceRevisions } } : {}),
       ...(opts?.derivedFromSources?.length ? { derivedFromSources: [...opts.derivedFromSources] } : {}),
+      ...(opts?.searchPaths?.length ? { searchPaths: [...opts.searchPaths] } : {}),
       ttl: opts?.ttl ?? (type === 'result' ? 3 : type === 'search' ? 5 : undefined),
     };
 
@@ -3291,7 +3307,43 @@ export const useContextStore = create<ContextStoreState>()(
 
     return { dropped, freedTokens };
   },
-  
+
+  /**
+   * Drop unpinned `type: 'search'` chunks whose single recorded hit matches
+   * the path just read. See type declaration for the gating rules.
+   *
+   * Conservative: only drops when `searchPaths.length === 1`. Multi-hit
+   * searches are left alone (tracking per-path coverage is a follow-on).
+   * Skips pinned chunks, and skips any chunk whose shortHash is cited in
+   * an active BB finding.
+   */
+  dropSupersededSearches: (readPath: string): number => {
+    const normRead = normalizeSourcePath(readPath);
+    const state = get();
+
+    // BB citation guard: chunks referenced by active BB entries may still be
+    // load-bearing even after the file is read.
+    const citedShorts = new Set<string>();
+    for (const [, entry] of state.blackboardEntries) {
+      if (!canSteerExecution({ state: entry.state })) continue;
+      const m = entry.content.match(/h:[0-9a-f]{4,12}/gi);
+      if (m) for (const ref of m) citedShorts.add(ref.slice(2).slice(0, SHORT_HASH_LEN));
+    }
+
+    const targetShorts: string[] = [];
+    for (const chunk of state.chunks.values()) {
+      if (chunk.type !== 'search') continue;
+      if (chunk.pinned) continue;
+      if (!chunk.searchPaths || chunk.searchPaths.length !== 1) continue;
+      if (normalizeSourcePath(chunk.searchPaths[0]) !== normRead) continue;
+      if (citedShorts.has(chunk.shortHash)) continue;
+      targetShorts.push(`h:${chunk.shortHash}`);
+    }
+    if (targetShorts.length === 0) return 0;
+    const result = get().dropChunks(targetShorts);
+    return result.dropped;
+  },
+
   /**
    * Pin chunks to protect from bulk unload.
    *
@@ -6221,7 +6273,6 @@ export const useContextStore = create<ContextStoreState>()(
       verifyArtifacts: new Map(),
       taskCompleteRecord: null,
       awarenessCache: new Map(),
-      rollingSummary: emptyRollingSummary(),
       batchMetrics: { toolCalls: 0, manageOps: 0, hadReads: false, hadBbWrite: false, hadSubstantiveBbWrite: false },
       batchReadNoBbStreak: 0,
       cumulativeCoveragePaths: new Set<string>(),

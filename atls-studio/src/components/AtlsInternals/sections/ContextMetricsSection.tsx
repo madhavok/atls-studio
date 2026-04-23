@@ -145,12 +145,6 @@ export function ContextMetricsSection() {
                 <span className="text-studio-text font-mono">{latestMainSnapshot.archivedTokens.toLocaleString()} tk</span>
               </span>
             )}
-            {(latestMainSnapshot.rollingSummaryTokens ?? 0) > 0 && (
-              <span>
-                <span className="text-studio-muted">Rolling summary: </span>
-                <span className="text-studio-text font-mono">{latestMainSnapshot.rollingSummaryTokens.toLocaleString()} tk</span>
-              </span>
-            )}
           </div>
         </div>
       )}
@@ -172,13 +166,9 @@ export function ContextMetricsSection() {
       {/* Savings */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
         <SavingStat label="Compression Savings" value={promptMetrics.compressionSavings.toLocaleString()} sub={`${promptMetrics.compressionCount} ops`} />
-        <SavingStat label="Rolling Savings" value={(promptMetrics.rollingSavings ?? 0).toLocaleString()} sub={`${promptMetrics.rolledRounds ?? 0} rounds distilled`} />
         <SavingStat label="Freed Tokens" value={freedTokens.toLocaleString()} sub="lifetime relieved, excluded from active CTX" />
         <SavingStat label="Rounds" value={promptMetrics.roundCount} />
         <SavingStat label="Cumulative Saved" value={promptMetrics.cumulativeInputSaved.toLocaleString()} accent />
-        {promptMetrics.orphanSummaryRemovals > 0 && (
-          <SavingStat label="Orphan Removals" value={promptMetrics.orphanSummaryRemovals} sub="stale summary pointers cleaned" />
-        )}
       </div>
 
       {/* Cache performance */}

@@ -7,7 +7,6 @@ import {
   extractToolDescription,
   isContentArchiveWorthy,
 } from './historyCompressor';
-import { ROLLING_SUMMARY_MARKER } from './historyDistiller';
 import { useContextStore } from '../stores/contextStore';
 import { useAppStore } from '../stores/appStore';
 import { hashContentSync } from '../utils/contextHash';
@@ -164,45 +163,10 @@ describe('compressToolLoopHistory [Stopped] fragments', () => {
   });
 });
 
-describe('compressToolLoopHistory orphaned compressed rolling summaries', () => {
-  beforeEach(() => resetStore());
-
-  it('removes compressed rolling summary pointers from history', () => {
-    const orphanedRef = '[-> h:a1b2c3d4, 969tk | history:assistant:[Rolling Summary] decisions...files...]';
-    const history: Array<{ role: string; content: unknown }> = [
-      { role: 'assistant', content: orphanedRef },
-      { role: 'user', content: 'start' },
-      { role: 'assistant', content: 'round 0' },
-      { role: 'user', content: 'ok' },
-      { role: 'assistant', content: 'round 1' },
-      { role: 'user', content: 'ok' },
-    ];
-
-    compressToolLoopHistory(history, 3, 0);
-
-    const hasOrphan = history.some(
-      (m) => typeof m.content === 'string' && m.content === orphanedRef,
-    );
-    expect(hasOrphan).toBe(false);
-  });
-
-  it('increments orphanSummaryRemovals in appStore when orphans are removed', () => {
-    const orphanedRef = '[-> h:a1b2c3d4, 969tk | history:assistant:[Rolling Summary] decisions...files...]';
-    const history: Array<{ role: string; content: unknown }> = [
-      { role: 'assistant', content: orphanedRef },
-      { role: 'user', content: 'start' },
-      { role: 'assistant', content: 'round 0' },
-      { role: 'user', content: 'ok' },
-      { role: 'assistant', content: 'round 1' },
-      { role: 'user', content: 'ok' },
-    ];
-
-    const before = useAppStore.getState().promptMetrics.orphanSummaryRemovals;
-    compressToolLoopHistory(history, 3, 0);
-    const after = useAppStore.getState().promptMetrics.orphanSummaryRemovals;
-    expect(after).toBeGreaterThan(before);
-  });
-});
+// Orphaned-rolling-summary cleanup paths were removed with the distillation
+// mechanism. Old pointer strings in the wild may still contain the literal
+// `[Rolling Summary]` in their description; they are now treated as ordinary
+// compressed refs with no special handling. See `historyCompressor.ts`.
 
 describe('compressToolLoopHistory dedup', () => {
   beforeEach(() => resetStore());
@@ -745,59 +709,70 @@ describe('compressToolLoopHistory Rule C skip-archive gate', () => {
   });
 });
 
-describe('compressToolLoopHistory rolling window', () => {
+describe('compressToolLoopHistory rolling window (eviction-only, no distillation)', () => {
   beforeEach(() => resetStore());
 
-  it('removes oldest round into rolling summary when rounds exceed ROLLING_WINDOW_ROUNDS', () => {
+  it('evicts oldest rounds when rounds exceed ROLLING_WINDOW_ROUNDS', () => {
     const history: Array<{ role: string; content: unknown }> = [{ role: 'user', content: 'start' }];
     for (let i = 0; i < 22; i++) {
       history.push({ role: 'assistant', content: `assistant round ${i}` });
       history.push({ role: 'user', content: `user round ${i}` });
     }
     const beforeLen = history.length;
-    const beforeRolling = useAppStore.getState().promptMetrics.rollingSavings;
     compressToolLoopHistory(history, 30, 0);
+    // Eviction shrinks the history.
     expect(history.length).toBeLessThan(beforeLen);
-    expect(history[0].role).toBe('assistant');
-    expect(String(history[0].content)).toContain(ROLLING_SUMMARY_MARKER);
-    expect(useAppStore.getState().promptMetrics.rollingSavings).toBeGreaterThan(beforeRolling);
   });
 
-  it('never compresses the rolling summary message to a hash pointer', () => {
+  it('does NOT inject a [Rolling Summary] assistant message at history head', () => {
+    // Regression: the legacy distiller unshifted a `[Rolling Summary]`
+    // assistant message. Removed in favor of letting BB / hash manifest /
+    // FileViews / `ru` rules carry durable state.
     const history: Array<{ role: string; content: unknown }> = [{ role: 'user', content: 'start' }];
     for (let i = 0; i < 25; i++) {
-      history.push({ role: 'assistant', content: `Round ${i} decision about architecture and implementation approach` });
+      history.push({ role: 'assistant', content: `Round ${i} decision about architecture` });
       history.push({ role: 'user', content: `acknowledged round ${i}` });
     }
 
     compressToolLoopHistory(history, 30, 0);
 
-    const summaryIdx = history.findIndex(
-      (m) => m.role === 'assistant' && typeof m.content === 'string' && String(m.content).includes(ROLLING_SUMMARY_MARKER),
+    const hasSummary = history.some(
+      (m) => m.role === 'assistant' && typeof m.content === 'string' && String(m.content).startsWith('[Rolling Summary]'),
     );
-    expect(summaryIdx).toBeGreaterThanOrEqual(0);
-    const content = String(history[summaryIdx].content);
-    expect(content).not.toMatch(/^\[h:/);
-    expect(content).toContain(ROLLING_SUMMARY_MARKER);
+    expect(hasSummary).toBe(false);
   });
 
-  it('rolling summary does not contain hash pointer strings after repeated compression', () => {
+  it('tool-pairing invariant: an assistant tool_use whose paired user message was evicted gets a synthetic placeholder', () => {
+    // When a round carrying a `tool_use` is at the eviction head, the paired
+    // `tool_result` is removed too. If the next-evicted round begins with an
+    // assistant tool_use and no user message follows, the splice inserts a
+    // synthetic tool_result so repairAnthropicToolPairing sees a valid pair.
     const history: Array<{ role: string; content: unknown }> = [{ role: 'user', content: 'start' }];
-    for (let i = 0; i < 25; i++) {
-      history.push({ role: 'assistant', content: `Decision ${i}: chose approach that optimizes for performance and clarity` });
-      history.push({ role: 'user', content: `acknowledged decision ${i}` });
+    for (let i = 0; i < 22; i++) {
+      history.push({
+        role: 'assistant',
+        content: [
+          { type: 'tool_use', id: `tu_${i}`, name: 'batch', input: { steps: [] } },
+        ],
+      });
+      history.push({
+        role: 'user',
+        content: [
+          { type: 'tool_result', tool_use_id: `tu_${i}`, content: `result ${i}` },
+        ],
+      });
     }
-
-    for (let pass = 0; pass < 3; pass++) {
-      compressToolLoopHistory(history, 30 + pass, 0);
+    compressToolLoopHistory(history, 30, 0);
+    // Every assistant with tool_use must still have a paired user message
+    // following it.
+    for (let i = 0; i < history.length; i++) {
+      const msg = history[i];
+      if (msg.role !== 'assistant' || !Array.isArray(msg.content)) continue;
+      const hasToolUse = (msg.content as Array<{ type?: string }>).some(b => b.type === 'tool_use');
+      if (!hasToolUse) continue;
+      const next = history[i + 1];
+      expect(next?.role).toBe('user');
     }
-
-    const summaryIdx = history.findIndex(
-      (m) => m.role === 'assistant' && typeof m.content === 'string' && String(m.content).includes(ROLLING_SUMMARY_MARKER),
-    );
-    expect(summaryIdx).toBeGreaterThanOrEqual(0);
-    const content = String(history[summaryIdx].content);
-    expect(content).not.toContain('[h:');
   });
 });
 

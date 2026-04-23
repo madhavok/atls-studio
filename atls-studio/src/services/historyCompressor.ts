@@ -16,24 +16,13 @@ import { useContextStore } from '../stores/contextStore';
 import { useAppStore } from '../stores/appStore';
 import { formatChunkRef, hashContentSync, isCompressedRef, SHORT_HASH_LEN } from '../utils/contextHash';
 import { countTokensSync, countTokensBatch } from '../utils/tokenCounter';
-import { serializeForTokenEstimate, serializeMessageContentForTokens } from '../utils/toon';
+import { serializeForTokenEstimate, serializeMessageContentForTokens, estimateImageContentTokens } from '../utils/toon';
 import { dematerialize, getRef } from './hashProtocol';
 import {
   CONVERSATION_HISTORY_BUDGET_TOKENS,
   PROTECTED_RECENT_ROUNDS,
   ROLLING_WINDOW_ROUNDS,
-  ROLLING_SUMMARY_MAX_TOKENS,
 } from './promptMemory';
-import {
-  distillRound,
-  emptyRollingSummary,
-  formatSummaryMessage,
-  isRollingSummaryEmpty,
-  isRollingSummaryMessage,
-  trimSummaryToTokenBudget,
-  updateRollingSummary,
-  type RollingSummary,
-} from './historyDistiller';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -77,7 +66,9 @@ export function isSyntheticAutoContinue(msg: { role: string; content: unknown })
 }
 
 /**
- * Map message index -> assistant round index. Skips the API-only rolling summary message.
+ * Map message index -> assistant round index.
+ *
+ * Rolling-summary injection was removed; no legacy skip is needed.
  */
 export function buildAssistantRoundMap(
   history: Array<{ role: string; content: unknown }>,
@@ -88,7 +79,6 @@ export function buildAssistantRoundMap(
   for (let i = startIdx; i < history.length; i++) {
     const msg = history[i];
     if (msg.role === 'assistant') {
-      if (isRollingSummaryMessage(msg)) continue;
       messageRounds.set(i, roundIndex);
       if (i + 1 < history.length && history[i + 1].role === 'user') {
         messageRounds.set(i + 1, roundIndex);
@@ -119,116 +109,45 @@ export function countSubstantiveRounds(
   return (maxR + 1) - syntheticRoundIndices.size;
 }
 
-function getLeadingOrphanUserIndices(
-  history: Array<{ role: string; content: unknown }>,
-  messageRounds: Map<number, number>,
-  summaryAt: number,
-): number[] {
-  const orphans: number[] = [];
-  if (!history[summaryAt] || !isRollingSummaryMessage(history[summaryAt])) return orphans;
-  let i = summaryAt + 1;
-  while (i < history.length && history[i].role === 'user' && !messageRounds.has(i)) {
-    orphans.push(i);
-    i++;
-  }
-  return orphans;
-}
-
-function syncRollingSummaryMessage(
-  history: Array<{ role: string; content: unknown }>,
-  summary: RollingSummary,
-  insertAt: number,
-): void {
-  const trimmed = trimSummaryToTokenBudget(summary, ROLLING_SUMMARY_MAX_TOKENS);
-  const ctx = useContextStore.getState();
-  if (isRollingSummaryEmpty(trimmed)) {
-    if (history[insertAt] && isRollingSummaryMessage(history[insertAt])) {
-      history.splice(insertAt, 1);
-    }
-    ctx.setRollingSummary(emptyRollingSummary());
-    return;
-  }
-  ctx.setRollingSummary(trimmed);
-  const msg = formatSummaryMessage(trimmed);
-  if (history[insertAt] && isRollingSummaryMessage(history[insertAt])) {
-    history[insertAt] = msg;
-  } else {
-    history.splice(insertAt, 0, msg);
-  }
-}
-
 /**
- * Remove oldest rounds into rolling summary; update context store + summary row at insertAt.
+ * Evict oldest tool-loop rounds from verbatim history when the count exceeds
+ * `ROLLING_WINDOW_ROUNDS`. No distillation, no `[Rolling Summary]` message
+ * injection — durable cross-round state lives in BB, the hash manifest,
+ * FileViews, and `ru` rules, all of which survive round eviction.
+ *
+ * Tool-pairing invariant: after splicing, any assistant message with
+ * `tool_use` blocks that lost its paired user `tool_result` gets a
+ * synthetic placeholder so downstream `repairAnthropicToolPairing` doesn't
+ * see orphaned tool_use.
  */
 function applyRollingHistoryWindow(
   history: Array<{ role: string; content: unknown }>,
   startIdx: number,
 ): void {
-  const ctx = useContextStore.getState();
   const messageRounds = buildAssistantRoundMap(history, startIdx);
   let maxR = -1;
   for (const r of messageRounds.values()) maxR = Math.max(maxR, r);
   const totalRounds = maxR + 1;
 
-  const summaryAt = startIdx;
-  const orphans = getLeadingOrphanUserIndices(history, messageRounds, summaryAt);
-
   // Use substantive (non-synthetic) round count for the window threshold so
   // auto-continue rounds don't push real work out of the verbatim window.
   const substantiveRounds = countSubstantiveRounds(history, messageRounds);
-  if (substantiveRounds <= ROLLING_WINDOW_ROUNDS) {
-    syncRollingSummaryMessage(history, ctx.rollingSummary, summaryAt);
-    removeOrphanedCompressedSummaries(history, startIdx);
-    return;
-  }
+  if (substantiveRounds <= ROLLING_WINDOW_ROUNDS) return;
 
-  let rolling: RollingSummary = {
-    ...ctx.rollingSummary,
-    decisions: [...ctx.rollingSummary.decisions],
-    filesChanged: [...ctx.rollingSummary.filesChanged],
-    userPreferences: [...ctx.rollingSummary.userPreferences],
-    workDone: [...ctx.rollingSummary.workDone],
-    findings: [...(ctx.rollingSummary.findings ?? [])],
-    errors: [...ctx.rollingSummary.errors],
-    currentGoal: ctx.rollingSummary.currentGoal || '',
-    nextSteps: [...(ctx.rollingSummary.nextSteps ?? [])],
-    blockers: [...(ctx.rollingSummary.blockers ?? [])],
-  };
-
-  // Evict oldest rounds to bring total back to ROLLING_WINDOW_ROUNDS.
-  // The threshold check uses substantive count (excluding synthetic auto-continues)
-  // but eviction uses totalRounds so the window stays bounded.
   const excess = totalRounds - ROLLING_WINDOW_ROUNDS;
-  let tokensSaved = 0;
-
-  for (let r = 0; r < excess; r++) {
-    const roundIndices = [...messageRounds.entries()]
-      .filter(([, rr]) => rr === r)
-      .map(([i]) => i)
-      .sort((a, b) => a - b);
-    const extra = r === 0 ? orphans : [];
-    const allIdx = [...new Set([...roundIndices, ...extra])].sort((a, b) => a - b);
-    if (allIdx.length === 0) continue;
-    const slice = allIdx.map((i) => history[i]);
-    tokensSaved += estimateHistoryTokens(slice);
-    rolling = updateRollingSummary(rolling, distillRound(slice));
-  }
 
   const removeSet = new Set<number>();
   for (const [idx, rr] of messageRounds) {
     if (rr < excess) removeSet.add(idx);
-  }
-  if (excess > 0) {
-    for (const o of orphans) removeSet.add(o);
   }
 
   for (const idx of [...removeSet].sort((a, b) => b - a)) {
     history.splice(idx, 1);
   }
 
-  // Verify tool pairing integrity after splicing — if an assistant with
-  // tool_use blocks lost its paired user message, re-insert a synthetic one
-  // so downstream repairAnthropicToolPairing doesn't see orphaned tool_use.
+  // Tool-pairing repair: if an assistant with tool_use blocks lost its
+  // paired user message, re-insert a synthetic one so downstream
+  // repairAnthropicToolPairing doesn't see orphaned tool_use.
   for (let i = 0; i < history.length; i++) {
     const msg = history[i];
     if (msg.role !== 'assistant' || !Array.isArray(msg.content)) continue;
@@ -244,35 +163,6 @@ function applyRollingHistoryWindow(
       });
     }
   }
-
-  if (tokensSaved > 0) {
-    useAppStore.getState().addRollingSavings(tokensSaved, excess);
-  }
-  syncRollingSummaryMessage(history, rolling, summaryAt);
-  removeOrphanedCompressedSummaries(history, startIdx);
-}
-
-/**
- * Remove stale compressed rolling summaries — old summaries that were replaced
- * then compressed into `[-> h:... | ...[Rolling Summary]...]` pointers.
- * These are invisible to `isRollingSummaryMessage` and accumulate indefinitely.
- */
-function removeOrphanedCompressedSummaries(
-  history: Array<{ role: string; content: unknown }>,
-  startIdx: number,
-): number {
-  let removed = 0;
-  for (let i = history.length - 1; i >= startIdx; i--) {
-    const msg = history[i];
-    if (isRollingSummaryMessage(msg)) continue;
-    if (msg.role !== 'assistant' || typeof msg.content !== 'string') continue;
-    if (isCompressedRef(msg.content) && msg.content.includes('[Rolling Summary]')) {
-      history.splice(i, 1);
-      removed++;
-    }
-  }
-  if (removed > 0) useAppStore.getState().addOrphanRemovals(removed);
-  return removed;
 }
 
 /**
@@ -524,6 +414,25 @@ export function compressToolLoopHistory(
         const inputTokens = countTokensSync(inputStr);
         if (inputTokens <= COMPRESSION_THRESHOLD_TOKENS) continue;
 
+        // Batch tool_use: skip creating a `call` chunk. `stubBatchToolUseInputs`
+        // already runs eagerly after each round; anything large reaching this
+        // path means stubbing didn't run (e.g. emergency compression on legacy
+        // history). Apply the stub directly — no engram, no manifest pollution.
+        // The `call`-chunk path persisted batch envelopes into the hash manifest
+        // as self-referential dormants the model could neither use nor recall.
+        if (block.name === 'batch') {
+          const steps = Array.isArray(block.input.steps)
+            ? block.input.steps as Array<Record<string, unknown>>
+            : [];
+          if (steps.length > 0) {
+            const stub = formatBatchToolUseStubSummary(steps);
+            block.input = { _stubbed: stub, _compressed: true } as any;
+            totalSavedTokens += inputTokens - countTokensSync(serializeForTokenEstimate(block.input));
+            compressedCount++;
+          }
+          continue;
+        }
+
         const description = extractToolDescription(block.name || 'tool_use', block.input);
         const hash = getCtx().addChunk(inputStr, 'call', description, undefined, `call: ${description}`);
         const shortHash = hash.slice(0, SHORT_HASH_LEN);
@@ -560,7 +469,6 @@ export function compressToolLoopHistory(
     }
 
     if (typeof msg.content === 'string') {
-      if (isRollingSummaryMessage(msg)) continue;
       const isStopped = msg.role === 'assistant' && msg.content.includes('[Stopped]');
       const tokens = countTokensSync(msg.content);
       if (!isStopped && tokens <= HISTORY_TEXT_REPLACEMENT_THRESHOLD_TOKENS) continue;
@@ -579,7 +487,6 @@ export function compressToolLoopHistory(
       const msgRound = messageRounds.get(i) ?? -1;
       if (msgRound >= skipThreshold) continue;
       if (typeof msg.content !== 'string' || isCompressedRef(msg.content)) continue;
-      if (isRollingSummaryMessage(msg)) continue;
       const tokens = countTokensSync(msg.content);
       if (tokens <= 0) continue;
       const description = `history:${msg.role}:budget-relief`;
@@ -997,7 +904,9 @@ export function estimateHistoryTokens(history: Array<{ role: string; content: un
   return history.reduce((sum, msg) => {
     if (typeof msg.content === 'string') return sum + countTokensSync(msg.content);
     if (Array.isArray(msg.content)) {
-      return sum + countTokensSync(serializeMessageContentForTokens(msg.content));
+      return sum
+        + countTokensSync(serializeMessageContentForTokens(msg.content))
+        + estimateImageContentTokens(msg.content);
     }
     return sum;
   }, 0);
@@ -1010,6 +919,7 @@ export function estimateHistoryTokens(history: Array<{ role: string; content: un
 export async function estimateHistoryTokensAsync(history: Array<{ role: string; content: unknown }>): Promise<number> {
   const contents: string[] = [];
   const indices: number[] = [];
+  let imageTokens = 0;
   for (let i = 0; i < history.length; i++) {
     const msg = history[i];
     if (typeof msg.content === 'string') {
@@ -1018,11 +928,12 @@ export async function estimateHistoryTokensAsync(history: Array<{ role: string; 
     } else if (Array.isArray(msg.content)) {
       contents.push(serializeMessageContentForTokens(msg.content));
       indices.push(i);
+      imageTokens += estimateImageContentTokens(msg.content);
     }
   }
-  if (contents.length === 0) return 0;
+  if (contents.length === 0) return imageTokens;
   const counts = await countTokensBatch(contents);
-  return counts.reduce((a, b) => a + b, 0);
+  return counts.reduce((a, b) => a + b, 0) + imageTokens;
 }
 
 // ---------------------------------------------------------------------------
@@ -1033,7 +944,12 @@ export interface HistoryBreakdown {
   total: number;
   /** Already-compressed hash refs ([-> h:XXXX, ...]) */
   compressed: number;
-  /** Rolling summary assistant message ([Rolling Summary] ...) */
+  /**
+   * Legacy field (distilled rolling-summary tokens). Always 0 since the
+   * distillation mechanism was removed; durable state lives in BB, the
+   * hash manifest, FileViews, and `ru` rules. Kept on the interface so
+   * downstream UI/telemetry consumers don't break.
+   */
   rolled: number;
   /** tool_result blocks not yet compressed */
   toolResults: number;
@@ -1078,10 +994,6 @@ export function analyzeHistoryBreakdown(
     if (typeof msg.content === 'string') {
       const tokens = countTokensSync(msg.content);
       breakdown.total += tokens;
-      if (msg.role === 'assistant' && isRollingSummaryMessage(msg)) {
-        breakdown.rolled += tokens;
-        continue;
-      }
       if (isCompressedRef(msg.content)) {
         breakdown.compressed += tokens;
       } else if (msg.role === 'assistant') {

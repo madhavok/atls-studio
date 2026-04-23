@@ -32,6 +32,13 @@ function autoPinViewAfterRead(ctx: HandlerContext, filePath: string, shape?: str
   if (typeof autoPin !== 'function') return; // handler tests may stub a partial store
   const pinned = autoPin(filePath, shape);
   if (pinned) recordAutoPinCreated();
+  // Search-ref auto-drop (F): once the model has read `filePath`, any
+  // prior `search` chunk whose sole recorded hit is this path is redundant —
+  // the search summary is derivable from the read content and keeping it
+  // compounds dormant noise. Conservative rule lives in the store; see
+  // `dropSupersededSearches`.
+  const dropSuperseded = ctx.store().dropSupersededSearches;
+  if (typeof dropSuperseded === 'function') dropSuperseded(filePath);
 }
 
 interface ResolvedHashContent {

@@ -298,7 +298,12 @@ export const handleSearchCode: OpHandler = async (params, ctx) => {
 
     const retained = checkRetention('search.code', params, resultStr, true, 'search_results', `search: ${queries.join(', ')}`, undefined, structuredContent);
     if (retained.reused) return retained.output;
-    const hash = ctx.store().addChunk(resultStr, 'search', queries.join(', '), undefined, summary);
+    const hash = ctx.store().addChunk(resultStr, 'search', queries.join(', '), undefined, summary, undefined, {
+      // Enable auto-drop once the model reads all hit paths: carry the
+      // deduped file set so the store can decide when the search is
+      // fully superseded. See `dropSupersededSearches`.
+      searchPaths: uniqueFilePaths,
+    });
     const tk = countTokensSync(resultStr);
     const wasScoped = Array.isArray(filePaths) && filePaths.length > 0;
     const manifestNote = getManifestHitNote([...new Set(structuredContent.file_paths)], wasScoped);

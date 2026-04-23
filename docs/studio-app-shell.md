@@ -16,7 +16,7 @@ The runtime docs describe how ATLS manages memory, freshness, and prompt assembl
 - Manage shell-level UI state such as active files, panel sizes, theme, quick actions, search, and window controls.
 - Route user actions into hooks and services that talk to the Tauri backend.
 - Host session selection and swarm-specific views without embedding backend logic directly in the UI.
-- Surface prompt metrics in chat (including **rolling** token savings and distilled-round counts when the rolling history window is active); see [history-compression.md](./history-compression.md). Compression is driven by [`historyCompressor.ts`](../atls-studio/src/services/historyCompressor.ts) (deflation + stubbing) and [`historyDistiller.ts`](../atls-studio/src/services/historyDistiller.ts) (rolling summary) — the shell only displays their outputs.
+- Surface prompt metrics in chat (compression savings, freed tokens, cumulative input savings). Compression is driven by [`historyCompressor.ts`](../atls-studio/src/services/historyCompressor.ts) (deflation + stubbing + rolling-window eviction); see [history-compression.md](./history-compression.md). The shell only displays the outputs.
 - Offer **Copy context window (last API payload)** in the chat UI ([`AiChat/index.tsx`](../atls-studio/src/components/AiChat/index.tsx)): copies the most recently assembled provider payload JSON for debugging, regression reports, or comparing what the model actually received versus the on-screen transcript.
 
 ## Key Code Locations

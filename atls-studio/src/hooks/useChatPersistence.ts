@@ -25,7 +25,6 @@ import {
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { getGeminiCacheSnapshot, restoreGeminiCacheSnapshot, type GeminiCacheSnapshot } from '../services/aiService';
 import { classifyStageSnippet, MAX_PERSISTENT_STAGE_ENTRY_TOKENS } from '../services/promptMemory';
-import { emptyRollingSummary } from '../services/historyDistiller';
 import { migrateLegacyFileView } from '../services/fileViewStore';
 import { recordUnrecoverable as manifestRecordUnrecoverable } from '../services/hashManifest';
 import { useSwarmStore } from '../stores/swarmStore';
@@ -135,15 +134,9 @@ export function applyV4SessionExtras(snapshot: PersistedMemorySnapshot): void {
       subAgentUsages: rehydrateSubAgentRows(snapshot.costChat.subAgentUsages),
     });
   }
-  if ((snapshot.version === 5 || snapshot.version === 6 || snapshot.version === 7) && snapshot.rollingSummary) {
-    const rs = snapshot.rollingSummary;
-    useContextStore.getState().setRollingSummary({
-      ...rs,
-      findings: rs.findings ?? [],
-    });
-  } else {
-    useContextStore.getState().setRollingSummary(emptyRollingSummary());
-  }
+  // Legacy `rollingSummary` field (v5–v7) is read and discarded — the
+  // distillation mechanism was removed in v8 because BB, hash manifest,
+  // FileViews, and `ru` rules already carry durable cross-round state.
 }
 
 function buildSpinDiagnosisSummary(snapshots: import('../stores/roundHistoryStore').RoundSnapshot[]): PersistedSpinDiagnosis | undefined {
@@ -172,7 +165,7 @@ export function serializeMemorySnapshot(
   const cost = useCostStore.getState();
   const rounds = useRoundHistoryStore.getState();
   return {
-    version: 7,
+    version: 8,
     savedAt: new Date().toISOString(),
     chunks: Array.from(ctxState.chunks.values()),
     archivedChunks: Array.from(ctxState.archivedChunks.values()),
@@ -202,18 +195,8 @@ export function serializeMemorySnapshot(
       chatSubAgentCostCents: cost.chatSubAgentCostCents,
       subAgentUsages: subAgentUsagesToRows(cost.subAgentUsages),
     },
-    rollingSummary: {
-      decisions: [...ctxState.rollingSummary.decisions],
-      filesChanged: [...ctxState.rollingSummary.filesChanged],
-      userPreferences: [...ctxState.rollingSummary.userPreferences],
-      workDone: [...ctxState.rollingSummary.workDone],
-      findings: [...(ctxState.rollingSummary.findings ?? [])],
-      errors: [...ctxState.rollingSummary.errors],
-      currentGoal: ctxState.rollingSummary.currentGoal || '',
-      nextSteps: [...(ctxState.rollingSummary.nextSteps ?? [])],
-      blockers: [...(ctxState.rollingSummary.blockers ?? [])],
-      distilledAt: ctxState.rollingSummary.distilledAt,
-    },
+    // Note: v5-v7 carried a `rollingSummary` field. Removed in v8 (the
+    // distillation mechanism went away — see historyCompressor + chatDb).
     verifyArtifacts: Array.from(ctxState.verifyArtifacts.entries()),
     awarenessCache: Array.from(ctxState.awarenessCache.entries()),
     cumulativeCoveragePaths: Array.from(ctxState.cumulativeCoveragePaths),
