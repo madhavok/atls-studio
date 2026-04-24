@@ -157,6 +157,37 @@ describe('fileViewRender — renderFileViewBlock', () => {
     expect(text).not.toContain('42|export function bar(): T { ... } [42-56]');
   });
 
+  it('renders content from both fills when second overlapping fill extends a coverage-promoted view', () => {
+    const v0 = createFileView(sk({ totalLines: 20 }));
+    // First fill triggers auto-promote (tokens 200 > 0.9 * 20 * 10 = 180)
+    const v1 = applyFillToView(v0, {
+      start: 1,
+      end: 15,
+      content: Array.from({ length: 15 }, (_, i) => row(i + 1, `first${i + 1}`)).join('\n'),
+      chunkHash: 'h1',
+      tokens: 200,
+    });
+    expect(v1.fullBody).toBeDefined();
+    expect(v1.fullBodyOrigin).toBe('coverage_promote');
+
+    // Second fill overlaps and extends the range
+    const v2 = applyFillToView(v1, {
+      start: 14,
+      end: 20,
+      content: Array.from({ length: 7 }, (_, i) => row(i + 14, `second${i + 14}`)).join('\n'),
+      chunkHash: 'h2',
+      tokens: 70,
+    });
+
+    const text = renderFileViewBlock(v2, { currentRound: 1 });
+    // Content from the first fill (lines outside the overlap)
+    expect(text).toContain('1|first1');
+    expect(text).toContain('13|first13');
+    // Content from the second fill (overlap + extension — incoming wins)
+    expect(text).toContain('14|second14');
+    expect(text).toContain('20|second20');
+  });
+
   it('emits unparseable placeholder when skeleton is empty and no regions/fullBody', () => {
     const view = createFileView(sk({ rows: [] }));
     const text = renderFileViewBlock(view, { currentRound: 1 });

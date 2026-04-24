@@ -1080,11 +1080,24 @@ export function applyFillToView(
   opts?: { avgTokensPerLine?: number },
 ): FileView {
   const nextRegions = mergeFilledRegion(view.filledRegions, fill);
-  const probe: FileView = {
-    ...view,
-    filledRegions: nextRegions,
-  };
   const refreshed = computeFileViewHashParts(view.filePath, view.sourceRevision);
+
+  // Coverage-promoted fullBody: re-compose from updated regions so new
+  // fills are visible. Direct reads (fullBodyOrigin === 'read') are
+  // authoritative — leave them alone.
+  if (view.fullBody !== undefined && view.fullBodyOrigin === 'coverage_promote') {
+    const body = composeFullBodyFromRegions({ ...view, filledRegions: nextRegions });
+    return {
+      ...view,
+      fullBody: body,
+      filledRegions: nextRegions,
+      hash: refreshed.hash,
+      shortHash: refreshed.shortHash,
+      lastAccessed: Date.now(),
+    };
+  }
+
+  const probe: FileView = { ...view, filledRegions: nextRegions };
   if (shouldAutoPromoteToFullBody(probe, opts?.avgTokensPerLine)) {
     const body = composeFullBodyFromRegions(probe);
     return {

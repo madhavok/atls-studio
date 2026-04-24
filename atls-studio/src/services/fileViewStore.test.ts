@@ -306,6 +306,56 @@ describe('fileViewStore — createFileView + applyFillToView', () => {
     expect(v1.fullBody).toBeUndefined();
     expect(v1.fullBodyOrigin).toBeUndefined();
   });
+
+  it('extending fill after coverage-promote re-composes fullBody', () => {
+    const v0 = createFileView(fakeSkeleton({ totalLines: 20 }));
+    // First fill triggers auto-promote (tokens 200 > 0.9 * 20 * 10 = 180)
+    const v1 = applyFillToView(v0, {
+      start: 1,
+      end: 15,
+      content: Array.from({ length: 15 }, (_, i) => row(i + 1, `line${i + 1}`)).join('\n'),
+      chunkHash: 'h1',
+      tokens: 200,
+    });
+    expect(v1.fullBody).toBeDefined();
+    expect(v1.fullBodyOrigin).toBe('coverage_promote');
+    expect(v1.fullBody).toContain('15|line15');
+    expect(v1.fullBody).not.toContain('20|line20');
+
+    // Second fill extends the range — should re-compose fullBody
+    const v2 = applyFillToView(v1, {
+      start: 14,
+      end: 20,
+      content: Array.from({ length: 7 }, (_, i) => row(i + 14, `line${i + 14}`)).join('\n'),
+      chunkHash: 'h2',
+      tokens: 70,
+    });
+    expect(v2.fullBody).toBeDefined();
+    expect(v2.fullBodyOrigin).toBe('coverage_promote');
+    // Must contain content from BOTH fills
+    expect(v2.fullBody).toContain('1|line1');
+    expect(v2.fullBody).toContain('20|line20');
+  });
+
+  it('extending fill after direct read does NOT overwrite fullBody', () => {
+    const v0 = createFileView(fakeSkeleton({ totalLines: 100 }));
+    const v1 = applyFullBodyToView(v0, 'the\nwhole\nfile', 'hFULL');
+    expect(v1.fullBodyOrigin).toBe('read');
+
+    // A subsequent fill should NOT overwrite the direct-read fullBody
+    const v2 = applyFillToView(v1, {
+      start: 50,
+      end: 60,
+      content: Array.from({ length: 11 }, (_, i) => row(i + 50, `new${i + 50}`)).join('\n'),
+      chunkHash: 'hSlice',
+      tokens: 50,
+    });
+    expect(v2.fullBody).toBe('the\nwhole\nfile');
+    expect(v2.fullBodyOrigin).toBe('read');
+    // Regions should still be updated
+    expect(v2.filledRegions.length).toBe(1);
+    expect(v2.filledRegions[0].start).toBe(50);
+  });
 });
 
 describe('fileViewStore — chunk eviction prunes regions', () => {
