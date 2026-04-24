@@ -63,4 +63,23 @@ describe('fetchModels', () => {
     const out = await fetchModels('anthropic', 'k');
     expect(out[0]?.contextWindow).toBeGreaterThan(0);
   });
+
+  it('returns empty for unknown provider (default branch)', async () => {
+    const out = await fetchModels('not-a-provider' as import('./modelFetcher').AIProvider, 'k');
+    expect(out).toEqual([]);
+  });
+
+  it('returns empty when anthropic, lmstudio, google, or vertex invoke throws', async () => {
+    invoke.mockRejectedValueOnce(new Error('network'));
+    expect(await fetchModels('anthropic', 'k')).toEqual([]);
+
+    invoke.mockRejectedValueOnce(new Error('network'));
+    expect(await fetchModels('lmstudio', 'http://127.0.0.1:1234')).toEqual([]);
+
+    invoke.mockRejectedValueOnce(new Error('network'));
+    expect(await fetchModels('google', 'k')).toEqual([]);
+
+    invoke.mockRejectedValueOnce(new Error('network'));
+    expect(await fetchModels('vertex', 'tok', 'p', 'r')).toEqual([]);
+  });
 });

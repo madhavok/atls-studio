@@ -33,6 +33,10 @@ describe('subagentToolResultIndicatesProgress', () => {
     expect(subagentToolResultIndicatesProgress('Error: no API key')).toBe(false);
     expect(subagentToolResultIndicatesProgress('ERROR missing path')).toBe(false);
   });
+
+  it('returns false when there is no progress or exploration marker', () => {
+    expect(subagentToolResultIndicatesProgress('plain status line')).toBe(false);
+  });
 });
 
 describe('subagentToolResultIndicatesExploration', () => {
@@ -49,5 +53,9 @@ describe('subagentToolResultIndicatesExploration', () => {
 
   it('is false without [OK]', () => {
     expect(subagentToolResultIndicatesExploration('[FAIL] x (read.lines): oops')).toBe(false);
+  });
+
+  it('is false for [OK] without read/search/intent/analyze context', () => {
+    expect(subagentToolResultIndicatesExploration('[OK] all done')).toBe(false);
   });
 });
