@@ -50,4 +50,26 @@ describe('executeWithConcurrency', () => {
     expect(out.length).toBe(2);
     expect(out.every(x => x === undefined)).toBe(true);
   });
+
+  it('handles empty task list', async () => {
+    expect(await executeWithConcurrency([], 2)).toEqual([]);
+  });
+
+  it('aborts in-flight work and returns sparse results', async () => {
+    const controller = new AbortController();
+    const tasks = [
+      () => Promise.resolve('a'),
+      () =>
+        new Promise<string>((resolve) => {
+          setTimeout(() => resolve('b'), 30);
+        }),
+      () => Promise.resolve('c'),
+    ];
+    const promise = executeWithConcurrency(tasks, 1, controller.signal);
+    await new Promise((r) => setTimeout(r, 5));
+    controller.abort();
+    const out = await promise;
+    expect(Array.isArray(out)).toBe(true);
+    expect(out.length).toBe(3);
+  });
 });
