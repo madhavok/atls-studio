@@ -603,6 +603,79 @@ describe('normalizeStepParams', () => {
       });
       expect(out.subtasks).toEqual([{ id: 'a', title: 'A' }]);
     });
+
+    it('comma-splits a scalar string of id:title pairs (matches q: parser semantics)', () => {
+      const out = normalizeStepParams('session.plan', {
+        goal: 'g',
+        subtasks: 't1:Batch,t2:UHPP,t3:FileView',
+      });
+      expect(out.subtasks).toEqual(['t1:Batch', 't2:UHPP', 't3:FileView']);
+    });
+
+    it('splits newline- and semicolon-joined strings', () => {
+      const out = normalizeStepParams('session.plan', {
+        goal: 'g',
+        subtasks: 't1:A\nt2:B;t3:C',
+      });
+      expect(out.subtasks).toEqual(['t1:A', 't2:B', 't3:C']);
+    });
+
+    it('expands object-of-strings map into id:title entries', () => {
+      const out = normalizeStepParams('session.plan', {
+        goal: 'g',
+        subtasks: { t1: 'Batch', t2: 'UHPP' },
+      });
+      expect(out.subtasks).toEqual(['t1:Batch', 't2:UHPP']);
+    });
+
+    it('expands array elements that are object-of-strings maps', () => {
+      const out = normalizeStepParams('session.plan', {
+        goal: 'g',
+        subtasks: [{ t1: 'Batch' }, { t2: 'UHPP' }],
+      });
+      expect(out.subtasks).toEqual(['t1:Batch', 't2:UHPP']);
+    });
+
+    it('preserves an array that mixes strings and {id,title} objects', () => {
+      const out = normalizeStepParams('session.plan', {
+        goal: 'g',
+        subtasks: ['t1:A', { id: 't2', title: 'B' }],
+      });
+      expect(out.subtasks).toEqual(['t1:A', { id: 't2', title: 'B' }]);
+    });
+
+    it('drops malformed array elements (no id+title, no object-map) without throwing', () => {
+      const out = normalizeStepParams('session.plan', {
+        goal: 'g',
+        subtasks: ['t1:A', 42, null, { id: 'x' }],
+      });
+      expect(out.subtasks).toEqual(['t1:A']);
+    });
+
+    it('accepts `tasks`, `plan`, `list`, `items` as aliases for `subtasks`', () => {
+      expect(normalizeStepParams('session.plan', { goal: 'g', tasks: ['t1:A'] }).subtasks).toEqual(['t1:A']);
+      expect(normalizeStepParams('session.plan', { goal: 'g', plan: ['t1:A'] }).subtasks).toEqual(['t1:A']);
+      expect(normalizeStepParams('session.plan', { goal: 'g', list: ['t1:A'] }).subtasks).toEqual(['t1:A']);
+      expect(normalizeStepParams('session.plan', { goal: 'g', items: ['t1:A'] }).subtasks).toEqual(['t1:A']);
+    });
+  });
+
+  describe('normalizeHashRefsToStrings passes dataflow strings through for downstream rescue', () => {
+    // The structured-JSON rescue for `hashes:"in:stepId.refs"` lives at the
+    // batch-step layer (coerceBatchSteps) and the handler layer
+    // (resolveRefsOrStepIds). normalizeStepParams just normalizes the string
+    // into an array so the downstream token-level fallback can handle it.
+    it('keeps `in:r1.refs` as a bare token in hashes array', () => {
+      const out = normalizeStepParams('session.unpin', { hashes: 'in:r1.refs' });
+      expect(out.hashes).toEqual(['in:r1.refs']);
+      expect(out.in).toBeUndefined();
+    });
+
+    it('does not rewrite real hash strings', () => {
+      const out = normalizeStepParams('session.unpin', { hashes: 'h:abc123' });
+      expect(out.hashes).toEqual(['h:abc123']);
+      expect(out.in).toBeUndefined();
+    });
   });
 
   // -----------------------------------------------------------------------

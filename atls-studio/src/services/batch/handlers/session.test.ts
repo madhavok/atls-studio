@@ -390,6 +390,26 @@ describe('handlePin', () => {
     expect(result.error).toMatch(/missing refs/);
   });
 
+  it('resolves a literal "in:stepId.refs" token in hashes (token-level fallback)', async () => {
+    // Covers the path where coerceBatchSteps didn't run (programmatic / internal
+    // callers) and the dataflow string reached the handler as a hash ref.
+    const h = useContextStore.getState().addChunk('pin-via-token', 'search', 'tok.ts');
+    const stepOutputs = new Map<string, StepOutput>([
+      ['r1', { kind: 'file_refs', ok: true, refs: [`h:${h}`], summary: 'read' }],
+    ]);
+    const ctx = {
+      ...createMockCtx(),
+      forEachStepOutput: (fn: (id: string, out: StepOutput) => void) => {
+        for (const [id, out] of stepOutputs) fn(id, out);
+      },
+      getStepOutput: (id: string) => stepOutputs.get(id),
+    } as unknown as Parameters<typeof handlePin>[1];
+
+    const result = await handlePin({ hashes: ['in:r1.refs'] }, ctx);
+    expect(result.ok).toBe(true);
+    expect(result.summary).toMatch(/pin: 1 chunk/);
+  });
+
   it('includes executor binding warning when hashes resolved to nothing from from_step', async () => {
     const result = await handlePin(
       {
@@ -610,6 +630,82 @@ describe('handleTaskPlan', () => {
     const p = useContextStore.getState().taskPlan;
     expect(p?.subtasks).toHaveLength(1);
     expect(p?.subtasks[0]).toMatchObject({ id: 'analyze', title: 'analyze', status: 'active' });
+  });
+
+  it('warns when top-level sibling keys contain commas (the "10 tasks" model shape)', async () => {
+    const r = await handleTaskPlan(
+      {
+        goal: '10 tasks for testing',
+        subtasks: 't1:Batch',
+        'Core,t2': 'UHPP',
+        'Pipeline,t3': 'FileView',
+      },
+      createMockCtx() as any,
+    );
+    expect(r.ok).toBe(true);
+    expect(r.summary).toMatch(/WARNING/);
+    expect(r.summary).toMatch(/top-level key/);
+    expect(r.summary).toMatch(/Core,t2/);
+  });
+
+  it('warns when goal promises N tasks but only 1 landed from a scalar string', async () => {
+    const r = await handleTaskPlan(
+      { goal: '5 phases: investigate and fix', subtasks: 'phase1' },
+      createMockCtx() as any,
+    );
+    expect(r.ok).toBe(true);
+    expect(r.summary).toMatch(/WARNING/);
+    expect(r.summary).toMatch(/5 tasks/);
+  });
+
+  it('warns when subtasks was provided but resolved to 0 entries', async () => {
+    const r = await handleTaskPlan(
+      { goal: 'g', subtasks: { id: 'only_id_no_title' } },
+      createMockCtx() as any,
+    );
+    expect(r.ok).toBe(true);
+    expect(r.summary).toMatch(/WARNING/);
+    expect(r.summary).toMatch(/resolved to 0 entries/);
+  });
+
+  it('does not warn on well-formed plans', async () => {
+    const r = await handleTaskPlan(
+      {
+        goal: 'Comprehensive testing plan — 10 tasks',
+        subtasks: [
+          't1:Batch', 't2:UHPP', 't3:FileView', 't4:Context', 't5:History',
+          't6:Spin', 't7:Freshness', 't8:Compression', 't9:Swarm', 't10:DOM',
+        ],
+      },
+      createMockCtx() as any,
+    );
+    expect(r.ok).toBe(true);
+    expect(r.summary).not.toContain('WARNING');
+    expect(r.summary).toContain('10 subtasks');
+  });
+
+  it('correctly expands comma-separated string subtasks (post-Fix A)', async () => {
+    const r = await handleTaskPlan(
+      { goal: 'g', subtasks: 't1:A,t2:B,t3:C' },
+      createMockCtx() as any,
+    );
+    expect(r.ok).toBe(true);
+    expect(r.summary).not.toContain('WARNING');
+    const p = useContextStore.getState().taskPlan;
+    expect(p?.subtasks).toHaveLength(3);
+    expect(p?.subtasks[0]).toMatchObject({ id: 't1', title: 'A', status: 'active' });
+    expect(p?.subtasks[2]).toMatchObject({ id: 't3', title: 'C', status: 'pending' });
+  });
+
+  it('correctly expands object-of-strings subtasks (post-Fix A)', async () => {
+    const r = await handleTaskPlan(
+      { goal: 'g', subtasks: { t1: 'A', t2: 'B' } },
+      createMockCtx() as any,
+    );
+    expect(r.ok).toBe(true);
+    expect(r.summary).not.toContain('WARNING');
+    const p = useContextStore.getState().taskPlan;
+    expect(p?.subtasks).toHaveLength(2);
   });
 });
 

@@ -107,6 +107,61 @@ function parseSubtaskString(raw: string): { id: string; title: string } {
   return { id, title };
 }
 
+/**
+ * Detect common session.plan shape mistakes that silently dropped or
+ * flattened what the model clearly meant to be multiple subtasks. Emits
+ * actionable hints so the model doesn't retry the same malformed shape.
+ *
+ * Signals it fires on:
+ *   1. `subtasks` was provided but normalization produced 0 entries.
+ *   2. Top-level sibling keys contain commas (e.g. `"Core,t2":"UHPP"`) —
+ *      strong sign the model split one subtask across multiple JSON keys.
+ *   3. `subtasks` was a scalar string containing a colon AND the goal text
+ *      mentions a count (e.g. "10 tasks") but only 1 subtask landed — soft.
+ */
+function detectTaskPlanInputWarnings(
+  params: Record<string, unknown>,
+  goal: string,
+  finalCount: number,
+): string[] {
+  const warnings: string[] = [];
+  const raw = params.subtasks;
+
+  const rawIsEmptyArray = Array.isArray(raw) && raw.length === 0;
+  const rawIsEmptyString = typeof raw === 'string' && raw.trim() === '';
+  const rawProvided = raw !== undefined && raw !== null && !rawIsEmptyArray && !rawIsEmptyString;
+
+  if (rawProvided && finalCount === 0) {
+    warnings.push(
+      'subtasks provided but resolved to 0 entries — pass a JSON array like ["id1:Title1","id2:Title2",...] or {id1:"Title1",...}',
+    );
+  }
+
+  const commaKeySiblings = Object.keys(params).filter(
+    k => k !== 'subtasks' && k.includes(','),
+  );
+  if (commaKeySiblings.length > 0) {
+    const sample = commaKeySiblings.slice(0, 2).map(k => JSON.stringify(k)).join(', ');
+    warnings.push(
+      `${commaKeySiblings.length} top-level key${commaKeySiblings.length === 1 ? '' : 's'} contain${commaKeySiblings.length === 1 ? 's' : ''} commas (${sample}) — these are NOT merged into subtasks. Send all subtasks as one JSON array under the \`subtasks\` key`,
+    );
+  }
+
+  if (finalCount === 1 && typeof raw === 'string' && goal) {
+    const countMatch = goal.match(/\b(\d+)\s+(?:tasks?|subtasks?|steps?|phases?|items?)\b/i);
+    if (countMatch) {
+      const expected = Number.parseInt(countMatch[1], 10);
+      if (Number.isFinite(expected) && expected >= 2) {
+        warnings.push(
+          `goal mentions ${expected} tasks but only 1 subtask landed — scalar string \`subtasks\` may have collapsed. Use JSON array ["id1:Title1",...]`,
+        );
+      }
+    }
+  }
+
+  return warnings;
+}
+
 export const handleTaskPlan: OpHandler = async (params, ctx) => {
   const goal = params.goal as string;
   if (!goal) return err('task_plan: missing goal');
@@ -127,7 +182,12 @@ export const handleTaskPlan: OpHandler = async (params, ctx) => {
     activeSubtaskId: subtasks.length > 0 ? subtasks[0].id : null,
   });
   const activeLabel = subtasks.find(s => s.status === 'active')?.title || 'none';
-  return ok(`task_plan: ${subtasks.length} subtasks | ${activeLabel}(active)`);
+  const warnings = detectTaskPlanInputWarnings(params, goal, subtasks.length);
+  let line = `task_plan: ${subtasks.length} subtasks | ${activeLabel}(active)`;
+  if (warnings.length > 0) {
+    line += ` — WARNING: ${warnings.join('; ')}`;
+  }
+  return ok(line);
 };
 
 // ---------------------------------------------------------------------------
@@ -715,11 +775,19 @@ function resolveRefsOrStepIds(
   });
 
   // Resolve bare step-ids (e.g. `r1`) to their output refs. Hash-prefixed
-  // tokens pass through unchanged.
+  // tokens pass through unchanged. Also recognize `in:stepId[.refs]` strings
+  // that slipped through into the refs list (parity with q: parser's
+  // `hashes:in:r1.refs` rescue in toon.ts::parseBatchLines).
   const resolved = expanded.flatMap(ref => {
     const token = typeof ref === 'string' ? ref : String(ref);
     if (token.startsWith('h:')) return [token];
-    const stepOutput = ctx.getStepOutput?.(token);
+    let stepIdToken = token;
+    if (token.startsWith('in:')) {
+      const dataflow = token.slice(3);
+      const dotIdx = dataflow.indexOf('.');
+      stepIdToken = dotIdx === -1 ? dataflow : dataflow.slice(0, dotIdx);
+    }
+    const stepOutput = ctx.getStepOutput?.(stepIdToken);
     if (stepOutput?.refs?.length) {
       materializeFileRefsContentIfNeeded(stepOutput, ctx.store());
       notes.push(`${token} \u2192 ${stepOutput.refs.join(', ')}`);

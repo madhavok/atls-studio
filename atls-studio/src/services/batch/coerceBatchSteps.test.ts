@@ -76,4 +76,72 @@ describe('coerceBatchSteps', () => {
     ]);
     expect(steps[0].use).toBe('search.code');
   });
+
+  // ---------------------------------------------------------------------
+  // dataflow rescue: `hashes: "in:stepId[.refs]"` → step.in.hashes
+  // ---------------------------------------------------------------------
+
+  describe('dataflow rescue for `hashes: "in:stepId.refs"`', () => {
+    it('promotes `with.hashes:"in:r1.refs"` into step.in.hashes', () => {
+      const steps = coerceBatchSteps([
+        { id: 'r1', use: 'search.code', with: { queries: ['x'] } },
+        { id: 'p1', use: 'session.pin', with: { hashes: 'in:r1.refs' } },
+      ]);
+      expect(steps[1].in).toEqual({ hashes: { from_step: 'r1', path: 'refs' } });
+      expect((steps[1].with as Record<string, unknown>).hashes).toBeUndefined();
+    });
+
+    it('promotes `with.hashes:"in:r1"` (default .refs) into step.in.hashes', () => {
+      const steps = coerceBatchSteps([
+        { id: 'p1', use: 'session.unpin', with: { hashes: 'in:r1' } },
+      ]);
+      expect(steps[0].in).toEqual({ hashes: { from_step: 'r1', path: 'refs' } });
+      expect((steps[0].with as Record<string, unknown>).hashes).toBeUndefined();
+    });
+
+    it('leaves real hash strings alone', () => {
+      const steps = coerceBatchSteps([
+        { id: 'p1', use: 'session.pin', with: { hashes: 'h:abc123' } },
+      ]);
+      expect((steps[0].with as Record<string, unknown>).hashes).toBe('h:abc123');
+      expect(steps[0].in).toBeUndefined();
+    });
+
+    it('leaves dataflow alone when step.in.hashes is already set', () => {
+      const steps = coerceBatchSteps([
+        {
+          id: 'p1',
+          use: 'session.pin',
+          with: { hashes: 'in:r2.refs' },
+          in: { hashes: { from_step: 'r0', path: 'refs' } },
+        },
+      ]);
+      expect(steps[0].in).toEqual({ hashes: { from_step: 'r0', path: 'refs' } });
+      // with.hashes still removed to avoid a literal token leaking through.
+      expect((steps[0].with as Record<string, unknown>).hashes).toBeUndefined();
+    });
+
+    it('refuses lossy multi-dataflow strings', () => {
+      const steps = coerceBatchSteps([
+        { id: 'p1', use: 'session.pin', with: { hashes: 'in:r1.refs,in:r2.refs' } },
+      ]);
+      expect(steps[0].in).toBeUndefined();
+      expect((steps[0].with as Record<string, unknown>).hashes).toBe('in:r1.refs,in:r2.refs');
+    });
+
+    it('merges alongside other step.in keys', () => {
+      const steps = coerceBatchSteps([
+        {
+          id: 'e1',
+          use: 'change.edit',
+          with: { hashes: 'in:r1.refs' },
+          in: { file_path: { from_step: 'r0', path: 'files.0' } },
+        },
+      ]);
+      expect(steps[0].in).toEqual({
+        file_path: { from_step: 'r0', path: 'files.0' },
+        hashes: { from_step: 'r1', path: 'refs' },
+      });
+    });
+  });
 });

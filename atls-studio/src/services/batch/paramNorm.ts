@@ -97,6 +97,10 @@ const OP_ALIASES: Readonly<Partial<Record<OperationKind, Readonly<Record<string,
   'annotate.note': { content: 'note' },
   // session.rule expects rule name `key`; models often send `hash` (engram-addressing habit).
   'session.rule': { hash: 'key' },
+  // session.plan canonical key is `subtasks`; cross-trained models produce
+  // `tasks`, `plan`, `list`, `items`. Collapse them before handler dispatch so
+  // the planner never silently drops a plan the model clearly intended.
+  'session.plan': { tasks: 'subtasks', plan: 'subtasks', list: 'subtasks', items: 'subtasks' },
 };
 
 // ---------------------------------------------------------------------------
@@ -296,21 +300,82 @@ export function normalizeHashRefsToStrings(value: unknown): string[] {
 }
 
 /**
- * session.plan `subtasks` must be an array for handlers, but APIs often send
- * a single string ("analyze", "analyze:Exercise") or one object.
+ * session.plan `subtasks` must be an array for handlers, but models send many
+ * natural shapes: a single string, a comma/newline-joined string of id:title
+ * pairs, an object of `{id,title}`, an object-of-strings map
+ * `{t1:"Title1", t2:"Title2"}`, or an array whose elements are any of the
+ * above. Normalize all of them into the canonical
+ * `Array<string | {id,title}>` shape so `handleTaskPlan` sees one thing.
+ *
+ * Only discards input when it carries no subtask signal at all — everything
+ * else is coerced. This mirrors the q: line parser's auto-split for scalar
+ * batch params (see `toon.ts::parseParamValue`).
  */
 export function normalizeSessionPlanSubtasksInput(
   raw: unknown,
 ): Array<string | { id: string; title: string }> {
   if (raw === undefined || raw === null) return [];
-  if (Array.isArray(raw)) return raw as Array<string | { id: string; title: string }>;
+
+  // Expand `{k1:"v1", k2:"v2"}` into `["k1:v1", "k2:v2"]`. Returns null when
+  // the object isn't an object-of-strings map — callers then fall back to
+  // the `{id,title}` shape check (or return []).
+  const expandObjectMap = (obj: Record<string, unknown>): string[] | null => {
+    if ('id' in obj || 'title' in obj) return null;
+    const entries: string[] = [];
+    for (const [k, v] of Object.entries(obj)) {
+      if (typeof v !== 'string') return null;
+      const key = k.trim();
+      const val = v.trim();
+      if (!key) continue;
+      entries.push(val ? `${key}:${val}` : key);
+    }
+    return entries.length > 0 ? entries : null;
+  };
+
+  const normalizeElement = (
+    item: unknown,
+  ): Array<string | { id: string; title: string }> => {
+    if (item === undefined || item === null) return [];
+    if (typeof item === 'string') {
+      const t = item.trim();
+      return t ? [t] : [];
+    }
+    if (typeof item === 'object') {
+      const o = item as Record<string, unknown>;
+      if (typeof o.id === 'string' && typeof o.title === 'string') {
+        return [{ id: o.id, title: o.title }];
+      }
+      const expanded = expandObjectMap(o);
+      if (expanded) return expanded;
+    }
+    return [];
+  };
+
+  if (Array.isArray(raw)) {
+    const out: Array<string | { id: string; title: string }> = [];
+    for (const item of raw) {
+      for (const e of normalizeElement(item)) out.push(e);
+    }
+    return out;
+  }
+
   if (typeof raw === 'string') {
     const t = raw.trim();
-    return t ? [t] : [];
+    if (!t) return [];
+    // Split on newlines/semicolons first, then commas within each segment.
+    // Matches the q: parser's comma-split for scalar batch params. Titles
+    // containing commas must use the explicit array form.
+    return t
+      .split(/[\n;]+/)
+      .flatMap(line => (line.includes(',') ? line.split(',') : [line]))
+      .map(s => s.trim())
+      .filter(Boolean);
   }
-  if (typeof raw === 'object' && raw !== null && 'id' in raw && 'title' in raw) {
-    return [raw as { id: string; title: string }];
+
+  if (typeof raw === 'object') {
+    return normalizeElement(raw);
   }
+
   return [];
 }
 

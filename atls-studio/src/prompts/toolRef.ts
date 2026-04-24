@@ -42,7 +42,7 @@ ${generateShorthandLegend()}
 
 ### Common Params (short codes in Key above; full names always accepted)
 sa subtask?:id summary:required — \`subtask\` is the id **before** the colon in spl (e.g. \`analyze\`, NOT the title \`Inspect\`). Omit to advance the currently active subtask. There is no \`subtask:*\` operation; never set \`use\` to \`subtask:...\`.
-spl goal:"required" subtasks:id1:Title1,id2:Title2 — comma-separated id:title lines, or JSON [{id,title},…]; h: prefixes are labels, not UHPP expansion targets
+spl goal:"required" subtasks:["id1:Title1","id2:Title2"] — JSON array of id:title strings works in both q: and structured JSON. Also accepted: [{id,title},...] array of objects, {id1:"Title1",id2:"Title2"} object-of-strings, or "id1:Title1,id2:Title2" comma-separated string (q: line form only). tasks/plan/list/items aliased to subtasks. h: prefixes are labels, not UHPP expansion targets.
 rc type:full|tree ps:path1,path2 depth?:N glob?:pattern line_range?:start-end max_lines?:N
   type:full = whole-file body. type:tree = directory listing (not file content).
   Any file read returns ONE retention ref per file: h:<short> — the FileView identity. Auto-pinned; unpin (pu) when you're done.
