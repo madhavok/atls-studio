@@ -267,6 +267,15 @@ describe('calculateCostBreakdown — cache savings delta', () => {
     expect(withCache.inputCostCents).toBeCloseTo(62.5, 5);
   });
 
+  it('openai GPT-5.5 cache read uses the published 10% input rate', () => {
+    const inputTokens = 1_000_000;
+    const full = calculateCostBreakdown('openai', 'gpt-5.5', inputTokens, 0, 0, 0);
+    const withCache = calculateCostBreakdown('openai', 'gpt-5.5', inputTokens, 0, inputTokens, 0);
+    // gpt-5.5 input = 500¢/MTok; cached input = 50¢/MTok.
+    expect(full.inputCostCents).toBeCloseTo(500, 5);
+    expect(withCache.inputCostCents).toBeCloseTo(50, 5);
+  });
+
   it('zero cache tokens → zero savings', () => {
     const a = calculateCostBreakdown('anthropic', 'claude-opus-4-7', 1000, 100, 0, 0);
     const b = calculateCostBreakdown('anthropic', 'claude-opus-4-7', 1000, 100, 0, 0);

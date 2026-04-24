@@ -13,9 +13,11 @@ import {
 } from './modelCapabilities';
 
 describe('modelCapabilities', () => {
-  it('GPT-5.4 known window is 1M', () => {
+  it('GPT-5.4 and GPT-5.5 known windows are 1M', () => {
     expect(getKnownContextWindow('gpt-5.4', 'openai')).toBe(EXTENDED_CONTEXT_VALUE);
     expect(getKnownContextWindow('gpt-5.4-mini', 'openai')).toBe(EXTENDED_CONTEXT_VALUE);
+    expect(getKnownContextWindow('gpt-5.5', 'openai')).toBe(EXTENDED_CONTEXT_VALUE);
+    expect(getKnownContextWindow('gpt-5.5-pro', 'openai')).toBe(EXTENDED_CONTEXT_VALUE);
   });
 
   it('legacy provider extended bumps Anthropic when per-model unset', () => {
@@ -47,10 +49,12 @@ describe('modelCapabilities', () => {
     ).toBe(true);
   });
 
-  it('OpenAI extended only for gpt-5.4-class; toggle hidden when base is 1M', () => {
+  it('OpenAI extended only for native 1M GPT-5 classes; toggle hidden when base is 1M', () => {
     expect(modelSupportsExtendedContext('gpt-5.4', 'openai')).toBe(true);
+    expect(modelSupportsExtendedContext('gpt-5.5', 'openai')).toBe(true);
     expect(modelSupportsExtendedContext('gpt-4o', 'openai')).toBe(false);
     expect(showExtendedContextToggleForModel('gpt-5.4', 'openai', undefined)).toBe(false);
+    expect(showExtendedContextToggleForModel('gpt-5.5', 'openai', undefined)).toBe(false);
     expect(showExtendedContextToggleForModel('claude-sonnet-4-5', 'anthropic', 200_000)).toBe(true);
   });
 });
@@ -109,6 +113,11 @@ describe('getEffectiveContextWindow resolution shapes', () => {
   it('returns base when already at 1M', () => {
     expect(
       getEffectiveContextWindow('gpt-5.4', 'openai', EXTENDED_CONTEXT_VALUE, {
+        openai: true,
+      }),
+    ).toBe(EXTENDED_CONTEXT_VALUE);
+    expect(
+      getEffectiveContextWindow('gpt-5.5', 'openai', EXTENDED_CONTEXT_VALUE, {
         openai: true,
       }),
     ).toBe(EXTENDED_CONTEXT_VALUE);

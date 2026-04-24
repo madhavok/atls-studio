@@ -83,6 +83,18 @@ describe('calculateCost', () => {
     expect(calculateCost('anthropic', 'claude-opus-4-7-20260115', oneM, 0)).toBe(500);
     expect(calculateCost('anthropic', 'claude-opus-4', oneM, 0)).toBe(1500);
   });
+
+  it('prices GPT-5.5 and GPT-5.5 Pro at current OpenAI rates', () => {
+    const oneM = 1_000_000;
+    expect(calculateCost('openai', 'gpt-5.5', oneM, oneM)).toBe(3500);
+    expect(calculateCost('openai', 'gpt-5.5-20260424', oneM, oneM)).toBe(3500);
+    expect(calculateCost('openai', 'gpt-5.5-pro', oneM, oneM)).toBe(21000);
+  });
+
+  it('uses the published GPT-5.5 cached input rate', () => {
+    const oneM = 1_000_000;
+    expect(calculateCost('openai', 'gpt-5.5', oneM, 0, oneM)).toBe(50);
+  });
 });
 
 const sampleSubAgentUsage = (): SubAgentUsage => ({

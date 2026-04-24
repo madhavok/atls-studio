@@ -29,8 +29,8 @@ export function getKnownContextWindow(modelId: string, provider: AIProvider): nu
     return 200_000; // default for unknown Claude
   }
   if (provider === 'openai') {
-    // GPT-5.4: native 1M context (API)
-    if (id.includes('gpt-5.4')) return EXTENDED_CONTEXT_VALUE;
+    // GPT-5.4 / GPT-5.5: native 1M context (API)
+    if (id.includes('gpt-5.4') || id.includes('gpt-5.5')) return EXTENDED_CONTEXT_VALUE;
     // o1/o3/o4: 200K; gpt-4o/mini: 128K+; gpt-4-turbo: 128K
     if (id.startsWith('o1') || id.startsWith('o3') || id.startsWith('o4')) return 200_000;
     if (id.includes('gpt-4o') || id.includes('gpt-4-turbo')) return 128_000;
@@ -42,7 +42,7 @@ export function getKnownContextWindow(modelId: string, provider: AIProvider): nu
 
 /**
  * Whether a model supports optional extended context (e.g. 200K → 1M via provider beta).
- * OpenAI: only GPT-5.4-class models use native 1M — no separate “extended” bump; toggle hidden when base is already 1M.
+ * OpenAI: GPT-5.4/5.5-class models use native 1M — no separate “extended” bump; toggle hidden when base is already 1M.
  */
 export function modelSupportsExtendedContext(modelId: string, provider: AIProvider): boolean {
   const id = modelId.toLowerCase();
@@ -50,7 +50,7 @@ export function modelSupportsExtendedContext(modelId: string, provider: AIProvid
     return id.includes('4-6') || id.includes('4.5') || id.includes('opus-4') || id.includes('sonnet-4');
   }
   if (provider === 'openai') {
-    return id.includes('gpt-5.4');
+    return id.includes('gpt-5.4') || id.includes('gpt-5.5');
   }
   if (provider === 'google' || provider === 'vertex') {
     return id.includes('gemini-2') || id.includes('gemini-3');

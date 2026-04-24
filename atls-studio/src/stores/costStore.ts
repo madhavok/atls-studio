@@ -90,9 +90,9 @@ export interface SubAgentUsage {
 const COST_DATA_KEY = 'atls-cost-data';
 const COST_SETTINGS_KEY = 'atls-cost-settings';
 
-// Pricing per 1M tokens (in cents) - updated Feb 2026
+// Pricing per 1M tokens (in cents) - updated Apr 2026
 // Use prefixes for versioned model matching (more specific prefixes first)
-const PRICING: Record<string, Array<{ prefix: string; input: number; output: number }>> = {
+const PRICING: Record<string, Array<{ prefix: string; input: number; output: number; cachedInput?: number }>> = {
   anthropic: [
     // Claude 4.6 series (Feb 2026) - current flagship
     { prefix: 'claude-sonnet-4-6', input: 300, output: 1500 },    // $3/$15
@@ -127,6 +127,10 @@ const PRICING: Record<string, Array<{ prefix: string; input: number; output: num
     { prefix: 'o1-mini', input: 300, output: 1200 },              // legacy
     { prefix: 'o1', input: 1500, output: 6000 },                  // legacy
     // GPT-5 series (specific variants before base, longer prefixes first)
+    { prefix: 'gpt-5.5-pro', input: 3000, output: 18000 },        // $30/$180
+    { prefix: 'gpt-5.5', input: 500, output: 3000, cachedInput: 50 }, // $5/$30, cached $0.50
+    { prefix: 'gpt-5.4-mini', input: 75, output: 450, cachedInput: 7.5 }, // $0.75/$4.50, cached $0.075
+    { prefix: 'gpt-5.4', input: 250, output: 1500, cachedInput: 25 }, // $2.50/$15, cached $0.25
     { prefix: 'gpt-5.2-pro', input: 2100, output: 16800 },       // $21/$168
     { prefix: 'gpt-5.2', input: 175, output: 1400 },              // $1.75/$14
     { prefix: 'gpt-5.1', input: 125, output: 1000 },              // $1.25/$10
@@ -185,7 +189,7 @@ const PRICING: Record<string, Array<{ prefix: string; input: number; output: num
 // Cache pricing multipliers (relative to base input price)
 const ANTHROPIC_CACHE_READ_MULT = 0.1;   // 10% of base input price
 const ANTHROPIC_CACHE_WRITE_MULT = 1.25; // 125% of base input price (5-min TTL)
-const OPENAI_CACHED_MULT = 0.5;          // 50% of base input price
+const OPENAI_CACHED_MULT = 0.5;          // legacy fallback when OpenAI has no explicit cached rate
 const GEMINI_CACHED_MULT = 0.25;         // 25% of base input price (75% discount)
 
 // Calculate cost for given tokens.
@@ -241,10 +245,11 @@ export function calculateCostBreakdown(
     const cacheWriteCost = (cacheWriteTokens / perM) * modelPricing.input * ANTHROPIC_CACHE_WRITE_MULT;
     inputCostCents = uncachedCost + cacheReadCost + cacheWriteCost;
   } else if (provider === 'openai' && cacheReadTokens > 0) {
-    // OpenAI: prompt_tokens includes cached; subtract cached portion and re-add at 50% rate
+    // OpenAI: prompt_tokens includes cached; subtract cached portion and re-add at the cached rate
     const uncached = Math.max(0, inputTokens - cacheReadTokens);
     const uncachedCost = (uncached / perM) * modelPricing.input;
-    const cachedCost = (cacheReadTokens / perM) * modelPricing.input * OPENAI_CACHED_MULT;
+    const cachedInput = modelPricing.cachedInput ?? modelPricing.input * OPENAI_CACHED_MULT;
+    const cachedCost = (cacheReadTokens / perM) * cachedInput;
     inputCostCents = uncachedCost + cachedCost;
   } else if ((provider === 'google' || provider === 'vertex') && cacheReadTokens > 0) {
     // Google/Vertex with Gemini Context Caching: cached tokens at 75% discount
