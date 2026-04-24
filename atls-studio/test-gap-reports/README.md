@@ -12,8 +12,11 @@ From `atls-studio/`:
 3. **Rust (atls-rs):** `cd ../../atls-rs && cargo llvm-cov --workspace --all-features --json --summary-only --output-path target/llvm-cov-atls-rs-summary.json`  
    (CI uses an `lcov` run plus `cargo llvm-cov report --json --summary-only --output-path …`; see `.github/workflows/ci.yml`.)
 4. **Lists:** `npm run test:coverage:gaps`
+5. **Below 100% lines (TypeScript):** `npm run test:coverage:check-100` — writes `ts-below-100-lines.txt`. Use `test:coverage:check-100:fail` only when the repo is ready to enforce per-file 100% lines.
 
-Or run `npm run test:coverage:report` after step 2–3 if the LLVM JSON files already exist.
+Or run `npm run test:coverage:report` (coverage + gap lists + below-100 list). Add Rust LLVM JSON paths first if you need the Rust gap files.
+
+**Playwright** (`npm run test:e2e`) is complementary smoke for the shell and full integration; it does not replace Vitest line coverage.
 
 ## Exclusions
 

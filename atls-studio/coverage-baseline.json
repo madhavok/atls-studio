@@ -1,12 +1,12 @@
 {
-  "recordedAt": "2026-04-04",
+  "recordedAt": "2026-04-24",
   "source": "npm run test:coverage (vitest v8)",
   "global": {
-    "statements": 36.64,
-    "branches": 32.1,
-    "functions": 27.9,
-    "lines": 38.08
+    "statements": 54.83,
+    "branches": 47.03,
+    "functions": 49.42,
+    "lines": 56.71
   },
-  "bottomQuartileNotes": "Lowest coverage areas (see full report): src/App.tsx, src/components/** (except partial AiChat/helpers), src/hooks/useAtls.ts (hook body), orchestrator.ts, swarmChat.ts, subagentService.ts, many large panels. Services/utils batch pipeline are comparatively strong.",
-  "ciThresholds": "See vite.config.ts coverage.thresholds — set slightly below this baseline to catch regressions."
+  "bottomQuartileNotes": "Largest remaining gaps (see coverage HTML or test-gap-reports/ts-below-100-lines.txt): components/CodeViewer, FileExplorer, AiChat/index, hooks/useAtls and usePanelResize, services/orchestrator/swarmChat/subagentService, stores/terminalStore. Batch pipeline, opMap, prompts/shellGuide, utils/languageMap+shapeOps are at or near full line coverage. App.tsx is covered in Vitest via App.dom.test.tsx (mocked panels).",
+  "ciThresholds": "vite.config.ts coverage.thresholds ratcheted with this baseline; use npm run test:coverage:check-100 to list files still below 100% lines."
 }

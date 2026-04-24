@@ -26,8 +26,12 @@ export default defineConfig(({ mode }) => ({
       exclude: [
         "src/**/*.test.ts",
         "src/**/*.test.tsx",
-        // Root shell: exercised by Playwright; composition-only unit tests are low ROI.
-        "src/App.tsx",
+        // Ad-hoc probes / stress harnesses (not part of app coverage; listed in coverage-gap-exclusions.json).
+        "src/_test_tool_probe.ts",
+        "src/__test_tool_probe.ts",
+        "src/__tests__/bracket-stress.ts",
+        "src/__tests__/bracket_stress.ts",
+        "src/__tests__/torture-brackets.ts",
         // Type-only / re-export surfaces (see coverage-gap-exclusions.json).
         "src/vite-env.d.ts",
         "src/services/batch/index.ts",
@@ -38,11 +42,11 @@ export default defineConfig(({ mode }) => ({
         "src/components/AtlsPanel/types.ts",
       ],
       thresholds: {
-        // Raised as coverage improves; repo target ~90% on meaningful runtime code (see coverage-gap-exclusions.json).
-        statements: 40,
-        branches: 35,
-        functions: 31,
-        lines: 42,
+        // Ratchet as suites grow; `npm run test:coverage:check-100` lists files still below 100% lines.
+        statements: 54,
+        branches: 45,
+        functions: 47,
+        lines: 55,
       },
     },
   },
