@@ -12,6 +12,7 @@
  * it lands in a `content_hash` slot. The model never needs to pick a slot.
  */
 import type { FileView, FilledRegion } from './fileViewStore';
+import { detectRegionGaps } from './fileViewStore';
 
 /** Fence marker for FileView blocks. */
 const FENCE_TOP = '===';
@@ -131,14 +132,13 @@ function formatAnnotations(view: FileView): string {
 
 function formatHeader(view: FileView): string {
   const pinSuffix = view.pinned ? ' [pinned]' : '';
-  // Auto-promote marker: distinguishes a stitched-region full-body (which
-  // may have approximated rows the model never directly read) from an
-  // intentional full read via read.file / read.context.
-  const promoteSuffix = view.fullBodyOrigin === 'coverage_promote'
-    ? ' [fullBody: promoted]'
-    : '';
-  // Single ref per work object. `injectSnapshotHashes` resolves the view's
-  // current sourceRevision when this ref lands in a `content_hash` slot.
+  let promoteSuffix = '';
+  if (view.fullBodyOrigin === 'coverage_promote') {
+    const gaps = detectRegionGaps(view.filledRegions, view.totalLines);
+    promoteSuffix = gaps.length > 0
+      ? ` [fullBody: promoted, ${gaps.length} gap${gaps.length === 1 ? '' : 's'} unread]`
+      : ' [fullBody: promoted]';
+  }
   return `${FENCE_TOP} ${view.filePath} h:${view.shortHash} (${view.totalLines} lines)${pinSuffix}${promoteSuffix} ${FENCE_TOP}`;
 }
 

@@ -28,6 +28,7 @@ const {
   computeFileViewHash,
   computeFileViewHashParts,
   createFileView,
+  detectRegionGaps,
   dropRegionByChunk,
   matchesViewRef,
   mergeFilledRegion,
@@ -1034,9 +1035,338 @@ describe('fileViewStore — stable path-derived identity across revisions', () =
     expect(matchesViewRef(v, foreign)).toBe(false);
   });
 
-  it('matchesViewRef handles prefix matches symmetrically', () => {
+  it('matchesViewRef rejects prefix shorter than SHORT_HASH_LEN', () => {
     const v = createFileView(fakeSkeleton({ revision: 'rA' }));
     const full = v.shortHash;
-    expect(matchesViewRef(v, full.slice(0, 4))).toBe(true);
+    expect(matchesViewRef(v, full.slice(0, 4))).toBe(false);
+  });
+
+  it('matchesViewRef accepts full-length prefix match', () => {
+    const v = createFileView(fakeSkeleton({ revision: 'rA' }));
+    expect(matchesViewRef(v, v.shortHash)).toBe(true);
+  });
+
+  it('matchesViewRef accepts longer candidate that starts with viewShort', () => {
+    const v = createFileView(fakeSkeleton({ revision: 'rA' }));
+    const extended = v.shortHash + 'ff';
+    expect(matchesViewRef(v, extended)).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Edge-case hardening: mergeFilledRegion with duplicate N| lines
+// ---------------------------------------------------------------------------
+
+describe('fileViewStore — mergeFilledRegion edge cases', () => {
+  it('duplicate N| lines in incoming: last row in content wins', () => {
+    const regions = mergeFilledRegion([], {
+      start: 10,
+      end: 12,
+      content: [row(10, 'first'), row(10, 'second'), row(12, 'end')].join('\n'),
+      chunkHash: 'h1',
+    });
+    expect(regions).toHaveLength(1);
+    expect(regions[0].content).toContain('10|second');
+    expect(regions[0].content).not.toContain('10|first');
+  });
+
+  it('duplicate N| lines in existing region: incoming wins on collision', () => {
+    const existing = [{
+      start: 10, end: 15,
+      content: [row(10, 'old-a'), row(12, 'old-b'), row(15, 'old-c')].join('\n'),
+      chunkHashes: ['h1'], tokens: 10, origin: 'read' as const,
+    }];
+    const merged = mergeFilledRegion(existing, {
+      start: 12, end: 18,
+      content: [row(12, 'NEW-b'), row(15, 'NEW-c'), row(18, 'NEW-d')].join('\n'),
+      chunkHash: 'h2',
+    });
+    expect(merged).toHaveLength(1);
+    expect(merged[0].start).toBe(10);
+    expect(merged[0].end).toBe(18);
+    expect(merged[0].content).toContain('12|NEW-b');
+    expect(merged[0].content).toContain('15|NEW-c');
+    expect(merged[0].content).toContain('10|old-a');
+  });
+
+  it('inverted range (end < start) silently returns existing list unchanged', () => {
+    const existing = [{
+      start: 5, end: 10,
+      content: row(5, 'a'),
+      chunkHashes: ['h1'], tokens: 5, origin: 'read' as const,
+    }];
+    const result = mergeFilledRegion(existing, {
+      start: 20, end: 5,
+      content: 'junk',
+      chunkHash: 'h2',
+    });
+    expect(result).toHaveLength(1);
+    expect(result[0]).toEqual(existing[0]);
+  });
+
+  it('single-line region merges correctly', () => {
+    const merged = mergeFilledRegion([], {
+      start: 42, end: 42,
+      content: row(42, 'only line'),
+      chunkHash: 'h1',
+    });
+    expect(merged).toHaveLength(1);
+    expect(merged[0].start).toBe(42);
+    expect(merged[0].end).toBe(42);
+    expect(merged[0].content).toContain('42|only line');
+  });
+
+  it('empty content incoming still creates region with correct bounds', () => {
+    const merged = mergeFilledRegion([], {
+      start: 1, end: 5,
+      content: '',
+      chunkHash: 'h1',
+    });
+    expect(merged).toHaveLength(1);
+    expect(merged[0].start).toBe(1);
+    expect(merged[0].end).toBe(5);
+  });
+
+  it('three-way merge: two existing + one incoming that bridges them', () => {
+    const existing = [
+      { start: 1, end: 5, content: [row(1, 'a'), row(5, 'b')].join('\n'),
+        chunkHashes: ['h1'], tokens: 5, origin: 'read' as const },
+      { start: 20, end: 25, content: [row(20, 'c'), row(25, 'd')].join('\n'),
+        chunkHashes: ['h2'], tokens: 5, origin: 'read' as const },
+    ];
+    const merged = mergeFilledRegion(existing, {
+      start: 4, end: 21,
+      content: [row(4, 'X'), row(10, 'Y'), row(21, 'Z')].join('\n'),
+      chunkHash: 'h3',
+    });
+    expect(merged).toHaveLength(1);
+    expect(merged[0].start).toBe(1);
+    expect(merged[0].end).toBe(25);
+    expect(merged[0].chunkHashes).toContain('h1');
+    expect(merged[0].chunkHashes).toContain('h2');
+    expect(merged[0].chunkHashes).toContain('h3');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Edge-case hardening: composeFullBodyFromRegions gap-awareness
+// ---------------------------------------------------------------------------
+
+describe('fileViewStore — composeFullBodyFromRegions gap behavior', () => {
+  it('concatenates non-contiguous regions without gap lines', () => {
+    const regions = [
+      { start: 1, end: 3, content: [row(1, 'a'), row(2, 'b'), row(3, 'c')].join('\n'),
+        chunkHashes: ['h1'], tokens: 5, origin: 'read' as const },
+      { start: 10, end: 12, content: [row(10, 'x'), row(11, 'y'), row(12, 'z')].join('\n'),
+        chunkHashes: ['h2'], tokens: 5, origin: 'read' as const },
+    ];
+    const body = composeFullBodyFromRegions({ filledRegions: regions });
+    const lines = body.split('\n');
+    expect(lines).toHaveLength(6);
+    const lineNums = lines.map(l => parseInt(l.trim().split('|')[0], 10));
+    expect(lineNums).toEqual([1, 2, 3, 10, 11, 12]);
+  });
+
+  it('empty regions produce empty body', () => {
+    expect(composeFullBodyFromRegions({ filledRegions: [] })).toBe('');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Edge-case hardening: removedMarkers accumulation
+// ---------------------------------------------------------------------------
+
+describe('fileViewStore — removedMarkers accumulation cap', () => {
+  it('repeated reconcile failures append markers (documents growth)', () => {
+    let v = applyFillToView(createFileView(fakeSkeleton({ revision: 'rev1' })), {
+      start: 42, end: 56,
+      content: [row(42, 'a'), row(56, 'b')].join('\n'),
+      chunkHash: 'h1', tokens: 5,
+    });
+    const { view: v2 } = reconcileFileView(v, {
+      currentRevision: 'rev2',
+      cause: 'same_file_prior_edit',
+      round: 1,
+      positionalDeltas: [{ line: 1, delta: -60 }],
+    });
+    expect(v2.removedMarkers).toHaveLength(1);
+
+    const v3 = applyFillToView(
+      { ...v2, sourceRevision: 'rev2' },
+      { start: 10, end: 20, content: [row(10, 'x'), row(20, 'y')].join('\n'),
+        chunkHash: 'h2', tokens: 5 },
+    );
+    const { view: v4 } = reconcileFileView(v3, {
+      currentRevision: 'rev3',
+      cause: 'same_file_prior_edit',
+      round: 2,
+      positionalDeltas: [{ line: 1, delta: -30 }],
+    });
+    expect(v4.removedMarkers!.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('clearRemovedMarker removes specific range', () => {
+    const v = {
+      ...createFileView(fakeSkeleton()),
+      removedMarkers: [
+        { start: 10, end: 20 },
+        { start: 30, end: 40 },
+        { start: 50, end: 60 },
+      ],
+    };
+    const cleared = clearRemovedMarker(v, 30, 40);
+    expect(cleared.removedMarkers).toHaveLength(2);
+    expect(cleared.removedMarkers).toEqual([
+      { start: 10, end: 20 },
+      { start: 50, end: 60 },
+    ]);
+  });
+
+  it('clearRemovedMarker on non-existent range is a no-op', () => {
+    const v = {
+      ...createFileView(fakeSkeleton()),
+      removedMarkers: [{ start: 10, end: 20 }],
+    };
+    const same = clearRemovedMarker(v, 99, 99);
+    expect(same).toBe(v);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Edge-case hardening: applyRefetchCap overflow behavior
+// ---------------------------------------------------------------------------
+
+describe('fileViewStore — applyRefetchCap overflow', () => {
+  it('returns exactly cap items when overflow exists', () => {
+    const items = Array.from({ length: 25 }, (_, i) => ({ id: i }));
+    const { processed, skipped } = applyRefetchCap(items, 10);
+    expect(processed).toHaveLength(10);
+    expect(skipped).toBe(15);
+    expect(processed[0]).toEqual({ id: 0 });
+    expect(processed[9]).toEqual({ id: 9 });
+  });
+
+  it('exactly at cap returns all with zero skipped', () => {
+    const items = Array.from({ length: 10 }, (_, i) => i);
+    const { processed, skipped } = applyRefetchCap(items, 10);
+    expect(processed).toHaveLength(10);
+    expect(skipped).toBe(0);
+  });
+
+  it('empty array returns empty with zero skipped', () => {
+    const { processed, skipped } = applyRefetchCap([], 10);
+    expect(processed).toHaveLength(0);
+    expect(skipped).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Edge-case hardening: shortHashMatches minimum length enforcement
+// ---------------------------------------------------------------------------
+
+describe('fileViewStore — shortHashMatches hardening', () => {
+  it('matchesViewRef rejects empty candidate', () => {
+    const v = createFileView(fakeSkeleton());
+    expect(matchesViewRef(v, '')).toBe(false);
+  });
+
+  it('matchesViewRef rejects candidate below SHORT_HASH_LEN on both sides', () => {
+    const v = createFileView(fakeSkeleton());
+    expect(matchesViewRef(v, 'ab')).toBe(false);
+  });
+
+  it('matchesViewRef with forwarding chain rejects short candidate', () => {
+    const v = {
+      ...createFileView(fakeSkeleton()),
+      previousShortHashes: ['aabbcc'],
+    };
+    expect(matchesViewRef(v, 'aa')).toBe(false);
+  });
+
+  it('matchesViewRef with forwarding chain accepts full-length match', () => {
+    const v = {
+      ...createFileView(fakeSkeleton()),
+      previousShortHashes: ['aabbcc'],
+    };
+    expect(matchesViewRef(v, 'aabbcc')).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Edge-case hardening: detectRegionGaps
+// ---------------------------------------------------------------------------
+
+describe('fileViewStore — detectRegionGaps', () => {
+  it('returns full span when no regions exist', () => {
+    const gaps = detectRegionGaps([], 100);
+    expect(gaps).toEqual([{ start: 1, end: 100 }]);
+  });
+
+  it('returns empty when single region covers entire file', () => {
+    const regions = [{
+      start: 1, end: 100,
+      content: '', chunkHashes: [], tokens: 0, origin: 'read' as const,
+    }];
+    expect(detectRegionGaps(regions, 100)).toEqual([]);
+  });
+
+  it('detects gap at the start', () => {
+    const regions = [{
+      start: 10, end: 100,
+      content: '', chunkHashes: [], tokens: 0, origin: 'read' as const,
+    }];
+    const gaps = detectRegionGaps(regions, 100);
+    expect(gaps).toEqual([{ start: 1, end: 9 }]);
+  });
+
+  it('detects gap at the end', () => {
+    const regions = [{
+      start: 1, end: 50,
+      content: '', chunkHashes: [], tokens: 0, origin: 'read' as const,
+    }];
+    const gaps = detectRegionGaps(regions, 100);
+    expect(gaps).toEqual([{ start: 51, end: 100 }]);
+  });
+
+  it('detects gap between two regions', () => {
+    const regions = [
+      { start: 1, end: 30, content: '', chunkHashes: [], tokens: 0, origin: 'read' as const },
+      { start: 50, end: 100, content: '', chunkHashes: [], tokens: 0, origin: 'read' as const },
+    ];
+    const gaps = detectRegionGaps(regions, 100);
+    expect(gaps).toEqual([{ start: 31, end: 49 }]);
+  });
+
+  it('detects multiple gaps', () => {
+    const regions = [
+      { start: 10, end: 20, content: '', chunkHashes: [], tokens: 0, origin: 'read' as const },
+      { start: 40, end: 60, content: '', chunkHashes: [], tokens: 0, origin: 'read' as const },
+      { start: 80, end: 90, content: '', chunkHashes: [], tokens: 0, origin: 'read' as const },
+    ];
+    const gaps = detectRegionGaps(regions, 100);
+    expect(gaps).toEqual([
+      { start: 1, end: 9 },
+      { start: 21, end: 39 },
+      { start: 61, end: 79 },
+      { start: 91, end: 100 },
+    ]);
+  });
+
+  it('returns empty for totalLines <= 0', () => {
+    expect(detectRegionGaps([], 0)).toEqual([]);
+    expect(detectRegionGaps([], -1)).toEqual([]);
+  });
+
+  it('handles unsorted regions correctly', () => {
+    const regions = [
+      { start: 50, end: 60, content: '', chunkHashes: [], tokens: 0, origin: 'read' as const },
+      { start: 10, end: 20, content: '', chunkHashes: [], tokens: 0, origin: 'read' as const },
+    ];
+    const gaps = detectRegionGaps(regions, 80);
+    expect(gaps).toEqual([
+      { start: 1, end: 9 },
+      { start: 21, end: 49 },
+      { start: 61, end: 80 },
+    ]);
   });
 });

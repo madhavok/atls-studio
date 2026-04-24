@@ -1950,20 +1950,40 @@ function findViewByRef(
 ): [string, FileView] | null {
   if (!ref || ref.startsWith('h:bb:') || ref.startsWith('bb:')) return null;
   const normalized = refToBaseHash(ref);
-  // Two-pass: prefer a view whose CURRENT shortHash matches before falling
-  // back to the forwarding chain. Keeps direct lookups on the hot path and
-  // avoids a historical chain-hit accidentally winning over a fresh view.
+  if (normalized.length < MIN_PREFIX_LEN) return null;
+
+  // Pass 1: exact shortHash match (O(N) scan, N typically <100).
   for (const [filePath, view] of views) {
-    if (view.shortHash === normalized || view.shortHash.startsWith(normalized) || normalized.startsWith(view.shortHash)) {
-      return [filePath, view];
+    if (view.shortHash === normalized) return [filePath, view];
+  }
+
+  // Pass 2: prefix match — collect ALL candidates, return only on unique hit.
+  // Non-deterministic "first wins" on ambiguous prefix was the prior bug.
+  let prefixHit: [string, FileView] | null = null;
+  let prefixCount = 0;
+  for (const [filePath, view] of views) {
+    if (view.shortHash.startsWith(normalized) || normalized.startsWith(view.shortHash)) {
+      prefixHit = [filePath, view];
+      prefixCount++;
+      if (prefixCount > 1) return null;
     }
   }
+  if (prefixCount === 1) return prefixHit;
+
+  // Pass 3: forwarding-chain fallback for stale refs from prior rounds.
+  // Same uniqueness rule: ambiguous chain hits are rejected.
+  let chainHit: [string, FileView] | null = null;
+  let chainCount = 0;
   for (const [filePath, view] of views) {
     if (!view.previousShortHashes || view.previousShortHashes.length === 0) continue;
     if (matchesViewRef(view, normalized)) {
-      return [filePath, view];
+      chainHit = [filePath, view];
+      chainCount++;
+      if (chainCount > 1) return null;
     }
   }
+  if (chainCount === 1) return chainHit;
+
   return null;
 }
 

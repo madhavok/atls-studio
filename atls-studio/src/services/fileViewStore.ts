@@ -125,10 +125,11 @@ export interface FileView {
    */
   fullBodyOrigin?: 'read' | 'coverage_promote';
   /**
-   * Aggregate identity: `h:<SHORT_HASH_LEN hex>` derived from (filePath, sourceRevision).
-   * Shares the chunk-hash namespace — the model sees one format. Lookup routes
-   * `h:<short>` to either the fileViews map (views first) or chunks map via
-   * `resolveAnyRef` in contextStore.
+   * Aggregate identity: `h:<SHORT_HASH_LEN hex>` derived from **filePath only**
+   * (revision is ignored — see {@link computeFileViewHashParts}). Stable across
+   * every revision of the file. Shares the chunk-hash namespace — the model sees
+   * one format. Lookup routes `h:<short>` to either the fileViews map (views
+   * first) or chunks map via `resolveAnyRef` in contextStore.
    */
   hash: string;
   /** Short hex portion of `hash` (without the `h:` prefix), for O(1) prefix lookups. */
@@ -216,6 +217,9 @@ export const AVG_TOKENS_PER_LINE_DEFAULT = 10;
 
 /** Max auto-refetches per round. Overflow drops regions and surfaces an aggregate hint. */
 export const MAX_REFETCHES_PER_ROUND_DEFAULT = 10;
+
+/** Max removedMarkers kept per view. Oldest entries drop when exceeded. */
+export const MAX_REMOVED_MARKERS = 20;
 
 // ---------------------------------------------------------------------------
 // Interval merge
@@ -351,9 +355,41 @@ export function shouldAutoPromoteToFullBody(
 /**
  * Compose fullBody from sorted filled regions. Assumes coverage promote
  * conditions hold — caller is responsible for the decision.
+ *
+ * **Important**: the result is NOT a verbatim disk snapshot. Gaps between
+ * regions (line ranges that were never read) are silently omitted. Callers
+ * that need to know about gaps should use {@link detectRegionGaps} first.
  */
 export function composeFullBodyFromRegions(view: Pick<FileView, 'filledRegions'>): string {
   return view.filledRegions.map(r => r.content).join('\n');
+}
+
+/**
+ * Detect line-range gaps between sorted, non-overlapping filled regions.
+ * Returns an array of `{ start, end }` pairs representing contiguous line
+ * ranges that are NOT covered by any region. Empty when regions cover the
+ * full `[1, totalLines]` span.
+ */
+export function detectRegionGaps(
+  regions: FilledRegion[],
+  totalLines: number,
+): Array<{ start: number; end: number }> {
+  if (totalLines <= 0 || regions.length === 0) {
+    return totalLines > 0 ? [{ start: 1, end: totalLines }] : [];
+  }
+  const sorted = regions.slice().sort((a, b) => a.start - b.start);
+  const gaps: Array<{ start: number; end: number }> = [];
+  let cursor = 1;
+  for (const r of sorted) {
+    if (r.start > cursor) {
+      gaps.push({ start: cursor, end: r.start - 1 });
+    }
+    cursor = Math.max(cursor, r.end + 1);
+  }
+  if (cursor <= totalLines) {
+    gaps.push({ start: cursor, end: totalLines });
+  }
+  return gaps;
 }
 
 // ---------------------------------------------------------------------------
@@ -610,9 +646,11 @@ export function reconcileFileView(
     freshness: isSameFileEdit && rebased.length > 0 ? 'shifted' : 'fresh',
     freshnessCause: cause,
     pendingRefetches: refetchRequests.length > 0 ? refetchRequests : undefined,
-    removedMarkers: rebaseFailures.length > 0
-      ? [...(view.removedMarkers ?? []), ...rebaseFailures]
-      : view.removedMarkers,
+    removedMarkers: capRemovedMarkers(
+      rebaseFailures.length > 0
+        ? [...(view.removedMarkers ?? []), ...rebaseFailures]
+        : view.removedMarkers,
+    ),
     lastAccessed: Date.now(),
   };
   void clearedFullBody; // fullBody intentionally discarded — see note above
@@ -723,10 +761,18 @@ export function applyEditToFileView(
   // Dense skeleton (one row per source line — plain text / fallback path):
   // regenerate from newBody line-by-line. The mapping-by-delta path can't
   // synthesize rows for INSERTED lines; dense shape needs every line to
-  // have a row. Detection: old skeleton had one row per old-line count.
+  // have a row.
+  //
+  // Detection: row count equals totalLines AND no fold markers present.
+  // Fold markers (`[A-B]` suffix) are a structural signature artifact —
+  // their presence means the skeleton is sparse even if the row count
+  // happens to match totalLines. Without this guard, a sparse skeleton
+  // whose row count coincidentally equals totalLines would be mis-classified
+  // as dense, causing a full regeneration that destroys signature structure.
   let nextSkeleton: string[];
+  const hasFoldMarkers = view.skeletonRows.some(r => /\[\d+-\d+\]\s*$/.test(r));
   const wasDense =
-    view.totalLines > 0 && view.skeletonRows.length === view.totalLines;
+    !hasFoldMarkers && view.totalLines > 0 && view.skeletonRows.length === view.totalLines;
   if (wasDense) {
     nextSkeleton = newLines.map((content, i) => `${padLine(i + 1)}|${content}`);
   } else {
@@ -833,9 +879,11 @@ export function applyEditToFileView(
     freshness: 'fresh',
     freshnessCause: 'same_file_prior_edit',
     pendingRefetches: undefined,
-    removedMarkers: rebaseFailures.length > 0
-      ? [...(view.removedMarkers ?? []), ...rebaseFailures]
-      : view.removedMarkers,
+    removedMarkers: capRemovedMarkers(
+      rebaseFailures.length > 0
+        ? [...(view.removedMarkers ?? []), ...rebaseFailures]
+        : view.removedMarkers,
+    ),
     lastAccessed: Date.now(),
   };
 }
@@ -962,6 +1010,19 @@ function parseFoldSuffix(row: string): { start: number; end: number } | null {
 /** Strip a trailing `[A-B]` fold marker from a row's content body (preserves prefix). */
 function stripFoldSuffix(content: string): string {
   return content.replace(/\s*\[\d+-\d+\]\s*$/, '');
+}
+
+/**
+ * Cap removed markers to {@link MAX_REMOVED_MARKERS}, keeping the most
+ * recent entries (tail). Returns `undefined` when the input is empty or
+ * absent, matching the optional-field convention.
+ */
+function capRemovedMarkers(
+  markers: Array<{ start: number; end: number }> | undefined,
+): Array<{ start: number; end: number }> | undefined {
+  if (!markers || markers.length === 0) return undefined;
+  if (markers.length <= MAX_REMOVED_MARKERS) return markers;
+  return markers.slice(markers.length - MAX_REMOVED_MARKERS);
 }
 
 /**
@@ -1268,9 +1329,10 @@ export function matchesViewRef(view: FileView, candidateShort: string): boolean 
 
 function shortHashMatches(viewShort: string, candidate: string): boolean {
   if (!viewShort || !candidate) return false;
+  if (candidate.length < SHORT_HASH_LEN && viewShort.length < SHORT_HASH_LEN) return false;
   if (viewShort === candidate) return true;
-  if (viewShort.startsWith(candidate)) return true;
-  if (candidate.startsWith(viewShort)) return true;
+  if (viewShort.startsWith(candidate) && candidate.length >= SHORT_HASH_LEN) return true;
+  if (candidate.startsWith(viewShort) && viewShort.length >= SHORT_HASH_LEN) return true;
   return false;
 }
 
