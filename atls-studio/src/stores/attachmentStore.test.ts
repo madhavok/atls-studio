@@ -33,6 +33,25 @@ describe('attachmentStore', () => {
     expect(imgs[0]?.base64).toBe('QUFB');
   });
 
+  it('addImageFromDataUrl ignores non-matching strings', () => {
+    useAttachmentStore.getState().addImageFromDataUrl('bad', 'not-a-data-url');
+    expect(useAttachmentStore.getState().getImageAttachments()).toHaveLength(0);
+  });
+
+  it('setInternalDragActive toggles flag', () => {
+    useAttachmentStore.getState().setInternalDragActive(true);
+    expect(useAttachmentStore.getState().isInternalDragActive).toBe(true);
+    useAttachmentStore.getState().setInternalDragActive(false);
+    expect(useAttachmentStore.getState().isInternalDragActive).toBe(false);
+  });
+
+  it('addImageAttachment builds thumbnail and stores metadata', () => {
+    useAttachmentStore.getState().addImageAttachment('x.png', '/x.png', 'QUFB', 'image/png', { width: 10, height: 12 });
+    const imgs = useAttachmentStore.getState().getImageAttachments();
+    expect(imgs[0]?.thumbnailUrl).toBe('data:image/png;base64,QUFB');
+    expect(imgs[0]?.metadata).toEqual({ width: 10, height: 12 });
+  });
+
   it('removeAttachment filters by id', () => {
     useAttachmentStore.getState().addFileAttachment('a.ts', '/a.ts');
     const id = useAttachmentStore.getState().getFileAttachments()[0]?.id;

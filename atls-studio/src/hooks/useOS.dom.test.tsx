@@ -81,4 +81,18 @@ describe('useOS', () => {
     const { getByTestId } = render(<Probe />);
     await expectOs(getByTestId, { os: 'windows', mac: 'false', win: 'true', linux: 'false' });
   });
+
+  it('falls back to userAgent (mac) when platform throws', async () => {
+    platformMock.mockRejectedValue(new Error('ipc'));
+    vi.stubGlobal('navigator', { userAgent: 'macintosh; intel mac os x' });
+    const { getByTestId } = render(<Probe />);
+    await expectOs(getByTestId, { os: 'macos', mac: 'true', win: 'false', linux: 'false' });
+  });
+
+  it('falls back to userAgent (linux) when platform throws', async () => {
+    platformMock.mockRejectedValue(new Error('ipc'));
+    vi.stubGlobal('navigator', { userAgent: 'x11; ubuntu; linux x86_64' });
+    const { getByTestId } = render(<Probe />);
+    await expectOs(getByTestId, { os: 'linux', mac: 'false', win: 'false', linux: 'true' });
+  });
 });

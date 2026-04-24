@@ -78,6 +78,35 @@ describe('evaluateCondition', () => {
     ]);
     expect(evaluateCondition({ ref_exists: 'deadbeef' }, outputs)).toBe(true);
   });
+
+  it('step_content_array_nonempty checks nested path on step content', () => {
+    const okOut = new Map<string, StepOutput>([
+      ['s1', { ok: true, refs: [], content: { nested: { file_paths: ['a.ts'] } } }],
+    ]);
+    expect(
+      evaluateCondition(
+        { step_content_array_nonempty: { step_id: 's1', path: 'nested.file_paths' } },
+        okOut,
+      ),
+    ).toBe(true);
+    const emptyOut = new Map<string, StepOutput>([
+      ['s1', { ok: true, refs: [], content: { file_paths: [] } }],
+    ]);
+    expect(
+      evaluateCondition(
+        { step_content_array_nonempty: { step_id: 's1', path: 'file_paths' } },
+        emptyOut,
+      ),
+    ).toBe(false);
+  });
+
+  it('or is true if any sub-condition is true', () => {
+    const outputs = new Map<string, StepOutput>([
+      ['a', { ok: false, refs: [] }],
+      ['b', { ok: true, refs: [] }],
+    ]);
+    expect(evaluateCondition({ or: [{ step_ok: 'a' }, { step_ok: 'b' }] }, outputs)).toBe(true);
+  });
 });
 
 describe('isStepAllowed', () => {

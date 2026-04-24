@@ -42,11 +42,11 @@ export default defineConfig(({ mode }) => ({
         "src/components/AtlsPanel/types.ts",
       ],
       thresholds: {
-        // Ratchet as suites grow; `npm run test:coverage:check-100` lists files still below 100% lines.
-        statements: 54,
-        branches: 45,
-        functions: 47,
-        lines: 55,
+        // Ratchet as suites grow toward 100; branches last. `test:coverage:check-100` lists per-file gaps.
+        statements: 55,
+        branches: 47,
+        functions: 50,
+        lines: 57,
       },
     },
   },

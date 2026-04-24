@@ -39,6 +39,11 @@ describe('executeWithConcurrency', () => {
     await expect(executeWithConcurrency(tasks, 2)).rejects.toThrow('boom');
   });
 
+  it('wraps non-Error rejections in Error', async () => {
+    const tasks = [() => Promise.resolve(0), () => Promise.reject('plain-string')];
+    await expect(executeWithConcurrency(tasks, 1)).rejects.toThrow('plain-string');
+  });
+
   it('returns sparse results when already aborted before work runs', async () => {
     const controller = new AbortController();
     controller.abort();
@@ -72,4 +77,5 @@ describe('executeWithConcurrency', () => {
     expect(Array.isArray(out)).toBe(true);
     expect(out.length).toBe(3);
   });
+
 });

@@ -187,4 +187,36 @@ mod tests {
         assert!(msg.contains("missing"));
         assert!(msg.len() < long.len() + 50);
     }
+
+    #[test]
+    fn to_user_message_io_permission_and_exists() {
+        let p = AtlsError::io_error("/x", io::Error::new(io::ErrorKind::PermissionDenied, "nope"));
+        assert!(p.to_user_message().to_lowercase().contains("permission"));
+        let a = AtlsError::io_error("/y", io::Error::new(io::ErrorKind::AlreadyExists, "nope"));
+        assert!(a.to_user_message().to_lowercase().contains("exists"));
+    }
+
+    #[test]
+    fn hash_resolution_short_hash_uses_full_in_message() {
+        let e = AtlsError::HashResolutionError {
+            hash: "abc".to_string(),
+            reason: "x".to_string(),
+        };
+        let msg = e.to_user_message();
+        assert!(msg.contains("abc"));
+    }
+
+    #[test]
+    fn io_result_ext_maps_err() {
+        let r: io::Result<()> = Err(io::Error::new(io::ErrorKind::Other, "e"));
+        let err = r.with_path("/p").unwrap_err();
+        assert!(matches!(err, AtlsError::IoError { .. }));
+    }
+
+    #[test]
+    fn error_source_returns_io() {
+        let io_e = io::Error::new(io::ErrorKind::Other, "inner");
+        let e = AtlsError::io_error("/f", io_e);
+        assert!(std::error::Error::source(&e).is_some());
+    }
 }

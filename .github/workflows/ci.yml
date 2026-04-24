@@ -33,6 +33,11 @@ jobs:
         working-directory: atls-studio
         run: npm run test:coverage
 
+      - name: Per-file line coverage vs 100% (report only; flip to :fail when gap list is empty)
+        working-directory: atls-studio
+        run: npm run test:coverage:check-100
+        continue-on-error: true
+
       - name: Coverage gap report (fail if any TS file at 0% lines)
         working-directory: atls-studio
         run: npm run test:coverage:gaps -- --fail-on-gaps
@@ -78,10 +83,12 @@ jobs:
           path: atls-studio/src-tauri/lcov.info
 
       # Runs workspace tests and produces reports for scripts/list-coverage-gaps.ts
+      # Omit --all-features: `neural-embeddings` enables ort-sys, which downloads ONNX from cdn.pyke.io
+      # and often fails in CI (504/timeouts). That path is untested; default features match the app/Tauri build.
       - name: Rust coverage (atls-rs workspace)
         working-directory: atls-rs
         run: |
-          cargo llvm-cov --workspace --all-features --lcov --output-path lcov.info
+          cargo llvm-cov --workspace --lcov --output-path lcov.info
           cargo llvm-cov report --json --summary-only --output-path target/llvm-cov-atls-rs-summary.json
 
       - name: Upload atls-rs coverage artifacts

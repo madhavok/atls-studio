@@ -385,4 +385,18 @@ describe('fileView — getFileSkeleton', () => {
     const sk = await getFileSkeleton('src/foo.ts', 'rev1', { invoker });
     expect(sk.totalLines).toBe(500);
   });
+
+  it('uses imports total_lines when sig omits it', async () => {
+    const invoker = vi.fn(async (rawRef: string) => {
+      if (rawRef.endsWith(':sig')) {
+        return { content: '  1|const x = 1;', total_lines: undefined };
+      }
+      if (rawRef.endsWith(':imports')) {
+        return { content: '   1|import "a";', total_lines: 333 };
+      }
+      throw new Error(`unexpected: ${rawRef}`);
+    });
+    const sk = await getFileSkeleton('src/only-imports-tl.ts', 'h1', { invoker });
+    expect(sk.totalLines).toBe(333);
+  });
 });

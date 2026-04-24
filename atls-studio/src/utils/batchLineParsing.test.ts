@@ -45,6 +45,16 @@ describe('parseBatchStepLines', () => {
     expect(lines[0].stepId).toBe('s1');
   });
 
+  it('skips non-status lines that do not match the step pattern', () => {
+    const result = [
+      'Some plain text without brackets',
+      '[OK] s1 (read.context): loaded file',
+    ].join('\n');
+    const lines = parseBatchStepLines(result);
+    expect(lines).toHaveLength(1);
+    expect(lines[0].stepId).toBe('s1');
+  });
+
   it('skips volatile nudge lines', () => {
     const result = [
       '[OK] s1 (read.context): loaded file',
