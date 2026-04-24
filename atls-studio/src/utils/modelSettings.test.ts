@@ -1,4 +1,6 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
+import type { AIProvider } from './modelCapabilities';
+import * as modelSettings from './modelSettings';
 import {
   supportsVerbosity,
   supportsThinking,
@@ -73,6 +75,10 @@ describe('supportsThinking', () => {
 
   it('returns false for lmstudio', () => {
     expect(supportsThinking('any-model', 'lmstudio')).toBe(false);
+  });
+
+  it('returns false for unknown provider (default branch)', () => {
+    expect(supportsThinking('any-model', 'not-a-provider' as AIProvider)).toBe(false);
   });
 });
 
@@ -241,5 +247,14 @@ describe('resolveModelSettings', () => {
     expect(r.outputVerbosity).toBeUndefined();
     expect(r.reasoningEffort).toBeUndefined();
     expect(r.thinkingBudget).toBeUndefined();
+  });
+
+  it('does not set thinking fields for unrecognized providers when thinking is forced on', () => {
+    const spy = vi.spyOn(modelSettings, 'supportsThinking').mockReturnValue(true);
+    const r = modelSettings.resolveModelSettings('medium', 'high', 'any', 'bogus' as AIProvider);
+    expect(r.outputVerbosity).toBeUndefined();
+    expect(r.reasoningEffort).toBeUndefined();
+    expect(r.thinkingBudget).toBeUndefined();
+    spy.mockRestore();
   });
 });

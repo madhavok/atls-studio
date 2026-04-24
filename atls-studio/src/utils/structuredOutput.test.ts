@@ -65,6 +65,14 @@ describe('parseTaskCompleteArgs', () => {
     });
   });
 
+  it('repairs filesChanged (camelCase) when parse fails', () => {
+    const input = { summary: 123, filesChanged: ['a', 'b'] };
+    expect(parseTaskCompleteArgs(input)).toEqual({
+      summary: 'Task completed',
+      filesChanged: ['a', 'b'],
+    });
+  });
+
   it('trims summary', () => {
     expect(parseTaskCompleteArgs({ summary: '  trimmed  ' })).toEqual({
       summary: 'trimmed',

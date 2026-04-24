@@ -5,6 +5,7 @@ import {
   parseShapeOp,
   parseSymbolAnchor,
   parseLineRanges,
+  parseLineRangesWithError,
   findShapeSeparator,
 } from './hashModifierParser';
 
@@ -103,6 +104,7 @@ describe('parseLineRanges', () => {
   it('returns null for non-numeric input', () => {
     expect(parseLineRanges('abc')).toBeNull();
     expect(parseLineRanges('abc-def')).toBeNull();
+    expect(parseLineRanges('10-abc')).toBeNull();
     expect(parseLineRanges('')).toBeNull();
   });
 
@@ -115,6 +117,7 @@ describe('parseLineRanges', () => {
     it('rejects inverted ranges', () => {
       expect(parseLineRanges('100-50')).toBeNull();
       expect(parseLineRanges('10-5')).toBeNull();
+      expect(parseLineRangesWithError('10-5')).toEqual({ ok: false, reason: 'inverted_range' });
     });
 
     it('rejects zero / negative start', () => {
@@ -212,6 +215,10 @@ describe('parseSymbolAnchor', () => {
 
   it('returns null for empty name', () => {
     expect(parseSymbolAnchor('fn()')).toBeNull();
+  });
+
+  it('returns null when anchor name is only whitespace', () => {
+    expect(parseSymbolAnchor('fn(   )')).toBeNull();
   });
 
   it('returns null for trailing garbage', () => {

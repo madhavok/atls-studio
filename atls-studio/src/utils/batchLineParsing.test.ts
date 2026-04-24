@@ -19,6 +19,12 @@ describe('parseBatchStepLines', () => {
     expect(lines[1]).toEqual({ stepId: 's2', text: '[FAIL] s2 (change.edit): ERROR file not found', failed: true });
   });
 
+  it('skips whitespace-only lines', () => {
+    const result = ['[OK] s1 (read.context): ok', '   ', '[OK] s2 (search.code): done'].join('\n');
+    const lines = parseBatchStepLines(result);
+    expect(lines.map((l) => l.stepId)).toEqual(['s1', 's2']);
+  });
+
   it('skips delegate continuation lines (indented refs, BB, explanatory)', () => {
     const result = [
       '[OK] d1 (delegate.retrieve): retriever: 4 refs (1.2k tk), 2 rounds',

@@ -1,5 +1,9 @@
-import { afterEach, describe, expect, it } from 'vitest';
-import { workspacePathKey, workspacePathKeyDefault } from './workspacePathKey';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import {
+  getConfiguredWorkspacePrefixes,
+  workspacePathKey,
+  workspacePathKeyDefault,
+} from './workspacePathKey';
 import { useAppStore } from '../stores/appStore';
 
 const snapshot = useAppStore.getState().projectProfile;
@@ -41,6 +45,16 @@ describe('workspacePathKey (pure)', () => {
     expect(workspacePathKey(null as any)).toBe('');
   });
 
+  it('returns empty when trim collapses the path', () => {
+    expect(workspacePathKey('   ')).toBe('');
+  });
+
+  it('skips empty prefix entries', () => {
+    expect(
+      workspacePathKey('atls-studio/src/foo.ts', { prefixes: ['', 'atls-studio'] }),
+    ).toBe('src/foo.ts');
+  });
+
   it('accepts multiple prefixes and strips the first match', () => {
     expect(workspacePathKey('backend/src/lib.rs', { prefixes: ['atls-studio', 'backend'] }))
       .toBe('src/lib.rs');
@@ -78,5 +92,33 @@ describe('workspacePathKeyDefault (config-derived)', () => {
     });
     // No real prefixes present → falls back to legacy default.
     expect(workspacePathKeyDefault('atls-studio/src/foo.ts')).toBe('src/foo.ts');
+  });
+
+  it('ignores workspace rows with non-string path', () => {
+    useAppStore.setState({
+      projectProfile: {
+        workspaces: [
+          {
+            name: 'bad',
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            path: null as any,
+            types: [],
+            build_files: [],
+            group: null,
+            source: 'auto',
+          },
+          { name: 'good', path: 'pkg', types: [], build_files: [], group: null, source: 'auto' },
+        ],
+      } as unknown as ReturnType<typeof useAppStore.getState>['projectProfile'],
+    });
+    expect(getConfiguredWorkspacePrefixes()).toEqual(['pkg']);
+  });
+
+  it('falls back to legacy prefixes when app store read throws', () => {
+    const spy = vi.spyOn(useAppStore, 'getState').mockImplementation(() => {
+      throw new Error('store unavailable');
+    });
+    expect(getConfiguredWorkspacePrefixes()).toEqual(['atls-studio/']);
+    spy.mockRestore();
   });
 });

@@ -310,6 +310,59 @@ describe('parseSetRef', () => {
   it('returns null for non-set input', () => {
     expect(parseSetRef('h:abc123')).toBeNull();
   });
+
+  it('rejects @search when options consume the entire query', () => {
+    expect(parseSetRef('h:@search(limit=5)')).toBeNull();
+  });
+
+  it('rejects @HEAD with empty path', () => {
+    expect(parseSetRef('h:@HEAD:')).toBeNull();
+  });
+
+  it('rejects @HEAD with invalid offset token', () => {
+    expect(parseSetRef('h:@HEAD~abc:src/main.ts')).toBeNull();
+  });
+
+  it('rejects empty @file= glob', () => {
+    expect(parseSetRef('h:@file=:sig')).toBeNull();
+  });
+
+  it('rejects empty @type= chunk', () => {
+    expect(parseSetRef('h:@type=:sig')).toBeNull();
+  });
+
+  it('rejects empty @sub: id', () => {
+    expect(parseSetRef('h:@sub:')).toBeNull();
+  });
+
+  it('rejects empty @ws: name', () => {
+    expect(parseSetRef('h:@ws:')).toBeNull();
+  });
+
+  it('rejects @search when trailing suffix is not introduced with colon', () => {
+    expect(parseSetRef('h:@search(foo)bar')).toBeNull();
+  });
+
+  it('parses @tag with Windows drive path and modifier after final colon', () => {
+    const result = parseSetRef('h:@tag:v1.0:C:\\src\\main.ts:sig');
+    expect(result).toEqual({
+      selector: { kind: 'tag', name: 'v1.0', path: 'C:\\src\\main.ts' },
+      modifier: { shape: 'sig' },
+    });
+  });
+
+  it('rejects @tag / @commit with empty name segment', () => {
+    expect(parseSetRef('h:@tag::src/foo.ts')).toBeNull();
+    expect(parseSetRef('h:@commit::src/foo.ts')).toBeNull();
+  });
+
+  it('skips false drive-letter colon when locating modifier boundary', () => {
+    const result = parseSetRef('h:@tag:rel:C:\\x:sig');
+    expect(result).toEqual({
+      selector: { kind: 'tag', name: 'rel', path: 'C:\\x' },
+      modifier: { shape: 'sig' },
+    });
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -475,5 +528,21 @@ describe('parseUhppRef', () => {
 
   it('returns null for completely invalid input', () => {
     expect(parseUhppRef('h:$invalid')).toBeNull();
+  });
+
+  it('returns null for blackboard ref with empty key segment', () => {
+    expect(parseUhppRef('h:bb::sig')).toBeNull();
+  });
+
+  it('returns null for blackboard ref with invalid modifier chain', () => {
+    expect(parseUhppRef('h:bb:mykey:notamodifier')).toBeNull();
+  });
+
+  it('returns null for bare bb: body', () => {
+    expect(parseUhppRef('h:bb:')).toBeNull();
+  });
+
+  it('returns null for malformed $last suffix', () => {
+    expect(parseUhppRef('h:$last-')).toBeNull();
   });
 });
