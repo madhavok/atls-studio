@@ -23,7 +23,7 @@ import { isStepAllowed, getAutoVerifySteps, isStepCountExceeded, evaluateConditi
 import { stepOutputToResult } from './resultFormatter';
 import { resetRecallBudget } from './handlers/session';
 import { SnapshotTracker, AwarenessLevel, canonicalizeSnapshotHash } from './snapshotTracker';
-import { recordForwarding as manifestRecordForwarding } from '../hashManifest';
+import { recordForwarding as manifestRecordForwarding, clearForward as manifestClearForward } from '../hashManifest';
 import { computeFileViewHashParts, matchesViewRef } from '../fileViewStore';
 import { getTurn as hppGetTurn } from '../hashProtocol';
 import { useRoundHistoryStore } from '../../stores/roundHistoryStore';
@@ -1445,6 +1445,7 @@ function recordSnapshotFromOutput(
   snapshotTracker: SnapshotTracker,
   ctx: HandlerContext,
   policy: { auto_reread_after_mutation?: boolean } | undefined,
+  batchForwardsByPath?: Map<string, string>,
 ): void {
   if (!output.ok || !output.content || typeof output.content !== 'object' || Array.isArray(output.content)) return;
 
@@ -1476,7 +1477,10 @@ function recordSnapshotFromOutput(
     const turnNumber = (() => { try { return hppGetTurn(); } catch { return 0; } })();
     const registerForward = (fp: string, newShort: string, prior?: string) => {
       if (!prior || prior === newShort) return;
-      try { manifestRecordForwarding(prior, newShort, fp, 'same_file_prior_edit', turnNumber); }
+      try {
+        manifestRecordForwarding(prior, newShort, fp, 'same_file_prior_edit', turnNumber);
+        batchForwardsByPath?.set(fp.replace(/\\/g, '/').toLowerCase(), prior);
+      }
       catch (e) { console.warn('[executor] recordForwarding failed:', e); }
     };
     const sources = [artifact.results, artifact.drafts, artifact.batch];
@@ -2323,6 +2327,7 @@ export async function executeUnifiedBatch(
   resetRecallBudget();
   const snapshotTracker = new SnapshotTracker();
   const batchEditedPaths = new Set<string>();
+  const batchForwardsByPath = new Map<string, string>();
 
   // Slim-ack rebase toggle: when true, after a successful change.edit we
   // rebase tracker readRegions + fullFileLineCount by the same positional
@@ -2811,7 +2816,7 @@ export async function executeUnifiedBatch(
       shouldCaptureAliases ? capturePathToPreMutationCite(snapshotTracker) : new Map();
 
     // Record snapshot hashes from step output
-    recordSnapshotFromOutput(step, output, snapshotTracker, ctx, policy);
+    recordSnapshotFromOutput(step, output, snapshotTracker, ctx, policy, batchForwardsByPath);
 
     // Post-edit housekeeping for successful change ops
     if (output.ok && step.use.startsWith('change.')) {
@@ -3019,6 +3024,30 @@ export async function executeUnifiedBatch(
     if (output.ok && step.use.startsWith('change.') && !isDryRunPreview(output)) {
       ctx.store().resetFileReadSpin();
       spinBreaker = undefined;
+    }
+
+    if (output.ok && step.use === 'change.rollback') {
+      try {
+        const rbWith = mergedParams as Record<string, unknown>;
+        const rbRestore = rbWith.restore as Array<{ file?: string; hash?: string }> | undefined;
+        if (Array.isArray(rbRestore)) {
+          for (const entry of rbRestore) {
+            const fp = typeof entry?.file === 'string' ? entry.file : undefined;
+            const hash = typeof entry?.hash === 'string' ? entry.hash.replace(/^h:/, '') : undefined;
+            if (fp && hash) {
+              snapshotTracker.invalidateAndRerecord(fp, hash);
+              const normKey = fp.replace(/\\/g, '/').toLowerCase();
+              const priorShort = batchForwardsByPath.get(normKey);
+              if (priorShort) {
+                manifestClearForward(priorShort);
+                batchForwardsByPath.delete(normKey);
+              }
+            }
+          }
+        }
+      } catch (e) {
+        console.warn('[executor] rollback tracker/manifest sync failed:', e);
+      }
     }
 
     if (!isAutoStep) userStepIndex += 1;

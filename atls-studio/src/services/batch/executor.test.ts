@@ -1347,6 +1347,93 @@ describe('executeUnifiedBatch multiedit multibatch stress', () => {
     expect(result.step_results).toHaveLength(2);
   });
 
+  it('updates snapshotTracker after change.rollback — subsequent step sees restored hash', async () => {
+    handlers.set('read.context', async () =>
+      raw('read', {
+        results: [{ file: 'src/a.py', content_hash: 'h:originalHash', content: 'x' }],
+      }),
+    );
+    handlers.set('change.refactor', async () =>
+      raw('refactored', {
+        status: 'success',
+        file: 'src/a.py',
+        content_hash: 'h:newEditHash',
+        _rollback: { restore: [{ file: 'src/a.py', hash: 'h:originalHash' }] },
+      }),
+    );
+    handlers.set('verify.build', async () => raw('verify failed', { error: 'lint' }, false));
+    handlers.set('change.rollback', async () =>
+      raw('rolled back', { ok: true }),
+    );
+
+    const editSpy = vi.fn(async (params: Record<string, unknown>) => {
+      expect(params.content_hash).toBe('originalHash');
+      return raw('post-rollback edit ok', { status: 'ok' });
+    });
+    handlers.set('change.edit', editSpy as unknown as OpHandler);
+
+    const result = await executeUnifiedBatch(
+      {
+        version: '1.0',
+        policy: { rollback_on_failure: true },
+        steps: [
+          { id: 'read', use: 'read.context', with: { type: 'full', file_paths: ['src/a.py'] } },
+          { id: 'refactor', use: 'change.refactor', with: {} },
+          { id: 'verify', use: 'verify.build', with: {}, on_error: 'rollback' },
+          { id: 'post-edit', use: 'change.edit', with: { file: 'src/a.py', line_edits: [{ line: 1, action: 'delete' }] } },
+        ],
+      },
+      makeCtx(),
+    );
+
+    expect(result.step_results.some((r) => r.id === 'verify__rollback')).toBe(true);
+    expect(editSpy).toHaveBeenCalledOnce();
+  });
+
+  it('clears hashManifest forward entry after change.rollback', async () => {
+    const { getForwardMap, resetManifestState } = await import('../hashManifest');
+    resetManifestState();
+
+    handlers.set('read.context', async () =>
+      raw('read', {
+        results: [{ file: 'src/c.py', content_hash: 'h:origHashC12345', content: 'x' }],
+      }),
+    );
+    handlers.set('change.refactor', async () =>
+      raw('refactored', {
+        status: 'success',
+        file: 'src/c.py',
+        content_hash: 'h:newHashC123456',
+        _rollback: { restore: [{ file: 'src/c.py', hash: 'h:origHashC12345' }] },
+      }),
+    );
+    handlers.set('verify.build', async () => raw('verify failed', { error: 'lint' }, false));
+    handlers.set('change.rollback', async () =>
+      raw('rolled back', { ok: true }),
+    );
+
+    await executeUnifiedBatch(
+      {
+        version: '1.0',
+        policy: { rollback_on_failure: true },
+        steps: [
+          { id: 'read', use: 'read.context', with: { type: 'full', file_paths: ['src/c.py'] } },
+          { id: 'refactor', use: 'change.refactor', with: {} },
+          { id: 'verify', use: 'verify.build', with: {}, on_error: 'rollback' },
+        ],
+      },
+      makeCtx(),
+    );
+
+    const forwardMap = getForwardMap();
+    const hasStaleForward = Array.from(forwardMap.values()).some(
+      (entry) => entry.source === 'src/c.py' && entry.newShortHash.startsWith('newHash'),
+    );
+    expect(hasStaleForward).toBe(false);
+
+    resetManifestState();
+  });
+
   it('normalizes path separators for snapshot lookup (backslash read vs forward edit)', async () => {
     const editSpy = vi.fn(async (params: Record<string, unknown>) => {
       expect(params.content_hash).toBe('same-hash');

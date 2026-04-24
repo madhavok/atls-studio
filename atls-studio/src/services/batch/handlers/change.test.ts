@@ -1431,15 +1431,19 @@ describe('handleRollback freshness invalidation', () => {
     expect(clearFreshnessJournalMock).toHaveBeenCalledWith('src/lib.rs');
   });
 
-  it('calls reconcileSourceRevision with restored hash', async () => {
+  it('calls reconcileSourceRevision with restored hash and rollback cause', async () => {
     const store = useContextStore.getState();
     const spy = vi.spyOn(store, 'reconcileSourceRevision');
     const atlsBatchQuery = vi.fn().mockResolvedValue({ status: 'ok' });
+    invokeMock.mockResolvedValue({ content: 'restored content' });
     const ctx = makeRollbackCtx(atlsBatchQuery);
 
     await handleRollback({ restore: [{ file: 'src/lib.rs', hash: 'h:aaa111' }] }, ctx);
 
-    expect(spy).toHaveBeenCalledWith('src/lib.rs', 'aaa111');
+    expect(spy).toHaveBeenCalledWith('src/lib.rs', 'aaa111', 'rollback', {
+      postEditResolved: true,
+      skipViewReconcile: true,
+    });
     spy.mockRestore();
   });
 
@@ -1498,6 +1502,7 @@ describe('handleRollback freshness invalidation', () => {
     const awarenessSpy = vi.spyOn(store, 'invalidateAwarenessForPaths');
     const reconcileSpy = vi.spyOn(store, 'reconcileSourceRevision');
     const atlsBatchQuery = vi.fn().mockResolvedValue({ status: 'ok' });
+    invokeMock.mockResolvedValue({ content: 'restored content' });
     const ctx = makeRollbackCtx(atlsBatchQuery);
 
     await handleRollback({
@@ -1509,14 +1514,134 @@ describe('handleRollback freshness invalidation', () => {
 
     expect(clearFreshnessJournalMock).toHaveBeenCalledWith('src/lib.rs');
     expect(clearFreshnessJournalMock).toHaveBeenCalledWith('src/pty.rs');
-    expect(reconcileSpy).toHaveBeenCalledWith('src/lib.rs', 'aaa111');
-    expect(reconcileSpy).toHaveBeenCalledWith('src/pty.rs', 'bbb222');
+    expect(reconcileSpy).toHaveBeenCalledWith('src/lib.rs', 'aaa111', 'rollback', {
+      postEditResolved: true,
+      skipViewReconcile: true,
+    });
+    expect(reconcileSpy).toHaveBeenCalledWith('src/pty.rs', 'bbb222', 'rollback', {
+      postEditResolved: true,
+      skipViewReconcile: true,
+    });
     expect(clearSpansSpy).toHaveBeenCalledWith(['src/lib.rs', 'src/pty.rs']);
     expect(awarenessSpy).toHaveBeenCalledWith(['src/lib.rs', 'src/pty.rs']);
 
     clearSpansSpy.mockRestore();
     awarenessSpy.mockRestore();
     reconcileSpy.mockRestore();
+  });
+
+  it('restores FileView with authoritative bytes after rollback', async () => {
+    const store = useContextStore.getState();
+    const preEditView = {
+      filePath: 'src/lib.rs',
+      sourceRevision: 'editedHash',
+      observedRevision: 'editedHash',
+      totalLines: 3,
+      skeletonRows: ['   1|line 1 edited', '   2|line 2', '   3|line 3'],
+      sigLevel: 'sig' as const,
+      filledRegions: [{ start: 1, end: 2, content: '   1|line 1 edited\n   2|line 2', tokens: 10, origin: 'read' as const }],
+      fullBody: 'line 1 edited\nline 2\nline 3\n',
+      fullBodyChunkHash: 'editedHash',
+      fullBodyOrigin: 'read' as const,
+      hash: 'h:aabbcc',
+      shortHash: 'aabbcc',
+      lastAccessed: Date.now(),
+      pinned: true,
+      freshness: 'fresh' as const,
+    };
+    const fvMap = new Map<string, typeof preEditView>();
+    fvMap.set('src/lib.rs', preEditView);
+    useContextStore.setState({ fileViews: fvMap });
+
+    const restoredContent = 'line 1 original\nline 2\nline 3\n';
+    invokeMock.mockResolvedValue({ content: restoredContent });
+    const atlsBatchQuery = vi.fn().mockResolvedValue({ status: 'ok' });
+    const ctx = makeRollbackCtx(atlsBatchQuery);
+
+    await handleRollback({ restore: [{ file: 'src/lib.rs', hash: 'origHash' }] }, ctx);
+
+    const view = useContextStore.getState().fileViews.get('src/lib.rs');
+    expect(view).toBeDefined();
+    expect(view!.sourceRevision).toBe('origHash');
+    expect(view!.freshness).toBe('fresh');
+    expect(view!.freshnessCause).toBe('rollback');
+    expect(view!.fullBody).toBe(restoredContent);
+    expect(view!.pendingRefetches).toBeUndefined();
+    expect(view!.previousShortHashes).toContain('aabbcc');
+  });
+
+  it('restores multiple FileViews with pinned and unpinned views', async () => {
+    const store = useContextStore.getState();
+    const pinnedView = {
+      filePath: 'src/a.rs',
+      sourceRevision: 'editA',
+      observedRevision: 'editA',
+      totalLines: 2,
+      skeletonRows: ['   1|aaa', '   2|bbb'],
+      sigLevel: 'sig' as const,
+      filledRegions: [],
+      fullBody: 'aaa\nbbb\n',
+      fullBodyChunkHash: 'editA',
+      fullBodyOrigin: 'read' as const,
+      hash: 'h:aa1111',
+      shortHash: 'aa1111',
+      lastAccessed: Date.now(),
+      pinned: true,
+      freshness: 'fresh' as const,
+    };
+    const unpinnedView = {
+      filePath: 'src/b.rs',
+      sourceRevision: 'editB',
+      observedRevision: 'editB',
+      totalLines: 2,
+      skeletonRows: ['   1|xxx', '   2|yyy'],
+      sigLevel: 'sig' as const,
+      filledRegions: [{ start: 1, end: 2, content: '   1|xxx\n   2|yyy', tokens: 8, origin: 'read' as const }],
+      hash: 'h:bb2222',
+      shortHash: 'bb2222',
+      lastAccessed: Date.now(),
+      pinned: false,
+      freshness: 'fresh' as const,
+    };
+    const fvMap = new Map<string, typeof pinnedView | typeof unpinnedView>();
+    fvMap.set('src/a.rs', pinnedView);
+    fvMap.set('src/b.rs', unpinnedView);
+    useContextStore.setState({ fileViews: fvMap });
+
+    invokeMock.mockImplementation(async (cmd: string, args: unknown) => {
+      const a = args as { rawRef?: string };
+      if (cmd === 'resolve_hash_ref' && a?.rawRef === 'h:origA') {
+        return { content: 'original a1\noriginal a2\n' };
+      }
+      if (cmd === 'resolve_hash_ref' && a?.rawRef === 'h:origB') {
+        return { content: 'original b1\noriginal b2\n' };
+      }
+      return {};
+    });
+    const atlsBatchQuery = vi.fn().mockResolvedValue({ status: 'ok' });
+    const ctx = makeRollbackCtx(atlsBatchQuery);
+
+    await handleRollback({
+      restore: [
+        { file: 'src/a.rs', hash: 'origA' },
+        { file: 'src/b.rs', hash: 'origB' },
+      ],
+    }, ctx);
+
+    const viewA = useContextStore.getState().fileViews.get('src/a.rs');
+    expect(viewA).toBeDefined();
+    expect(viewA!.sourceRevision).toBe('origA');
+    expect(viewA!.freshnessCause).toBe('rollback');
+    expect(viewA!.fullBody).toBe('original a1\noriginal a2\n');
+    expect(viewA!.previousShortHashes).toContain('aa1111');
+
+    const viewB = useContextStore.getState().fileViews.get('src/b.rs');
+    expect(viewB).toBeDefined();
+    expect(viewB!.sourceRevision).toBe('origB');
+    expect(viewB!.freshnessCause).toBe('rollback');
+    expect(viewB!.filledRegions.length).toBe(1);
+    expect(viewB!.filledRegions[0].content).toContain('original b1');
+    expect(viewB!.previousShortHashes).toContain('bb2222');
   });
 });
 

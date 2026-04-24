@@ -14,6 +14,7 @@ import { parseHashRef } from '../../../utils/hashRefParsers';
 import { formatResult } from '../../../utils/toon';
 import { canonicalizeSnapshotHash } from '../snapshotTracker';
 import { resolveForwardChain as manifestResolveForwardChain } from '../../hashManifest';
+import { useRoundHistoryStore } from '../../../stores/roundHistoryStore';
 
 function ok(summary: string, refs: string[] = [], content?: unknown): StepOutput {
   return { kind: 'edit_result', ok: true, refs, summary, content };
@@ -2145,7 +2146,7 @@ export const handleRollback: OpHandler = async (params, ctx) => {
     const result = await ctx.atlsBatchQuery('refactor', merged);
     const refs = extractRefs(result);
     clearEditLessonsForRollback(params, ctx);
-    invalidateFreshnessForRollback(params);
+    await invalidateFreshnessForRollback(params, ctx);
     return ok(formatResult(result), refs, result);
   } catch (rbErr) {
     const msg = rbErr instanceof Error ? rbErr.message : String(rbErr);
@@ -2193,33 +2194,61 @@ function clearEditLessonsForRollback(
 }
 
 /**
- * After rollback, purge all freshness state for restored files so the preflight
- * system doesn't apply poisoned journal deltas, stale engram revisions, or
- * redundant-read dedup from the pre-rollback edit lineage.
+ * After rollback, purge all freshness state for restored files, reconcile
+ * chunks, and deterministically restore the FileView from authoritative bytes.
+ * Symmetric with `refreshContextAfterEdit` in executor.ts.
  */
-function invalidateFreshnessForRollback(params: Record<string, unknown>): void {
+async function invalidateFreshnessForRollback(
+  params: Record<string, unknown>,
+  ctx: HandlerContext,
+): Promise<void> {
   try {
     const restoreEntries = params.restore as Array<{ file?: string; hash?: string }> | undefined;
     if (!Array.isArray(restoreEntries) || restoreEntries.length === 0) return;
 
-    const store = useContextStore.getState();
+    const store = ctx.store();
     const allPaths: string[] = [];
+    const currentRound = (() => {
+      try { return useRoundHistoryStore.getState().snapshots.length; } catch { return 0; }
+    })();
 
     for (const entry of restoreEntries) {
       if (typeof entry?.file !== 'string') continue;
       allPaths.push(entry.file);
-      clearFreshnessJournal(entry.file);
       const restoredHash = typeof entry.hash === 'string' ? entry.hash.replace(/^h:/, '') : undefined;
+
+      clearFreshnessJournal(entry.file);
+
       if (restoredHash) {
-        store.reconcileSourceRevision(entry.file, restoredHash);
+        store.reconcileSourceRevision(entry.file, restoredHash, 'rollback', {
+          postEditResolved: true,
+          skipViewReconcile: true,
+        });
+
+        try {
+          const resolved = await invoke<{ content: string; source?: string | null }>(
+            'resolve_hash_ref', { rawRef: `h:${restoredHash}` },
+          );
+          if (resolved?.content) {
+            store.applyRestoreToFileView({
+              filePath: entry.file,
+              sourceRevision: restoredHash,
+              newBody: resolved.content,
+              round: currentRound,
+            });
+          }
+        } catch {
+          store.markEngramsSuspect([entry.file], 'rollback', 'content');
+        }
       }
     }
 
     if (allPaths.length > 0) {
-      store.clearReadSpansForPaths(allPaths);
-      store.invalidateAwarenessForPaths(allPaths);
-      store.bumpWorkspaceRev(allPaths);
-      store.invalidateArtifactsForPaths(allPaths);
+      const fullStore = useContextStore.getState();
+      fullStore.clearReadSpansForPaths(allPaths);
+      fullStore.invalidateAwarenessForPaths(allPaths);
+      fullStore.bumpWorkspaceRev(allPaths);
+      fullStore.invalidateArtifactsForPaths(allPaths);
     }
   } catch {
     // Non-fatal — freshness invalidation must not block rollback success

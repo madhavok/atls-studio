@@ -591,6 +591,12 @@ export interface ContextStoreApi {
     deltas: Array<{ line: number; delta: number; lineInclusive?: boolean; consumes?: number }>;
     round: number;
   }) => boolean;
+  applyRestoreToFileView: (params: {
+    filePath: string;
+    sourceRevision: string;
+    newBody: string;
+    round: number;
+  }) => boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -653,6 +659,7 @@ export type FreshnessCause =
   | 'external_file_change'
   | 'watcher_event'
   | 'session_restore'
+  | 'rollback'
   | 'ttl_expired'
   | 'unknown';
 export type EngramOrigin = 'read' | 'edit' | 'edit-refresh' | 'stage' | 'derived';

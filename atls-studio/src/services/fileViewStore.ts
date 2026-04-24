@@ -89,6 +89,7 @@ export type FileViewFreshnessCause =
   | 'same_file_prior_edit'
   | 'external_file_change'
   | 'session_restore'
+  | 'rollback'
   | 'unknown';
 
 /**
@@ -450,6 +451,9 @@ export interface ReconcileOutcome {
  * Policy (Section 6 of the plan):
  * - Skeleton regenerates (caller supplies newSkeleton if revision changed).
  * - same_file_prior_edit: shifted regions rebase via freshnessJournal.lineDelta.
+ * - rollback: runtime-authoritative — regions stay as placeholders for the
+ *   caller's `applyRestoreToFileView` refill. No pendingRefetches, no
+ *   unpinned-region drop. Always emits `freshness: 'fresh'`.
  * - Pinned content-changed regions go into pendingRefetches.
  * - Unpinned content-changed regions drop silently.
  * - Rebase failure (no matching line delta) surfaces [REMOVED].
@@ -474,6 +478,7 @@ export function reconcileFileView(
   }
 
   const isSameFileEdit = cause === 'same_file_prior_edit';
+  const isRollback = cause === 'rollback';
   const hasPositionalDeltas = isSameFileEdit && Array.isArray(positionalDeltas) && positionalDeltas.length > 0;
   // Scalar fallback: only when we don't have positional-delta precision AND
   // there's a journal entry. External changes / session restore never have
@@ -549,6 +554,14 @@ export function reconcileFileView(
       // the region in the list at its pre-edit coordinates as a placeholder
       // so the caller can re-slice at those coords against the new body.
       // Do NOT queue a pendingRefetch: there is nothing to fetch.
+      rebased.push(region);
+      continue;
+    }
+
+    if (isRollback && postEditResolved) {
+      // Rollback with authoritative restored bytes: caller will refill via
+      // `applyRestoreToFileView` immediately after. Keep regions as
+      // placeholders — no positional shifting, no pendingRefetches.
       rebased.push(region);
       continue;
     }
@@ -823,6 +836,107 @@ export function applyEditToFileView(
     removedMarkers: rebaseFailures.length > 0
       ? [...(view.removedMarkers ?? []), ...rebaseFailures]
       : view.removedMarkers,
+    lastAccessed: Date.now(),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Deterministic rollback restore — replace view content wholesale
+// ---------------------------------------------------------------------------
+
+/**
+ * Inputs for {@link applyRestoreToFileView}. Symmetric with
+ * {@link ApplyEditInputs} but without positional deltas — rollback replaces
+ * the entire file content so no per-anchor shifting is needed.
+ */
+export interface ApplyRestoreInputs {
+  /** `content_hash` (source revision) of the restored file. */
+  sourceRevision: string;
+  /** Authoritative restored body bytes (from `resolve_hash_ref`). */
+  newBody: string;
+  /** Round number for marker bookkeeping. */
+  round: number;
+}
+
+/**
+ * Deterministic FileView refresh for a rollback (content revert).
+ *
+ * Symmetric with {@link applyEditToFileView} — the runtime has authoritative
+ * bytes and we apply them without a reconcile→clear→refetch cycle. The key
+ * difference: there are no positional deltas. Rollback replaces the file
+ * wholesale, so the skeleton regenerates from `newBody`, every surviving
+ * filled region refills from the restored body at its original coordinates,
+ * and `fullBody` repopulates when the view previously had one.
+ *
+ * Pure function. No side effects, no freshness-journal reads.
+ */
+export function applyRestoreToFileView(
+  view: FileView,
+  inputs: ApplyRestoreInputs,
+): FileView {
+  const { sourceRevision, newBody, round } = inputs;
+
+  const rawLines = newBody.length === 0 ? [] : newBody.split('\n');
+  const newLines = rawLines.length > 0 && rawLines[rawLines.length - 1] === ''
+    ? rawLines.slice(0, -1)
+    : rawLines;
+  const totalLines = newLines.length;
+
+  const padLine = (n: number): string => String(n).padStart(4);
+
+  // Skeleton: regenerate as dense (one row per line) from the restored body.
+  const nextSkeleton = newLines.map((content, i) => `${padLine(i + 1)}|${content}`);
+
+  // Filled regions: refill at original coordinates, dropping any that
+  // fall outside the restored body's line count.
+  const nextRegions: FilledRegion[] = [];
+  for (const region of view.filledRegions) {
+    const start = region.start;
+    const end = Math.min(region.end, totalLines);
+    if (start < 1 || start > totalLines || end < start) continue;
+    const parts: string[] = [];
+    for (let n = start; n <= end; n++) {
+      parts.push(`${padLine(n)}|${newLines[n - 1] ?? ''}`);
+    }
+    const refilled = parts.join('\n');
+    nextRegions.push({
+      ...region,
+      start,
+      end,
+      content: refilled,
+      origin: 'refetch',
+      refetchedAtRound: round,
+      tokens: countTokensSync(refilled),
+    });
+  }
+
+  const hadFullBody = view.fullBody !== undefined;
+  const nextFullBody = hadFullBody ? newBody : undefined;
+  const nextFullBodyChunkHash = hadFullBody ? sourceRevision : undefined;
+  const nextFullBodyOrigin = hadFullBody ? view.fullBodyOrigin ?? 'read' : undefined;
+
+  const { hash, shortHash } = computeFileViewHashParts(view.filePath, sourceRevision);
+  const nextPreviousShortHashes = view.shortHash === shortHash
+    ? view.previousShortHashes
+    : appendPreviousShortHash(view.previousShortHashes, view.shortHash);
+
+  return {
+    ...view,
+    sourceRevision,
+    observedRevision: sourceRevision,
+    totalLines,
+    skeletonRows: nextSkeleton,
+    filledRegions: nextRegions,
+    fullBody: nextFullBody,
+    fullBodyChunkHash: nextFullBodyChunkHash,
+    fullBodyOrigin: nextFullBodyOrigin,
+    hash,
+    shortHash,
+    previousShortHashes: nextPreviousShortHashes,
+    freshness: 'fresh',
+    freshnessCause: 'rollback',
+    pendingRefetches: undefined,
+    removedMarkers: undefined,
     lastAccessed: Date.now(),
   };
 }

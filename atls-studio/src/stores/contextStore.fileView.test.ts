@@ -1524,3 +1524,169 @@ describe('FileView stable identity across own-edits', () => {
     expect(after.previousShortHashes).toBeUndefined();
   });
 });
+
+// ---------------------------------------------------------------------------
+// applyRestoreToFileView — deterministic rollback restore
+// ---------------------------------------------------------------------------
+
+describe('applyRestoreToFileView — rollback restore', () => {
+  beforeEach(resetStore);
+
+  function seedView(opts: {
+    filePath: string;
+    sourceRevision: string;
+    totalLines: number;
+    body: string;
+    pinned?: boolean;
+    withFullBody?: boolean;
+    filledRegion?: { start: number; end: number; content: string };
+  }) {
+    const skeleton = opts.body.split('\n').filter(Boolean).map(
+      (line, i) => rowLine(i + 1, line),
+    );
+    const view = {
+      filePath: opts.filePath,
+      sourceRevision: opts.sourceRevision,
+      observedRevision: opts.sourceRevision,
+      totalLines: opts.totalLines,
+      skeletonRows: skeleton,
+      sigLevel: 'sig' as const,
+      filledRegions: opts.filledRegion
+        ? [{ ...opts.filledRegion, tokens: 10, origin: 'read' as const }]
+        : [],
+      fullBody: opts.withFullBody ? opts.body : undefined,
+      fullBodyChunkHash: opts.withFullBody ? opts.sourceRevision : undefined,
+      fullBodyOrigin: opts.withFullBody ? 'read' as const : undefined,
+      hash: `h:${opts.sourceRevision.slice(0, 6)}`,
+      shortHash: opts.sourceRevision.slice(0, 6),
+      lastAccessed: Date.now(),
+      pinned: opts.pinned ?? false,
+      freshness: 'fresh' as const,
+    };
+    const fvMap = new Map(useContextStore.getState().fileViews);
+    fvMap.set(opts.filePath.replace(/\\/g, '/').toLowerCase(), view);
+    useContextStore.setState({ fileViews: fvMap });
+    return view;
+  }
+
+  it('refills filledRegions from restored body at original coordinates', () => {
+    seedView({
+      filePath: 'src/foo.ts',
+      sourceRevision: 'editedHash123456',
+      totalLines: 3,
+      body: 'edited line 1\nline 2\nline 3',
+      filledRegion: { start: 1, end: 2, content: rowLine(1, 'edited line 1') + '\n' + rowLine(2, 'line 2') },
+    });
+
+    const restoredBody = 'original line 1\nline 2\nline 3';
+    const didUpdate = useContextStore.getState().applyRestoreToFileView({
+      filePath: 'src/foo.ts',
+      sourceRevision: 'restoredHash1234',
+      newBody: restoredBody,
+      round: 0,
+    });
+
+    expect(didUpdate).toBe(true);
+    const view = useContextStore.getState().fileViews.get('src/foo.ts');
+    expect(view).toBeDefined();
+    expect(view!.sourceRevision).toBe('restoredHash1234');
+    expect(view!.filledRegions).toHaveLength(1);
+    expect(view!.filledRegions[0].content).toContain('original line 1');
+    expect(view!.filledRegions[0].start).toBe(1);
+    expect(view!.filledRegions[0].end).toBe(2);
+  });
+
+  it('repopulates fullBody when view previously had it', () => {
+    seedView({
+      filePath: 'src/bar.ts',
+      sourceRevision: 'editedHash654321',
+      totalLines: 2,
+      body: 'edited a\nedited b',
+      withFullBody: true,
+    });
+
+    const restoredBody = 'original a\noriginal b';
+    useContextStore.getState().applyRestoreToFileView({
+      filePath: 'src/bar.ts',
+      sourceRevision: 'restoredHash6543',
+      newBody: restoredBody,
+      round: 0,
+    });
+
+    const view = useContextStore.getState().fileViews.get('src/bar.ts');
+    expect(view!.fullBody).toBe(restoredBody);
+    expect(view!.fullBodyChunkHash).toBe('restoredHash6543');
+  });
+
+  it('does not set fullBody when view did not have it', () => {
+    seedView({
+      filePath: 'src/nofull.ts',
+      sourceRevision: 'editedHash999999',
+      totalLines: 2,
+      body: 'line a\nline b',
+      withFullBody: false,
+    });
+
+    useContextStore.getState().applyRestoreToFileView({
+      filePath: 'src/nofull.ts',
+      sourceRevision: 'restoredHash9999',
+      newBody: 'restored a\nrestored b',
+      round: 0,
+    });
+
+    const view = useContextStore.getState().fileViews.get('src/nofull.ts');
+    expect(view!.fullBody).toBeUndefined();
+  });
+
+  it('appends pre-rollback shortHash to previousShortHashes', () => {
+    const seeded = seedView({
+      filePath: 'src/chain.ts',
+      sourceRevision: 'editedHashABCDEF',
+      totalLines: 1,
+      body: 'x',
+    });
+    const oldShort = seeded.shortHash;
+
+    useContextStore.getState().applyRestoreToFileView({
+      filePath: 'src/chain.ts',
+      sourceRevision: 'restoredHashXYZW',
+      newBody: 'y',
+      round: 0,
+    });
+
+    const view = useContextStore.getState().fileViews.get('src/chain.ts');
+    expect(view!.previousShortHashes).toContain(oldShort);
+  });
+
+  it('emits freshness: fresh and freshnessCause: rollback', () => {
+    seedView({
+      filePath: 'src/fresh.ts',
+      sourceRevision: 'editedHash000000',
+      totalLines: 1,
+      body: 'x',
+    });
+
+    useContextStore.getState().applyRestoreToFileView({
+      filePath: 'src/fresh.ts',
+      sourceRevision: 'restoredHash0000',
+      newBody: 'y',
+      round: 0,
+    });
+
+    const view = useContextStore.getState().fileViews.get('src/fresh.ts');
+    expect(view!.freshness).toBe('fresh');
+    expect(view!.freshnessCause).toBe('rollback');
+    expect(view!.pendingRefetches).toBeUndefined();
+    expect(view!.removedMarkers).toBeUndefined();
+  });
+
+  it('returns false when no FileView exists for the path', () => {
+    const didUpdate = useContextStore.getState().applyRestoreToFileView({
+      filePath: 'src/nonexistent.ts',
+      sourceRevision: 'whatever',
+      newBody: 'content',
+      round: 0,
+    });
+    expect(didUpdate).toBe(false);
+  });
+});

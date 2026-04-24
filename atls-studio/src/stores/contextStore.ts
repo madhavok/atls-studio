@@ -57,6 +57,7 @@ import {
   applyFullBodyToView,
   clearRemovedMarker as fvClearRemovedMarker,
   applyEditToFileView,
+  applyRestoreToFileView,
   computeFileViewHash,
   createFileView,
   matchesViewRef,
@@ -1086,6 +1087,13 @@ interface ContextStoreState {
     sourceRevision: string;
     newBody: string;
     deltas: ReconcilePositionalDelta[];
+    round: number;
+  }) => boolean;
+  /** Deterministic FileView restore for rollback — replaces content wholesale. */
+  applyRestoreToFileView: (params: {
+    filePath: string;
+    sourceRevision: string;
+    newBody: string;
     round: number;
   }) => boolean;
   /** Drop any FileView regions backed by these chunk hashes (TTL / eviction callback). */
@@ -4048,7 +4056,9 @@ export const useContextStore = create<ContextStoreState>()(
           ? 'session_restore'
           : effectiveCause === 'external_file_change'
             ? 'external_file_change'
-            : 'unknown';
+            : effectiveCause === 'rollback'
+              ? 'rollback'
+              : 'unknown';
       get().reconcileFileViewsForPath(path, currentRevision, fvCause, round, {
         postEditResolved: opts?.postEditResolved,
         positionalDeltas: opts?.positionalDeltas,
@@ -7124,6 +7134,20 @@ export const useContextStore = create<ContextStoreState>()(
       if (!view) return {};
       const next = new Map(state.fileViews);
       next.set(key, applyEditToFileView(view, { sourceRevision, newBody, deltas, round }));
+      didUpdate = true;
+      return { fileViews: next };
+    });
+    return didUpdate;
+  },
+
+  applyRestoreToFileView: ({ filePath, sourceRevision, newBody, round }) => {
+    let didUpdate = false;
+    set(state => {
+      const key = fvNormalizePath(filePath);
+      const view = state.fileViews.get(key);
+      if (!view) return {};
+      const next = new Map(state.fileViews);
+      next.set(key, applyRestoreToFileView(view, { sourceRevision, newBody, round }));
       didUpdate = true;
       return { fileViews: next };
     });
