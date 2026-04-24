@@ -24,4 +24,19 @@ describe('deduplicateOutput', () => {
     expect(r.text).toMatch(/h:[a-f0-9]/);
     expect(r.text).not.toContain('const a = 1');
   });
+
+  it('skips code blocks shorter than four lines', () => {
+    const r = deduplicateOutput('```\n1\n2\n3\n```');
+    expect(r.text).toContain('```');
+    expect(r.refsInserted).toBe(0);
+  });
+
+  it('leaves blocks that do not match any chunk enough', () => {
+    const store = useContextStore.getState();
+    store.addChunk('unrelated\nlines\nhere\nnow', 'smart', 'src/y.ts');
+    const unique = ['const u = 1', 'const v = 2', 'const w = 3', 'const z = 9'].join('\n');
+    const r = deduplicateOutput(`\`\`\`ts\n${unique}\n\`\`\``);
+    expect(r.refsInserted).toBe(0);
+    expect(r.text).toContain('const u = 1');
+  });
 });
