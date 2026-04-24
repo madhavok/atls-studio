@@ -32,4 +32,35 @@ describe('fetchModels', () => {
   it('throws for vertex without project id', async () => {
     await expect(fetchModels('vertex', 'tok')).rejects.toThrow('Project ID required');
   });
+
+  it('fetches google and lmstudio models', async () => {
+    invoke.mockResolvedValueOnce([{ id: 'gem-1', name: 'G', context_window: 1_000_000 }]);
+    const g = await fetchModels('google', 'gk');
+    expect(invoke).toHaveBeenCalledWith('fetch_google_models', { apiKey: 'gk' });
+    expect(g[0]?.id).toBe('gem-1');
+
+    invoke.mockResolvedValueOnce([{ id: 'local', name: 'L' }]);
+    const ls = await fetchModels('lmstudio', 'http://127.0.0.1:1234');
+    expect(invoke).toHaveBeenCalledWith('fetch_lmstudio_models', { baseUrl: 'http://127.0.0.1:1234' });
+    expect(ls[0]?.id).toBe('local');
+  });
+
+  it('fetches vertex models when project id is set', async () => {
+    invoke.mockResolvedValueOnce([{ id: 'v1', name: 'V', context_window: null, max_output_tokens: 8 }]);
+    const v = await fetchModels('vertex', 'tok', 'my-proj', 'us-central1');
+    expect(invoke).toHaveBeenCalledWith('fetch_vertex_models', {
+      accessToken: 'tok',
+      projectId: 'my-proj',
+      region: 'us-central1',
+    });
+    expect(v[0]?.id).toBe('v1');
+  });
+
+  it('uses known context window when API returns 0 or null', async () => {
+    invoke.mockResolvedValueOnce([
+      { id: 'claude-3-5-sonnet-20241022', name: 'S', context_window: 0, max_output_tokens: 1 },
+    ]);
+    const out = await fetchModels('anthropic', 'k');
+    expect(out[0]?.contextWindow).toBeGreaterThan(0);
+  });
 });

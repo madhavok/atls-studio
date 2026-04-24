@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type { Message } from '../stores/appStore';
+import type { DbSegment } from '../services/chatDb';
 import {
+  analyzeDbSegments,
   analyzeToolTokens,
   formatTokens,
   formatToolDisplayName,
@@ -78,5 +80,98 @@ describe('toolTokenMetrics', () => {
     const merged = mergeReports([a, a]);
     expect(merged.totalToolCalls).toBe(2);
     expect(merged.entries[0].callCount).toBe(2);
+  });
+
+  it('analyzeToolTokens expands syntheticChildren on tool calls', () => {
+    const messages: Message[] = [
+      msg({
+        id: 'a1',
+        role: 'assistant',
+        content: '',
+        parts: [
+          {
+            type: 'tool',
+            toolCall: {
+              id: 'p1',
+              name: 'parent',
+              args: {},
+              result: '',
+              status: 'completed',
+              syntheticChildren: [
+                { id: 'c1', name: 'deduped_name', args: { a: 1 }, result: 'out' },
+              ],
+            } as never,
+          },
+        ],
+      }),
+    ];
+    const r = analyzeToolTokens(messages);
+    expect(r.entries.some((e) => e.toolName === 'deduped_name')).toBe(true);
+  });
+
+  it('analyzeDbSegments reads tool rows and synthetic children in JSON', () => {
+    const dbMessages = [
+      { id: 'm1', role: 'user', content: 'u' },
+      { id: 'm2', role: 'assistant', content: '' },
+    ];
+    const toolArgs = JSON.stringify({
+      __syntheticChildren: [{ id: 'x', name: 'from_db', args: {}, result: 'z' }],
+    });
+    const segments = new Map<string, DbSegment[]>([
+      [
+        'm2',
+        [
+          {
+            id: 1,
+            message_id: 'm2',
+            seq: 0,
+            type: 'tool',
+            content: '',
+            tool_name: 'batch',
+            tool_args: toolArgs,
+          },
+        ],
+      ],
+    ]);
+    const r = analyzeDbSegments(dbMessages, segments);
+    expect(r.entries.some((e) => e.toolName === 'from_db')).toBe(true);
+  });
+
+  it('mergeReports keeps larger maxResultTokens across reports', () => {
+    const small = analyzeToolTokens([
+      msg({
+        id: 'a',
+        role: 'assistant',
+        content: '',
+        parts: [
+          {
+            type: 'tool',
+            toolCall: { id: '1', name: 't', args: {}, result: 'x', status: 'completed' },
+          },
+        ],
+      }),
+    ]);
+    const big = analyzeToolTokens([
+      msg({
+        id: 'b',
+        role: 'assistant',
+        content: '',
+        parts: [
+          {
+            type: 'tool',
+            toolCall: {
+              id: '2',
+              name: 't',
+              args: {},
+              result: 'x'.repeat(5000),
+              status: 'completed',
+            },
+          },
+        ],
+      }),
+    ]);
+    const m = mergeReports([small, big]);
+    const e = m.entries.find((x) => x.toolName === 't');
+    expect(e?.maxResultTokens).toBe(big.entries[0].maxResultTokens);
   });
 });
