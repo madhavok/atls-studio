@@ -446,22 +446,22 @@ describe('isContentArchiveWorthy', () => {
     expect(isContentArchiveWorthy('arbitrary', undefined)).toBe(true);
   });
 
-  it('returns false for batch results containing only status + footer lines', () => {
+  it('returns true for batch results with failed status lines', () => {
     const content = [
       '[FAIL] r1 (read.lines): read_lines: requires lines (e.g. "15-50") (39ms)',
       '[FAIL] r2 (read.lines): read_lines: requires lines (e.g. "15-50") (40ms)',
       '[ATLS] 2 steps: 2 fail (74ms) | ok',
     ].join('\n');
-    expect(isContentArchiveWorthy(content, 'batch')).toBe(false);
+    expect(isContentArchiveWorthy(content, 'batch')).toBe(true);
   });
 
-  it('returns false for batch results with dedupe tails + footer', () => {
+  it('returns true for batch results with a failure plus dedupe tails', () => {
     const content = [
       '[FAIL] r1 (read.lines): requires lines (39ms)',
       '[FAIL] +2 identical (r2, r3) - same class: read.lines',
       '[ATLS] 3 steps: 3 fail (74ms) | ok',
     ].join('\n');
-    expect(isContentArchiveWorthy(content, 'batch')).toBe(false);
+    expect(isContentArchiveWorthy(content, 'batch')).toBe(true);
   });
 
   it('returns false for batch results with FileView merge pointers', () => {
@@ -540,12 +540,11 @@ describe('deflateToolResults Rule C skip-archive gate', () => {
     const chunksBefore = useContextStore.getState().chunks.size;
     const toolResults = [{ type: 'tool_result', tool_use_id, content }];
     const deflated = deflateToolResults(toolResults, history);
-    const chunksAfter = useContextStore.getState().chunks.size;
-
-    expect(deflated).toBe(0);
-    expect(chunksAfter).toBe(chunksBefore);
-    // Content stays inline (not replaced by a ref)
-    expect(toolResults[0].content).toBe(content);
+    expect(deflated).toBe(1);
+    expect(toolResults[0].content).toContain('h:');
+    expect(toolResults[0].content).toContain('[FAIL]');
+    // Failure content is replaced by a ref so the actionable error remains recallable.
+    expect(toolResults[0].content).not.toBe(content);
   });
 
   it('does NOT create a new engram for batch FileView-merged read content', () => {

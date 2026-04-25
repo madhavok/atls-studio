@@ -70,14 +70,14 @@ describe('pillar gate — N-identical failure dedupe', () => {
     expect(afterTk / beforeTk).toBeLessThanOrEqual(0.35);
   });
 
-  it('collapsed failure batch is not archive-worthy (Rule C catches downstream)', () => {
+  it('collapsed failure batch is archive-worthy so failure text remains steerable', () => {
     const result: UnifiedBatchResult = {
       ok: false,
       duration_ms: 120,
       step_results: [mkFail('r1'), mkFail('r2'), mkFail('r3')],
     };
     const afterText = formatBatchResult(result);
-    expect(isContentArchiveWorthy(afterText, 'batch')).toBe(false);
+    expect(isContentArchiveWorthy(afterText, 'batch')).toBe(true);
   });
 });
 

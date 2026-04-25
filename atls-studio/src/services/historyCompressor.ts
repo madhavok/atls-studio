@@ -683,7 +683,10 @@ export function isContentArchiveWorthy(content: string, toolName?: string): bool
   for (const rawLine of raw) {
     const line = rawLine.trimEnd();
     if (!line.trim()) continue;
-    if (BATCH_RESULT_LINE_RE.test(line)) continue;
+    if (BATCH_RESULT_LINE_RE.test(line)) {
+      if (/^\s*\[(?:FAIL|TOOL-ERROR)\]/.test(line)) return true;
+      continue;
+    }
     if (BATCH_DEDUPE_TAIL_RE.test(line)) continue;
     if (BATCH_FOOTER_RE.test(line)) continue;
     if (BATCH_INTERRUPT_RE.test(line)) continue;
