@@ -1416,12 +1416,20 @@ function resolveGatePathForTracker(
 ): string {
   const raw = (mergedParams.file ?? mergedParams.file_path) as string | undefined;
   if (typeof raw !== 'string') return '';
+  if (!raw.startsWith('h:')) {
+    const exact = findCaseSensitiveTrackerIdentity(tracker, raw);
+    if (exact) return exact.filePath;
+    if (findCaseOnlyTrackerCollision(tracker, raw)) return raw;
+  }
   const ch = mergedParams.content_hash ?? mergedParams.snapshot_hash;
   if (typeof ch === 'string') {
     const p = tracker.findFilePathForSnapshotHash(ch);
     if (p) return p;
   }
-  if (!raw.startsWith('h:') && tracker.getIdentity(raw)) return raw;
+  if (!raw.startsWith('h:')) {
+    const identity = tracker.getIdentity(raw);
+    if (identity) return identity.filePath;
+  }
   const fromRaw = tracker.findFilePathForSnapshotHash(raw);
   if (fromRaw) return fromRaw;
   // Tail-match fallback: the model may pass `utils/foo.ts` for a tracker
@@ -1434,6 +1442,59 @@ function resolveGatePathForTracker(
     if (bySuffix) return bySuffix;
   }
   return raw;
+}
+
+function normalizeGatePathForCaseMatch(path: string): string {
+  return path.replace(/\\/g, '/');
+}
+
+function findCaseSensitiveTrackerIdentity(
+  tracker: SnapshotTracker,
+  filePath: string,
+): ReturnType<SnapshotTracker['getIdentity']> {
+  const target = normalizeGatePathForCaseMatch(filePath);
+  for (const [, identity] of tracker.entries()) {
+    if (normalizeGatePathForCaseMatch(identity.filePath) === target) return identity;
+  }
+  return undefined;
+}
+
+function findCaseOnlyTrackerCollision(
+  tracker: SnapshotTracker,
+  filePath: string,
+): ReturnType<SnapshotTracker['getIdentity']> {
+  const target = normalizeGatePathForCaseMatch(filePath);
+  const targetFolded = target.toLowerCase();
+  for (const [, identity] of tracker.entries()) {
+    const tracked = normalizeGatePathForCaseMatch(identity.filePath);
+    if (tracked !== target && tracked.toLowerCase() === targetFolded) return identity;
+  }
+  return undefined;
+}
+
+function trackerRegionsCover(regions: LineRegion[], target: LineRegion): boolean {
+  return regions.some(r => r.start <= target.start && r.end >= target.end);
+}
+
+function hasCaseSensitiveCanonicalRead(tracker: SnapshotTracker, filePath: string): boolean {
+  const identity = findCaseSensitiveTrackerIdentity(tracker, filePath);
+  if (!identity) return false;
+  if (identity.canonicalHash != null) return true;
+  if (identity.readKind !== 'lines') return false;
+  const lineCount = identity.fullFileLineCount;
+  if (lineCount == null || lineCount < 1 || !identity.readRegions?.length) return false;
+  return trackerRegionsCover(identity.readRegions, { start: 1, end: lineCount });
+}
+
+function hasCaseSensitiveReadCoverage(
+  tracker: SnapshotTracker,
+  filePath: string,
+  start: number,
+  end: number,
+): boolean {
+  const identity = findCaseSensitiveTrackerIdentity(tracker, filePath);
+  if (!identity?.readRegions?.length) return false;
+  return trackerRegionsCover(identity.readRegions, { start, end });
 }
 
 /**
@@ -2598,7 +2659,7 @@ export async function executeUnifiedBatch(
         typeof gateFileRaw === 'string' &&
         !gateFileRaw.startsWith('h:') &&
         Array.isArray(gateLineEdits) &&
-        !snapshotTracker.hasCanonicalRead(gatePath) &&
+        !hasCaseSensitiveCanonicalRead(snapshotTracker, gatePath) &&
         !batchEditedPaths.has(gateFileRaw) &&
         !batchEditedPaths.has(gatePath)
       ) {
@@ -2607,7 +2668,7 @@ export async function executeUnifiedBatch(
           const endLine = (le.end_line ?? le.line);
           if (typeof line !== 'number' || line <= 0) continue;
           const end = typeof endLine === 'number' ? endLine : line;
-          if (!snapshotTracker.hasReadCoverage(gatePath, line, end)) {
+          if (!hasCaseSensitiveReadCoverage(snapshotTracker, gatePath, line, end)) {
             const output: StepOutput = {
               kind: 'edit_result', ok: false, refs: [],
               summary: `${step.id}: target region not yet read — read lines ${line}-${end} of ${gatePath} first, then retry.`,
