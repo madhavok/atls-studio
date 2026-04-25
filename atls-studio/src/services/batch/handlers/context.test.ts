@@ -447,6 +447,29 @@ describe('context handlers validation and errors', () => {
     expect(r.error).toMatch(/no such ref/);
   });
 
+  it('handleShape resolves live frontend chunk refs before Rust fallback', async () => {
+    const store = useContextStore.getState();
+    const short = store.addChunk(
+      'verify.typecheck: passed\nerrors: 0',
+      'result',
+      'verify.typecheck',
+      undefined,
+      undefined,
+      '56c355abcdef1234',
+    );
+
+    const r = await handleShape({ hash: `h:${short}` }, makeCtx());
+
+    expect(r.ok).toBe(true);
+    expect(r.summary).toMatch(/frontend chunk/);
+    expect(r.refs?.[0]).toMatch(/^h:/);
+    expect(invokeWithTimeoutMock).not.toHaveBeenCalled();
+    const shapedShort = r.refs![0].replace(/^h:/, '');
+    const shaped = Array.from(useContextStore.getState().chunks.values())
+      .find(c => c.shortHash === shapedShort);
+    expect(shaped?.content).toContain('verify.typecheck: passed');
+  });
+
   it('handleShape resolves view refs by rendering the FileView block (no Rust round-trip)', async () => {
     // Build a FileView for src/foo.ts via the store's addChunk readSpan path
     // (same pattern used in fileViewPin.test.ts). Under the unified h:<short>

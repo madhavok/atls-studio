@@ -1054,7 +1054,10 @@ export const handleShape: OpHandler = async (params, ctx) => {
   // Unified hash namespace: a ref could be either a FileView or a chunk. Views
   // resolve entirely frontend-side (the store owns them, `fileViewRender`
   // already composed the block). If the ref matches a view, short-circuit
-  // and return the rendered block. Otherwise fall through to Rust.
+  // and return the rendered block. Otherwise try live frontend chunks before
+  // falling back to Rust: verify/search/session result refs are often stored
+  // only in contextStore, so asking Rust first can produce a false
+  // "Hash ... not found in registry" for valid refs.
   const store = ctx.store();
   const views = store.fileViews;
   const shortLookup = rawRef.replace(/^h:/, '').split(':')[0];
@@ -1079,6 +1082,14 @@ export const handleShape: OpHandler = async (params, ctx) => {
         `shape: ERROR rendering FileView ${rawRef}: ${renderErr instanceof Error ? renderErr.message : String(renderErr)}`,
       );
     }
+  }
+
+  const chunkMatch = store.getChunkForHashRef(rawRef);
+  if (chunkMatch) {
+    const content = chunkMatch.content;
+    const hash = store.addChunk(content, 'smart', chunkMatch.source || undefined);
+    const tokens = countTokensSync(content);
+    return ok(`shape: ${rawRef} → h:${hash} (${tokens}tk, frontend chunk)`, [`h:${hash}`], tokens);
   }
 
   try {
