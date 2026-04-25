@@ -215,7 +215,7 @@ export function coerceFilePathsArray(value: unknown): string[] {
   const seen = new Set<string>();
   const dedup: string[] = [];
   for (const p of out) {
-    const k = p.replace(/\\/g, '/').toLowerCase();
+    const k = p.replace(/\\/g, '/');
     if (!seen.has(k)) {
       seen.add(k);
       dedup.push(p);
@@ -245,7 +245,7 @@ export function expandCommaSeparatedFilePaths(paths: string[]): string[] {
   const seen = new Set<string>();
   const dedup: string[] = [];
   for (const p of out) {
-    const k = p.replace(/\\/g, '/').toLowerCase();
+    const k = p.replace(/\\/g, '/');
     if (!seen.has(k)) {
       seen.add(k);
       dedup.push(p);

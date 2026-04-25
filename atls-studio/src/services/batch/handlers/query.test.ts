@@ -235,6 +235,28 @@ describe('query handlers', () => {
     expect(out.summary).toMatch(/MANIFEST:.*ManifestHit/);
   });
 
+  it('handleSearchCode manifest note requires exact path case after slash normalization', async () => {
+    vi.spyOn(useAppStore, 'getState').mockReturnValue({
+      projectProfile: {
+        entryManifest: [{ path: 'Src/App.ts' }],
+      },
+    } as any);
+
+    const ctx = {
+      atlsBatchQuery: vi.fn(async () => ({
+        results: [{
+          query: 'q',
+          results: [{ file: 'src/App.ts', line: 1 }],
+        }],
+      })),
+      store: () => minimalStore(),
+    } as any;
+
+    const out = await handleSearchCode({ queries: ['x'] }, ctx);
+    expect(out.ok).toBe(true);
+    expect(out.summary).not.toMatch(/MANIFEST:/);
+  });
+
   it('handleSearchCode emits unique_file_paths deduped by first occurrence', async () => {
     const ctx = {
       atlsBatchQuery: vi.fn(async () => ({

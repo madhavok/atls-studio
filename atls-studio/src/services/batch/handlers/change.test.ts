@@ -26,7 +26,7 @@ vi.mock('@tauri-apps/api/core', () => ({
 }));
 
 vi.mock('../../../services/freshnessJournal', async (importOriginal) => {
-  const orig = await importOriginal<typeof import('../../../services/freshnessJournal')>();
+  const orig = await importOriginal() as typeof import('../../../services/freshnessJournal');
   return {
     ...orig,
     clearFreshnessJournal: vi.fn(orig.clearFreshnessJournal),

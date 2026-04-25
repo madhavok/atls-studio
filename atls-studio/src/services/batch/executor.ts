@@ -15,6 +15,7 @@ import type {
   HandlerContext,
   VerifyClassification,
   OperationKind,
+  Step,
 } from './types';
 
 import { getHandler } from './opMap';
@@ -89,7 +90,7 @@ function inferWorkspaceFromPaths(editedPaths: Set<string>): string | null {
 // ---------------------------------------------------------------------------
 
 function normalizePathForRebase(value: string): string {
-  return value.replace(/\\/g, '/').toLowerCase();
+  return value.replace(/\\/g, '/');
 }
 
 function extractEditTargetFile(params: Record<string, unknown>): string | undefined {
@@ -652,7 +653,7 @@ function extractTopLevelEditsResolved(artifact: Record<string, unknown>): unknow
   return undefined;
 }
 
-/** Build a per-file `edits_resolved` lookup for batch_edits artifacts keyed by `normalizePathForRebase`. */
+/** Build a per-file `edits_resolved` lookup for batch_edits artifacts keyed by separator-normalized path. */
 function extractBatchEditsResolved(artifact: Record<string, unknown>): Map<string, unknown[]> {
   const map = new Map<string, unknown[]>();
   for (const key of ['drafts', 'batch', 'results'] as const) {
@@ -1828,20 +1829,18 @@ async function refreshContextAfterEdit(
 
 /**
  * Look up positional deltas for a specific file in the batch's per-file
- * delta map. `buildPerFileDeltaMap` keys on the rebase-normalized path
- * (`normalizePathForRebase`), which may differ from the edited-file path
- * in monorepo setups; try the normalized form, the raw form, and a
- * forward-slash lowercased variant.
+ * delta map. `buildPerFileDeltaMap` keys on separator-normalized paths;
+ * try that normalized spelling first, then the raw path. Do not lowercase
+ * as a fallback: ATLS path resolution is case-sensitive, so `Src/A.ts`
+ * and `src/a.ts` must not share positional deltas.
  */
 function resolveDeltasForFile(
   deltaMap: ReadonlyMap<string, PositionalDelta[]>,
   filePath: string,
 ): PositionalDelta[] | undefined {
   const norm = normalizePathForRebase(filePath);
-  const lower = filePath.replace(/\\/g, '/').toLowerCase();
   return deltaMap.get(norm)
     ?? deltaMap.get(filePath)
-    ?? deltaMap.get(lower)
     ?? undefined;
 }
 
@@ -2121,7 +2120,7 @@ function scanValueForProducedHashes(
 function autoPersistIntraBatch(
   producingStep: { id: string; use: string; out?: string | string[] },
   outputRefs: readonly string[],
-  futureSteps: readonly import('./types').Step[],
+  futureSteps: readonly Step[],
   namedBindings: ReadonlyMap<string, StepOutput>,
   ctx: HandlerContext,
 ): void {
@@ -2459,8 +2458,8 @@ export async function executeUnifiedBatch(
     // G19: file claims enforcement — reject change ops targeting files outside claims
     if (ctx.fileClaims && ctx.fileClaims.length > 0 && step.use.startsWith('change.')) {
       const targetFile = (step.with?.file ?? step.with?.file_path) as string | undefined;
-      const claimNorm = new Set(ctx.fileClaims.map(f => f.replace(/\\/g, '/').toLowerCase()));
-      if (targetFile && !targetFile.startsWith('h:') && !claimNorm.has(targetFile.replace(/\\/g, '/').toLowerCase())) {
+      const claimNorm = new Set(ctx.fileClaims.map(f => normalizePathForRebase(f)));
+      if (targetFile && !targetFile.startsWith('h:') && !claimNorm.has(normalizePathForRebase(targetFile))) {
         const output: StepOutput = {
           kind: 'raw', ok: false, refs: [],
           summary: `${step.id}: ${step.use} rejected — path "${targetFile}" outside this agent's scope [${ctx.fileClaims.join(', ')}]`,

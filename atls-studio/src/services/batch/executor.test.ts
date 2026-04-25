@@ -10,7 +10,7 @@ vi.mock('./opMap', () => ({
 }));
 
 vi.mock('./policy', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('./policy')>();
+  const actual = await importOriginal() as typeof import('./policy');
   return {
     isStepAllowed: () => ({ allowed: true }),
     getAutoVerifySteps: () => [],
@@ -501,6 +501,52 @@ describe('executeUnifiedBatch auto-stage repeat read and verify stop', () => {
       ctx,
     );
     expect(result.step_results[0]?.error).toBe('not available to subagents');
+  });
+});
+
+
+describe('executeUnifiedBatch file claim enforcement', () => {
+  beforeEach(() => {
+    handlers.clear();
+  });
+
+  it('treats case-distinct file claims as different paths', async () => {
+    const editSpy = vi.fn(async () => raw('edited', { ok: true }));
+    handlers.set('change.edit', editSpy as unknown as OpHandler);
+
+    const ctx = { ...makeCtx(), fileClaims: ['Src/A.ts'] };
+    const result = await executeUnifiedBatch(
+      {
+        version: '1.0',
+        steps: [
+          { id: 'e1', use: 'change.edit', with: { file_path: 'src/a.ts' } },
+        ],
+      },
+      ctx,
+    );
+
+    expect(result.ok).toBe(false);
+    expect(editSpy).not.toHaveBeenCalled();
+    expect(result.step_results[0]?.error).toBe('file_claim_violation');
+  });
+
+  it('still normalizes path separators for file claims', async () => {
+    const editSpy = vi.fn(async () => raw('edited', { ok: true }));
+    handlers.set('change.edit', editSpy as unknown as OpHandler);
+
+    const ctx = { ...makeCtx(), fileClaims: ['src\\a.ts'] };
+    const result = await executeUnifiedBatch(
+      {
+        version: '1.0',
+        steps: [
+          { id: 'e1', use: 'change.edit', with: { file_path: 'src/a.ts' } },
+        ],
+      },
+      ctx,
+    );
+
+    expect(result.ok).toBe(true);
+    expect(editSpy).toHaveBeenCalledOnce();
   });
 });
 
@@ -2270,25 +2316,27 @@ describe('executeUnifiedBatch line-edit pipeline stress', () => {
     expect(result.ok).toBe(true);
   });
 
-  it('normalizes path keys: read.lines file vs edit file casing differ', async () => {
+  it('treats read-range coverage as case-sensitive for path keys', async () => {
     const editSpy = vi.fn(async () => raw('ok', { status: 'ok' }));
     handlers.set('read.lines', async () => raw('rl', {
-      file: 'src/Case/File.TS',
+      file: 'Src/A.ts',
       content_hash: 'h1',
-      content: 'x',
       actual_range: [[1, 10]],
+      lines: 10,
     }));
     handlers.set('change.edit', editSpy as unknown as OpHandler);
 
-    await executeUnifiedBatch({
+    const result = await executeUnifiedBatch({
       version: '1.0',
       steps: [
-        { id: 'read', use: 'read.lines', with: { file_path: 'src/Case/File.TS', lines: '1-10' } },
-        { id: 'edit', use: 'change.edit', with: { file: 'SRC/case/file.ts', line_edits: [{ line: 5, action: 'replace', content: 'y' }] } },
+        { id: 'r', use: 'read.lines', with: { file_path: 'Src/A.ts', start_line: 1, end_line: 10 } },
+        { id: 'e', use: 'change.edit', with: { file: 'src/a.ts', line_edits: [{ line: 5, content: 'x' }] } },
       ],
     }, makeCtx());
 
-    expect(editSpy).toHaveBeenCalledOnce();
+    expect(editSpy).not.toHaveBeenCalled();
+    expect(result.ok).toBe(false);
+    expect(result.step_results.find(s => s.id === 'e')?.error).toContain('target region not yet read');
   });
 
   it('intra-step chain: insert + delete + replace + move rebases to sequential coordinates', async () => {
@@ -3787,6 +3835,23 @@ describe('buildPerFileDeltaMap — edits_resolved backfill', () => {
     // The resolved-path key ALSO lands — this is what `resolveDeltasForFile`
     // looks up from `collectEditedFiles` (which pulls file paths from drafts).
     expect(map.get('fv-debug.ts')).toEqual([{ line: 4, delta: 2, lineInclusive: false }]);
+  });
+
+
+  it('keeps case-distinct batch_edit paths in separate delta buckets', () => {
+    const params = {
+      mode: 'batch_edits',
+      edits: [
+        { file: 'Src/A.ts', line_edits: [{ line: 5, action: 'insert_after', content: 'x' }] },
+        { file: 'src/a.ts', line_edits: [{ line: 10, action: 'delete' }] },
+      ],
+    };
+
+    const map = buildPerFileDeltaMap(params);
+
+    expect(map.get('Src/A.ts')).toEqual([{ line: 5, delta: 1, lineInclusive: false }]);
+    expect(map.get('src/a.ts')).toEqual([{ line: 10, delta: -1, lineInclusive: false, consumes: 1 }]);
+    expect(map.size).toBe(2);
   });
 });
 

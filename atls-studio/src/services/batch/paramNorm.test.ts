@@ -569,8 +569,8 @@ describe('normalizeStepParams', () => {
       ]);
     });
 
-    it('dedupes paths case-insensitively', () => {
-      expect(coerceFilePathsArray(['Src/A.ts', 'src/a.ts'])).toEqual(['Src/A.ts']);
+    it('dedupes exact normalized paths without collapsing case-distinct paths', () => {
+      expect(coerceFilePathsArray(['Src/A.ts', 'src/a.ts', 'Src\\A.ts'])).toEqual(['Src/A.ts', 'src/a.ts']);
     });
   });
 
@@ -581,8 +581,8 @@ describe('normalizeStepParams', () => {
   });
 
   describe('expandCommaSeparatedFilePaths', () => {
-    it('splits comma-joined entries and dedupes', () => {
-      expect(expandCommaSeparatedFilePaths(['a.py,b.py', 'c.ts'])).toEqual(['a.py', 'b.py', 'c.ts']);
+    it('splits comma-joined entries and dedupes exact normalized paths', () => {
+      expect(expandCommaSeparatedFilePaths(['a.py,b.py', 'c.ts', 'a.py', 'C.ts'])).toEqual(['a.py', 'b.py', 'c.ts', 'C.ts']);
     });
   });
 

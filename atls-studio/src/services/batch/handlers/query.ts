@@ -42,8 +42,8 @@ function getManifestHitNote(filePaths: string[], wasScoped = false): string {
   if (filePaths.length === 0) return '';
   const manifest = useAppStore.getState().projectProfile?.entryManifest;
   if (!manifest?.length) return '';
-  const manifestPaths = new Set(manifest.map(e => e.path.replace(/\\/g, '/').toLowerCase()));
-  const hits = filePaths.filter(fp => manifestPaths.has(fp.replace(/\\/g, '/').toLowerCase()));
+  const manifestPaths = new Set(manifest.map(e => e.path.replace(/\\/g, '/')));
+  const hits = filePaths.filter(fp => manifestPaths.has(fp.replace(/\\/g, '/')));
   if (hits.length === 0) return '';
   return `MANIFEST: ${hits.join(', ')} already in entry manifest (system prompt, 0tk). Use read.context or read.shaped directly — no search needed for known entry points.\n`;
 }
