@@ -71,7 +71,7 @@ export function classifyVerifyResult(raw: unknown): { passed: boolean; classific
 
 export function didVerifyPass(raw: unknown): boolean {
   const r = (raw && typeof raw === 'object') ? raw as Record<string, unknown> : {};
-  if (typeof r.status === 'string') {
+  if (typeof r.status === 'string' && VALID_STATUSES.includes(r.status)) {
     return r.status === 'pass' || r.status === 'pass-with-warnings';
   }
   if (typeof r.success === 'boolean') return r.success;

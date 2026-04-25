@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { didVerifyPass, handleVerifyBuild } from './verify';
+import { classifyVerifyResult, didVerifyPass, handleVerifyBuild } from './verify';
 import { useRetentionStore } from '../../../stores/retentionStore';
 
 describe('didVerifyPass', () => {
@@ -10,6 +10,16 @@ describe('didVerifyPass', () => {
 
   it('does not treat missing has_errors as a pass', () => {
     expect(didVerifyPass({ summary: 'no flags present' })).toBe(false);
+  });
+
+  it('falls back to legacy flags when status is unknown', () => {
+    expect(didVerifyPass({ status: 'unknown', success: true })).toBe(true);
+    expect(didVerifyPass({ status: 'unknown', passed: true })).toBe(true);
+    expect(didVerifyPass({ status: 'unknown', has_errors: true })).toBe(false);
+    expect(classifyVerifyResult({ status: 'unknown', success: true })).toEqual({
+      passed: true,
+      classification: 'pass',
+    });
   });
 });
 
