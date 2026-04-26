@@ -2,12 +2,11 @@ use std::ffi::OsString;
 use std::path::PathBuf;
 
 use super::*;
-pub(crate) const GIT_CMD_TIMEOUT_SECS: u64 = 30;
 
 pub(crate) const GIT_INDEX_LOCK_RETRIES: u32 = 4;
 
-/// Run a git command with timeout, pager/prompt suppression, and async-safe blocking.
-/// Prevents hangs from pager, credential prompts, or slow Windows process spawning.
+/// Run a git command with pager/prompt suppression and async-safe blocking.
+/// Prevents pager and credential prompt hangs without imposing a model-facing deadline.
 /// Auto-retries with backoff when .git/index.lock contention is detected.
 pub(crate) async fn run_git_command(args: Vec<String>, cwd: String) -> Result<std::process::Output, String> {
     let cwd_path = std::path::Path::new(&cwd);
@@ -46,23 +45,20 @@ pub(crate) async fn run_git_command(args: Vec<String>, cwd: String) -> Result<st
 
         let a = args.clone();
         let c = cwd.clone();
-        let result = tokio::time::timeout(
-            std::time::Duration::from_secs(GIT_CMD_TIMEOUT_SECS),
-            tokio::task::spawn_blocking(move || {
-                let mut cmd = std::process::Command::new("git");
-                cmd.args(&a)
-                    .current_dir(&c)
-                    .env("GIT_TERMINAL_PROMPT", "0")
-                    .env("GIT_PAGER", "");
-                #[cfg(windows)]
-                cmd.creation_flags(0x08000000);
-                cmd.output()
-            }),
-        )
+        let result = tokio::task::spawn_blocking(move || {
+            let mut cmd = std::process::Command::new("git");
+            cmd.args(&a)
+                .current_dir(&c)
+                .env("GIT_TERMINAL_PROMPT", "0")
+                .env("GIT_PAGER", "");
+            #[cfg(windows)]
+            cmd.creation_flags(0x08000000);
+            cmd.output()
+        })
         .await;
 
         match result {
-            Ok(Ok(Ok(output))) => {
+            Ok(Ok(output)) => {
                 if !output.status.success() {
                     let stderr = String::from_utf8_lossy(&output.stderr);
                     if stderr.contains("index.lock") || (stderr.contains("Unable to create") && stderr.contains(".lock")) {
@@ -73,9 +69,8 @@ pub(crate) async fn run_git_command(args: Vec<String>, cwd: String) -> Result<st
                 }
                 return Ok(output);
             }
-            Ok(Ok(Err(e))) => return Err(format!("Failed to run git: {}", e)),
-            Ok(Err(e)) => return Err(format!("Git task panicked: {}", e)),
-            Err(_) => return Err(format!("Git command timed out after {}s", GIT_CMD_TIMEOUT_SECS)),
+            Ok(Err(e)) => return Err(format!("Failed to run git: {}", e)),
+            Err(e) => return Err(format!("Git task panicked: {}", e)),
         }
     }
 
@@ -127,43 +122,33 @@ pub(crate) fn probe_executable(cmd_str: &str) -> Option<String> {
         .map(|s| s.trim().to_string())
 }
 
-/// Run a shell command with timeout, async-safe via spawn_blocking.
+/// Run a shell command async-safe via spawn_blocking.
 /// Mirrors `run_git_command` pattern to avoid blocking the tokio runtime.
 pub(crate) async fn run_shell_cmd_async(
     cmd_str: String,
     working_dir: PathBuf,
-    timeout_secs: u64,
+    _timeout_secs: u64,
 ) -> Result<std::process::Output, String> {
     let path_env = path_for_atls_subprocess();
-    let result = tokio::time::timeout(
-        std::time::Duration::from_secs(timeout_secs),
-        tokio::task::spawn_blocking(move || {
-            let (shell, shell_arg) = super::resolve_shell();
-            let mut cmd = std::process::Command::new(shell);
-            cmd.arg(shell_arg)
-                .arg(&cmd_str)
-                .current_dir(&working_dir)
-                .env("PATH", &path_env)
-                .stdout(std::process::Stdio::piped())
-                .stderr(std::process::Stdio::piped());
-            #[cfg(windows)]
-            cmd.creation_flags(0x08000000);
-            cmd.output()
-        }),
-    )
+    let result = tokio::task::spawn_blocking(move || {
+        let (shell, shell_arg) = super::resolve_shell();
+        let mut cmd = std::process::Command::new(shell);
+        cmd.arg(shell_arg)
+            .arg(&cmd_str)
+            .current_dir(&working_dir)
+            .env("PATH", &path_env)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped());
+        #[cfg(windows)]
+        cmd.creation_flags(0x08000000);
+        cmd.output()
+    })
     .await;
 
     match result {
-        Ok(Ok(Ok(output))) => Ok(output),
-        Ok(Ok(Err(e))) => Err(format!("Failed to run command: {}", e)),
-        Ok(Err(e)) => Err(format!("Command task panicked: {}", e)),
-        Err(_) => Err(format!(
-            "Command timed out after {}s. For cold Rust builds \
-             (cargo test compiling 80+ crates), set timeout_seconds:300 \
-             or higher. Alternatively, use verify type:'typecheck' which \
-             is much faster.",
-            timeout_secs
-        )),
+        Ok(Ok(output)) => Ok(output),
+        Ok(Err(e)) => Err(format!("Failed to run command: {}", e)),
+        Err(e) => Err(format!("Command task panicked: {}", e)),
     }
 }
 

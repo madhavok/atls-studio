@@ -229,7 +229,6 @@ pub(crate) fn ast_query_treesitter_matches(
         "language": language,
         "matches": out,
         "count": out.len(),
-        "timed_out_hint": "Per-query timeout applies (see atls-core parser/query.rs)",
     }))
 }
 

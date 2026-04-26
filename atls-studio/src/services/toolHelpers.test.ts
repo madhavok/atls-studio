@@ -30,17 +30,14 @@ function preflightOk(overrides: Partial<PreflightResult> = {}): PreflightResult 
 }
 
 describe('getAtlsBatchQueryTimeoutMs', () => {
-  it('uses 300s floor for refactor (non-rollback)', () => {
-    expect(getAtlsBatchQueryTimeoutMs('refactor', { action: 'execute' }, 120_000)).toBe(300_000);
-    expect(getAtlsBatchQueryTimeoutMs('change.refactor', {}, 50_000)).toBe(300_000);
-  });
-
-  it('uses 90s for refactor rollback (not the 300s refactor bucket)', () => {
-    expect(getAtlsBatchQueryTimeoutMs('refactor', { action: 'rollback' }, 120_000)).toBe(90_000);
-  });
-
-  it('passes through default timeout for other operations', () => {
+  it('passes through requested values because tool invokes no longer enforce deadlines', () => {
+    expect(getAtlsBatchQueryTimeoutMs('refactor', { action: 'execute' }, 120_000)).toBe(120_000);
+    expect(getAtlsBatchQueryTimeoutMs('change.refactor', {}, 50_000)).toBe(50_000);
     expect(getAtlsBatchQueryTimeoutMs('context', { type: 'full' }, 120_000)).toBe(120_000);
+  });
+
+  it('does not apply a shorter rollback cap', () => {
+    expect(getAtlsBatchQueryTimeoutMs('refactor', { action: 'rollback' }, 120_000)).toBe(120_000);
   });
 });
 

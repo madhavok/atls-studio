@@ -2994,7 +2994,7 @@ pub async fn atls_batch_query(
                     .and_then(|v| v.as_u64())
                     .unwrap_or(120);
 
-                // Shell commands now use run_shell_cmd_async (spawn_blocking + timeout)
+                // Deprecated compatibility parameter: tool commands now run to completion.
                 
                 // Collect detected project info for error messages
                 let detected_info = || -> serde_json::Value {
@@ -3211,14 +3211,12 @@ pub async fn atls_batch_query(
                         let mut stderr = String::from_utf8_lossy(&output.stderr).to_string();
                         let mut combined = combine_output(&stdout, &stderr);
 
-                        // Retry with npm install if Node test failed due to missing deps (e.g. npm-license)
-                        // Use capped timeout for npm install (90s max) to avoid long hangs on large monorepos
+                        // Retry with npm install if Node test failed due to missing deps (e.g. npm-license).
                         if has_package_json && !output.status.success()
                             && (combined.contains("npm-license") || combined.contains("Cannot find module")
                                 || combined.contains("MODULE_NOT_FOUND") || combined.contains("Error: Cannot find module"))
                         {
-                            let install_timeout = std::cmp::min(90u64, timeout_seconds);
-                            let _ = run_shell_cmd_async("npm install".to_string(), work_dir.clone(), install_timeout).await;
+                            let _ = run_shell_cmd_async("npm install".to_string(), work_dir.clone(), timeout_seconds).await;
                             output = run_shell_cmd_async(cmd_str.clone(), work_dir.clone(), timeout_seconds).await?;
                             stdout = String::from_utf8_lossy(&output.stdout).to_string();
                             stderr = String::from_utf8_lossy(&output.stderr).to_string();
@@ -4661,8 +4659,6 @@ pub async fn atls_batch_query(
 
                 // Phase 1: Compare against name+signature in DB (no file I/O).
                 // ORDER BY id DESC so newest symbols are included first.
-                let phase_start = std::time::Instant::now();
-                let phase_timeout = std::time::Duration::from_secs(20);
                 let mut stmt = match conn.prepare(
                     "SELECT s.name, f.path, s.line, s.kind, s.signature, s.metadata,
                             s.end_line
@@ -4736,12 +4732,7 @@ pub async fn atls_batch_query(
                     .collect();
 
                 // Phase 1: Compare against signature + function name (no file I/O)
-                let mut timed_out = false;
                 for (name, file, line, kind, signature, _metadata, db_end_line) in &db_rows {
-                    if phase_start.elapsed() > phase_timeout {
-                        timed_out = true;
-                        break;
-                    }
                     let key = format!("{}:{}", file, line);
                     if phase0_keys.contains(&key) { continue; }
                     let sig_text = signature.as_deref().unwrap_or("");
@@ -4812,11 +4803,6 @@ pub async fn atls_batch_query(
                 if let Some(hint) = retry_hint {
                     response.as_object_mut().unwrap().insert("hint".to_string(), serde_json::json!(hint));
                 }
-                if timed_out {
-                    response.as_object_mut().unwrap().insert("warning".to_string(),
-                        serde_json::json!("Search timed out after 20s â€” returning partial results. Try narrowing with file_paths or a higher threshold."));
-                }
-                
                 Ok(response)
             }
             "find_similar_functions" => {

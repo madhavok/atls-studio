@@ -233,24 +233,20 @@ pub async fn execute_command(
 ) -> Result<String, String> {
     let working_dir = resolve_working_dir(&app, cwd);
 
-    let result = tokio::time::timeout(
-        std::time::Duration::from_secs(30),
-        tokio::task::spawn_blocking(move || {
-            let (shell, shell_arg) = super::resolve_shell();
-            let mut cmd = std::process::Command::new(shell);
-            cmd.arg(shell_arg).arg(&command).current_dir(&working_dir);
-            #[cfg(windows)]
-            cmd.creation_flags(0x08000000);
-            cmd.output()
-        }),
-    )
+    let result = tokio::task::spawn_blocking(move || {
+        let (shell, shell_arg) = super::resolve_shell();
+        let mut cmd = std::process::Command::new(shell);
+        cmd.arg(shell_arg).arg(&command).current_dir(&working_dir);
+        #[cfg(windows)]
+        cmd.creation_flags(0x08000000);
+        cmd.output()
+    })
     .await;
 
     let output = match result {
-        Ok(Ok(Ok(output))) => output,
-        Ok(Ok(Err(e))) => return Err(format!("Failed to execute command: {}", e)),
-        Ok(Err(e)) => return Err(format!("Command task panicked: {}", e)),
-        Err(_) => return Err("Command timed out after 30s".to_string()),
+        Ok(Ok(output)) => output,
+        Ok(Err(e)) => return Err(format!("Failed to execute command: {}", e)),
+        Err(e) => return Err(format!("Command task panicked: {}", e)),
     };
 
     let stdout = strip_ansi(&String::from_utf8_lossy(&output.stdout));

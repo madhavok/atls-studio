@@ -31,8 +31,7 @@ impl TreeSitterDetector {
     }
 
     /// Detect issues in source code using tree-sitter queries.
-    /// Uses per-query timeout and match limits to prevent hangs on
-    /// pathological queries or very large files.
+    /// Uses match limits to bound pathological queries or very large files.
     pub fn detect(&self, source: &str, tree: &Tree) -> Result<Vec<ParsedIssue>, TreeSitterDetectorError> {
         let query_str = self.get_query_string()?;
 
@@ -46,12 +45,6 @@ impl TreeSitterDetector {
         let result = execute_query(&query, tree, source.as_bytes())
             .map_err(|e| TreeSitterDetectorError::QueryExecutionError(e.to_string()))?;
 
-        if result.timed_out {
-            tracing::warn!(
-                "TIMEOUT: pattern {:?} timed out on current file (query halted by tree-sitter)",
-                self.pattern.id
-            );
-        }
         if result.exceeded_match_limit {
             tracing::warn!(
                 "MATCH_LIMIT: pattern {:?} exceeded match limit on current file ({} matches collected)",

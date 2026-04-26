@@ -67,7 +67,7 @@ pub fn extract_matches_from_cursor(
     results
 }
 
-/// Extract matches using `matches_with_options` (timeout via progress callback).
+/// Extract matches using `matches_with_options`.
 pub fn extract_matches_with_options(
     query: &Query,
     cursor: &mut tree_sitter::QueryCursor,

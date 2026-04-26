@@ -397,16 +397,7 @@ async function runSubagentRound(
     throw new Error(`Subagent streaming not supported for provider: ${provider}`);
   }
 
-  const SUBAGENT_ROUND_TIMEOUT_MS = 5 * 60 * 1000;
-  const timeoutPromise = new Promise<'timeout'>((resolve) =>
-    setTimeout(() => resolve('timeout'), SUBAGENT_ROUND_TIMEOUT_MS),
-  );
-  const raceResult = await Promise.race([donePromise.then(() => 'done' as const), timeoutPromise]);
-  if (raceResult === 'timeout') {
-    unlisten();
-    streamError = `Subagent round timed out after ${SUBAGENT_ROUND_TIMEOUT_MS / 1000}s`;
-    console.error(`[subagent] ${streamError}`);
-  }
+  await donePromise;
 
   if (streamError) {
     throw new Error(`Subagent stream failed (${provider}/${model}): ${streamError}`);

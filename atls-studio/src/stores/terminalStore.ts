@@ -153,7 +153,6 @@ interface PendingCompletion {
   resolve: (result: ExecutionResult) => void;
   startMarker: string;
   buffer: string;
-  timeoutId: ReturnType<typeof setTimeout>;
 }
 const pendingCompletions = new Map<string, PendingCompletion[]>();
 
@@ -314,7 +313,6 @@ function checkPendingCompletions(terminalId: string): void {
     const p = pending[i];
     const parsed = tryParseAgentExecPtyBuffer(p.buffer, p.marker, p.startMarker);
     if (parsed) {
-      clearTimeout(p.timeoutId);
       p.resolve(parsed);
       toRemove.push(i);
     }
@@ -335,38 +333,14 @@ function clearOutputBufferDirect(id: string): void {
 function registerPendingCompletion(
   terminalId: string, 
   marker: string, 
-  startMarker: string,
-  timeoutMs: number
+  startMarker: string
 ): Promise<ExecutionResult> {
   return new Promise((resolve) => {
-    const timeoutId = setTimeout(() => {
-      // Timeout - remove from pending and resolve with error
-      const pending = pendingCompletions.get(terminalId);
-      if (pending) {
-        const idx = pending.findIndex(p => p.marker === marker);
-        if (idx !== -1) {
-          const p = pending[idx];
-          pending.splice(idx, 1);
-          console.warn(`[Terminal] Command timed out after ${timeoutMs}ms`);
-          resolve({ 
-            exitCode: -1, 
-            output: `Timeout. Last output: ${p.buffer.slice(-200)}`, 
-            success: false 
-          });
-        } else {
-          resolve({ exitCode: -1, output: 'Timeout (marker not found)', success: false });
-        }
-      } else {
-        resolve({ exitCode: -1, output: 'Timeout (terminal destroyed)', success: false });
-      }
-    }, timeoutMs);
-    
     const completion: PendingCompletion = {
       marker,
       resolve,
       startMarker,
       buffer: '',
-      timeoutId,
     };
     
     let pending = pendingCompletions.get(terminalId);
@@ -376,6 +350,18 @@ function registerPendingCompletion(
     }
     pending.push(completion);
   });
+}
+
+function resolvePendingCompletions(
+  terminalId: string,
+  result: ExecutionResult,
+): void {
+  const pending = pendingCompletions.get(terminalId);
+  if (!pending) return;
+  pendingCompletions.delete(terminalId);
+  for (const p of pending) {
+    p.resolve(result);
+  }
 }
 
 export const useTerminalStore = create<TerminalStore>((set, get) => ({
@@ -491,11 +477,11 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
     const closingTerminal = get().terminals.get(id);
     await get().cleanupTerminal(id);
     // Clean up leaked resources for the closed terminal
-    const pending = pendingCompletions.get(id);
-    if (pending) {
-      for (const p of pending) clearTimeout(p.timeoutId);
-      pendingCompletions.delete(id);
-    }
+    resolvePendingCompletions(id, {
+      exitCode: -1,
+      output: 'Terminal closed before command completed',
+      success: false,
+    });
     outputBuffers.delete(id);
     agentLogEntries.delete(id);
     agentDisplayStates.delete(id);
@@ -778,7 +764,7 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
     }
 
     // Register completion after script is on disk; before PTY runs it
-    const completionPromise = registerPendingCompletion(terminalId, marker, startMarker, 30000);
+    const completionPromise = registerPendingCompletion(terminalId, marker, startMarker);
 
     const invokeLine = '& ' + "'" + escapePsSingleQuotedPath(ps1Path) + "'";
 
@@ -803,9 +789,7 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
 
     // Finalize agent display entry
     if (terminal.isAgent && agentEntryId) {
-      const status = result.exitCode === -1 && result.output.startsWith('Timeout')
-        ? 'timeout' as const
-        : result.success ? 'done' as const : 'error' as const;
+      const status = result.success ? 'done' as const : 'error' as const;
       finalizeAgentEntry(terminalId, agentEntryId, result.exitCode, status);
     }
 

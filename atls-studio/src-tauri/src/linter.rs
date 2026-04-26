@@ -142,7 +142,7 @@ pub struct LintOptions {
     /// Include warnings (default: true). Reserved for future filtering support.
     #[allow(dead_code)]
     pub include_warnings: Option<bool>,
-    /// Timeout in ms for CLI linters (default: 10000)
+    /// Deprecated compatibility field; CLI linters no longer enforce deadlines.
     pub timeout_ms: Option<u64>,
     /// Use tree-sitter syntax-only check instead of full compilation.
     /// Catches syntax errors (malformed braces, missing tokens) without
@@ -153,43 +153,24 @@ pub struct LintOptions {
     pub use_native_parser: Option<bool>,
 }
 
-/// Default timeout for external linter commands (15 seconds)
+/// Deprecated compatibility value; external linter commands run to completion.
 const DEFAULT_LINT_TIMEOUT_MS: u64 = 15000;
 
-/// Extended timeout for compiler-based linters (C#/dotnet, Java/javac) that
-/// may need to resolve dependencies and build entire projects.
+/// Deprecated compatibility value for compiler-based linters.
 const COMPILER_LINT_TIMEOUT_MS: u64 = 30000;
 
-/// Run an external command with a timeout. Returns None if the command
-/// times out or fails to spawn, preventing hangs from missing tools or
-/// Windows Defender delays.
-fn run_lint_command(mut cmd: Command, timeout_ms: u64) -> Option<std::process::Output> {
-    use std::time::Duration;
-
+/// Run an external command. Returns None if the command fails to spawn.
+fn run_lint_command(mut cmd: Command, _timeout_ms: u64) -> Option<std::process::Output> {
     #[cfg(windows)]
     cmd.creation_flags(CREATE_NO_WINDOW);
 
-    let child = match cmd.stdout(std::process::Stdio::piped())
+    match cmd.stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
-        .spawn()
+        .output()
     {
-        Ok(c) => c,
+        Ok(output) => Some(output),
         Err(e) => {
-            eprintln!("[Linter] Failed to spawn command: {}", e);
-            return None;
-        }
-    };
-
-    let (tx, rx) = std::sync::mpsc::channel();
-    std::thread::spawn(move || {
-        let _ = tx.send(child.wait_with_output());
-    });
-
-    match rx.recv_timeout(Duration::from_millis(timeout_ms)) {
-        Ok(Ok(output)) => Some(output),
-        Ok(Err(_)) => None,
-        Err(_) => {
-            eprintln!("[Linter] Command timed out after {}ms", timeout_ms);
+            eprintln!("[Linter] Failed to run command: {}", e);
             None
         }
     }
@@ -1219,7 +1200,7 @@ pub fn lint_java(path: &str, content: &str, options: &LintOptions) -> Vec<LintRe
             }
         }
         None => {
-            eprintln!("[Linter] javac not available or timed out");
+            eprintln!("[Linter] javac not available or failed to run");
         }
     }
     
@@ -1343,7 +1324,7 @@ pub fn lint_rust(path: &str, content: &str, options: &LintOptions) -> Vec<LintRe
             }
         }
         None => {
-            eprintln!("[Linter] rustc not available or timed out");
+            eprintln!("[Linter] rustc not available or failed to run");
         }
     }
     
@@ -1551,7 +1532,7 @@ pub fn lint_php(path: &str, content: &str, options: &LintOptions) -> Vec<LintRes
             }
         }
         None => {
-            eprintln!("[Linter] php not available or timed out");
+            eprintln!("[Linter] php not available or failed to run");
         }
     }
     
@@ -1640,7 +1621,7 @@ pub fn lint_ruby(path: &str, content: &str, options: &LintOptions) -> Vec<LintRe
             }
         }
         None => {
-            eprintln!("[Linter] ruby not available or timed out");
+            eprintln!("[Linter] ruby not available or failed to run");
         }
     }
 
@@ -1796,7 +1777,7 @@ pub fn lint_kotlin(path: &str, content: &str, options: &LintOptions) -> Vec<Lint
             }
         }
         None => {
-            eprintln!("[Linter] kotlinc not available or timed out");
+            eprintln!("[Linter] kotlinc not available or failed to run");
         }
     }
 
@@ -1872,7 +1853,7 @@ pub fn lint_dart(path: &str, content: &str, options: &LintOptions) -> Vec<LintRe
             }
         }
         None => {
-            eprintln!("[Linter] dart not available or timed out");
+            eprintln!("[Linter] dart not available or failed to run");
         }
     }
 

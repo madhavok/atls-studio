@@ -24,30 +24,26 @@ pub async fn ai_execute(
     cwd: Option<String>,
     timeout_ms: Option<u64>,
 ) -> Result<AiCommandResult, String> {
+    let _ = timeout_ms;
     let working_dir = resolve_working_dir(&app, cwd);
     let working_dir_clone = working_dir.clone();
     let start = Instant::now();
-    let timeout = Duration::from_millis(timeout_ms.unwrap_or(30000));
 
-    let output = match tokio::time::timeout(
-        timeout,
-        tokio::task::spawn_blocking(move || {
-            let (shell, shell_arg) = super::resolve_shell();
-            let mut cmd = std::process::Command::new(shell);
-            cmd.arg(shell_arg)
-                .arg(&command)
-                .current_dir(&working_dir_clone)
-                .stdout(std::process::Stdio::piped())
-                .stderr(std::process::Stdio::piped());
-            #[cfg(windows)]
-            cmd.creation_flags(0x08000000);
-            cmd.output()
-        }),
-    ).await {
-        Ok(Ok(Ok(output))) => output,
-        Ok(Ok(Err(e))) => return Err(format!("Failed to execute command: {}", e)),
-        Ok(Err(e)) => return Err(format!("Command task panicked: {}", e)),
-        Err(_) => return Err(format!("Command timed out after {}ms", timeout.as_millis())),
+    let output = match tokio::task::spawn_blocking(move || {
+        let (shell, shell_arg) = super::resolve_shell();
+        let mut cmd = std::process::Command::new(shell);
+        cmd.arg(shell_arg)
+            .arg(&command)
+            .current_dir(&working_dir_clone)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped());
+        #[cfg(windows)]
+        cmd.creation_flags(0x08000000);
+        cmd.output()
+    }).await {
+        Ok(Ok(output)) => output,
+        Ok(Err(e)) => return Err(format!("Failed to execute command: {}", e)),
+        Err(e) => return Err(format!("Command task panicked: {}", e)),
     };
     
     let duration = start.elapsed();
@@ -79,7 +75,7 @@ pub async fn ai_execute(
 pub(crate) struct BackgroundProcess {
     pub(crate) child: std::process::Child,
     pub(crate) output_buffer: Arc<Mutex<Vec<String>>>,
-    /// Tracks when the process started for timeout enforcement and status reporting.
+    /// Tracks when the process started for status reporting.
     pub(crate) _start_time: Instant,
 }
 

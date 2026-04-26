@@ -13,25 +13,16 @@ import { parseSetExpression } from '../utils/hashRefParsers';
 import { getTurn } from './hashProtocol';
 
 const TOOL_TIMEOUT_MS = 120000;
-/** Refactor/extract can exceed default when indexing large workspaces. */
-const REFACTOR_BATCH_TIMEOUT_MS = 300_000;
-/** Rollback (restore from registry hash) should be fast; cap separately so a stuck backend fails before 5 minutes. */
-const REFACTOR_ROLLBACK_TIMEOUT_MS = 90_000;
 
-/** Effective timeout for `atls_batch_query` (preflight + main invoke). Exported for unit tests. */
+/** @deprecated Tool invokes no longer enforce model-facing deadlines. */
 export function getAtlsBatchQueryTimeoutMs(
   operation: string,
   params: Record<string, unknown>,
   timeoutMs: number,
 ): number {
-  if (operation !== 'change.refactor' && operation !== 'refactor') {
-    return timeoutMs;
-  }
-  if (params.action === 'rollback') {
-    // Do not use the 300s refactor bucket — restore-from-hash should be seconds; fail faster if Rust stalls.
-    return REFACTOR_ROLLBACK_TIMEOUT_MS;
-  }
-  return Math.max(timeoutMs, REFACTOR_BATCH_TIMEOUT_MS);
+  void operation;
+  void params;
+  return timeoutMs;
 }
 
 /** Client-only keys for atlsBatchQuery; never forwarded to Rust atls_batch_query. */
@@ -266,21 +257,8 @@ export async function invokeWithTimeout<T>(
   args: Record<string, unknown>,
   timeoutMs: number = TOOL_TIMEOUT_MS
 ): Promise<T> {
-  let timeoutId: ReturnType<typeof setTimeout> | undefined;
-  const invokePromise = invoke<T>(cmd, args);
-  const timeoutPromise = new Promise<never>((_, reject) => {
-    timeoutId = setTimeout(() => {
-      reject(new Error(`${cmd} timed out after ${timeoutMs}ms`));
-    }, timeoutMs);
-  });
-
-  try {
-    return await Promise.race([invokePromise, timeoutPromise]);
-  } finally {
-    if (timeoutId) clearTimeout(timeoutId);
-    // If the timeout won the race, `invoke` may still be pending; swallow late rejections.
-    void invokePromise.catch(() => {});
-  }
+  void timeoutMs;
+  return invoke<T>(cmd, args);
 }
 
 interface HashLookup {
