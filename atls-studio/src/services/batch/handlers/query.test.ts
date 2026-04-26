@@ -282,6 +282,52 @@ describe('query handlers', () => {
     expect((out.content as Record<string, unknown>)?.unique_file_paths).toEqual(['src/a.ts', 'src/b.ts', 'src/c.ts']);
   });
 
+  it('handleSearchCode exact_text filters FTS candidates to literal matches', async () => {
+    const calls: Array<{ op: string; params: Record<string, unknown> }> = [];
+    const ctx = {
+      atlsBatchQuery: vi.fn(async (op: string, params: Record<string, unknown>) => {
+        calls.push({ op, params });
+        if (op === 'code_search') {
+          return {
+            results: [{
+              query: 'return x * 3;',
+              results: [
+                { file: 'src/false_positive.ts', line: 1 },
+                { file: 'src/actual.ts', line: 2 },
+              ],
+            }],
+          };
+        }
+        if (op === 'context') {
+          const file = (params.file_paths as string[])[0];
+          return {
+            results: [{
+              file,
+              content: file.endsWith('actual.ts')
+                ? 'export function f() {\n  return x * 3;\n}\n'
+                : 'export function f() {\n  return x + 3;\n}\n',
+            }],
+          };
+        }
+        return {};
+      }),
+      store: () => minimalStore(),
+    } as any;
+
+    const out = await handleSearchCode(
+      { queries: ['return x * 3;'], exact_text: 'return x * 3;', max_file_paths: 10 },
+      ctx,
+    );
+
+    expect(out.ok).toBe(true);
+    expect(out.content).toMatchObject({
+      file_paths: ['src/actual.ts'],
+      unique_file_paths: ['src/actual.ts'],
+      lines: [2],
+    });
+    expect(calls.map(c => c.op)).toEqual(['code_search', 'context', 'context']);
+  });
+
   it('handleSearchCode scrubs __atls_check_* scratch hits from results', async () => {
     const ctx = {
       atlsBatchQuery: vi.fn(async () => ({

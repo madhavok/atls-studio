@@ -1250,6 +1250,43 @@ describe('executeUnifiedBatch multiedit multibatch stress', () => {
     expect(verifySpy).not.toHaveBeenCalled();
   });
 
+  it('skips unchanged edit retry when primary edit failed with syntax_error_after_edit', async () => {
+    const retryReadSpy = vi.fn(async () => raw('retry read', { ok: true }));
+    const editSpy = vi.fn(async () => ({
+      kind: 'edit_result' as const,
+      ok: false,
+      refs: [],
+      summary: 'edit: ROLLED BACK [syntax_error]',
+      content: { error_class: 'syntax_error_after_edit' },
+    }));
+
+    handlers.set('change.edit', editSpy as unknown as OpHandler);
+    handlers.set('read.lines', retryReadSpy as unknown as OpHandler);
+
+    const result = await executeUnifiedBatch({
+      version: '1.0',
+      steps: [
+        { id: 'edit', use: 'change.edit', with: { file: 'x.ts', line_edits: [{ line: 1, action: 'replace', content: 'bad {' }] } },
+        {
+          id: 'retry_read',
+          use: 'read.lines',
+          if: { step_error_class_in: { step_id: 'edit', classes: ['stale_hash', 'anchor_not_found'] } },
+          with: { file_path: 'x.ts', start_line: 1, end_line: 1 },
+        },
+        {
+          id: 'retry_edit',
+          use: 'change.edit',
+          if: { step_error_class_in: { step_id: 'edit', classes: ['stale_hash', 'anchor_not_found'] } },
+          with: { file: 'x.ts', line_edits: [{ line: 1, action: 'replace', content: 'bad {' }] },
+        },
+      ],
+    }, makeCtx());
+
+    expect(editSpy).toHaveBeenCalledTimes(1);
+    expect(retryReadSpy).not.toHaveBeenCalled();
+    expect(result.step_results.find(r => r.id === 'retry_edit')?.summary).toContain('SKIPPED');
+  });
+
   it('honors max_steps and stops before exceeding', async () => {
     const callOrder: string[] = [];
 

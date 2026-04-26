@@ -100,6 +100,20 @@ describe('evaluateCondition', () => {
     ).toBe(false);
   });
 
+  it('step_error_class_in checks top-level and internal error classes', () => {
+    const outputs = new Map<string, StepOutput>([
+      ['syntax', { ok: false, refs: [], content: { error_class: 'syntax_error_after_edit' } }],
+      ['stale', { ok: false, refs: [], content: { _internal: { error_class: 'stale_hash' } } }],
+    ]);
+
+    expect(evaluateCondition({
+      step_error_class_in: { step_id: 'syntax', classes: ['stale_hash'] },
+    }, outputs)).toBe(false);
+    expect(evaluateCondition({
+      step_error_class_in: { step_id: 'stale', classes: ['stale_hash'] },
+    }, outputs)).toBe(true);
+  });
+
   it('or is true if any sub-condition is true', () => {
     const outputs = new Map<string, StepOutput>([
       ['a', { ok: false, refs: [] }],

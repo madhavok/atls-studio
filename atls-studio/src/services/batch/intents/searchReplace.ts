@@ -5,10 +5,10 @@
  * verifies. Works ONLY for literal text replacement, not semantic transforms.
  *
  * Edit shape: `{edits:[{file, old, new}], replace_all:true}` — dispatched to
- * the backend `replace` op via `resolve_edit_operation` (Rust), which
- * verifies the `old` substring exists in the file before writing. FTS false
- * positives (hits where the token appears but the literal string doesn't)
- * produce `Pattern not found` errors instead of corrupting unrelated lines.
+ * `change.edit`'s draft path, which preserves FileView/HPP freshness,
+ * undo tracking, and lint-on-write while treating `old` as an exact content
+ * anchor. Search is literal-filtered before expansion so FTS false positives
+ * do not fan out into edit attempts.
  *
  * Historical bug: emitted `line_edits:[{action:'replace', content:new}]`
  * bound to a single line number from search hits. That replaced the ENTIRE
@@ -48,15 +48,17 @@ export const resolveSearchReplace: IntentResolver = (
   const force = params.force === true;
   const intentId = (params._intentId as string) ?? 'search_replace';
 
-  const sq = searchQuery.trim();
   const ot = oldText.trim();
-  if (!sq && !ot) {
+  if (!ot) {
     return {
       steps: [
         {
           id: makeStepId(intentId, 'blocked'),
           use: 'session.emit',
-          with: { label: 'intent.search_replace' },
+          with: {
+            label: 'intent.search_replace',
+            content: 'intent.search_replace requires exact old_text; no edits were emitted.',
+          },
         },
       ],
     };
@@ -74,7 +76,8 @@ export const resolveSearchReplace: IntentResolver = (
 
   const searchId = makeStepId(intentId, 'search');
   const searchWith: Record<string, unknown> = {
-    queries: [searchQuery],
+    queries: [oldText || searchQuery],
+    exact_text: oldText,
     /** Align backend hit cap + structured `content.lines` length with edit slot count (default 10). */
     limit: maxMatches,
     max_file_paths: maxMatches,
@@ -93,13 +96,10 @@ export const resolveSearchReplace: IntentResolver = (
   for (let i = 0; i < maxMatches; i++) {
     const editId = makeStepId(intentId, `edit_${i}`);
 
-    // Text-replace shape: the backend `replace` op verifies `old` exists in
-    // the target file (errors `Pattern not found` otherwise) and replaces
-    // only that substring, leaving surrounding content intact. `replace_all`
-    // matches the intent's semantic — replace every occurrence in each hit
-    // file. `resolve_edit_operation` routes `edits:[{old,new}]` to `replace`
-    // when no line_edits/mode are present. `inheritSingleEditContext` folds
-    // the top-level `file_path` into `edits[0].file`.
+    // Text-replace shape stays on `change.edit`'s draft route: the primitive
+    // verifies `old` exists, preserves FileView/HPP freshness semantics, and
+    // replaces only that substring. `replace_all` matches the intent's
+    // semantic — replace every occurrence in each literal-hit file.
     const editWith: Record<string, unknown> = {
       edits: [{ old: oldText, new: newText }],
       replace_all: true,

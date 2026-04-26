@@ -164,6 +164,7 @@ export type RefExpr =
 export type ConditionExpr =
   | { step_ok: string }
   | { step_has_refs: string }
+  | { step_error_class_in: { step_id: string; classes: string[] } }
   | { ref_exists: string }
   | { all_steps_ok: string[] }
   | { or: ConditionExpr[] }

@@ -483,14 +483,19 @@ describe('intent.edit resolver', () => {
     expect(readSteps.length).toBe(0);
   });
 
-  it('emits conditional retry steps with not:{step_ok}', () => {
+  it('emits conditional retry steps only for recoverable edit error classes', () => {
     const result = resolveEdit(params, emptyContext());
     const retryRead = result.steps.find(s => s.id === 'e1__retry_read');
     const retryEdit = result.steps.find(s => s.id === 'e1__retry_edit');
     expect(retryRead).toBeDefined();
     expect(retryEdit).toBeDefined();
-    expect(retryRead!.if).toEqual({ not: { step_ok: 'e1__edit' } });
-    expect(retryEdit!.if).toEqual({ not: { step_ok: 'e1__edit' } });
+    expect(retryRead!.if).toMatchObject({
+      step_error_class_in: { step_id: 'e1__edit' },
+    });
+    expect(retryEdit!.if).toMatchObject({
+      step_error_class_in: { step_id: 'e1__edit' },
+    });
+    expect(JSON.stringify(retryEdit!.if)).not.toContain('syntax_error_after_edit');
   });
 
   it('verify:false → no verify step', () => {
@@ -616,7 +621,7 @@ describe('intent.survey resolver', () => {
 // ---------------------------------------------------------------------------
 
 describe('intent.refactor resolver', () => {
-  const params = { file_path: 'src/lib.rs', symbol_names: ['dispatch'], _intentId: 'rf1' };
+  const params = { file_path: 'src/lib.rs', symbol_names: ['dispatch'], target_file: 'src/dispatch.rs', _intentId: 'rf1' };
 
   it('empty context → emits read + pin + deps + extract + refactor + verify', () => {
     const result = resolveRefactor(params, emptyContext());
@@ -664,7 +669,33 @@ describe('intent.refactor resolver', () => {
     const extractStep = result.steps.find(s => s.use === 'analyze.extract_plan');
     expect(extractStep?.with?.strategy).toBe('by_cluster');
     const refactorStep = result.steps.find(s => s.use === 'change.refactor');
-    expect(refactorStep?.with?.strategy).toBe('rename');
+    expect(refactorStep?.with?.extractions).toEqual([
+      { symbols: ['dispatch'], target_file: 'src/dispatch.rs' },
+    ]);
+  });
+
+  it('maps explicit symbol extraction to HPP-compatible execute params', () => {
+    const result = resolveRefactor(params, emptyContext());
+    const refactorStep = result.steps.find(s => s.use === 'change.refactor');
+    expect(refactorStep?.with).toMatchObject({
+      action: 'execute',
+      source_file: 'src/lib.rs',
+      extractions: [{ symbols: ['dispatch'], target_file: 'src/dispatch.rs' }],
+    });
+    expect(refactorStep?.with?.file_paths).toBeUndefined();
+    expect(refactorStep?.with?.strategy).toBeUndefined();
+  });
+
+  it('does not emit vacuous HPP execute when target_file is missing', () => {
+    const result = resolveRefactor(
+      { file_path: 'src/lib.rs', symbol_names: ['dispatch'], _intentId: 'rf_missing' },
+      emptyContext(),
+    );
+    const ops = result.steps.map(s => s.use);
+    expect(ops).not.toContain('change.refactor');
+    expect(ops).toContain('session.emit');
+    const emitStep = result.steps.find(s => s.use === 'session.emit');
+    expect(emitStep?.with?.content).toContain('no HPP execute step was emitted');
   });
 });
 
@@ -1069,6 +1100,8 @@ describe('intent.search_replace resolver', () => {
   it('search forwards limit and max_file_paths from max_matches', () => {
     const result = resolveSearchReplace({ ...params, max_matches: 5 }, emptyContext());
     const searchStep = result.steps.find(s => s.use === 'search.code');
+    expect(searchStep!.with!.queries).toEqual(['console.log']);
+    expect(searchStep!.with!.exact_text).toBe('console.log');
     expect(searchStep!.with!.limit).toBe(5);
     expect(searchStep!.with!.max_file_paths).toBe(5);
   });

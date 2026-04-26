@@ -113,6 +113,16 @@ export function evaluateCondition(
     const output = stepOutputs.get(cond.step_has_refs);
     return (output?.refs?.length ?? 0) > 0;
   }
+  if ('step_error_class_in' in cond) {
+    const { step_id, classes } = cond.step_error_class_in;
+    const output = stepOutputs.get(step_id);
+    const content = output?.content as Record<string, unknown> | undefined;
+    const internal = content?._internal as Record<string, unknown> | undefined;
+    const errorClass = typeof content?.error_class === 'string'
+      ? content.error_class
+      : (typeof internal?.error_class === 'string' ? internal.error_class : undefined);
+    return typeof errorClass === 'string' && classes.includes(errorClass);
+  }
   if ('step_content_array_nonempty' in cond) {
     const { step_id, path } = (cond as { step_content_array_nonempty: { step_id: string; path: string } }).step_content_array_nonempty;
     const output = stepOutputs.get(step_id);

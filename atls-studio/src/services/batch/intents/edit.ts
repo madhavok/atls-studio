@@ -14,6 +14,15 @@ import type { IntentResolver, IntentResult, IntentContext, Step } from '../types
 import { AwarenessLevel } from '../snapshotTracker';
 import { makeStepId, isFilePinned, isFileStaged, getFileAwareness, computeNextTargets } from '../intents';
 
+const RECOVERABLE_EDIT_ERROR_CLASSES = [
+  'anchor_not_found',
+  'stale_hash',
+  'range_drifted',
+  'mixed',
+  'span_out_of_range',
+  'anchor_mismatch_after_refresh',
+];
+
 export const resolveEdit: IntentResolver = (
   params: Record<string, unknown>,
   context: IntentContext,
@@ -82,14 +91,14 @@ export const resolveEdit: IntentResolver = (
         start_line: Math.max(1, editRange.start - 5),
         end_line: editRange.end + 5,
       },
-      if: { not: { step_ok: editId } },
+      if: { step_error_class_in: { step_id: editId, classes: RECOVERABLE_EDIT_ERROR_CLASSES } },
     });
   } else {
     steps.push({
       id: retryReadId,
       use: 'read.shaped',
       with: { file_paths: [filePath], shape: 'sig' },
-      if: { not: { step_ok: editId } },
+      if: { step_error_class_in: { step_id: editId, classes: RECOVERABLE_EDIT_ERROR_CLASSES } },
     });
   }
 
@@ -97,7 +106,7 @@ export const resolveEdit: IntentResolver = (
     id: retryEditId,
     use: 'change.edit',
     with: { file_path: filePath, line_edits: lineEdits },
-    if: { not: { step_ok: editId } },
+    if: { step_error_class_in: { step_id: editId, classes: RECOVERABLE_EDIT_ERROR_CLASSES } },
   });
 
   if (verify) {

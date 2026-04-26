@@ -84,16 +84,17 @@ export const resolveRefactor: IntentResolver = (
     });
   }
 
-  const hasRefactorPayload = symbolNames.length > 0 || !!targetFile || !!rawStrategy;
+  const hasExecutableExtraction = symbolNames.length > 0 && !!targetFile;
 
-  if (hasRefactorPayload) {
+  if (hasExecutableExtraction) {
     const refactorWith: Record<string, unknown> = {
       action: 'execute',
-      file_paths: [filePath],
+      source_file: filePath,
+      extractions: [{
+        symbols: symbolNames,
+        target_file: targetFile,
+      }],
     };
-    if (symbolNames.length > 0) refactorWith.symbol_names = symbolNames;
-    if (targetFile) refactorWith.to = targetFile;
-    if (rawStrategy) refactorWith.strategy = rawStrategy;
 
     steps.push({
       id: refactorId,
@@ -108,6 +109,26 @@ export const resolveRefactor: IntentResolver = (
       id: verifyId,
       use: 'verify.build',
       if: { step_ok: refactorId },
+    });
+  } else {
+    const missingBits: string[] = [];
+    if (symbolNames.length === 0) missingBits.push('symbol_names');
+    if (!targetFile) missingBits.push('target_file');
+    steps.push({
+      id: refactorId,
+      use: 'session.emit',
+      with: {
+        label: 'intent.refactor',
+        content: [
+          'intent.refactor produced analysis only; no HPP execute step was emitted.',
+          `strategy: ${rawStrategy}`,
+          `source_file: ${filePath || '(missing)'}`,
+          `next: provide ${missingBits.join(' + ')} to execute an extraction, or call change.refactor with explicit HPP operations.`,
+        ].join('\n'),
+      },
+      ...(needsExtract
+        ? { if: { step_ok: extractId } }
+        : {}),
     });
   }
 

@@ -173,8 +173,8 @@ function scrubScratchHitsFromResult(result: unknown): void {
 /** When FTS yields no structured hits, find 1-based line numbers by substring scan (scoped search / intent.search_replace). */
 function literalHitsFromContent(filePath: string, content: string, query: string): CodeSearchHitRow[] {
   const rows: CodeSearchHitRow[] = [];
-  const q = query.trim();
-  if (!q || !filePath) return rows;
+  const q = query;
+  if (!q.trim() || !filePath) return rows;
   const lines = content.split(/\r?\n/);
   const qLines = q.split('\n');
   if (qLines.length === 1) {
@@ -226,6 +226,28 @@ async function literalFallbackHitsForScopedSearch(
   }
 }
 
+async function literalFilteredHitsForFiles(
+  ctx: HandlerContext,
+  filePaths: string[],
+  query: string,
+  maxHits: number,
+): Promise<CodeSearchHitRow[]> {
+  if (!query.trim() || filePaths.length === 0) return [];
+
+  const rows: CodeSearchHitRow[] = [];
+  const seen = new Set<string>();
+  for (const fp of filePaths) {
+    if (!fp || seen.has(fp)) continue;
+    seen.add(fp);
+    const hits = await literalFallbackHitsForScopedSearch(ctx, fp, query);
+    for (const hit of hits) {
+      rows.push(hit);
+      if (maxHits > 0 && rows.length >= maxHits) return rows;
+    }
+  }
+  return rows;
+}
+
 // ---------------------------------------------------------------------------
 // search.code
 // ---------------------------------------------------------------------------
@@ -250,14 +272,18 @@ export const handleSearchCode: OpHandler = async (params, ctx) => {
     const rowCap = typeof maxPaths === 'number' && maxPaths > 0 ? maxPaths : 0;
     let perHit = extractPerHitStructured(result, rowCap);
 
+    const exactTextRaw = typeof params.exact_text === 'string' ? params.exact_text : '';
+    const exactText = exactTextRaw.trim() ? exactTextRaw : '';
+
     if (
+      !exactText &&
       perHit.file_paths.length === 0 &&
       Array.isArray(filePaths) &&
       filePaths.length === 1 &&
       typeof filePaths[0] === 'string' &&
       queries.length >= 1
     ) {
-      const fb = await literalFallbackHitsForScopedSearch(ctx, filePaths[0], queries[0]);
+      const fb = await literalFallbackHitsForScopedSearch(ctx, filePaths[0], exactText || queries[0]);
       if (fb.length > 0) {
         const cappedByMax = rowCap > 0 ? fb.slice(0, rowCap) : fb;
         perHit = {
@@ -271,6 +297,23 @@ export const handleSearchCode: OpHandler = async (params, ctx) => {
           capped: rowCap > 0 && fb.length > rowCap,
         };
       }
+    }
+
+    if (exactText) {
+      const candidatePaths = perHit.file_paths.length > 0
+        ? perHit.file_paths
+        : (Array.isArray(filePaths) ? filePaths.filter((fp): fp is string => typeof fp === 'string') : []);
+      const literalHits = await literalFilteredHitsForFiles(ctx, candidatePaths, exactText, rowCap);
+      perHit = {
+        file_paths: literalHits.map((r) => r.file),
+        lines: literalHits.map((r) => r.line),
+        end_lines: literalHits.map((r) => {
+          const start = r.line;
+          const el = r.end_line;
+          return el != null && el >= start ? el : start;
+        }),
+        capped: rowCap > 0 && literalHits.length >= rowCap,
+      };
     }
 
     // `file_paths`/`lines`/`end_lines` are per-hit and parallel, so
