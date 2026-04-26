@@ -100,6 +100,24 @@ describe('evaluateCondition', () => {
     ).toBe(false);
   });
 
+  it('step_content_array_has_index checks indexed entries on step content', () => {
+    const outputs = new Map<string, StepOutput>([
+      ['s1', { ok: true, refs: [], content: { unique_file_paths: ['a.ts', 'b.ts'] } }],
+    ]);
+    expect(
+      evaluateCondition(
+        { step_content_array_has_index: { step_id: 's1', path: 'unique_file_paths', index: 1 } },
+        outputs,
+      ),
+    ).toBe(true);
+    expect(
+      evaluateCondition(
+        { step_content_array_has_index: { step_id: 's1', path: 'unique_file_paths', index: 2 } },
+        outputs,
+      ),
+    ).toBe(false);
+  });
+
   it('step_error_class_in checks top-level and internal error classes', () => {
     const outputs = new Map<string, StepOutput>([
       ['syntax', { ok: false, refs: [], content: { error_class: 'syntax_error_after_edit' } }],

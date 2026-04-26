@@ -328,6 +328,119 @@ describe('query handlers', () => {
     expect(calls.map(c => c.op)).toEqual(['code_search', 'context', 'context']);
   });
 
+  it('handleSearchCode exact_text falls back to scoped concrete file content when FTS is empty', async () => {
+    const calls: Array<{ op: string; params: Record<string, unknown> }> = [];
+    const ctx = {
+      atlsBatchQuery: vi.fn(async (op: string, params: Record<string, unknown>) => {
+        calls.push({ op, params });
+        if (op === 'code_search') {
+          return { results: [{ query: 'hello world', results: [] }] };
+        }
+        if (op === 'context') {
+          return {
+            results: [{
+              file: 'src/exact.ts',
+              content: "export const msg = 'hello world';\n",
+            }],
+          };
+        }
+        return {};
+      }),
+      store: () => minimalStore(),
+    } as any;
+
+    const out = await handleSearchCode(
+      { queries: ['hello world'], exact_text: 'hello world', file_paths: ['src/exact.ts'] },
+      ctx,
+    );
+
+    expect(out.ok).toBe(true);
+    expect(out.content).toMatchObject({
+      file_paths: ['src/exact.ts'],
+      unique_file_paths: ['src/exact.ts'],
+      lines: [1],
+    });
+    expect(calls.map(c => c.op)).toEqual(['code_search', 'context']);
+  });
+
+  it('handleSearchCode exact_text does not treat wildcard scopes as literal fallback paths', async () => {
+    const calls: Array<{ op: string; params: Record<string, unknown> }> = [];
+    const ctx = {
+      atlsBatchQuery: vi.fn(async (op: string, params: Record<string, unknown>) => {
+        calls.push({ op, params });
+        if (op === 'code_search') {
+          return { results: [{ query: 'needle', results: [] }] };
+        }
+        if (op === 'context') {
+          return {
+            results: [{
+              file: 'src/**/*.ts',
+              content: 'needle\n',
+            }],
+          };
+        }
+        return {};
+      }),
+      store: () => minimalStore(),
+    } as any;
+
+    const out = await handleSearchCode(
+      { queries: ['needle'], exact_text: 'needle', file_paths: ['src/**/*.ts'] },
+      ctx,
+    );
+
+    expect(out.ok).toBe(true);
+    expect(out.content).toMatchObject({
+      file_paths: [],
+      unique_file_paths: [],
+      lines: [],
+    });
+    expect(calls.map(c => c.op)).toEqual(['code_search']);
+  });
+
+  it('handleSearchCode exact_text filters uncapped candidates before applying max_file_paths', async () => {
+    const ctx = {
+      atlsBatchQuery: vi.fn(async (op: string, params: Record<string, unknown>) => {
+        if (op === 'code_search') {
+          return {
+            results: [{
+              query: 'return x * 3;',
+              results: [
+                { file: 'src/false_positive.ts', line: 1 },
+                { file: 'src/actual.ts', line: 2 },
+              ],
+            }],
+          };
+        }
+        if (op === 'context') {
+          const file = (params.file_paths as string[])[0];
+          return {
+            results: [{
+              file,
+              content: file.endsWith('actual.ts')
+                ? 'export function f() {\n  return x * 3;\n}\n'
+                : 'export function f() {\n  return x + 3;\n}\n',
+            }],
+          };
+        }
+        return {};
+      }),
+      store: () => minimalStore(),
+    } as any;
+
+    const out = await handleSearchCode(
+      { queries: ['return x * 3;'], exact_text: 'return x * 3;', max_file_paths: 1 },
+      ctx,
+    );
+
+    expect(out.ok).toBe(true);
+    expect(out.content).toMatchObject({
+      file_paths: ['src/actual.ts'],
+      unique_file_paths: ['src/actual.ts'],
+      lines: [2],
+    });
+  });
+
   it('handleSearchCode scrubs __atls_check_* scratch hits from results', async () => {
     const ctx = {
       atlsBatchQuery: vi.fn(async () => ({

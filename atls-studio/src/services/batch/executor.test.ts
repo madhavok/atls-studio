@@ -1945,6 +1945,49 @@ describe('executeUnifiedBatch ref contamination prevention', () => {
     expect(e2?.summary).toContain('file_path');
   });
 
+  it('skips indexed search-replace edit slots beyond unique hit files before dispatch', async () => {
+    const editSpy = vi.fn();
+
+    handlers.set('search.code', async () => ({
+      kind: 'search_results' as const,
+      ok: true,
+      refs: ['h:search1'],
+      summary: 'search',
+      content: { unique_file_paths: ['a.ts'] },
+    }));
+    handlers.set('change.edit', async (params) => {
+      editSpy(params);
+      return raw('ok', { drafts: [{ file: 'a.ts', content_hash: 'h1' }] });
+    });
+
+    const result = await executeUnifiedBatch({
+      version: '1.0',
+      steps: [
+        { id: 's1', use: 'search.code', with: { queries: ['x'] } },
+        {
+          id: 'e0',
+          use: 'change.edit',
+          with: { edits: [{ old: 'x', new: 'y' }], replace_all: true },
+          in: { file_path: { from_step: 's1', path: 'content.unique_file_paths.0' } },
+          if: { step_content_array_has_index: { step_id: 's1', path: 'unique_file_paths', index: 0 } },
+        },
+        {
+          id: 'e1',
+          use: 'change.edit',
+          with: { edits: [{ old: 'x', new: 'y' }], replace_all: true },
+          in: { file_path: { from_step: 's1', path: 'content.unique_file_paths.1' } },
+          if: { step_content_array_has_index: { step_id: 's1', path: 'unique_file_paths', index: 1 } },
+        },
+      ],
+    }, makeCtx());
+
+    expect(editSpy).toHaveBeenCalledTimes(1);
+    const e1 = result.step_results.find(r => r.id === 'e1');
+    expect(e1?.ok).toBe(true);
+    expect(e1?.summary).toContain('SKIPPED');
+    expect(e1?.summary).toContain('condition not met');
+  });
+
   it('change.edit binds content.lines.0 and content.lines.1 from same search step', async () => {
     const editSpy = vi.fn();
 

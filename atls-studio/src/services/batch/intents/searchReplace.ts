@@ -121,9 +121,13 @@ export const resolveSearchReplace: IntentResolver = (
       // searches collapse to a clean "no replacements" rather than
       // emitting cryptic skipped stubs. Gate against the deduped list
       // so the presence/absence signal matches the binding source.
-      if: {
-        step_content_array_nonempty: { step_id: searchId, path: 'unique_file_paths' },
-      },
+      if: isConcreteGlob
+        ? {
+            step_content_array_nonempty: { step_id: searchId, path: 'unique_file_paths' },
+          }
+        : {
+            step_content_array_has_index: { step_id: searchId, path: 'unique_file_paths', index: i },
+          },
     };
 
     if (!isConcreteGlob) {

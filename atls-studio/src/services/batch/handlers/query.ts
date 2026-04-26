@@ -124,6 +124,68 @@ function extractPerHitStructured(result: unknown, maxHits: number): {
 
 const LITERAL_FALLBACK_MAX = 50;
 
+function normalizeSearchPath(path: string): string {
+  return path.replace(/\\/g, '/');
+}
+
+function hasGlobMagic(path: string): boolean {
+  return /[*?[\]{}]/.test(path);
+}
+
+function escapeRegexLiteral(value: string): string {
+  return value.replace(/[|\\{}()[\]^$+*?.]/g, '\\$&');
+}
+
+function globToRegex(glob: string): RegExp {
+  const pattern = normalizeSearchPath(glob);
+  let source = '^';
+  for (let i = 0; i < pattern.length; i++) {
+    const ch = pattern[i];
+    const next = pattern[i + 1];
+    if (ch === '*' && next === '*') {
+      const after = pattern[i + 2];
+      if (after === '/') {
+        source += '(?:.*/)?';
+        i += 2;
+      } else {
+        source += '.*';
+        i += 1;
+      }
+    } else if (ch === '*') {
+      source += '[^/]*';
+    } else if (ch === '?') {
+      source += '[^/]';
+    } else {
+      source += escapeRegexLiteral(ch);
+    }
+  }
+  source += '$';
+  return new RegExp(source);
+}
+
+function filterCandidatePathsByScope(candidatePaths: string[], scopes: string[] | undefined): string[] {
+  if (!scopes?.length) return candidatePaths;
+
+  const concreteScopes = new Set(
+    scopes
+      .filter(scope => typeof scope === 'string' && scope && !hasGlobMagic(scope))
+      .map(normalizeSearchPath),
+  );
+  const globScopes = scopes
+    .filter(scope => typeof scope === 'string' && scope && hasGlobMagic(scope))
+    .map(globToRegex);
+
+  return candidatePaths.filter((candidate) => {
+    const normalized = normalizeSearchPath(candidate);
+    return concreteScopes.has(normalized) || globScopes.some(re => re.test(normalized));
+  });
+}
+
+function concreteScopedPaths(scopes: string[] | undefined): string[] {
+  if (!scopes?.length) return [];
+  return scopes.filter(scope => typeof scope === 'string' && scope && !hasGlobMagic(scope));
+}
+
 /**
  * Drop search-result entries that point at ATLS linter scratch files
  * (`__atls_check_*.ts`). These are created by verify.lint pre-write syntax
@@ -300,9 +362,11 @@ export const handleSearchCode: OpHandler = async (params, ctx) => {
     }
 
     if (exactText) {
-      const candidatePaths = perHit.file_paths.length > 0
-        ? perHit.file_paths
-        : (Array.isArray(filePaths) ? filePaths.filter((fp): fp is string => typeof fp === 'string') : []);
+      const uncappedPerHit = extractPerHitStructured(result, 0);
+      const ftsCandidatePaths = filterCandidatePathsByScope(uncappedPerHit.file_paths, filePaths);
+      const candidatePaths = ftsCandidatePaths.length > 0
+        ? ftsCandidatePaths
+        : concreteScopedPaths(filePaths);
       const literalHits = await literalFilteredHitsForFiles(ctx, candidatePaths, exactText, rowCap);
       perHit = {
         file_paths: literalHits.map((r) => r.file),

@@ -98,6 +98,19 @@ export function isStepCountExceeded(
 // Condition evaluation
 // ---------------------------------------------------------------------------
 
+function resolveContentPath(output: StepOutput | undefined, path: string): unknown {
+  const content = output?.content as Record<string, unknown> | undefined;
+  if (!content || typeof content !== 'object') return undefined;
+  // Walk dotted path (e.g. `content.file_paths`). Mirrors dataflow binder.
+  const segments = path.split('.').filter(s => s.length > 0);
+  let cur: unknown = content;
+  for (const seg of segments) {
+    if (cur == null || typeof cur !== 'object') return undefined;
+    cur = (cur as Record<string, unknown>)[seg];
+  }
+  return cur;
+}
+
 export function evaluateCondition(
   cond: ConditionExpr | string,
   stepOutputs: ReadonlyMap<string, StepOutput>,
@@ -126,16 +139,15 @@ export function evaluateCondition(
   if ('step_content_array_nonempty' in cond) {
     const { step_id, path } = (cond as { step_content_array_nonempty: { step_id: string; path: string } }).step_content_array_nonempty;
     const output = stepOutputs.get(step_id);
-    const content = output?.content as Record<string, unknown> | undefined;
-    if (!content || typeof content !== 'object') return false;
-    // Walk dotted path (e.g. `content.file_paths`). Mirrors dataflow binder.
-    const segments = path.split('.').filter(s => s.length > 0);
-    let cur: unknown = content;
-    for (const seg of segments) {
-      if (cur == null || typeof cur !== 'object') return false;
-      cur = (cur as Record<string, unknown>)[seg];
-    }
+    const cur = resolveContentPath(output, path);
     return Array.isArray(cur) && cur.length > 0;
+  }
+  if ('step_content_array_has_index' in cond) {
+    const { step_id, path, index } = (cond as { step_content_array_has_index: { step_id: string; path: string; index: number } }).step_content_array_has_index;
+    if (!Number.isInteger(index) || index < 0) return false;
+    const output = stepOutputs.get(step_id);
+    const cur = resolveContentPath(output, path);
+    return Array.isArray(cur) && index < cur.length && cur[index] !== undefined;
   }
   if ('ref_exists' in cond) {
     const refHash = (cond as { ref_exists: string }).ref_exists;

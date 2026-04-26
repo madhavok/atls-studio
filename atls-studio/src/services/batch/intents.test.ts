@@ -1083,9 +1083,9 @@ describe('intent.search_replace resolver', () => {
   it('edit slots conditioned on search producing unique_file_paths hits', () => {
     const result = resolveSearchReplace(params, emptyContext());
     const editSteps = result.steps.filter(s => s.use === 'change.edit');
-    for (const step of editSteps) {
+    for (const [index, step] of editSteps.entries()) {
       expect(step.if).toEqual({
-        step_content_array_nonempty: { step_id: 'sr1__search', path: 'unique_file_paths' },
+        step_content_array_has_index: { step_id: 'sr1__search', path: 'unique_file_paths', index },
       });
     }
   });
@@ -1111,10 +1111,15 @@ describe('intent.search_replace resolver', () => {
       { ...params, file_glob: '_test/edit_test.py' },
       emptyContext(),
     );
-    const editStep = result.steps.find(s => s.use === 'change.edit');
+    const editSteps = result.steps.filter(s => s.use === 'change.edit');
+    expect(editSteps).toHaveLength(1);
+    const editStep = editSteps[0];
     expect(editStep!.with!.file_path).toBe('_test/edit_test.py');
     // Concrete path: no binding needed.
     expect(editStep!.in).toBeUndefined();
+    expect(editStep!.if).toEqual({
+      step_content_array_nonempty: { step_id: 'sr1__search', path: 'unique_file_paths' },
+    });
   });
 
   it('verify:false → no verify step', () => {

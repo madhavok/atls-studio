@@ -177,7 +177,14 @@ export type ConditionExpr =
    * is always materialized as a chunk, so the empty-hits path used to
    * trigger a misleading bb.write + verify.
    */
-  | { step_content_array_nonempty: { step_id: string; path: string } };
+  | { step_content_array_nonempty: { step_id: string; path: string } }
+  /**
+   * True when the named step's `output.content[path]` resolves to an array
+   * with a concrete value at `index`. Used by generated per-hit edit slots so
+   * slots beyond the search result count skip before input binding or handler
+   * dispatch.
+   */
+  | { step_content_array_has_index: { step_id: string; path: string; index: number } };
 
 // ---------------------------------------------------------------------------
 // Execution Policy
