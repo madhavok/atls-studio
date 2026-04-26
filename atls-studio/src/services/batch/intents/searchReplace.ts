@@ -93,7 +93,11 @@ export const resolveSearchReplace: IntentResolver = (
   /** Concrete path (no wildcards): bind file_path in `with`; search may still omit per-hit paths. */
   const isConcreteGlob = Boolean(fileGlob && !fileGlob.includes('*') && !fileGlob.includes('?'));
 
-  for (let i = 0; i < maxMatches; i++) {
+  // Concrete path: one slot + replace_all covers the entire file.
+  // Non-concrete: one slot per unique hit file (bound via unique_file_paths).
+  const slotCount = isConcreteGlob ? 1 : maxMatches;
+
+  for (let i = 0; i < slotCount; i++) {
     const editId = makeStepId(intentId, `edit_${i}`);
 
     // Text-replace shape stays on `change.edit`'s draft route: the primitive
