@@ -844,13 +844,9 @@ function resolveFileKeyForRebaseLookup(
   if (!rawFile.startsWith('h:')) return normalizePathForRebase(rawFile);
   // canonicalizeSnapshotHash mirrors the same `h:<hex>:<rest>` → `<hex>` rule
   // the tracker uses, so ranges and shape modifiers don't defeat lookup.
-  const bare = rawFile.startsWith('h:')
-    ? (() => {
-        const stripped = rawFile.slice(2);
-        const colon = stripped.indexOf(':');
-        return colon >= 0 ? stripped.slice(0, colon) : stripped;
-      })()
-    : rawFile;
+  const stripped = rawFile.slice(2);
+  const colon = stripped.indexOf(':');
+  const bare = colon >= 0 ? stripped.slice(0, colon) : stripped;
   const resolved = hashAliases.get(bare);
   return resolved ? normalizePathForRebase(resolved) : undefined;
 }

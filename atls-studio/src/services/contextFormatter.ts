@@ -205,11 +205,9 @@ export function formatWorkingMemory(input: FormatterInput): string {
   // events) is dev-tool data — none of it carried a work-level action for
   // the model. Both surfaces live in the AtlsInternals panel for debugging.
   // Reference the unused inputs so the signature stays stable for callers.
-  void safetyCompaction;
   void memoryEvents;
   void reconcileStats;
   void memoryTelemetry;
-  void cognitiveRules;
 
   // Pin inventory is now in ## HASH MANIFEST (dynamic context block)
 
@@ -387,7 +385,7 @@ export function formatWorkingMemory(input: FormatterInput): string {
         if (chunk.compacted) {
           const isToolType = chunk.type === 'call' || chunk.type === 'result' || chunk.type === 'search';
           const digest = isToolType
-            ? (chunk.summary || `[compacted — use h:${chunk.shortHash} in tool params]`)
+            ? (chunk.summary || `[compacted h:${chunk.shortHash}]`)
             : (chunk.editDigest || chunk.digest || chunk.summary || `[compacted — use h:${chunk.shortHash} in tool params]`);
           if (digest !== chunk.summary || !summaryHint) {
             lines.push(digest);
