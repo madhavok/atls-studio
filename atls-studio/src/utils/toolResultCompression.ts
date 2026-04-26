@@ -792,15 +792,6 @@ function isBoundaryEnd(s: string, pos: number): boolean {
   return STRUCTURAL_BOUNDARIES.has(c) || CONTENT_BOUNDARIES.has(c);
 }
 
-function applySubstringDictionary(s: string, substrToCode: Map<string, string>): string {
-  // Already applied during buildSubstringDictionary via splitJoin; this is the
-  // re-apply path (currently unused since build also applies). Kept for symmetry.
-  let result = s;
-  for (const [sub, code] of substrToCode) {
-    result = splitJoin(result, sub, code);
-  }
-  return result;
-}
 
 function nextAvailableCode(startCounter: number, reserved: Set<string>): string {
   let n = startCounter;

@@ -6,13 +6,9 @@ import type {
   HandlerContext,
   OpHandler,
   StepOutput,
-  SearchCodeParams,
   SearchSymbolParams,
-  SearchUsageParams,
   AnalyzeDepsParams,
-  AnalyzeImpactParams,
   AnalyzeBlastRadiusParams,
-  AnalyzeStructureParams,
   SearchMemoryParams,
 } from '../types';
 import {
