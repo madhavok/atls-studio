@@ -37,7 +37,7 @@ An AI-powered cognitive development environment with managed working memory, bui
 └──────────────────────────────────────────┘
 ```
 
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for app-package architecture notes, or the repository overview at [`../ARCHITECTURE.md`](../ARCHITECTURE.md).
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for app-package architecture notes, or the repository overview at [`../README.md`](../README.md).
 
 Development uses **npm** and **Node 20+** from this directory — see [Getting Started](#getting-started) below.
 
@@ -74,7 +74,7 @@ This file lives in the **app package** folder (`<clone>/atls-studio/` — one di
 
 | Location | Role |
 |----------|------|
-| **Clone root** | `ARCHITECTURE.md`, `docs/`, `atls-rs/` |
+| **Clone root** | `README.md`, `docs/`, `atls-rs/` |
 | **This folder** (`atls-studio/`) | `package.json`, `src/`, `src-tauri/` — **run npm scripts here** |
 
 ## Vision
@@ -87,7 +87,7 @@ ATLS Studio is a minimal, purpose-built development environment where ATLS provi
 - **Batch executor** (`batch()` tool, intents, snapshot injection, optional op/param shorthands): [`../docs/batch-executor.md`](../docs/batch-executor.md)
 - **Docs index**: [`../docs/README.md`](../docs/README.md)
 - **Subagents** (delegate roles, budgets, scoped HPP): [`../docs/subagents.md`](../docs/subagents.md)
-- **Architecture overview**: [`../ARCHITECTURE.md`](../ARCHITECTURE.md)
+- **Repository overview**: [`../README.md`](../README.md)
 - **Tauri IPC command names**: [`../docs/tauri-commands.md`](../docs/tauri-commands.md)
 
 ### `line_edits` semantics
@@ -328,7 +328,7 @@ colors: {
 
 ## Integration with ATLS
 
-This desktop app talks to Rust via **Tauri `invoke()`** (see `src/services/` and `src/hooks/useAtls.ts`). The npm package `atls/studio` / `StudioBridge` is a **separate** integration surface for embedding ATLS outside this repo; it is **not** used by this application.
+This desktop app talks to Rust via **Tauri `invoke()`** (see `src/services/` and `src/hooks/useAtls.ts`) and links the shared Rust engine from `../atls-rs`. There is no separate ATLS npm package required to build or run this application.
 
 ## License
 

@@ -241,7 +241,10 @@ Threshold warnings appear at:
 | **reviewer** | Code review | Read-only + BB | No |
 | **ask** | Conversational Q&A | None | No |
 | **retriever** | Subagent for research | Search, read, pin, stage | No |
+| **custom** | User-authored custom instruction profile | Configured by prompt | Configured by prompt |
+| **swarm** | Multi-agent orchestration | Delegate + coordination operations | Coordinated by subagents |
 | **refactor** | 4-phase refactor workflow | All operations + refactor config | Yes |
+| **planner** | Plan-first task decomposition | Planning and read-oriented operations | No |
 
 The **retriever** row is the chat **mode** preset. Separately, the batch tool can run **delegate subagents** in four roles — **retriever**, **design**, **coder**, and **tester** — via `delegate.retrieve`, `delegate.design`, `delegate.code`, and `delegate.test`. Those use a snapshot-based prompt and scoped hash-protocol view per round; see [subagents.md](./subagents.md).
 

@@ -9,8 +9,8 @@ From `atls-studio/`:
 1. **TypeScript:** `npm run test:coverage`
 2. **Rust (Tauri):** `cd src-tauri && cargo llvm-cov --json --summary-only --output-path target/llvm-cov-tauri-summary.json`  
    Requires `cargo install cargo-llvm-cov` and `rustup component add llvm-tools-preview`.
-3. **Rust (atls-rs):** `cd ../../atls-rs && cargo llvm-cov --workspace --all-features --json --summary-only --output-path target/llvm-cov-atls-rs-summary.json`  
-   (CI uses an `lcov` run plus `cargo llvm-cov report --json --summary-only --output-path …`; see `.github/workflows/ci.yml`.)
+3. **Rust (atls-rs):** `cd ../../atls-rs && cargo llvm-cov --workspace --json --summary-only --output-path target/llvm-cov-atls-rs-summary.json`
+   CI intentionally omits `--all-features` because the neural-embeddings feature pulls `ort-sys` and can fail on external CDN timeouts. CI uses an `lcov` run plus `cargo llvm-cov report --json --summary-only --output-path …`; see `.github/workflows/ci.yml`.
 4. **Lists:** `npm run test:coverage:gaps`
 5. **Below 100% lines (TypeScript):** `npm run test:coverage:check-100` — writes `ts-below-100-lines.txt`. Use `test:coverage:check-100:fail` only when the repo is ready to enforce per-file 100% lines.
 

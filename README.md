@@ -103,7 +103,7 @@ Tracks what the model can currently "see." Scoped views let subagents participat
                     +-------------------------------+
 ```
 
-See [Architecture Document](atls-studio/docs/ARCHITECTURE.md) for the full technical description, or browse the [docs/](docs/) directory for 19 focused deep-dives on each subsystem.
+See [Architecture Document](atls-studio/docs/ARCHITECTURE.md) for the full technical description, or browse the [docs/](docs/) directory for 25 focused docs on the core protocols, runtime, backend, and app shell.
 
 ## Documentation
 
@@ -119,8 +119,12 @@ See [Architecture Document](atls-studio/docs/ARCHITECTURE.md) for the full techn
 | [Freshness System](docs/freshness.md) | Epistemic integrity: five-state taxonomy, preflight gating, round-end reconciliation |
 | [Engrams & Memory](docs/engrams.md) | Content-addressed knowledge units, activation states, memory regions |
 | [Prompt Assembly](docs/prompt-assembly.md) | State/chat separation, cache breakpoints, dynamic block composition |
+| [ASSESS Context](docs/assess-context.md) | Ephemeral pinned-working-memory cleanup steering |
+| [Auto-Pin on Read](docs/auto-pin-on-read.md) | Read-time FileView pinning and release-only retention vocabulary |
 | [History Compression](docs/history-compression.md) | Hash deflation, rolling window, distilled summary |
+| [Input Compression Merit](docs/input-compression-merit.md) | Spike criteria and risk assessment for dictionary/ditto input compression |
 | [API Economics](docs/api-economics.md) | The input/output cost asymmetry and what would fix it |
+| [Metrics](docs/metrics.md) | Billing-grade and estimated metric tiers for cost, cache, and savings accounting |
 | [Swarm Orchestration](docs/swarm-orchestration.md) | Multi-agent research, planning, task hydration, execution |
 | [Subagents](docs/subagents.md) | Delegate subagents: four roles, scoped HPP, BB handoff |
 | [ATLS Engine](docs/atls-engine.md) | `atls-core` Rust engine: indexer, query, detectors |
@@ -129,22 +133,22 @@ See [Architecture Document](atls-studio/docs/ARCHITECTURE.md) for the full techn
 | [MCP Integration](docs/mcp-integration.md) | External MCP server (7 tools, literal paths, no UHPP) |
 | [Session Persistence](docs/session-persistence.md) | Snapshot format v2-v6, auto-resume, freshness-after-restore |
 | [Studio App Shell](docs/studio-app-shell.md) | Desktop UI, Internals dashboard, panel layout |
-| [Test Coverage](docs/test-coverage-backlog.md) | 148 TS tests, 36/38 Rust `#[cfg(test)]`, Playwright E2E |
+| [Test Coverage](docs/test-coverage-backlog.md) | 185 frontend test files, Rust `#[cfg(test)]` coverage across most `src-tauri` and `atls-rs` modules, Playwright E2E |
 
 ## Tech Stack
 
-- **Frontend**: TypeScript, React, Zustand, Vite (~100k LOC including 148 test files)
-- **Backend**: Rust, Tauri v2 (38 modules, ~40k LOC in `src-tauri`)
+- **Frontend**: TypeScript, React, Zustand, Vite (~120k LOC including 185 test files)
+- **Backend**: Rust, Tauri v2 (36 Rust files, ~54k LOC in `src-tauri/src`)
 - **Engine**: `atls-core` -- tree-sitter indexing, FTS + optional neural embeddings, pattern detectors (~20k LOC)
 - **Providers**: Anthropic (Claude), OpenAI, Google (Gemini/Vertex), LM Studio
 
 ## Repository Layout
 
 ```
-docs/                         19 subsystem docs + whitepaper
+docs/                         25 focused docs including the whitepaper
 atls-rs/                      Reusable Rust engine
   crates/
-    atls-core/                  Indexer, query engine, detectors, DB (~55 .rs files)
+    atls-core/                  Indexer, query engine, detectors, DB (45 Rust files)
     atls-mcp/                   External MCP server (7 tools, stdio JSON-RPC)
 atls-studio/                  Desktop app -- run npm scripts from here
   src/                          TypeScript frontend
@@ -155,9 +159,8 @@ atls-studio/                  Desktop app -- run npm scripts from here
       batch/                        Executor, 10 handler files, intents, policy
     stores/                       contextStore, appStore, costStore, roundHistory, swarm, terminal
     utils/                        symbolResolver, toon, contextHash, uhpp*, tokenCounter
-  src-tauri/src/                Rust backend (38 modules)
+  src-tauri/src/                Rust backend (36 Rust files)
   e2e/                          Playwright E2E tests
-REVIEWED_CLEAN.md             Audit status: reviewed files, bugs found/fixed
 ```
 
 ## Setup
@@ -186,7 +189,7 @@ npm run tauri:build
 
 ```bash
 cd atls-studio
-npm run test                    # Vitest (148 test files)
+npm run test                    # Vitest (185 frontend test files)
 npm run test:coverage:report    # Coverage + gap analysis
 npm run test:e2e                # Playwright
 npm run test:all                # Vitest + cargo test (src-tauri + atls-rs)

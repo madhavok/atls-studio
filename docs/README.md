@@ -70,22 +70,20 @@ Architecture overview: [`atls-studio/docs/ARCHITECTURE.md`](../atls-studio/docs/
 | [tauri-commands.md](./tauri-commands.md) | Enumerated Tauri `invoke` command names (`generate_handler!` in `lib.rs`) |
 | [mcp-integration.md](./mcp-integration.md) | External MCP server: 7 tools over stdio JSON-RPC, per-root project caching, literal paths only (no UHPP) |
 | [studio-app-shell.md](./studio-app-shell.md) | React/Vite UI: multi-panel workspace, AtlsPanel tabs (Issues/File/Patterns/Overview/Health), Internals dashboard (batch efficiency, tool tokens, cache composition, cost I/O, spin trace), copy last API payload |
-| [test-coverage-backlog.md](./test-coverage-backlog.md) | Test strategy: 148 TS test files, `#[cfg(test)]` in 36/38 Rust modules, Playwright E2E, coverage gap tracking |
+| [test-coverage-backlog.md](./test-coverage-backlog.md) | Test strategy: 185 frontend test files, Rust `#[cfg(test)]` coverage across most `src-tauri` and `atls-rs` modules, Playwright E2E, coverage gap tracking |
 
 ## Repo layout
 
 ```
 atls-studio/          # Tauri desktop app (React + Rust)
   src/                #   TypeScript: cognitive runtime, batch handlers, prompt system, stores, UI
-  src-tauri/          #   Rust backend: 38 modules (hash resolver, shape ops, edit session, AI streaming, persistence)
+  src-tauri/          #   Rust backend: 36 Rust files (hash resolver, shape ops, edit session, AI streaming, persistence)
   e2e/                #   Playwright E2E tests
 atls-rs/              # Reusable Rust engine
   crates/atls-core/   #   Code intelligence: indexer, query engine, detectors, DB
   crates/atls-mcp/    #   MCP server
-docs/                 # This folder: 19 subsystem docs + whitepaper
-REVIEWED_CLEAN.md     # Audit status: reviewed files, bugs found/fixed
+docs/                 # This folder: 25 focused docs including the whitepaper
 ```
 
 - **Architecture overview**: [`atls-studio/docs/ARCHITECTURE.md`](../atls-studio/docs/ARCHITECTURE.md)
 - **App README** (npm scripts, dev/build): [`atls-studio/README.md`](../atls-studio/README.md)
-- **Audit log**: [`DOCUMENTATION_AUDIT.md`](./DOCUMENTATION_AUDIT.md) — what each doc is for and last accuracy pass.

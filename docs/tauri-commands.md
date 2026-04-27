@@ -7,7 +7,7 @@ IPC command names registered in [`atls-studio/src-tauri/src/lib.rs`](../atls-stu
 ## File system
 
 - `get_file_tree`, `read_file_contents`, `expand_file_glob`, `write_file_contents`, `write_design_file`, `delete_path`, `rename_path`, `create_file`, `create_folder`, `create_project_directory`, `add_to_atlsignore`, `remove_from_atlsignore`, `copy_path`, `read_file_as_base64`
-- `read_file_signatures`, `compress_and_read_image` (attachments)
+- `read_file_signatures`, `compress_and_read_image`, `compress_image_bytes` (attachments)
 
 ## File watcher
 
