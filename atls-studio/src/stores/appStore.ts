@@ -741,6 +741,17 @@ export interface Settings {
    * code change. See `src/services/batch/executor.ts`.
    */
   rebaseAllChangeOps?: boolean;
+  /**
+   * Enforce read-before-edit gate. When true, `change.edit` line edits
+   * targeting a region that was never read in the current batch are rejected
+   * with `edit_outside_read_range`. When false (default), the gate is
+   * skipped — the model may edit based on search results, create output,
+   * or prior context without an explicit `read.lines` first.
+   *
+   * Disabled by default because the gate causes friction when edits are
+   * informed by search data or follow a same-batch file create.
+   */
+  enforceReadBeforeEdit?: boolean;
 }
 
 /** Per-category severity enables. Key = category, value = enabled severities */
@@ -1672,6 +1683,7 @@ export const useAppStore = create<AppState>((set) => ({
       compressEditAcks: false,
       autoPinReads: true,
       rebaseAllChangeOps: true,
+      enforceReadBeforeEdit: false,
       messageToggles: DEFAULT_MESSAGE_TOGGLES,
     };
     let parsed: Record<string, unknown> = {};

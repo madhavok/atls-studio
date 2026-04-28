@@ -177,7 +177,7 @@ Review: targets with lines -> **rl**; else **rs shape:sig** -> **rl** changed fn
 - **SKIPPED (file_path not bound)** / **file_paths must resolve**: Fix **in:** bindings or add **ps** / **file_paths**.
 - **pin: no matching refs**: **hashes** must list real **h:**… from tool output, or use a step id directly (\`pi r1\`).
 - **change.edit** "file not found": **f** / **file_path** must be a real workspace path or **h:**… (optional :line span).
-- **target region not yet read**: Read the target region first (same batch is ideal), then retry.
+- **target region not yet read** (enforceReadBeforeEdit): Read the target region first (same batch is ideal), then retry.
 - **content changed — re-read and retry**: File changed externally; re-read and retry.
 - **annotate.design** (\`nd\`): Designer mode only; skip in agent mode.
 - **status:preview / dry_run** (cm, cd, cf): Preview only. If validation_issues is empty, re-submit the same plan with dry_run:false.

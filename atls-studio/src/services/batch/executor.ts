@@ -2415,6 +2415,11 @@ export async function executeUnifiedBatch(
     catch { return true; }
   })();
 
+  const enforceReadBeforeEdit = (() => {
+    try { return useAppStore.getState().settings.enforceReadBeforeEdit === true; }
+    catch { return false; }
+  })();
+
   // Batch read-spin WARN/NUDGE surface toggle. When false, the read-spin
   // counters in contextStore still advance (so state stays consistent if the
   // user re-enables the toggle) but no `<<WARN:`/`<<NUDGE:` string is
@@ -2658,7 +2663,7 @@ export async function executeUnifiedBatch(
     }
 
     // Read-range edit gate: reject line edits outside prior read.lines coverage
-    if (step.use === 'change.edit' && snapshotTracker.size > 0) {
+    if (enforceReadBeforeEdit && step.use === 'change.edit' && snapshotTracker.size > 0) {
       const gateFileRaw = (mergedParams.file ?? mergedParams.file_path) as string | undefined;
       const gateLineEdits = mergedParams.line_edits as Array<Record<string, unknown>> | undefined;
       const gatePath = gateFileRaw ? resolveGatePathForTracker(mergedParams, snapshotTracker) : '';

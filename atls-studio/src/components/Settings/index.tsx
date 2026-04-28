@@ -792,6 +792,28 @@ export function Settings({ isOpen, onClose }: SettingsProps) {
                   }`} />
                 </button>
               </div>
+
+              {/* Enforce Read Before Edit */}
+              <div className="flex items-center justify-between">
+                <div>
+                  <span className="text-sm font-medium">Enforce Read Before Edit</span>
+                  <p className="text-xs text-studio-muted">
+                    Reject line edits targeting regions not yet read in the current batch.
+                    Off by default — edits informed by search results or same-batch file
+                    creates proceed without a preceding read.lines.
+                  </p>
+                </div>
+                <button
+                  onClick={() => setLocalSettings(prev => ({ ...prev, enforceReadBeforeEdit: !prev.enforceReadBeforeEdit }))}
+                  className={`w-12 h-6 rounded-full transition-colors ${
+                    localSettings.enforceReadBeforeEdit ? 'bg-studio-accent' : 'bg-studio-border'
+                  }`}
+                >
+                  <div className={`w-5 h-5 bg-white rounded-full shadow transition-transform ${
+                    localSettings.enforceReadBeforeEdit ? 'translate-x-6' : 'translate-x-0.5'
+                  }`} />
+                </button>
+              </div>
             </div>
           )}
 

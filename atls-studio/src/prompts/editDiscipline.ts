@@ -33,4 +33,4 @@ export const EDIT_DISCIPLINE = `### EDIT + VERIFY DISCIPLINE
 
 ### POST-EDIT CONTEXT
 - **Do NOT re-read after your own edits.** The FileView re-hydrates with post-edit content automatically — \`fullBody\` is re-populated so the next round's \`## FILE VIEWS\` block shows the updated file in full. Chain from \`edits_resolved\` coordinates and the returned \`h:\` ref.
-- On "target region not yet read": rl the region, retry in same batch.`;
+- On "target region not yet read" (enforceReadBeforeEdit enabled): rl the region, retry in same batch.`;
