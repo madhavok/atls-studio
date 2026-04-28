@@ -521,9 +521,11 @@ function extractRefs(result: unknown): string[] {
     const h = (r.h ?? r.hash) as string;
     refs.push(h.startsWith('h:') ? h : `h:${h}`);
   }
-  // Include created file paths so verify/diff can scope to them
+  // Include created file paths for verify/diff scoping only when no h: refs
+  // were extracted (backward compat for results without hash entries).
+  const hasHashRefs = refs.length > 0;
   const created = (r.created ?? r.created_files ?? r.written_target_files) as string[] | undefined;
-  if (Array.isArray(created)) {
+  if (!hasHashRefs && Array.isArray(created)) {
     for (const path of created) {
       if (typeof path === 'string' && path.length > 0 && !refs.includes(path)) {
         refs.push(path);
@@ -2072,6 +2074,12 @@ export const handleCreate: OpHandler = async (params, ctx) => {
         }
       }
     }
+
+    // Wire created files into the batch dataflow model (hash chaining,
+    // freshness journal, lint-lesson extraction) — same post-processing
+    // that edits receive so h: refs are immediately addressable.
+    registerEditHashes(result, params);
+    extractEditLessons(result, params);
 
     const refs = extractRefs(result);
     const affectedPaths = extractAffectedPaths(result);

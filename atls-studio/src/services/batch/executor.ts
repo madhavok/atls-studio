@@ -1832,14 +1832,25 @@ async function refreshContextAfterEdit(
 
         // 3. Deterministic FileView refresh: splice skeleton + regions +
         //    fullBody using the per-anchor deltas and the new body bytes.
+        //    For newly created files (no prior view), create one and fill it.
         try {
-          store.applyEditToFileView({
+          const didUpdate = store.applyEditToFileView({
             filePath: ef.filePath,
             sourceRevision: bareHash,
             newBody: resolved.content,
             deltas,
             round: currentRound,
           });
+          if (!didUpdate) {
+            store.ensureFileView(ef.filePath, bareHash);
+            store.applyFullBodyFromChunk({
+              filePath: ef.filePath,
+              sourceRevision: bareHash,
+              content: resolved.content,
+              chunkHash: bareHash,
+              totalLines: resolved.content.split('\n').length,
+            });
+          }
         } catch (e) {
           console.warn('[executor] FileView edit refresh failed:', e);
         }

@@ -13324,6 +13324,8 @@ pub async fn atls_batch_query(
                 let mut lint_results: Vec<linter::LintResult> = Vec::new();
                 // Track content integrity for truncation diagnosis
                 let mut file_integrity: Vec<serde_json::Value> = Vec::new();
+                // Edit-style result entries for hash chaining
+                let mut results: Vec<serde_json::Value> = Vec::new();
                 
                 // Deep check: lint content before writing (works with dry_run)
                 if deep_check {
@@ -13400,6 +13402,44 @@ pub async fn atls_batch_query(
                                 "written_bytes": written_len,
                                 "integrity_ok": written_len == content_len,
                             }));
+
+                            // Register snapshot so resolve_hash_ref works immediately
+                            {
+                                let ss_state = app.state::<crate::snapshot::SnapshotServiceState>();
+                                let mut snapshot_svc = ss_state.service.lock().await;
+                                snapshot_svc.record_write(&resolved_path, &path, &content, None);
+                            }
+
+                            // Register in HashRegistry for h: chaining
+                            let line_count = content.lines().count();
+                            {
+                                let hr_state = app.state::<hash_resolver::HashRegistryState>();
+                                let mut registry = hr_state.registry.lock().await;
+                                let lang = hash_resolver::detect_lang(Some(&path));
+                                registry.register(content_digest.clone(), hash_resolver::HashEntry {
+                                    source: Some(path.clone()),
+                                    content: content.clone(),
+                                    tokens: content.len() / 4,
+                                    lang,
+                                    line_count,
+                                    symbol_count: None,
+                                    spilled: false,
+                                });
+                            }
+
+                            let _ = app.emit("canonical_revision_changed", serde_json::json!({
+                                "path": path.replace('\\', "/"),
+                                "revision": content_digest,
+                            }));
+
+                            results.push(serde_json::json!({
+                                "file": path,
+                                "h": format!("h:{}", &content_digest[..hash_resolver::SHORT_HASH_LEN]),
+                                "content_hash": content_digest,
+                                "lines": line_count,
+                                "status": "created",
+                            }));
+
                             created.push(path.clone());
                             if lint_enabled && !deep_check {
                                 created_files_content.push((path.clone(), content.clone()));
@@ -13441,6 +13481,7 @@ pub async fn atls_batch_query(
                 
                 Ok(serde_json::json!({
                     "created": created,
+                    "results": results,
                     "skipped": skipped,
                     "errors": errors,
                     "lints": lint_summary,

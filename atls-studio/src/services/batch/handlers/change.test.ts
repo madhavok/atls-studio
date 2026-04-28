@@ -683,6 +683,82 @@ describe('freshness safety', () => {
     });
   });
 
+  it('change.create returns refs containing h: refs for created files', async () => {
+    const atlsBatchQuery = vi.fn().mockResolvedValue({
+      created: ['src/new.ts'],
+      results: [
+        { file: 'src/new.ts', h: 'h:abc123', content_hash: 'abc123full', lines: 3, status: 'created' },
+      ],
+      skipped: [],
+      errors: [],
+    });
+    const ctx = {
+      atlsBatchQuery,
+      store: () => useContextStore.getState(),
+    } as unknown as Parameters<typeof handleCreate>[1];
+
+    const out = await handleCreate(
+      { creates: [{ path: 'src/new.ts', content: 'export const value = 1;\n' }] },
+      ctx,
+    );
+
+    expect(out.ok).toBe(true);
+    expect(out.refs).toContain('h:abc123');
+    expect(out.refs).not.toContain('src/new.ts');
+  });
+
+  it('extractRefs prefers h: refs from results over created paths', async () => {
+    const atlsBatchQuery = vi.fn().mockResolvedValue({
+      created: ['src/a.ts', 'src/b.ts'],
+      results: [
+        { file: 'src/a.ts', h: 'h:aaa111', content_hash: 'aaa111full', lines: 5, status: 'created' },
+        { file: 'src/b.ts', h: 'h:bbb222', content_hash: 'bbb222full', lines: 10, status: 'created' },
+      ],
+      skipped: [],
+      errors: [],
+    });
+    const ctx = {
+      atlsBatchQuery,
+      store: () => useContextStore.getState(),
+    } as unknown as Parameters<typeof handleCreate>[1];
+
+    const out = await handleCreate(
+      { creates: [{ path: 'src/a.ts', content: '// a' }, { path: 'src/b.ts', content: '// b' }] },
+      ctx,
+    );
+
+    expect(out.ok).toBe(true);
+    expect(out.refs).toEqual(['h:aaa111', 'h:bbb222']);
+  });
+
+  it('registerEditHashes is called after change.create', async () => {
+    const registerSpy = vi.spyOn(useContextStore.getState(), 'registerEditHash');
+    const atlsBatchQuery = vi.fn().mockResolvedValue({
+      created: ['src/new.ts'],
+      results: [
+        { file: 'src/new.ts', h: 'h:def456', content_hash: 'def456full', lines: 2, status: 'created' },
+      ],
+      skipped: [],
+      errors: [],
+    });
+    const ctx = {
+      atlsBatchQuery,
+      store: () => useContextStore.getState(),
+    } as unknown as Parameters<typeof handleCreate>[1];
+
+    await handleCreate(
+      { creates: [{ path: 'src/new.ts', content: 'export const x = 1;\n' }] },
+      ctx,
+    );
+
+    expect(registerSpy).toHaveBeenCalledWith(
+      'h:def456',
+      'src/new.ts',
+      undefined,
+    );
+    registerSpy.mockRestore();
+  });
+
   it('hydrates a top-level file_path text edit into a draftable single edit', async () => {
     invokeMock.mockResolvedValueOnce([
       { source: 'src/demo.ts', content: 'export const demo = 1;\n', tokens: 4 },

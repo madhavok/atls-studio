@@ -5832,6 +5832,57 @@ export function extractMe() {
         assert!(e2.content.contains("return 2"));
     }
 
+    // ── create_files chainable refs: hash registration mirrors edit pattern ──
+
+    #[test]
+    fn create_files_hash_registration_produces_chainable_ref() {
+        let content = "export const value = 42;\nconst other = true;\n";
+        let hash = content_hash(content);
+
+        let mut reg = HashRegistry::new();
+        let short = reg.register(hash.clone(), HashEntry {
+            source: Some("src/new_file.ts".to_string()),
+            content: content.to_string(),
+            tokens: content.len() / 4,
+            lang: Some("typescript".to_string()),
+            line_count: content.lines().count(),
+            symbol_count: None,
+            spilled: false,
+        });
+
+        assert!(short.len() >= hash_resolver::SHORT_HASH_LEN);
+        let entry = reg.get(&short).expect("created file hash must be resolvable via short prefix");
+        assert_eq!(entry.source.as_deref(), Some("src/new_file.ts"));
+        assert_eq!(entry.content, content);
+        assert_eq!(entry.line_count, 2);
+
+        let h_ref = format!("h:{}", &hash[..hash_resolver::SHORT_HASH_LEN]);
+        assert!(h_ref.starts_with("h:"));
+        assert!(h_ref.len() >= 2 + hash_resolver::SHORT_HASH_LEN);
+    }
+
+    #[test]
+    fn create_files_result_shape_matches_edit_pattern() {
+        let path = "src/created.ts";
+        let content = "console.log('hello');\n";
+        let content_digest = content_hash(content);
+        let line_count = content.lines().count();
+
+        let result_entry = serde_json::json!({
+            "file": path,
+            "h": format!("h:{}", &content_digest[..hash_resolver::SHORT_HASH_LEN]),
+            "content_hash": content_digest,
+            "lines": line_count,
+            "status": "created",
+        });
+
+        assert_eq!(result_entry["file"].as_str(), Some(path));
+        assert!(result_entry["h"].as_str().unwrap().starts_with("h:"));
+        assert_eq!(result_entry["content_hash"].as_str(), Some(content_digest.as_str()));
+        assert_eq!(result_entry["lines"].as_u64(), Some(1));
+        assert_eq!(result_entry["status"].as_str(), Some("created"));
+    }
+
     // ── Large file: 500-line file with multiple operations ──
 
     #[test]
