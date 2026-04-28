@@ -60,18 +60,19 @@ The remainder of the paper is organized as follows. §2 presents the economic pr
 
 ### 2.1 The input/output cost asymmetry
 
-Frontier model providers price output tokens at a significant multiple of input tokens. As a representative example, Anthropic's Claude pricing tier (Sonnet 4 and Opus 4) applies the following multipliers relative to the baseline uncached input rate:
+Frontier model providers price output tokens at a significant multiple of input tokens. As a representative example, Anthropic's Claude pricing tier (Sonnet 4.6 and Opus 4.6) applies the following multipliers relative to the baseline uncached input rate; cache-write pricing depends on the prompt-cache TTL:
 
-| Token class | Multiplier (× uncached input) |
-|---|---|
-| Cached input read | 0.1× |
-| Uncached input | 1.0× (baseline) |
-| Cache write | 1.25× |
-| Output | **5.0×** |
+| Token class | Multiplier (× uncached input) | Note |
+|---|---:|---|
+| Cached input read / refresh | 0.1× | Applies after a cache hit |
+| Uncached input | 1.0× | Baseline |
+| Cache write, 5-minute TTL | 1.25× | ATLS's current `cache_control: {type: "ephemeral"}` assumption |
+| Cache write, 1-hour TTL | 2.0× | Anthropic's longer-lived cache option; not assumed in the examples below |
+| Output | **5.0×** | Sonnet 4.6 / Opus 4.6 output rate relative to input |
 
-A model round that reads 10k cached input tokens and writes 1k output tokens thus pays approximately `10,000 × 0.1 + 1,000 × 5.0 = 6,000` input-equivalent tokens — of which **83% is attributable to output**. Against uncached input, the comparison is less extreme but still output-dominant: `10,000 × 1.0 + 1,000 × 5.0 = 15,000` input-equivalents, with output contributing 33%.
+A model round that reads 10k cached input tokens and writes 1k output tokens thus pays approximately `10,000 × 0.1 + 1,000 × 5.0 = 6,000` input-equivalent tokens — of which **83% is attributable to output**. Against uncached input, the comparison is less extreme but still output-dominant: `10,000 × 1.0 + 1,000 × 5.0 = 15,000` input-equivalents, with output contributing 33%. Cache creation is omitted from this simplified read-vs-output comparison; where it appears in the worked ATLS loop costs, the document uses Anthropic's 5-minute 1.25× write rate rather than the 1-hour 2× rate.
 
-For Opus-tier pricing ($15/MTok input, $75/MTok output), these ratios translate directly into dollar costs. A 10-round tool loop spending 30–50k uncached input per round and 2–4k output per round costs approximately \$1.37–\$2.27 on Sonnet 4 and \$6.85–\$11.35 on Opus 4.
+For Opus 4.6 pricing ($5/MTok input, $25/MTok output), these ratios translate directly into dollar costs. A 10-round tool loop spending 30–50k uncached input per round and 2–4k output per round costs approximately \$1.37–\$2.27 on Sonnet 4.6 and \$2.28–\$3.78 on Opus 4.6 under the 5-minute cache-write assumption.
 
 ### 2.2 Why the dominant mitigations are input-side — and why they are insufficient alone
 
@@ -920,7 +921,7 @@ Cost(round) = r_cached × T_cached_input
             + r_out   × T_output
 ```
 
-Under Claude Sonnet 4 pricing (`k_out = 5.0`, `k_cached = 0.1`):
+Under Claude Sonnet 4.6 pricing (`k_out = 5.0`, `k_cached = 0.1`):
 
 ```
 Cost(round) = r_in × (0.1 × T_cached + 1.0 × T_uncached + 5.0 × T_output)

@@ -4,27 +4,28 @@ ATLS Studio works. It produces correct multi-step agentic behavior with structur
 
 ## The Cost Structure
 
-Anthropic API pricing follows consistent ratios across Claude models:
+Anthropic API pricing uses prompt-cache rates that depend on the cache write TTL. ATLS currently uses Anthropic's default 5-minute `cache_control: {type: "ephemeral"}` breakpoints, so the worked examples below use the 5-minute write rate:
 
-| Token Type | Relative to Input | Sonnet 4 ($/MTok) | Opus 4 ($/MTok) |
+| Token Type | Relative to Input | Sonnet 4.6 ($/MTok) | Opus 4.6 ($/MTok) |
 |-----------|-------------------|-------------------|------------------|
-| Cached input (read) | 0.1x | $0.30 | $1.50 |
-| Cached input (write) | 1.25x | $3.75 | $18.75 |
-| Uncached input | 1x | $3.00 | $15.00 |
-| Output | 5x | $15.00 | $75.00 |
+| Cached input (read / refresh) | 0.1x | $0.30 | $0.50 |
+| Cached input (write, 5-minute TTL) | 1.25x | $3.75 | $6.25 |
+| Cached input (write, 1-hour TTL) | 2x | $6.00 | $10.00 |
+| Uncached input | 1x | $3.00 | $5.00 |
+| Output | 5x | $15.00 | $25.00 |
 
-In a typical 10-round ATLS tool loop (Sonnet 4):
+In a typical 10-round ATLS tool loop (Sonnet 4.6):
 
 | Region | Tokens/Round | Cost Rate | 10-Round Total |
 |--------|-------------|-----------|---------------|
 | System + tools (cached) | ~6k | $0.30/MTok | ~$0.02 |
 | History prefix (cached) | ~12k avg | $0.30/MTok | ~$0.04 |
-| History new turns (cache write) | ~3k | $3.75/MTok | ~$0.11 |
+| History new turns (5-min cache write) | ~3k | $3.75/MTok | ~$0.11 |
 | Dynamic block (uncached) | ~30-50k | $3.00/MTok | ~$0.90-1.50 |
 | Output | ~2-4k | $15.00/MTok | ~$0.30-0.60 |
 | **Total** | | | **~$1.37-2.27** |
 
-For Opus 4, multiply by 5×: **~$6.85-11.35** per 10-round loop.
+For Opus 4.6, multiply by 5/3: **~$2.28-3.78** per 10-round loop.
 
 The dynamic block — hash manifest, blackboard, staged snippets, working memory, workspace context, steering — accounts for **55-70% of input tokens** and is charged at **full uncached price** on every round.
 
@@ -65,7 +66,7 @@ The more sophisticated the memory system, the less cacheable the prompt. A simpl
 
 ATLS uses two active cache breakpoints and has infrastructure for a third:
 
-**BP-static (system + tools):** The Rust backend adds `cache_control: {type: "ephemeral"}` to the last tool definition in the Anthropic tools array (`build_atls_tools_for_provider`). This creates a single cacheable prefix covering the system prompt and all tool definitions (~6k tokens). Since neither changes within a session, this achieves near-100% cache reads after round 1. Five-minute TTL; refreshed every round.
+**BP-static (system + tools):** The Rust backend adds `cache_control: {type: "ephemeral"}` to the last tool definition in the Anthropic tools array (`build_atls_tools_for_provider`). This creates a single cacheable prefix covering the system prompt and all tool definitions (~6k tokens). Since neither changes within a session, this achieves near-100% cache reads after round 1. ATLS uses the default five-minute ephemeral TTL here, so cache creation is priced at 1.25× input; Anthropic's optional one-hour TTL would raise creation cost to 2× and is not the active cost assumption in this document.
 
 **BP3 (conversation history):** The TypeScript prompt assembler (`assembleProviderMessages`) injects a `<<PRIOR_TURN_BOUNDARY>>` marker on the last message before the current user turn. The Rust backend strips this marker and adds `cache_control` to that message block. History compression is deferred to round 0 (between user turns), so within a tool loop the message prefix is byte-identical across rounds — Anthropic serves cache reads at 0.1×. The boundary is placed carefully: if the last prior message contains `tool_use` blocks (which Anthropic doesn't allow `cache_control` on), the marker targets the message before it.
 
