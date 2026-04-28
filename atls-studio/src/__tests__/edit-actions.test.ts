@@ -47,6 +47,7 @@ vi.mock('../services/batch/handlers/session', () => ({
 }));
 
 import { executeUnifiedBatch } from '../services/batch/executor';
+import { useAppStore } from '../stores/appStore';
 
 function makeCtx() {
   const awarenessCache = new Map();
@@ -279,6 +280,14 @@ describe('mergeRanges with bracket-stress regions', () => {
 describe('edit_outside_read_range with bracket-stress regions', () => {
   beforeEach(() => {
     handlers.clear();
+    const state = useAppStore.getState();
+    vi.spyOn(useAppStore, 'getState').mockImplementation(() => ({
+      ...state,
+      settings: { ...state.settings, enforceReadBeforeEdit: true },
+    }));
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
   it('rejects edit targeting class body when only generics region was read', async () => {

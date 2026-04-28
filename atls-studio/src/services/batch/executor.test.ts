@@ -639,6 +639,14 @@ describe('executeUnifiedBatch snapshot propagation', () => {
 describe('executeUnifiedBatch read-range gate (line edits)', () => {
   beforeEach(() => {
     handlers.clear();
+    const state = useAppStore.getState();
+    vi.spyOn(useAppStore, 'getState').mockImplementation(() => ({
+      ...state,
+      settings: { ...state.settings, enforceReadBeforeEdit: true },
+    }));
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
   it('rejects change.edit when read.lines range does not cover edit lines', async () => {
@@ -2334,6 +2342,14 @@ describe('executeUnifiedBatch inter-step rebase for move and replace_body', () =
 describe('executeUnifiedBatch line-edit pipeline stress', () => {
   beforeEach(() => {
     handlers.clear();
+    const state = useAppStore.getState();
+    vi.spyOn(useAppStore, 'getState').mockImplementation(() => ({
+      ...state,
+      settings: { ...state.settings, enforceReadBeforeEdit: true },
+    }));
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
   it('documents gap: batch_edits has no top-level file so read-range gate is skipped', async () => {

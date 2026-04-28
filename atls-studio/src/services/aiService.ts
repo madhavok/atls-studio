@@ -51,7 +51,6 @@ function findNearestValidTool(name: string): string | undefined {
  * All API calls are routed through Tauri backend to bypass CORS.
  */
 
-export { streamChatForSwarm, type SwarmStreamCallbacks, type SwarmStreamOptions } from './swarmChat';
 export { fetchModels, type AIProvider } from './modelFetcher';
 export { getGeminiCacheSnapshot, restoreGeminiCacheSnapshot, type GeminiCacheSnapshot } from './geminiCache';
 
@@ -4546,10 +4545,6 @@ export async function streamChat(
     isFirstTurn,
   });
 }
-
-// ============================================================================
-// Swarm-Specific Chat Streaming (re-exported from swarmChat.ts at top of file)
-// ============================================================================
 
 /**
  * Get provider from model ID
