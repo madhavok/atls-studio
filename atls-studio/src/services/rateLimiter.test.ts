@@ -80,7 +80,7 @@ describe('rateLimiter', () => {
     expect(s).not.toBeNull();
     expect(s?.minuteUsage.limit.requests).toBeGreaterThan(0);
     const all = rateLimiter.getAllStates();
-    expect(Object.keys(all).sort()).toEqual(['anthropic', 'google', 'lmstudio', 'openai', 'vertex'].sort());
+    expect(Object.keys(all).sort()).toEqual(['anthropic', 'google', 'lmstudio', 'openai', 'openrouter', 'vertex'].sort());
   });
 
   it('rejects queued acquires on reset', async () => {
