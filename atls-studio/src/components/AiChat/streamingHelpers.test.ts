@@ -54,6 +54,14 @@ describe('streamingHelpers', () => {
     expect(refs.streamingSegmentsRef.current[0]).toMatchObject({ type: 'reasoning', content: 'r1r2' });
   });
 
+  it('appendReasoningToSegments coalesces adjacent reasoning even when block ids change', () => {
+    const refs = makeRefs();
+    appendReasoningToSegments(refs, 'a', 'think-1');
+    appendReasoningToSegments(refs, 'b', 'think-2');
+    expect(refs.streamingSegmentsRef.current).toHaveLength(1);
+    expect(refs.streamingSegmentsRef.current[0]).toMatchObject({ type: 'reasoning', content: 'ab' });
+  });
+
   it('closeBlockById marks the latest matching block done', () => {
     const refs = makeRefs();
     appendTextToSegments(refs, 't', 'blk');

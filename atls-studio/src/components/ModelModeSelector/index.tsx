@@ -105,6 +105,7 @@ const MODES: { id: ChatMode; name: string; description: string; icon: React.Reac
 const PROVIDER_COLORS: Record<AIProvider, string> = {
   anthropic: 'text-orange-400',
   openai: 'text-green-400',
+  openrouter: 'text-pink-400',
   google: 'text-blue-400',
   vertex: 'text-purple-400',
   lmstudio: 'text-cyan-400',
@@ -113,6 +114,7 @@ const PROVIDER_COLORS: Record<AIProvider, string> = {
 const PROVIDER_BADGES: Record<AIProvider, string> = {
   anthropic: 'Claude',
   openai: 'GPT',
+  openrouter: 'OpenRouter',
   google: 'Google AI',
   vertex: 'Vertex AI',
   lmstudio: 'LM Studio',
@@ -122,6 +124,7 @@ const PROVIDER_BADGES: Record<AIProvider, string> = {
 const DEFAULT_SUBAGENT_MODELS: Record<AIProvider, string> = {
   anthropic: 'claude-haiku-4-5',
   openai: 'gpt-4o-mini',
+  openrouter: 'openai/gpt-4o-mini',
   google: 'gemini-2.0-flash',
   vertex: 'gemini-2.0-flash',
   lmstudio: 'default',
@@ -410,6 +413,7 @@ export function ModelModeSelector() {
     console.log('[ModelModeSelector] Fetching models...', {
       anthropicKey: settings.anthropicApiKey ? '***' + settings.anthropicApiKey.slice(-4) : 'none',
       openaiKey: settings.openaiApiKey ? '***' + settings.openaiApiKey.slice(-4) : 'none',
+      openrouterKey: settings.openrouterApiKey ? '***' + settings.openrouterApiKey.slice(-4) : 'none',
       googleKey: settings.googleApiKey ? '***' + settings.googleApiKey.slice(-4) : 'none',
     });
     
@@ -419,6 +423,7 @@ export function ModelModeSelector() {
     const providers = [
       { provider: 'anthropic' as const, key: settings.anthropicApiKey },
       { provider: 'openai' as const, key: settings.openaiApiKey },
+      { provider: 'openrouter' as const, key: settings.openrouterApiKey },
       { provider: 'google' as const, key: settings.googleApiKey },
       { provider: 'vertex' as const, key: settings.vertexAccessToken, projectId: settings.vertexProjectId },
       { provider: 'lmstudio' as const, key: settings.lmstudioBaseUrl },
@@ -449,7 +454,7 @@ export function ModelModeSelector() {
     }
     setAvailableModels(allModels);
     setModelsLoading(false);
-  }, [settings.disabledProviders, settings.anthropicApiKey, settings.openaiApiKey, settings.googleApiKey, settings.vertexAccessToken, settings.vertexProjectId, settings.lmstudioBaseUrl, setAvailableModels, setModelsLoading]);
+  }, [settings.disabledProviders, settings.anthropicApiKey, settings.openaiApiKey, settings.openrouterApiKey, settings.googleApiKey, settings.vertexAccessToken, settings.vertexProjectId, settings.lmstudioBaseUrl, setAvailableModels, setModelsLoading]);
 
   // Debounce model fetching to avoid rapid API calls when settings change
   useEffect(() => {
@@ -515,7 +520,7 @@ export function ModelModeSelector() {
     }
   };
 
-  const hasAnyApiKey = settings.anthropicApiKey || settings.openaiApiKey || settings.googleApiKey || settings.vertexAccessToken || settings.lmstudioBaseUrl;
+  const hasAnyApiKey = settings.anthropicApiKey || settings.openaiApiKey || settings.openrouterApiKey || settings.googleApiKey || settings.vertexAccessToken || settings.lmstudioBaseUrl;
 
   const extendedResolution = getExtendedContextResolutionFromSettings(settings);
   const effectiveCtx = currentModel && getEffectiveContextWindow(

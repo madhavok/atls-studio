@@ -1087,13 +1087,14 @@ pub(crate) fn build_atls_tools_for_provider(provider: &str) -> serde_json::Value
 
 /// Get tools formatted for specific provider (cached — P0 #5).
 /// Supports: `anthropic`, `openai`, `google` (case-insensitive), plus aliases **`vertex` → Gemini format**
-/// and **`lmstudio` → OpenAI format** so BP2 / [`count_tool_def_tokens`](crate::tokenizer::count_tool_def_tokens_inner)
-/// match the shapes used by `stream_chat_vertex` / `stream_chat_lmstudio`.
+/// and **`lmstudio` / `openrouter` → OpenAI format** so BP2 /
+/// [`count_tool_def_tokens`](crate::tokenizer::count_tool_def_tokens_inner)
+/// match the shapes used by OpenAI-compatible streaming routes.
 pub(crate) fn get_atls_tools(provider: &str) -> serde_json::Value {
     let lower = provider.to_lowercase();
     let key = match lower.as_str() {
         "vertex" => "google",
-        "lmstudio" => "openai",
+        "lmstudio" | "openrouter" => "openai",
         other => other,
     };
     match key {
@@ -2536,6 +2537,248 @@ pub async fn stream_chat_openai(
     Ok(())
 }
 
+fn openrouter_visible_text_delta(delta: &serde_json::Value) -> Option<&str> {
+    delta.get("content").and_then(|c| c.as_str()).filter(|s| !s.is_empty())
+}
+
+fn openrouter_reasoning_text_delta(delta: &serde_json::Value) -> Option<&str> {
+    delta.get("reasoning_content")
+        .or_else(|| delta.get("reasoning"))
+        .and_then(|r| r.as_str())
+        .filter(|s| !s.is_empty())
+}
+
+/// Stream chat from OpenRouter (OpenAI-compatible hosted gateway).
+/// Uses Chat Completions only so router model ids never hit OpenAI's Responses-only branch.
+#[tauri::command]
+pub async fn stream_chat_openrouter(
+    app: AppHandle,
+    api_key: String,
+    model: String,
+    messages: Vec<ChatMessage>,
+    max_tokens: u32,
+    temperature: f32,
+    system_prompt: Option<String>,
+    stream_id: String,
+    enable_tools: Option<bool>,
+    reasoning_effort: Option<String>,
+) -> Result<(), String> {
+    let stream_state = app.state::<ChatStreamState>();
+    let client = reqwest::Client::new();
+
+    let openai_messages = convert_messages_for_openai(&messages, system_prompt.as_deref());
+
+    let mut body = serde_json::json!({
+        "model": model,
+        "max_tokens": max_tokens,
+        "temperature": temperature,
+        "messages": openai_messages,
+        "stream": true,
+        "stream_options": { "include_usage": true },
+    });
+
+    if let Some(ref effort) = reasoning_effort {
+        body["reasoning_effort"] = serde_json::json!(effort);
+    }
+
+    if enable_tools.unwrap_or(true) {
+        body["tools"] = get_atls_tools("openai");
+    }
+
+    let body_str = body.to_string();
+    let response = retry_with_backoff(MAX_RETRIES, Some(&app), Some(&stream_id), || {
+        let client = client.clone();
+        let api_key = api_key.clone();
+        let body_str = body_str.clone();
+        async move {
+            let resp = client
+                .post("https://openrouter.ai/api/v1/chat/completions")
+                .header("Content-Type", "application/json")
+                .header("Authorization", format!("Bearer {}", api_key))
+                .header("X-OpenRouter-Title", "ATLS Studio")
+                .body(body_str)
+                .send()
+                .await
+                .map_err(|e| (reqwest::StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+            if !resp.status().is_success() {
+                let status = resp.status();
+                let body = resp.text().await.unwrap_or_default();
+                return Err((status, body));
+            }
+
+            Ok(resp)
+        }
+    }).await?;
+
+    let app_clone = app.clone();
+    let stream_id_clone = stream_id.clone();
+    let stream_id_cleanup = stream_id.clone();
+
+    let handle = tokio::spawn(async move {
+        use futures::StreamExt;
+        use crate::stream_protocol::*;
+
+        let mut stream = response.bytes_stream();
+        let mut buffer = String::new();
+        let mut block_counter: u32 = 0;
+
+        let mut text_batcher = TextBatcher::new(next_block_id(&mut block_counter));
+        let mut reasoning_batcher = ReasoningBatcher::new(next_block_id(&mut block_counter));
+        let mut is_reasoning = false;
+        let mut pending_tc: std::collections::HashMap<usize, (String, String, String, bool)> = std::collections::HashMap::new();
+        let mut last_stop_reason: Option<String> = None;
+
+        while let Some(chunk_result) = stream.next().await {
+            match chunk_result {
+                Ok(chunk) => {
+                    buffer.push_str(&String::from_utf8_lossy(&chunk));
+
+                    while let Some(newline_pos) = buffer.find('\n') {
+                        let line = buffer[..newline_pos].to_string();
+                        buffer = buffer[newline_pos + 1..].to_string();
+
+                        if line.starts_with("data: ") {
+                            let data = &line[6..];
+                            if data.trim() == "[DONE]" {
+                                text_batcher.close(&app_clone, &stream_id_clone);
+                                reasoning_batcher.close(&app_clone, &stream_id_clone);
+                                for (_, (id, name, args, _)) in pending_tc.drain() {
+                                    if !name.is_empty() {
+                                        let input = parse_tool_args_or_warn(&app_clone, &stream_id_clone, &name, &args);
+                                        emit_chunk(&app_clone, &stream_id_clone, StreamChunk::ToolInputAvailable {
+                                            tool_call_id: id,
+                                            tool_name: name,
+                                            input,
+                                            thought_signature: None,
+                                        });
+                                    }
+                                }
+                                if let Some(ref reason) = last_stop_reason {
+                                    emit_chunk(&app_clone, &stream_id_clone, StreamChunk::StopReason {
+                                        reason: reason.clone(),
+                                    });
+                                }
+                                emit_chunk(&app_clone, &stream_id_clone, StreamChunk::Done);
+                                return;
+                            }
+
+                            if let Ok(event) = serde_json::from_str::<serde_json::Value>(data.trim()) {
+                                if let Some(usage) = event.get("usage") {
+                                    emit_chunk(&app_clone, &stream_id_clone, StreamChunk::Usage {
+                                        input_tokens: usage.get("prompt_tokens").and_then(|v| v.as_i64()).unwrap_or(0),
+                                        output_tokens: usage.get("completion_tokens").and_then(|v| v.as_i64()).unwrap_or(0),
+                                        cache_creation_input_tokens: None,
+                                        cache_read_input_tokens: None,
+                                        openai_cached_tokens: None,
+                                        cached_content_tokens: None,
+                                    });
+                                }
+
+                                if let Some(choices) = event.get("choices").and_then(|c| c.as_array()) {
+                                    if let Some(choice) = choices.first() {
+                                        if let Some(delta) = choice.get("delta") {
+                                            if let Some(reasoning) = openrouter_reasoning_text_delta(delta) {
+                                                if !is_reasoning {
+                                                    text_batcher.close(&app_clone, &stream_id_clone);
+                                                    is_reasoning = true;
+                                                }
+                                                reasoning_batcher.push(reasoning, &app_clone, &stream_id_clone);
+                                            }
+                                            if let Some(content) = openrouter_visible_text_delta(delta) {
+                                                if is_reasoning {
+                                                    reasoning_batcher.close(&app_clone, &stream_id_clone);
+                                                    reasoning_batcher = ReasoningBatcher::new(next_block_id(&mut block_counter));
+                                                    text_batcher = TextBatcher::new(next_block_id(&mut block_counter));
+                                                    is_reasoning = false;
+                                                }
+                                                text_batcher.push(content, &app_clone, &stream_id_clone);
+                                            }
+                                            if let Some(tool_calls) = delta.get("tool_calls").and_then(|tc| tc.as_array()) {
+                                                text_batcher.close(&app_clone, &stream_id_clone);
+                                                reasoning_batcher.close(&app_clone, &stream_id_clone);
+                                                for tool_call in tool_calls {
+                                                    let idx = tool_call.get("index").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+                                                    if let Some(func) = tool_call.get("function") {
+                                                        let entry = pending_tc.entry(idx).or_insert_with(|| (String::new(), String::new(), String::new(), false));
+                                                        if let Some(id) = tool_call.get("id").and_then(|v| v.as_str()) {
+                                                            if !id.is_empty() { entry.0 = id.to_string(); }
+                                                        }
+                                                        if let Some(name) = func.get("name").and_then(|v| v.as_str()) {
+                                                            if !name.is_empty() { entry.1 = name.to_string(); }
+                                                        }
+                                                        if !entry.3 && !entry.0.is_empty() && !entry.1.is_empty() {
+                                                            emit_chunk(&app_clone, &stream_id_clone, StreamChunk::ToolInputStart {
+                                                                tool_call_id: entry.0.clone(),
+                                                                tool_name: entry.1.clone(),
+                                                            });
+                                                            entry.3 = true;
+                                                        }
+                                                        if let Some(args) = func.get("arguments").and_then(|v| v.as_str()) {
+                                                            entry.2.push_str(args);
+                                                            if entry.3 {
+                                                                emit_chunk(&app_clone, &stream_id_clone, StreamChunk::ToolInputDelta {
+                                                                    tool_call_id: entry.0.clone(),
+                                                                    input_text_delta: args.to_string(),
+                                                                });
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        if let Some(finish_reason) = choice.get("finish_reason") {
+                                            if !finish_reason.is_null() {
+                                                let normalized = match finish_reason.as_str().unwrap_or("") {
+                                                    "stop" | "content_filter" => "end_turn",
+                                                    "length" => "max_tokens",
+                                                    "tool_calls" => "tool_use",
+                                                    other => other,
+                                                };
+                                                last_stop_reason = Some(normalized.to_string());
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    emit_chunk(&app_clone, &stream_id_clone, StreamChunk::Error {
+                        error_text: e.to_string(),
+                    });
+                    break;
+                }
+            }
+        }
+
+        text_batcher.close(&app_clone, &stream_id_clone);
+        reasoning_batcher.close(&app_clone, &stream_id_clone);
+        for (_, (id, name, args, _)) in pending_tc.drain() {
+            if !name.is_empty() {
+                let input = parse_tool_args_or_warn(&app_clone, &stream_id_clone, &name, &args);
+                emit_chunk(&app_clone, &stream_id_clone, StreamChunk::ToolInputAvailable {
+                    tool_call_id: id,
+                    tool_name: name,
+                    input,
+                    thought_signature: None,
+                });
+            }
+        }
+        if let Some(ref reason) = last_stop_reason {
+            emit_chunk(&app_clone, &stream_id_clone, StreamChunk::StopReason {
+                reason: reason.clone(),
+            });
+        }
+        emit_chunk(&app_clone, &stream_id_clone, StreamChunk::Done);
+    });
+
+    stream_state.handles.lock().await.insert(stream_id_cleanup, handle);
+
+    Ok(())
+}
+
 /// Stream chat from LM Studio (OpenAI-compatible local server).
 /// Uses the same /v1/chat/completions format as OpenAI but against a user-provided base URL.
 #[tauri::command]
@@ -3236,6 +3479,23 @@ mod responses_api_conversion_tests {
         assert_eq!(v.get("effort").and_then(|x| x.as_str()), Some("high"));
         assert_eq!(v.get("summary").and_then(|x| x.as_str()), Some("auto"));
     }
+
+    #[test]
+    fn openrouter_delta_separates_reasoning_from_visible_text() {
+        let reasoning_only = serde_json::json!({
+            "reasoning": "scratchpad",
+            "reasoning_content": "preferred scratchpad"
+        });
+        assert_eq!(openrouter_visible_text_delta(&reasoning_only), None);
+        assert_eq!(openrouter_reasoning_text_delta(&reasoning_only), Some("preferred scratchpad"));
+
+        let visible = serde_json::json!({
+            "reasoning": "scratchpad",
+            "content": "visible answer"
+        });
+        assert_eq!(openrouter_visible_text_delta(&visible), Some("visible answer"));
+        assert_eq!(openrouter_reasoning_text_delta(&visible), Some("scratchpad"));
+    }
 }
 
 #[cfg(test)]
@@ -3257,6 +3517,14 @@ mod atls_tools_provider_tests {
         let o = get_atls_tools("openai");
         let l = get_atls_tools("lmstudio");
         assert_eq!(o, l);
+        assert!(o.to_string().contains("\"type\":\"function\""));
+    }
+
+    #[test]
+    fn openrouter_and_openai_share_chat_tools_format() {
+        let o = get_atls_tools("openai");
+        let r = get_atls_tools("openrouter");
+        assert_eq!(o, r);
         assert!(o.to_string().contains("\"type\":\"function\""));
     }
 

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { calculateCost, type SubAgentUsage } from './costStore';
+import { calculateCost, clearOpenRouterModelPricing, registerOpenRouterModelPricing, type SubAgentUsage } from './costStore';
 import type { RoundSnapshot } from './roundHistoryStore';
 
 const COST_DATA_KEY = 'atls-cost-data';
@@ -70,6 +70,10 @@ function makeSnapshot(): RoundSnapshot {
 }
 
 describe('calculateCost', () => {
+  beforeEach(() => {
+    clearOpenRouterModelPricing();
+  });
+
   it('returns 0 for non-finite or negative token counts', () => {
     expect(calculateCost('openai', 'gpt-4o', Number.NaN, 10)).toBe(0);
     expect(calculateCost('openai', 'gpt-4o', 10, Number.POSITIVE_INFINITY)).toBe(0);
@@ -94,6 +98,14 @@ describe('calculateCost', () => {
   it('uses the published GPT-5.5 cached input rate', () => {
     const oneM = 1_000_000;
     expect(calculateCost('openai', 'gpt-5.5', oneM, 0, oneM)).toBe(50);
+  });
+
+  it('uses runtime OpenRouter pricing when model catalog supplies rates', () => {
+    const oneM = 1_000_000;
+    registerOpenRouterModelPricing([
+      { id: 'openai/gpt-5.2', openRouterPricing: { input: 125, output: 1000 } },
+    ]);
+    expect(calculateCost('openrouter', 'openai/gpt-5.2', oneM, oneM)).toBe(1125);
   });
 });
 

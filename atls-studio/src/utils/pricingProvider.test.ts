@@ -19,6 +19,20 @@ describe('getPricingProviderForModel', () => {
     ).toBe('anthropic');
   });
 
+  it('keeps OpenRouter catalog slugs routed through OpenRouter', () => {
+    expect(
+      getPricingProviderForModel('openai/gpt-5.2', 'openai', [
+        { id: 'openai/gpt-5.2', provider: 'openrouter' },
+      ]),
+    ).toBe('openrouter');
+  });
+
+  it('falls back to selected OpenRouter for unlisted vendor slugs', () => {
+    expect(
+      getPricingProviderForModel('anthropic/claude-sonnet-4', 'openrouter', []),
+    ).toBe('openrouter');
+  });
+
   it('maps unlisted gemini to vertex when Vertex is selected', () => {
     expect(
       getPricingProviderForModel('gemini-2.0-flash-custom', 'vertex', []),

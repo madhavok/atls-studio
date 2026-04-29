@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { extractFirstTextFromMessage, generateTitle, getMessageParts } from './appStore';
+import { coalesceReasoningParts, extractFirstTextFromMessage, generateTitle, getMessageParts } from './appStore';
 import type { Message } from './appStore';
 
 describe('getMessageParts / extractFirstTextFromMessage', () => {
@@ -47,6 +47,33 @@ describe('getMessageParts / extractFirstTextFromMessage', () => {
       segments: [{ type: 'text' as const, content: 'from segments' }],
     };
     expect(getMessageParts(msg)).toEqual([{ type: 'text', content: 'from parts' }]);
+  });
+
+  it('coalesces adjacent reasoning fragments for display without dropping context', () => {
+    expect(coalesceReasoningParts([
+      { type: 'reasoning', content: 'The ' },
+      { type: 'reasoning', content: 'user ' },
+      { type: 'text', content: 'visible' },
+      { type: 'reasoning', content: 'next' },
+    ])).toEqual([
+      { type: 'reasoning', content: 'The user ' },
+      { type: 'text', content: 'visible' },
+      { type: 'reasoning', content: 'next' },
+    ]);
+  });
+
+  it('getMessageParts coalesces adjacent persisted reasoning parts', () => {
+    const parts = getMessageParts({
+      parts: [
+        { type: 'reasoning' as const, content: 'a' },
+        { type: 'reasoning' as const, content: 'b' },
+        { type: 'text' as const, content: 'out' },
+      ],
+    });
+    expect(parts).toEqual([
+      { type: 'reasoning', content: 'ab' },
+      { type: 'text', content: 'out' },
+    ]);
   });
 
   it('getMessageParts maps toolCalls with leading text content', () => {

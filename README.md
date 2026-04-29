@@ -2,7 +2,7 @@
 
 An **output-compression-first** desktop coding agent. ~200k LOC across TypeScript and Rust.
 
-**Built with** TypeScript + React + Rust (Tauri) | **Providers** Anthropic · OpenAI · Google (Gemini/Vertex) · LM Studio
+**Built with** TypeScript + React + Rust (Tauri) | **Providers** Anthropic · OpenAI · OpenRouter · Google (Gemini/Vertex) · LM Studio
 
 ---
 
@@ -22,6 +22,7 @@ See the **[whitepaper](docs/whitepaper.md)** for the full technical treatment.
 
 Recent work tightens the loop between **cheap references**, **honest accounting**, and **what the UI shows** — moving from scattered per-read file chunks and implicit cost toward one file-context pipeline you can reason about and measure.
 
+- **OpenRouter provider** — OpenRouter is now a first-class provider with its own settings entry, model discovery, chat streaming, subagent/swarm routing, rate limits, and runtime pricing from the OpenRouter model catalog. Routed ids like `openai/gpt-5.2`, `anthropic/claude-*`, and `moonshotai/kimi-*` stay under `provider: openrouter` for API keys, cost buckets, and model selection. OpenRouter reasoning/thought deltas are preserved for continuity and coalesced for display so context is retained without token-sized reasoning parts cluttering the transcript.
 - **Unified hash namespace** — FileView refs and chunk refs now share the single `h:<short>` shape (6 hex chars). The prior `h:fv:<16>` prefix is retired — the model sees one hash format everywhere, can't templated-truncate across the asymmetry, and retention ops resolve short refs to the view/chunk by prefix match (views win on collision). *Why:* the old asymmetry was a spin vector — the model would see both formats, try to normalize to one, and fail lookups. `resolveAnyRef` unifies the lookup; `RoundSnapshot.refCollisions` tracks the rare cases where a short hash matches both a view and a chunk (~3% birthday bound at session scale; bump `SHORT_HASH_LEN` to 8 if observed).
 - **Auto-pin on read + release-only retention** — Reads (`rs`, `rl`, `rc`, `rf`) now auto-pin their FileView; the model's retention vocabulary collapses to release (`pu` / `pc` / `dro`). Explicit `pi` stays available for non-read artifacts (searches, analyses). Saves output tokens on the "keep what I just read" decision (5x output pricing made it dominant), simplifies cognitive core (~106 cached tokens removed, 3 anti-patterns retired), and feeds ASSESS more evidence to rank on. `autoPinReads` setting is an emergency rollback lever (not A/B — the prompt and runtime flip together); telemetry tracks `autoPinsCreated / autoPinsReleasedUnused` so the "was auto-pin correct?" rate is measurable per session.
 - **Pinned-WM hygiene (ASSESS + ephemeral retention output)** — Two complementary layers close the silent-accumulator gap. **ASSESS** is an ephemeral steering block that surfaces the oldest / largest pinned targets with a per-row `release | compact | hold` decision when CTX climbs or a pin survives edit-forwards untouched; single-fire dedupe keyed on candidates + CTX bucket. **Ephemeral retention output:** `session.pin/unpin/drop/unload/compact/bb.delete` are state mutations; their effect is visible in the next round's hash manifest. So persisted history carries no tool_result line on success and no tool_use args — the manifest is the receipt. FAIL lines stay loud (the model needs to know it targeted something that isn't there), and zero-match retention now errs loudly at the handler instead of silently faking success. *Why:* any stable shape in prior tool_use becomes a shape the model re-emits verbatim; removing the shape removes the templating vector. Measured 35.5% input-token savings over 20 sub-threshold retention rounds with byte-stable BP3 prefix.
@@ -140,7 +141,7 @@ See [Architecture Document](atls-studio/docs/ARCHITECTURE.md) for the full techn
 - **Frontend**: TypeScript, React, Zustand, Vite (~120k LOC including 185 test files)
 - **Backend**: Rust, Tauri v2 (36 Rust files, ~54k LOC in `src-tauri/src`)
 - **Engine**: `atls-core` -- tree-sitter indexing, FTS + optional neural embeddings, pattern detectors (~20k LOC)
-- **Providers**: Anthropic (Claude), OpenAI, Google (Gemini/Vertex), LM Studio
+- **Providers**: Anthropic (Claude), OpenAI, OpenRouter, Google (Gemini/Vertex), LM Studio
 
 ## Repository Layout
 

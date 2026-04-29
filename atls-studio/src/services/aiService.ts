@@ -2157,6 +2157,18 @@ async function streamChatViaTauri(
             reasoningEffort: config.reasoningEffort ?? null,
             verbosity: config.outputVerbosity ?? null,
           });
+        } else if (config.provider === 'openrouter') {
+          await invoke('stream_chat_openrouter', {
+            apiKey: config.apiKey,
+            model: config.model,
+            messages: tauriMessages,
+            maxTokens: config.maxTokens,
+            temperature: config.temperature,
+            systemPrompt: config.systemPrompt || '',
+            streamId,
+            enableTools: toolsEnabled,
+            reasoningEffort: config.reasoningEffort ?? null,
+          });
         } else if (config.provider === 'lmstudio') {
           await invoke('stream_chat_lmstudio', {
             baseUrl: config.baseUrl || config.apiKey,

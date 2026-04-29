@@ -361,6 +361,18 @@ async function runStreamRound(
         reasoningEffort: config.reasoningEffort ?? null,
         verbosity: config.outputVerbosity ?? null,
       });
+    } else if (provider === 'openrouter') {
+      await invoke('stream_chat_openrouter', {
+        apiKey: config.apiKey,
+        model: config.model,
+        messages,
+        maxTokens: config.maxTokens ?? 4096,
+        temperature: config.temperature ?? 0.7,
+        systemPrompt,
+        streamId,
+        enableTools,
+        reasoningEffort: config.reasoningEffort ?? null,
+      });
     } else if (provider === 'lmstudio') {
       await invoke('stream_chat_lmstudio', {
         baseUrl: config.baseUrl ?? config.apiKey,

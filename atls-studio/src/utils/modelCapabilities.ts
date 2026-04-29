@@ -7,7 +7,7 @@
  * `src-tauri/src/tokenizer.rs` `test_models` (Rust) — update both when changing defaults.
  */
 
-export type AIProvider = 'anthropic' | 'openai' | 'google' | 'vertex' | 'lmstudio';
+export type AIProvider = 'anthropic' | 'openai' | 'google' | 'vertex' | 'lmstudio' | 'openrouter';
 
 /** Max extended context we surface in UI and budgets (1M). */
 export const EXTENDED_CONTEXT_VALUE = 1_000_000;
@@ -168,6 +168,15 @@ export function deriveModelCapabilities(
       id.startsWith('gemini-2.5') ||
       id.startsWith('gemini-3');
     isFast = id.includes('flash') || id.includes('flash-lite');
+  } else if (provider === 'openrouter') {
+    isReasoning =
+      id.includes('/o1') ||
+      id.includes('/o3') ||
+      id.includes('/o4') ||
+      id.includes('/gpt-5') ||
+      id.includes('reasoning') ||
+      id.includes('deepseek-r1');
+    isFast = id.includes('mini') || id.includes('nano') || id.includes('flash') || id.includes('haiku');
   }
   // lmstudio: no static patterns
 
@@ -192,6 +201,9 @@ export function modelSupportsTools(modelId: string, provider: AIProvider): boole
   if (provider === 'openai') {
     // Chat models we list support tools; exclude any known non-tool chat models
     if (id.includes('gpt-4o-audio') || id.includes('gpt-4o-mini-audio')) return false;
+    return true;
+  }
+  if (provider === 'openrouter') {
     return true;
   }
   if (provider === 'google' || provider === 'vertex') {

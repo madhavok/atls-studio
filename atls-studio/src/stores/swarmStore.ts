@@ -134,6 +134,7 @@ export interface SwarmStats {
 const DEFAULT_RATE_LIMITS: Record<string, { rpm: number; tpm: number }> = {
   anthropic: { rpm: 50, tpm: 100000 },
   openai: { rpm: 60, tpm: 150000 },
+  openrouter: { rpm: 60, tpm: 150000 },
   google: { rpm: 60, tpm: 1000000 },
   vertex: { rpm: 60, tpm: 1000000 },
   lmstudio: { rpm: 999, tpm: 10000000 },

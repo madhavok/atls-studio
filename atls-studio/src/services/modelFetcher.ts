@@ -1,7 +1,8 @@
 import { invoke } from '@tauri-apps/api/core';
 import { deriveModelCapabilities, getKnownContextWindow } from '../utils/modelCapabilities';
+import { clearOpenRouterModelPricing, registerOpenRouterModelPricing, type OpenRouterModelPricing } from '../stores/costStore';
 
-export type AIProvider = 'anthropic' | 'openai' | 'google' | 'vertex' | 'lmstudio';
+export type AIProvider = 'anthropic' | 'openai' | 'google' | 'vertex' | 'lmstudio' | 'openrouter';
 
 export interface ModelInfo {
   id: string;
@@ -11,13 +12,18 @@ export interface ModelInfo {
   isReasoning?: boolean;
   isFast?: boolean;
   hasHighContext?: boolean;
+  supportedParameters?: string[];
+  openRouterPricing?: OpenRouterModelPricing;
 }
 
 interface TauriAIModel {
   id: string;
   name: string;
   context_window?: number | null;
-  max_output_tokens?: number;
+  max_output_tokens?: number | null;
+  supported_parameters?: string[];
+  pricing_prompt_cents_per_million?: number | null;
+  pricing_completion_cents_per_million?: number | null;
 }
 
 export async function fetchModels(provider: AIProvider, apiKey: string, _projectId?: string, _region?: string): Promise<ModelInfo[]> {
@@ -28,6 +34,8 @@ export async function fetchModels(provider: AIProvider, apiKey: string, _project
       return fetchOpenAIModelsTauri(apiKey);
     case 'lmstudio':
       return fetchLMStudioModelsTauri(apiKey);
+    case 'openrouter':
+      return fetchOpenRouterModelsTauri(apiKey);
     case 'google':
       return fetchGoogleModelsTauri(apiKey);
     case 'vertex':
@@ -39,7 +47,7 @@ export async function fetchModels(provider: AIProvider, apiKey: string, _project
 }
 
 function enrichWithCapabilities(
-  m: { id: string; name: string; context_window?: number | null; max_output_tokens?: number },
+  m: TauriAIModel,
   provider: AIProvider
 ): ModelInfo {
   const ctx =
@@ -47,14 +55,25 @@ function enrichWithCapabilities(
       ? m.context_window
       : undefined) ?? getKnownContextWindow(m.id, provider);
   const caps = deriveModelCapabilities(m.id, provider, ctx);
+  const openRouterPricing =
+    provider === 'openrouter' &&
+    typeof m.pricing_prompt_cents_per_million === 'number' &&
+    typeof m.pricing_completion_cents_per_million === 'number'
+      ? {
+        input: m.pricing_prompt_cents_per_million,
+        output: m.pricing_completion_cents_per_million,
+      }
+      : undefined;
   return {
     id: m.id,
     name: m.name,
     contextWindow: ctx,
-    maxOutputTokens: m.max_output_tokens,
+    maxOutputTokens: m.max_output_tokens ?? undefined,
     isReasoning: caps.isReasoning,
     isFast: caps.isFast,
     hasHighContext: caps.hasHighContext,
+    supportedParameters: m.supported_parameters,
+    openRouterPricing,
   };
 }
 
@@ -84,6 +103,19 @@ async function fetchLMStudioModelsTauri(baseUrl: string): Promise<ModelInfo[]> {
     return models.map(m => enrichWithCapabilities(m, 'lmstudio'));
   } catch (err) {
     console.error('Failed to fetch LMStudio models:', err);
+    return [];
+  }
+}
+
+async function fetchOpenRouterModelsTauri(apiKey: string): Promise<ModelInfo[]> {
+  try {
+    clearOpenRouterModelPricing();
+    const models = await invoke<TauriAIModel[]>('fetch_openrouter_models', { apiKey });
+    const enriched = models.map(m => enrichWithCapabilities(m, 'openrouter'));
+    registerOpenRouterModelPricing(enriched);
+    return enriched;
+  } catch (err) {
+    console.error('Failed to fetch OpenRouter models:', err);
     return [];
   }
 }

@@ -56,6 +56,27 @@ describe('fetchModels', () => {
     expect(v[0]?.id).toBe('v1');
   });
 
+  it('fetches openrouter models and carries pricing metadata', async () => {
+    invoke.mockResolvedValueOnce([{
+      id: 'openai/gpt-5.2',
+      name: 'GPT-5.2',
+      context_window: 400_000,
+      max_output_tokens: 32_000,
+      supported_parameters: ['tools', 'reasoning_effort'],
+      pricing_prompt_cents_per_million: 125,
+      pricing_completion_cents_per_million: 1000,
+    }]);
+    const models = await fetchModels('openrouter', 'sk-or-test');
+    expect(invoke).toHaveBeenCalledWith('fetch_openrouter_models', { apiKey: 'sk-or-test' });
+    expect(models[0]).toMatchObject({
+      id: 'openai/gpt-5.2',
+      contextWindow: 400_000,
+      maxOutputTokens: 32_000,
+      supportedParameters: ['tools', 'reasoning_effort'],
+      openRouterPricing: { input: 125, output: 1000 },
+    });
+  });
+
   it('uses known context window when API returns 0 or null', async () => {
     invoke.mockResolvedValueOnce([
       { id: 'claude-3-5-sonnet-20241022', name: 'S', context_window: 0, max_output_tokens: 1 },
@@ -81,5 +102,8 @@ describe('fetchModels', () => {
 
     invoke.mockRejectedValueOnce(new Error('network'));
     expect(await fetchModels('vertex', 'tok', 'p', 'r')).toEqual([]);
+
+    invoke.mockRejectedValueOnce(new Error('network'));
+    expect(await fetchModels('openrouter', 'k')).toEqual([]);
   });
 });

@@ -66,7 +66,7 @@ Architecture overview: [`atls-studio/docs/ARCHITECTURE.md`](../atls-studio/docs/
 | Doc | What it covers |
 |-----|----------------|
 | [atls-engine.md](./atls-engine.md) | `atls-core` Rust engine: `AtlsProject`, `ParserRegistry` (tree-sitter), `Indexer` (incremental + hash-based), `QueryEngine` (FTS + optional neural embeddings), `DetectorRegistry` (pattern-based issue detection), SQLite WAL persistence |
-| [tauri-backend.md](./tauri-backend.md) | Native Rust host: `hash_resolver` (UHPP resolution, ~3k LOC), `shape_ops` (shapes + symbol resolver, ~5.7k LOC), `edit_session` (preimage verification), AI streaming, PTY terminals, git ops |
+| [tauri-backend.md](./tauri-backend.md) | Native Rust host: `hash_resolver` (UHPP resolution, ~3k LOC), `shape_ops` (shapes + symbol resolver, ~5.7k LOC), `edit_session` (preimage verification), AI streaming (Anthropic, OpenAI, OpenRouter, Gemini/Vertex, LM Studio), PTY terminals, git ops |
 | [tauri-commands.md](./tauri-commands.md) | Enumerated Tauri `invoke` command names (`generate_handler!` in `lib.rs`) |
 | [mcp-integration.md](./mcp-integration.md) | External MCP server: 7 tools over stdio JSON-RPC, per-root project caching, literal paths only (no UHPP) |
 | [studio-app-shell.md](./studio-app-shell.md) | React/Vite UI: multi-panel workspace, AtlsPanel tabs (Issues/File/Patterns/Overview/Health), Internals dashboard (batch efficiency, tool tokens, cache composition, cost I/O, spin trace), copy last API payload |

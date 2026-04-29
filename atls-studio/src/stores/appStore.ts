@@ -27,17 +27,30 @@ export interface RootFileTree {
   files: FileNode[];
 }
 
+export function coalesceReasoningParts(parts: MessagePart[]): MessagePart[] {
+  const out: MessagePart[] = [];
+  for (const part of parts) {
+    const last = out[out.length - 1];
+    if (part.type === 'reasoning' && last?.type === 'reasoning') {
+      last.content += part.content;
+    } else {
+      out.push({ ...part } as MessagePart);
+    }
+  }
+  return out;
+}
+
 /** Normalize message to MessagePart[]. Prefers parts, falls back to segments then toolCalls. */
 export function getMessageParts(msg: Message | { parts?: MessagePart[]; segments?: MessageSegment[]; toolCalls?: MessageToolCall[]; content?: string }): MessagePart[] {
-  if (msg.parts && msg.parts.length > 0) return msg.parts;
+  if (msg.parts && msg.parts.length > 0) return coalesceReasoningParts(msg.parts);
   if (msg.segments && msg.segments.length > 0) {
-    return msg.segments.map((s) =>
+    return coalesceReasoningParts(msg.segments.map((s) =>
       s.type === 'text'
         ? { type: 'text' as const, content: s.content }
         : s.type === 'reasoning'
           ? { type: 'reasoning' as const, content: s.content }
           : { type: 'tool' as const, toolCall: (s as Extract<MessageSegment, { type: 'tool' }>).toolCall },
-    );
+    ));
   }
   if (msg.toolCalls && msg.toolCalls.length > 0) {
     const parts: MessagePart[] = [];
@@ -412,11 +425,14 @@ export interface LogicalCacheState {
 export interface ModelInfo {
   id: string;
   name: string;
-  provider: 'anthropic' | 'openai' | 'google' | 'vertex' | 'lmstudio';
+  provider: AIProvider;
   contextWindow?: number;
+  maxOutputTokens?: number;
   isReasoning?: boolean;
   isFast?: boolean;
   hasHighContext?: boolean;
+  supportedParameters?: string[];
+  openRouterPricing?: { input: number; output: number; cachedInput?: number };
 }
 
 // AI Agent configuration
@@ -493,7 +509,7 @@ const DEFAULT_AGENT_PROGRESS: AgentProgress = {
 };
 
 // AI provider type (matches aiService)
-export type AIProvider = 'anthropic' | 'openai' | 'google' | 'vertex' | 'lmstudio';
+export type AIProvider = 'anthropic' | 'openai' | 'google' | 'vertex' | 'lmstudio' | 'openrouter';
 
 /**
  * Per-category gates for every `<<...>>` intervention message the app injects
@@ -639,6 +655,7 @@ export interface Settings {
   // Provider credentials
   anthropicApiKey: string;
   openaiApiKey: string;
+  openrouterApiKey: string;
   googleApiKey: string;
   vertexAccessToken: string;
   vertexProjectId: string;
@@ -646,10 +663,10 @@ export interface Settings {
   lmstudioBaseUrl: string;
   // Model selection
   selectedModel: string;
-  selectedProvider: 'anthropic' | 'openai' | 'google' | 'vertex' | 'lmstudio';
+  selectedProvider: AIProvider;
   // SubAgent model: 'none' = disabled, '' = auto-select cheapest, or explicit model id
   subagentModel: string;
-  subagentProvider: 'anthropic' | 'openai' | 'google' | 'vertex' | 'lmstudio' | '';
+  subagentProvider: AIProvider | '';
   // Generation settings
   maxTokens: number;
   temperature: number;
@@ -1653,6 +1670,7 @@ export const useAppStore = create<AppState>((set) => ({
       disabledProviders: [],
       anthropicApiKey: '',
       openaiApiKey: '',
+      openrouterApiKey: '',
       googleApiKey: '',
       vertexAccessToken: '',
       vertexProjectId: '',

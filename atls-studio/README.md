@@ -6,7 +6,7 @@ An AI-powered cognitive development environment with managed working memory, bui
 
 - **Engram-based Memory** — Hash-addressed knowledge units with lifecycle management (active → dormant → archived → evicted). Pin to retain, recall by hash, auto-evict under pressure.
 - **Universal Hash Pointers (UHPP)** — Reference any content by hash with line ranges, symbol selectors, shapes, diffs, and composition chains. `h:XXXX:fn(name):sig` targets a function signature directly.
-- **Multi-Provider AI** — Supports Anthropic (Claude), OpenAI (GPT), Google (Gemini), Vertex AI, and LM Studio for local models. Streaming responses with tool execution loops.
+- **Multi-Provider AI** — Supports Anthropic (Claude), OpenAI (GPT), OpenRouter, Google (Gemini), Vertex AI, and LM Studio for local models. Streaming responses with tool execution loops.
 - **9 operation families, 76 `OperationKind` steps** — Discover, Understand, Change, Verify, Session, Annotation, Delegate, System, and Intent operations with short codes for efficient batch execution (see [`src/services/batch/families.ts`](src/services/batch/families.ts)).
 - **Subagent Architecture** — Four specialized agents (Retriever, Designer, Coder, Tester) with isolated memory, compressed state snapshots, and different permission levels.
 - **Batch Execution** — Positional rebasing across sequential edits, snapshot tracking with content hashing, automatic context refresh, and interruption detection.
@@ -27,7 +27,7 @@ An AI-powered cognitive development environment with managed working memory, bui
 │  (task planning, multi-agent coord)       │
 ├──────────┬──────────┬────────────────────┤
 │ AI Service│ Subagent │  Batch Executor     │
-│ (5 provs) │ (4 types)│  (rebase+snapshot)  │
+│ (6 provs) │ (4 types)│  (rebase+snapshot)  │
 ├──────────┴──────────┴────────────────────┤
 │       Context Store + App Store           │
 │  (engrams, staging, BB, awareness)        │
@@ -126,7 +126,7 @@ Edits in `change.edit` / `line_edits` apply **sequentially in array order** (top
 - **Tailwind CSS** — Styling
 - **Zustand** — State
 - **ATLS** — Code intelligence via the in-process Tauri backend (`atls-core` in `../../atls-rs/crates/atls-core`)
-- **Claude API** (and other providers) — Chat streaming through Rust adapters
+- **Claude API** (and other providers including OpenRouter) — Chat streaming through Rust adapters
 
 ## Prerequisites
 
@@ -169,6 +169,7 @@ Configure provider credentials in the in-app **Settings** UI:
 |----------|----------|
 | Anthropic | API key |
 | OpenAI | API key |
+| OpenRouter | API key |
 | Google | API key |
 | Vertex AI | Project ID + Location + OAuth token |
 | LM Studio | Base URL (default: `http://localhost:1234`) |

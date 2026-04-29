@@ -3362,6 +3362,7 @@ pub fn run() {
             ai_streaming::stream_chat_anthropic,
             ai_streaming::estimate_tool_def_tokens,
             ai_streaming::stream_chat_openai,
+            ai_streaming::stream_chat_openrouter,
             ai_streaming::stream_chat_lmstudio,
             ai_streaming::stream_chat_google,
             gemini_cache::stream_chat_vertex,
@@ -3375,6 +3376,7 @@ pub fn run() {
             // AI Model fetching
             ai_models::fetch_anthropic_models,
             ai_models::fetch_openai_models,
+            ai_models::fetch_openrouter_models,
             ai_models::fetch_lmstudio_models,
             ai_models::fetch_google_models,
             ai_models::fetch_vertex_models,

@@ -21,6 +21,7 @@ export function getPricingProviderForModel(
 ): AIProvider {
   const info = (availableModels ?? []).find((m) => m.id === modelId);
   if (info?.provider) return info.provider;
+  if (selectedProvider === 'openrouter' && modelId.includes('/')) return 'openrouter';
   const heuristic = getProviderFromModelId(modelId);
   if (heuristic === 'google' && selectedProvider === 'vertex') return 'vertex';
   return heuristic;

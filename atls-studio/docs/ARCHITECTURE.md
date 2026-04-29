@@ -126,6 +126,7 @@ The AI service layer abstracts all model providers behind a unified streaming in
 |---|---|
 | Anthropic (Claude) | Primary provider; supports native tool_use, extended thinking, prompt caching |
 | OpenAI (GPT-4, GPT-4o) | Function-call format; streamed via Tauri backend |
+| OpenRouter | First-class routed provider; OpenAI-compatible chat streaming, catalog model fetch, runtime pricing, OpenAI tool/tokenizer shape, and coalesced reasoning display |
 | Google AI (Gemini) | Rolling cache management; uncached-message-start tracking |
 | Google Vertex AI | Vertex-hosted Gemini; same cache semantics as Google AI |
 | LMStudio | Local model server; provider type `'lmstudio'`; no cloud CORS constraints |

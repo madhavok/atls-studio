@@ -2,7 +2,30 @@ import { create } from 'zustand';
 import { useRoundHistoryStore } from './roundHistoryStore';
 
 // Types
-export type AIProvider = 'anthropic' | 'openai' | 'google' | 'vertex' | 'lmstudio';
+export type AIProvider = 'anthropic' | 'openai' | 'google' | 'vertex' | 'lmstudio' | 'openrouter';
+
+export interface OpenRouterModelPricing {
+  input: number;
+  output: number;
+  cachedInput?: number;
+}
+
+const openRouterPricing = new Map<string, OpenRouterModelPricing>();
+
+export function registerOpenRouterModelPricing(
+  models: Array<{ id: string; openRouterPricing?: OpenRouterModelPricing }>,
+): void {
+  for (const model of models) {
+    if (!model.id || !model.openRouterPricing) continue;
+    const { input, output, cachedInput } = model.openRouterPricing;
+    if (!Number.isFinite(input) || !Number.isFinite(output) || input < 0 || output < 0) continue;
+    openRouterPricing.set(model.id.toLowerCase(), { input, output, cachedInput });
+  }
+}
+
+export function clearOpenRouterModelPricing(): void {
+  openRouterPricing.clear();
+}
 
 export interface UsageRecord {
   provider: AIProvider;
@@ -60,6 +83,7 @@ function createProviderTotalsRecord(): Record<AIProvider, ProviderTotals> {
     google: createEmptyTotals(),
     vertex: createEmptyTotals(),
     lmstudio: createEmptyTotals(),
+    openrouter: createEmptyTotals(),
   };
 }
 
@@ -184,6 +208,7 @@ const PRICING: Record<string, Array<{ prefix: string; input: number; output: num
     { prefix: 'gemini-pro', input: 125, output: 500 },
     { prefix: 'gemini-flash', input: 7.5, output: 30 },
   ],
+  openrouter: [],
 };
 
 // Cache pricing multipliers (relative to base input price)
@@ -218,7 +243,9 @@ export function calculateCostBreakdown(
   ) {
     return zero;
   }
-  const providerPricing = PRICING[provider];
+  const providerPricing = provider === 'openrouter'
+    ? Array.from(openRouterPricing.entries()).map(([prefix, pricing]) => ({ prefix, ...pricing }))
+    : PRICING[provider];
   if (!providerPricing) {
     console.warn(`[CostStore] No pricing for provider: ${provider}`);
     return zero;

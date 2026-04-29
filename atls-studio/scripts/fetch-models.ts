@@ -1,7 +1,7 @@
 #!/usr/bin/env npx tsx
 /**
  * Fetch models from provider endpoints and generate models-manifest.json.
- * Usage: OPENAI_API_KEY=... ANTHROPIC_API_KEY=... GOOGLE_API_KEY=... npm run models:fetch
+ * Usage: OPENAI_API_KEY=... ANTHROPIC_API_KEY=... GOOGLE_API_KEY=... OPENROUTER_API_KEY=... npm run models:fetch
  */
 
 import { writeFileSync, mkdirSync } from 'fs';
@@ -19,9 +19,11 @@ interface ManifestModel {
   id: string;
   name: string;
   contextWindow?: number;
+  maxOutputTokens?: number;
   isReasoning: boolean;
   isFast: boolean;
   hasHighContext: boolean;
+  openRouterPricing?: { input: number; output: number };
 }
 
 interface Manifest {
@@ -107,6 +109,56 @@ async function fetchAnthropic(key: string): Promise<ManifestModel[]> {
     });
 }
 
+function priceCentsPerMillion(value: unknown): number | undefined {
+  const perTokenUsd =
+    typeof value === 'number' ? value :
+      typeof value === 'string' ? Number.parseFloat(value) :
+        Number.NaN;
+  if (!Number.isFinite(perTokenUsd) || perTokenUsd < 0) return undefined;
+  return perTokenUsd * 100 * 1_000_000;
+}
+
+async function fetchOpenRouter(key: string): Promise<ManifestModel[]> {
+  const resp = await fetch('https://openrouter.ai/api/v1/models', {
+    headers: { Authorization: `Bearer ${key}` },
+  });
+  if (!resp.ok) throw new Error(`OpenRouter: ${resp.status}`);
+  const data = (await resp.json()) as { data?: Array<Record<string, unknown>> };
+  const arr = data.data ?? [];
+  return arr
+    .filter((m) => m.id && typeof m.id === 'string')
+    .map((m) => {
+      const id = String(m.id);
+      const name = String(m.name ?? id);
+      const topProvider = (typeof m.top_provider === 'object' && m.top_provider !== null)
+        ? m.top_provider as Record<string, unknown>
+        : {};
+      const pricing = (typeof m.pricing === 'object' && m.pricing !== null)
+        ? m.pricing as Record<string, unknown>
+        : {};
+      const ctx =
+        typeof topProvider.context_length === 'number' ? topProvider.context_length :
+          typeof m.context_length === 'number' ? m.context_length :
+            undefined;
+      const maxOutputTokens = typeof topProvider.max_completion_tokens === 'number'
+        ? topProvider.max_completion_tokens
+        : undefined;
+      const caps = deriveModelCapabilities(id, 'openrouter', ctx);
+      const input = priceCentsPerMillion(pricing.prompt);
+      const output = priceCentsPerMillion(pricing.completion);
+      return {
+        id,
+        name,
+        contextWindow: ctx,
+        maxOutputTokens,
+        isReasoning: caps.isReasoning,
+        isFast: caps.isFast,
+        hasHighContext: caps.hasHighContext,
+        openRouterPricing: input !== undefined && output !== undefined ? { input, output } : undefined,
+      };
+    });
+}
+
 async function fetchGoogle(key: string): Promise<ManifestModel[]> {
   const resp = await fetch(
     `https://generativelanguage.googleapis.com/v1beta/models?key=${key}`
@@ -184,6 +236,7 @@ async function main() {
       google: [],
       vertex: [],
       lmstudio: [],
+      openrouter: [],
     },
   };
 
@@ -209,6 +262,17 @@ async function main() {
     }
   } else {
     console.warn('ANTHROPIC_API_KEY not set, skipping Anthropic');
+  }
+
+  if (process.env.OPENROUTER_API_KEY) {
+    try {
+      manifest.providers.openrouter = await fetchOpenRouter(process.env.OPENROUTER_API_KEY);
+      console.log(`OpenRouter: ${manifest.providers.openrouter.length} models`);
+    } catch (e) {
+      console.error('OpenRouter fetch failed:', e);
+    }
+  } else {
+    console.warn('OPENROUTER_API_KEY not set, skipping OpenRouter');
   }
 
   if (process.env.GOOGLE_API_KEY) {

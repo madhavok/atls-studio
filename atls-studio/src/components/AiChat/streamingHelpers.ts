@@ -45,8 +45,9 @@ export function appendReasoningToSegments(
   const segments = refs.streamingSegmentsRef.current;
   const lastSegment = segments[segments.length - 1];
 
-  if (lastSegment && lastSegment.type === 'reasoning' && (!blockId || lastSegment.id === blockId)) {
+  if (lastSegment && lastSegment.type === 'reasoning') {
     lastSegment.content += text;
+    if (!lastSegment.id && blockId) lastSegment.id = blockId;
   } else {
     segments.push({ type: 'reasoning', id: blockId, content: text, state: 'streaming' });
   }

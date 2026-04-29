@@ -118,6 +118,7 @@ function resolveApiKey(provider: AIProvider): string {
   switch (provider) {
     case 'anthropic': return (settings.anthropicApiKey as string) || '';
     case 'openai': return (settings.openaiApiKey as string) || '';
+    case 'openrouter': return (settings.openrouterApiKey as string) || '';
     case 'google': return (settings.googleApiKey as string) || '';
     case 'vertex': return (settings.vertexAccessToken as string) || '';
     case 'lmstudio': return (settings.lmstudioBaseUrl as string) || 'http://localhost:1234';

@@ -39,6 +39,7 @@ export function Settings({ isOpen, onClose }: SettingsProps) {
   const [testResults, setTestResults] = useState<Record<AIProvider, 'success' | 'error' | null>>({
     anthropic: null,
     openai: null,
+    openrouter: null,
     google: null,
     vertex: null,
     lmstudio: null,
@@ -48,7 +49,7 @@ export function Settings({ isOpen, onClose }: SettingsProps) {
   useEffect(() => {
     if (isOpen) {
       setLocalSettings({ ...settings });
-      setTestResults({ anthropic: null, openai: null, google: null, vertex: null, lmstudio: null });
+      setTestResults({ anthropic: null, openai: null, openrouter: null, google: null, vertex: null, lmstudio: null });
     }
   }, [settings, isOpen]);
 
@@ -67,11 +68,12 @@ export function Settings({ isOpen, onClose }: SettingsProps) {
   };
 
   // Reset test result when credentials change so auto-test can re-fire
-  const prevCreds = useRef({ a: '', o: '', g: '', vt: '', vp: '', vr: '', lm: '' });
+  const prevCreds = useRef({ a: '', o: '', or: '', g: '', vt: '', vp: '', vr: '', lm: '' });
   useEffect(() => {
     const cur = {
       a: localSettings.anthropicApiKey,
       o: localSettings.openaiApiKey,
+      or: localSettings.openrouterApiKey,
       g: localSettings.googleApiKey,
       vt: localSettings.vertexAccessToken,
       vp: localSettings.vertexProjectId,
@@ -82,6 +84,7 @@ export function Settings({ isOpen, onClose }: SettingsProps) {
     const resets: Partial<Record<AIProvider, null>> = {};
     if (cur.a !== prev.a) resets.anthropic = null;
     if (cur.o !== prev.o) resets.openai = null;
+    if (cur.or !== prev.or) resets.openrouter = null;
     if (cur.g !== prev.g) resets.google = null;
     if (cur.vt !== prev.vt || cur.vp !== prev.vp || cur.vr !== prev.vr) resets.vertex = null;
     if (cur.lm !== prev.lm) resets.lmstudio = null;
@@ -92,6 +95,7 @@ export function Settings({ isOpen, onClose }: SettingsProps) {
   }, [
     localSettings.anthropicApiKey,
     localSettings.openaiApiKey,
+    localSettings.openrouterApiKey,
     localSettings.googleApiKey,
     localSettings.vertexAccessToken,
     localSettings.vertexProjectId,
@@ -108,6 +112,7 @@ export function Settings({ isOpen, onClose }: SettingsProps) {
     const providers = [
       { provider: 'anthropic' as const, ready: localSettings.anthropicApiKey.length > 10 },
       { provider: 'openai' as const, ready: localSettings.openaiApiKey.length > 10 },
+      { provider: 'openrouter' as const, ready: localSettings.openrouterApiKey.length > 10 },
       { provider: 'google' as const, ready: localSettings.googleApiKey.length > 10 },
       { provider: 'vertex' as const, ready: localSettings.vertexAccessToken.length > 10 && localSettings.vertexProjectId.length > 1 },
       { provider: 'lmstudio' as const, ready: localSettings.lmstudioBaseUrl.length > 5 },
@@ -131,6 +136,7 @@ export function Settings({ isOpen, onClose }: SettingsProps) {
     localSettings.disabledProviders,
     localSettings.anthropicApiKey,
     localSettings.openaiApiKey,
+    localSettings.openrouterApiKey,
     localSettings.googleApiKey,
     localSettings.vertexAccessToken,
     localSettings.vertexProjectId,
@@ -145,6 +151,7 @@ export function Settings({ isOpen, onClose }: SettingsProps) {
     const keyMap: Record<AIProvider, string> = {
       anthropic: localSettings.anthropicApiKey,
       openai: localSettings.openaiApiKey,
+      openrouter: localSettings.openrouterApiKey,
       google: localSettings.googleApiKey,
       vertex: localSettings.vertexAccessToken,
       lmstudio: localSettings.lmstudioBaseUrl,
@@ -179,6 +186,7 @@ export function Settings({ isOpen, onClose }: SettingsProps) {
     const providers = [
       { provider: 'anthropic' as const, key: localSettings.anthropicApiKey },
       { provider: 'openai' as const, key: localSettings.openaiApiKey },
+      { provider: 'openrouter' as const, key: localSettings.openrouterApiKey },
       { provider: 'google' as const, key: localSettings.googleApiKey },
       { provider: 'vertex' as const, key: localSettings.vertexAccessToken },
       { provider: 'lmstudio' as const, key: localSettings.lmstudioBaseUrl },
@@ -209,6 +217,7 @@ export function Settings({ isOpen, onClose }: SettingsProps) {
     console.log('[Settings] Saving settings...', {
       anthropicKey: localSettings.anthropicApiKey ? '***' + localSettings.anthropicApiKey.slice(-4) : 'none',
       openaiKey: localSettings.openaiApiKey ? '***' + localSettings.openaiApiKey.slice(-4) : 'none',
+      openrouterKey: localSettings.openrouterApiKey ? '***' + localSettings.openrouterApiKey.slice(-4) : 'none',
     });
     setSettings(localSettings);
     // Refresh models with new API keys
@@ -374,6 +383,64 @@ export function Settings({ isOpen, onClose }: SettingsProps) {
                   </button>
                 </div>
                 <p className="text-xs text-studio-muted mt-1">Get key: platform.openai.com</p>
+              </div>
+
+              {/* OpenRouter */}
+              <div className={`p-3 bg-studio-bg/50 rounded-lg ${!isProviderEnabled('openrouter') ? 'opacity-60' : ''}`}>
+                <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-medium">OpenRouter</span>
+                    <span className="text-xs text-studio-muted">Routed models</span>
+                    <button
+                      onClick={() => toggleProviderEnabled('openrouter')}
+                      className={`w-10 h-5 rounded-full transition-colors flex-shrink-0 ${
+                        isProviderEnabled('openrouter') ? 'bg-studio-accent' : 'bg-studio-border'
+                      }`}
+                      title={isProviderEnabled('openrouter') ? 'Disable provider' : 'Enable provider'}
+                    >
+                      <div className={`w-4 h-4 bg-white rounded-full shadow transition-transform m-0.5 ${
+                        isProviderEnabled('openrouter') ? 'translate-x-5' : 'translate-x-0'
+                      }`} />
+                    </button>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {testResults.openrouter === 'success' && <CheckIcon />}
+                    {testResults.openrouter === 'error' && <span className="text-xs text-studio-error">Invalid</span>}
+                    <button
+                      onClick={() => testApiKey('openrouter')}
+                      disabled={!localSettings.openrouterApiKey || testingProvider === 'openrouter'}
+                      className={`p-1.5 rounded transition-colors ${
+                        localSettings.openrouterApiKey
+                          ? 'text-studio-accent hover:bg-studio-accent/20'
+                          : 'text-studio-muted/50'
+                      } disabled:cursor-not-allowed`}
+                      title="Test API key"
+                    >
+                      {testingProvider === 'openrouter' ? (
+                        <div className="w-4 h-4 border-2 border-studio-accent border-t-transparent rounded-full animate-spin" />
+                      ) : (
+                        <RefreshIcon />
+                      )}
+                    </button>
+                  </div>
+                </div>
+                <div className="relative">
+                  <input
+                    type={showKeys.openrouter ? 'text' : 'password'}
+                    value={localSettings.openrouterApiKey}
+                    onChange={(e) => setLocalSettings(prev => ({ ...prev, openrouterApiKey: e.target.value }))}
+                    placeholder="sk-or-..."
+                    className="w-full px-3 py-2 pr-10 bg-studio-bg border border-studio-border rounded focus:outline-none focus:border-studio-accent font-mono text-sm"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => toggleShowKey('openrouter')}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-studio-muted hover:text-studio-text"
+                  >
+                    {showKeys.openrouter ? <EyeOffIcon /> : <EyeIcon />}
+                  </button>
+                </div>
+                <p className="text-xs text-studio-muted mt-1">Get key: openrouter.ai</p>
               </div>
 
               {/* Google AI */}

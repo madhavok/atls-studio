@@ -67,6 +67,13 @@ const DEFAULT_CONFIGS: Record<AIProvider, RateLimitConfig> = {
     tokensPerDay: 30000000,
     concurrentRequests: 20,
   },
+  openrouter: {
+    requestsPerMinute: 60,
+    tokensPerMinute: 150000,
+    requestsPerDay: 10000,
+    tokensPerDay: 30000000,
+    concurrentRequests: 20,
+  },
   google: {
     requestsPerMinute: 60,
     tokensPerMinute: 1000000,

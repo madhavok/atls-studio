@@ -192,7 +192,7 @@ enum TokenizerKind {
 
 fn resolve_kind(provider: &str) -> TokenizerKind {
     match provider {
-        "openai" | "lmstudio" => TokenizerKind::OpenAI,
+        "openai" | "lmstudio" | "openrouter" => TokenizerKind::OpenAI,
         "anthropic" => {
             if CLAUDE_VOCAB_BYTES.is_empty() {
                 TokenizerKind::Heuristic
@@ -317,9 +317,11 @@ mod tests {
         let text = "function test() { return true; }";
 
         let openai = count_tokens_inner("openai", test_models::OPENAI, text);
+        let openrouter = count_tokens_inner("openrouter", "openai/gpt-5.2", text);
         let heuristic = count_tokens_inner("google", test_models::GOOGLE, text);
 
         assert!(openai > 0);
+        assert_eq!(openrouter, openai);
         assert!(heuristic > 0);
         assert!(openai < 20);
         assert!(heuristic < 20);

@@ -369,6 +369,12 @@ async function runSubagentRound(
       reasoningEffort: streamOpts.reasoningEffort ?? null,
       verbosity: streamOpts.outputVerbosity ?? null,
     });
+  } else if (provider === 'openrouter') {
+    await invoke('stream_chat_openrouter', {
+      ...commonParams,
+      apiKey,
+      reasoningEffort: streamOpts.reasoningEffort ?? null,
+    });
   } else if (provider === 'vertex') {
     await invoke('stream_chat_vertex', {
       ...commonParams,
@@ -1408,6 +1414,7 @@ function getApiKeyForProvider(provider: AIProvider, settings: Record<string, unk
   switch (provider) {
     case 'anthropic': return settings.anthropicApiKey as string || undefined;
     case 'openai': return settings.openaiApiKey as string || undefined;
+    case 'openrouter': return settings.openrouterApiKey as string || undefined;
     case 'google': return settings.googleApiKey as string || undefined;
     case 'vertex': return settings.vertexAccessToken as string || undefined;
     case 'lmstudio': return settings.lmstudioBaseUrl as string || 'http://localhost:1234';

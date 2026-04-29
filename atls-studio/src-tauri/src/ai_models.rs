@@ -112,6 +112,103 @@ pub struct AIModel {
     context_window: Option<u32>,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+pub struct OpenRouterAIModel {
+    id: String,
+    name: String,
+    provider: String,
+    context_window: Option<u32>,
+    max_output_tokens: Option<u32>,
+    supported_parameters: Vec<String>,
+    pricing_prompt_cents_per_million: Option<f64>,
+    pricing_completion_cents_per_million: Option<f64>,
+}
+
+fn json_u32(value: Option<&serde_json::Value>) -> Option<u32> {
+    value
+        .and_then(|v| v.as_u64())
+        .and_then(|v| u32::try_from(v).ok())
+}
+
+fn openrouter_price_cents_per_million(value: Option<&serde_json::Value>) -> Option<f64> {
+    let per_token_usd = match value? {
+        serde_json::Value::Number(n) => n.as_f64()?,
+        serde_json::Value::String(s) => s.parse::<f64>().ok()?,
+        _ => return None,
+    };
+    if !per_token_usd.is_finite() || per_token_usd < 0.0 {
+        return None;
+    }
+    Some(per_token_usd * 100.0 * 1_000_000.0)
+}
+
+fn parse_openrouter_model(m: &serde_json::Value) -> Option<OpenRouterAIModel> {
+    let id = m.get("id")?.as_str()?;
+    let name = m.get("name").and_then(|v| v.as_str()).unwrap_or(id);
+    let context_window = json_u32(
+        m.pointer("/top_provider/context_length")
+            .or_else(|| m.get("context_length"))
+    );
+    let max_output_tokens = json_u32(
+        m.pointer("/top_provider/max_completion_tokens")
+            .or_else(|| m.pointer("/per_request_limits/completion_tokens"))
+    );
+    let supported_parameters = m.get("supported_parameters")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+
+    Some(OpenRouterAIModel {
+        id: id.to_string(),
+        name: name.to_string(),
+        provider: "openrouter".to_string(),
+        context_window,
+        max_output_tokens,
+        supported_parameters,
+        pricing_prompt_cents_per_million: openrouter_price_cents_per_million(m.pointer("/pricing/prompt")),
+        pricing_completion_cents_per_million: openrouter_price_cents_per_million(m.pointer("/pricing/completion")),
+    })
+}
+
+#[tauri::command]
+pub async fn fetch_openrouter_models(api_key: String) -> Result<Vec<OpenRouterAIModel>, String> {
+    if api_key.trim().is_empty() {
+        return Ok(vec![]);
+    }
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .map_err(|e| format!("HTTP client error: {}", e))?;
+
+    let response = client
+        .get("https://openrouter.ai/api/v1/models")
+        .header("Authorization", format!("Bearer {}", api_key))
+        .send()
+        .await
+        .map_err(|e| format!("Request failed: {}", e))?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        return Err(format!("OpenRouter API error {}: {}", status, body));
+    }
+
+    let data: serde_json::Value = response
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse response: {}", e))?;
+
+    let models_array = data.get("data")
+        .and_then(|v| v.as_array())
+        .ok_or("Invalid response format")?;
+
+    Ok(models_array.iter().filter_map(parse_openrouter_model).collect())
+}
+
 #[tauri::command]
 pub async fn fetch_anthropic_models(api_key: String) -> Result<Vec<AIModel>, String> {
     if api_key.trim().is_empty() {
@@ -431,5 +528,33 @@ mod tests {
             format_openai_model_name("gpt-4-turbo-preview").as_str(),
             "GPT-4 Turbo Preview"
         );
+    }
+
+    #[test]
+    fn parse_openrouter_model_carries_limits_and_pricing() {
+        let value = serde_json::json!({
+            "id": "openai/gpt-5.2",
+            "name": "GPT-5.2",
+            "context_length": 400000,
+            "top_provider": {
+                "context_length": 500000,
+                "max_completion_tokens": 32000,
+                "is_moderated": true
+            },
+            "supported_parameters": ["tools", "reasoning_effort"],
+            "pricing": {
+                "prompt": "0.00000125",
+                "completion": "0.000010"
+            }
+        });
+
+        let model = parse_openrouter_model(&value).expect("valid model");
+        assert_eq!(model.id, "openai/gpt-5.2");
+        assert_eq!(model.provider, "openrouter");
+        assert_eq!(model.context_window, Some(500000));
+        assert_eq!(model.max_output_tokens, Some(32000));
+        assert_eq!(model.supported_parameters, vec!["tools", "reasoning_effort"]);
+        assert_eq!(model.pricing_prompt_cents_per_million, Some(125.0));
+        assert_eq!(model.pricing_completion_cents_per_million, Some(1000.0));
     }
 }

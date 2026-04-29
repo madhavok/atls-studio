@@ -322,7 +322,7 @@ describe('Anthropic tool pairing finalization', () => {
 });
 
 describe('provider tool enablement', () => {
-  const providers: AIProvider[] = ['anthropic', 'openai', 'google', 'vertex', 'lmstudio'];
+  const providers: AIProvider[] = ['anthropic', 'openai', 'openrouter', 'google', 'vertex', 'lmstudio'];
   const toolModes: ChatMode[] = ['agent', 'designer', 'reviewer', 'retriever', 'custom', 'swarm', 'refactor', 'planner'];
 
   it('disables tools for Ask mode; enables for all other modes', () => {

@@ -92,6 +92,7 @@ describe('modelSupportsExtendedContext', () => {
 
   it('returns false for lmstudio / unknown provider fall-through', () => {
     expect(modelSupportsExtendedContext('any', 'lmstudio')).toBe(false);
+    expect(modelSupportsExtendedContext('openai/gpt-5.2', 'openrouter')).toBe(false);
   });
 });
 
@@ -172,6 +173,15 @@ describe('deriveModelCapabilities', () => {
     expect(deriveModelCapabilities('custom', 'lmstudio', 200_000).hasHighContext).toBe(true);
     expect(deriveModelCapabilities('custom', 'lmstudio', 64_000).hasHighContext).toBe(false);
   });
+
+  it('tags OpenRouter routed models from slash ids and supplied context', () => {
+    expect(deriveModelCapabilities('openai/gpt-5.2', 'openrouter', 400_000)).toMatchObject({
+      isReasoning: true,
+      isFast: false,
+      hasHighContext: true,
+    });
+    expect(deriveModelCapabilities('anthropic/claude-haiku-4.5', 'openrouter', 200_000).isFast).toBe(true);
+  });
 });
 
 describe('modelSupportsTools', () => {
@@ -192,6 +202,10 @@ describe('modelSupportsTools', () => {
 
   it('assumes tools for lmstudio', () => {
     expect(modelSupportsTools('any', 'lmstudio')).toBe(true);
+  });
+
+  it('assumes tools for openrouter catalog models', () => {
+    expect(modelSupportsTools('openai/gpt-5.2', 'openrouter')).toBe(true);
   });
 });
 

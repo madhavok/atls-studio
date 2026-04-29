@@ -1,6 +1,6 @@
 import React, { memo, useCallback, useEffect, useMemo, useRef, useState, useTransition } from 'react';
 import { processFileAttachment, processImageBytes, formatAttachmentForLLM } from '../../utils/fileAttachments';
-import { useAppStore, Message, ToolCall, MessageToolCall, MessageSegment, MessagePart, StreamPart, getMessageParts } from '../../stores/appStore';
+import { useAppStore, Message, ToolCall, MessageToolCall, MessageSegment, MessagePart, StreamPart, coalesceReasoningParts, getMessageParts } from '../../stores/appStore';
 import { useContextStore } from '../../stores/contextStore';
 import { appendTextToSegments as _appendText, appendReasoningToSegments as _appendReasoning, closeBlockById as _closeBlock, upsertToolSegment as _upsertTool, resetStreamingState, clearStreamingState, type StreamingRefs } from './streamingHelpers';
 import { useSwarmStore } from '../../stores/swarmStore';
@@ -2838,6 +2838,7 @@ export function AiChat() {
     switch (provider) {
       case 'anthropic': return settings.anthropicApiKey;
       case 'openai': return settings.openaiApiKey;
+      case 'openrouter': return settings.openrouterApiKey;
       case 'google': return settings.googleApiKey;
       case 'vertex': return settings.vertexAccessToken;
       case 'lmstudio': return '';
@@ -3504,11 +3505,12 @@ export function AiChat() {
             .filter((s): s is { type: 'text'; content: string } => s.type === 'text')
             .map(s => s.content)
             .join('\n');
-          if (priorText || partialParts.some(s => s.type === 'tool' || s.type === 'reasoning')) {
+          const coalescedPartialParts = coalesceReasoningParts(partialParts);
+          if (priorText || coalescedPartialParts.some(s => s.type === 'tool' || s.type === 'reasoning')) {
             addMessage({
               role: 'assistant',
               content: priorText || '*(Partial response before error)*',
-              parts: partialParts.length > 0 ? partialParts : undefined,
+              parts: coalescedPartialParts.length > 0 ? coalescedPartialParts : undefined,
             });
           }
           addMessage({
@@ -3577,24 +3579,25 @@ export function AiChat() {
             }
           }
           
-          const cleanedContent = finalParts
+          const coalescedFinalParts = coalesceReasoningParts(finalParts);
+          const cleanedContent = coalescedFinalParts
             .filter((s): s is { type: 'text'; content: string } => s.type === 'text')
             .map(s => s.content)
             .join('\n');
-          const synthesizedTaskSummary = cleanedContent ? '' : getTaskCompleteSummaryFromParts(finalParts);
+          const synthesizedTaskSummary = cleanedContent ? '' : getTaskCompleteSummaryFromParts(coalescedFinalParts);
           if (synthesizedTaskSummary) {
-            finalParts.unshift({ type: 'text', content: synthesizedTaskSummary });
+            coalescedFinalParts.unshift({ type: 'text', content: synthesizedTaskSummary });
             finalSegments.unshift({ type: 'text', content: synthesizedTaskSummary });
           }
           const resolvedContent = cleanedContent || synthesizedTaskSummary;
-          const finalTaskSummary = synthesizedTaskSummary || getTaskCompleteSummaryFromParts(finalParts);
+          const finalTaskSummary = synthesizedTaskSummary || getTaskCompleteSummaryFromParts(coalescedFinalParts);
           
-          const hasToolCalls = finalParts.some(s => s.type === 'tool');
-          const hasErrors = finalParts.some(s => s.type === 'error');
-          const hasReasoning = finalParts.some(s => s.type === 'reasoning');
+          const hasToolCalls = coalescedFinalParts.some(s => s.type === 'tool');
+          const hasErrors = coalescedFinalParts.some(s => s.type === 'error');
+          const hasReasoning = coalescedFinalParts.some(s => s.type === 'reasoning');
           
           if (resolvedContent || hasToolCalls || hasErrors || hasReasoning) {
-            const hashContent = finalParts
+            const hashContent = coalescedFinalParts
               .filter((s): s is { type: 'text'; content: string } | { type: 'reasoning'; content: string } =>
                 s.type === 'text' || s.type === 'reasoning')
               .map(s => s.content)
@@ -3606,7 +3609,7 @@ export function AiChat() {
             addMessage({ 
               role: 'assistant', 
               content: resolvedContent || finalTaskSummary || '*(Tool execution completed)*',
-              parts: finalParts.length > 0 ? finalParts : undefined,
+              parts: coalescedFinalParts.length > 0 ? coalescedFinalParts : undefined,
               segments: finalSegments.length > 0 ? finalSegments : undefined,
               chunkHash: asstChunkHash,
             });
