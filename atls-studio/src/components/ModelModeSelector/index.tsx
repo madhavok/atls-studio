@@ -374,6 +374,7 @@ export function ModelModeSelector() {
   } = useSwarmStore();
 
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
+  const [modelSearchQuery, setModelSearchQuery] = useState('');
   const [modeMenuOpen, setModeMenuOpen] = useState(false);
   const [agentMenuOpen, setAgentMenuOpen] = useState(false);
   const [showAddAgent, setShowAddAgent] = useState(false);
@@ -407,6 +408,10 @@ export function ModelModeSelector() {
     document.addEventListener('mousedown', handleClick);
     return () => document.removeEventListener('mousedown', handleClick);
   }, []);
+
+  useEffect(() => {
+    if (!modelMenuOpen) setModelSearchQuery('');
+  }, [modelMenuOpen]);
 
   // Auto-fetch models on mount and when API keys change
   const fetchAllModels = useCallback(async () => {
@@ -493,11 +498,30 @@ export function ModelModeSelector() {
     () => availableModels.filter((m) => modelPassesFilters(m, filters)),
     [availableModels, showReasoning, showFast, showHighContext, showToolCapableOnly]
   );
-  const modelsByProvider = filteredModels.reduce((acc, model) => {
-    if (!acc[model.provider]) acc[model.provider] = [];
-    acc[model.provider].push(model);
-    return acc;
-  }, {} as Record<AIProvider, ModelInfo[]>);
+  const normalizedModelSearch = modelSearchQuery.trim().toLowerCase();
+  const searchedModels = useMemo(() => {
+    if (!normalizedModelSearch) return filteredModels;
+
+    return filteredModels.filter((model) => {
+      const providerLabel = PROVIDER_BADGES[model.provider] ?? model.provider;
+      return `${providerLabel} ${model.name} ${model.id}`.toLowerCase().includes(normalizedModelSearch);
+    });
+  }, [filteredModels, normalizedModelSearch]);
+  const modelsByProvider = useMemo(
+    () => searchedModels.reduce((acc, model) => {
+      if (!acc[model.provider]) acc[model.provider] = [];
+      acc[model.provider].push(model);
+      return acc;
+    }, {} as Record<AIProvider, ModelInfo[]>),
+    [searchedModels]
+  );
+  const modelMenuWidthCh = useMemo(() => {
+    const longestModelLabel = filteredModels.reduce(
+      (longest, model) => Math.max(longest, model.name.length, model.id.length),
+      'Search models by provider...'.length
+    );
+    return Math.min(Math.max(longestModelLabel + 14, 36), 84);
+  }, [filteredModels]);
 
   const handleSelectModel = (model: ModelInfo) => {
     useAppStore.getState().setSettings({
@@ -563,7 +587,27 @@ export function ModelModeSelector() {
         </button>
 
         {modelMenuOpen && (
-          <div className="absolute bottom-full left-0 mb-1 w-64 max-h-80 overflow-y-auto bg-studio-surface border border-studio-border rounded-lg shadow-xl z-50">
+          <div
+            className="absolute bottom-full left-0 mb-1 max-h-80 overflow-y-auto bg-studio-surface border border-studio-border rounded-lg shadow-xl z-50"
+            style={{
+              width: `${modelMenuWidthCh}ch`,
+              maxWidth: 'min(42rem, calc(100vw - 1rem))',
+            }}
+          >
+            <div className="sticky top-0 z-10 p-2 bg-studio-surface border-b border-studio-border">
+              <input
+                type="search"
+                value={modelSearchQuery}
+                onChange={(e) => setModelSearchQuery(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Escape') setModelMenuOpen(false);
+                }}
+                placeholder="Search models by provider..."
+                aria-label="Search models by provider"
+                autoFocus
+                className="w-full px-2 py-1.5 bg-studio-bg border border-studio-border rounded text-xs text-studio-text placeholder:text-studio-muted focus:outline-none focus:border-studio-accent"
+              />
+            </div>
             {Object.entries(modelsByProvider).map(([provider, models]) => {
               const prov = provider as AIProvider;
               return (
@@ -647,6 +691,11 @@ export function ModelModeSelector() {
             {filteredModels.length === 0 && (
               <div className="px-3 py-4 text-center text-studio-muted">
                 No models available. Configure a provider in settings.
+              </div>
+            )}
+            {filteredModels.length > 0 && searchedModels.length === 0 && (
+              <div className="px-3 py-4 text-center text-studio-muted">
+                No models match "{modelSearchQuery.trim()}".
               </div>
             )}
           </div>
