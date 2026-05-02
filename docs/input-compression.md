@@ -49,7 +49,10 @@ This eliminates repeated file paths — a single path string covers all entries 
 ### Layer 2: Dictionary compression on tool results
 
 **Source**: [`toolResultCompression.ts`](../atls-studio/src/utils/toolResultCompression.ts) (`encodeToolResult`, `buildKeyAbbreviations`, `applyDittoEncode`, `buildSubstringDictionary`)
-
+  - Iteratively finds the **boundary-aligned substring** that saves the most tokens if replaced by a short code.
+  - `findBestBoundaryAlignedSubstring`: scans all start positions that are word/path boundaries, tries candidate lengths (8-32 chars), scores by `occurrences × tokenCost(substring) - tokenCost(code) - legendCost`.
+  - Assigns `~1`, `~2`, ... `~N` codes (tilde + number). Up to 32 entries.
+  - Each iteration removes the best substring, re-scans. Stops when no candidate saves tokens.
 After TOON serialization, tool results above a token threshold go through a **three-pass dictionary compression pipeline**:
 
 **Pass 1 — Key abbreviation** (`buildKeyAbbreviations`):
@@ -124,12 +127,13 @@ The FileView fence emits a single ref:
 (retention ops, edit `content_hash`, `f:h:<short>:L-M`, reads) — the
 runtime swaps the retention hash for the current `sourceRevision` when it
 lands in a cite slot via `injectSnapshotHashes` in the executor.
+Runs via the history compression middleware on round 0 (between user turns). This is the primary compression path.
 
-### Layer 5: History compression — temporal dedup
+**Rules**:
 
 **Source**: [`historyCompressor.ts`](../atls-studio/src/services/historyCompressor.ts) (`compressToolLoopHistory`), [`chatMiddleware.ts`](../atls-studio/src/services/chatMiddleware.ts) (`historyCompressionMiddleware`)
-
-Between rounds, `compressToolLoopHistory` replaces tool results with hash pointers:
+- Protects recent rounds (the latest round is never compressed)
+- Never touches messages before `priorTurnBoundary` (preserves BP3 cache prefix)
 ```
 [-> h:abc123, 1094tk | msg:asst]
 ```

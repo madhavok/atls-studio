@@ -57,9 +57,9 @@ This document describes every major subsystem and the nested responsibilities in
 | UI and application shell | `src/components/*`, `src/stores/appStore.ts` | chat/session model, workspace model, agent control plane, prompt metrics view |
 | AI service layer | `src/services/aiService.ts`, `src/services/geminiCache.ts`, `src/services/swarmChat.ts`, `src/services/modelFetcher.ts`, `src/services/uhppExpansion.ts`, `src/services/toolHelpers.ts` | provider adapters, Tauri proxy, Gemini rolling cache, HPP hydration, UHPP expansion, tool-call helpers |
 | Swarm orchestrator | `src/services/orchestrator.ts`, `src/stores/swarmStore.ts` | task decomposition, file claims, agent coordination, research digest, synthesis |
-| Managed memory runtime | `src/stores/contextStore.ts`, `src/services/hashProtocol.ts`, `src/services/hashManifest.ts`, `src/services/freshnessTelemetry.ts`, `src/services/historyCompressor.ts` | engram registry, staging, blackboard, task planning, freshness/reconcile, auto-management, hash forwarding, history deflation + tool_use stubbing, rolling-window eviction |
+| Managed memory runtime | `src/stores/contextStore.ts`, `src/services/hashProtocol.ts`, `src/services/hashManifest.ts`, `src/services/freshnessTelemetry.ts`, `src/services/historyCompressor.ts` | engram registry, staging, blackboard, task planning, freshness/reconcile, auto-management, hash forwarding, history compression pipeline (rolling-window eviction, tool result deflation, batch input stubbing, retention op compaction) |
 | Prompt construction | `src/utils/contextHash.ts`, `src/services/promptMemory.ts`, `src/utils/tokenCounter.ts`, `src/services/contextFormatter.ts` | digests and ref formatting, prompt-budget policy, provider-aware token counting, WM formatting |
-| Batch and tool execution | `src/utils/toon.ts`, `src/services/batch/executor.ts`, `src/services/batch/opMap.ts`, `src/services/batch/intents.ts`, `src/services/batch/snapshotTracker.ts`, `src/services/batch/policy.ts`, `src/services/batch/paramNorm.ts`, `src/services/batch/resultFormatter.ts`, `src/services/batch/validateBatchSteps.ts` | TOON serialization, step dispatch, policy enforcement, intent expansion, read-range awareness, line rebasing |
+| Batch and tool execution | `src/utils/toon.ts`, `src/utils/toolResultCompression.ts`, `src/services/batch/executor.ts`, `src/services/batch/opMap.ts`, `src/services/batch/intents.ts`, `src/services/batch/snapshotTracker.ts`, `src/services/batch/policy.ts`, `src/services/batch/paramNorm.ts`, `src/services/batch/resultFormatter.ts`, `src/services/batch/validateBatchSteps.ts` | TOON serialization, dictionary-based tool result encoding, step dispatch, policy enforcement, intent expansion, read-range awareness, line rebasing |
 | History and verification telemetry | `src/stores/roundHistoryStore.ts` | round snapshots, verification confidence, cost summaries |
 | Rust analysis core | `atls-rs/crates/atls-core/src/*` | parser, query engine, indexer, detector pipeline |
 
@@ -430,18 +430,52 @@ Freshness telemetry is a lightweight instrumentation layer that tracks how often
 
 The telemetry data is surfaced in `AtlsInternals` and in the session diagnostics block.
 
-### 9. Rolling History Window (eviction-only)
+### 9. History Compression Pipeline
 
-Primary module: `atls-studio/src/services/historyCompressor.ts` (`applyRollingHistoryWindow`)
+Primary module: `atls-studio/src/services/historyCompressor.ts`
 
-Older rounds outside the protected chat window are **evicted** from verbatim history, not distilled. Durable cross-round state is already carried authoritatively by:
+The history compressor applies five complementary strategies to keep conversation history lean without losing recoverable content. All strategies operate in-place on the message history array.
 
-- **Blackboard** — keyed findings
-- **Hash manifest** — artifact index
-- **FileViews** — auto-healing code state
-- **`ru` rules** — policy
+#### 9.1 Rolling-window eviction (`applyRollingHistoryWindow`)
 
-Synthesizing a parallel summary from assistant prose would be redundant at best and could perturb the BP3 prefix cache, so the mechanism was removed. The window still bounds total history size; tool-pairing integrity is preserved via synthetic `tool_result` placeholders when an assistant `tool_use` loses its paired user message.
+Rounds older than `ROLLING_WINDOW_ROUNDS` (default 20) are spliced from history. The window counts **substantive** rounds only — synthetic auto-continue prompts (injected when the model's response was truncated) are excluded via `isSyntheticAutoContinue` so they don't push real work out prematurely. When an evicted assistant message contained `tool_use` blocks, a synthetic `tool_result` placeholder is inserted to preserve tool-pairing integrity for downstream `repairAnthropicToolPairing`.
+
+Durable cross-round state is already carried authoritatively by the blackboard (keyed findings), hash manifest (artifact index), FileViews (auto-healing code state), and `ru` rules (policy). Synthesizing a parallel summary from assistant prose would be redundant and could perturb the BP3 prefix cache, so no summary generation is performed.
+
+#### 9.2 Tool result compression (`compressToolLoopHistory`)
+
+After rolling-window eviction, this pass walks the surviving history and replaces large `tool_result` content blocks (above `COMPRESSION_THRESHOLD_TOKENS`, default 100) with hash-pointer references (`[h:XXXX Ntk | description]`). Results in the most recent `PROTECTED_RECENT_ROUNDS` are skipped so the model retains full verbatim access to recent outputs. In emergency mode (context pressure), all rounds are eligible for compression.
+
+The replacement registers each compressed result as an engram in `contextStore` (via `addChunk`) and marks it as `dematerialized` in the hash protocol, so subsequent turns see only the compact ref line. Existing engrams are matched first — by content hash, then by source description — to avoid duplicate chunks.
+
+Per-operation thresholds are configurable via `TOOL_COMPRESSION_OVERRIDES`: `system.*` and `verify.*` families receive a higher threshold (200 tokens) since their output is typically needed for immediate interpretation.
+
+#### 9.3 Batch input stubbing (`stubBatchToolUseInputs`)
+
+Batch `tool_use` blocks carry the full `steps` array in their `input` field. Once the results have been captured, the step definitions are redundant. This pass replaces each batch input's `steps` with a compact stub: `{ _stubbed: "5 steps: read×2, change×1, ...", _compressed: true }`.
+
+The `_compressed: true` sentinel is a safety guard — if the model ever echoes a stubbed input as a new tool call, the runtime rejects it. Change-preview steps (`dry_run: true`) are annotated in the stub summary (`| change:preview(dry_run)`) so the preview intent survives compression. Inputs below `BATCH_INPUT_STUB_THRESHOLD` (80 tokens) are kept verbatim.
+
+#### 9.4 Retention op compaction (`compactRetentionOps`)
+
+Retention operations (`session.pin`, `session.unpin`, `session.drop`, `session.unload`, `session.compact`, `session.bb.delete`) mutate state the model reads from the next round's hash manifest. Their `tool_result` echo is duplicate signal and — worse — a stable shape the model re-emits verbatim (template calcification). This pass:
+
+1. Strips `with` and `in` fields from retention-op steps in the last assistant message's `tool_use` block, leaving only `{id, use}`.
+2. Removes `[OK]` result lines for retention ops from `tool_result` content. `[FAIL]` lines are preserved so the model sees failed retention attempts.
+
+Runs at turn-finalize before the turn joins the cacheable BP3 prefix, so subsequent rounds see the compacted form and the prefix stays byte-stable.
+
+#### 9.5 Eager tool result deflation (`deflateToolResults`)
+
+Called immediately when tool results are pushed to history (before the next turn begins). If a result's content already exists as an engram (by content hash) or matches an existing engram by source description, the inline content is replaced with a hash-pointer ref. For new content above `MIN_DEFLATE_TOKENS` (30), a fresh engram is created.
+
+Archive-worthiness filtering (`isContentArchiveWorthy`) skips engram creation for batch results that carry no recoverable content — results consisting only of status lines, dedupe tails, FileView merge pointers, and footer/nudge markers produce no engram and no manifest entry.
+
+#### 9.6 Token estimation and breakdown
+
+- `estimateHistoryTokens` / `estimateHistoryTokensAsync` — estimate total token cost of the history array
+- `analyzeHistoryBreakdown` — detailed per-round breakdown of token usage with protected/unprotected classification, used by diagnostics and emergency compression decisions
+- `formatHistoryBreakdown` — human-readable formatting of the breakdown
 
 ---
 
@@ -461,8 +495,8 @@ Primary module: `atls-studio/src/utils/contextHash.ts`
 
 #### Ref and tag formatting
 
-- `formatChunkRef(hash, shortHash, type, source?, tokens?, shape?)` — formats the `<<h:XXXX tk:N type>>` tag rendered in prompt context
-- `formatChunkTag(hash, shortHash, ...)` — variant used for inline chunk headers
+- `formatChunkRef(shortHash, tokens, source?, description?, digest?)` — formats the `[h:XXXX Ntk description]` ref rendered in prompt context; appends digest on a second line when present
+- `formatChunkTag(shortHash, tokens, type, source?)` — formats the `«h:XXXX Ntk type source»` tag used for inline chunk headers
 - `parseChunkTag(tag)` — parses a formatted tag string back to its fields (hash, tokens, type, source, lines spec)
 - `formatShapeRef(shortHash, shape, lines?)` — formats a shaped ref string like `h:abcdef:sig`
 - `formatDiffRef(oldHash, newHash)` — formats `h:OLD..h:NEW` diff refs
@@ -591,6 +625,18 @@ TOON (Token-Oriented Object Notation) is the compact transport format for large 
 - `parseBatchLines(q)` — top-level parser: returns `{ version: '1.0', steps: Record<string, unknown>[] }` from a raw `q:` string
 - `expandBatchQ(args)` — called by the executor to normalize a raw batch args object into the canonical `{ version, steps }` shape
 - `serializeMessageContentForTokens(content)` — serializes Anthropic-style message content (array of text/tool-use/tool-result blocks) to a flat string for token estimation
+
+#### Tool result compression (`toolResultCompression.ts`)
+
+`toolResultCompression.ts` (registered as a TOON compression provider via `registerCompressionProvider`) applies dictionary-based encoding to tool result strings when the chat-level compression toggle is active. `formatResult` feeds serialized output through `encodeToolResult` before returning to the handler.
+
+Three strategies are applied in sequence:
+
+1. **Key abbreviation** — long JSON key names are mapped to short codes. Existing aliases from `GLOBAL_ALIASES` and `PARAM_SHORT` are reused when applicable; new codes are validated against all reserved namespaces.
+2. **Substring dictionary** — repeated path prefixes and other common substrings are replaced with `~N` codes (e.g., `~1=src/services/batch/handlers/`). The `~` prefix is namespace-safe: it collides with no existing shorthand, hash ref, or conditional syntax.
+3. **Ditto encoding** — in arrays of objects, repeated values for the same key across adjacent rows are replaced with a ditto glyph (`^`).
+
+The encoded form prepends a `<<dict ... >>` legend declaring all codes. `decodeToolResult` parses the legend and reverses all three transforms. Compression is only applied when savings exceed `minSavedPct` (default 10%); below that threshold `encodeToolResult` returns `null` and the raw text is used.
 
 ### 15. Batch Executor Subsystem
 
@@ -842,7 +888,7 @@ The detector subsystem provides reusable pattern-matching over parsed codebases 
 4. `SnapshotTracker.record()` logs the file, range, and read kind.
 5. The Rust backend processes the request via Tauri IPC.
 6. `contextStore` materializes the result chunk; `hashProtocol.materialize()` registers the ref.
-7. `contextHash` formats a compact `<<h:XXXX tk:N type>>` ref for the response.
+7. `contextHash` formats a compact `[h:XXXX Ntk description]` ref for the response.
 8. `resultFormatter` wraps the result; the executor returns `StepResult` to the caller.
 
 ### Edit and Verify Flow
@@ -903,7 +949,7 @@ The detector subsystem provides reusable pattern-matching over parsed codebases 
 8. **Edit steps** → `SnapshotTracker.regionsCover` guard → Rust backend → `hashManifest.recordForwarding`
 9. **Results** → `stepOutputToResult` (TOON compaction + hash ref injection) → batch response
 10. **Hash refs** → `hashProtocol.materialize` → `contextStore` chunk registration
-11. **History compression** → large outputs deflated to `h:XXXX` refs by `resultFormatter`
+11. **History compression** → large outputs deflated to `h:XXXX` refs by `historyCompressor` (eager deflation at insertion + retroactive compression of older rounds); batch inputs stubbed; retention ops compacted
 12. **Round end** → `advanceTurn` dematerializes unreferenced refs → `refreshRoundEnd` reconcile
 13. **Next turn** → `contextFormatter.formatWorkingMemory` → prompt assembly
 
@@ -936,8 +982,9 @@ The detector subsystem provides reusable pattern-matching over parsed codebases 
 - Pin budget: ≤15 engrams recommended
 - HPP refs map: hard cap at `HPP_REFS_MAX_ENTRIES = 8000` entries
 - Auto-eviction at 90% memory pressure
-- History compression reduces tool outputs to hash references
-- Rolling-window eviction (`applyRollingHistoryWindow`) splices the oldest rounds beyond `ROLLING_WINDOW_ROUNDS` (20); durable state lives in BB / hash manifest / FileViews / `ru` rules
+- History compression pipeline: eager deflation at insertion (`deflateToolResults`), retroactive compression of older rounds (`compressToolLoopHistory`), batch input stubbing (`stubBatchToolUseInputs`), and retention op compaction (`compactRetentionOps`) — all in `historyCompressor.ts`
+- Rolling-window eviction (`applyRollingHistoryWindow`) splices the oldest substantive rounds beyond `ROLLING_WINDOW_ROUNDS` (20); synthetic auto-continue prompts are excluded from the round count; durable state lives in BB / hash manifest / FileViews / `ru` rules
+- Tool result dictionary encoding (`toolResultCompression.ts`) applies key abbreviation, substring dictionary, and ditto encoding when the compression toggle is active
 
 ---
 
@@ -950,7 +997,8 @@ The detector subsystem provides reusable pattern-matching over parsed codebases 
 | Ref visibility or turn-based lifecycle | `src/services/hashProtocol.ts` |
 | Hash forwarding after edits | `src/services/hashManifest.ts` |
 | Freshness and reconcile telemetry | `src/services/freshnessTelemetry.ts` |
-| Rolling chat history eviction | `src/services/historyCompressor.ts` (`applyRollingHistoryWindow`) |
+| History compression pipeline (deflation, stubbing, compaction, eviction) | `src/services/historyCompressor.ts` |
+| Tool result dictionary encoding | `src/utils/toolResultCompression.ts` |
 | Digest formatting or hash/ref presentation | `src/utils/contextHash.ts` |
 | Prompt WM block and context assembly | `src/services/contextFormatter.ts` |
 | Prompt budgets and stage-admission policy | `src/services/promptMemory.ts` |
@@ -976,7 +1024,7 @@ The detector subsystem provides reusable pattern-matching over parsed codebases 
 ATLS is not a single orchestrator module; it is a layered cognitive runtime made from cooperating subsystem trees:
 
 - the **application shell** that manages user-visible sessions and agent state
-- the **AI service layer** that abstracts five provider adapters, manages Gemini caching, and routes all calls through the Tauri backend
+- the **AI service layer** that abstracts six provider adapters, manages Gemini caching, and routes all calls through the Tauri backend
 - the **swarm orchestrator** that decomposes goals into parallel agent tasks with file claims, context digests, and synthesis
 - the **managed memory runtime** that owns engrams, staging, BB artifacts, hash forwarding, freshness telemetry, and rolling history
 - the **prompt subsystem** that formats, budgets, and measures context for every provider and model

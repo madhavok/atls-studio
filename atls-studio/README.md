@@ -14,7 +14,7 @@ An AI-powered cognitive development environment with managed working memory, bui
 - **Workspace Management** — Multi-root project support with framework detection, language statistics, and `.atlsignore` filtering.
 - **Built-in Linting** — SWC-powered JavaScript/TypeScript analysis with fix suggestions and barrel export deduplication.
 - **Durable Blackboard** — Persistent key-value store surviving compaction and session boundaries. Stores plans, findings, edit records, and cognitive rules.
-- **History Compression** — Tool result deflation to hash references, batch input stubbing, and rolling summaries to maintain manageable context size.
+- **History Compression** — Tool result deflation to hash references, batch input stubbing, retention op compaction, and rolling-window eviction to maintain manageable context size.
 - **9 Chat Modes** — Agent, Designer, Ask, Reviewer, Retriever, Custom, Swarm, Refactor, and Planner modes for different workflows.
 
 ## Architecture
@@ -50,7 +50,7 @@ atls-studio/
 │   │   ├── orchestrator.ts       # Task decomposition & multi-agent coordination
 │   │   ├── aiService.ts          # AI provider integration & prompt assembly
 │   │   ├── subagentService.ts    # Retriever/Designer/Coder/Tester dispatch
-│   │   ├── historyCompressor.ts  # Tool result deflation & rolling summaries
+│   │   ├── historyCompressor.ts  # Tool result deflation & rolling-window eviction
 │   │   ├── hashProtocol.ts       # Chunk visibility lifecycle (HPP)
 │   │   └── batch/
 │   │       ├── executor.ts       # Positional rebase & snapshot tracking

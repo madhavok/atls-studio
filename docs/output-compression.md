@@ -35,7 +35,7 @@ Tokens saved per tool call by writing less characters on the wire.
 |---|-----------|----------|--------|
 | L1 | **Single `batch()` tool envelope** | [services/batch/executor.ts](../atls-studio/src/services/batch/executor.ts), tool schema | One tool_use per round instead of N |
 | L2 | **Line-per-step `q` format** (`id op k:v …`) | [utils/toon.ts](../atls-studio/src/utils/toon.ts) `parseBatchLines` | ~70%+ vs JSON for multi-step batches |
-| L3 | **Operation shorthands** (`ce`, `sc`, `vb`, `rl`, …) | [services/batch/opShorthand.ts](../atls-studio/src/services/batch/opShorthand.ts) (`SHORT_TO_OP`, 76 codes) | 1-3 tokens per op vs dotted name |
+| L3 | **Operation shorthands** (`ce`, `sc`, `vb`, `rl`, …) | [services/batch/opShorthand.ts](../atls-studio/src/services/batch/opShorthand.ts) (`SHORT_TO_OP`, 77 codes) | 1-3 tokens per op vs dotted name |
 | L4 | **Parameter shorthands** (`ps`, `le`, `sl`, `el`, `sn`, `qs`, `sf`, `ff`) | [services/batch/paramNorm.ts](../atls-studio/src/services/batch/paramNorm.ts) `GLOBAL_ALIASES` + [opShorthand.ts](../atls-studio/src/services/batch/opShorthand.ts) `PARAM_SHORT` | 1-3 tokens per high-frequency key |
 | L5 | **`in:` dataflow shorthand** (`in:r1.refs`) | [toon.ts](../atls-studio/src/utils/toon.ts) `expandDataflow` | Avoids nested JSON `{from_step,path}` |
 | L6 | **`if:` condition shorthand** (`if:e1.ok`, `!.refs`, `if:e1.refs`) | [toon.ts](../atls-studio/src/utils/toon.ts) `expandBatchIfShorthand`; [coerceBatchSteps.ts](../atls-studio/src/services/batch/coerceBatchSteps.ts) applies the same expansion to JSON `if` strings | Avoids `{step_ok: "e1"}` structure |
