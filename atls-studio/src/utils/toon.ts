@@ -412,11 +412,17 @@ function parseParamValue(raw: string): unknown {
     }
   }
 
-  if (raw.startsWith('"') && raw.endsWith('"')) {
-    try { return JSON.parse(raw); } catch { return raw.slice(1, -1); }
+  if (raw.length >= 2) {
+    const quote = raw[0];
+    if ((quote === '"' || quote === "'" || quote === '`') && raw.endsWith(quote)) {
+      if (quote === '"') {
+        try { return JSON.parse(raw); } catch { return raw.slice(1, -1); }
+      }
+      return raw.slice(1, -1);
+    }
   }
 
-  if (raw.includes(',') && !raw.includes('"')) {
+  if (raw.includes(',') && !raw.includes('"') && !raw.includes("'") && !raw.includes('`')) {
     return raw.split(',').map(s => {
       const trimmed = s.trim();
       if (RE_NUMBER.test(trimmed)) return Number(trimmed);

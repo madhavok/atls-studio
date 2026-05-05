@@ -284,6 +284,21 @@ describe('parseBatchLines', () => {
     expect(result.steps[0].with).toEqual({ file_paths: ['src/api.ts', 'src/db.ts'] });
   });
 
+  it('keeps single-quoted comma values as scalar strings', () => {
+    const result = parseBatchLines("r1 search.code qs:'auth,login'");
+    expect(result.steps[0].with).toEqual({ qs: 'auth,login' });
+  });
+
+  it('keeps backtick-quoted comma values as scalar strings', () => {
+    const result = parseBatchLines('r1 search.code qs:`auth,login`');
+    expect(result.steps[0].with).toEqual({ qs: 'auth,login' });
+  });
+
+  it('keeps double-quoted comma values as scalar strings (JSON string)', () => {
+    const result = parseBatchLines('r1 search.code qs:"auth,login"');
+    expect(result.steps[0].with).toEqual({ qs: 'auth,login' });
+  });
+
   it('parses dataflow shorthand', () => {
     const result = parseBatchLines('p1 session.pin in:r1.refs');
     expect(result.steps[0].in).toEqual({ hashes: { from_step: 'r1', path: 'refs' } });
