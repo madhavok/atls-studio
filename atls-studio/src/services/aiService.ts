@@ -142,6 +142,7 @@ import { advanceTurn, dematerialize, getAllRefs, getRef, shouldMaterialize, getT
 import { formatHashManifest, pruneStaleEntries, getForwardMap, getEvictionMap } from './hashManifest';
 import { estimateFileViewTokens } from './fileViewTokens';
 import { INTERNALS_TAB_ID } from '../constants/atlsInternals';
+import { SWARM_ORCHESTRATION_TAB_ID } from '../constants/swarmOrchestrationTab';
 import { useRoundHistoryStore, type VerificationConfidence } from '../stores/roundHistoryStore';
 import {
   executeUnifiedBatch,
@@ -3833,7 +3834,7 @@ function buildContextTOON(context: WorkspaceContext, minimal = false): string {
   // is focused — NOT a real repo path. Surfacing it to the model as
   // `file:__atls_internals__` is leaked editor state that looks like a
   // workspace file and mis-cues tool targeting.
-  if (context.activeFile && context.activeFile !== INTERNALS_TAB_ID) {
+  if (context.activeFile && context.activeFile !== INTERNALS_TAB_ID && context.activeFile !== SWARM_ORCHESTRATION_TAB_ID) {
     ctx.file = context.activeFile;
     if (context.cursorLine) ctx.ln = context.cursorLine;
   }

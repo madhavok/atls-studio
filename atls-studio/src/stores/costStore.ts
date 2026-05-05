@@ -155,8 +155,11 @@ const PRICING: Record<string, Array<{ prefix: string; input: number; output: num
     { prefix: 'gpt-5.5', input: 500, output: 3000, cachedInput: 50 }, // $5/$30, cached $0.50
     { prefix: 'gpt-5.4-mini', input: 75, output: 450, cachedInput: 7.5 }, // $0.75/$4.50, cached $0.075
     { prefix: 'gpt-5.4', input: 250, output: 1500, cachedInput: 25 }, // $2.50/$15, cached $0.25
+    { prefix: 'gpt-5.3-codex', input: 175, output: 1400, cachedInput: 17.5 }, // $1.75/$14, cached $0.175
+    { prefix: 'gpt-5.3', input: 175, output: 1400, cachedInput: 17.5 },     // $1.75/$14, cached $0.175
     { prefix: 'gpt-5.2-pro', input: 2100, output: 16800 },       // $21/$168
     { prefix: 'gpt-5.2', input: 175, output: 1400 },              // $1.75/$14
+    { prefix: 'gpt-5.1-codex', input: 125, output: 1000, cachedInput: 12.5 }, // $1.25/$10, cached $0.125
     { prefix: 'gpt-5.1', input: 125, output: 1000 },              // $1.25/$10
     { prefix: 'gpt-5-pro', input: 1500, output: 12000 },          // $15/$120
     { prefix: 'gpt-5-nano', input: 5, output: 40 },               // $0.05/$0.40
@@ -214,7 +217,7 @@ const PRICING: Record<string, Array<{ prefix: string; input: number; output: num
 // Cache pricing multipliers (relative to base input price)
 const ANTHROPIC_CACHE_READ_MULT = 0.1;   // 10% of base input price
 const ANTHROPIC_CACHE_WRITE_MULT = 1.25; // 125% of base input price (5-min TTL)
-const OPENAI_CACHED_MULT = 0.5;          // legacy fallback when OpenAI has no explicit cached rate
+const OPENAI_CACHED_MULT = 0.1;          // 90% discount — standard for newer OpenAI models; legacy fallback when no explicit cachedInput
 const GEMINI_CACHED_MULT = 0.25;         // 25% of base input price (75% discount)
 
 // Calculate cost for given tokens.

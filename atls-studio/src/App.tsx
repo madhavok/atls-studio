@@ -11,8 +11,7 @@ import { SearchPanel } from './components/SearchPanel';
 import { MenuBar } from './components/MenuBar';
 import { WindowControls } from './components/WindowControls';
 import { SessionPicker } from './components/SessionPicker';
-import { SwarmPanel } from './components/SwarmPanel';
-import { SwarmErrorBoundary } from './components/SwarmPanel/SwarmErrorBoundary';
+import { SWARM_ORCHESTRATION_TAB_ID } from './constants/swarmOrchestrationTab';
 import { ToastContainer } from './components/Toast';
 import { INTERNALS_TAB_ID } from './components/AtlsInternals';
 import { useAppStore } from './stores/appStore';
@@ -171,7 +170,7 @@ function App() {
       window.dispatchEvent(new CustomEvent('editor-save-file'));
     }},
     { id: 'file.close', label: 'Close File', category: 'file', shortcut: 'Ctrl+W', action: () => {
-      if (activeFile) closeFile(activeFile);
+      if (activeFile && !(activeFile === SWARM_ORCHESTRATION_TAB_ID && useSwarmStore.getState().isActive)) closeFile(activeFile);
     }},
     
     // ATLS actions
@@ -423,18 +422,12 @@ function App() {
 
         {/* Center Panel - Code Viewer / Swarm Panel + ATLS Panel + Terminal */}
         <div className="flex-1 flex flex-col overflow-hidden">
-          {/* Main View - Code Viewer OR Swarm Panel */}
+          {/* Main View - Code Viewer (Swarm Panel renders as a virtual tab inside) */}
           <div 
-            className={`flex-1 overflow-hidden min-h-0 ${swarmActive && chatMode === 'swarm' ? 'bg-studio-bg' : ''}`}
+            className="flex-1 overflow-hidden min-h-0"
             style={{ minHeight: 200 }}
           >
-            {swarmActive && chatMode === 'swarm' ? (
-              <SwarmErrorBoundary>
-                <SwarmPanel />
-              </SwarmErrorBoundary>
-            ) : (
-              <CodeViewer />
-            )}
+            <CodeViewer />
           </div>
 
           {/* Bottom Resizer */}
@@ -486,7 +479,7 @@ function App() {
           ) : (
             <>
               {/* Collapse toggle when swarm is active */}
-              {swarmActive && chatMode === 'swarm' && (
+              {swarmActive && (
                 <div className="flex items-center justify-between px-3 py-1.5 border-b border-studio-border bg-studio-bg">
                   <span className="text-xs font-medium text-studio-title">AI Chat</span>
                   <button

@@ -77,6 +77,8 @@ export interface RoundSnapshot {
   isSubagentRound?: boolean;
   /** Swarm worker / planner / synthesis stream (not main chat agent loop) */
   isSwarmRound?: boolean;
+  /** Task ID that produced this swarm round (enables per-task chart coloring) */
+  swarmTaskId?: string;
   subagentType?: 'retriever' | 'design' | 'coder' | 'tester';
   subagentModel?: string;
   subagentProvider?: string;

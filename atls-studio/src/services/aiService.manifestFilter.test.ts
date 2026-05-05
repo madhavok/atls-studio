@@ -257,3 +257,16 @@ describe('Ctx: TOON — INTERNALS_TAB_ID is not surfaced as a file', () => {
     expect(block).toContain('src/widget/panel.tsx');
   });
 });
+
+describe('Ctx: TOON — SWARM_ORCHESTRATION_TAB_ID is not surfaced as a file', () => {
+  beforeEach(resetStore);
+
+  it('omits `file` when activeFile is the swarm orchestration sentinel', () => {
+    const block = buildDynamicContextBlock({
+      activeFile: '__swarm_orchestration__',
+      cursorLine: 10,
+    } as any);
+    expect(block).not.toContain('__swarm_orchestration__');
+    expect(block).not.toMatch(/\bln:\s*10/);
+  });
+});

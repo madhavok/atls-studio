@@ -28,6 +28,7 @@ import { classifyStageSnippet, MAX_PERSISTENT_STAGE_ENTRY_TOKENS } from '../serv
 import { migrateLegacyFileView } from '../services/fileViewStore';
 import { recordUnrecoverable as manifestRecordUnrecoverable } from '../services/hashManifest';
 import { useSwarmStore } from '../stores/swarmStore';
+import { SWARM_ORCHESTRATION_TAB_ID } from '../constants/swarmOrchestrationTab';
 import { serializeJournal, restoreJournal } from '../services/freshnessJournal';
 import { diagnoseSpinning } from '../services/spinDetector';
 import type { PersistedSpinDiagnosis } from '../services/chatDb';
@@ -991,6 +992,15 @@ export function useChatPersistence() {
       if (result.tasks && result.tasks.length > 0) {
         useSwarmStore.getState().rehydrateTasks(sessionId, result.tasks);
         console.log('[ChatPersistence] Rehydrated', result.tasks.length, 'swarm tasks');
+        if (useSwarmStore.getState().isActive) {
+          useAppStore.getState().openFile(SWARM_ORCHESTRATION_TAB_ID);
+        }
+      } else {
+        // Loading a non-swarm session — close orphaned swarm tab if present
+        const appState = useAppStore.getState();
+        if (appState.openFiles.includes(SWARM_ORCHESTRATION_TAB_ID)) {
+          appState.closeFile(SWARM_ORCHESTRATION_TAB_ID);
+        }
       }
 
       try {

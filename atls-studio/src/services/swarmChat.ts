@@ -9,6 +9,7 @@ import type { ContextUsage, StreamChunk } from '../stores/appStore';
 import { useAppStore } from '../stores/appStore';
 import { useContextStore } from '../stores/contextStore';
 import { useCostStore, calculateCost, calculateCostBreakdown, type AIProvider as CostProvider } from '../stores/costStore';
+import { useSwarmStore } from '../stores/swarmStore';
 import { useRoundHistoryStore } from '../stores/roundHistoryStore';
 import { getEffectiveContextWindow, getExtendedContextResolutionFromSettings } from '../utils/modelCapabilities';
 import { resolveHashRefsWithMeta, type HashLookup } from '../utils/hashResolver';
@@ -126,6 +127,7 @@ function pushSwarmRoundSnapshot(
   },
   config: AIConfig,
   provider: AIProvider,
+  swarmTaskId?: string,
 ): void {
   const appState = useAppStore.getState();
   const modelInfo = appState.availableModels.find(m => m.id === config.model);
@@ -182,6 +184,7 @@ function pushSwarmRoundSnapshot(
     hypotheticalNonBatchedCost: r.roundCostCents,
     actualCost: r.roundCostCents,
     isSwarmRound: true,
+    swarmTaskId,
     timeToFirstTokenMs: r.timeToFirstTokenMs,
     roundLatencyMs: r.roundLatencyMs,
   });
@@ -565,8 +568,17 @@ export async function streamChatForSwarm(
     sessionCostCents += r.roundCostCents;
   };
 
+  const taskId = _options.taskId;
+
   const recordRoundAndHistory = (r: Awaited<ReturnType<typeof runStreamRound>>) => {
     accumulateRound(r);
+    if (taskId) {
+      useSwarmStore.getState().updateTaskStats(
+        taskId,
+        r.roundInputTokens + r.roundOutputTokens,
+        Math.round(r.roundCostCents),
+      );
+    }
     if (recordSwarmRoundHistory) {
       swarmHistoryRoundSeq += 1;
       pushSwarmRoundSnapshot(
@@ -582,6 +594,7 @@ export async function streamChatForSwarm(
         },
         config,
         provider,
+        taskId,
       );
     }
   };

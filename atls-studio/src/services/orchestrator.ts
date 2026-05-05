@@ -19,6 +19,7 @@ import { resolveModelSettings } from '../utils/modelSettings';
 import { EDIT_DISCIPLINE } from '../prompts/editDiscipline';
 import { toTOON } from '../utils/toon';
 import { countTokensSync } from '../utils/tokenCounter';
+import { SWARM_ORCHESTRATION_TAB_ID } from '../constants/swarmOrchestrationTab';
 
 /** Persisted in agent_stats for LLM usage not tied to a worker task row */
 const SWARM_ORCHESTRATION_PLAN_TASK_ID = '__swarm_orchestration_plan__';
@@ -256,6 +257,7 @@ class OrchestratorService {
     
     // Initialize swarm
     swarmStore.startSwarm(sessionId, userRequest);
+    useAppStore.getState().openFile(SWARM_ORCHESTRATION_TAB_ID);
     
     try {
       // CRITICAL: Initialize chat DB for the correct project FIRST
@@ -330,6 +332,7 @@ class OrchestratorService {
     } catch (error: unknown) {
       console.error('[Orchestrator] Error:', error);
       swarmStore.resetSwarm();
+      useAppStore.getState().closeFile(SWARM_ORCHESTRATION_TAB_ID);
       // Normalize to Error so callers always get a .message
       if (error instanceof Error) throw error;
       const msg = typeof error === 'string' ? error
@@ -1735,8 +1738,8 @@ Synthesize the swarm outcome.`;
         { 
           mode: 'agent', 
           enableTools: true,
-          maxIterations: 15,  // Up to 15 tool rounds per agent (increased for complex tasks)
-          maxAutoContinues: 3, // Auto-continue up to 3 times if no task_complete
+          maxIterations: 50,  // Up to 50 tool rounds per agent (high ceiling for complex multi-file tasks)
+          maxAutoContinues: 10, // Auto-continue up to 10 times if no task_complete
           swarmTerminalId: agentTerminalId || undefined,
           agentRole: task.assignedRole,
           taskId: task.id,
@@ -1745,13 +1748,8 @@ Synthesize the swarm outcome.`;
         }
       );
       
-      // Update task with results (sessionCostCents is sum of cache-aware per-round costs from streamChatForSwarm)
+      // Update task with results (cost/tokens already accumulated per-round inside streamChatForSwarm)
       swarmStore.updateTaskResult(task.id, taskCompleteSummary || result);
-      swarmStore.updateTaskStats(
-        task.id,
-        sessionInputTokens + sessionOutputTokens,
-        Math.round(sessionCostCents),
-      );
       
       // Post-completion freshness: bump workspace rev and reconcile owned files against disk
       useContextStore.getState().bumpWorkspaceRev();
@@ -1783,7 +1781,12 @@ Synthesize the swarm outcome.`;
         : (taskStatus === 'awaiting_input' ? 'awaiting_input' : 'failed');
       swarmStore.updateTaskStatus(task.id, finalStatus);
       
-      if (!taskCompleted) {
+      if (finalStatus === 'failed') {
+        const reason = taskStatus === 'incomplete'
+          ? `Agent did not call task_complete — iteration limit (50) or auto-continue limit (10) reached. Expand logs for details.`
+          : `Agent stopped without completing task (status: ${taskStatus}). Check logs for tool errors.`;
+        swarmStore.setTaskFailureReason(task.id, reason);
+        await chatDb.updateTaskError(task.id, reason).catch(() => {});
         console.log(`[Agent:${agentLabel}] Finished without explicit task_complete (iteration limit reached)`);
       }
       

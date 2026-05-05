@@ -247,6 +247,8 @@ interface SwarmStoreState {
   updateTaskStatus: (taskId: string, status: TaskStatus) => void;
   updateTaskResult: (taskId: string, result: string) => void;
   updateTaskError: (taskId: string, error: string) => void;
+  /** Sets terminal failure reason without incrementing retryCount (for non-retriable classification) */
+  setTaskFailureReason: (taskId: string, reason: string) => void;
   updateTaskStats: (taskId: string, tokensUsed: number, costCents: number) => void;
   addTaskMessage: (taskId: string, message: Omit<AgentMessage, 'id' | 'timestamp'>) => void;
   appendToTaskMessage: (taskId: string, text: string) => void;
@@ -550,6 +552,14 @@ export const useSwarmStore = create<SwarmStoreState>((set, get) => ({
     set(state => ({
       tasks: state.tasks.map(t => 
         t.id === taskId ? { ...t, error, retryCount: t.retryCount + 1 } : t
+      ),
+    }));
+  },
+
+  setTaskFailureReason: (taskId: string, reason: string) => {
+    set(state => ({
+      tasks: state.tasks.map(t =>
+        t.id === taskId ? { ...t, error: reason } : t
       ),
     }));
   },

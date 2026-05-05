@@ -259,7 +259,7 @@ function StatsBar({ stats }: StatsBarProps) {
           <span className="text-studio-muted">Running:</span>
           <span className="text-blue-400">{stats.runningTasks}</span>
         </div>
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-1" title="See agent cards in the Failed column for details">
           <span className="text-studio-muted">Failed:</span>
           <span className="text-red-400">{stats.failedTasks}</span>
         </div>

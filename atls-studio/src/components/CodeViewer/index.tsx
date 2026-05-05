@@ -7,8 +7,12 @@ import { invoke } from '@tauri-apps/api/core';
 import { type UnlistenFn } from '@tauri-apps/api/event';
 import { safeListen } from '../../utils/tauri';
 import { useAppStore } from '../../stores/appStore';
+import { useSwarmStore } from '../../stores/swarmStore';
 import { MarkdownMessage } from '../AiChat/MarkdownMessage';
 import { AtlsInternals, INTERNALS_TAB_ID } from '../AtlsInternals';
+import { SwarmPanel } from '../SwarmPanel';
+import { SwarmErrorBoundary } from '../SwarmPanel/SwarmErrorBoundary';
+import { SWARM_ORCHESTRATION_TAB_ID } from '../../constants/swarmOrchestrationTab';
 import { normalizeEditorPath } from './codeViewerPaths';
 import { mergeDefinitionsAndReferencesUnique } from './codeViewerSymbolRefs';
 
@@ -46,6 +50,7 @@ export function CodeViewer() {
   const chatMode = useAppStore((s) => s.chatMode);
   const designPreviewContent = useAppStore((s) => s.designPreviewContent);
   const editorTheme = useAppStore((s) => s.settings.theme === 'light' ? 'vs' : 'vs-dark');
+  const swarmActive = useSwarmStore((s) => s.isActive);
   const [fileContents, setFileContents] = useState<Record<string, string>>({});
   const [designPreviewTabActive, setDesignPreviewTabActive] = useState(false);
   const [originalContents, setOriginalContents] = useState<Record<string, string>>({});
@@ -88,7 +93,7 @@ export function CodeViewer() {
   // Load or refresh file content when the active editor tab changes.
   // Inactive tabs keep a cached buffer; activating a tab re-reads from disk so it stays fresh (unless dirty).
   useEffect(() => {
-    if (!activeFile || activeFile === INTERNALS_TAB_ID) return;
+    if (!activeFile || activeFile === INTERNALS_TAB_ID || activeFile === SWARM_ORCHESTRATION_TAB_ID) return;
     if (showDesignPreview) return;
 
     const path = activeFile;
@@ -495,6 +500,7 @@ export function CodeViewer() {
 
   // Handle close with unsaved changes
   const handleCloseFile = useCallback((file: string) => {
+    if (file === SWARM_ORCHESTRATION_TAB_ID && swarmActive) return;
     if (isDirty(file)) {
       const confirmed = window.confirm(
         `"${file.split('/').pop()}" has unsaved changes.\n\nDiscard changes and close?`
@@ -517,9 +523,10 @@ export function CodeViewer() {
       return next;
     });
     closeFile(file);
-  }, [closeFile, isDirty, normalizePath]);
+  }, [closeFile, isDirty, normalizePath, swarmActive]);
 
   const isInternalsActive = activeFile === INTERNALS_TAB_ID;
+  const isSwarmTabActive = activeFile === SWARM_ORCHESTRATION_TAB_ID;
 
   if (openFiles.length === 0 && !hasDesignPreview) {
     return (
@@ -542,13 +549,15 @@ export function CodeViewer() {
   const content = activeFile ? fileContents[activeFile] : '';
 
   // Build tabs: Design Preview (if applicable) + file tabs + virtual tabs
-  const tabs: { id: string; label: string; isDesign?: boolean; isInternals?: boolean }[] = [];
+  const tabs: { id: string; label: string; isDesign?: boolean; isInternals?: boolean; isSwarmOrchestration?: boolean }[] = [];
   if (hasDesignPreview) {
     tabs.push({ id: DESIGN_PREVIEW_TAB, label: 'Plan Preview', isDesign: true });
   }
   openFiles.forEach((file) => {
     if (file === INTERNALS_TAB_ID) {
       tabs.push({ id: INTERNALS_TAB_ID, label: 'ATLS Internals', isInternals: true });
+    } else if (file === SWARM_ORCHESTRATION_TAB_ID) {
+      tabs.push({ id: SWARM_ORCHESTRATION_TAB_ID, label: 'Swarm Orchestration', isSwarmOrchestration: true });
     } else {
       tabs.push({ id: file, label: file.split(/[/\\]/).pop() || file });
     }
@@ -562,7 +571,7 @@ export function CodeViewer() {
           const isActive = tab.isDesign
             ? designPreviewTabActive
             : tab.id === activeFile && !designPreviewTabActive;
-          const isVirtual = tab.isDesign || tab.isInternals;
+          const isVirtual = tab.isDesign || tab.isInternals || tab.isSwarmOrchestration;
           const fileIsDirty = !isVirtual && isDirty(tab.id);
           const fileIsSaving = !isVirtual && saving[tab.id];
           
@@ -586,6 +595,10 @@ export function CodeViewer() {
                 }
               }}
             >
+              {/* Swarm tab icon */}
+              {tab.isSwarmOrchestration && (
+                <span className="text-sm">🐝</span>
+              )}
               {/* Internals tab icon */}
               {tab.isInternals && (
                 <svg className="w-3.5 h-3.5 text-studio-accent" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
@@ -603,27 +616,30 @@ export function CodeViewer() {
                 {tab.label}
                 {fileIsDirty && !fileIsSaving && <span className="ml-1 text-studio-accent">*</span>}
               </span>
-              <button
-                className={`
-                  p-0.5 rounded hover:bg-studio-border
-                  ${isActive ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}
-                `}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  if (tab.isDesign) {
-                    useAppStore.getState().clearDesignPreview();
-                    setDesignPreviewTabActive(false);
-                    const fallbackFile = openFiles.find((file) => file !== tab.id);
-                    if (fallbackFile) {
-                      setActiveFile(fallbackFile);
+              {/* Hide close button for swarm tab while active */}
+              {!(tab.isSwarmOrchestration && swarmActive) && (
+                <button
+                  className={`
+                    p-0.5 rounded hover:bg-studio-border
+                    ${isActive ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}
+                  `}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (tab.isDesign) {
+                      useAppStore.getState().clearDesignPreview();
+                      setDesignPreviewTabActive(false);
+                      const fallbackFile = openFiles.find((file) => file !== tab.id);
+                      if (fallbackFile) {
+                        setActiveFile(fallbackFile);
+                      }
+                    } else {
+                      handleCloseFile(tab.id);
                     }
-                  } else {
-                    handleCloseFile(tab.id);
-                  }
-                }}
-              >
-                <CloseIcon className="w-3 h-3" />
-              </button>
+                  }}
+                >
+                  <CloseIcon className="w-3 h-3" />
+                </button>
+              )}
             </div>
           );
         })}
@@ -631,9 +647,13 @@ export function CodeViewer() {
 
       {/* Main Editor Area */}
       <div className="flex-1 flex min-h-0">
-        {/* Editor, Plan Preview, or ATLS Internals */}
+        {/* Editor, Plan Preview, Swarm Orchestration, or ATLS Internals */}
         <div className="flex-1 flex flex-col relative min-h-0 overflow-hidden">
-          {isInternalsActive ? (
+          {isSwarmTabActive ? (
+            <SwarmErrorBoundary>
+              <SwarmPanel />
+            </SwarmErrorBoundary>
+          ) : isInternalsActive ? (
             <AtlsInternals />
           ) : showDesignPreview ? (
             <div className="flex-1 overflow-y-auto p-4 markdown-message">

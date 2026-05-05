@@ -11,6 +11,7 @@ import { CacheCompositionSection } from './sections/CacheCompositionSection';
 import { BatchEfficiencySection } from './sections/BatchEfficiencySection';
 import { EntryManifestSection } from './sections/EntryManifestSection';
 import { SubAgentSection } from './sections/SubAgentSection';
+import { SwarmActivitySection } from './sections/SwarmActivitySection';
 import { MemoryTelemetrySection } from './sections/MemoryTelemetrySection';
 import { ReconcileFreshnessSection } from './sections/ReconcileFreshnessSection';
 import { IndexDbSection } from './sections/IndexDbSection';
@@ -43,6 +44,7 @@ const SECTIONS: SectionDef[] = [
   { id: 'batch', title: 'Batch Efficiency', subtitle: 'Batching ratio and non-batched cost comparison', component: BatchEfficiencySection },
   { id: 'tools', title: 'Tool Token Usage', subtitle: 'Per-tool token consumption breakdown', component: ToolTokenSection },
   { id: 'subagent', title: 'SubAgent Activity', subtitle: 'Retriever invocations, cost, and pin efficiency', component: SubAgentSection },
+  { id: 'swarm', title: 'Swarm Activity', subtitle: 'Orchestration tasks, per-agent cost, and round timeline', component: SwarmActivitySection },
   { id: 'entry', title: 'Entry Manifest', subtitle: 'Entry point signatures and token scaling', component: EntryManifestSection },
   { id: 'indexdb', title: 'Index / DB', subtitle: 'SQLite index health for active project', component: IndexDbSection },
 ];
