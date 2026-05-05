@@ -3339,7 +3339,7 @@ pub async fn stream_chat_google(
                                         input_tokens: prompt_tokens,
                                         output_tokens: candidate_tokens,
                                         cache_creation_input_tokens: None,
-                                        cache_read_input_tokens: None,
+                                        cache_read_input_tokens: cached,
                                         openai_cached_tokens: None,
                                         cached_content_tokens: cached,
                                     });
