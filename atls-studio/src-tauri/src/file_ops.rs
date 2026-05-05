@@ -492,6 +492,26 @@ pub async fn delete_path(path: String, app: tauri::AppHandle) -> Result<(), Stri
     Ok(())
 }
 
+fn validate_rename_basename(new_name: &str) -> Result<&str, crate::error::AtlsError> {
+    if new_name.trim().is_empty() {
+        return Err(crate::error::AtlsError::ValidationError {
+            field: "new_name".into(),
+            message: "new_name must not be empty".into(),
+        });
+    }
+
+    let mut components = std::path::Path::new(new_name).components();
+    let is_single_normal_component = matches!(components.next(), Some(std::path::Component::Normal(_)))
+        && components.next().is_none();
+    if is_single_normal_component && !new_name.contains('/') && !new_name.contains('\\') {
+        Ok(new_name)
+    } else {
+        Err(crate::error::AtlsError::ValidationError {
+            field: "new_name".into(),
+            message: "new_name must be a single file or folder name, not a path".into(),
+        })
+    }
+}
 /// Rename a file or folder. If dest_dir is provided, moves it there with the new name.
 #[tauri::command]
 pub async fn rename_path(old_path: String, new_name: String, dest_dir: Option<String>, app: tauri::AppHandle) -> Result<(), String> {
@@ -512,7 +532,8 @@ pub async fn rename_path(old_path: String, new_name: String, dest_dir: Option<St
                 })?
                 .to_path_buf()
         };
-        let new_path = parent.join(&new_name);
+        let safe_name = validate_rename_basename(&new_name)?;
+        let new_path = parent.join(safe_name);
         std::fs::rename(&old, &new_path)
             .with_path(format!("{} -> {}", old_path, new_path.display()))?;
         Ok(new_path)
@@ -752,7 +773,7 @@ pub async fn copy_path(src: String, dest_dir: String) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{common_tree_change_root, normalized_tree_change_paths};
+    use super::{common_tree_change_root, normalized_tree_change_paths, validate_rename_basename};
     use std::path::PathBuf;
 
     #[test]
@@ -786,8 +807,20 @@ mod tests {
 
         assert_eq!(root.as_deref(), Some(if cfg!(windows) { "C:/repo/src" } else { "/repo/src" }));
     }
-}
 
+    #[test]
+    fn validate_rename_basename_accepts_plain_name() {
+        assert!(validate_rename_basename("renamed.rs").is_ok());
+    }
+
+    #[test]
+    fn validate_rename_basename_rejects_paths() {
+        assert!(validate_rename_basename("../escape.rs").is_err());
+        assert!(validate_rename_basename("nested/escape.rs").is_err());
+        assert!(validate_rename_basename(r"nested\\escape.rs").is_err());
+    }
+
+}
 fn copy_dir_recursive(src: &PathBuf, dest: &PathBuf) -> Result<(), error::AtlsError> {
     use crate::error::IoResultExt;
     std::fs::create_dir_all(dest).with_path(dest.display().to_string())?;

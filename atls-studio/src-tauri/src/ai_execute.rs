@@ -24,26 +24,35 @@ pub async fn ai_execute(
     cwd: Option<String>,
     timeout_ms: Option<u64>,
 ) -> Result<AiCommandResult, String> {
-    let _ = timeout_ms;
     let working_dir = resolve_working_dir(&app, cwd);
     let working_dir_clone = working_dir.clone();
     let start = Instant::now();
+    let timeout_duration = timeout_ms.map(std::time::Duration::from_millis);
 
-    let output = match tokio::task::spawn_blocking(move || {
+    let run_command = async move {
         let (shell, shell_arg) = super::resolve_shell();
-        let mut cmd = std::process::Command::new(shell);
+        let mut cmd = tokio::process::Command::new(shell);
         cmd.arg(shell_arg)
             .arg(&command)
             .current_dir(&working_dir_clone)
             .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped());
+            .stderr(std::process::Stdio::piped())
+            .kill_on_drop(true);
         #[cfg(windows)]
         cmd.creation_flags(0x08000000);
-        cmd.output()
-    }).await {
-        Ok(Ok(output)) => output,
-        Ok(Err(e)) => return Err(format!("Failed to execute command: {}", e)),
-        Err(e) => return Err(format!("Command task panicked: {}", e)),
+        cmd.output().await
+    };
+
+    let output = match timeout_duration {
+        Some(duration) => match tokio::time::timeout(duration, run_command).await {
+            Ok(Ok(output)) => output,
+            Ok(Err(e)) => return Err(format!("Failed to execute command: {}", e)),
+            Err(_) => return Err(format!("Command timed out after {}ms", timeout_ms.unwrap_or(0))),
+        },
+        None => match run_command.await {
+            Ok(output) => output,
+            Err(e) => return Err(format!("Failed to execute command: {}", e)),
+        },
     };
     
     let duration = start.elapsed();

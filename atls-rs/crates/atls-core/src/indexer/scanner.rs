@@ -513,7 +513,7 @@ impl Indexer {
         }
         
         // Phase 1: Parallel file processing (read, parse, detect)
-        let mut handles = Vec::with_capacity(files_to_index.len());
+        let mut handles = tokio::task::JoinSet::new();
         
         for (path, hash) in files_to_index {
             let semaphore = Arc::clone(&semaphore);
@@ -525,7 +525,7 @@ impl Indexer {
             let _start = start_time.clone();
             let scan_matrix = scan_matrix_shared.clone();
             
-            let handle = tokio::spawn(async move {
+            handles.spawn(async move {
                 // Acquire semaphore permit to limit concurrency
                 let _permit = semaphore.acquire().await.unwrap();
                 
@@ -660,30 +660,16 @@ impl Indexer {
                     parse_result,
                 }))
             });
-            
-            handles.push(handle);
         }
         
-        // Collect results while emitting progress updates
-        let mut results = Vec::with_capacity(handles.len());
-        let mut last_reported = 0usize;
+        // Collect results as parse tasks complete so progress callbacks are not
+        // blocked behind an earlier slow file in spawn order.
+        let mut results = Vec::with_capacity(total_files);
+        let mut completed_count = 0usize;
         
-        for handle in handles {
-            // Emit progress before each await (shows real-time progress)
-            let current = processed_count.load(Ordering::Relaxed);
-            if current > last_reported {
-                last_reported = current;
-                if let Some(ref callback) = self.progress_callback {
-                    callback(ScanProgress {
-                        processed: current,
-                        total: total_files,
-                        current_file: None,
-                        duration_ms: start_time.elapsed().as_millis() as u64,
-                    });
-                }
-            }
-            
-            match handle.await {
+        while let Some(joined) = handles.join_next().await {
+            completed_count += 1;
+            match joined {
                 Ok(Ok(Some(result))) => results.push(result),
                 Ok(Ok(None)) => {} // Skipped (unknown language)
                 Ok(Err(e)) => {
@@ -694,6 +680,15 @@ impl Indexer {
                     stats.errors += 1;
                     stats.error_details.push((PathBuf::new(), format!("Task panic: {}", e)));
                 }
+            }
+
+            if let Some(ref callback) = self.progress_callback {
+                callback(ScanProgress {
+                    processed: completed_count,
+                    total: total_files,
+                    current_file: None,
+                    duration_ms: start_time.elapsed().as_millis() as u64,
+                });
             }
         }
         
