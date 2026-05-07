@@ -1,5 +1,6 @@
 use crate::project::ProjectManager;
 use serde_json::Value;
+use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::info;
@@ -13,51 +14,57 @@ pub async fn handle_get_codebase_overview(
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
 
-    let pm = project_manager.lock().await;
+    let pm = {
+        let pm = project_manager.lock().await;
+        pm.clone()
+    };
     let project = pm
         .get_or_create_project(root_path.as_deref())
         .await
         .map_err(|e| format!("Failed to get project: {}", e))?;
 
-    let project = project.lock().await;
-    let query_engine = project.query_engine();
-    let db = project.db();
+    let (query_engine, db) = {
+        let project = project.lock().await;
+        (project.query_engine_handle(), project.db_handle())
+    };
 
     // Get file stats
     let file_count: i64 = db
-        .conn()
-        .query_row("SELECT COUNT(*) FROM files", [], |row| row.get(0))
-        .unwrap_or(0);
+        .with_conn(|conn| conn.query_row("SELECT COUNT(*) FROM files", [], |row| row.get(0)))
+        .map_err(|e| format!("Failed to query file count: {}", e))?;
 
     let total_lines: i64 = db
-        .conn()
-        .query_row("SELECT SUM(line_count) FROM files", [], |row| row.get(0))
-        .unwrap_or(0);
+        .with_conn(|conn| {
+            conn.query_row("SELECT COALESCE(SUM(line_count), 0) FROM files", [], |row| {
+                row.get(0)
+            })
+        })
+        .map_err(|e| format!("Failed to query total line count: {}", e))?;
 
     // Get language distribution
-    let langs: std::collections::HashMap<String, i64> = {
-        let conn = db.conn();
-        let mut stmt = conn
-            .prepare("SELECT language, COUNT(*) FROM files GROUP BY language")
-            .unwrap();
-        let lang_rows = stmt
-            .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)))
-            .unwrap();
-        
-        let mut result = std::collections::HashMap::new();
-        for row in lang_rows {
-            let (lang, count) = row.unwrap();
-            result.insert(lang, count);
-        }
-        result
-    };
+    let langs: HashMap<String, i64> = db
+        .with_conn(|conn| {
+            let mut stmt = conn.prepare(
+                "SELECT COALESCE(language, 'unknown'), COUNT(*) FROM files GROUP BY language",
+            )?;
+            let lang_rows =
+                stmt.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)))?;
+
+            let mut result = HashMap::new();
+            for row in lang_rows {
+                let (lang, count) = row?;
+                result.insert(lang, count);
+            }
+            Ok(result)
+        })
+        .map_err(|e| format!("Failed to query language distribution: {}", e))?;
 
     // Get issue stats
     let issue_stats = query_engine
         .get_category_stats()
-        .unwrap_or_default();
+        .map_err(|e| format!("Failed to query issue category stats: {}", e))?;
 
-    let mut issue_counts = std::collections::HashMap::new();
+    let mut issue_counts = HashMap::new();
     for stat in issue_stats {
         issue_counts.insert(stat.category, stat.count);
     }
@@ -65,7 +72,7 @@ pub async fn handle_get_codebase_overview(
     // Get subsystems (top-level directories)
     let subsystems = query_engine
         .get_subsystems(1)
-        .unwrap_or_default();
+        .map_err(|e| format!("Failed to query subsystems: {}", e))?;
 
     let subsystem_names: Vec<String> = subsystems
         .iter()

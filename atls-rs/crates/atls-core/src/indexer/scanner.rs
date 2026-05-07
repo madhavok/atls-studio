@@ -863,13 +863,12 @@ impl Indexer {
             .parse_file(&content, language, path, policy.run_structural_patterns)
             .await?;
         
-        // Get or create file ID
-        let file_id = self.upsert_file(path, hash, language, &content).await?;
-        
-        self.store_parse_result(
-            file_id,
-            &parse_result,
+        self.write_indexed_file_to_db(
+            path,
+            hash,
             language,
+            content.lines().count() as u32,
+            &parse_result,
             policy.run_structural_patterns,
         )
         .await?;
@@ -924,41 +923,65 @@ impl Indexer {
 
     /// Write a processed file result to the database
     async fn write_file_to_db(&self, result: &FileProcessResult) -> Result<(), IndexerError> {
-        // Get or create file ID
-        let file_id = self.upsert_file_direct(
+        self.write_indexed_file_to_db(
             &result.path,
             &result.hash,
             result.language,
             result.line_count,
-        ).await?;
-        
-        self.store_parse_result(file_id, &result.parse_result, result.language, true).await?;
-        
-        Ok(())
+            &result.parse_result,
+            true,
+        )
+        .await
     }
 
-    /// Upsert file without re-reading content (used by parallel processor)
-    async fn upsert_file_direct(
+    /// Atomically upsert a file and replace all derived index rows for it.
+    async fn write_indexed_file_to_db(
         &self,
         path: &Path,
         hash: &str,
         language: Language,
         line_count: u32,
-    ) -> Result<i64, IndexerError> {
-        // Canonicalize the path to match root_path format
-        let canonical_path = path.canonicalize()
+        parse_result: &ParseResult,
+        update_code_issues: bool,
+    ) -> Result<(), IndexerError> {
+        let path_str = self.relative_db_path(path)?;
+        let mut conn = self.db.conn();
+        let tx = conn.transaction()?;
+
+        let file_id = Self::upsert_file_in_conn(&tx, &path_str, hash, language, line_count)?;
+        self.store_parse_result_in_conn(
+            &tx,
+            file_id,
+            parse_result,
+            language,
+            update_code_issues,
+        )?;
+
+        tx.commit()?;
+        Ok(())
+    }
+
+    fn relative_db_path(&self, path: &Path) -> Result<String, IndexerError> {
+        let canonical_path = path
+            .canonicalize()
             .map_err(|e| IndexerError::Path(format!("Failed to canonicalize path: {}", e)))?;
-        let relative_path = canonical_path.strip_prefix(&self.root_path)
-            .map_err(|_| IndexerError::Path(format!(
-                "Path not under root: {:?} not under {:?}", 
+        let relative_path = canonical_path.strip_prefix(&self.root_path).map_err(|_| {
+            IndexerError::Path(format!(
+                "Path not under root: {:?} not under {:?}",
                 canonical_path, self.root_path
-            )))?;
-        // Always use forward slashes for cross-platform consistency
-        let path_str = relative_path.to_string_lossy().replace('\\', "/");
-        
-        let conn = self.db.conn();
-        
-        // Upsert file
+            ))
+        })?;
+
+        Ok(relative_path.to_string_lossy().replace('\\', "/"))
+    }
+
+    fn upsert_file_in_conn(
+        conn: &rusqlite::Connection,
+        path_str: &str,
+        hash: &str,
+        language: Language,
+        line_count: u32,
+    ) -> Result<i64, IndexerError> {
         conn.execute(
             "INSERT INTO files (path, hash, language, line_count, last_indexed)
              VALUES (?1, ?2, ?3, ?4, datetime('now'))
@@ -969,14 +992,13 @@ impl Indexer {
                 last_indexed = datetime('now')",
             params![path_str, hash, language.as_str(), line_count],
         )?;
-        
-        // Get the file ID
+
         let file_id: i64 = conn.query_row(
             "SELECT id FROM files WHERE path = ?1",
             params![path_str],
             |row| row.get(0),
         )?;
-        
+
         Ok(file_id)
     }
 
@@ -1080,44 +1102,6 @@ impl Indexer {
             calls,
             issues,
         })
-    }
-
-    async fn upsert_file(
-        &self,
-        path: &Path,
-        hash: &str,
-        language: Language,
-        content: &str,
-    ) -> Result<i64, IndexerError> {
-        // Canonicalize the path to match root_path format (handles Windows \\?\ prefix)
-        let canonical_path = path.canonicalize()
-            .map_err(|e| IndexerError::Path(format!("Failed to canonicalize path: {}", e)))?;
-        let relative_path = canonical_path.strip_prefix(&self.root_path)
-            .map_err(|_| IndexerError::Path(format!(
-                "Path not under root: {:?} not under {:?}", 
-                canonical_path, self.root_path
-            )))?;
-        // Always use forward slashes for cross-platform consistency
-        let path_str = relative_path.to_string_lossy().replace('\\', "/");
-        let line_count = content.lines().count() as u32;
-        
-        let conn = self.db.conn();
-        
-        // Upsert file
-        conn.execute(
-            "INSERT INTO files (path, hash, language, line_count) VALUES (?1, ?2, ?3, ?4)
-             ON CONFLICT(path) DO UPDATE SET hash = ?2, language = ?3, line_count = ?4, last_indexed = CURRENT_TIMESTAMP",
-            params![path_str, hash, language.as_str(), line_count],
-        )?;
-        
-        // Get file ID
-        let file_id: i64 = conn.query_row(
-            "SELECT id FROM files WHERE path = ?1",
-            params![path_str],
-            |row| row.get(0),
-        )?;
-        
-        Ok(file_id)
     }
 
     /// Resolve import paths to file IDs and store as file_relations.
@@ -1447,15 +1431,14 @@ impl Indexer {
         parts.join("/")
     }
 
-    async fn store_parse_result(
+    fn store_parse_result_in_conn(
         &self,
+        conn: &rusqlite::Connection,
         file_id: i64,
         result: &ParseResult,
         language: Language,
         update_code_issues: bool,
     ) -> Result<(), IndexerError> {
-        let conn = self.db.conn();
-        
         // Clear stale data for this file before re-inserting
         conn.execute("DELETE FROM symbols WHERE file_id = ?1", params![file_id])?;
         conn.execute("DELETE FROM calls WHERE file_id = ?1", params![file_id])?;
@@ -1560,7 +1543,7 @@ impl Indexer {
                     "SELECT id FROM symbols WHERE file_id = ?1 AND name = ?2 LIMIT 1",
                     params![file_id, scope],
                     |row| row.get(0),
-                ).optional().unwrap_or(None)
+                ).optional()?
             } else {
                 // Fallback: use the first function/class symbol in this file as the caller
                 // (covers top-level calls and anonymous arrow functions)
@@ -1568,7 +1551,7 @@ impl Indexer {
                     "SELECT id FROM symbols WHERE file_id = ?1 AND kind IN ('function', 'method', 'arrow_function', 'class', 'variable') ORDER BY line LIMIT 1",
                     params![file_id],
                     |row| row.get(0),
-                ).optional().unwrap_or(None)
+                ).optional()?
             };
 
             // Resolve callee: broader kind filter to catch const arrow fns and exports
@@ -1578,7 +1561,7 @@ impl Indexer {
                 "SELECT id FROM symbols WHERE name = ?1 AND kind IN ('function', 'method', 'arrow_function', 'variable', 'export') LIMIT 1",
                 params![call_name],
                 |row| row.get(0),
-            ).optional().unwrap_or(None);
+            ).optional()?;
 
             if let (Some(from_id), Some(to_id)) = (caller_id, callee_id) {
                 if from_id != to_id {
@@ -1685,10 +1668,11 @@ impl Indexer {
         // Always use forward slashes for cross-platform consistency
         let path_str = relative_path.to_string_lossy().replace('\\', "/");
         
-        let conn = self.db.conn();
+        let mut conn = self.db.conn();
+        let tx = conn.transaction()?;
         
         // Get file ID
-        let file_id: Option<i64> = conn.query_row(
+        let file_id: Option<i64> = tx.query_row(
             "SELECT id FROM files WHERE path = ?1",
             params![path_str],
             |row| row.get(0),
@@ -1696,11 +1680,13 @@ impl Indexer {
         
         if let Some(file_id) = file_id {
             // Delete related data (cascade delete should handle this, but we'll be explicit)
-            conn.execute("DELETE FROM symbols WHERE file_id = ?1", params![file_id])?;
-            conn.execute("DELETE FROM code_issues WHERE file_id = ?1", params![file_id])?;
-            conn.execute("DELETE FROM file_relations WHERE from_file_id = ?1 OR to_file_id = ?1", params![file_id])?;
-            conn.execute("DELETE FROM files WHERE id = ?1", params![file_id])?;
+            tx.execute("DELETE FROM symbols WHERE file_id = ?1", params![file_id])?;
+            tx.execute("DELETE FROM code_issues WHERE file_id = ?1", params![file_id])?;
+            tx.execute("DELETE FROM file_relations WHERE from_file_id = ?1 OR to_file_id = ?1", params![file_id])?;
+            tx.execute("DELETE FROM files WHERE id = ?1", params![file_id])?;
         }
+
+        tx.commit()?;
         
         Ok(())
     }

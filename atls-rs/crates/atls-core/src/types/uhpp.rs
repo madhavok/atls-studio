@@ -5,7 +5,31 @@
 //!
 //! See: docs/UHPP_END_STATE_SPEC.md, docs/UHPP_PHASE1_CANONICAL_UNITS.md
 
-use serde::{Deserialize, Serialize};
+use regex::Regex;
+use serde::{de::Error as SerdeDeError, Deserialize, Deserializer, Serialize};
+use std::sync::OnceLock;
+use thiserror::Error;
+
+const CODE_DIGEST_SYMBOL_PATTERN: &str =
+    r"(?m)^\s*(?:export\s+)?(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?(?:fn|function|def|func|class|struct|interface|trait|enum|type|impl)\s+(\w+)";
+
+#[derive(Debug, Clone, Error)]
+pub enum UhppValidationError {
+    #[error("{field} must be non-empty")]
+    EmptyString { field: &'static str },
+    #[error("line numbers must be 1-based")]
+    ZeroLine,
+    #[error("span start_line ({start_line}) must be <= end_line ({end_line})")]
+    InvalidLineRange { start_line: u32, end_line: u32 },
+    #[error("column numbers must be 1-based")]
+    ZeroColumn,
+    #[error("same-line span start_column ({start_column}) must be <= end_column ({end_column})")]
+    InvalidColumnRange { start_column: u32, end_column: u32 },
+    #[error("confidence_score must be finite and between 0 and 1, got {value}")]
+    InvalidConfidenceScore { value: f64 },
+    #[error("invalid shorthand parse result: {reason}")]
+    InvalidShorthandParseResult { reason: &'static str },
+}
 
 // ---------------------------------------------------------------------------
 // Shared foundational types
@@ -54,6 +78,7 @@ pub enum DiagnosticSeverity {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(try_from = "UhppSpanUnchecked")]
 pub struct UhppSpan {
     pub start_line: u32,
     pub end_line: u32,
@@ -61,6 +86,61 @@ pub struct UhppSpan {
     pub start_column: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub end_column: Option<u32>,
+}
+
+#[derive(Debug, Deserialize)]
+struct UhppSpanUnchecked {
+    start_line: u32,
+    end_line: u32,
+    start_column: Option<u32>,
+    end_column: Option<u32>,
+}
+
+impl UhppSpan {
+    pub fn new(
+        start_line: u32,
+        end_line: u32,
+        start_column: Option<u32>,
+        end_column: Option<u32>,
+    ) -> Result<Self, UhppValidationError> {
+        let span = Self { start_line, end_line, start_column, end_column };
+        span.validate()?;
+        Ok(span)
+    }
+
+    pub fn validate(&self) -> Result<(), UhppValidationError> {
+        if self.start_line == 0 || self.end_line == 0 {
+            return Err(UhppValidationError::ZeroLine);
+        }
+        if self.start_line > self.end_line {
+            return Err(UhppValidationError::InvalidLineRange {
+                start_line: self.start_line,
+                end_line: self.end_line,
+            });
+        }
+        if self.start_column == Some(0) || self.end_column == Some(0) {
+            return Err(UhppValidationError::ZeroColumn);
+        }
+        if self.start_line == self.end_line {
+            if let (Some(start_column), Some(end_column)) = (self.start_column, self.end_column) {
+                if start_column > end_column {
+                    return Err(UhppValidationError::InvalidColumnRange {
+                        start_column,
+                        end_column,
+                    });
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+impl TryFrom<UhppSpanUnchecked> for UhppSpan {
+    type Error = UhppValidationError;
+
+    fn try_from(value: UhppSpanUnchecked) -> Result<Self, Self::Error> {
+        Self::new(value.start_line, value.end_line, value.start_column, value.end_column)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -423,8 +503,9 @@ pub struct HydrationCost {
 }
 
 /// Multi-class hash record for a canonical unit.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HashIdentity {
+    #[serde(deserialize_with = "deserialize_non_empty_string")]
     pub content_hash: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub normalized_hash: Option<String>,
@@ -440,6 +521,27 @@ pub struct HashIdentity {
     pub change_hash: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub verification_hash: Option<String>,
+}
+
+impl HashIdentity {
+    pub fn new(content_hash: impl Into<String>) -> Result<Self, UhppValidationError> {
+        let identity = Self {
+            content_hash: content_hash.into(),
+            normalized_hash: None,
+            digest_hash: None,
+            edit_ready_digest_hash: None,
+            slice_hash: None,
+            neighborhood_hash: None,
+            change_hash: None,
+            verification_hash: None,
+        };
+        identity.validate()?;
+        Ok(identity)
+    }
+
+    pub fn validate(&self) -> Result<(), UhppValidationError> {
+        validate_non_empty("content_hash", &self.content_hash)
+    }
 }
 
 /// Normalization level for producing normalized hashes.
@@ -499,12 +601,19 @@ pub struct CandidateTarget {
     pub source_path: Option<String>,
     pub target_kind: EditTargetKind,
     pub confidence: BindingConfidence,
+    #[serde(deserialize_with = "deserialize_confidence_score")]
     pub confidence_score: f64,
     pub match_reason: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub content_hash: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub revision_id: Option<String>,
+}
+
+impl CandidateTarget {
+    pub fn validate(&self) -> Result<(), UhppValidationError> {
+        validate_confidence_score(self.confidence_score)
+    }
 }
 
 /// Binding result — structured output of the intent-binding pipeline.
@@ -895,6 +1004,7 @@ pub struct ShorthandError {
 
 /// Result of parsing a shorthand expression.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(try_from = "ShorthandParseResultUnchecked")]
 pub struct ShorthandParseResult {
     pub success: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -902,6 +1012,50 @@ pub struct ShorthandParseResult {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<ShorthandError>,
     pub raw_input: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct ShorthandParseResultUnchecked {
+    success: bool,
+    op: Option<ShorthandOp>,
+    error: Option<ShorthandError>,
+    raw_input: String,
+}
+
+impl ShorthandParseResult {
+    pub fn validate(&self) -> Result<(), UhppValidationError> {
+        match (self.success, self.op.is_some(), self.error.is_some()) {
+            (true, true, false) => Ok(()),
+            (true, _, true) => Err(UhppValidationError::InvalidShorthandParseResult {
+                reason: "successful result must not include an error",
+            }),
+            (true, false, _) => Err(UhppValidationError::InvalidShorthandParseResult {
+                reason: "successful result must include an operation",
+            }),
+            (false, false, true) => Ok(()),
+            (false, true, _) => Err(UhppValidationError::InvalidShorthandParseResult {
+                reason: "failed result must not include an operation",
+            }),
+            (false, _, false) => Err(UhppValidationError::InvalidShorthandParseResult {
+                reason: "failed result must include an error",
+            }),
+        }
+    }
+}
+
+impl TryFrom<ShorthandParseResultUnchecked> for ShorthandParseResult {
+    type Error = UhppValidationError;
+
+    fn try_from(value: ShorthandParseResultUnchecked) -> Result<Self, Self::Error> {
+        let result = Self {
+            success: value.success,
+            op: value.op,
+            error: value.error,
+            raw_input: value.raw_input,
+        };
+        result.validate()?;
+        Ok(result)
+    }
 }
 
 /// A batch step descriptor — compilation target for shorthand.
@@ -1035,10 +1189,9 @@ fn format_symbol_digest_with_lines(symbols: &[DigestSymbol]) -> String {
 
 /// Regex-based code digest: extract fn/class/struct names from raw code.
 fn extract_code_digest(content: &str) -> String {
-    use regex::Regex;
-    let re = Regex::new(
-        r"(?m)^\s*(?:export\s+)?(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?(?:fn|function|def|func|class|struct|interface|trait|enum|type|impl)\s+(\w+)"
-    ).unwrap();
+    let Some(re) = code_digest_symbol_regex() else {
+        return String::new();
+    };
     let names: Vec<&str> = re.captures_iter(content)
         .take(DIGEST_MAX_SYMBOLS)
         .filter_map(|c| c.get(1).map(|m| m.as_str()))
@@ -1049,22 +1202,70 @@ fn extract_code_digest(content: &str) -> String {
 
 /// Regex-based code digest with line numbers.
 fn extract_code_digest_with_lines(content: &str) -> String {
-    use regex::Regex;
-    let re = Regex::new(
-        r"(?m)^\s*(?:export\s+)?(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?(?:fn|function|def|func|class|struct|interface|trait|enum|type|impl)\s+(\w+)"
-    ).unwrap();
-    let entries: Vec<String> = re.captures_iter(content)
-        .take(DIGEST_MAX_SYMBOLS)
-        .filter_map(|c| {
-            let m = c.get(1)?;
-            let name = m.as_str();
-            let byte_offset = c.get(0)?.start();
-            let line_num = content[..byte_offset].matches('\n').count() + 1;
-            Some(format!("{}:{}", name, line_num))
-        })
-        .collect();
+    let Some(re) = code_digest_symbol_regex() else {
+        return String::new();
+    };
+    let mut entries = Vec::new();
+    let mut scan_offset = 0;
+    let mut line_num = 1;
+
+    for captures in re.captures_iter(content).take(DIGEST_MAX_SYMBOLS) {
+        let Some(name) = captures.get(1).map(|m| m.as_str()) else {
+            continue;
+        };
+        let Some(match_start) = captures.get(0).map(|m| m.start()) else {
+            continue;
+        };
+        line_num += content[scan_offset..match_start]
+            .bytes()
+            .filter(|b| *b == b'\n')
+            .count();
+        scan_offset = match_start;
+        entries.push(format!("{}:{}", name, line_num));
+    }
     if entries.is_empty() { return String::new(); }
     format!("  {}", entries.join(" | "))
+}
+
+fn code_digest_symbol_regex() -> Option<&'static Regex> {
+    static CODE_DIGEST_SYMBOL_REGEX: OnceLock<Result<Regex, regex::Error>> = OnceLock::new();
+
+    CODE_DIGEST_SYMBOL_REGEX
+        .get_or_init(|| Regex::new(CODE_DIGEST_SYMBOL_PATTERN))
+        .as_ref()
+        .ok()
+}
+
+fn validate_non_empty(field: &'static str, value: &str) -> Result<(), UhppValidationError> {
+    if value.trim().is_empty() {
+        return Err(UhppValidationError::EmptyString { field });
+    }
+    Ok(())
+}
+
+fn deserialize_non_empty_string<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = String::deserialize(deserializer)?;
+    validate_non_empty("content_hash", &value).map_err(SerdeDeError::custom)?;
+    Ok(value)
+}
+
+fn validate_confidence_score(value: f64) -> Result<(), UhppValidationError> {
+    if value.is_finite() && (0.0..=1.0).contains(&value) {
+        return Ok(());
+    }
+    Err(UhppValidationError::InvalidConfidenceScore { value })
+}
+
+fn deserialize_confidence_score<'de, D>(deserializer: D) -> Result<f64, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = f64::deserialize(deserializer)?;
+    validate_confidence_score(value).map_err(SerdeDeError::custom)?;
+    Ok(value)
 }
 
 /// Extract first N non-empty, non-comment lines as a generic digest.
@@ -1479,21 +1680,15 @@ mod tests {
     }
 
     #[test]
-    fn serde_hash_identity_default_and_sparse() {
-        let id = HashIdentity {
-            content_hash: "abcdef12".into(),
-            ..Default::default()
-        };
+    fn serde_hash_identity_sparse() {
+        let id = HashIdentity::new("abcdef12").unwrap();
         let json = serde_json::to_string(&id).unwrap();
         assert!(json.contains("\"content_hash\":\"abcdef12\""));
         assert!(!json.contains("normalized_hash"));
         assert!(!json.contains("digest_hash"));
 
-        let id2 = HashIdentity {
-            content_hash: "aaa".into(),
-            digest_hash: Some("bbb".into()),
-            ..Default::default()
-        };
+        let mut id2 = HashIdentity::new("aaa").unwrap();
+        id2.digest_hash = Some("bbb".into());
         let json2 = serde_json::to_string(&id2).unwrap();
         assert!(json2.contains("\"digest_hash\":\"bbb\""));
         assert!(!json2.contains("normalized_hash"));
@@ -2573,5 +2768,55 @@ mod tests {
             }
             _ => panic!("expected Extract variant"),
         }
+    }
+
+    #[test]
+    fn uhpp_span_rejects_invalid_ranges() {
+        assert!(UhppSpan::new(10, 9, None, None).is_err());
+        assert!(UhppSpan::new(1, 1, Some(8), Some(4)).is_err());
+        assert!(serde_json::from_str::<UhppSpan>(
+            r#"{"start_line":0,"end_line":1}"#
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn candidate_target_rejects_invalid_confidence_score() {
+        assert!(serde_json::from_str::<CandidateTarget>(
+            r#"{
+                "ref": "h:abc",
+                "target_kind": "symbol",
+                "confidence": "high",
+                "confidence_score": 1.5,
+                "match_reason": "test"
+            }"#
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn hash_identity_rejects_empty_content_hash() {
+        assert!(HashIdentity::new(" ").is_err());
+        assert!(serde_json::from_str::<HashIdentity>(
+            r#"{"content_hash":""}"#
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn shorthand_parse_result_rejects_contradictions() {
+        assert!(serde_json::from_str::<ShorthandParseResult>(
+            r#"{
+                "success": true,
+                "op": {"kind": "target", "ref": "h:abc"},
+                "error": {
+                    "message": "unexpected",
+                    "position": 0,
+                    "expected": "none"
+                },
+                "raw_input": "target(h:abc)"
+            }"#
+        )
+        .is_err());
     }
 }

@@ -20,7 +20,7 @@ Thumbs.db
 # ATLS runtime data
 .atls/
 .cursor/
-
+debug/
 # Logs
 *.log
 

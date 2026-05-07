@@ -119,8 +119,8 @@ impl Project {
         &self.root_path
     }
 
-    pub fn db(&self) -> &Database {
-        &self.db
+    pub fn db_handle(&self) -> Arc<Database> {
+        Arc::clone(&self.db)
     }
 
     pub async fn indexer(&self) -> tokio::sync::MutexGuard<'_, Indexer> {
@@ -129,6 +129,10 @@ impl Project {
 
     pub fn query_engine(&self) -> &QueryEngine {
         &self.query_engine
+    }
+
+    pub fn query_engine_handle(&self) -> Arc<QueryEngine> {
+        Arc::clone(&self.query_engine)
     }
 
     pub fn detector_registry(&self) -> &DetectorRegistry {
@@ -153,6 +157,7 @@ impl Project {
 }
 
 /// Project manager - maintains per-root-path project instances
+#[derive(Clone)]
 pub struct ProjectManager {
     projects: Arc<Mutex<HashMap<PathBuf, Arc<Mutex<Project>>>>>,
     last_project_path: Arc<Mutex<Option<PathBuf>>>,

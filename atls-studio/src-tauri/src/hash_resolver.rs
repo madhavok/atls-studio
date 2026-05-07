@@ -16,6 +16,7 @@
 //!   h:abc12345..h:def67890 — diff between two hash states
 
 use std::collections::HashMap;
+use std::fmt;
 use std::path::Path;
 use tokio::sync::Mutex;
 
@@ -126,6 +127,74 @@ pub fn is_replay_safe(shape: &ShapeOp) -> bool {
 pub struct HashRef {
     pub hash: String,
     pub modifier: HashModifier,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct HashResolveWarning {
+    pub code: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hash: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub field: Option<String>,
+    pub context: &'static str,
+    pub message: String,
+}
+
+impl HashResolveWarning {
+    fn unresolved_hash(hash: &str, field: Option<&str>, context: &'static str, error: &AtlsError) -> Self {
+        Self {
+            code: "hash_unresolved",
+            hash: Some(hash.to_string()),
+            field: field.map(|f| f.to_string()),
+            context,
+            message: error.to_string(),
+        }
+    }
+
+    fn skipped_inline_comment(hash: &str, field: &str) -> Self {
+        Self {
+            code: "hash_ref_in_comment",
+            hash: Some(hash.to_string()),
+            field: Some(field.to_string()),
+            context: "inline",
+            message: "skipped — ref is inside a comment. Move it to its own line to resolve.".to_string(),
+        }
+    }
+
+    fn unresolved_file_symbol_ref(value: &str) -> Self {
+        Self {
+            code: "file_symbol_ref_unresolved",
+            hash: None,
+            field: Some("from_refs".to_string()),
+            context: "field",
+            message: format!(
+                "from_refs element looks like file→symbol but failed to resolve: {:?}. Use h:XXX:cls(Name):dedent format.",
+                value.chars().take(80).collect::<String>()
+            ),
+        }
+    }
+}
+
+impl fmt::Display for HashResolveWarning {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match (self.context, self.hash.as_deref()) {
+            ("inline", Some(hash)) => write!(
+                f,
+                "h:{} (inline, field {:?}): {}",
+                hash,
+                self.field.as_deref().unwrap_or("?"),
+                self.message
+            ),
+            (_, Some(hash)) => write!(
+                f,
+                "h:{} (field {:?}): {}",
+                hash,
+                self.field.as_deref().unwrap_or("?"),
+                self.message
+            ),
+            _ => write!(f, "{}", self.message),
+        }
+    }
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -1109,8 +1178,21 @@ pub fn resolve_hash_refs(
     registry: &HashRegistry,
     _project_root: &Path,
 ) -> (usize, Vec<String>) {
+    let (resolved_count, warnings) = resolve_hash_refs_detailed(params, registry, _project_root);
+    (
+        resolved_count,
+        warnings.into_iter().map(|warning| warning.to_string()).collect(),
+    )
+}
+
+/// Recursively walk params and return structured warning details for unresolved refs.
+pub fn resolve_hash_refs_detailed(
+    params: &mut serde_json::Value,
+    registry: &HashRegistry,
+    _project_root: &Path,
+) -> (usize, Vec<HashResolveWarning>) {
     let mut resolved_count = 0;
-    let mut warnings: Vec<String> = Vec::new();
+    let mut warnings: Vec<HashResolveWarning> = Vec::new();
     resolve_value(params, None, registry, _project_root, &mut resolved_count, &mut warnings, false);
     (resolved_count, warnings)
 }
@@ -1121,7 +1203,7 @@ fn resolve_value(
     registry: &HashRegistry,
     project_root: &Path,
     count: &mut usize,
-    warnings: &mut Vec<String>,
+    warnings: &mut Vec<HashResolveWarning>,
     skip_inline: bool,
 ) {
     match value {
@@ -1132,9 +1214,12 @@ fn resolve_value(
                         *s = resolved;
                         *count += 1;
                     }
-                    Err(e) => {
-                        warnings.push(format!("h:{} (field {:?}): {}", href.hash, field_name.unwrap_or("?"), e));
-                    }
+                    Err(e) => warnings.push(HashResolveWarning::unresolved_hash(
+                        &href.hash,
+                        field_name,
+                        "field",
+                        &e,
+                    )),
                 }
             } else if let Ok(resolved) = try_resolve_file_symbol_ref(s, field_name, registry, project_root) {
                 *s = resolved;
@@ -1142,10 +1227,7 @@ fn resolve_value(
             } else if field_name.map_or(false, |n| n == "from_ref" || n == "from_refs")
                 && (s.contains("→") || s.contains("\n")) && (s.contains("cls(") || s.contains("fn("))
             {
-                warnings.push(format!(
-                    "from_refs element looks like file→symbol but failed to resolve: {:?}. Use h:XXX:cls(Name):dedent format.",
-                    s.chars().take(80).collect::<String>()
-                ));
+                warnings.push(HashResolveWarning::unresolved_file_symbol_ref(s));
             } else if !skip_inline {
                 if let Some(name) = field_name {
                     if INLINE_RESOLVE_FIELDS.contains(&name) && s.contains("h:") {
@@ -1187,7 +1269,7 @@ fn resolve_inline_refs(
     registry: &HashRegistry,
     project_root: &Path,
     count: &mut usize,
-    warnings: &mut Vec<String>,
+    warnings: &mut Vec<HashResolveWarning>,
 ) -> String {
     use regex::Regex;
     use std::sync::OnceLock;
@@ -1218,10 +1300,7 @@ fn resolve_inline_refs(
             if matches!(href.modifier, HashModifier::Auto) {
                 result.push_str(m.as_str());
             } else if is_inside_comment(text, m.start()) {
-                warnings.push(format!(
-                    "h:{} (inline, field {:?}): skipped — ref is inside a comment. Move it to its own line to resolve.",
-                    href.hash, field_name
-                ));
+                warnings.push(HashResolveWarning::skipped_inline_comment(&href.hash, field_name));
                 result.push_str(m.as_str());
             } else {
                 match resolve_single(&href, Some(field_name), registry, project_root) {
@@ -1230,7 +1309,12 @@ fn resolve_inline_refs(
                         *count += 1;
                     }
                     Err(e) => {
-                        warnings.push(format!("h:{} (inline, field {:?}): {}", href.hash, field_name, e));
+                        warnings.push(HashResolveWarning::unresolved_hash(
+                            &href.hash,
+                            Some(field_name),
+                            "inline",
+                            &e,
+                        ));
                         result.push_str(m.as_str());
                     }
                 }
@@ -2429,6 +2513,21 @@ mod tests {
     }
 
     #[test]
+    fn resolve_hash_refs_detailed_returns_structured_warnings() {
+        let reg = HashRegistry::new();
+        let mut params = serde_json::json!({"content": "h:deadbeef:content"});
+        let (count, warnings) = resolve_hash_refs_detailed(&mut params, &reg, Path::new("/tmp"));
+
+        assert_eq!(count, 0);
+        assert_eq!(warnings.len(), 1);
+        assert_eq!(warnings[0].code, "hash_unresolved");
+        assert_eq!(warnings[0].hash.as_deref(), Some("deadbeef"));
+        assert_eq!(warnings[0].field.as_deref(), Some("content"));
+        assert_eq!(warnings[0].context, "field");
+        assert!(warnings[0].to_string().contains("h:deadbeef"));
+    }
+
+    #[test]
     fn test_resolve_hash_refs_deletes_resolves_to_path() {
         let mut reg = HashRegistry::new();
         reg.register("aabb1122".to_string(), test_entry("src/foo.ts", "content"));
@@ -3004,6 +3103,44 @@ mod tests {
         let stored = reg.get("ccdd3344").unwrap();
         assert_eq!(stored.source.as_deref(), Some("src/components/App.tsx"),
             "backslashes should be normalized to forward slashes on registration");
+    }
+
+    #[tokio::test]
+    async fn hash_registry_mutex_serializes_same_source_updates() {
+        let registry = std::sync::Arc::new(tokio::sync::Mutex::new(HashRegistry::new()));
+        let mut handles = Vec::new();
+
+        for i in 0..8 {
+            let registry = std::sync::Arc::clone(&registry);
+            handles.push(tokio::spawn(async move {
+                let hash = format!("feedface{:08x}", i);
+                let content = format!("export const v{} = {};", i, i);
+                let mut registry = registry.lock().await;
+                registry.register(hash.clone(), test_entry("src/shared.ts", &content));
+                hash
+            }));
+        }
+
+        let mut registered_hashes = Vec::new();
+        for handle in handles {
+            registered_hashes.push(handle.await.unwrap());
+        }
+
+        let registry = registry.lock().await;
+        let source_hashes = registry
+            .get_by_source("SRC\\SHARED.ts")
+            .expect("source index should normalize lookup paths");
+        assert_eq!(source_hashes.len(), registered_hashes.len());
+        for hash in &registered_hashes {
+            assert!(source_hashes.contains(hash));
+        }
+
+        let current = source_hashes.last().unwrap();
+        let current_content = registry.get(current).unwrap().content.clone();
+        for stale_hash in &source_hashes[..source_hashes.len() - 1] {
+            assert!(registry.is_forwarded(stale_hash));
+            assert_eq!(registry.get(stale_hash).unwrap().content, current_content);
+        }
     }
 
     // ── Spill tests ──

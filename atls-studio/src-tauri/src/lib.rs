@@ -2481,6 +2481,14 @@ pub(crate) struct RootFolder {
     sub_workspaces: Vec<WorkspaceEntry>,
 }
 
+/// Shared backend state lock policy:
+/// 1. Take `AtlsProjectState.roots` only long enough to clone `Arc<AtlsProject>` handles.
+/// 2. Do not hold `roots` while awaiting git, verification, indexing, or hash resolution work.
+/// 3. If multiple shared states are needed, acquire project state before hash registry state.
+/// 4. Per-repo operation locks (`GitOpState`) are leaf locks; do not acquire project state while holding them.
+///
+/// This keeps long-running commands from blocking workspace selection and avoids hidden
+/// lock-order inversions between batch operations, hash resolution, and git/index work.
 pub(crate) struct AtlsProjectState {
     roots: tokio::sync::Mutex<Vec<RootFolder>>,
     active_root: Arc<std::sync::RwLock<Option<String>>>,

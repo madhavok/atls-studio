@@ -117,14 +117,21 @@ pub async fn atls_batch_query(
     // Hash-relational resolver: resolve h:XXXX references in all params
     let mut params = params;
     let hash_resolve_warnings: Vec<String>;
+    let hash_resolve_warning_details: Vec<hash_resolver::HashResolveWarning>;
     {
         let hr_state = app.state::<hash_resolver::HashRegistryState>();
         let registry = hr_state.registry.lock().await;
-        let (_resolved, warnings) = hash_resolver::resolve_hash_refs(&mut params, &registry, project_root);
+        let (_resolved, warning_details) =
+            hash_resolver::resolve_hash_refs_detailed(&mut params, &registry, project_root);
+        let warnings: Vec<String> = warning_details
+            .iter()
+            .map(|warning| warning.to_string())
+            .collect();
         if !warnings.is_empty() {
             eprintln!("[HPP] {} hash ref(s) unresolved: {:?}", warnings.len(), warnings);
         }
         hash_resolve_warnings = warnings;
+        hash_resolve_warning_details = warning_details;
     }
 
     // Edit dispatcher: route operation "edit" to the correct backend op (delete_files, draft, batch_edits, etc.)
@@ -16076,6 +16083,10 @@ pub async fn atls_batch_query(
             }
             if !hash_resolve_warnings.is_empty() {
                 obj.insert("_hash_warnings".to_string(), serde_json::json!(hash_resolve_warnings));
+                obj.insert(
+                    "_hash_warning_details".to_string(),
+                    serde_json::json!(hash_resolve_warning_details),
+                );
             }
         }
     }
