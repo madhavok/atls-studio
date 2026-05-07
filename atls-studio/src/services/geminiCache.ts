@@ -2,7 +2,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { serializeMessageContentForTokens } from '../utils/toon';
 import { estimateTokens, SHORT_HASH_LEN } from '../utils/contextHash';
 import { useContextStore } from '../stores/contextStore';
-import type { ChatMessage } from './aiService';
+import type { ChatMessage, ContentBlock } from './aiService';
 
 const GEMINI_CACHE_VERSION = 'v6';
 
@@ -67,20 +67,48 @@ export function hydrateHppReferences(messages: ChatMessage[]): ChatMessage[] {
 
   const MAX_HYDRATED_CHARS = 1200;
 
+  const hydrateString = (s: string): string => {
+    return s.replace(/h:([0-9a-f]{6,16})/g, (match, hash) => {
+      const chunk = shortHashMap.get(hash.slice(0, SHORT_HASH_LEN));
+      if (chunk?.content) {
+        const excerpt = chunk.content.length > MAX_HYDRATED_CHARS
+          ? `${chunk.content.slice(0, MAX_HYDRATED_CHARS)}\n...[cache hydration truncated; resolve the ref on demand for full content]`
+          : chunk.content;
+        return `${match}\n${excerpt}`;
+      }
+      return match;
+    });
+  };
+
   for (let i = startIdx; i < messages.length; i++) {
     const msg = messages[i];
-    if (typeof msg.content === 'string' && hppTestRegex.test(msg.content)) {
-      const hydrated = msg.content.replace(/h:([0-9a-f]{6,16})/g, (match, hash) => {
-        const chunk = shortHashMap.get(hash.slice(0, SHORT_HASH_LEN));
-        if (chunk?.content) {
-          const excerpt = chunk.content.length > MAX_HYDRATED_CHARS
-            ? `${chunk.content.slice(0, MAX_HYDRATED_CHARS)}\n...[cache hydration truncated; resolve the ref on demand for full content]`
-            : chunk.content;
-          return `${match}\n${excerpt}`;
+    if (typeof msg.content === 'string') {
+      if (hppTestRegex.test(msg.content)) {
+        result.push({ ...msg, content: hydrateString(msg.content) });
+      } else {
+        result.push(msg);
+      }
+    } else if (Array.isArray(msg.content)) {
+      // Hydrate h:refs inside structured content blocks (tool_result, text, etc.)
+      // so Gemini cached messages carry expanded excerpts — the hash manifest
+      // lives in dynamic context (uncached) and can't resolve refs in the cache.
+      let anyHydrated = false;
+      const hydratedBlocks = (msg.content as Array<Record<string, unknown>>).map(block => {
+        if (block == null || typeof block !== 'object') return block;
+        let changed = false;
+        const newBlock = { ...block };
+        if (typeof block.text === 'string' && hppTestRegex.test(block.text)) {
+          newBlock.text = hydrateString(block.text);
+          changed = true;
         }
-        return match;
+        if (typeof block.content === 'string' && hppTestRegex.test(block.content)) {
+          newBlock.content = hydrateString(block.content as string);
+          changed = true;
+        }
+        if (changed) anyHydrated = true;
+        return changed ? newBlock : block;
       });
-      result.push({ ...msg, content: hydrated });
+      result.push(anyHydrated ? { ...msg, content: hydratedBlocks as ContentBlock[] } : msg);
     } else {
       result.push(msg);
     }

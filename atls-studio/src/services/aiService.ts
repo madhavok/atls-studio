@@ -2114,7 +2114,11 @@ async function streamChatViaTauri(
 
       const tauriMessagesRaw = assembledRound.messages.map(m => ({ role: m.role, content: m.content }));
       const tauriMessages = repairToolPairing(tauriMessagesRaw, config.provider);
-      const cacheMessages = assembledRound.messages.map(m => ({
+      // Derive cache messages from REPAIRED messages so cache prefix count
+      // aligns with tauriMessages.length used for the uncached-tail slice.
+      // repairToolPairing can add synthetic [cancelled] tool_results or strip
+      // orphaned blocks, changing the count vs assembledRound.messages.
+      const cacheMessages = tauriMessages.map(m => ({
         role: m.role as 'user' | 'assistant' | 'system',
         content: m.content as string | ContentBlock[],
       }));
