@@ -1173,21 +1173,8 @@ const INLINE_RESOLVE_FIELDS: &[&str] = &[
 const LITERAL_CONTENT_ARRAYS: &[&str] = &["line_edits", "edits"];
 
 /// Recursively walk the params JSON and resolve all `h:XXXX` references.
-/// Mutates `params` in place. Returns (resolved_count, unresolved_warnings).
+/// Mutates `params` in place. Returns (resolved_count, structured warnings).
 /// Lenient: unresolved refs are left as literal strings with a warning collected.
-pub fn resolve_hash_refs(
-    params: &mut serde_json::Value,
-    registry: &HashRegistry,
-    _project_root: &Path,
-) -> (usize, Vec<String>) {
-    let (resolved_count, warnings) = resolve_hash_refs_detailed(params, registry, _project_root);
-    (
-        resolved_count,
-        warnings.into_iter().map(|warning| warning.to_string()).collect(),
-    )
-}
-
-/// Recursively walk params and return structured warning details for unresolved refs.
 pub fn resolve_hash_refs_detailed(
     params: &mut serde_json::Value,
     registry: &HashRegistry,
@@ -2109,6 +2096,18 @@ mod tests {
     use super::*;
     use serde::Deserialize;
     use serde_json::json;
+
+    fn resolve_hash_refs(
+        params: &mut serde_json::Value,
+        registry: &HashRegistry,
+        project_root: &Path,
+    ) -> (usize, Vec<String>) {
+        let (resolved_count, warnings) = resolve_hash_refs_detailed(params, registry, project_root);
+        (
+            resolved_count,
+            warnings.into_iter().map(|w| w.to_string()).collect(),
+        )
+    }
 
     #[derive(Debug, Deserialize)]
     struct SharedHashRefCase {
