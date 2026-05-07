@@ -164,7 +164,7 @@ const PRICING: Record<string, Array<{ prefix: string; input: number; output: num
     { prefix: 'gpt-5-pro', input: 1500, output: 12000 },          // $15/$120
     { prefix: 'gpt-5-nano', input: 5, output: 40 },               // $0.05/$0.40
     { prefix: 'gpt-5-mini', input: 25, output: 200 },             // $0.25/$2
-    { prefix: 'gpt-5', input: 125, output: 1000 },                // $1.25/$10
+    { prefix: 'gpt-5', input: 125, output: 1000, cachedInput: 62.5 }, // $1.25/$10, cached $0.625 (50% of input)
     // GPT-4o series
     { prefix: 'gpt-4o-mini', input: 15, output: 60 },             // $0.15/$0.60
     { prefix: 'gpt-4o', input: 250, output: 1000 },               // $2.50/$10

@@ -62,7 +62,27 @@ vi.mock('./services/aiService', async (importOriginal) => {
 });
 
 vi.mock('./components/FileExplorer', () => ({ FileExplorer: () => <div data-testid="m-fe" /> }));
-vi.mock('./components/CodeViewer', () => ({ CodeViewer: () => <div data-testid="m-cv" /> }));
+vi.mock('./components/CodeViewer', async () => {
+  const { useAppStore } = await import('./stores/appStore');
+  const { SWARM_ORCHESTRATION_TAB_ID } = await import('./constants/swarmOrchestrationTab');
+  return {
+    CodeViewer: () => {
+      const activeFile = useAppStore((s) => s.activeFile);
+      const openFiles = useAppStore((s) => s.openFiles);
+      const chatMode = useAppStore((s) => s.chatMode);
+      const designPreviewContent = useAppStore((s) => s.designPreviewContent);
+      const hasDesignPreview = chatMode === 'designer' && designPreviewContent.length > 0;
+      if (openFiles.length === 0 && !hasDesignPreview) {
+        return <div data-testid="m-cv" />;
+      }
+      return (
+        <div data-testid="m-cv">
+          {activeFile === SWARM_ORCHESTRATION_TAB_ID ? <div data-testid="m-swarm" /> : null}
+        </div>
+      );
+    },
+  };
+});
 vi.mock('./components/AtlsPanel', () => ({ AtlsPanel: () => <div data-testid="m-atls" /> }));
 vi.mock('./components/AiChat', () => ({ AiChat: () => <div data-testid="m-aichat" /> }));
 vi.mock('./components/Settings', () => ({
@@ -125,6 +145,7 @@ vi.mock('./components/SwarmPanel/SwarmErrorBoundary', () => ({
 vi.mock('./components/Toast', () => ({ ToastContainer: () => <div data-testid="m-toast" /> }));
 
 import { resetStaticPromptCache } from './services/aiService';
+import { SWARM_ORCHESTRATION_TAB_ID } from './constants/swarmOrchestrationTab';
 import App from './App';
 
 function resetAppStores() {
@@ -226,7 +247,11 @@ describe('App shell', () => {
   });
 
   it('loads swarm panel when chatMode swarm and swarm active', () => {
-    useAppStore.setState({ chatMode: 'swarm' });
+    useAppStore.setState({
+      chatMode: 'swarm',
+      openFiles: [SWARM_ORCHESTRATION_TAB_ID],
+      activeFile: SWARM_ORCHESTRATION_TAB_ID,
+    });
     useSwarmStore.setState({ isActive: true });
     render(<App />);
     expect(screen.getByTestId('m-swarm')).toBeTruthy();
