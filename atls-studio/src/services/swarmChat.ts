@@ -39,6 +39,7 @@ export interface SwarmStreamOptions {
   taskId?: string;
   fileClaims?: string[];
   swarmSessionId?: string;
+  signal?: AbortSignal;
   /**
    * When true, updates main chat context bar, prompt round counter, and session cache metrics.
    * Default false so parallel swarm workers do not distort the primary chat UI.
