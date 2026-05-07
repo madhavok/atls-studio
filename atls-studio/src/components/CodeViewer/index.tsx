@@ -13,7 +13,7 @@ import { AtlsInternals, INTERNALS_TAB_ID } from '../AtlsInternals';
 import { SwarmPanel } from '../SwarmPanel';
 import { SwarmErrorBoundary } from '../SwarmPanel/SwarmErrorBoundary';
 import { SWARM_ORCHESTRATION_TAB_ID } from '../../constants/swarmOrchestrationTab';
-import { normalizeEditorPath } from './codeViewerPaths';
+import { normalizeEditorPath, toEditorModelPath } from './codeViewerPaths';
 import { mergeDefinitionsAndReferencesUnique } from './codeViewerSymbolRefs';
 
 
@@ -697,6 +697,7 @@ export function CodeViewer() {
                   <Editor
                     height="100%"
                     language={getLanguage(activeFile)}
+                    path={toEditorModelPath(activeFile)}
                     value={content || ''}
                     onChange={(value) => handleContentChange(value, activeFile)}
                     onMount={handleEditorMount}

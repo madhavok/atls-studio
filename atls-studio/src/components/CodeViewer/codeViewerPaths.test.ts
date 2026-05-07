@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { normalizeEditorPath } from './codeViewerPaths';
+import { normalizeEditorPath, toEditorModelPath } from './codeViewerPaths';
 
 describe('codeViewerPaths', () => {
   it('normalizeEditorPath converts backslashes', () => {
@@ -12,5 +12,21 @@ describe('codeViewerPaths', () => {
 
   it('handles empty string', () => {
     expect(normalizeEditorPath('')).toBe('');
+  });
+
+  it('toEditorModelPath creates a file URI for project-relative paths', () => {
+    expect(toEditorModelPath('src/__tests__/edit-actions.test.ts')).toBe(
+      'file:///src/__tests__/edit-actions.test.ts',
+    );
+  });
+
+  it('toEditorModelPath normalizes Windows paths before creating the URI', () => {
+    expect(toEditorModelPath('F:\\source\\atls-studio\\src\\app.tsx')).toBe(
+      'file:///F:/source/atls-studio/src/app.tsx',
+    );
+  });
+
+  it('toEditorModelPath preserves existing URI paths', () => {
+    expect(toEditorModelPath('file:///src/app.tsx')).toBe('file:///src/app.tsx');
   });
 });
