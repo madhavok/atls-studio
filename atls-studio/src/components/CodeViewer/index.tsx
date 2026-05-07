@@ -43,6 +43,13 @@ interface CanonicalRevisionChangedEvent {
   previous_revision?: string | null;
 }
 
+/** Compare paths that may differ in absolute vs relative form (watcher sends absolute, openFiles stores relative). */
+function pathEndMatch(a: string, b: string): boolean {
+  const an = a.replace(/\\/g, '/');
+  const bn = b.replace(/\\/g, '/');
+  if (an === bn) return true;
+  return an.endsWith('/' + bn) || bn.endsWith('/' + an);
+}
 const DESIGN_PREVIEW_TAB = '__design_preview__';
 
 export function CodeViewer() {
@@ -217,10 +224,7 @@ export function CodeViewer() {
         const changedNorm = changedPath.replace(/\\/g, '/');
 
         const currentOpenFiles = openFilesRef.current;
-        const matchedFile = currentOpenFiles.find((f) => {
-          const fNorm = f.replace(/\\/g, '/');
-          return fNorm === changedNorm || f === changedPath;
-        });
+        const matchedFile = currentOpenFiles.find((f) => pathEndMatch(f, changedPath));
         if (!matchedFile) return;
 
 
@@ -278,10 +282,7 @@ export function CodeViewer() {
 
         for (const changedPath of changedPaths) {
           const changedNorm = changedPath.replace(/\\/g, '/');
-          const matchedFile = currentOpenFiles.find((f) => {
-            const fNorm = f.replace(/\\/g, '/');
-            return fNorm === changedNorm || f === changedPath;
-          });
+          const matchedFile = currentOpenFiles.find((f) => pathEndMatch(f, changedPath));
           if (!matchedFile) continue;
 
           const matchedNorm = matchedFile.replace(/\\/g, '/');
