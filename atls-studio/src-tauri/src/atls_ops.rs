@@ -306,7 +306,12 @@ pub async fn get_issue_counts(
         
         // Build SQL with optional filters
         let mut sql = String::from(
-            "SELECT severity, COUNT(*) as cnt FROM code_issues WHERE suppressed = 0"
+            "SELECT severity, COUNT(*) as cnt FROM code_issues WHERE suppressed = 0
+               AND id IN (
+                   SELECT MIN(id) FROM code_issues
+                   WHERE suppressed = 0
+                   GROUP BY file_id, line, type
+               )"
         );
         let mut param_values: Vec<String> = Vec::new();
         
