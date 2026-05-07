@@ -252,6 +252,7 @@ function SubAgentGenerationSettings({ disabled }: { disabled: boolean }) {
     { id: 'low', label: 'Lo', title: 'Low reasoning budget (subagent)' },
     { id: 'medium', label: 'Med', title: 'Medium reasoning budget (subagent)' },
     { id: 'high', label: 'Hi', title: 'High reasoning budget (subagent)' },
+    { id: 'xhigh', label: 'XHi', title: 'Extra-high reasoning budget (subagent)' },
   ];
   const speedColor = (id: OutputSpeedLevel) =>
     speed === id
@@ -264,7 +265,8 @@ function SubAgentGenerationSettings({ disabled }: { disabled: boolean }) {
       ? id === 'off' ? 'bg-studio-border text-studio-text'
         : id === 'low' ? 'bg-sky-500/80 text-white'
         : id === 'medium' ? 'bg-emerald-500/80 text-white'
-        : 'bg-violet-500/80 text-white'
+        : id === 'high' ? 'bg-violet-500/80 text-white'
+        : 'bg-fuchsia-500/80 text-white'
       : 'bg-studio-surface/30 text-studio-muted hover:bg-studio-surface';
 
   const setSpeed = (v: OutputSpeedLevel) => setSettings({ subagentOutputSpeed: v });
@@ -719,6 +721,7 @@ export function ModelModeSelector() {
           { id: 'low', label: 'Lo', title: 'Low reasoning budget' },
           { id: 'medium', label: 'Med', title: 'Medium reasoning budget' },
           { id: 'high', label: 'Hi', title: 'High reasoning budget' },
+          { id: 'xhigh', label: 'XHi', title: 'Extra-high reasoning budget (supported models)' },
         ];
         const speedColor = (id: OutputSpeedLevel) =>
           speed === id
@@ -731,7 +734,8 @@ export function ModelModeSelector() {
             ? id === 'off' ? 'bg-studio-border text-studio-text'
               : id === 'low' ? 'bg-sky-500/80 text-white'
               : id === 'medium' ? 'bg-emerald-500/80 text-white'
-              : 'bg-violet-500/80 text-white'
+              : id === 'high' ? 'bg-violet-500/80 text-white'
+              : 'bg-fuchsia-500/80 text-white'
             : 'bg-studio-surface/30 text-studio-muted hover:bg-studio-surface';
         return (
           <>
@@ -861,7 +865,7 @@ export function ModelModeSelector() {
                   <div className="px-4 py-3 border-b border-studio-border bg-yellow-500/5">
                     <div className="flex items-center justify-between mb-2">
                       <span className="text-sm font-medium text-yellow-400">🎯 Orchestrator</span>
-                      <span className="text-xs text-studio-muted">Plans & coordinates</span>
+                      <span className="text-xs text-studio-muted">Plans &amp; coordinates</span>
                     </div>
                     <select
                       value={`${orchestratorProvider}:${orchestratorModel}`}
@@ -952,6 +956,7 @@ export function ModelModeSelector() {
                               <option value="low">Low</option>
                               <option value="medium">Med</option>
                               <option value="high">High</option>
+                              <option value="xhigh">Extra High</option>
                             </select>
                           </label>
                         </div>

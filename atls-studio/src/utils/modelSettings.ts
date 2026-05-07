@@ -13,7 +13,7 @@ import type { AIProvider } from './modelCapabilities';
 // ---------------------------------------------------------------------------
 
 export type OutputSpeedLevel = 'low' | 'medium' | 'high';
-export type ThinkingLevel = 'off' | 'low' | 'medium' | 'high';
+export type ThinkingLevel = 'off' | 'low' | 'medium' | 'high' | 'xhigh';
 
 export interface ResolvedModelSettings {
   outputVerbosity?: 'low' | 'medium' | 'high';
@@ -93,6 +93,7 @@ const ANTHROPIC_BUDGET: Record<ThinkingLevel, number | null> = {
   low: 1024,
   medium: 10_000,
   high: 32_000,
+  xhigh: 64_000,
 };
 
 export function thinkingToAnthropicBudget(level: ThinkingLevel): number | null {
@@ -104,6 +105,7 @@ const GEMINI_BUDGET: Record<ThinkingLevel, number | null> = {
   low: 1024,
   medium: 8192,
   high: 24_576,
+  xhigh: 32_768,
 };
 
 export function thinkingToGeminiBudget(level: ThinkingLevel): number | null {
@@ -115,6 +117,8 @@ const OPENAI_EFFORT: Record<ThinkingLevel, string | null> = {
   low: 'low',
   medium: 'medium',
   high: 'high',
+  // OpenAI currently tops out at "high"; xhigh selects the highest valid effort.
+  xhigh: 'high',
 };
 
 export function thinkingToOpenAIEffort(level: ThinkingLevel): string | null {
@@ -134,6 +138,7 @@ const ANTHROPIC_EFFORT: Record<ThinkingLevel, string | null> = {
   low: 'low',
   medium: 'medium',
   high: 'high',
+  xhigh: 'xhigh',
 };
 
 export function thinkingToAnthropicEffort(level: ThinkingLevel): string | null {

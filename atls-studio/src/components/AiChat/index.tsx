@@ -1981,6 +1981,7 @@ const SubAgentCard = memo(function SubAgentCard({ toolCall, liveTrace }: { toolC
     { id: 'low', label: 'Lo', title: 'Low reasoning budget (subagent)' },
     { id: 'medium', label: 'Med', title: 'Medium reasoning budget (subagent)' },
     { id: 'high', label: 'Hi', title: 'High reasoning budget (subagent)' },
+    { id: 'xhigh', label: 'XHi', title: 'Extra-high reasoning budget where supported (subagent)' },
   ];
   const speedColor = (id: OutputSpeedLevel) =>
     subagentSpeed === id

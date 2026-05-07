@@ -8,6 +8,7 @@
 import { create } from 'zustand';
 import type { AIProvider } from '../services/aiService';
 
+import type { OutputSpeedLevel, ThinkingLevel } from '../utils/modelSettings';
 // ============================================================================
 // Types
 // ============================================================================
@@ -80,9 +81,9 @@ export interface AgentConfig {
   maxConcurrent: number;
   systemPromptOverride?: string;
   /** Override output speed/verbosity for this agent; undefined = inherit from main settings */
-  outputSpeed?: 'low' | 'medium' | 'high';
+  outputSpeed?: OutputSpeedLevel;
   /** Override thinking/reasoning depth for this agent; undefined = inherit from main settings */
-  thinking?: 'off' | 'low' | 'medium' | 'high';
+  thinking?: ThinkingLevel;
 }
 
 export interface RateLimiterState {

@@ -11,6 +11,7 @@ import {
   normalizeProjectHistory,
 } from './projectHistory';
 import type { PersistedMemorySnapshot } from '../services/chatDb';
+import type { OutputSpeedLevel, ThinkingLevel } from '../utils/modelSettings';
 import type { SpinMode } from '../services/spinDetector';
 
 export type { ProjectHistoryEntry };
@@ -692,13 +693,13 @@ export interface Settings {
   // Entry manifest depth: 'off' = skip, 'paths' = file list only, 'sigs' = signatures only, 'paths_sigs' = both
   entryManifestDepth: 'off' | 'paths' | 'sigs' | 'paths_sigs';
   // Model output speed / verbosity: controls brevity of model responses (maps to OpenAI verbosity for GPT-5)
-  modelOutputSpeed: 'low' | 'medium' | 'high';
+  modelOutputSpeed: OutputSpeedLevel;
   // Model thinking / reasoning depth: controls extended thinking budget / reasoning effort
-  modelThinking: 'off' | 'low' | 'medium' | 'high';
+  modelThinking: ThinkingLevel;
   /** Override output speed for subagent tool only; omit to use modelOutputSpeed */
-  subagentOutputSpeed?: 'low' | 'medium' | 'high';
+  subagentOutputSpeed?: OutputSpeedLevel;
   /** Override thinking for subagent tool only; omit to use modelThinking */
-  subagentThinking?: 'off' | 'low' | 'medium' | 'high';
+  subagentThinking?: ThinkingLevel;
   /** Override entry manifest depth for subagent system prompt; omit to use entryManifestDepth */
   subagentEntryManifestDepth?: 'off' | 'paths' | 'sigs' | 'paths_sigs';
   /**

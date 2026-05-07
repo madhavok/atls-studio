@@ -91,6 +91,7 @@ describe('thinkingToAnthropicBudget', () => {
     expect(thinkingToAnthropicBudget('low')).toBe(1024);
     expect(thinkingToAnthropicBudget('medium')).toBe(10_000);
     expect(thinkingToAnthropicBudget('high')).toBe(32_000);
+    expect(thinkingToAnthropicBudget('xhigh')).toBe(64_000);
   });
 });
 
@@ -100,6 +101,7 @@ describe('thinkingToGeminiBudget', () => {
     expect(thinkingToGeminiBudget('low')).toBe(1024);
     expect(thinkingToGeminiBudget('medium')).toBe(8192);
     expect(thinkingToGeminiBudget('high')).toBe(24_576);
+    expect(thinkingToGeminiBudget('xhigh')).toBe(32_768);
   });
 });
 
@@ -109,6 +111,7 @@ describe('thinkingToOpenAIEffort', () => {
     expect(thinkingToOpenAIEffort('low')).toBe('low');
     expect(thinkingToOpenAIEffort('medium')).toBe('medium');
     expect(thinkingToOpenAIEffort('high')).toBe('high');
+    expect(thinkingToOpenAIEffort('xhigh')).toBe('high');
   });
 });
 
@@ -118,6 +121,7 @@ describe('thinkingToAnthropicEffort', () => {
     expect(thinkingToAnthropicEffort('low')).toBe('low');
     expect(thinkingToAnthropicEffort('medium')).toBe('medium');
     expect(thinkingToAnthropicEffort('high')).toBe('high');
+    expect(thinkingToAnthropicEffort('xhigh')).toBe('xhigh');
   });
 });
 
@@ -175,6 +179,11 @@ describe('resolveModelSettings', () => {
     expect(r.reasoningEffort).toBe('high');
   });
 
+  it('maps OpenAI extra-high thinking to the highest supported effort', () => {
+    const r = resolveModelSettings('medium', 'xhigh', 'gpt-5', 'openai');
+    expect(r.reasoningEffort).toBe('high');
+  });
+
   it('sets thinkingBudget for Anthropic', () => {
     const r = resolveModelSettings('medium', 'medium', 'claude-sonnet-4-5', 'anthropic', 16384);
     expect(r.thinkingBudget).toBe(10_000);
@@ -202,6 +211,12 @@ describe('resolveModelSettings', () => {
     expect(r.reasoningEffort).toBe('high');
   });
 
+  it('uses extra-high adaptive effort when Anthropic supports it', () => {
+    const r = resolveModelSettings('medium', 'xhigh', 'claude-opus-4-7', 'anthropic', 16384);
+    expect(r.thinkingBudget).toBeNull();
+    expect(r.reasoningEffort).toBe('xhigh');
+  });
+
   it('uses adaptive effort for Opus 4.6', () => {
     const r = resolveModelSettings('medium', 'medium', 'claude-opus-4-6', 'anthropic', 16384);
     expect(r.thinkingBudget).toBeNull();
@@ -223,6 +238,11 @@ describe('resolveModelSettings', () => {
   it('sets thinkingBudget for Google', () => {
     const r = resolveModelSettings('medium', 'high', 'gemini-2.5-pro', 'google');
     expect(r.thinkingBudget).toBe(24_576);
+  });
+
+  it('sets extra-high thinkingBudget for Google', () => {
+    const r = resolveModelSettings('medium', 'xhigh', 'gemini-2.5-pro', 'google');
+    expect(r.thinkingBudget).toBe(32_768);
   });
 
   it('omits thinkingBudget when thinking is off for Google', () => {
