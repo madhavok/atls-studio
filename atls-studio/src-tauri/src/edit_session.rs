@@ -195,7 +195,7 @@ impl EditSession {
     pub fn apply(&mut self, op: EditOp) -> Result<(), EditSessionError> {
         match op.kind {
             EditOpKind::ExactReplace => {
-                self.apply_exact_replace(&op.preimage, &op.replacement)
+                self.apply_exact_replace(&op.preimage, &op.replacement, op.hint_byte_offset)
             }
             EditOpKind::ByteRange { start, end } => {
                 self.apply_byte_range(start, end, &op.preimage, &op.replacement)
@@ -206,7 +206,7 @@ impl EditSession {
         }
     }
 
-    fn apply_exact_replace(&mut self, preimage: &str, replacement: &str) -> Result<(), EditSessionError> {
+    fn apply_exact_replace(&mut self, preimage: &str, replacement: &str, hint_offset: Option<usize>) -> Result<(), EditSessionError> {
         if preimage.is_empty() {
             return Err(EditSessionError::PreimageNotFound {
                 preimage_preview: "[empty preimage]".to_string(),
@@ -217,29 +217,53 @@ impl EditSession {
         let mut start = 0;
         while let Some(pos) = self.working_content[start..].find(preimage) {
             positions.push(start + pos);
-            start += pos + 1;
+            // Advance by one full character (not one byte) to avoid landing
+            // mid-character on multi-byte UTF-8 content.
+            let char_len = self.working_content[start + pos..]
+                .chars()
+                .next()
+                .map_or(1, |c| c.len_utf8());
+            start += pos + char_len;
         }
 
         match positions.len() {
             0 => Err(EditSessionError::PreimageNotFound { preimage_preview: preview }),
             1 => {
-                let offset = positions[0];
-                let old_len = preimage.len();
-                let new_len = replacement.len();
-                self.working_content = format!(
-                    "{}{}{}",
-                    &self.working_content[..offset],
-                    replacement,
-                    &self.working_content[offset + old_len..],
-                );
-                self.edits.push(EditRecord {
-                    kind: EditOpKind::ExactReplace,
-                    byte_offset: offset, old_len, new_len,
-                });
+                self.apply_replace_at(positions[0], preimage, replacement);
                 Ok(())
             }
-            n => Err(EditSessionError::AmbiguousPreimage { count: n, preimage_preview: preview }),
+            n => {
+                // Use hint_byte_offset to disambiguate when the preimage
+                // appears multiple times. Pick the occurrence closest to
+                // the hinted position (derived from shadow snapshot).
+                if let Some(hint) = hint_offset {
+                    let &offset = positions.iter()
+                        .min_by_key(|&&p| if p >= hint { p - hint } else { hint - p })
+                        .unwrap();
+                    self.apply_replace_at(offset, preimage, replacement);
+                    Ok(())
+                } else {
+                    Err(EditSessionError::AmbiguousPreimage { count: n, preimage_preview: preview })
+                }
+            }
         }
+    }
+
+    /// Apply a replacement at a known byte offset. Shared by single-match and
+    /// hint-disambiguated paths.
+    fn apply_replace_at(&mut self, offset: usize, preimage: &str, replacement: &str) {
+        let old_len = preimage.len();
+        let new_len = replacement.len();
+        self.working_content = format!(
+            "{}{}{}",
+            &self.working_content[..offset],
+            replacement,
+            &self.working_content[offset + old_len..],
+        );
+        self.edits.push(EditRecord {
+            kind: EditOpKind::ExactReplace,
+            byte_offset: offset, old_len, new_len,
+        });
     }
 
     fn apply_byte_range(&mut self, start: usize, end: usize, preimage: &str, replacement: &str) -> Result<(), EditSessionError> {

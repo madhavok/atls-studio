@@ -15414,10 +15414,17 @@ pub async fn atls_batch_query(
                                     // (symbol ranges were resolved against current content)
                                     let shift_entry = line_shifts.entry(sp.clone()).or_default();
                                     for &(start, end) in &numeric_ranges {
-                                        let count = match end {
-                                            Some(e) => e.saturating_sub(start) + 1,
-                                            None => 1,
-                                        };
+                                    let count = match end {
+                                        Some(e) => e.saturating_sub(start) + 1,
+                                        None => {
+                                            // Open-ended range removes from `start` to EOF.
+                                            // Approximate the original removal count so
+                                            // subsequent adjust_line_for_shifts calls are
+                                            // not under-corrected.
+                                            let current_total = current.lines().count() as u32;
+                                            current_total.saturating_sub(start.saturating_sub(1))
+                                        }
+                                    };
                                         shift_entry.push((start, count));
                                     }
                                     shift_entry.sort_by_key(|&(s, _)| s);

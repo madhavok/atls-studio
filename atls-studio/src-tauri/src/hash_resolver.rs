@@ -358,10 +358,12 @@ impl HashRegistry {
             for old_hash in prev_hashes.iter() {
                 if old_hash != &hash {
                     self.forward_map.insert(old_hash.clone(), hash.clone());
-                    // Also forward old short hashes
-                    if old_hash.len() > SHORT_HASH_LEN {
-                        let old_short = old_hash[..SHORT_HASH_LEN].to_string();
-                        self.forward_map.insert(old_short, hash.clone());
+                    // Forward all possible short-hash prefix lengths (6..=8) that
+                    // may exist as entry keys from shortest_unique_prefix.
+                    let max_prefix = 8.min(old_hash.len());
+                    for prefix_len in SHORT_HASH_LEN..=max_prefix {
+                        let prefix = old_hash[..prefix_len].to_string();
+                        self.forward_map.insert(prefix, hash.clone());
                     }
                 }
             }
