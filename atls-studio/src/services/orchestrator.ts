@@ -237,6 +237,15 @@ Workflow:
 // Orchestrator Class
 // ============================================================================
 
+/** Delay that resolves early when the abort signal fires. */
+function abortableDelay(ms: number, signal: AbortSignal): Promise<void> {
+  if (signal.aborted) return Promise.resolve();
+  return new Promise(resolve => {
+    const timer = setTimeout(resolve, ms);
+    signal.addEventListener('abort', () => { clearTimeout(timer); resolve(); }, { once: true });
+  });
+}
+
 class OrchestratorService {
   private activeAgents: Map<string, AgentExecution> = new Map();
   private dispatchRevs: Map<string, number> = new Map();
@@ -331,6 +340,10 @@ class OrchestratorService {
       
     } catch (error: unknown) {
       console.error('[Orchestrator] Error:', error);
+      // Persist failure state to DB before resetting UI
+      try {
+        await chatDb.updateSwarmStatus(sessionId, 'failed');
+      } catch { /* best-effort — DB may already be unreachable */ }
       swarmStore.resetSwarm();
       useAppStore.getState().closeFile(SWARM_ORCHESTRATION_TAB_ID);
       // Normalize to Error so callers always get a .message
@@ -1242,7 +1255,7 @@ Based on the research above, create a detailed task plan.
       
       const agentConfig = swarmStore.agentConfigs.find(c => c.role === 'coder');
       
-      swarmStore.addTask({
+      const fallbackTaskId = swarmStore.addTask({
         title: fallbackTask.title,
         description: fallbackTask.description,
         assignedModel: agentConfig?.model || config.model,
@@ -1253,6 +1266,23 @@ Based on the research above, create a detailed task plan.
         contextFiles: [],
         dependencies: [],
       });
+      
+      // Persist fallback task to DB for FK consistency with later status updates
+      try {
+        await chatDb.createTask(
+          swarmStore.sessionId!,
+          fallbackTask.title,
+          fallbackTask.description,
+          undefined,       // parentTaskId
+          agentConfig?.model,
+          fallbackTask.role,
+          [],              // contextHashes
+          [],              // fileClaims
+          fallbackTaskId   // same taskId for FK consistency
+        );
+      } catch (dbError: any) {
+        console.error('[Orchestrator] Failed to save fallback task to DB:', dbError);
+      }
       
       return {
         tasks: [fallbackTask],
@@ -1576,7 +1606,7 @@ Synthesize the swarm outcome.`;
     task: SwarmTask,
     projectPath: string,
     _config: OrchestratorConfig,
-    _signal: AbortSignal
+    signal: AbortSignal
   ): Promise<void> {
     const swarmStore = useSwarmStore.getState();
     
@@ -1608,9 +1638,12 @@ Synthesize the swarm outcome.`;
         // updateTaskError increments retryCount automatically
         swarmStore.updateTaskError(task.id, `Rate limit, retry ${currentRetryCount + 1}/${maxRetries} in ${Math.round(totalDelay/1000)}s`);
         
-        // Wait with backoff before setting to pending
-        await new Promise(resolve => setTimeout(resolve, totalDelay));
-        
+        // Wait with backoff before setting to pending (aborts early on cancellation)
+        await abortableDelay(totalDelay, signal);
+        if (signal.aborted) {
+          swarmStore.updateTaskStatus(task.id, 'failed');
+          return;
+        }
         swarmStore.updateTaskStatus(task.id, 'pending');
         console.log(`[Agent] Task ${task.id} set to pending after backoff`);
         return; // Don't call release() - we never acquired!
@@ -1745,6 +1778,7 @@ Synthesize the swarm outcome.`;
           taskId: task.id,
           fileClaims: task.fileClaims, // File ownership enforcement
           swarmSessionId: swarmStore.sessionId || undefined,
+          signal, // Propagate cancellation into streaming/tool calls
         }
       );
       
@@ -1833,7 +1867,11 @@ Synthesize the swarm outcome.`;
           console.log(`[Agent:${agentLabel}] Rate limited, waiting ${(totalDelay/1000).toFixed(1)}s before retry...`);
           swarmStore.updateTaskError(task.id, `Rate limited, retry ${currentRetryCount + 1}/${retryMaxRetries} in ${Math.round(totalDelay/1000)}s`);
           
-          await new Promise(resolve => setTimeout(resolve, totalDelay));
+          await abortableDelay(totalDelay, signal);
+          if (signal.aborted) {
+            swarmStore.updateTaskStatus(task.id, 'failed');
+            return;
+          }
           swarmStore.updateTaskStatus(task.id, 'pending');
           return;
         }
@@ -1877,11 +1915,12 @@ Synthesize the swarm outcome.`;
           return;
         }
         
-        // Check if all done
+        // Check if all done (awaiting_input is non-terminal — user action still required)
         const pending = state.tasks.filter(t => t.status === 'pending').length;
         const running = state.tasks.filter(t => t.status === 'running').length;
+        const awaitingInput = state.tasks.filter(t => t.status === 'awaiting_input').length;
         
-        if (pending === 0 && running === 0) {
+        if (pending === 0 && running === 0 && awaitingInput === 0) {
           clearInterval(checkInterval);
           this.completionInterval = null;
           resolve();
