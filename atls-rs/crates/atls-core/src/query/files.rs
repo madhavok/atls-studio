@@ -330,13 +330,10 @@ impl QueryEngine {
         })?;
 
         let mut file_id_to_path = HashMap::new();
-        let mut path_to_file_id = HashMap::new();
         for row in files_rows {
             let (id, path) = row?;
-            file_id_to_path.insert(id, path.clone());
-            path_to_file_id.insert(path, id);
+            file_id_to_path.insert(id, path);
         }
-
         // Get all import relations
         let mut relations_stmt = conn.prepare(
             "SELECT from_file_id, to_file_id FROM file_relations WHERE type = 'IMPORTS'"
@@ -484,18 +481,23 @@ impl QueryEngine {
         self.traverse_related_files(&*conn, file_id, 0, max_depth, per_level_cap, &mut visited, &mut result)?;
 
         // Fallback: if file_relations yielded nothing, parse file content for imports
+        // Fallback: if file_relations yielded nothing, parse file content for imports
         if result.is_empty() {
-            if let Ok(content) = std::fs::read_to_string(&normalized_path) {
-                for m in parse_imports_from_content(&content, 150) {
-                    result.push(RelatedFile {
-                        path: m,
-                        relation: "IMPORTS".to_string(),
-                        depth: 1,
-                    });
+            match std::fs::read_to_string(&normalized_path) {
+                Ok(content) => {
+                    for m in parse_imports_from_content(&content, 150) {
+                        result.push(RelatedFile {
+                            path: m,
+                            relation: "IMPORTS".to_string(),
+                            depth: 1,
+                        });
+                    }
+                }
+                Err(e) => {
+                    tracing::debug!(path = %normalized_path, error = %e, "fallback file read failed in get_related_files");
                 }
             }
         }
-
         Ok(result)
     }
 
@@ -510,7 +512,7 @@ impl QueryEngine {
         visited: &mut HashSet<i64>,
         result: &mut Vec<RelatedFile>,
     ) -> Result<(), QueryError> {
-        if current_depth > max_depth {
+        if current_depth >= max_depth {
             if !visited.contains(&file_id) {
                 tracing::warn!(file_id, depth = current_depth, max_depth, "MAX_CONTEXT_DEPTH reached in related-files traversal");
             }
@@ -704,7 +706,7 @@ impl QueryEngine {
                  WHERE s.file_id = ?
                    AND s.kind IN ('function', 'class', 'interface', 'type')
                    AND (s.metadata LIKE '%export%' OR s.metadata LIKE '%pub%'
-                        OR s.kind IN ('class', 'interface', 'type'))
+                   ) >= 2
                    AND (
                        SELECT COUNT(DISTINCT c.file_id) FROM calls c
                        WHERE c.name = s.name AND c.file_id != s.file_id

@@ -1278,7 +1278,7 @@ fn extract_key_lines(content: &str) -> String {
     if lines.is_empty() { return String::new(); }
     lines.iter()
         .map(|l| {
-            let truncated = if l.len() > 100 { &l[..100] } else { l };
+            let truncated = if l.len() > 100 { &l[..l.floor_char_boundary(100)] } else { l };
             format!("  {}", truncated)
         })
         .collect::<Vec<_>>()
