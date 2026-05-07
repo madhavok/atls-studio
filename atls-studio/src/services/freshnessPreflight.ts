@@ -540,7 +540,9 @@ export async function runFreshnessPreflight(
 
   if (suspectDetails.length > 0) {
     /** Allow context/read_lines to reach handlers that clear suspect + reconcile (see context.ts handleRead). */
-    const healingReadOps = operation === 'context' || operation === 'read_lines';
+    const healingReadOps = operation === 'context' || operation === 'read_lines'
+      || operation === 'read.context' || operation === 'read.lines'
+      || operation === 'read.shaped' || operation === 'read.file';
     if (healingReadOps) {
       let reconciledCount = 0;
       if (refreshedHashes && refreshedHashes.size > 0) {
@@ -785,8 +787,7 @@ export async function runFreshnessPreflight(
         factors = [...factors, 'identity_lost'];
       }
       if (relocated && relocated.length > 0) {
-        const [start, end] = relocated[0]!;
-        const newLines = `${start}-${end}`;
+        const newLines = relocated.map(([s, e]) => `${s}-${e}`).join(',');
         relocationParts.push(`${strategy} shifted anchor to ${newLines} (was ${lines})`);
         nextParams = { ...nextParams };
         if (nextParams.file === source || nextParams.file_path === source) {
