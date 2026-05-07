@@ -223,19 +223,10 @@ export function CodeViewer() {
         });
         if (!matchedFile) return;
 
-        const currentActive = activeFileRef.current;
-        const activeNorm = currentActive?.replace(/\\/g, '/');
-        const matchedNormForActive = matchedFile.replace(/\\/g, '/');
-        if (
-          currentActive !== matchedFile &&
-          activeNorm !== matchedNormForActive
-        ) {
-          return;
-        }
 
         // Skip files we're currently saving (our own write triggered this event)
         const currentSaving = savingRef.current;
-        const matchedNorm = matchedNormForActive;
+        const matchedNorm = matchedFile.replace(/\\/g, '/');
         if (currentSaving[matchedFile] || currentSaving[matchedNorm]) return;
 
         const currentContents = fileContentsRef.current;
@@ -293,11 +284,7 @@ export function CodeViewer() {
           });
           if (!matchedFile) continue;
 
-          const currentActive = activeFileRef.current;
-          const activeNorm = currentActive?.replace(/\\/g, '/');
           const matchedNorm = matchedFile.replace(/\\/g, '/');
-          if (currentActive !== matchedFile && activeNorm !== matchedNorm) continue;
-
           // Skip files we're currently saving
           const currentSaving = savingRef.current;
           if (currentSaving[matchedFile] || currentSaving[matchedNorm]) continue;
