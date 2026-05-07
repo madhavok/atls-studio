@@ -1,22 +1,32 @@
 # ATLS Studio
 
-An **output-compression-first** desktop coding agent. ~200k LOC across TypeScript and Rust.
+**ATLS Studio is a code-first cognitive runtime for software engineering.** It is a desktop agent environment that gives an LLM managed working memory, hash-addressed references, freshness-aware editing, batchable tools, and verification loops, then grounds those capabilities in real code: files, symbols, diagnostics, tests, git history, and a Rust indexing engine.
+
+ATLS is not just a chat UI wrapped around shell commands. It keeps work objects alive across turns, lets the model refer to code without copying it, blocks edits against stale or unread snapshots, rebases line coordinates after mutations, delegates scoped work to subagents, and records first-party telemetry so cost, cache behavior, context pressure, and tool efficiency are visible instead of guessed.
 
 **Built with** TypeScript + React + Rust (Tauri) | **Providers** Anthropic · OpenAI · OpenRouter · Google (Gemini/Vertex) · LM Studio
 
 ---
 
-## The Thesis
+## What ATLS Does
 
-Contemporary LLM coding agents optimize the **context window** — fitting more into the prompt. ATLS optimizes **both directions of the token economy**.
+ATLS turns long-running software work into addressable runtime state. A model can read a file as a cheap signature, slice only the relevant lines, pin that FileView into working memory, edit through hash-checked coordinates, verify the result, and carry the surviving context into the next round without re-pasting the world. The same runtime also manages blackboard notes, staged snippets, task plans, archived refs, delegated subagents, and session restore.
 
-**Input compression** — a 10-layer stack (TOON serialization, dictionary compression, shaped reads, FileView incremental access, history deflation, cache-aware layout, token budgets, materialization control, workspace context compression, and UHPP content references) keeps what the model **reads** lean enough to sustain long sessions at high cache-hit rates.
+That makes ATLS effective in the places where ordinary coding agents become expensive or unreliable: repeated reads, stale context, copied code, multi-step edits, noisy transcripts, and unmeasured token spend.
 
-**Output compression** — six axes (lexical, semantic, temporal, spatial, computational, transcript) let the model **write** 20–50× fewer tokens than naive tool-calling agents.
+## Why It Works
 
-Under current pricing (output 5× input; cached input 0.1× uncached), both sides compound: smaller input means higher cache hits and lower latency; smaller output means lower cost per round. Neither alone is sufficient.
+The core design rule is simple: **every token the model emits should express intent the runtime cannot infer**. Names, paths, line coordinates, repeated context, stale-state checks, edit rebasing, cache layout, and verification bookkeeping are runtime responsibilities.
 
-See the **[whitepaper](docs/whitepaper.md)** for the full technical treatment.
+ATLS applies that rule on both sides of the token economy:
+
+- **Input compression** keeps what the model reads lean through TOON serialization, shaped reads, FileView incremental access, history deflation, cache-aware prompt layout, token budgets, materialization control, workspace compression, and UHPP content references.
+- **Output compression** lets the model write far less through shorthand operations, intent macros, hash refs, recency refs, set selectors, content-as-ref expansion, executor-side line rebasing, auto-verification, and transcript deflation.
+- **Epistemic integrity** keeps the runtime honest through snapshot hashes, read-range edit gates, freshness reconciliation, stale-artifact filtering, own-write suppression, and verify artifacts.
+
+The whitepaper reports **20–50× output compression** across representative tool workflows and a **97.6% cost reduction from the batch primitive alone** on a self-audit workload. Those numbers are not magic prompt claims; they come from moving repeated mechanical work out of the model transcript and into a stateful runtime.
+
+See the **[cognitive runtime overview](docs/cognitive-runtime.md)** for the practical model and the **[whitepaper](docs/whitepaper.md)** for the full technical treatment.
 
 ## What's New
 
@@ -104,13 +114,14 @@ Tracks what the model can currently "see." Scoped views let subagents participat
                     +-------------------------------+
 ```
 
-See [Architecture Document](atls-studio/docs/ARCHITECTURE.md) for the full technical description, or browse the [docs/](docs/) directory for 25 focused docs on the core protocols, runtime, backend, and app shell.
+See [Architecture Document](atls-studio/docs/ARCHITECTURE.md) for the full technical description, or browse the [docs/](docs/) directory for 26 focused docs on the core protocols, runtime, backend, and app shell.
 
 ## Documentation
 
 | Document | Description |
 |----------|-------------|
 | **[Whitepaper](docs/whitepaper.md)** | **Full technical paper**: output-compression-first thesis, UHPP grammar, HPP state machine, six compression axes, architecture, evaluation |
+| **[Cognitive Runtime](docs/cognitive-runtime.md)** | **Practical synthesis**: what ATLS does, why it is effective, what is mature today, and how the runtime layers compose |
 | [Architecture Overview](atls-studio/docs/ARCHITECTURE.md) | Complete technical architecture (start here for code orientation) |
 | [Hash Protocol](docs/hash-protocol.md) | UHPP v6 reference syntax + HPP visibility tracking |
 | [Output Compression](docs/output-compression.md) | Six-axis emission compression inventory with per-mechanism source links |
@@ -146,7 +157,7 @@ See [Architecture Document](atls-studio/docs/ARCHITECTURE.md) for the full techn
 ## Repository Layout
 
 ```
-docs/                         25 focused docs including the whitepaper
+docs/                         26 focused docs including the whitepaper
 atls-rs/                      Reusable Rust engine
   crates/
     atls-core/                  Indexer, query engine, detectors, DB (45 Rust files)

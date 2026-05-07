@@ -1,13 +1,17 @@
 # ATLS Studio — Documentation Index
 
-**ATLS** (Augmented Thinking and Language System) is an output-compression-first desktop coding agent — approximately **200k LOC** across TypeScript and Rust — built around two novel protocols:
+**ATLS** (Augmented Thinking and Language System) is a **code-first cognitive runtime** implemented as an output-compression-first desktop coding agent — approximately **200k LOC** across TypeScript and Rust.
+
+Code is the first mature domain because it gives the runtime concrete anchors: files, symbols, diffs, diagnostics, tests, git history, and verifiable edits. The underlying runtime is broader: hash-addressed work objects, managed working memory, blackboard state, freshness-aware references, batchable tool execution, session persistence, telemetry, and scoped subagents.
+
+Two protocols make that runtime practical:
 
 - **UHPP (Universal Hash Pointer Protocol)** — a reference calculus for addressing, slicing, shaping, and composing LLM working memory (`h:SHORT:slice:shape:op` with temporal refs, set selectors, symbol extraction, and content-as-ref resolution).
 - **HPP (Hash Presence Protocol)** — a round-scoped visibility state machine (`materialized → referenced → archived → evicted`) over content-addressed engrams with scoped views for multi-agent coordination.
 
-The core thesis: **every token the model emits should express intent the runtime cannot infer**. Names, paths, coordinates, narration, and repetitions are the runtime's job. Measured result: **97.6% cost reduction** from the batch primitive alone on a representative self-audit workload; **20–50× output compression** across all six axes versus naive tool-calling agents.
+The core thesis: **every token the model emits should express intent the runtime cannot infer**. Names, paths, coordinates, narration, repetitions, stale-state checks, line rebasing, and context lifecycle are the runtime's job. Measured result: **97.6% cost reduction** from the batch primitive alone on a representative self-audit workload; **20–50× output compression** across all six axes versus naive tool-calling agents.
 
-For the full technical treatment, see the **[whitepaper](./whitepaper.md)**.
+Start with **[cognitive-runtime.md](./cognitive-runtime.md)** for what ATLS does in practice, then read the **[whitepaper](./whitepaper.md)** for the full technical treatment.
 
 ---
 
@@ -28,6 +32,7 @@ Architecture overview: [`atls-studio/docs/ARCHITECTURE.md`](../atls-studio/docs/
 | Doc | What it covers |
 |-----|----------------|
 | **[whitepaper.md](./whitepaper.md)** | **Full technical paper**: output-compression-first thesis, UHPP grammar + semantics, HPP state machine, six compression axes, ten-layer input compression stack, ~200k LOC system architecture, freshness as epistemic integrity, self-audit evaluation, EBNF grammar, cost model |
+| **[cognitive-runtime.md](./cognitive-runtime.md)** | **Practical synthesis**: what ATLS does, why it is effective, what is mature today, and how UHPP/HPP, FileViews, batch execution, freshness, compression, telemetry, and subagents compose into a code-first cognitive runtime |
 | **[hash-protocol.md](./hash-protocol.md)** | UHPP reference syntax (v6): `h:` refs, line ranges, shapes, symbols, selectors, set algebra, temporal refs, recency refs, blackboard refs, diff refs, content-as-ref, batch-level resolution |
 | **[output-compression.md](./output-compression.md)** | Cross-cutting output-token compression inventory across six axes (lexical / semantic / temporal / spatial / computational / transcript) with per-mechanism source links |
 | **[engrams.md](./engrams.md)** | Working memory chunks + the **Unified FileView** surface: data model, activation states (`Active → Dormant → Archived → Evicted`), FileView lifecycle (pin-gated render, skeleton + fills + fullBody, auto-heal reconcile, TTL-thin), memory regions (`chunks`, `fileViews`, archive, staged, blackboard) |
@@ -82,7 +87,7 @@ atls-studio/          # Tauri desktop app (React + Rust)
 atls-rs/              # Reusable Rust engine
   crates/atls-core/   #   Code intelligence: indexer, query engine, detectors, DB
   crates/atls-mcp/    #   MCP server
-docs/                 # This folder: 25 focused docs including the whitepaper
+docs/                 # This folder: 26 focused docs including the whitepaper
 ```
 
 - **Architecture overview**: [`atls-studio/docs/ARCHITECTURE.md`](../atls-studio/docs/ARCHITECTURE.md)
