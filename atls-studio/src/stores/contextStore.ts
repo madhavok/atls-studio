@@ -1213,6 +1213,7 @@ interface ContextStoreState {
   unstageSnippet: (key: string) => { freed: number };
   getStagedBlock: () => string;
   getStagedTokenCount: () => number;
+  getStagedEntries: () => Map<string, { source: string; tokens: number }>;
   /**
    * Tokens actually emitted by `getStagedBlock` into the prompt. Entries whose
    * body is omitted because an active engram already covers the source are
@@ -1304,6 +1305,8 @@ interface ContextStoreState {
   // Batch compliance tracking
   recordToolCall: () => void;
   recordManageOps: (count: number) => void;
+  recordBatchRead: () => void;
+  recordBatchBbWrite: (key?: string, content?: string) => void;
   resetBatchMetrics: () => void;
   getBatchMetrics: () => {
     toolCalls: number;
@@ -6517,6 +6520,7 @@ export const useContextStore = create<ContextStoreState>()(
   getPinnedCount: () => {
     let count = 0;
     get().chunks.forEach(c => { if (c.pinned) count++; });
+    get().fileViews.forEach(fv => { if (fv.pinned) count++; });
     return count;
   },
   

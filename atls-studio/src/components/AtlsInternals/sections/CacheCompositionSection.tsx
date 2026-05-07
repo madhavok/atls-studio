@@ -33,9 +33,9 @@ export function CacheCompositionSection() {
   const promptMetrics = useAppStore((s) => s.promptMetrics);
   const cacheMetrics = useAppStore((s) => s.cacheMetrics);
   const logicalCache = useAppStore((s) => s.logicalCache);
-  const getStagedTokenCount = useContextStore((s) => s.getStagedTokenCount);
-  const getUsedTokens = useContextStore((s) => s.getUsedTokens);
-  const getBlackboardTokenCount = useContextStore((s) => s.getBlackboardTokenCount);
+  const stagedTokenCount = useContextStore((s) => s.getStagedTokenCount());
+  const usedTokens = useContextStore((s) => s.getUsedTokens());
+  const blackboardTokenCount = useContextStore((s) => s.getBlackboardTokenCount());
   const contextUsage = useAppStore((s) => s.contextUsage);
   const latestSnap = useRoundHistoryStore((s) => {
     const a = s.snapshots;
@@ -45,9 +45,9 @@ export function CacheCompositionSection() {
 
   const { blocks, providerLabel, note } = useMemo(() => {
     const provider = selectedProvider || 'anthropic';
-    const stTokens = getStagedTokenCount();
-    const wmTokens = getUsedTokens();
-    const bbTokens = getBlackboardTokenCount();
+    const stTokens = stagedTokenCount;
+    const wmTokens = usedTokens;
+    const bbTokens = blackboardTokenCount;
 
     if (provider === 'lmstudio') {
       return {
@@ -133,7 +133,7 @@ export function CacheCompositionSection() {
       providerLabel: provider,
       note: 'Cache composition for other providers not mapped',
     };
-  }, [selectedProvider, promptMetrics, cacheMetrics, getStagedTokenCount, getUsedTokens, getBlackboardTokenCount, contextUsage.maxTokens]);
+  }, [selectedProvider, promptMetrics, cacheMetrics, stagedTokenCount, usedTokens, blackboardTokenCount, contextUsage.maxTokens]);
 
   if (selectedProvider === 'lmstudio') {
     return (
