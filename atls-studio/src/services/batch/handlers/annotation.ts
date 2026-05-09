@@ -8,7 +8,6 @@
 
 import type { OpHandler, StepOutput, ContextStoreApi } from '../types';
 import { SHORT_HASH_LEN } from '../../../utils/contextHash';
-import { resolveForwardChain as manifestResolveForwardChain } from '../../hashManifest';
 
 function ok(summary: string, refs: string[] = []): StepOutput {
   return { kind: 'session', ok: true, refs, summary };
@@ -24,49 +23,6 @@ function baseHashFromRef(ref: string): string {
   return rest.includes(':') ? rest.split(':')[0]! : rest;
 }
 
-/**
- * If `ref` is a FileView retention hash, return the view's `sourceRevision`
- * (the real content hash backing the view) so annotation handlers can pass
- * it to chunk-based stores. Returns undefined for non-view refs; callers
- * fall through to normal resolution.
- */
-function viewSourceRevisionForRef(ref: string, store: ContextStoreApi): string | undefined {
-  if (!ref || !ref.startsWith('h:')) return undefined;
-  const short = baseHashFromRef(ref).slice(0, SHORT_HASH_LEN);
-  if (!short || !/^[0-9a-fA-F_]{6,16}$/.test(short)) return undefined;
-  const views = store.fileViews;
-  if (!views) return undefined;
-  const toFullRef = (sr: string) => (sr.startsWith('h:') ? sr : `h:${sr}`);
-  for (const view of views.values()) {
-    if (
-      view.shortHash === short
-      || view.shortHash.startsWith(short)
-      || short.startsWith(view.shortHash)
-    ) {
-      return toFullRef(view.sourceRevision);
-    }
-  }
-  // Stale-ref recovery: if the short isn't a live view, walk the
-  // hash-manifest forward chain. Annotate/link refs copied from past
-  // tool output after an edit should route to the current view.
-  try {
-    const walk = manifestResolveForwardChain(short);
-    if (walk.kind === 'resolved') {
-      for (const view of views.values()) {
-        if (
-          view.shortHash === walk.shortHash
-          || view.shortHash.startsWith(walk.shortHash)
-          || walk.shortHash.startsWith(view.shortHash)
-        ) {
-          return toFullRef(view.sourceRevision);
-        }
-      }
-    }
-  } catch {
-    // Non-fatal: fall back to "not a view ref".
-  }
-  return undefined;
-}
 
 /** Block when chunk is suspect — annotation ops mutate in-place and cannot relocate. */
 function isChunkSuspect(store: ContextStoreApi): (hash: string) => boolean {
@@ -119,11 +75,10 @@ export const handleRule: OpHandler = async (params, ctx) => {
  *   - note     → store.addAnnotation(ref, note)   (free-form, always works)
  *   - fields   → store.editEngram(ref, fields)    (metadata edit in place)
  *
- * There is one public op — `annotate.note`. It attaches whatever you hand it
- * to a ref; the runtime picks the right backing store based on ref kind.
- *
- * FileView refs route through `viewSourceRevisionForRef` to the underlying
- * chunk, so both `note` and `fields` shapes work on view refs.
+ * FileView refs are routed natively by the store: addAnnotation attaches the
+ * note to the view itself, and editEngram applies metadata to the view's
+ * backing chunk (or a synthesized chunk for skeleton-only views). Content
+ * edits on view refs are rejected by the store — use change.edit instead.
  */
 export const handleAnnotate: OpHandler = async (params, ctx) => {
   const hash = params.hash as string;
@@ -135,42 +90,23 @@ export const handleAnnotate: OpHandler = async (params, ctx) => {
   }
 
   const store = ctx.store();
-  const viewRevision = viewSourceRevisionForRef(hash, store);
-  const isViewRef = viewRevision !== undefined;
-  const resolved = viewRevision ?? hash;
-  if (isChunkSuspect(store)(resolved)) {
+  if (isChunkSuspect(store)(hash)) {
     return err('annotate: ref changed — re-read and retry');
   }
-
-  // FileView refs cannot be annotated directly: FileViews are file-content
-  // views, not engrams. The view's sourceRevision points at file content,
-  // which the engram store does not own. Give the agent an actionable
-  // pointer instead of bubbling the bare 'engram not found' from below.
-  const fileViewError = () => err(
-    'annotate: hash resolves to a FileView, which is not an annotatable engram. '
-    + 'Annotate operates on chunk refs from search/verify/exec/read results. '
-    + 'For file-level notes, use bw (blackboard) keyed by file path.'
-  );
 
   const outRefs: string[] = [];
   const parts: string[] = [];
   const shortOut = (h: string) => (h.startsWith('h:') ? h.slice(2) : h);
 
   if (note) {
-    const annotateResult = store.addAnnotation(resolved, note);
-    if (!annotateResult.ok) {
-      if (isViewRef) return fileViewError();
-      return err(`annotate: ${annotateResult.error}`);
-    }
+    const annotateResult = store.addAnnotation(hash, note);
+    if (!annotateResult.ok) return err(`annotate: ${annotateResult.error}`);
     parts.push(`note:${annotateResult.id}`);
   }
 
   if (fields && typeof fields === 'object') {
-    const editResult = store.editEngram(resolved, fields);
-    if (!editResult.ok) {
-      if (isViewRef) return fileViewError();
-      return err(`annotate: ${editResult.error}`);
-    }
+    const editResult = store.editEngram(hash, fields);
+    if (!editResult.ok) return err(`annotate: ${editResult.error}`);
     if (editResult.newHash) {
       const ref = `h:${editResult.newHash}`;
       outRefs.push(ref);
@@ -180,7 +116,7 @@ export const handleAnnotate: OpHandler = async (params, ctx) => {
     }
   }
 
-  return ok(`annotate: h:${shortOut(resolved)} — ${parts.join(' | ')}`, outRefs);
+  return ok(`annotate: h:${shortOut(hash)} — ${parts.join(' | ')}`, outRefs);
 };
 
 export const handleLink: OpHandler = async (params, ctx) => {
@@ -190,13 +126,20 @@ export const handleLink: OpHandler = async (params, ctx) => {
   if (!fromRaw || !toRaw) return err('link: missing from/to params');
 
   const store = ctx.store();
-  // Route FileView refs to their backing content chunk (sourceRevision).
-  // Views aren't linkable entities on their own — the chunk underneath is.
-  // Falls through for BB, path, or regular chunk refs.
-  const fromResolved = viewSourceRevisionForRef(fromRaw, store) ?? fromRaw;
-  const toResolved = viewSourceRevisionForRef(toRaw, store) ?? toRaw;
-  const from = store.resolveLinkRefToHash(fromResolved);
-  const to = store.resolveLinkRefToHash(toResolved);
+  // Synapses live on chunks; FileView refs have no clear link semantic.
+  // Reject early with a hint rather than fall through to a generic "not found".
+  const isFv = (ref: string) => {
+    const base = baseHashFromRef(ref).slice(0, SHORT_HASH_LEN);
+    for (const v of store.fileViews?.values() ?? []) {
+      if (v.viewHash?.startsWith(base) || v.sourceRevision?.startsWith(base)) return true;
+    }
+    return false;
+  };
+  if (isFv(fromRaw) || isFv(toRaw)) {
+    return err('link: FileView refs are not linkable; stage a snippet via sg or use a chunk hash');
+  }
+  const from = store.resolveLinkRefToHash(fromRaw);
+  const to = store.resolveLinkRefToHash(toRaw);
   const suspect = isChunkSuspect(store);
   if (suspect(from) || suspect(to)) {
     return err('link: ref changed — re-read and retry');
