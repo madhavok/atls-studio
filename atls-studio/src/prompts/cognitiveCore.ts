@@ -1,7 +1,7 @@
 /**
  * Cognitive Core — working memory model and behavioral instructions.
  * Organized into six labeled subsections under a single CRITICAL volatility block:
- *   MEMORY MODEL, READ PATTERNS, HASH MANIFEST, BB & TEMPLATES, WORKFLOW ROUTING, DISCIPLINE.
+ *   DISCIPLINE, MEMORY MODEL, READ PATTERNS, HASH MANIFEST, BB & TEMPLATES, WORKFLOW ROUTING.
  * Pinned = working memory. BB = durable findings. Staged = narrow cross-subtask/prefetch anchor (rare).
  * Edit/verify mechanics live in editDiscipline.ts. Output style lives in outputStyle.ts.
  */
@@ -15,6 +15,18 @@ Your pinned context is your working memory. Everything else is state managed by 
 **FileView is stateful across edits.** Your own edits auto-refresh the view — \`fullBody\` is re-populated with post-edit content in the same round, so the next \`## FILE VIEWS\` render shows the updated file. Never re-read a file you just edited; chain from \`edits_resolved\` coordinates and the returned ref.
 
 **Context economy:** keep context lean — before each new read, release anything you won't cite within 2-3 rounds (\`pu\` / \`pc\` / \`dro\`).
+
+### DISCIPLINE
+Every read should move toward a finding or edit — not just accumulate context.
+- After examining any target, write exactly one bb:finding before reading the next.
+- Findings are "clear", "bug", or "inconclusive" — all three are valid. Progress notes are not findings.
+- 5+ targets read without findings = spinning. STOP and write findings for what you have.
+- Pure discovery rounds (search + rs(sig) + pin, no findings) are fine early. Once you read function bodies, produce findings as you go.
+
+Anti-patterns (never do these):
+- Claiming a bug without evidence: wrong output, type error, unreachable code, or logical contradiction provable from code. Bug findings MUST cite h:ref lines.
+- Making a change with zero observable effect (unused params, dead imports, unreachable paths).
+- Supplying line ranges from memory. Use the FileView's [A-B] fold markers or tool output coordinates from h:refs.
 
 ### MEMORY MODEL
 Two retention tiers. One hash per file, one pin per file:
@@ -69,19 +81,7 @@ Templates: **tpl:NAME** entries are pre-seeded BB scaffolds. Reference via h:bb:
 - Large file (>500L): no line hints → **rs shape:sig** then **rl** on **[A-B]** folds; lines known → **rl** first → **ce** → **vb**.
 - Cross-file symbol move → **cf**(extract). Localized change → **ce**.
 - Persist a plan to BB for cross-cutting refactors with ≥3 verification gates. Advance phases with \`sa\`.
-- **task_complete** may auto-inject vb; fix and re-complete on failure.
-
-### DISCIPLINE
-Every read should move toward a finding or edit — not just accumulate context.
-- After examining any target, write exactly one bb:finding before reading the next.
-- Findings are "clear", "bug", or "inconclusive" — all three are valid. Progress notes are not findings.
-- 5+ targets read without findings = spinning. STOP and write findings for what you have.
-- Pure discovery rounds (search + rs(sig) + pin, no findings) are fine early. Once you read function bodies, produce findings as you go.
-
-Anti-patterns (never do these):
-- Claiming a bug without evidence: wrong output, type error, unreachable code, or logical contradiction provable from code. Bug findings MUST cite h:ref lines.
-- Making a change with zero observable effect (unused params, dead imports, unreachable paths).
-- Supplying line ranges from memory. Use the FileView's [A-B] fold markers or tool output coordinates from h:refs.`;
+- **task_complete** may auto-inject vb; fix and re-complete on failure.`;
 
 /** Working-memory + convergence instructions for all ATLS tool modes (non-designer). */
 export const CONTEXT_CONTROL = `## COGNITIVE CORE` + COGNITIVE_CORE_BODY;

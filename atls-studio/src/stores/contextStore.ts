@@ -48,6 +48,7 @@ import { normalizeSessionPlanSubtasksInput } from '../services/batch/paramNorm';
 import { freshnessTelemetry, incSessionRestoreReconcileCount, incCognitiveRulesExpired, setManifestMetricsAccessor } from '../services/freshnessTelemetry';
 import { recordAutoPinReleasedUnused } from '../services/autoPinTelemetry';
 import { recordForwarding as manifestRecordForwarding, recordEviction as manifestRecordEviction, resolveForwardChain as manifestResolveForwardChain, recordUnrecoverable as manifestRecordUnrecoverable, getManifestMetrics, resetManifestState } from '../services/hashManifest';
+import { EXACT_SPIN_LIMIT, RANGE_NUDGE_LIMIT } from '../services/spinConstants';
 import {
   type FileView,
   type FileViewFreshnessCause,
@@ -6597,8 +6598,6 @@ export const useContextStore = create<ContextStoreState>()(
 
   recordFileReadSpin: (entries: Array<{ path: string; range?: string }>) => {
     if (entries.length === 0) return null;
-    const EXACT_SPIN_LIMIT = 3;
-    const RANGE_NUDGE_LIMIT = 5;
     let breaker: string | null = null;
     set(state => {
       const nextSpin = { ...state.fileReadSpinByPath };
