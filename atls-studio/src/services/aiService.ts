@@ -3674,12 +3674,16 @@ async function executeToolCallDetailed(
         const filesChanged = rawFilesChanged.filter((f): f is string => typeof f === 'string');
         const filesList = filesChanged.length > 0 ? `\nFiles: ${filesChanged.join(', ')}` : '';
 
-        // Auto-advance any remaining subtasks so plan state is clean on exit
+        // Auto-advance any remaining subtasks so plan state is clean on exit.
+        // Use a short marker (not the full summary) to avoid duplicating identical
+        // text into every subtask: BB entry — the real summary lives in the
+        // task_complete display and any explicit bw the agent wrote.
         const plan = useContextStore.getState().taskPlan;
         if (plan) {
+          const closeMarker = '(auto-closed at task_complete)';
           for (const st of plan.subtasks) {
             if (st.status !== 'done') {
-              useContextStore.getState().advanceSubtask(st.id, summary);
+              useContextStore.getState().advanceSubtask(st.id, closeMarker);
             }
           }
         }

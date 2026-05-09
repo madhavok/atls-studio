@@ -135,10 +135,22 @@ export const handleAnnotate: OpHandler = async (params, ctx) => {
   }
 
   const store = ctx.store();
-  const resolved = viewSourceRevisionForRef(hash, store) ?? hash;
+  const viewRevision = viewSourceRevisionForRef(hash, store);
+  const isViewRef = viewRevision !== undefined;
+  const resolved = viewRevision ?? hash;
   if (isChunkSuspect(store)(resolved)) {
     return err('annotate: ref changed — re-read and retry');
   }
+
+  // FileView refs cannot be annotated directly: FileViews are file-content
+  // views, not engrams. The view's sourceRevision points at file content,
+  // which the engram store does not own. Give the agent an actionable
+  // pointer instead of bubbling the bare 'engram not found' from below.
+  const fileViewError = () => err(
+    'annotate: hash resolves to a FileView, which is not an annotatable engram. '
+    + 'Annotate operates on chunk refs from search/verify/exec/read results. '
+    + 'For file-level notes, use bw (blackboard) keyed by file path.'
+  );
 
   const outRefs: string[] = [];
   const parts: string[] = [];
@@ -146,13 +158,19 @@ export const handleAnnotate: OpHandler = async (params, ctx) => {
 
   if (note) {
     const annotateResult = store.addAnnotation(resolved, note);
-    if (!annotateResult.ok) return err(`annotate: ${annotateResult.error}`);
+    if (!annotateResult.ok) {
+      if (isViewRef) return fileViewError();
+      return err(`annotate: ${annotateResult.error}`);
+    }
     parts.push(`note:${annotateResult.id}`);
   }
 
   if (fields && typeof fields === 'object') {
     const editResult = store.editEngram(resolved, fields);
-    if (!editResult.ok) return err(`annotate: ${editResult.error}`);
+    if (!editResult.ok) {
+      if (isViewRef) return fileViewError();
+      return err(`annotate: ${editResult.error}`);
+    }
     if (editResult.newHash) {
       const ref = `h:${editResult.newHash}`;
       outRefs.push(ref);

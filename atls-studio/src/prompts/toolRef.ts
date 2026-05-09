@@ -43,6 +43,7 @@ ${generateShorthandLegend()}
 ### Common Params (short codes in Key above; full names always accepted)
 sa subtask?:id summary:required — \`subtask\` is the id **before** the colon in spl (e.g. \`analyze\`, NOT the title \`Inspect\`). Omit to advance the currently active subtask. There is no \`subtask:*\` operation; never set \`use\` to \`subtask:...\`.
 spl goal:"required" subtasks:["id1:Title1","id2:Title2"] — JSON array of id:title strings works in both q: and structured JSON. Also accepted: [{id,title},...] array of objects, {id1:"Title1",id2:"Title2"} object-of-strings, or "id1:Title1,id2:Title2" comma-separated string (q: line form only). tasks/plan/list/items aliased to subtasks. h: prefixes are labels, not UHPP expansion targets.
+  Auto-id rule: when only titles are passed, ids derive from the first significant word lowercased (e.g. "Inspect search" → inspect) — always supply explicit id:title to make sa subtask:id predictable.
 rc type:full|tree ps:path1,path2 depth?:N glob?:pattern line_range?:start-end max_lines?:N
   type:full = whole-file body. type:tree = directory listing (not file content).
   Any file read returns ONE retention ref per file: h:<short> — the FileView identity. Auto-pinned; unpin (pu) when you're done.
@@ -82,9 +83,11 @@ cf action:inventory|impact_analysis|execute|rollback|rename|move|extract ps?:pat
 cb restore:[{file:path,hash:h}] delete?:path1,path2
 cm source_file:path target_dir:dir plan:[{module:name,symbols:[s1,s2]}] dry_run?:true
 vb|vt|vl|vk target_dir?:dir workspace?:name runner?:name
+  Runner auto-resolves from workspace config (package.json scripts, Cargo.toml). No runner detected → small "no runner" h:ref; pass runner:name to override. Failure detail (test names, errors) lives in the returned h:ref — recall it to inspect.
 xg action:status|diff|stage|unstage|commit|push|log|reset|restore files?:path1,path2 message?:"text" all?:true
 xw action:list|search|add|remove|set_active|rescan
 xe cmd:"command text"
+  PowerShell PTY runs cmd as a temp .ps1; hangs on interactive/long-running commands (npx without --reporter, npm test without --run, watch modes, REPLs). For builds/tests/lints/typecheck use vb/vt/vl/vk (no PTY). External commands need non-interactive flags (--run, --reporter=default, --no-interaction).
 dr query:"what to find" ff?:path1,path2 max_tokens?:N
 dd query:"what to design" ff?:path1,path2
 bw key:name content:"text"
@@ -103,7 +106,7 @@ sg hash:h:XXXX lines:start-end | content:"text" label:"name" — stage snippet (
 ust hash:h:XXXX | label:"name" | hashes:h:H1,h:H2 — unstage (one of hash/label/hashes required)
 ulo hashes:h:HASH1,h:HASH2 — unload engrams from context
 db|st|ch — no required params (debug, stats, compact history)
-nn hash:h:XXXX note:"text" and/or fields:{digest,summary,type} — attach a note and/or edit engram metadata
+nn hash:h:XXXX note:"text" and/or fields:{digest,summary,type} — attach a note and/or edit engram metadata. Requires a chunk/engram ref (search hits, tool results, exec output). FileView refs (rs/rl/rc/rf — fv in the manifest) are not annotatable; annotate the chunks the view was built from, or stage a snippet via sg first.
 nk from:h:XXXX to:h:YYYY — link two engrams
 nr hash:h:XXXX type:name — retype an engram
 ns hash:h:XXXX at:N — split engram at line N
@@ -233,4 +236,3 @@ r1 rs ps:src/api.ts shape:sig
 
 d1 nd content:"# Plan" append:false
 bb1 bw key:design-decisions content:"..."`;
-
