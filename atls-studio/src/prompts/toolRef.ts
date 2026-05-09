@@ -23,9 +23,6 @@ Release: \`pu\` when done, \`pc\` to compact, \`dro\` to delete. \`pi/pu/pc/dro\
 - Put explanations in normal assistant text. Lines in \`q\` used only as comments must start with \`#\` or \`--\` (parser skips them).
 - \`bw\` content is a single quoted string — do not split prose across multiple steps. Correct: \`b1 bw key:findings content:"BUG — file.ts:fn, line 42. Return should be continue."\` Wrong: encoding each sentence of your findings as a separate batch step (they become invalid step IDs).
 
-### Never emit \`_stubbed\` / \`_compressed\`
-If you see \`{"_stubbed": "...", "_compressed": true}\` in your own prior tool_use inputs, that is post-hoc history compression — **not a callable shape**. The runtime rewrites large past batch inputs to that sentinel to save tokens; it is never something you should produce. Always emit real \`steps\` or a \`q:\` DSL block. The batch executor rejects envelopes containing \`_stubbed\` or \`_compressed\` with an explicit error.
-
 ### JSON \`steps\` array (native batch args) — same discipline as \`q\`
 When you pass \`batch\` with a \`steps\` array instead of line-oriented \`q\`:
 - Each element must be a real step: \`id\` (short identifier) + \`use\` (operation name or short code) + optional \`with\` / \`in\` / \`if\`.
