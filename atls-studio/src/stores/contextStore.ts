@@ -6446,6 +6446,15 @@ export const useContextStore = create<ContextStoreState>()(
     let freedTokens = 0;
     const evictedHashes: string[] = [];
     const DORMANT_TURN_AGE_LIMIT = 3;
+    const ACK_TURN_AGE_LIMIT = 1;
+    const isAckShape = (s: string | undefined): boolean => {
+      if (!s) return false;
+      return s === 'task_complete'
+        || s.startsWith('verify.')
+        || s.startsWith('session.')
+        || s.startsWith('git.')
+        || s.startsWith('batch');
+    };
 
     set(state => {
       const currentTurn = hppGetTurn();
@@ -6470,7 +6479,8 @@ export const useContextStore = create<ContextStoreState>()(
       for (const [key, chunk] of dormantEntries) {
         const ref = hppGetRef(chunk.hash);
         const seenAt = ref?.seenAtTurn ?? 0;
-        const isTurnStale = currentTurn > 0 && (currentTurn - seenAt) >= DORMANT_TURN_AGE_LIMIT;
+        const turnLimit = isAckShape(chunk.source) ? ACK_TURN_AGE_LIMIT : DORMANT_TURN_AGE_LIMIT;
+        const isTurnStale = currentTurn > 0 && (currentTurn - seenAt) >= turnLimit;
         const isOverCount = (dormantEntries.length - evicted) > MAX_DORMANT_CHUNKS;
 
         if (!isTurnStale && !isOverCount) continue;
@@ -6479,7 +6489,7 @@ export const useContextStore = create<ContextStoreState>()(
         freedTokens += chunk.tokens;
         evicted++;
 
-        if (chunk.tokens > DORMANT_ARCHIVE_THRESHOLD) {
+        if (!isAckShape(chunk.source) && chunk.tokens > DORMANT_ARCHIVE_THRESHOLD) {
           newArchive.set(key, { ...chunk });
           archived++;
         } else {
