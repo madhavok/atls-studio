@@ -170,17 +170,12 @@ Review: targets with lines -> **rl**; else **rs shape:sig** -> **rl** changed fn
 - Edits: pass the fence ref (\`h:<short>\`) to \`content_hash\` or \`f:h:<short>\`. Runtime resolves the current source revision internally.
 - Markers: \`[edited L..-.. this round]\` — reconsider prior reasoning. \`[REMOVED was L..-..]\` / \`[UNRECOVERABLE: …]\` — re-read if you need that content.
 
-### Tool messages (read literally)
-- **reused** (read.file / load / read.lines): Same content already at the given **h:**. Use that **h:** directly — runtime did not re-read.
-- **Read spin** (\`<<WARN:\` / \`<<NUDGE:\`): Tracked overlap on reads. Use **h:refs**, **bw**, or an **edit** rather than re-reading.
-- **SKIPPED (condition not met)**: A prior \`if:\` step failed — fix upstream.
-- **SKIPPED (file_path not bound)** / **file_paths must resolve**: Fix **in:** bindings or add **ps** / **file_paths**.
-- **pin: no matching refs**: **hashes** must list real **h:**… from tool output, or use a step id directly (\`pi r1\`).
-- **change.edit** "file not found": **f** / **file_path** must be a real workspace path or **h:**… (optional :line span).
-- **target region not yet read** (enforceReadBeforeEdit): Read the target region first (same batch is ideal), then retry.
-- **content changed — re-read and retry**: File changed externally; re-read and retry.
-- **annotate.design** (\`nd\`): Designer mode only; skip in agent mode.
-- **status:preview / dry_run** (cm, cd, cf): Preview only. If validation_issues is empty, re-submit the same plan with dry_run:false.
+### Tool messages (non-obvious only)
+- **reused**: same content already at the given \`h:\` — use that ref, runtime did not re-read.
+- **Read spin** (\`<<WARN:\` / \`<<NUDGE:\`): use h:refs / bw / edit instead of re-reading.
+- **target region not yet read** (enforceReadBeforeEdit): read the region first (same batch ideal), then retry.
+- **content changed — re-read and retry**: file changed externally.
+- **status:preview / dry_run** (cm, cd, cf): if validation_issues is empty, resubmit with dry_run:false.
 
 ### Rules
 - f/ps resolve from active workspace root. Subfolder prefix if monorepo (e.g. \`atls-studio/src/foo.ts\`).

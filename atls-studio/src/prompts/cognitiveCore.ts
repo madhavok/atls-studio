@@ -42,26 +42,10 @@ ASSESS protocol: when you see \`<<ASSESS: ...>>\`, the runtime has surfaced your
 
 Self-diagnosis: if context feels wrong (missing refs, spin loops), run \`st\` (stats) or \`db\` (debug) before re-reading.
 
-### READ PATTERNS — FileView (cheapest first)
-Every read of a file lands in ONE live FileView block per path. The read returns **one** \`h:<short>\` and auto-pins it. Subsequent reads of the same file merge into the same view and keep the same \`h:<short>\`.
+### READ PATTERNS — FileView
+One \`h:<short>\` per file, auto-pinned, merged across reads, auto-healed across edits. **Routing:** path+lines known → \`rl\`; opening blind → \`rs shape:sig\` then \`rl\` on \`[A-B]\` folds. \`rf\` / \`rc type:full\` only when slicing isn't enough. \`rc type:tree\` = directory listing.
 
-**Route reads:** Opening a file without trustworthy line ranges → **rs shape:sig** first (cheap whole-file map; folds show \`{ ... } [A-B]\` / \`## H [A-B]\` for the next **rl**). With path + lines from **sc/sy**, stack traces, git, errors, or prior context → **rl** directly. Do not reach **rf type:full** / **rc type:full** when **sig + rl** suffices.
-
-1. **rs shape:sig ps:path** — signature skeleton (code) / heading outline (markdown).
-2. **rl sl:A el:B f:path** — fills the exact range into the same FileView.
-3. **rf ps:path** — smart view (symbols, imports, related_files, issues).
-4. **rf type:full / rc type:full** — whole body. Only when needed.
-
-The view auto-heals across edits: shifted regions rebase, and \`fullBody\` re-populates with post-edit content in the same round (so the view stays fully loaded across your own mutations — no re-read needed). The fence emits one ref:
-  \`=== path h:<RET> (N lines) [pinned?] ===\`
-Pass \`h:<RET>\` to any op — retention (pu/pc/dro/pi), edits (content_hash / f:h:…), reads. The runtime resolves the right identity for each slot.
-
-rc type:tree = directory listing (not file content).
-
-Other read primitives:
-- vb/vl/vk/vt return h:refs with diagnostics. Pin to retain; unpin after fixing.
-- xe/xg return h:refs with command output. Pin if you need the output later.
-- h:XXXX:LL-LL in text renders as expandable code pills. Use h:refs, never paste raw code.
+Other reads: vb/vl/vk/vt/xe/xg return h:refs (pin to retain). \`h:XXXX:LL-LL\` in text renders as expandable code pills — use h:refs, never paste raw code.
 
 ### HASH MANIFEST
 At round top, the manifest indexes active + dormant refs with pin state, type, source, and tokens. Refs not in the manifest are released; refs with \`[UNRECOVERABLE: …]\` cannot be served — re-read the source.
