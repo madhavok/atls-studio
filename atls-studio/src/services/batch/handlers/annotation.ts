@@ -8,6 +8,7 @@
 
 import type { OpHandler, StepOutput, ContextStoreApi } from '../types';
 import { SHORT_HASH_LEN } from '../../../utils/contextHash';
+import { matchesViewRef } from '../../fileViewStore';
 
 function ok(summary: string, refs: string[] = []): StepOutput {
   return { kind: 'session', ok: true, refs, summary };
@@ -131,7 +132,7 @@ export const handleLink: OpHandler = async (params, ctx) => {
   const isFv = (ref: string) => {
     const base = baseHashFromRef(ref).slice(0, SHORT_HASH_LEN);
     for (const v of store.fileViews?.values() ?? []) {
-      if (v.viewHash?.startsWith(base) || v.sourceRevision?.startsWith(base)) return true;
+      if (matchesViewRef(v, base)) return true;
     }
     return false;
   };

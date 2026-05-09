@@ -248,7 +248,10 @@ function makeVerifyHandler(mode: string): OpHandler {
         kind: 'verify_result' as const,
         ok: passed,
         refs: [`h:${hash}`],
-        summary: `${opKind}: ${passed ? 'passed' : 'failed'} → h:${hash} (${(tk / 1000).toFixed(1)}k tk)`,
+        // Surface the rich summary (error / hint / workspace hint folded in by
+        // buildVerifyStepSummary) so failures are actionable without a follow-up
+        // rl. Falls back to the bare status when no extras were available.
+        summary: `${summary} → h:${hash} (${(tk / 1000).toFixed(1)}k tk)`,
         tokens: tk,
         content: raw,
         classification,
