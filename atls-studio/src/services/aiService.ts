@@ -1379,21 +1379,30 @@ export function formatEntryManifestSection(
     return '';
   }
   const pathList = entryManifest.map(e => `${e.path} (${e.method}, ${e.lines}L)`).join(' | ');
-  const sigLines = entryManifest
-    .filter(e => e.sig && e.tokens > 0)
-    .map(e => e.sig);
   if (entryManifestDepth === 'paths') {
     return `\n\n## Entry Points\n${pathList}`;
   }
-  if (entryManifestDepth === 'sigs') {
-    if (sigLines.length > 0) {
-      return `\n\n## Entry Points\n${sigLines.join('\n')}`;
-    }
-    return '';
+
+  // Group sig entries by file and emit a path header per group so the consumer
+  // can unambiguously resolve each signature block to its source file.
+  const sigEntries = entryManifest.filter(e => e.sig && e.tokens > 0);
+  if (sigEntries.length === 0) {
+    return entryManifestDepth === 'paths_sigs' ? `\n\n## Entry Points\n${pathList}` : '';
   }
-  const body =
-    sigLines.length > 0 ? `${pathList}\n\n${sigLines.join('\n')}` : pathList;
-  return `\n\n## Entry Points\n${body}`;
+  const grouped: { path: string; lines: number; importance: number; sigs: string[] }[] = [];
+  for (const e of sigEntries) {
+    const last = grouped[grouped.length - 1];
+    if (last && last.path === e.path) {
+      last.sigs.push(e.sig);
+    } else {
+      grouped.push({ path: e.path, lines: e.lines, importance: e.importance, sigs: [e.sig] });
+    }
+  }
+  const sections = grouped.map(g => {
+    const imp = g.importance !== 1 ? ` | importance:${g.importance}` : '';
+    return `${g.path} | ${g.lines}L${imp}\n${g.sigs.join('\n')}`;
+  });
+  return `\n\n## Entry Points\n${sections.join('\n')}`;
 }
 
 export interface ProjectProfile {
