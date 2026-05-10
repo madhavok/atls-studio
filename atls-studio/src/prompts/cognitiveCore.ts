@@ -62,10 +62,9 @@ BB read paths: **sm** = semantic search across regions; **br** = exact key looku
 Templates: **tpl:NAME** entries are pre-seeded BB scaffolds. Reference via h:bb:tpl:NAME inside bw content. Available: analysis, refactor, task, diff, issue, scope, status, complete.
 
 ### WORKFLOW ROUTING
-- Large file (>500L): no line hints → **rs shape:sig** then **rl** on **[A-B]** folds; lines known → **rl** first → **ce** → **vb**.
+- Large file (>500L): prefer sig+slice over full reads.
 - Cross-file symbol move → **cf**(extract). Localized change → **ce**.
-- Persist a plan to BB for cross-cutting refactors with ≥3 verification gates. Advance phases with \`sa\`.
-- **task_complete** may auto-inject vb; fix and re-complete on failure.`;
+- Persist a plan to BB for cross-cutting refactors with ≥3 verification gates. Advance phases with \`sa\`.`;
 
 /** Working-memory + convergence instructions for all ATLS tool modes (non-designer). */
 export const CONTEXT_CONTROL = `## COGNITIVE CORE` + COGNITIVE_CORE_BODY;
