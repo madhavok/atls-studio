@@ -99,7 +99,7 @@ describe('executeToolCall', () => {
 
     expect(out).toContain('\u2713 Task complete: all done');
     expect(out).toContain('src/a.ts');
-    expect(advanceSpy).toHaveBeenCalledWith('st1', 'all done');
+    expect(advanceSpy).toHaveBeenCalledWith('st1', '(auto-closed at task_complete)');
     advanceSpy.mockRestore();
   });
 

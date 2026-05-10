@@ -32,7 +32,7 @@ describe('handleVerifyBuild', () => {
     const out = await handleVerifyBuild(
       {},
       {
-        atlsBatchQuery: async () => ({ success: false, summary: 'build failed' }),
+        atlsBatchQuery: async () => ({ success: false }),
         store: () => ({
           addChunk: () => 'abc123',
         }),
