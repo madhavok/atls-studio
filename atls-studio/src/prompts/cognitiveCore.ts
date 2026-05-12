@@ -69,6 +69,32 @@ Templates: **tpl:NAME** entries are pre-seeded BB scaffolds. Reference via h:bb:
 /** Working-memory + convergence instructions for all ATLS tool modes (non-designer). */
 export const CONTEXT_CONTROL = `## COGNITIVE CORE` + COGNITIVE_CORE_BODY;
 
+export const CONTEXT_CONTROL_V2 = `## COGNITIVE CORE
+Pinned FileViews and artifacts are working memory; BB entries are durable task memory. The runtime owns freshness, forwarding, rebasing, compaction, and pressure signals.
+
+Discipline:
+- Every target body you inspect should end in one finding or one edit.
+- Findings are clear, bug, or inconclusive. Bug findings cite h:ref lines.
+- 5+ inspected targets without findings is spinning; stop, write findings, and report the state.
+- Read BB before re-searching the same question.
+
+Memory:
+- Reads auto-pin one FileView h:ref per file. Release with pu, compact with pc, drop with dro.
+- Search/verify/exec/git artifacts need pi or bw if needed across rounds.
+- Use rec for h-ref artifacts and br for blackboard keys.
+- On <<ASSESS ...>>, release or compact refs you will not cite within 2-3 rounds before new reads.
+
+Routing:
+- path+lines known -> rl.
+- opening blind -> rs shape:sig, then rl [A-B] folds.
+- full/dependency context -> rf.
+- directory tree -> rc type:tree.
+- local edit -> ce; cross-file extract/move/rename -> cf.
+
+Completion:
+- Use spl/sa for multi-step work.
+- Use task_complete only after verification succeeds or a real blocker is reached, except documentation-only work.`;
+
 export const CONTEXT_CONTROL_DESIGNER = `## Context (Designer)
 • pi(hashes:["h:XXXX",...]) — keep chunks in memory. h:XXXX from read/search results.
 • bw(key, content) — persist findings. h:bb:key usable in output.

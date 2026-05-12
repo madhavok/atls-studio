@@ -1,12 +1,15 @@
 import { describe, expect, it } from 'vitest';
-import { BATCH_TOOL_REF } from './toolRef';
+import { BATCH_TOOL_REF, BATCH_TOOL_REF_V2 } from './toolRef';
 import { ALL_OPERATIONS, OPERATION_FAMILIES, FAMILY_NAMES } from '../services/batch/families';
 import { getHandler } from '../services/batch/opMap';
 import { SHORT_TO_OP, OP_TO_SHORT } from '../services/batch/opShorthand';
 
 describe('BATCH_TOOL_REF drift detection', () => {
-  it('contains every operation (via shorthand) from families.ts in the Operation Families section', () => {
-    const familiesMatch = BATCH_TOOL_REF.match(/### Operation Families\n([\s\S]*?)(?=\n###)/);
+  it.each([
+    ['v1', BATCH_TOOL_REF],
+    ['v2', BATCH_TOOL_REF_V2],
+  ])('contains every operation in the %s Operation Families section', (_label, toolRef) => {
+    const familiesMatch = toolRef.match(/### Operation Families\n([\s\S]*?)(?=\n###)/);
     expect(familiesMatch).toBeTruthy();
     const familiesBlock = familiesMatch![1];
 
@@ -39,10 +42,13 @@ describe('BATCH_TOOL_REF drift detection', () => {
     }
   });
 
-  it('contains the shorthand legend with all short codes', () => {
-    expect(BATCH_TOOL_REF).toContain('### Short codes');
-    expect(BATCH_TOOL_REF).toContain('sc=search.code');
-    expect(BATCH_TOOL_REF).toContain('ps=file_paths');
+  it.each([
+    ['v1', BATCH_TOOL_REF],
+    ['v2', BATCH_TOOL_REF_V2],
+  ])('contains the shorthand legend with all short codes in %s', (_label, toolRef) => {
+    expect(toolRef).toContain('### Short codes');
+    expect(toolRef).toContain('sc=search.code');
+    expect(toolRef).toContain('ps=file_paths');
   });
 });
 

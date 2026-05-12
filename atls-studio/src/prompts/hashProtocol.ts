@@ -17,6 +17,14 @@ EXTRACT: refactor(extract:"fn(name)", from:"h:XXXX", to:"target.ts") — declara
 BATCH EXTRACT: refactor(action:"extract",extractions:[{target_file,methods}]) — multi-target, same-target merges.
 Advanced syntax (sets, search expressions, semantic shapes, full symbol kinds): xh topic:"uhpp"`;
 
+export const HASH_PROTOCOL_CORE_V2 = `## UHPP
+h:XXXX is a universal pointer to file views, artifacts, memory, and tool results. Pass it where it fits; the runtime resolves identity, freshness, and forward chains.
+
+Common forms: h:XXXX, h:XXXX:15-22, h:XXXX:sig, h:XXXX:fn(name), h:OLD..h:NEW.
+Recency: h:$last, h:$last-1.
+Recall h-ref artifacts with rec. Read BB keys with br.
+Advanced selectors and set syntax: xh topic:"uhpp".`;
+
 export const HASH_PROTOCOL_ADVANCED = `## UHPP — Advanced Syntax
 Semantic: h:XXXX:concept(auth), h:XXXX:pattern(error-handling), h:XXXX:if(has(TODO)).
 SYMBOL KINDS: fn() cls() struct() trait() interface() protocol() enum() record() extension() mixin() impl() type() const() static() mod() macro() ctor() property() field() enum_member() operator() event() object() actor() union() sym(). Aliases: class→cls, ns→mod, variant→enum_member.

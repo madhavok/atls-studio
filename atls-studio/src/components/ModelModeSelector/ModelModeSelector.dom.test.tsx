@@ -36,6 +36,7 @@ describe('ModelModeSelector', () => {
         selectedModel: 'claude-sonnet-4-5',
         selectedProvider: 'anthropic',
         disabledProviders: [],
+        agentPromptVersion: 'v1',
       },
     });
   });
@@ -58,6 +59,19 @@ describe('ModelModeSelector', () => {
     fireEvent.click(screen.getByText('Claude Test'));
     expect(useAppStore.getState().settings.selectedModel).toBe('claude-test');
     expect(useAppStore.getState().settings.selectedProvider).toBe('anthropic');
+  });
+
+  it('toggles the Agent v2 prompt surface without changing chat mode', async () => {
+    render(<ModelModeSelector />);
+    await act(async () => {
+      vi.advanceTimersByTime(520);
+      await Promise.resolve();
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'V2' }));
+
+    expect(useAppStore.getState().chatMode).toBe('agent');
+    expect(useAppStore.getState().settings.agentPromptVersion).toBe('v2');
   });
 
   it('changes chat mode from the mode menu', async () => {

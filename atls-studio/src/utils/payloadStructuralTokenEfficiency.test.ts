@@ -6,8 +6,11 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import { BATCH_TOOL_REF } from '../prompts/toolRef';
-import { EDIT_DISCIPLINE } from '../prompts/editDiscipline';
+import { CONTEXT_CONTROL, CONTEXT_CONTROL_V2 } from '../prompts/cognitiveCore';
+import { EDIT_DISCIPLINE, EDIT_DISCIPLINE_V2 } from '../prompts/editDiscipline';
+import { HASH_PROTOCOL_CORE, HASH_PROTOCOL_CORE_V2 } from '../prompts/hashProtocol';
+import { getModePrompt } from '../prompts/modePrompts';
+import { BATCH_TOOL_REF, BATCH_TOOL_REF_V2 } from '../prompts/toolRef';
 import { estimateTokens } from './contextHash';
 import { logTokenDelta } from './toonDeltaTestHelpers';
 import { toTOON } from './toon';
@@ -83,6 +86,30 @@ describe('payload structural efficiency (heuristic tokens)', () => {
     );
     expect(batchTok).toBeGreaterThan(0);
     expect(editTok).toBeGreaterThan(0);
+  });
+
+  it('agent v2 prompt surfaces are smaller than v1 shared agent surfaces', () => {
+    const v1 = [
+      getModePrompt('agent'),
+      BATCH_TOOL_REF,
+      EDIT_DISCIPLINE,
+      CONTEXT_CONTROL,
+      HASH_PROTOCOL_CORE,
+    ].join('\n');
+    const v2 = [
+      getModePrompt('agent', { agentPromptVersion: 'v2' }),
+      BATCH_TOOL_REF_V2,
+      EDIT_DISCIPLINE_V2,
+      CONTEXT_CONTROL_V2,
+      HASH_PROTOCOL_CORE_V2,
+    ].join('\n');
+    const v1Tok = estimateTokens(v1);
+    const v2Tok = estimateTokens(v2);
+    console.log(
+      `[struct payload] agent prompt surfaces | v1: ${v1.length} ch / ${v1Tok} tok | v2: ${v2.length} ch / ${v2Tok} tok | Δ ${v1Tok - v2Tok} tok (${(((v1Tok - v2Tok) / v1Tok) * 100).toFixed(1)}%)`,
+    );
+    expect(v2Tok).toBeGreaterThan(0);
+    expect(v2Tok).toBeLessThan(v1Tok);
   });
 
   it('TOON omits null/empty string but still serializes false and 0 (potential future omission)', () => {

@@ -34,3 +34,15 @@ export const EDIT_DISCIPLINE = `### EDIT + VERIFY DISCIPLINE
 ### POST-EDIT CONTEXT
 - **Do NOT re-read after your own edits.** The FileView re-hydrates with post-edit content automatically — \`fullBody\` is re-populated so the next round's \`## FILE VIEWS\` block shows the updated file in full. Chain from \`edits_resolved\` coordinates and the returned \`h:\` ref.
 - On "target region not yet read" (enforceReadBeforeEdit enabled): rl the region, retry in same batch.`;
+
+export const EDIT_DISCIPLINE_V2 = `### EDIT + VERIFY DISCIPLINE
+- Edit only visible/read target ranges. If the tool says target region not yet read, rl that range and retry.
+- ce minimal form: f:h:XXXX:L-M le:[{content:"..."}].
+- In one ce, all le entries use original snapshot coordinates; runtime rebases them.
+- Across separate same-file edits, chain from edits_resolved. Do not calculate shifted lines yourself.
+- One concern per edit. Use cf for cross-file extract/move/rename.
+- Do not re-read after your own edit; FileView refreshes with the post-edit body.
+- Batch low-risk related mutations, then one verify at milestone/task end. Verify earlier for public API, schema, dependency, or config changes.
+- Documentation-only changes can skip verify unless asked.
+- State the observable behavior change before ce/ie. Do not make changes with no observable effect.
+- Stop on preview, paused, rollback, action_required, or confirmation-needed and resolve that state.`;

@@ -204,6 +204,57 @@ Markers:
 Retention: reads auto-pin their FileView. pu/pc/dro on the view's h:<short> acts on the view. Explicit \`pi\` for non-read artifacts (search/verify results) you want across rounds; intra-batch consumers auto-persist.
 The view auto-heals across file edits — shifted regions rebase, pinned regions refetch, unpinned stale regions drop silently.`;
 
+export const BATCH_TOOL_REF_V2 = `## Batch Tool
+Use the native batch tool. Pass q: one executable step per line:
+STEP_ID <operation> key:val key:val
+
+Short codes and full dotted operation names are both accepted. Do not put prose, markdown, bullets, or fake steps in q. Put explanation in assistant text or bw content.
+
+Dataflow: in:stepId.refs. Conditional: if:stepId.ok. Errors: on_error:stop|continue|rollback.
+Values: quote spaces/colons, e.g. content:"const x = 1;". Arrays are comma-separated unless an op says JSON-style inline objects are required.
+
+### Operation Families
+${generateFamilyLines()}
+
+${generateShorthandLegend()}
+
+### Common Params
+ps:file_paths, f:file_path, sn:symbol_names, qs:queries, le:line_edits, sl:start_line, el:end_line, sf:severity_filter, ff:focus_files.
+
+rc type:full|tree ps:path depth?:N glob?:pattern line_range?:A-B max_lines?:N.
+rl f:path sl:N el:N | rl hash:h:XXXX lines:A-B.
+rs ps:path shape:sig|fold|grep|dedent|nocomment|refs|highlight max_files?:N.
+rf ps:path type?:full.
+
+sc qs:term ps?:path limit?:N compact?:true.
+sy sn:name limit?:N. su sn:name filter?:pattern limit?:N. si ps?:path sf?:high|medium|low|all issue_mode?:correctness|all|security limit?:N. sm query:text regions?:active,archived,bb max_results?:N.
+ad|at|ai ps:path filter?:pattern limit?:N. ac sn:name depth?:N. ab sn:name ps:path action?:move. ag sn:name mode?:callees|callers|subgraph depth?:N. ax f:path strategy?:by_cluster|by_prefix|by_kind.
+
+ce f:h:XXXX:L-M le:[{content:"new code"}].
+  Read target ranges first. In one ce, every le entry uses original snapshot coordinates. Response edits_resolved is authoritative for chained edits.
+  action defaults to replace; other actions: insert_before, insert_after, delete, move, replace_body.
+cc creates:[{path:p,content:c}]. cd ps:path confirm?:true dry_run?:false. cf action:inventory|impact_analysis|execute|rollback|rename|move|extract ps?:path sn?:name. cb restore:[{file:path,hash:h}] delete?:path.
+
+vb|vt|vl|vk target_dir?:dir workspace?:name runner?:name. Failure details return h:refs; use rec h:XXXX to inspect.
+
+spl goal:"required" subtasks:["id:Title"]. sa subtask?:id summary:"required". ss shows task status.
+bw key:name content:"text". br keys:key1,key2. bl lists BB keys.
+pi hashes:h:HASH | pi stepId. pu hashes:h:HASH | pu stepId. pc hashes:h:HASH tier?:pointer|sig. dro hashes:h:HASH. rec hashes:h:HASH.
+
+xg action:status|diff|stage|unstage|commit|push|log files?:path message?:"text". Prefer xg for git.
+xe cmd:"command text". Use for builds/packages only when verify ops are insufficient; commands must be non-interactive.
+xh topic:"..." returns advanced help.
+
+Intent macros: iu, ie, im, iv, id, srv, ifr, ic, it, is, ix. Use them when the outcome is clear; use primitives when exploring.
+
+### Recipes
+Bug hunt: si -> top suspects -> rl if lines exist, else rs(sig) then rl folds -> bw finding per target -> fix confirmed -> verify -> task_complete.
+Feature: find/read target slices -> spl if multi-step -> ce/cc/cf -> verify -> task_complete.
+Review: read changed functions -> bw review findings -> task_complete.
+Investigation: iv or search/read -> bw structured findings -> task_complete.
+
+Cheapest read route: path+lines -> rl; blind file -> rs shape:sig; full/deps -> rf; tree -> rc type:tree.`;
+
 export const SUBAGENT_TOOL_REF = `
 
 **DELEGATE** — dispatch a cheaper model as a specialized subagent inside batch

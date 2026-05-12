@@ -673,6 +673,8 @@ export interface Settings {
   temperature: number;
   // Agent settings
   maxIterations: number; // 0 = unlimited
+  /** Agent prompt surface. v1 is the current stable prompt; v2 is opt-in for compact all-model testing. */
+  agentPromptVersion: 'v1' | 'v2';
   // Editor settings
   fontSize: number;
   autoSave: boolean;
@@ -1684,6 +1686,7 @@ export const useAppStore = create<AppState>((set) => ({
       maxTokens: 4096,
       temperature: 0.7,
       maxIterations: 0, // 0 = unlimited (like Cursor)
+      agentPromptVersion: 'v1',
       fontSize: 13,
       autoSave: true,
       theme: 'dark' as const,

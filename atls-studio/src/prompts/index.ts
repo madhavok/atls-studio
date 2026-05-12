@@ -13,20 +13,23 @@ export type { SubagentRole } from './subagentPrompts';
 
 export {
   BATCH_TOOL_REF,
+  BATCH_TOOL_REF_V2,
   DESIGNER_TOOL_REF,
   SUBAGENT_TOOL_REF,
 } from './toolRef';
 
 export {
   CONTEXT_CONTROL,
+  CONTEXT_CONTROL_V2,
   CONTEXT_CONTROL_DESIGNER,
 } from './cognitiveCore';
 
-export { EDIT_DISCIPLINE } from './editDiscipline';
+export { EDIT_DISCIPLINE, EDIT_DISCIPLINE_V2 } from './editDiscipline';
 
-export { HASH_PROTOCOL_CORE, HASH_PROTOCOL_ADVANCED, HASH_PROTOCOL_SPEC } from './hashProtocol';
+export { HASH_PROTOCOL_CORE, HASH_PROTOCOL_CORE_V2, HASH_PROTOCOL_ADVANCED, HASH_PROTOCOL_SPEC } from './hashProtocol';
 
 export { getModePrompt } from './modePrompts';
+export type { AgentPromptVersion } from './modePrompts';
 
 export { getShellGuide } from './shellGuide';
 

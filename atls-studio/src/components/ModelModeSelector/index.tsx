@@ -558,6 +558,7 @@ export function ModelModeSelector() {
   const contextLabel = effectiveCtx && effectiveCtx > 0
     ? (effectiveCtx >= 1000000 ? `${(effectiveCtx / 1000000).toFixed(1)}M` : `${(effectiveCtx / 1000).toFixed(0)}K`)
     : null;
+  const agentPromptVersion = settings.agentPromptVersion ?? 'v1';
 
   return (
     <div className="flex flex-col gap-1 px-2 py-1.5 bg-studio-bg/50 border-t border-studio-border text-xs">
@@ -1234,6 +1235,36 @@ export function ModelModeSelector() {
           </div>
         )}
       </div>
+
+      {chatMode === 'agent' && (
+        <>
+          <span className="text-studio-border">|</span>
+          <div className="flex rounded overflow-hidden border border-studio-border/60" title="Agent prompt surface">
+            {(['v1', 'v2'] as const).map((version) => (
+              <button
+                key={version}
+                type="button"
+                onClick={() => {
+                  useAppStore.getState().setSettings({ agentPromptVersion: version });
+                  resetStaticPromptCache();
+                }}
+                className={`px-1.5 py-0.5 text-[9px] font-medium transition-colors ${
+                  agentPromptVersion === version
+                    ? version === 'v2'
+                      ? 'bg-violet-500/80 text-white'
+                      : 'bg-studio-border text-studio-text'
+                    : 'bg-studio-surface/30 text-studio-muted hover:bg-studio-surface'
+                }`}
+                title={version === 'v2'
+                  ? 'Agent v2 compact all-model prompt surface'
+                  : 'Agent v1 stable prompt surface'}
+              >
+                {version.toUpperCase()}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
 
       {/* Custom Agent dropdown + Context */}
       {chatMode === 'agent' && (customAgents.length > 0 || agentMenuOpen) && (

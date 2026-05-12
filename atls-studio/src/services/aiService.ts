@@ -130,11 +130,11 @@ import { resolveHashRefsWithMeta, setRecencyResolver, setEditRecencyResolver, se
 import { toTOON, formatResult, expandBatchQ } from '../utils/toon';
 import { getProviderFromModelId } from '../utils/pricingProvider';
 import { countTokensSync, countTokens as countTokensAsync } from '../utils/tokenCounter';
-import { BATCH_TOOL_REF, DESIGNER_TOOL_REF, SUBAGENT_TOOL_REF, NATIVE_TOOL_TOKENS_ESTIMATE } from '../prompts/toolRef';
-import { CONTEXT_CONTROL, CONTEXT_CONTROL_DESIGNER } from '../prompts/cognitiveCore';
-import { EDIT_DISCIPLINE } from '../prompts/editDiscipline';
+import { BATCH_TOOL_REF, BATCH_TOOL_REF_V2, DESIGNER_TOOL_REF, SUBAGENT_TOOL_REF, NATIVE_TOOL_TOKENS_ESTIMATE } from '../prompts/toolRef';
+import { CONTEXT_CONTROL, CONTEXT_CONTROL_V2, CONTEXT_CONTROL_DESIGNER } from '../prompts/cognitiveCore';
+import { EDIT_DISCIPLINE, EDIT_DISCIPLINE_V2 } from '../prompts/editDiscipline';
 import { OUTPUT_STYLE } from '../prompts/outputStyle';
-import { HASH_PROTOCOL_CORE } from '../prompts/hashProtocol';
+import { HASH_PROTOCOL_CORE, HASH_PROTOCOL_CORE_V2 } from '../prompts/hashProtocol';
 import { getModePrompt } from '../prompts/modePrompts';
 import { getShellGuide } from '../prompts/shellGuide';
 import { GEMINI_REINFORCEMENT, GEMINI_RECENCY_BOOST } from '../prompts/providerOverrides';
@@ -4336,17 +4336,20 @@ function _buildStaticSystemPrompt(
 ): string {
   // Inject refactor config early for cache key (refactor mode only)
   const refactorPart = mode === 'refactor' ? useRefactorStore.getState().getConfigForPrompt() : '';
+  const settings = useAppStore.getState().settings;
+  const agentPromptVersion = mode === 'agent' ? (settings.agentPromptVersion ?? 'v1') : 'v1';
+  const useAgentV2 = mode === 'agent' && agentPromptVersion === 'v2';
   // P0 #1: Check cache — key includes refactor config for invalidation when thresholds change
   const manifestFingerprint = hashContentSync(JSON.stringify(entryManifest ?? [])).slice(0, 8);
-  const subagentFlag = !!(useAppStore.getState().settings.subagentModel && useAppStore.getState().settings.subagentProvider);
-  const cacheKey = `${mode}|${shellContext?.os ?? ''}|${shellContext?.shell ?? ''}|${shellContext?.cwd ?? ''}|${atlsReady ?? false}|${provider ?? ''}|${refactorPart}|${entryManifestDepth ?? 'off'}|${manifestFingerprint}|${subagentFlag}`;
+  const subagentFlag = !!(settings.subagentModel && settings.subagentProvider);
+  const cacheKey = `${mode}|${agentPromptVersion}|${shellContext?.os ?? ''}|${shellContext?.shell ?? ''}|${shellContext?.cwd ?? ''}|${atlsReady ?? false}|${provider ?? ''}|${refactorPart}|${entryManifestDepth ?? 'off'}|${manifestFingerprint}|${subagentFlag}`;
   if (_cachedStaticPrompt && _cachedStaticPrompt.key === cacheKey) {
     useAppStore.getState().setPromptMetrics(_cachedStaticPrompt.metrics);
     return _cachedStaticPrompt.prompt;
   }
 
   // Get mode-specific base prompt
-  const modePrompt = getModePrompt(mode);
+  const modePrompt = getModePrompt(mode, { agentPromptVersion });
   
   // Retriever mode: prompt only, no tools/shell/patterns
   if (mode === 'retriever') {
@@ -4367,12 +4370,11 @@ function _buildStaticSystemPrompt(
     : '';
 
   // Only include batch tool docs if initialized
-  const settings = useAppStore.getState().settings;
   const subagentEnabled = atlsReady && settings.subagentModel !== 'none'
     && (settings.subagentModel || settings.subagentProvider);
 
   let toolRef = atlsReady 
-    ? (mode === 'designer' ? DESIGNER_TOOL_REF : BATCH_TOOL_REF)
+    ? (mode === 'designer' ? DESIGNER_TOOL_REF : useAgentV2 ? BATCH_TOOL_REF_V2 : BATCH_TOOL_REF)
     : `## Terminal Only (ATLS not initialized - open a project first)
 q: exec system.exec cmd:"..." → write cmd to temp .ps1 and run in agent shell`;
 
@@ -4388,6 +4390,8 @@ q: exec system.exec cmd:"..." → write cmd to temp .ps1 and run in agent shell`
     ? 'Review mode: Find and report issues. Suggest fixes but do not apply them.'
     : mode === 'refactor'
     ? 'Refactoring mode: Systematic code extraction and restructuring. Follow the 4-phase workflow.'
+    : useAgentV2
+    ? 'Agent v2 mode. Compact all-model prompt surface; runtime enforces lifecycle, freshness, and recovery.'
     : 'Full agent mode. Pinned context = working memory. Runtime manages lifecycle and freshness.';
 
   // Inject refactor config thresholds when in refactor mode (reuse refactorPart from cache key)
@@ -4395,7 +4399,7 @@ q: exec system.exec cmd:"..." → write cmd to temp .ps1 and run in agent shell`
 
   // Shared edit/verify discipline (non-designer, ATLS ready)
   const editDisciplineSection = (atlsReady && mode !== 'designer')
-    ? `\n${EDIT_DISCIPLINE}`
+    ? `\n${useAgentV2 ? EDIT_DISCIPLINE_V2 : EDIT_DISCIPLINE}`
     : '';
 
   // Output style — density/structure rules for explanatory text. Same gate as edit discipline.
@@ -4406,8 +4410,8 @@ q: exec system.exec cmd:"..." → write cmd to temp .ps1 and run in agent shell`
   // Designer: read-only context hints. All other non-retriever tool modes share COGNITIVE_CORE + EDIT_DISCIPLINE + OUTPUT_STYLE.
   const contextControl = mode === 'designer'
     ? `\n${CONTEXT_CONTROL_DESIGNER}\n## Output: 1 sentence between tool calls. End with a concise final summary.`
-    : `\n${CONTEXT_CONTROL}`;
-  const hppSection = (atlsReady && mode !== 'designer') ? `\n${HASH_PROTOCOL_CORE}` : '';
+    : `\n${useAgentV2 ? CONTEXT_CONTROL_V2 : CONTEXT_CONTROL}`;
+  const hppSection = (atlsReady && mode !== 'designer') ? `\n${useAgentV2 ? HASH_PROTOCOL_CORE_V2 : HASH_PROTOCOL_CORE}` : '';
   const providerReinforcement = (provider === 'google' || provider === 'vertex')
     ? `\n${GEMINI_REINFORCEMENT}`
     : '';
