@@ -253,6 +253,7 @@ export interface Step {
 export interface StepOutput {
   kind: StepOutputKind;
   ok: boolean;
+  skipped?: boolean;
   refs: string[];
   content?: unknown;
   tokens?: number;
@@ -646,6 +647,7 @@ export interface IntentMetrics {
   emittedSteps: number;
   skippedSteps: number;
   lookaheadSteps: number;
+  lookaheadReason?: string;
 }
 
 export interface TaskPlanState {

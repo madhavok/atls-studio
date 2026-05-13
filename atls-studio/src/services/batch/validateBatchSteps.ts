@@ -94,14 +94,48 @@ export function validateBatchSteps(steps: ReadonlyArray<BatchStepLike>): Validat
     // Let the executor emit rich errors for doc-token mistakes vs OpenAI wrappers.
     const deferredToExecutor =
       useRaw.toUpperCase() === 'USE' || useRaw.startsWith('multi_tool_use.');
+    let normalized: string | null = null;
     if (!deferredToExecutor) {
-      const normalized = normalizeOperationUse(useRaw.toLowerCase()) as string;
+      normalized = normalizeOperationUse(useRaw.toLowerCase()) as string;
       if (!CANONICAL_OPS.has(normalized)) {
         const hint = hintForUnknownOp(useRaw);
         return {
           ok: false,
           error: `unknown operation at step ${id}: "${useRaw}"${hint}`,
         };
+      }
+    }
+    // replace_body must be the sole entry in its line_edits array. The
+    // intra-step rebase math (computeSingleEditNetDelta) can't compute a
+    // positional delta for replace_body until Rust backfills
+    // _resolved_body_span post-apply (see executor.ts ~L258-266), so any
+    // sibling le entry below the replace_body would shift by the wrong
+    // amount and silently corrupt the file. Enforce sole-occupant here
+    // to convert silent-corruption into a clear pre-dispatch error.
+    if (normalized === 'change.edit') {
+      const w = step.with as Record<string, unknown> | undefined;
+      if (w) {
+        const top = w.line_edits;
+        if (Array.isArray(top) && top.length > 1
+            && top.some(le => le && typeof le === 'object' && (le as Record<string, unknown>).action === 'replace_body')) {
+          return {
+            ok: false,
+            error: `change.edit step "${id}" mixes replace_body with sibling line_edits entries; replace_body must be the only entry in its step`,
+          };
+        }
+        if (w.mode === 'batch_edits' && Array.isArray(w.edits)) {
+          for (let j = 0; j < (w.edits as unknown[]).length; j++) {
+            const ed = (w.edits as Record<string, unknown>[])[j];
+            const le = ed?.line_edits;
+            if (Array.isArray(le) && le.length > 1
+                && le.some(e => e && typeof e === 'object' && (e as Record<string, unknown>).action === 'replace_body')) {
+              return {
+                ok: false,
+                error: `change.edit step "${id}" mixes replace_body with sibling line_edits entries in edits[${j}]; replace_body must be the only entry in its sub-edit`,
+              };
+            }
+          }
+        }
       }
     }
   }

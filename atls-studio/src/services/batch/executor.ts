@@ -2442,7 +2442,7 @@ export async function executeUnifiedBatch(
     if (onStepComplete) {
       const label = output.classification
         ? { pass: '[OK]', 'pass-with-warnings': '[WARN]', fail: '[FAIL]', 'tool-error': '[TOOL-ERROR]' }[output.classification]
-        : output.summary?.includes('SKIPPED') ? '[SKIP]' : (output.ok ? '[OK]' : '[FAIL]');
+        : output.skipped ? '[SKIP]' : (output.ok ? '[OK]' : '[FAIL]');
       const suffix = durationMs > 0 ? ` (${durationMs}ms)` : '';
       const text = output.summary || output.error || stepId;
       const summaryLine = `${label} ${stepId}: ${text}${suffix}`;
@@ -2462,8 +2462,16 @@ export async function executeUnifiedBatch(
   const intentCtx = buildIntentContext(ctx.store, stepOutputs);
   const intentResult = resolveIntents(request.steps, intentCtx);
   const stepsToRun = [...intentResult.expanded];
-  if (intentResult.lookahead.length > 0 && !isPressured(ctx.store)) {
+  const lookaheadPressured = intentResult.lookahead.length > 0 && isPressured(ctx.store);
+  if (intentResult.lookahead.length > 0 && !lookaheadPressured) {
     stepsToRun.push(...intentResult.lookahead);
+  } else if (lookaheadPressured) {
+    // Override resolver-side `'emitted'` reason — these steps existed but
+    // were dropped by the pressure gate. Surfaces the drop in intent_metrics
+    // so callers can see why lookaheadSteps>0 produced zero downstream reads.
+    for (const m of intentResult.metrics) {
+      if (m.lookaheadSteps > 0) m.lookaheadReason = 'pressured';
+    }
   }
 
   // Track batch size for compliance metrics
@@ -2490,7 +2498,7 @@ export async function executeUnifiedBatch(
     // Max steps check: only when model explicitly set policy.max_steps
     if (!isAutoStep && policy && isStepCountExceeded(userStepIndex, policy)) {
       const output: StepOutput = {
-        kind: 'raw', ok: false, refs: [],
+        kind: 'raw', ok: false, refs: [], skipped: true,
         summary: `${step.id}: SKIPPED (max_steps ${policy.max_steps} exceeded)`,
         error: 'max_steps exceeded',
       };
@@ -2551,7 +2559,7 @@ export async function executeUnifiedBatch(
       const condMet = evaluateCondition(step.if, stepOutputs);
       if (!condMet) {
         const output: StepOutput = {
-          kind: 'raw', ok: true, refs: [],
+          kind: 'raw', ok: true, refs: [], skipped: true,
           summary: `${step.id}: SKIPPED (condition not met)`,
         };
         stepOutputs.set(step.id, output);

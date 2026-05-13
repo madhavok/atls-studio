@@ -11,6 +11,7 @@ import type { IntentResolver, IntentResult, IntentContext, Step } from '../types
 import { AwarenessLevel } from '../snapshotTracker';
 import { makeStepId, isFileStaged, getFileAwareness, computeNextTargets, resolveAwarenessPathBySuffix } from '../intents';
 import { normalizeStepParams } from '../paramNorm';
+import { RECOVERABLE_EDIT_ERROR_CLASSES } from './editCommon';
 
 interface FileEdit {
   file_path: string;
@@ -111,14 +112,14 @@ export const resolveEditMulti: IntentResolver = (
           start_line: Math.max(1, editRange.start - 5),
           end_line: editRange.end + 5,
         },
-        if: { not: { step_ok: editId } },
+        if: { step_error_class_in: { step_id: editId, classes: RECOVERABLE_EDIT_ERROR_CLASSES } },
       });
     } else {
       steps.push({
         id: retryReadId,
         use: 'read.shaped',
         with: { file_paths: [resolvedPath], shape: 'sig' },
-        if: { not: { step_ok: editId } },
+        if: { step_error_class_in: { step_id: editId, classes: RECOVERABLE_EDIT_ERROR_CLASSES } },
       });
     }
 
@@ -126,7 +127,7 @@ export const resolveEditMulti: IntentResolver = (
       id: retryEditId,
       use: 'change.edit',
       with: { file_path: resolvedPath, line_edits: lineEdits },
-      if: { not: { step_ok: editId } },
+      if: { step_error_class_in: { step_id: editId, classes: RECOVERABLE_EDIT_ERROR_CLASSES } },
     });
   }
 

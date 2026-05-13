@@ -1029,6 +1029,12 @@ function capRemovedMarkers(
  * Append `oldShort` to a view's forwarding chain. Idempotent — re-appending
  * the same value is a no-op (tail check), so repeat reconciles at the same
  * revision don't grow the chain. Returns a new array (immutable).
+ *
+ * Cap safety: chain depth is O(distinct-legacy-migrations) because
+ * `computeFileViewHashParts` derives identity from path alone (ignoring
+ * revision). Same-file revision bumps produce priorShort === newShort,
+ * short-circuited by callers. Re-introducing revision into the hash
+ * computation would break this bound — add an explicit cap if that happens.
  */
 function appendPreviousShortHash(
   existing: string[] | undefined,

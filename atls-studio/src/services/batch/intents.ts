@@ -194,12 +194,17 @@ export function resolveIntents(
     }
 
     const totalPossible = estimateTotalSteps(step.use);
+    const lookaheadCount = result.prepareNext?.length ?? 0;
     metrics.push({
       intentName: step.use,
       totalPossibleSteps: totalPossible,
       emittedSteps: result.steps.length,
       skippedSteps: Math.max(0, totalPossible - result.steps.length),
-      lookaheadSteps: result.prepareNext?.length ?? 0,
+      lookaheadSteps: lookaheadCount,
+      // Resolver-side reason. Executor overrides to 'pressured' at the gate
+      // (see executeUnifiedBatch's lookahead guard) when isPressured()
+      // drops these steps before dispatch.
+      lookaheadReason: lookaheadCount > 0 ? 'emitted' : 'no_targets',
     });
   }
 

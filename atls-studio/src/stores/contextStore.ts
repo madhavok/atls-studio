@@ -1924,6 +1924,11 @@ function findChunkByRef<T extends { hash: string; shortHash: string }>(
  * Used by `applyFillFromChunk` / `applyFullBodyFromChunk` rebuild branches
  * and by `reconcileFileView` (via its own local helper). Keeps the chain
  * bounded by the actual number of distinct revisions the view has seen.
+ *
+ * Cap safety: under path-derived identity (`computeFileViewHashParts`
+ * ignores revision), same-file edits produce priorShort === newShort and
+ * hit the early return. Chain growth is limited to legacy-migration appends.
+ * If revision-scoped identity is ever restored, add an explicit length cap.
  */
 function appendPriorShort(
   existing: string[] | undefined,

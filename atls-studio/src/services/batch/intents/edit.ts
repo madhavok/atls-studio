@@ -14,14 +14,7 @@ import type { IntentResolver, IntentResult, IntentContext, Step } from '../types
 import { AwarenessLevel } from '../snapshotTracker';
 import { makeStepId, isFilePinned, isFileStaged, getFileAwareness, computeNextTargets } from '../intents';
 
-const RECOVERABLE_EDIT_ERROR_CLASSES = [
-  'anchor_not_found',
-  'stale_hash',
-  'range_drifted',
-  'mixed',
-  'span_out_of_range',
-  'anchor_mismatch_after_refresh',
-];
+import { RECOVERABLE_EDIT_ERROR_CLASSES } from './editCommon';
 
 export const resolveEdit: IntentResolver = (
   params: Record<string, unknown>,
