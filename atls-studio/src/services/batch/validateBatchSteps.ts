@@ -31,8 +31,7 @@ function hintForUnknownOp(useRaw: string): string {
   return '';
 }
 
-/** Minimal shape for validation (matches `Step` and loose JSON from tool args). */
-export type BatchStepLike = { id?: unknown; use?: unknown };
+export type BatchStepLike = { id?: unknown; use?: unknown; with?: unknown };
 
 /** Minimal shape for envelope-level validation (tool_use input as received). */
 export type BatchEnvelopeLike = Record<string, unknown> & {

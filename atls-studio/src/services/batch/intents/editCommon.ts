@@ -10,11 +10,11 @@
  * Used in `if: { step_error_class_in: { step_id, classes } }` conditions on
  * the conditional retry steps emitted by the edit intents.
  */
-export const RECOVERABLE_EDIT_ERROR_CLASSES = [
+export const RECOVERABLE_EDIT_ERROR_CLASSES: string[] = [
   'anchor_not_found',
   'stale_hash',
   'range_drifted',
   'mixed',
   'span_out_of_range',
   'anchor_mismatch_after_refresh',
-] as const;
+];
