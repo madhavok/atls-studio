@@ -806,8 +806,8 @@ describe('intent.edit_multi resolver', () => {
     const retryEdits = result.steps.filter(s => s.id.includes('retry_edit'));
     expect(retryReads.length).toBe(2);
     expect(retryEdits.length).toBe(2);
-    expect(retryReads[0].if).toEqual({ not: { step_ok: 'em1__edit_0' } });
-    expect(retryReads[1].if).toEqual({ not: { step_ok: 'em1__edit_1' } });
+    expect(retryReads[0].if).toEqual({ step_error_class_in: { step_id: 'em1__edit_0', classes: ['anchor_not_found', 'stale_hash', 'range_drifted', 'mixed', 'span_out_of_range', 'anchor_mismatch_after_refresh'] } });
+    expect(retryReads[1].if).toEqual({ step_error_class_in: { step_id: 'em1__edit_1', classes: ['anchor_not_found', 'stale_hash', 'range_drifted', 'mixed', 'span_out_of_range', 'anchor_mismatch_after_refresh'] } });
   });
 
   it('force:true → reads even when staged', () => {
