@@ -84,4 +84,46 @@ describe('ModelModeSelector', () => {
     fireEvent.click(screen.getByRole('button', { name: /Ask Simple Q&A/i }));
     expect(useAppStore.getState().chatMode).toBe('ask');
   });
+
+  it('keeps worker routing inside the model popover', async () => {
+    render(<ModelModeSelector />);
+    await act(async () => {
+      vi.advanceTimersByTime(520);
+      await Promise.resolve();
+    });
+
+    fireEvent.click(screen.getByTitle('Select model'));
+
+    expect(screen.getByText('Agent Routing')).toBeTruthy();
+    expect(screen.getByText('Worker:')).toBeTruthy();
+    expect(screen.queryByText('SA:')).toBeNull();
+  });
+
+  it('hides extra-high thinking when the selected model does not support it', async () => {
+    render(<ModelModeSelector />);
+    await act(async () => {
+      vi.advanceTimersByTime(520);
+      await Promise.resolve();
+    });
+
+    expect(screen.queryByRole('button', { name: 'XHi' })).toBeNull();
+  });
+
+  it('shows extra-high thinking for adaptive-thinking models', async () => {
+    useAppStore.setState({
+      settings: {
+        ...useAppStore.getState().settings,
+        selectedModel: 'claude-opus-4-7',
+        selectedProvider: 'anthropic',
+      },
+    });
+
+    render(<ModelModeSelector />);
+    await act(async () => {
+      vi.advanceTimersByTime(520);
+      await Promise.resolve();
+    });
+
+    expect(screen.getByRole('button', { name: 'XHi' })).toBeTruthy();
+  });
 });

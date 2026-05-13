@@ -449,6 +449,7 @@ export interface Agent {
 // Chat mode - matches aiService.ts (swarm is extended mode for multi-agent)
 // 'planner' is internal-only for swarm orchestrator planning phase
 export type ChatMode = 'agent' | 'designer' | 'ask' | 'reviewer' | 'retriever' | 'custom' | 'swarm' | 'refactor' | 'planner';
+export type ChatWorkspaceLayout = 'grid' | 'document';
 
 // Agent progress tracking - displayed in status card
 export interface AgentToolSummary {
@@ -1024,6 +1025,8 @@ interface AppState {
   clearWorkspace: () => void;
 
   // UI state
+  chatWorkspaceLayout: ChatWorkspaceLayout;
+  setChatWorkspaceLayout: (layout: ChatWorkspaceLayout) => void;
   quickActionsOpen: boolean;
   setQuickActionsOpen: (open: boolean) => void;
   quickFindOpen: boolean;
@@ -1859,6 +1862,8 @@ export const useAppStore = create<AppState>((set) => ({
   }),
 
   // UI State - Modals/Panels
+  chatWorkspaceLayout: 'grid',
+  setChatWorkspaceLayout: (layout) => set({ chatWorkspaceLayout: layout }),
   quickActionsOpen: false,
   setQuickActionsOpen: (open) => set({ quickActionsOpen: open }),
   quickFindOpen: false,

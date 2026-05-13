@@ -2846,6 +2846,15 @@ export async function executeUnifiedBatch(
       }
     }
 
+    if (step.use.startsWith('delegate.')) {
+      ctx.onSubagentProgress?.(step.id, {
+        toolName: step.use,
+        status: `Starting ${step.use}`,
+        round: 0,
+        done: false,
+      });
+    }
+
     let output: StepOutput;
     try {
       output = await handler(mergedParams, ctx, step.id);

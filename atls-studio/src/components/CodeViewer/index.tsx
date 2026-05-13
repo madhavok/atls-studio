@@ -7,10 +7,9 @@ import { invoke } from '@tauri-apps/api/core';
 import { type UnlistenFn } from '@tauri-apps/api/event';
 import { safeListen } from '../../utils/tauri';
 import { useAppStore } from '../../stores/appStore';
-import { useSwarmStore } from '../../stores/swarmStore';
 import { MarkdownMessage } from '../AiChat/MarkdownMessage';
 import { AtlsInternals, INTERNALS_TAB_ID } from '../AtlsInternals';
-import { SwarmPanel } from '../SwarmPanel';
+import { OrchestrationCockpit } from '../OrchestrationCockpit';
 import { SwarmErrorBoundary } from '../SwarmPanel/SwarmErrorBoundary';
 import { SWARM_ORCHESTRATION_TAB_ID } from '../../constants/swarmOrchestrationTab';
 import { normalizeEditorPath, toEditorModelPath } from './codeViewerPaths';
@@ -57,7 +56,6 @@ export function CodeViewer() {
   const chatMode = useAppStore((s) => s.chatMode);
   const designPreviewContent = useAppStore((s) => s.designPreviewContent);
   const editorTheme = useAppStore((s) => s.settings.theme === 'light' ? 'vs' : 'vs-dark');
-  const swarmActive = useSwarmStore((s) => s.isActive);
   const [fileContents, setFileContents] = useState<Record<string, string>>({});
   const [designPreviewTabActive, setDesignPreviewTabActive] = useState(false);
   const [originalContents, setOriginalContents] = useState<Record<string, string>>({});
@@ -488,7 +486,6 @@ export function CodeViewer() {
 
   // Handle close with unsaved changes
   const handleCloseFile = useCallback((file: string) => {
-    if (file === SWARM_ORCHESTRATION_TAB_ID && swarmActive) return;
     if (isDirty(file)) {
       const confirmed = window.confirm(
         `"${file.split('/').pop()}" has unsaved changes.\n\nDiscard changes and close?`
@@ -511,7 +508,7 @@ export function CodeViewer() {
       return next;
     });
     closeFile(file);
-  }, [closeFile, isDirty, normalizePath, swarmActive]);
+  }, [closeFile, isDirty, normalizePath]);
 
   const isInternalsActive = activeFile === INTERNALS_TAB_ID;
   const isSwarmTabActive = activeFile === SWARM_ORCHESTRATION_TAB_ID;
@@ -545,7 +542,7 @@ export function CodeViewer() {
     if (file === INTERNALS_TAB_ID) {
       tabs.push({ id: INTERNALS_TAB_ID, label: 'ATLS Internals', isInternals: true });
     } else if (file === SWARM_ORCHESTRATION_TAB_ID) {
-      tabs.push({ id: SWARM_ORCHESTRATION_TAB_ID, label: 'Swarm Orchestration', isSwarmOrchestration: true });
+      tabs.push({ id: SWARM_ORCHESTRATION_TAB_ID, label: 'Orchestration Cockpit', isSwarmOrchestration: true });
     } else {
       tabs.push({ id: file, label: file.split(/[/\\]/).pop() || file });
     }
@@ -585,7 +582,7 @@ export function CodeViewer() {
             >
               {/* Swarm tab icon */}
               {tab.isSwarmOrchestration && (
-                <span className="text-sm">🐝</span>
+                <span className="font-mono text-[10px] text-studio-title">OC</span>
               )}
               {/* Internals tab icon */}
               {tab.isInternals && (
@@ -604,30 +601,28 @@ export function CodeViewer() {
                 {tab.label}
                 {fileIsDirty && !fileIsSaving && <span className="ml-1 text-studio-accent">*</span>}
               </span>
-              {/* Hide close button for swarm tab while active */}
-              {!(tab.isSwarmOrchestration && swarmActive) && (
-                <button
-                  className={`
-                    p-0.5 rounded hover:bg-studio-border
-                    ${isActive ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}
-                  `}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    if (tab.isDesign) {
-                      useAppStore.getState().clearDesignPreview();
-                      setDesignPreviewTabActive(false);
-                      const fallbackFile = openFiles.find((file) => file !== tab.id);
-                      if (fallbackFile) {
-                        setActiveFile(fallbackFile);
-                      }
-                    } else {
-                      handleCloseFile(tab.id);
+              <button
+                className={`
+                  p-0.5 rounded hover:bg-studio-border
+                  ${isActive ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}
+                `}
+                title={`Close ${tab.label}`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (tab.isDesign) {
+                    useAppStore.getState().clearDesignPreview();
+                    setDesignPreviewTabActive(false);
+                    const fallbackFile = openFiles.find((file) => file !== tab.id);
+                    if (fallbackFile) {
+                      setActiveFile(fallbackFile);
                     }
-                  }}
-                >
-                  <CloseIcon className="w-3 h-3" />
-                </button>
-              )}
+                  } else {
+                    handleCloseFile(tab.id);
+                  }
+                }}
+              >
+                <CloseIcon className="w-3 h-3" />
+              </button>
             </div>
           );
         })}
@@ -639,7 +634,7 @@ export function CodeViewer() {
         <div className="flex-1 flex flex-col relative min-h-0 overflow-hidden">
           {isSwarmTabActive ? (
             <SwarmErrorBoundary>
-              <SwarmPanel />
+              <OrchestrationCockpit />
             </SwarmErrorBoundary>
           ) : isInternalsActive ? (
             <AtlsInternals />

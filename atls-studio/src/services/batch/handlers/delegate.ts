@@ -196,6 +196,12 @@ async function runDelegate(
       token_budget: typeof params.token_budget === 'number' ? params.token_budget as number : undefined,
       fileClaims: ctx?.fileClaims,
     }, onProgress);
+    ctx?.onSubagentProgress?.(stepId ?? role, {
+      toolName: `delegate.${role === 'retriever' ? 'retrieve' : role}`,
+      status: `${role}: complete (${result.rounds} rounds, ${result.toolCalls} tools)`,
+      round: result.rounds,
+      done: true,
+    } satisfies SubAgentProgressEvent);
 
     const pinnedHashes = result.refs
       .filter(r => r.pinned || r.type === 'staged')

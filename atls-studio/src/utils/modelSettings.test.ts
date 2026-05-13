@@ -240,9 +240,9 @@ describe('resolveModelSettings', () => {
     expect(r.thinkingBudget).toBe(24_576);
   });
 
-  it('sets extra-high thinkingBudget for Google', () => {
+  it('clamps extra-high thinkingBudget for Google to highest supported level', () => {
     const r = resolveModelSettings('medium', 'xhigh', 'gemini-2.5-pro', 'google');
-    expect(r.thinkingBudget).toBe(32_768);
+    expect(r.thinkingBudget).toBe(24_576);
   });
 
   it('omits thinkingBudget when thinking is off for Google', () => {

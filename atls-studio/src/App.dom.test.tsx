@@ -77,7 +77,7 @@ vi.mock('./components/CodeViewer', async () => {
       }
       return (
         <div data-testid="m-cv">
-          {activeFile === SWARM_ORCHESTRATION_TAB_ID ? <div data-testid="m-swarm" /> : null}
+          {activeFile === SWARM_ORCHESTRATION_TAB_ID ? <div data-testid="m-cockpit" /> : null}
         </div>
       );
     },
@@ -85,6 +85,9 @@ vi.mock('./components/CodeViewer', async () => {
 });
 vi.mock('./components/AtlsPanel', () => ({ AtlsPanel: () => <div data-testid="m-atls" /> }));
 vi.mock('./components/AiChat', () => ({ AiChat: () => <div data-testid="m-aichat" /> }));
+vi.mock('./components/ChatGridWorkspace', () => ({
+  ChatGridWorkspace: (p: { variant?: string }) => <div data-testid={`m-chat-grid-${p.variant ?? 'primary'}`} />,
+}));
 vi.mock('./components/Settings', () => ({
   Settings: (p: { isOpen: boolean }) => (p.isOpen ? <div data-testid="m-settings" /> : null),
 }));
@@ -165,6 +168,7 @@ function resetAppStores() {
     files: [],
     activeFile: null,
     chatMode: 'agent',
+    chatWorkspaceLayout: 'grid',
   });
   useAppStore.setState({
     settings: { ...useAppStore.getState().settings, theme: 'dark' },
@@ -246,7 +250,13 @@ describe('App shell', () => {
     expect(resetStaticPromptCache).toHaveBeenCalled();
   });
 
-  it('loads swarm panel when chatMode swarm and swarm active', () => {
+  it('uses chat grid as the primary workspace when no document is focused', () => {
+    render(<App />);
+    expect(screen.getByTestId('m-chat-grid-primary')).toBeTruthy();
+    expect(screen.queryByTestId('m-chat-grid-dock')).toBeNull();
+  });
+
+  it('loads orchestration cockpit when chatMode swarm and swarm active', () => {
     useAppStore.setState({
       chatMode: 'swarm',
       openFiles: [SWARM_ORCHESTRATION_TAB_ID],
@@ -254,7 +264,8 @@ describe('App shell', () => {
     });
     useSwarmStore.setState({ isActive: true });
     render(<App />);
-    expect(screen.getByTestId('m-swarm')).toBeTruthy();
+    expect(screen.getByTestId('m-cockpit')).toBeTruthy();
+    expect(screen.getByTestId('m-chat-grid-dock')).toBeTruthy();
   });
 
   it('uses mac top layout and menu-event listener', async () => {
@@ -289,13 +300,12 @@ describe('App shell', () => {
     expect(useAppStore.getState().terminalOpen).toBe(true);
   });
 
-  it('shows chat collapse when swarm+swarm mode', () => {
-    useAppStore.setState({ chatMode: 'swarm' });
-    useSwarmStore.setState({ isActive: true });
+  it('shows chat grid collapse when a document is focused', () => {
+    useAppStore.setState({ activeFile: 'src/App.tsx', openFiles: ['src/App.tsx'] });
     render(<App />);
-    const collapse = screen.getByTitle('Collapse Chat');
+    const collapse = screen.getByTitle('Collapse Chat Grid');
     fireEvent.click(collapse);
-    const expand = screen.getByTitle('Expand Chat');
+    const expand = screen.getByTitle('Expand Chat Grid');
     fireEvent.click(expand);
   });
 });

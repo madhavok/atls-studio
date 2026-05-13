@@ -1320,6 +1320,12 @@ export interface StreamCallbacks {
   onStepEnd?: () => void;
   onStreamError?: (errorText: string) => void;
   onStatus?: (message: string) => void;
+  onStreamId?: (streamId: string) => void;
+}
+
+export interface StreamChatOptions {
+  allowConcurrent?: boolean;
+  abortSignal?: AbortSignal;
 }
 
 export interface AIConfig {
@@ -1569,6 +1575,21 @@ function createChatSession(isSwarm: boolean): ChatSessionContext {
   return session;
 }
 
+function createConcurrentChatSession(isSwarm: boolean, abortSignal?: AbortSignal): ChatSessionContext {
+  const controller = new AbortController();
+  if (abortSignal) {
+    if (abortSignal.aborted) controller.abort();
+    else abortSignal.addEventListener('abort', () => controller.abort(), { once: true });
+  }
+  return {
+    abortController: controller,
+    activeStreamIds: new Set(),
+    isSwarmAgent: isSwarm,
+    toolLoopState: null,
+    sessionId: ++_nextSessionId,
+  };
+}
+
 /** Get the active session's abort signal. Safe for guards. */
 export function getActiveSession(): ChatSessionContext | null {
   return _activeSession;
@@ -1743,6 +1764,7 @@ async function streamChatViaTauri(
   callbacks: StreamCallbacks,
   mode: ChatMode = 'agent',
   dynamicContextInput?: { workspaceContext?: WorkspaceContext; projectTree?: string; isFirstTurn?: boolean },
+  options?: StreamChatOptions,
 ): Promise<void> {
   // Guarantee cross-store accessors are wired before any tool/context resolution
   ensureAiServiceWiring();
@@ -1771,15 +1793,19 @@ async function streamChatViaTauri(
   // Reset continuation state when starting new chat
   useAppStore.getState().setAgentCanContinue(false);
 
-  // Create scoped session context (replaces legacy module globals atomically)
-  const session = createChatSession(false);
+  const concurrent = Boolean(options?.allowConcurrent);
+  // Create scoped session context. Legacy main chat remains singleton; agent windows opt into concurrent local sessions.
+  const session = concurrent
+    ? createConcurrentChatSession(false, options?.abortSignal)
+    : createChatSession(false);
   const abortSignal = session.abortController.signal;
 
-  const sessionId = useAppStore.getState().incrementChatSession();
+  const sessionId = concurrent ? session.sessionId : useAppStore.getState().incrementChatSession();
   session.sessionId = sessionId;
 
   // Check that our session is still active (false after stopChat or when a new chat replaced us)
   const isSessionValid = () => {
+    if (concurrent) return !abortSignal.aborted;
     const active = getActiveSession();
     return active !== null && active.sessionId === sessionId;
   };
@@ -2107,6 +2133,7 @@ async function streamChatViaTauri(
       
       const streamId = crypto.randomUUID();
       session.activeStreamIds.add(streamId);
+      safeCallbacks.onStreamId?.(streamId);
       const pendingToolCalls: Map<number, PendingToolCall> = new Map();
       let needsToolResults = false;
       let assistantTextContent = '';
@@ -3341,7 +3368,8 @@ async function streamChatViaTauri(
       }
     }
   } finally {
-    const shouldNotifyDone = _activeSession === session;
+    const shouldNotifyDone = concurrent || _activeSession === session;
+    const shouldTouchGlobalEndState = !concurrent && _activeSession === session;
 
     if (shouldNotifyDone) {
       callbacks.onDone();
@@ -3351,7 +3379,7 @@ async function streamChatViaTauri(
     // by Anthropic with the compressed bytes. On the next user turn we reuse
     // this compressed history instead of rebuilding from UI messages (which
     // would produce uncompressed content → different bytes → cache miss).
-    if (shouldNotifyDone && conversationHistory.length > 0) {
+    if (shouldTouchGlobalEndState && conversationHistory.length > 0) {
       try {
         compressToolLoopHistory(conversationHistory, undefined, priorTurnBoundary);
         _endOfTurnHistory = structuredClone(conversationHistory);
@@ -3368,7 +3396,7 @@ async function streamChatViaTauri(
 
     // Prune low-value context chunks on natural completion
     const finalStatus = useAppStore.getState().agentProgress.stoppedReason;
-    if (shouldNotifyDone && finalStatus === 'completed') {
+    if (shouldTouchGlobalEndState && finalStatus === 'completed') {
       const pruned = useContextStore.getState().pruneObsoleteTaskArtifacts();
       if (pruned.compacted > 0 || pruned.dropped > 0) {
         console.log(`[aiService] Post-completion prune: compacted=${pruned.compacted} dropped=${pruned.dropped} freed=${pruned.freedTokens}tk`);
@@ -3377,13 +3405,13 @@ async function streamChatViaTauri(
 
     // Only clear global state if this session is still active (prevents race where
     // a newer session started and this stale session would overwrite its state)
-    if (shouldNotifyDone) {
+    if (shouldTouchGlobalEndState) {
       _activeSession = null;
       currentAbortController = null;
       setRoundRefreshRevisionResolver(null);
     }
     session.activeStreamIds.clear();
-    if (_activeSession === session || _activeSession === null) {
+    if (!concurrent && (_activeSession === session || _activeSession === null)) {
       _toolLoopState = null;
       useAppStore.getState().setToolLoopSteering(null);
     }
@@ -4514,7 +4542,8 @@ export async function streamChat(
   messages: ChatMessage[],
   callbacks: StreamCallbacks,
   workspaceContext?: WorkspaceContext,
-  mode: ChatMode = 'agent'
+  mode: ChatMode = 'agent',
+  options?: StreamChatOptions,
 ): Promise<void> {
   let systemPrompt = config.systemPrompt;
   let dynamicContextBlock = '';
@@ -4577,7 +4606,7 @@ export async function streamChat(
     workspaceContext,
     projectTree,
     isFirstTurn,
-  });
+  }, options);
 }
 
 /**

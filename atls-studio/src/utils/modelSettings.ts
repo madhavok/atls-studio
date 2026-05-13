@@ -84,6 +84,23 @@ export function supportsThinking(modelId: string, provider: AIProvider): boolean
   }
 }
 
+export function supportsExtraHighThinking(modelId: string, provider: AIProvider): boolean {
+  return supportsAdaptiveThinking(modelId, provider);
+}
+
+export function getSupportedThinkingLevels(modelId: string, provider: AIProvider): ThinkingLevel[] {
+  if (!supportsThinking(modelId, provider)) return ['off'];
+  const levels: ThinkingLevel[] = ['off', 'low', 'medium', 'high'];
+  if (supportsExtraHighThinking(modelId, provider)) levels.push('xhigh');
+  return levels;
+}
+
+export function clampThinkingLevel(level: ThinkingLevel, modelId: string, provider: AIProvider): ThinkingLevel {
+  const supported = getSupportedThinkingLevels(modelId, provider);
+  if (supported.includes(level)) return level;
+  return supported[supported.length - 1] ?? 'off';
+}
+
 // ---------------------------------------------------------------------------
 // Preset → provider value converters
 // ---------------------------------------------------------------------------
@@ -166,6 +183,7 @@ export function resolveModelSettings(
   maxTokens?: number,
 ): ResolvedModelSettings {
   const result: ResolvedModelSettings = {};
+  const supportedThinking = clampThinkingLevel(thinking, modelId, provider);
 
   if (supportsVerbosity(modelId)) {
     result.outputVerbosity = speedToOpenAIVerbosity(speed) as OutputSpeedLevel;
@@ -178,14 +196,14 @@ export function resolveModelSettings(
       if (supportsAdaptiveThinking(modelId, provider)) {
         // Adaptive-thinking models: use output_config.effort + thinking.type=adaptive.
         // budget_tokens is rejected (Opus 4.7) or deprecated (Opus 4.6, Sonnet 4.6).
-        const effort = thinkingToAnthropicEffort(thinking);
+        const effort = thinkingToAnthropicEffort(supportedThinking);
         if (effort != null) result.reasoningEffort = effort;
         // Signal explicitly that no budget is in play so Rust doesn't try to
         // attach the legacy thinking block.
         result.thinkingBudget = null;
         break;
       }
-      let budget = thinkingToAnthropicBudget(thinking);
+      let budget = thinkingToAnthropicBudget(supportedThinking);
       if (budget != null) {
         if (budget < 1024) budget = 1024;
         if (maxTokens != null && budget >= maxTokens) budget = maxTokens - 1;
@@ -195,12 +213,12 @@ export function resolveModelSettings(
       break;
     }
     case 'openai': {
-      result.reasoningEffort = thinkingToOpenAIEffort(thinking) ?? undefined;
+      result.reasoningEffort = thinkingToOpenAIEffort(supportedThinking) ?? undefined;
       break;
     }
     case 'google':
     case 'vertex': {
-      result.thinkingBudget = thinkingToGeminiBudget(thinking);
+      result.thinkingBudget = thinkingToGeminiBudget(supportedThinking);
       break;
     }
     default:

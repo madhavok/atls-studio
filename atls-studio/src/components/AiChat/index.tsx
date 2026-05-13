@@ -14,6 +14,7 @@ import { Settings } from '../Settings';
 import { useAtls } from '../../hooks/useAtls';
 import { useChatPersistence } from '../../hooks/useChatPersistence';
 import { chatDb } from '../../services/chatDb';
+import { handleDelegateToolCall, handleSubAgentProgress } from '../../services/agentDelegateBridge';
 import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWebview } from '@tauri-apps/api/webview';
 import { open as openFileDialog } from '@tauri-apps/plugin-dialog';
@@ -24,6 +25,10 @@ import { HashRefText } from './HashRefInline';
 import { tierTooltip } from './metricsLabels';
 import { SignatureView } from '../SignatureView';
 import { ImageAttachment } from '../ImageAttachment';
+import {
+  SwarmExecutionProgress as SharedSwarmExecutionProgress,
+  SwarmResearchProgress as SharedSwarmResearchProgress,
+} from '../OrchestrationCockpit/SwarmProgress';
 import { formatTokens } from '../../utils/toolTokenMetrics';
 import {
   getEffectiveContextWindow,
@@ -32,7 +37,7 @@ import {
   modelSupportsExtendedContext,
 } from '../../utils/modelCapabilities';
 import { getPricingProviderForModel } from '../../utils/pricingProvider';
-import { resolveModelSettings, type OutputSpeedLevel, type ThinkingLevel } from '../../utils/modelSettings';
+import { clampThinkingLevel, getSupportedThinkingLevels, resolveModelSettings, type OutputSpeedLevel, type ThinkingLevel } from '../../utils/modelSettings';
 import { useRoundHistoryStore } from '../../stores/roundHistoryStore';
 import { serializeForTokenEstimate } from '../../utils/toon';
 import {
@@ -313,6 +318,26 @@ const AgentStatusCard = memo(function AgentStatusCard() {
           )}
         </div>
       )}
+    </div>
+  );
+});
+
+const SessionRoundStrip = memo(function SessionRoundStrip() {
+  const progress = useAppStore((s) => s.agentProgress);
+  const promptMetrics = useAppStore((s) => s.promptMetrics);
+  const isGenerating = useAppStore((s) => s.isGenerating);
+  const messages = useAppStore((s) => s.messages);
+  const totalRounds = promptMetrics.roundCount || messages.filter((message) => message.role === 'assistant').length;
+  const activeRounds = isGenerating ? Math.max(1, progress.round || 0) : 0;
+
+  return (
+    <div className="shrink-0 border-b border-studio-border/70 bg-studio-bg/60 px-3 py-1.5">
+      <div className="flex items-center justify-between gap-2 font-mono text-[10px] uppercase tracking-[0.16em] text-studio-muted">
+        <span>Session Rounds</span>
+        <span className="text-studio-title" title="Active session rounds / total session rounds">
+          active {activeRounds} / total {totalRounds}
+        </span>
+      </div>
     </div>
   );
 });
@@ -1275,15 +1300,15 @@ const MessageToolCallBubble = memo(function MessageToolCallBubble({ toolCall }: 
   return (
     <div className="my-0.5">
       <div 
-        className={`flex items-center gap-2 px-2 py-1 rounded text-xs cursor-pointer
+        className={`flex items-center gap-2 px-2 py-1 rounded border text-[11px] cursor-pointer
           ${toolCall.status === 'completed' 
-            ? 'bg-studio-accent/10 border border-studio-accent/30 text-studio-text/70' 
-            : 'bg-studio-error/10 border border-studio-error/30 text-studio-error'
+            ? 'bg-studio-bg/60 border-studio-border/70 text-studio-text/75' 
+            : 'bg-red-500/10 border-red-500/30 text-red-300'
           }`}
         onClick={() => setExpanded(!expanded)}
       >
         {toolCall.status === 'completed' ? <CheckIcon /> : <ErrorIcon />}
-        <span className="font-medium">{friendly}</span>
+        <span className="font-mono uppercase tracking-[0.12em] text-[10px]">{friendly}</span>
         {detail && <span className="text-studio-muted truncate max-w-[150px]">{truncate(detail)}</span>}
         <svg 
           className={`w-3 h-3 transition-transform ml-auto ${expanded ? 'rotate-180' : ''}`}
@@ -1293,7 +1318,7 @@ const MessageToolCallBubble = memo(function MessageToolCallBubble({ toolCall }: 
         </svg>
       </div>
       {expanded && toolCall.result && (
-        <pre className="mt-1 p-2 text-[10px] bg-studio-bg rounded overflow-x-auto max-h-32 scrollbar-thin whitespace-pre-wrap">
+        <pre className="mt-1 p-2 text-[10px] bg-studio-bg rounded border border-studio-border/50 overflow-x-auto max-h-32 scrollbar-thin whitespace-pre-wrap">
           {truncateToolResult(toolCall.result)}
         </pre>
       )}
@@ -1967,7 +1992,13 @@ const SubAgentCard = memo(function SubAgentCard({ toolCall, liveTrace }: { toolC
   const statusText = SUBAGENT_STATUS_TEXT[subType] || 'working...';
 
   const subagentSpeed = settings.subagentOutputSpeed ?? settings.modelOutputSpeed ?? 'medium';
-  const subagentThinking = settings.subagentThinking ?? settings.modelThinking ?? 'medium';
+  const subagentProvider = (settings.subagentProvider || settings.selectedProvider) as AIProvider;
+  const subagentModel = settings.subagentModel || settings.selectedModel;
+  const supportedSubagentThinking = getSupportedThinkingLevels(subagentModel, subagentProvider);
+  const requestedSubagentThinking = settings.subagentThinking ?? settings.modelThinking ?? 'medium';
+  const subagentThinking = supportedSubagentThinking.includes(requestedSubagentThinking)
+    ? requestedSubagentThinking
+    : supportedSubagentThinking[supportedSubagentThinking.length - 1] ?? 'off';
   const hasSubagentSpdThkOverride =
     settings.subagentOutputSpeed !== undefined || settings.subagentThinking !== undefined;
 
@@ -1976,13 +2007,13 @@ const SubAgentCard = memo(function SubAgentCard({ toolCall, liveTrace }: { toolC
     { id: 'medium', label: 'Med', title: 'Medium — balanced verbosity (subagent)' },
     { id: 'high', label: 'Hi', title: 'High — detailed, verbose responses (subagent)' },
   ];
-  const thinkingLevels: { id: ThinkingLevel; label: string; title: string }[] = [
+  const thinkingLevels = ([
     { id: 'off', label: 'Off', title: 'No extended thinking (subagent)' },
     { id: 'low', label: 'Lo', title: 'Low reasoning budget (subagent)' },
     { id: 'medium', label: 'Med', title: 'Medium reasoning budget (subagent)' },
     { id: 'high', label: 'Hi', title: 'High reasoning budget (subagent)' },
     { id: 'xhigh', label: 'XHi', title: 'Extra-high reasoning budget where supported (subagent)' },
-  ];
+  ] as { id: ThinkingLevel; label: string; title: string }[]).filter((level) => supportedSubagentThinking.includes(level.id));
   const speedColor = (id: OutputSpeedLevel) =>
     subagentSpeed === id
       ? id === 'low'
@@ -2082,7 +2113,9 @@ const SubAgentCard = memo(function SubAgentCard({ toolCall, liveTrace }: { toolC
               <button
                 key={l.id}
                 type="button"
-                onClick={() => useAppStore.getState().setSettings({ subagentThinking: l.id })}
+                onClick={() => useAppStore.getState().setSettings({
+                  subagentThinking: clampThinkingLevel(l.id, subagentModel, subagentProvider),
+                })}
                 title={l.title}
                 className={`px-1.5 py-0.5 text-[9px] font-medium transition-colors ${thinkColor(l.id)}`}
               >
@@ -2250,14 +2283,14 @@ const ToolSegmentBubble = memo(function ToolSegmentBubble({ toolCall }: { toolCa
   };
 
   return (
-    <div className="rounded-lg border overflow-hidden transition-colors">
+    <div className="rounded border border-studio-border/70 overflow-hidden transition-colors bg-studio-bg/40">
       {/* Header - clickable to expand */}
       <div 
-        className={`flex items-center gap-2 px-3 py-2 ${getStatusStyles()} ${hasDetails ? 'cursor-pointer hover:opacity-80' : ''}`}
+        className={`flex items-center gap-2 px-2 py-1.5 ${getStatusStyles()} ${hasDetails ? 'cursor-pointer hover:opacity-80' : ''}`}
         onClick={() => hasDetails && setExpanded(!expanded)}
       >
         {getStatusIcon()}
-        <span className="font-medium text-sm">{friendly}</span>
+        <span className="font-mono text-[10px] uppercase tracking-[0.14em]">{friendly}</span>
         {getStatusLabel() && <span className="text-xs text-studio-muted italic">{getStatusLabel()}</span>}
         {/* Always show detail when present — hiding it on failed/pending hid batch step hints (only "ATLS" + Failed). */}
         {detail && <span className="text-xs text-studio-muted truncate max-w-[200px]" title={detail}>{truncate(detail)}</span>}
@@ -2277,7 +2310,7 @@ const ToolSegmentBubble = memo(function ToolSegmentBubble({ toolCall }: { toolCa
           {toolCall.args && (
             <div>
               <div className="text-[10px] text-studio-muted uppercase tracking-wide mb-1">Arguments</div>
-              <pre className="text-[11px] bg-studio-surface/50 rounded p-2 overflow-x-auto max-h-32 scrollbar-thin whitespace-pre-wrap">
+              <pre className="text-[11px] bg-studio-surface/50 rounded border border-studio-border/40 p-2 overflow-x-auto max-h-32 scrollbar-thin whitespace-pre-wrap">
                 {formatArgs(toolCall.args)}
               </pre>
             </div>
@@ -2285,7 +2318,7 @@ const ToolSegmentBubble = memo(function ToolSegmentBubble({ toolCall }: { toolCa
           {toolCall.result && (
             <div>
               <div className="text-[10px] text-studio-muted uppercase tracking-wide mb-1">Result</div>
-              <pre className="text-[11px] bg-studio-surface/50 rounded p-2 overflow-x-auto max-h-48 scrollbar-thin whitespace-pre-wrap">
+              <pre className="text-[11px] bg-studio-surface/50 rounded border border-studio-border/40 p-2 overflow-x-auto max-h-48 scrollbar-thin whitespace-pre-wrap">
                 {toolCall.result.length > 1000 ? toolCall.result.substring(0, 1000) + '...' : toolCall.result}
               </pre>
             </div>
@@ -3381,9 +3414,13 @@ export function AiChat() {
           const trace = subagentProgressByStepRef.current.get(stepId) ?? [];
           if (trace.length < SUBAGENT_PROGRESS_TRACE_CAP) trace.push(progress);
           subagentProgressByStepRef.current.set(stepId, trace);
+          handleSubAgentProgress(useAppStore.getState().currentSessionId, stepId, progress);
           segmentsRevisionRef.current++;
         },
         onToolCall: (toolCall) => {
+          const parentSessionId = useAppStore.getState().currentSessionId;
+          handleDelegateToolCall(parentSessionId, toolCall);
+          toolCall.syntheticChildren?.forEach((child) => handleDelegateToolCall(parentSessionId, child));
           const existing = messageToolCalls.get(toolCall.id);
           messageToolCalls.set(toolCall.id, {
             id: toolCall.id,
@@ -3771,9 +3808,13 @@ export function AiChat() {
           const trace = subagentProgressByStepRef.current.get(stepId) ?? [];
           if (trace.length < SUBAGENT_PROGRESS_TRACE_CAP) trace.push(progress);
           subagentProgressByStepRef.current.set(stepId, trace);
+          handleSubAgentProgress(useAppStore.getState().currentSessionId, stepId, progress);
           segmentsRevisionRef.current++;
         },
         onToolCall: (toolCall) => {
+          const parentSessionId = useAppStore.getState().currentSessionId;
+          handleDelegateToolCall(parentSessionId, toolCall);
+          toolCall.syntheticChildren?.forEach((child) => handleDelegateToolCall(parentSessionId, child));
           const existing = messageToolCalls.get(toolCall.id);
           messageToolCalls.set(toolCall.id, {
             id: toolCall.id,
@@ -4179,11 +4220,7 @@ export function AiChat() {
         </div>
       )}
 
-      {/* Agent Progress Status Card - fixed at top, outside scroll area */}
-      <AgentStatusCard />
-      
-      {/* Context/Task/Blackboard Panel */}
-      <ContextPanel />
+      <SessionRoundStrip />
       
       {/* Undo restore banner */}
       {restoreUndoStack && (
@@ -4239,10 +4276,10 @@ export function AiChat() {
             />
 
             {/* Live swarm research progress - shows during research/planning phases */}
-            <SwarmResearchProgress />
+            <SharedSwarmResearchProgress />
             
             {/* Live swarm execution progress - shows during running phase */}
-            <SwarmExecutionProgress />
+            <SharedSwarmExecutionProgress />
             
             {/* Streaming response with inline tool calls */}
             <StreamingBubble

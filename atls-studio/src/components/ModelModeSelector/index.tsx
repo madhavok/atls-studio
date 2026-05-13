@@ -10,7 +10,12 @@ import {
 } from '../../utils/modelCapabilities';
 import { useSwarmStore, type AgentRole } from '../../stores/swarmStore';
 import { useRefactorStore } from '../../stores/refactorStore';
-import type { OutputSpeedLevel, ThinkingLevel } from '../../utils/modelSettings';
+import {
+  clampThinkingLevel,
+  getSupportedThinkingLevels,
+  type OutputSpeedLevel,
+  type ThinkingLevel,
+} from '../../utils/modelSettings';
 
 // Icons
 const ChevronDownIcon = () => (
@@ -130,6 +135,44 @@ const DEFAULT_SUBAGENT_MODELS: Record<AIProvider, string> = {
   lmstudio: 'default',
 };
 
+function CompactModelPicker({
+  models,
+  value,
+  onSelect,
+}: {
+  models: ModelInfo[];
+  value: string;
+  onSelect: (model: ModelInfo) => void;
+}) {
+  return (
+    <div className="max-h-36 overflow-y-auto rounded-lg border border-studio-border bg-studio-bg/70 scrollbar-thin">
+      {models.map((model) => {
+        const modelValue = `${model.provider}:${model.id}`;
+        const selected = modelValue === value;
+        return (
+          <button
+            key={`${model.provider}:${model.id}`}
+            type="button"
+            onClick={() => onSelect(model)}
+            className={`flex w-full items-center justify-between gap-2 px-2 py-1.5 text-left text-xs transition-colors hover:bg-studio-accent/15 ${
+              selected ? 'bg-studio-accent/15 text-studio-accent' : 'text-studio-text'
+            }`}
+          >
+            <span className="min-w-0 truncate">
+              <span className={PROVIDER_COLORS[model.provider]}>{PROVIDER_BADGES[model.provider]}</span>
+              <span className="mx-1 text-studio-muted">/</span>
+              <span>{model.name}</span>
+            </span>
+            {model.contextWindow && (
+              <span className="shrink-0 font-mono text-[10px] text-studio-muted">{(model.contextWindow / 1000).toFixed(0)}K</span>
+            )}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 function SubAgentModelSelector({ models, inline }: { models: ModelInfo[]; inline?: boolean }) {
   const { settings, setSettings } = useAppStore();
   const [open, setOpen] = useState(false);
@@ -161,9 +204,9 @@ function SubAgentModelSelector({ models, inline }: { models: ModelInfo[]; inline
         <button
           onClick={() => setOpen(!open)}
           className="flex items-center gap-1 px-2 py-1 rounded hover:bg-studio-surface transition-colors text-studio-text text-xs"
-          title="SubAgent model for retriever/design dispatch"
+          title="Worker model for delegated agent routing"
         >
-          <span className="text-teal-400">SA:</span>
+          <span className="text-teal-400">Worker:</span>
           <span className="truncate max-w-[140px]" title={isDisabled ? 'SubAgent disabled' : (currentModel === 'auto' ? 'Auto (cheapest from provider)' : (models.find(m => m.id === currentModel)?.name || currentModel))}>{displayName}</span>
           <ChevronDownIcon />
         </button>
@@ -171,8 +214,8 @@ function SubAgentModelSelector({ models, inline }: { models: ModelInfo[]; inline
         {open && (
           <div className="absolute bottom-full left-0 mb-1 w-56 bg-studio-surface border border-studio-border rounded-lg shadow-xl z-50 max-h-64 overflow-y-auto scrollbar-thin">
             <div className="px-3 py-2 border-b border-studio-border/50">
-              <div className="text-[10px] text-studio-muted uppercase tracking-wide">SubAgent Model</div>
-              <div className="text-[10px] text-studio-muted">Cheap model for retriever/design dispatch</div>
+              <div className="text-[10px] text-studio-muted uppercase tracking-wide">Worker Model</div>
+              <div className="text-[10px] text-studio-muted">Delegated agent routing model</div>
             </div>
 
             {/* None — disable subagent */}
@@ -236,24 +279,30 @@ function SubAgentModelSelector({ models, inline }: { models: ModelInfo[]; inline
 /** Spd / Thk / EM for SubAgent row — same controls as main model; optional overrides in settings. */
 function SubAgentGenerationSettings({ disabled }: { disabled: boolean }) {
   const settings = useAppStore((s) => s.settings);
+  const availableModels = useAppStore((s) => s.availableModels);
   const setSettings = useAppStore((s) => s.setSettings);
 
   const speed = settings.subagentOutputSpeed ?? settings.modelOutputSpeed ?? 'medium';
   const thinking = settings.subagentThinking ?? settings.modelThinking ?? 'medium';
   const depth = settings.subagentEntryManifestDepth ?? settings.entryManifestDepth ?? 'sigs';
+  const subagentProvider = (settings.subagentProvider || settings.selectedProvider) as AIProvider;
+  const subagentModel = settings.subagentModel || DEFAULT_SUBAGENT_MODELS[subagentProvider] || settings.selectedModel;
+  const subagentModelInfo = availableModels.find((model) => model.id === subagentModel);
+  const supportedThinking = getSupportedThinkingLevels(subagentModel, subagentModelInfo?.provider ?? subagentProvider);
+  const effectiveThinking = supportedThinking.includes(thinking) ? thinking : supportedThinking[supportedThinking.length - 1] ?? 'off';
 
   const speedLevels: { id: OutputSpeedLevel; label: string; title: string }[] = [
     { id: 'low', label: 'Lo', title: 'Low — terse, fast responses (subagent)' },
     { id: 'medium', label: 'Med', title: 'Medium — balanced verbosity (subagent)' },
     { id: 'high', label: 'Hi', title: 'High — detailed, verbose responses (subagent)' },
   ];
-  const thinkingLevels: { id: ThinkingLevel; label: string; title: string }[] = [
+  const thinkingLevels = ([
     { id: 'off', label: 'Off', title: 'No extended thinking (subagent)' },
     { id: 'low', label: 'Lo', title: 'Low reasoning budget (subagent)' },
     { id: 'medium', label: 'Med', title: 'Medium reasoning budget (subagent)' },
     { id: 'high', label: 'Hi', title: 'High reasoning budget (subagent)' },
     { id: 'xhigh', label: 'XHi', title: 'Extra-high reasoning budget (subagent)' },
-  ];
+  ] as { id: ThinkingLevel; label: string; title: string }[]).filter((level) => supportedThinking.includes(level.id));
   const speedColor = (id: OutputSpeedLevel) =>
     speed === id
       ? id === 'low' ? 'bg-sky-500/80 text-white'
@@ -261,7 +310,7 @@ function SubAgentGenerationSettings({ disabled }: { disabled: boolean }) {
         : 'bg-amber-500/80 text-white'
       : 'bg-studio-surface/30 text-studio-muted hover:bg-studio-surface';
   const thinkColor = (id: ThinkingLevel) =>
-    thinking === id
+    effectiveThinking === id
       ? id === 'off' ? 'bg-studio-border text-studio-text'
         : id === 'low' ? 'bg-sky-500/80 text-white'
         : id === 'medium' ? 'bg-emerald-500/80 text-white'
@@ -270,7 +319,7 @@ function SubAgentGenerationSettings({ disabled }: { disabled: boolean }) {
       : 'bg-studio-surface/30 text-studio-muted hover:bg-studio-surface';
 
   const setSpeed = (v: OutputSpeedLevel) => setSettings({ subagentOutputSpeed: v });
-  const setThinking = (v: ThinkingLevel) => setSettings({ subagentThinking: v });
+  const setThinking = (v: ThinkingLevel) => setSettings({ subagentThinking: clampThinkingLevel(v, subagentModel, subagentModelInfo?.provider ?? subagentProvider) });
   const setDepth = (d: 'off' | 'paths' | 'sigs' | 'paths_sigs') => {
     setSettings({ subagentEntryManifestDepth: d });
   };
@@ -486,6 +535,10 @@ export function ModelModeSelector() {
   const currentModel = availableModels.find(m => m.id === settings.selectedModel);
   const currentModelName = currentModel?.name || settings.selectedModel.split('-').slice(0, 2).join(' ');
   const currentProvider = currentModel?.provider || settings.selectedProvider;
+  const supportedThinkingLevels = getSupportedThinkingLevels(settings.selectedModel, currentProvider);
+  const effectiveMainThinking = supportedThinkingLevels.includes(settings.modelThinking ?? 'medium')
+    ? settings.modelThinking ?? 'medium'
+    : supportedThinkingLevels[supportedThinkingLevels.length - 1] ?? 'off';
 
   // Get current custom agent (if any)
   const currentAgent = customAgents.find(a => a.id === selectedAgent);
@@ -529,6 +582,7 @@ export function ModelModeSelector() {
     useAppStore.getState().setSettings({
       selectedModel: model.id,
       selectedProvider: model.provider,
+      modelThinking: clampThinkingLevel(settings.modelThinking ?? 'medium', model.id, model.provider),
     });
     setModelMenuOpen(false);
   };
@@ -701,6 +755,23 @@ export function ModelModeSelector() {
                 No models match "{modelSearchQuery.trim()}".
               </div>
             )}
+            {(chatMode === 'agent' || chatMode === 'designer') && (
+              <div className="border-t border-studio-border/70 bg-studio-bg/40 p-2">
+                <div className="mb-1.5 flex items-center justify-between">
+                  <div>
+                    <div className="font-mono text-[10px] uppercase tracking-[0.16em] text-studio-title">Agent Routing</div>
+                    <div className="text-[10px] text-studio-muted">Worker model and inherited generation controls</div>
+                  </div>
+                  <span className="rounded-full border border-studio-border/60 px-2 py-0.5 text-[9px] uppercase tracking-wide text-studio-muted">
+                    {settings.subagentModel === 'none' ? 'disabled' : settings.subagentModel ? 'override' : 'auto'}
+                  </span>
+                </div>
+                <div className="rounded-lg border border-studio-border/60 bg-studio-surface/50 p-2">
+                  <SubAgentModelSelector models={availableModels} inline={false} />
+                  <SubAgentGenerationSettings disabled={settings.subagentModel === 'none'} />
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -708,22 +779,24 @@ export function ModelModeSelector() {
       {/* Speed / Thinking controls */}
       {(() => {
         const speed = settings.modelOutputSpeed ?? 'medium';
-        const thinking = settings.modelThinking ?? 'medium';
+        const thinking = effectiveMainThinking;
         const setSpeed = (v: OutputSpeedLevel) => useAppStore.getState().setSettings({ modelOutputSpeed: v });
-        const setThinking = (v: ThinkingLevel) => useAppStore.getState().setSettings({ modelThinking: v });
+        const setThinking = (v: ThinkingLevel) => useAppStore.getState().setSettings({
+          modelThinking: clampThinkingLevel(v, settings.selectedModel, currentProvider),
+        });
 
         const speedLevels: { id: OutputSpeedLevel; label: string; title: string }[] = [
           { id: 'low', label: 'Lo', title: 'Low — terse, fast responses' },
           { id: 'medium', label: 'Med', title: 'Medium — balanced verbosity' },
           { id: 'high', label: 'Hi', title: 'High — detailed, verbose responses' },
         ];
-        const thinkingLevels: { id: ThinkingLevel; label: string; title: string }[] = [
+        const thinkingLevels = ([
           { id: 'off', label: 'Off', title: 'No extended thinking / reasoning' },
           { id: 'low', label: 'Lo', title: 'Low reasoning budget' },
           { id: 'medium', label: 'Med', title: 'Medium reasoning budget' },
           { id: 'high', label: 'Hi', title: 'High reasoning budget' },
           { id: 'xhigh', label: 'XHi', title: 'Extra-high reasoning budget (supported models)' },
-        ];
+        ] as { id: ThinkingLevel; label: string; title: string }[]).filter((level) => supportedThinkingLevels.includes(level.id));
         const speedColor = (id: OutputSpeedLevel) =>
           speed === id
             ? id === 'low' ? 'bg-sky-500/80 text-white'
@@ -868,20 +941,11 @@ export function ModelModeSelector() {
                       <span className="text-sm font-medium text-yellow-400">🎯 Orchestrator</span>
                       <span className="text-xs text-studio-muted">Plans &amp; coordinates</span>
                     </div>
-                    <select
+                    <CompactModelPicker
+                      models={availableModels}
                       value={`${orchestratorProvider}:${orchestratorModel}`}
-                      onChange={(e) => {
-                        const [provider, model] = e.target.value.split(':');
-                        setOrchestratorModel(model, provider as AIProvider);
-                      }}
-                      className="w-full px-3 py-2 bg-studio-bg border border-studio-border rounded text-sm"
-                    >
-                      {availableModels.map(m => (
-                        <option key={m.id} value={`${m.provider}:${m.id}`}>
-                          {PROVIDER_BADGES[m.provider]} - {m.name}
-                        </option>
-                      ))}
-                    </select>
+                      onSelect={(model) => setOrchestratorModel(model.id, model.provider)}
+                    />
                   </div>
 
                   {/* Agent Roles */}
@@ -902,6 +966,10 @@ export function ModelModeSelector() {
                       tester: 'Writes tests',
                       documenter: 'Writes docs',
                     };
+                    const roleThinkingLevels = getSupportedThinkingLevels(config.model, config.provider);
+                    const roleThinking = config.thinking && roleThinkingLevels.includes(config.thinking)
+                      ? config.thinking
+                      : '';
 
                     return (
                       <div key={config.role} className="px-4 py-3 border-b border-studio-border last:border-b-0">
@@ -911,20 +979,11 @@ export function ModelModeSelector() {
                           </span>
                           <span className="text-xs text-studio-muted">{roleDescriptions[config.role]}</span>
                         </div>
-                        <select
+                        <CompactModelPicker
+                          models={availableModels}
                           value={`${config.provider}:${config.model}`}
-                          onChange={(e) => {
-                            const [provider, model] = e.target.value.split(':');
-                            setAgentConfig(config.role, { model, provider: provider as AIProvider });
-                          }}
-                          className="w-full px-3 py-2 bg-studio-bg border border-studio-border rounded text-sm"
-                        >
-                          {availableModels.map(m => (
-                            <option key={m.id} value={`${m.provider}:${m.id}`}>
-                              {PROVIDER_BADGES[m.provider]} - {m.name}
-                            </option>
-                          ))}
-                        </select>
+                          onSelect={(model) => setAgentConfig(config.role, { model: model.id, provider: model.provider })}
+                        />
                         <div className="flex gap-2 mt-1.5">
                           <label className="flex items-center gap-1 text-[10px] text-studio-muted">
                             Spd
@@ -945,19 +1004,19 @@ export function ModelModeSelector() {
                           <label className="flex items-center gap-1 text-[10px] text-studio-muted">
                             Thk
                             <select
-                              value={config.thinking ?? ''}
+                              value={roleThinking}
                               onChange={(e) => {
                                 const v = e.target.value as ThinkingLevel | '';
-                                setAgentConfig(config.role, { thinking: v || undefined });
+                                setAgentConfig(config.role, { thinking: v ? clampThinkingLevel(v, config.model, config.provider) : undefined });
                               }}
                               className="px-1.5 py-0.5 bg-studio-bg border border-studio-border rounded text-[10px]"
                             >
                               <option value="">(inherit)</option>
-                              <option value="off">Off</option>
-                              <option value="low">Low</option>
-                              <option value="medium">Med</option>
-                              <option value="high">High</option>
-                              <option value="xhigh">Extra High</option>
+                              {roleThinkingLevels.map((level) => (
+                                <option key={level} value={level}>
+                                  {level === 'off' ? 'Off' : level === 'medium' ? 'Med' : level === 'xhigh' ? 'Extra High' : level[0].toUpperCase() + level.slice(1)}
+                                </option>
+                              ))}
                             </select>
                           </label>
                         </div>
@@ -1362,13 +1421,6 @@ export function ModelModeSelector() {
       )}
       </div>
 
-      {/* Row 2: SubAgent in selection box (agent/designer mode) */}
-      {(chatMode === 'agent' || chatMode === 'designer') && (
-        <div className="border border-studio-border/60 rounded px-2 py-1 bg-studio-surface/30 flex items-center flex-wrap gap-y-1 gap-x-0">
-          <SubAgentModelSelector models={availableModels} inline={false} />
-          <SubAgentGenerationSettings disabled={settings.subagentModel === 'none'} />
-        </div>
-      )}
     </div>
   );
 }

@@ -4,18 +4,16 @@ import { usePanelResize } from './hooks/usePanelResize';
 import { FileExplorer } from './components/FileExplorer';
 import { CodeViewer } from './components/CodeViewer';
 import { AtlsPanel } from './components/AtlsPanel';
-import { AiChat } from './components/AiChat';
+import { ChatGridWorkspace } from './components/ChatGridWorkspace';
 import { Settings } from './components/Settings';
 import { QuickActions, QuickAction } from './components/QuickActions';
 import { SearchPanel } from './components/SearchPanel';
 import { MenuBar } from './components/MenuBar';
 import { WindowControls } from './components/WindowControls';
 import { SessionPicker } from './components/SessionPicker';
-import { SWARM_ORCHESTRATION_TAB_ID } from './constants/swarmOrchestrationTab';
 import { ToastContainer } from './components/Toast';
 import { INTERNALS_TAB_ID } from './components/AtlsInternals';
 import { useAppStore } from './stores/appStore';
-import { useSwarmStore } from './stores/swarmStore';
 import { useCostStore } from './stores/costStore';
 import { useAtls } from './hooks/useAtls';
 import { useOS } from './hooks/useOS';
@@ -53,12 +51,12 @@ function App() {
     openFile,
     activeFile,
     closeFile,
-    chatMode,
+    chatWorkspaceLayout,
+    setChatWorkspaceLayout,
     addToast,
     newChat,
     resetAgentProgress,
   } = useAppStore();
-  const { isActive: swarmActive } = useSwarmStore();
   const { newProject, openProjectWithPicker, loadFileTree, scanProject, refreshIssues, addFolderToWorkspace, saveWorkspace, openWorkspace, closeWorkspace } = useAtls();
   const { loadSession, createNewSession, deleteSession } = useChatPersistence();
   const { isMac, isWindows, isLinux } = useOS();
@@ -122,6 +120,10 @@ function App() {
     }
   }, [projectPath, loadFileTree]);
 
+  useEffect(() => {
+    setChatWorkspaceLayout(activeFile ? 'document' : 'grid');
+  }, [activeFile, setChatWorkspaceLayout]);
+
   // Global keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -170,7 +172,7 @@ function App() {
       window.dispatchEvent(new CustomEvent('editor-save-file'));
     }},
     { id: 'file.close', label: 'Close File', category: 'file', shortcut: 'Ctrl+W', action: () => {
-      if (activeFile && !(activeFile === SWARM_ORCHESTRATION_TAB_ID && useSwarmStore.getState().isActive)) closeFile(activeFile);
+      if (activeFile) closeFile(activeFile);
     }},
     
     // ATLS actions
@@ -327,6 +329,8 @@ function App() {
       handleFindInFile, handleReplaceInFile, handleToggleTerminal,
       setSettingsOpen, setQuickActionsOpen, setQuickFindOpen, setSearchPanelOpen]);
 
+  const documentFocused = chatWorkspaceLayout === 'document' && Boolean(activeFile);
+
   return (
     <div 
       ref={rootRef}
@@ -420,86 +424,88 @@ function App() {
           onMouseDown={handleLeftResize}
         />
 
-        {/* Center Panel - Code Viewer / Swarm Panel + ATLS Panel + Terminal */}
+        {/* Center Panel - Chat grid primary or document focus */}
         <div className="flex-1 flex flex-col overflow-hidden">
-          {/* Main View - Code Viewer (Swarm Panel renders as a virtual tab inside) */}
-          <div 
-            className="flex-1 overflow-hidden min-h-0"
-            style={{ minHeight: 200 }}
-          >
-            <CodeViewer />
-          </div>
+          {documentFocused ? (
+            <>
+              {/* Main View - Code Viewer (files, internals, cockpit virtual tabs) */}
+              <div
+                className="flex-1 overflow-hidden min-h-0"
+                style={{ minHeight: 200 }}
+              >
+                <CodeViewer />
+              </div>
 
-          {/* Bottom Resizer */}
-          <div 
-            className="panel-resizer-horizontal"
-            onMouseDown={handleBottomResize}
-          />
+              {/* Bottom Resizer */}
+              <div
+                className="panel-resizer-horizontal"
+                onMouseDown={handleBottomResize}
+              />
 
-          {/* Bottom Panel - ATLS Intelligence & Terminal (tabbed) */}
-          <div 
-            className={`shrink-0 bg-studio-surface border-t border-studio-border overflow-hidden ${isResizing ? '' : 'transition-[height] duration-150'}`}
-            style={{ height: terminalCollapsed ? 40 : bottomHeight }}
-          >
-            <AtlsPanel />
-          </div>
+              {/* Bottom Panel - ATLS Intelligence & Terminal (tabbed) */}
+              <div
+                className={`shrink-0 bg-studio-surface border-t border-studio-border overflow-hidden ${isResizing ? '' : 'transition-[height] duration-150'}`}
+                style={{ height: terminalCollapsed ? 40 : bottomHeight }}
+              >
+                <AtlsPanel />
+              </div>
+            </>
+          ) : (
+            <ChatGridWorkspace variant="primary" loadSession={loadSession} />
+          )}
         </div>
 
-        {/* Right Resizer - only show if chat not collapsed */}
-        {!chatCollapsed && (
+        {/* Right Resizer - only show when document focus docks the chat grid */}
+        {documentFocused && !chatCollapsed && (
           <div 
             className="panel-resizer"
             onMouseDown={handleRightResize}
           />
         )}
 
-        {/* Right Panel - AI Chat (collapsible when swarm active) */}
-        <div 
-          className={`shrink-0 bg-studio-surface border-l border-studio-border overflow-hidden flex flex-col ${isResizing ? '' : 'transition-[width] duration-150'} ${
-            chatCollapsed ? 'w-10' : ''
-          }`}
-          style={{ width: chatCollapsed ? 40 : rightWidth }}
-        >
-          {/* Collapsed state - just a toggle button */}
-          {chatCollapsed ? (
-            <div className="h-full flex flex-col items-center py-2">
-              <button
-                onClick={() => setChatCollapsed(false)}
-                className="p-2 hover:bg-studio-border rounded text-studio-muted hover:text-studio-text"
-                title="Expand Chat"
-              >
-                <svg className="w-5 h-5" viewBox="0 0 24 24" fill="currentColor">
-                  <path d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z" />
-                </svg>
-              </button>
-              <div className="mt-2 text-xs text-studio-muted [writing-mode:vertical-lr] rotate-180">
-                AI Chat
+        {documentFocused && (
+          <div
+            className={`shrink-0 bg-studio-surface border-l border-studio-border overflow-hidden flex flex-col ${isResizing ? '' : 'transition-[width] duration-150'} ${
+              chatCollapsed ? 'w-10' : ''
+            }`}
+            style={{ width: chatCollapsed ? 40 : rightWidth }}
+          >
+            {chatCollapsed ? (
+              <div className="h-full flex flex-col items-center py-2">
+                <button
+                  onClick={() => setChatCollapsed(false)}
+                  className="p-2 hover:bg-studio-border rounded text-studio-muted hover:text-studio-text"
+                  title="Expand Chat Grid"
+                >
+                  <svg className="w-5 h-5" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z" />
+                  </svg>
+                </button>
+                <div className="mt-2 text-xs text-studio-muted [writing-mode:vertical-lr] rotate-180">
+                  Chat Grid
+                </div>
               </div>
-            </div>
-          ) : (
-            <>
-              {/* Collapse toggle when swarm is active */}
-              {swarmActive && (
+            ) : (
+              <>
                 <div className="flex items-center justify-between px-3 py-1.5 border-b border-studio-border bg-studio-bg">
-                  <span className="text-xs font-medium text-studio-title">AI Chat</span>
+                  <span className="text-xs font-medium text-studio-title">Chat Grid</span>
                   <button
                     onClick={() => setChatCollapsed(true)}
                     className="p-1 hover:bg-studio-border rounded text-studio-muted hover:text-studio-text"
-                    title="Collapse Chat"
+                    title="Collapse Chat Grid"
                   >
                     <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
                       <path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z" />
                     </svg>
                   </button>
                 </div>
-              )}
-              {/* AI Chat */}
-              <div className="flex-1 overflow-hidden">
-                <AiChat />
-              </div>
-            </>
-          )}
-        </div>
+                <div className="flex-1 overflow-hidden">
+                  <ChatGridWorkspace variant="dock" loadSession={loadSession} />
+                </div>
+              </>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Status Bar */}

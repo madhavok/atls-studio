@@ -120,6 +120,15 @@ export type ChatMode = 'agent' | 'designer' | 'ask' | 'reviewer' | 'retriever' |
 export type SwarmStatus = 'researching' | 'planning' | 'running' | 'paused' | 'synthesizing' | 'completed' | 'failed';
 export type TaskStatus = 'pending' | 'running' | 'awaiting_input' | 'completed' | 'failed' | 'cancelled';
 
+function isAgentLaneMessageMetadata(metadata?: string | null): boolean {
+  if (!metadata) return false;
+  try {
+    return (JSON.parse(metadata) as { atlsType?: string })?.atlsType === 'agent_lane_message';
+  } catch {
+    return false;
+  }
+}
+
 // ============================================================================
 // Chat Database Service
 // ============================================================================
@@ -632,8 +641,9 @@ class ChatDbService {
     ]);
 
     // Load segments for each message
+    const visibleMessages = dbMessages.filter((msg) => !isAgentLaneMessageMetadata(msg.metadata));
     const messages: Message[] = await Promise.all(
-      dbMessages.map(async (msg) => {
+      visibleMessages.map(async (msg) => {
         const segments = await this.getSegments(msg.id);
         const messageSegments: Array<MessageSegment | { type: 'step-boundary' } | { type: 'error'; errorText: string }> = segments.map(seg => {
           if (seg.type === 'text') {
