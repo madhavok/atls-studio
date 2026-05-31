@@ -251,6 +251,28 @@ export function resetManifestState(): void {
   unrecoverableMap.clear();
 }
 
+export interface ManifestSnapshot {
+  forward: Array<[string, ForwardEntry]>;
+  eviction: Array<[string, EvictionEntry]>;
+  unrecoverable: Array<[string, UnrecoverableEntry]>;
+}
+
+export function exportManifestSnapshot(): ManifestSnapshot {
+  return {
+    forward: [...forwardMap.entries()],
+    eviction: [...evictionMap.entries()],
+    unrecoverable: [...unrecoverableMap.entries()],
+  };
+}
+
+export function importManifestSnapshot(snapshot: ManifestSnapshot | null | undefined): void {
+  resetManifestState();
+  if (!snapshot) return;
+  for (const [key, entry] of snapshot.forward) forwardMap.set(key, entry);
+  for (const [key, entry] of snapshot.eviction) evictionMap.set(key, entry);
+  for (const [key, entry] of snapshot.unrecoverable) unrecoverableMap.set(key, entry);
+}
+
 // ---------------------------------------------------------------------------
 // Formatting
 // ---------------------------------------------------------------------------

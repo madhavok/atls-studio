@@ -4,9 +4,10 @@
  */
 
 import { useContextStore } from '../stores/contextStore';
-import { useRoundHistoryStore } from '../stores/roundHistoryStore';
 import { chatDb, type PersistedMemorySnapshot } from './chatDb';
 import { getGeminiCacheSnapshot } from './geminiCache';
+import { exportHppSnapshot, importHppSnapshot, type HppSnapshot } from './hashProtocol';
+import { exportManifestSnapshot, importManifestSnapshot, type ManifestSnapshot } from './hashManifest';
 import { applyMemorySnapshotToStore } from './memorySnapshotApply';
 import { serializeMemorySnapshot } from '../hooks/useChatPersistence';
 
@@ -21,6 +22,13 @@ export interface ActivateContextSessionOptions {
 
 let activeContextSessionId: string | null = null;
 const partitionCache = new Map<string, PersistedMemorySnapshot>();
+
+interface SessionAuxPartition {
+  hpp: HppSnapshot;
+  manifest: ManifestSnapshot;
+}
+
+const auxPartitionCache = new Map<string, SessionAuxPartition>();
 let contextOpChain: Promise<void> = Promise.resolve();
 let contextLockDepth = 0;
 
@@ -52,6 +60,26 @@ function captureActivePartition(): void {
     activeContextSessionId,
     serializeMemorySnapshot(useContextStore.getState(), getGeminiCacheSnapshot()),
   );
+  captureActiveAuxPartition();
+}
+
+function captureActiveAuxPartition(): void {
+  if (!activeContextSessionId) return;
+  auxPartitionCache.set(activeContextSessionId, {
+    hpp: exportHppSnapshot(),
+    manifest: exportManifestSnapshot(),
+  });
+}
+
+function restoreAuxPartition(sessionId: string, options?: { fresh?: boolean }): void {
+  if (options?.fresh) {
+    importHppSnapshot(null);
+    importManifestSnapshot(null);
+    return;
+  }
+  const aux = auxPartitionCache.get(sessionId);
+  importHppSnapshot(aux?.hpp);
+  importManifestSnapshot(aux?.manifest);
 }
 
 export async function activateContextSession(
@@ -68,6 +96,7 @@ export async function activateContextSession(
   useContextStore.getState().resetSession();
 
   if (options?.fresh) {
+    restoreAuxPartition(sessionId, { fresh: true });
     activeContextSessionId = sessionId;
     return;
   }
@@ -75,6 +104,7 @@ export async function activateContextSession(
   const cached = partitionCache.get(sessionId);
   if (cached) {
     await applyMemorySnapshotToStore(cached, { lite: options?.lite });
+    restoreAuxPartition(sessionId);
     activeContextSessionId = sessionId;
     return;
   }
@@ -85,6 +115,7 @@ export async function activateContextSession(
       if (fromDb && fromDb.version >= 2 && fromDb.version <= 8) {
         await applyMemorySnapshotToStore(fromDb, { lite: options?.lite });
         partitionCache.set(sessionId, fromDb);
+        restoreAuxPartition(sessionId);
         activeContextSessionId = sessionId;
         return;
       }
@@ -93,6 +124,7 @@ export async function activateContextSession(
     }
   }
 
+  restoreAuxPartition(sessionId, { fresh: true });
   activeContextSessionId = sessionId;
 }
 
@@ -102,6 +134,7 @@ export async function persistContextSession(
 ): Promise<void> {
   if (!sessionId) return;
   if (activeContextSessionId !== sessionId) return;
+  captureActiveAuxPartition();
   const snapshot = serializeMemorySnapshot(useContextStore.getState(), getGeminiCacheSnapshot());
   if (!options?.skipCache) {
     partitionCache.set(sessionId, snapshot);
@@ -142,17 +175,8 @@ export async function withContextSession<T>(
 /** Drop hot cache entry when a window/session is closed. */
 export function evictContextPartition(sessionId: string): void {
   partitionCache.delete(sessionId);
+  auxPartitionCache.delete(sessionId);
   if (activeContextSessionId === sessionId) {
     activeContextSessionId = null;
-  }
-}
-
-/** Restore round-history snapshots bundled in a memory snapshot (grid partition reload). */
-export function restoreRoundHistoryFromSnapshot(snapshot: { roundHistorySnapshots?: unknown[] }): void {
-  const rows = snapshot.roundHistorySnapshots;
-  if (!Array.isArray(rows) || rows.length === 0) return;
-  useRoundHistoryStore.getState().reset();
-  for (const row of rows) {
-    useRoundHistoryStore.getState().pushSnapshot(row as Parameters<ReturnType<typeof useRoundHistoryStore.getState>['pushSnapshot']>[0]);
   }
 }

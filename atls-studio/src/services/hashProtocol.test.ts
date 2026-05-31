@@ -22,6 +22,8 @@ import {
   setRoundRefreshHook,
   createScopedView,
   getRefBurdenCounts,
+  exportHppSnapshot,
+  importHppSnapshot,
 } from './hashProtocol';
 
 describe('hashProtocol', () => {
@@ -436,6 +438,25 @@ describe('hashProtocol', () => {
       const ref = view.getRef('nonexistent-ffff');
       expect(ref).toBeUndefined();
       expect(view.touchedHashes().has('nonexistent-ffff')).toBe(false);
+    });
+  });
+
+  describe('session snapshot', () => {
+    it('export/import round-trips refs and turn counter', async () => {
+      await advanceTurn();
+      materialize('abc1234567890abcd', 'file', 'src/foo.ts', 100, 50, 'digest1');
+      materialize('def1234567890abcd', 'result', undefined, 20, 1, '');
+      evict('abc1234567890abcd');
+
+      const snapshot = exportHppSnapshot();
+      resetProtocol();
+      expect(getAllRefs().length).toBe(0);
+
+      importHppSnapshot(snapshot);
+      expect(getTurn()).toBe(1);
+      expect(getAllRefs().length).toBe(2);
+      expect(getRef('abc1234567890abcd')?.visibility).toBe('evicted');
+      expect(getRef('def1234567890abcd')?.visibility).toBe('materialized');
     });
   });
 });

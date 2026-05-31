@@ -9,6 +9,7 @@ import { restoreJournal } from './freshnessJournal';
 import { restoreGeminiCacheSnapshot } from './geminiCache';
 import type { PersistedMemorySnapshot } from './chatDb';
 import { applyV4SessionExtras, applyHashFirstFreshness, rehydrateChunkDates } from '../hooks/useChatPersistence';
+import { useRoundHistoryStore } from '../stores/roundHistoryStore';
 
 function rehydrateBbEntry(
   key: string,
@@ -53,6 +54,19 @@ function normalizePersistedStagedEntries(
 export interface ApplyMemorySnapshotOptions {
   /** Skip hash-first freshness + reconcile (used for hot partition swaps during concurrent runs). */
   lite?: boolean;
+  /** Skip round-history restore (default false). */
+  skipRoundHistory?: boolean;
+}
+
+export function restoreRoundHistoryFromSnapshot(snapshot: { roundHistorySnapshots?: unknown[] }): void {
+  const rows = snapshot.roundHistorySnapshots;
+  if (!Array.isArray(rows) || rows.length === 0) return;
+  useRoundHistoryStore.getState().reset();
+  for (const row of rows) {
+    useRoundHistoryStore.getState().pushSnapshot(
+      row as Parameters<ReturnType<typeof useRoundHistoryStore.getState>['pushSnapshot']>[0],
+    );
+  }
 }
 
 export async function applyMemorySnapshotToStore(
@@ -117,5 +131,9 @@ export async function applyMemorySnapshotToStore(
     } catch (error) {
       console.warn('[memorySnapshotApply] reconciliation failed:', error);
     }
+  }
+
+  if (!options?.skipRoundHistory) {
+    restoreRoundHistoryFromSnapshot(snapshot);
   }
 }

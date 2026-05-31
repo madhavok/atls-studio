@@ -1,6 +1,7 @@
 /** @vitest-environment happy-dom */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useContextStore } from '../stores/contextStore';
+import { materialize, getRef } from './hashProtocol';
 import {
   activateContextSession,
   evictContextPartition,
@@ -51,5 +52,17 @@ describe('contextSessionPartition', () => {
     }, { fresh: true });
     expect(lockedDuringRun).toBe(true);
     expect(isContextSessionLocked()).toBe(false);
+  });
+
+  it('preserves HPP refs across session swap', async () => {
+    await activateContextSession('session-a', { fresh: true });
+    materialize('abc1234567890abcd', 'file', 'src/a.ts', 50, 10, 'd1');
+
+    await activateContextSession('session-b', { fresh: true });
+    materialize('def1234567890abcd', 'file', 'src/b.ts', 60, 12, 'd2');
+
+    await activateContextSession('session-a', { loadFromDb: false, lite: true });
+    expect(getRef('abc1234567890abcd')?.source).toBe('src/a.ts');
+    expect(getRef('def1234567890abcd')).toBeUndefined();
   });
 });

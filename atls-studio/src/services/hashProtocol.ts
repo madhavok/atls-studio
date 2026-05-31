@@ -315,6 +315,53 @@ export function resetProtocol(): void {
   lastTurnDelta = { dematerialized: 0, newMaterialized: 0 };
 }
 
+export interface HppSnapshot {
+  currentTurn: number;
+  refs: ChunkRef[];
+  lastTurnDelta: { dematerialized: number; newMaterialized: number };
+}
+
+function rebuildIndexesFromRefs(): void {
+  shortHashIndex.clear();
+  divergedRefs.clear();
+  evictedMinHeap.length = 0;
+  refsActiveCount = 0;
+  refsEvictedCount = 0;
+  for (const ref of refs.values()) {
+    addShortHashIndexEntry(ref.shortHash, ref);
+    if (ref.shortHash !== ref.hash.slice(0, SHORT_HASH_LEN)) {
+      divergedRefs.add(ref);
+    }
+    if (ref.visibility === 'evicted') {
+      refsEvictedCount++;
+      evictedHeapPush({ hash: ref.hash, seenAtTurn: ref.seenAtTurn });
+    } else {
+      refsActiveCount++;
+    }
+  }
+}
+
+/** Capture HPP turn/refs for per-session partition swap. */
+export function exportHppSnapshot(): HppSnapshot {
+  return {
+    currentTurn,
+    refs: [...refs.values()].map((ref) => ({ ...ref })),
+    lastTurnDelta: { ...lastTurnDelta },
+  };
+}
+
+/** Restore HPP state captured by {@link exportHppSnapshot}. */
+export function importHppSnapshot(snapshot: HppSnapshot | null | undefined): void {
+  resetProtocol();
+  if (!snapshot) return;
+  currentTurn = snapshot.currentTurn;
+  lastTurnDelta = { ...snapshot.lastTurnDelta };
+  for (const ref of snapshot.refs) {
+    refs.set(ref.hash, { ...ref });
+  }
+  rebuildIndexesFromRefs();
+}
+
 /** Snapshot of non-evicted vs evicted ref rows (for tests / diagnostics). */
 export function getRefBurdenCounts(): { active: number; evicted: number; total: number } {
   return { active: refsActiveCount, evicted: refsEvictedCount, total: refs.size };
