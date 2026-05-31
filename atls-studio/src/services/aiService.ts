@@ -228,6 +228,7 @@ import {
 } from './promptMemory';
 import { compressToolLoopHistory, compactRetentionOps, deflateToolResults, stubBatchToolUseInputs, estimateHistoryTokens, estimateHistoryTokensAsync } from './historyCompressor';
 import { createGuardrailCallbacks, runBeforeRoundMiddlewares, setPromptBudgetEstimates } from './chatMiddleware';
+import { syncCurrentSessionIdToLocalStorage } from './lastActiveSession';
 import {
   getActiveRunScope,
   resolveDbSessionId,
@@ -1870,6 +1871,7 @@ async function streamChatViaTauri(
       projectPath: options.projectPath ?? useAppStore.getState().projectPath ?? undefined,
       loopState,
     });
+    syncCurrentSessionIdToLocalStorage(options.dbSessionId);
   } else if (!concurrent) {
     resetLegacyRunLoopFlags();
   }
@@ -2068,7 +2070,7 @@ async function streamChatViaTauri(
       // is isolated in `subagentService.ts`. These toggles therefore only
       // affect the main chat — do not re-audit for subagent leakage.
       let cbEvaluation: ReturnType<typeof evaluateSpin> | undefined;
-      if (mode !== 'ask' && mode !== 'retriever' && round >= 2) {
+      if (!concurrent && mode !== 'ask' && mode !== 'retriever' && round >= 2) {
         const snapshots = useRoundHistoryStore.getState().snapshots;
         if (snapshots.length >= 3) {
           const spinToggles = useAppStore.getState().settings.messageToggles.spin;
@@ -2672,6 +2674,7 @@ async function streamChatViaTauri(
 
       /** Per-round ATLS Internals snapshot. `isResearchRound` must reflect post-tool mutations when tools ran (see call sites). */
       const captureInternalsSnapshot = async (isResearchRound: boolean): Promise<void> => {
+        if (concurrent) return;
         const ctxState = useContextStore.getState();
         const appState = useAppStore.getState();
         const bm = ctxState.batchMetrics;
@@ -3503,6 +3506,9 @@ async function streamChatViaTauri(
     if (concurrent) {
       setActiveRunScope(null);
       _gridConcurrentRunCount = Math.max(0, _gridConcurrentRunCount - 1);
+      if (_gridConcurrentRunCount === 0) {
+        syncCurrentSessionIdToLocalStorage(useAppStore.getState().currentSessionId);
+      }
     }
     const shouldNotifyDone = concurrent || _activeSession === session;
     const shouldTouchGlobalEndState = !concurrent && _activeSession === session;
