@@ -14,6 +14,7 @@ import { buildDelegationContext } from '../services/delegationContext';
 import { syncShellToProjectPath } from '../services/agentShellSync';
 import { buildAgentWindowStreamCallbacks } from './agentWindowStreamCallbacks';
 import { persistGridAssistantTurn, persistGridUserMessage } from '../services/agentGridMessagePersist';
+import { useAtls } from './useAtls';
 
 function getApiKeyForProvider(provider: AIProvider): string {
   const settings = useAppStore.getState().settings;
@@ -204,6 +205,7 @@ function updateWindowSessionTitle(window: AgentWindow, title: string): void {
 }
 
 export function useAgentWindowRunner() {
+  const { initAtls } = useAtls();
   const runWindow = useCallback(async (windowId: string, prompt: string) => {
     const trimmed = prompt.trim();
     if (!trimmed) return;
@@ -295,6 +297,9 @@ export function useAgentWindowRunner() {
         await syncShellToProjectPath(shellPath).catch((error) => {
           console.warn('[AgentWindowRunner] shell sync failed:', error);
         });
+        if (!useAppStore.getState().atlsInitialized) {
+          await initAtls(shellPath);
+        }
       }
       const callbacks = buildAgentWindowStreamCallbacks({
         window,
@@ -324,7 +329,7 @@ export function useAgentWindowRunner() {
       runtimeStore.finishRun(windowId, controller.signal.aborted ? 'cancelled' : 'failed', message);
       useAgentWindowStore.getState().setWindowStatus(windowId, controller.signal.aborted ? 'paused' : 'failed');
     }
-  }, []);
+  }, [initAtls]);
 
   const cancelWindow = useCallback((windowId: string) => {
     const streamIds = useAgentRuntimeStore.getState().cancelRun(windowId);

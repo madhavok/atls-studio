@@ -145,7 +145,7 @@ export function handleDelegateToolCall(parentSessionId: string | null, toolCall:
       content: `Delegate call ${toolCall.status}.${argsSummary}`,
     });
     if (message) void persistRuntimeMessage(window.sessionId, message);
-    runtimeStore.startRun(window.windowId, new AbortController());
+    runtimeStore.setProxyActive(window.windowId, true);
     return;
   }
 
@@ -159,7 +159,8 @@ export function handleDelegateToolCall(parentSessionId: string | null, toolCall:
     content: resultContent,
   });
   if (resultMessage) void persistRuntimeMessage(window.sessionId, resultMessage);
-  runtimeStore.finishRun(window.windowId, terminalStatus);
+  runtimeStore.setProxyActive(window.windowId, false);
+  runtimeStore.setStreamingText(window.windowId, '');
   useAgentWindowStore.getState().setWindowStatus(window.windowId, terminalStatus);
   runtimeStore.appendParentEvent({
     parentSessionId,
@@ -191,7 +192,7 @@ export function handleSubAgentProgress(parentSessionId: string | null, stepId: s
   useAgentWindowStore.getState().setWindowStatus(window.windowId, delegateDone ? 'completed' : 'running');
   if (!delegateDone) {
     const runtime = useAgentRuntimeStore.getState().runtimesByWindow[window.windowId];
-    if (!runtime?.isGenerating) runtimeStore.startRun(window.windowId, new AbortController());
+    if (!runtime?.proxyActive) runtimeStore.setProxyActive(window.windowId, true);
   }
   const content = `Round ${progress.round}: ${progress.status}`;
   runtimeStore.setStreamingText(window.windowId, content);
@@ -206,7 +207,9 @@ export function handleSubAgentProgress(parentSessionId: string | null, stepId: s
     lastTool: progress.toolName,
   });
   if (delegateDone) {
-    runtimeStore.finishRun(window.windowId, 'completed');
+    runtimeStore.setProxyActive(window.windowId, false);
+    runtimeStore.setStreamingText(window.windowId, '');
+    useAgentWindowStore.getState().setWindowStatus(window.windowId, 'completed');
     runtimeStore.appendParentEvent({
       parentSessionId,
       childWindowId: window.windowId,

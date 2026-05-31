@@ -16,12 +16,10 @@ import { AgentChatSurface } from './AgentChatSurface';
 import { ConversationSelector } from './ConversationSelector';
 import { GridErrorBoundary } from './GridErrorBoundary';
 import { useAgentRuntimeStore } from '../../stores/agentRuntimeStore';
-import { activateAgentWindow } from '../../services/activateAgentWindow';
-import { activateContextSession } from '../../services/contextSessionPartition';
-import { writeLastActiveSessionId } from '../../services/lastActiveSession';
+import { activateAgentWindow, activateAgentParentSession } from '../../services/activateAgentWindow';
+import { evictContextPartition, persistContextSession } from '../../services/contextSessionPartition';
 import { disposeParentSessionRuntimes, disposeWindowRuntime } from '../../services/agentGridLifecycle';
 import { useAgentGridPersistence } from '../../hooks/useAgentGridPersistence';
-import { evictContextPartition, persistContextSession } from '../../services/contextSessionPartition';
 import { canRecoverSwarmTask, canStopSwarmTask, pauseSwarmTask, recoverSwarmTask, syncSwarmSelection } from '../../services/swarmWindowBridge';
 import { ModelModeSelector } from '../ModelModeSelector';
 import { Settings } from '../Settings';
@@ -394,18 +392,9 @@ export const ChatGridWorkspace = memo(function ChatGridWorkspace({ variant = 'pr
         ...state.chatSessions.filter((session) => session.id !== sessionId),
       ],
     }));
-    ensurePrimaryWindow(sessionId, title);
-    setActiveParentSession(sessionId);
-    selectWindow(sessionId, `primary-${sessionId}`);
     const projectPath = useAgentWindowStore.getState().projectPath ?? useAppStore.getState().projectPath;
-    if (projectPath) writeLastActiveSessionId(projectPath, sessionId);
-    useAgentRuntimeStore.getState().ensureRuntime({
-      windowId: `primary-${sessionId}`,
-      sessionId,
-      parentSessionId: sessionId,
-    });
-    await activateContextSession(sessionId, { fresh: true });
-  }, [addToast, chatSessions, ensurePrimaryWindow, selectWindow, setActiveParentSession]);
+    await activateAgentParentSession(sessionId, title, projectPath);
+  }, [addToast, chatSessions]);
 
   const focusChildWindow = useCallback((childWindowId: string) => {
     const window = Object.values(useAgentWindowStore.getState().windowsByParent)
@@ -455,7 +444,7 @@ export const ChatGridWorkspace = memo(function ChatGridWorkspace({ variant = 'pr
                 const selected = window.parentSessionId === activeGroupId && window.windowId === selectedWindowId;
                 const runtime = runtimesByWindow[window.windowId];
                 const active = window.kind === 'standard' || window.kind === 'primary'
-                  ? Boolean(runtime?.isGenerating)
+                  ? Boolean(runtime?.isGenerating || runtime?.proxyActive)
                   : window.sessionId === currentSessionId && window.kind !== 'swarm';
                 const task = window.kind === 'swarm'
                   ? swarmTasks.find((candidate) => `swarm-${candidate.id}` === window.windowId)
@@ -473,7 +462,7 @@ export const ChatGridWorkspace = memo(function ChatGridWorkspace({ variant = 'pr
                   ? promptMetrics.roundCount || getRoundCount(messages)
                   : getRoundCount(previewMessages);
                 const activeRounds = window.kind === 'standard' || window.kind === 'primary'
-                  ? (runtime?.isGenerating ? 1 : 0)
+                  ? ((runtime?.isGenerating || runtime?.proxyActive) ? 1 : 0)
                   : active && isGenerating
                   ? Math.max(1, useAppStore.getState().agentProgress.round)
                   : 0;

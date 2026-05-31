@@ -56,7 +56,7 @@ export const AgentChatSurface = memo(function AgentChatSurface({ window, showCon
       role: window.role,
     });
     const current = useAgentRuntimeStore.getState().runtimesByWindow[window.windowId];
-    if (window.kind !== 'primary' && window.status === 'running' && !current?.isGenerating) {
+    if (window.kind !== 'primary' && window.status === 'running' && !current?.isGenerating && !current?.proxyActive) {
       useAgentWindowStore.getState().setWindowStatus(window.windowId, 'paused');
       useAgentRuntimeStore.getState().appendMessage(window.windowId, {
         role: 'system',
@@ -96,10 +96,10 @@ export const AgentChatSurface = memo(function AgentChatSurface({ window, showCon
   }, []);
 
   useEffect(() => {
-    if (!runtime?.isGenerating) return;
+    if (!runtime?.isGenerating && !runtime?.proxyActive) return;
     userScrolledUpRef.current = false;
     scrollToBottom(true);
-  }, [runtime?.isGenerating, scrollToBottom]);
+  }, [runtime?.isGenerating, runtime?.proxyActive, scrollToBottom]);
 
   useEffect(() => {
     if (!runtime) return;
@@ -115,6 +115,7 @@ export const AgentChatSurface = memo(function AgentChatSurface({ window, showCon
     );
   }
   const canSend = (safeRuntime.draft.trim().length > 0 || safeRuntime.attachments.length > 0) && !safeRuntime.isGenerating;
+  const streamLive = safeRuntime.isGenerating || safeRuntime.proxyActive;
   const showAttachments = window.kind === 'primary' || window.kind === 'standard';
   const selectedModel = availableModels.find((model) => model.id === settings.selectedModel);
   const modelLabel = selectedModel?.name ?? settings.selectedModel;
@@ -195,6 +196,10 @@ export const AgentChatSurface = memo(function AgentChatSurface({ window, showCon
                 fallbackText={safeRuntime.streamingText}
                 fallbackReasoning={safeRuntime.streamingReasoning}
               />
+            ) : safeRuntime.proxyActive && safeRuntime.streamingText ? (
+              <div className="min-w-0 overflow-hidden rounded-lg border border-studio-border/50 bg-studio-bg/45 p-2 text-xs leading-relaxed text-studio-text [overflow-wrap:anywhere]">
+                {safeRuntime.streamingText}
+              </div>
             ) : (
               <AgentToolTrace toolCalls={safeRuntime.toolCalls} />
             )}
@@ -276,7 +281,7 @@ export const AgentChatSurface = memo(function AgentChatSurface({ window, showCon
         />
         <div className="mt-2 flex items-center justify-between gap-2">
           <div className="font-mono text-[9px] uppercase tracking-[0.14em] text-studio-muted">
-            {safeRuntime.isGenerating ? 'live stream active' : `${safeRuntime.telemetry.rounds} rounds`}
+            {streamLive ? 'live stream active' : `${safeRuntime.telemetry.rounds} rounds`}
           </div>
           <div className="flex items-center gap-2">
             {safeRuntime.canContinue && !safeRuntime.isGenerating && (

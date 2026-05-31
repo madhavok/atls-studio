@@ -130,7 +130,7 @@ export const ChatTelemetryPane = memo(function ChatTelemetryPane({
   const contextPressure = isLiveSession && contextUsage.maxTokens > 0
     ? Math.min(100, Math.round((contextUsage.totalTokens / contextUsage.maxTokens) * 100))
     : 0;
-  const activeRuntimeCount = Object.values(runtimesByWindow).filter((runtime) => runtime.isGenerating).length;
+  const activeRuntimeCount = Object.values(runtimesByWindow).filter((runtime) => runtime.isGenerating || runtime.proxyActive).length;
   const claimConflicts = getClaimConflicts(Object.values(runtimesByWindow));
 
   const mission = useMemo(

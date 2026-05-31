@@ -40,15 +40,22 @@ const streamChatMock = vi.hoisted(() => vi.fn(async (
   callbacks.onDone?.();
 }));
 
-vi.mock('../../services/activateAgentWindow', () => ({
-  activateAgentWindow: vi.fn(async () => undefined),
-  activateAgentParentSession: vi.fn(async () => undefined),
-}));
+vi.mock('../../services/activateAgentWindow', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../services/activateAgentWindow')>();
+  return {
+    ...actual,
+    activateAgentWindow: vi.fn(async () => undefined),
+  };
+});
 
 vi.mock('../../services/aiService', () => ({
   fetchModels: fetchModelsMock,
   resetStaticPromptCache: vi.fn(),
   streamChat: streamChatMock,
+}));
+
+vi.mock('../../services/agentShellSync', () => ({
+  syncShellToProjectPath: vi.fn(async () => undefined),
 }));
 
 vi.mock('../../services/chatDb', () => ({
@@ -244,7 +251,8 @@ describe('ChatGridWorkspace', () => {
       expect(screen.getAllByText('Agent Session 1').length).toBeGreaterThan(0);
     });
     const activeParentSessionId = useAgentWindowStore.getState().activeParentSessionId;
-    expect(useAppStore.getState().currentSessionId).toBe('session-1');
+    expect(activeParentSessionId).toBeTruthy();
+    expect(useAppStore.getState().currentSessionId).toBe(activeParentSessionId);
     expect(activeParentSessionId).not.toBe('session-1');
     expect(useAgentWindowStore.getState().windowsByParent[activeParentSessionId ?? '']?.some((window) => window.kind === 'standard')).toBe(false);
     expect(screen.getByTestId(`agent-runtime-transcript-primary-${activeParentSessionId}`)).toBeTruthy();
@@ -492,7 +500,8 @@ describe('ChatGridWorkspace', () => {
     });
     const delegateWindows = useAgentWindowStore.getState().windowsByParent['session-1'].filter((window) => window.sourceToolCallId === 'delegate-step-1');
     expect(delegateWindows).toHaveLength(1);
-    expect(useAgentRuntimeStore.getState().runtimesByWindow[delegateWindows[0].windowId].isGenerating).toBe(true);
+    expect(useAgentRuntimeStore.getState().runtimesByWindow[delegateWindows[0].windowId].proxyActive).toBe(true);
+    expect(useAgentRuntimeStore.getState().runtimesByWindow[delegateWindows[0].windowId].isGenerating).toBe(false);
   });
 
   it('keeps child runtime output visible while switching window focus', () => {

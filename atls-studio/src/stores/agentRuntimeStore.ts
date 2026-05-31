@@ -47,6 +47,8 @@ export interface AgentRuntime {
   streamingText: string;
   streamingReasoning: string;
   isGenerating: boolean;
+  /** Parent batch/delegate mirror activity — does not block user Run. */
+  proxyActive: boolean;
   status: AgentRuntimeStatus;
   toolCalls: MessageToolCall[];
   telemetry: AgentRuntimeTelemetry;
@@ -73,6 +75,7 @@ interface AgentRuntimeState {
   setStreamingText: (windowId: string, text: string) => void;
   setStreamingReasoning: (windowId: string, text: string) => void;
   startRun: (windowId: string, controller: AbortController) => void;
+  setProxyActive: (windowId: string, proxyActive: boolean) => void;
   finishRun: (windowId: string, status: AgentRuntimeStatus, error?: string) => void;
   addStreamId: (windowId: string, streamId: string) => void;
   addToolCall: (windowId: string, toolCall: MessageToolCall) => void;
@@ -122,6 +125,7 @@ function createRuntime(input: { windowId: string; sessionId: string; parentSessi
     streamingText: '',
     streamingReasoning: '',
     isGenerating: false,
+    proxyActive: false,
     status: 'idle',
     toolCalls: [],
     telemetry: { ...EMPTY_TELEMETRY },
@@ -267,6 +271,7 @@ export const useAgentRuntimeStore = create<AgentRuntimeState>((set, get) => ({
           streamingText: '',
           streamingReasoning: '',
           toolCalls: [],
+          proxyActive: false,
           lastError: undefined,
           canContinue: false,
           telemetry: {
@@ -274,6 +279,22 @@ export const useAgentRuntimeStore = create<AgentRuntimeState>((set, get) => ({
             rounds: runtime.telemetry.rounds + 1,
             retries: runtime.status === 'failed' ? runtime.telemetry.retries + 1 : runtime.telemetry.retries,
           },
+          updatedAt: new Date(),
+        },
+      },
+    };
+  }),
+
+  setProxyActive: (windowId, proxyActive) => set((state) => {
+    const runtime = state.runtimesByWindow[windowId];
+    if (!runtime || runtime.proxyActive === proxyActive) return {};
+    return {
+      runtimesByWindow: {
+        ...state.runtimesByWindow,
+        [windowId]: {
+          ...runtime,
+          proxyActive,
+          status: proxyActive ? 'running' : runtime.status,
           updatedAt: new Date(),
         },
       },
@@ -289,6 +310,7 @@ export const useAgentRuntimeStore = create<AgentRuntimeState>((set, get) => ({
         [windowId]: {
           ...runtime,
           isGenerating: false,
+          proxyActive: false,
           status,
           streamingText: '',
           streamingReasoning: '',
