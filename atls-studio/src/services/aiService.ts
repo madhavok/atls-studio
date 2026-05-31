@@ -2546,8 +2546,10 @@ async function streamChatViaTauri(
       if (concurrent) {
         const scopedWindowId = getActiveRunScope()?.windowId;
         if (scopedWindowId) {
-          const priorRounds = useAgentRuntimeStore.getState().runtimesByWindow[scopedWindowId]?.telemetry.rounds ?? 0;
-          useAgentRuntimeStore.getState().updateTelemetry(scopedWindowId, { rounds: priorRounds + 1 });
+          const prior = useAgentRuntimeStore.getState().runtimesByWindow[scopedWindowId]?.telemetry;
+          useAgentRuntimeStore.getState().updateTelemetry(scopedWindowId, {
+            rounds: (prior?.rounds ?? 0) + 1,
+          });
         }
       } else {
         useAppStore.getState().recordRound();
@@ -2579,6 +2581,20 @@ async function streamChatViaTauri(
           windowId: getActiveRunScope()?.windowId,
           dbSessionId: getActiveRunScope()?.dbSessionId,
         });
+        if (concurrent) {
+          const scopedWindowId = getActiveRunScope()?.windowId;
+          if (scopedWindowId) {
+            const prior = useAgentRuntimeStore.getState().runtimesByWindow[scopedWindowId]?.telemetry;
+            const nextInput = (prior?.inputTokens ?? 0) + roundInputTokens;
+            const nextOutput = (prior?.outputTokens ?? 0) + roundOutputTokens;
+            useAgentRuntimeStore.getState().updateTelemetry(scopedWindowId, {
+              inputTokens: nextInput,
+              outputTokens: nextOutput,
+              totalTokens: nextInput + nextOutput,
+              costCents: (prior?.costCents ?? 0) + roundCostCents,
+            });
+          }
+        }
         console.log(`[aiService] Recorded cost: ${roundCostCents}¢ for ${roundInputTokens}in/${roundOutputTokens}out (cache r:${roundCacheReadTokens} w:${roundCacheWriteTokens}) (${config.provider}/${config.model})`);
         const modelInfo = useAppStore.getState().availableModels.find(m => m.id === config.model);
         const st = useAppStore.getState().settings;
