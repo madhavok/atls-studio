@@ -1,13 +1,15 @@
-import { memo, useEffect } from 'react';
+import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import type { AgentWindow } from '../../stores/agentWindowStore';
 import { chatDb } from '../../services/chatDb';
 import { useAgentRuntimeStore, type AgentRuntimeMessage } from '../../stores/agentRuntimeStore';
 import { useAgentWindowStore } from '../../stores/agentWindowStore';
-import { useAppStore, type Message } from '../../stores/appStore';
 import { useAgentWindowRunner } from '../../hooks/useAgentWindowRunner';
+import { useAppStore } from '../../stores/appStore';
 
 interface AgentChatSurfaceProps {
   window: AgentWindow;
+  showControls?: boolean;
+  onOpenOptions?: () => void;
 }
 
 function toRuntimeMessages(messages: Array<{ id: string; role: 'user' | 'assistant'; content: string; timestamp: Date }>): AgentRuntimeMessage[] {
@@ -19,25 +21,19 @@ function toRuntimeMessages(messages: Array<{ id: string; role: 'user' | 'assista
   }));
 }
 
-function appMessagesToRuntime(messages: Message[]): AgentRuntimeMessage[] {
-  return messages
-    .filter((message): message is Message & { role: 'user' | 'assistant' } => message.role === 'user' || message.role === 'assistant')
-    .map((message) => ({
-      id: message.id,
-      role: message.role,
-      content: message.content,
-      timestamp: message.timestamp,
-    }));
-}
-
-export const AgentChatSurface = memo(function AgentChatSurface({ window }: AgentChatSurfaceProps) {
+export const AgentChatSurface = memo(function AgentChatSurface({ window, showControls = false, onOpenOptions }: AgentChatSurfaceProps) {
   const runtime = useAgentRuntimeStore((s) => s.runtimesByWindow[window.windowId]);
-  const currentSessionId = useAppStore((s) => s.currentSessionId);
-  const appMessages = useAppStore((s) => s.messages);
+  const settings = useAppStore((s) => s.settings);
+  const availableModels = useAppStore((s) => s.availableModels);
+  const chatMode = useAppStore((s) => s.chatMode);
   const ensureRuntime = useAgentRuntimeStore((s) => s.ensureRuntime);
   const hydrateRuntime = useAgentRuntimeStore((s) => s.hydrateRuntime);
   const setDraft = useAgentRuntimeStore((s) => s.setDraft);
   const { runWindow, cancelWindow } = useAgentWindowRunner();
+  const transcriptRef = useRef<HTMLDivElement>(null);
+  const transcriptEndRef = useRef<HTMLDivElement>(null);
+  const userScrolledUpRef = useRef(false);
+  const [showJumpToLatest, setShowJumpToLatest] = useState(false);
 
   useEffect(() => {
     ensureRuntime({
@@ -57,11 +53,6 @@ export const AgentChatSurface = memo(function AgentChatSurface({ window }: Agent
   }, [ensureRuntime, window.kind, window.parentSessionId, window.role, window.sessionId, window.status, window.windowId]);
 
   useEffect(() => {
-    if (window.kind !== 'primary' || window.sessionId !== currentSessionId || appMessages.length === 0) return;
-    hydrateRuntime(window.windowId, appMessagesToRuntime(appMessages));
-  }, [appMessages, currentSessionId, hydrateRuntime, window.kind, window.sessionId, window.windowId]);
-
-  useEffect(() => {
     if (!chatDb.isInitialized()) return;
     let cancelled = false;
     void chatDb.loadFullSession(window.sessionId).then((result) => {
@@ -73,6 +64,35 @@ export const AgentChatSurface = memo(function AgentChatSurface({ window }: Agent
     };
   }, [hydrateRuntime, window.sessionId, window.windowId]);
 
+  const scrollToBottom = useCallback((force = false) => {
+    if (!force && userScrolledUpRef.current) return;
+    const el = transcriptRef.current;
+    if (!el) return;
+    el.scrollTop = Math.max(0, el.scrollHeight - el.clientHeight);
+    transcriptEndRef.current?.scrollIntoView?.({ block: 'end' });
+    setShowJumpToLatest(false);
+  }, []);
+
+  const handleTranscriptScroll = useCallback(() => {
+    const el = transcriptRef.current;
+    if (!el) return;
+    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    const scrolledUp = distanceFromBottom > 64;
+    userScrolledUpRef.current = scrolledUp;
+    setShowJumpToLatest(scrolledUp);
+  }, []);
+
+  useEffect(() => {
+    if (!runtime?.isGenerating) return;
+    userScrolledUpRef.current = false;
+    scrollToBottom(true);
+  }, [runtime?.isGenerating, scrollToBottom]);
+
+  useEffect(() => {
+    if (!runtime) return;
+    scrollToBottom();
+  }, [runtime, runtime?.messages.length, runtime?.streamingText, scrollToBottom]);
+
   const safeRuntime = runtime;
   if (!safeRuntime) {
     return (
@@ -82,10 +102,22 @@ export const AgentChatSurface = memo(function AgentChatSurface({ window }: Agent
     );
   }
   const canSend = safeRuntime.draft.trim().length > 0 && !safeRuntime.isGenerating;
+  const selectedModel = availableModels.find((model) => model.id === settings.selectedModel);
+  const modelLabel = selectedModel?.name ?? settings.selectedModel;
+  const workerLabel = settings.subagentModel === 'none'
+    ? 'off'
+    : settings.subagentModel
+      ? settings.subagentModel
+      : 'auto';
 
   return (
-    <div className="flex h-full min-h-0 flex-col" onClick={(event) => event.stopPropagation()}>
-      <div className="min-h-0 flex-1 overflow-y-auto p-3 text-xs" data-testid={`agent-runtime-transcript-${window.windowId}`}>
+    <div className="flex h-full max-h-full min-h-0 flex-col overflow-hidden" onClick={(event) => event.stopPropagation()}>
+      <div
+        ref={transcriptRef}
+        onScroll={handleTranscriptScroll}
+        className="relative min-h-0 flex-1 overflow-y-auto overflow-x-hidden p-3 text-xs scrollbar-thin"
+        data-testid={`agent-runtime-transcript-${window.windowId}`}
+      >
         {safeRuntime.messages.length === 0 && !safeRuntime.streamingText ? (
           <div className="flex h-full items-center justify-center text-center text-studio-muted">
             {window.role
@@ -99,7 +131,7 @@ export const AgentChatSurface = memo(function AgentChatSurface({ window }: Agent
             {safeRuntime.messages.map((message) => (
               <div
                 key={message.id}
-                className={`rounded-lg border p-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)] ${
+                className={`min-w-0 overflow-hidden rounded-lg border p-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)] ${
                   message.role === 'user'
                     ? 'border-studio-title/35 bg-studio-title/10'
                     : message.role === 'system'
@@ -111,18 +143,31 @@ export const AgentChatSurface = memo(function AgentChatSurface({ window }: Agent
                   <span>{message.role}</span>
                   {message.toolName && <span className="truncate text-studio-title">{message.toolName}</span>}
                 </div>
-                <div className="whitespace-pre-wrap leading-relaxed text-studio-text">{message.content}</div>
+                <div className="whitespace-pre-wrap break-words leading-relaxed text-studio-text [overflow-wrap:anywhere]">{message.content}</div>
               </div>
             ))}
             {safeRuntime.streamingText && (
-              <div className="rounded-lg border border-cyan-400/30 bg-cyan-500/8 p-2">
+              <div className="min-w-0 overflow-hidden rounded-lg border border-cyan-400/30 bg-cyan-500/8 p-2">
                 <div className="mb-1 font-mono text-[9px] uppercase tracking-[0.16em] text-cyan-300">
                   {safeRuntime.isGenerating ? 'streaming' : 'latest stream'}
                 </div>
-                <div className="whitespace-pre-wrap leading-relaxed text-studio-text">{safeRuntime.streamingText}</div>
+                <div className="whitespace-pre-wrap break-words leading-relaxed text-studio-text [overflow-wrap:anywhere]">{safeRuntime.streamingText}</div>
               </div>
             )}
+            <div ref={transcriptEndRef} />
           </div>
+        )}
+        {showJumpToLatest && (
+          <button
+            type="button"
+            onClick={() => {
+              userScrolledUpRef.current = false;
+              scrollToBottom(true);
+            }}
+            className="sticky bottom-2 left-full z-10 rounded-full border border-studio-title/40 bg-studio-bg/90 px-2 py-1 font-mono text-[9px] uppercase tracking-wide text-studio-title shadow-lg"
+          >
+            Latest
+          </button>
         )}
       </div>
 
@@ -132,7 +177,24 @@ export const AgentChatSurface = memo(function AgentChatSurface({ window }: Agent
         </div>
       )}
 
-      <div className="border-t border-studio-border/70 bg-studio-bg/45 p-2">
+      <div className="shrink-0 border-t border-studio-border/70 bg-studio-bg/45 p-2">
+        {showControls && (
+          <div className="mb-2 flex items-center justify-between gap-2 rounded-lg border border-studio-border/60 bg-studio-bg/60 px-2 py-1" data-testid={`agent-card-controls-${window.windowId}`}>
+            <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1 font-mono text-[9px] uppercase tracking-[0.14em] text-studio-muted">
+              <span className="text-studio-title">Controls</span>
+              <span className="truncate" title={modelLabel}>Model: {modelLabel}</span>
+              <span>Mode: {chatMode}</span>
+              <span className="truncate" title={workerLabel}>Worker: {workerLabel}</span>
+            </div>
+            <button
+              type="button"
+              onClick={onOpenOptions}
+              className="rounded border border-studio-title/40 bg-studio-title/10 px-2 py-0.5 text-[10px] uppercase tracking-wide text-studio-title hover:border-studio-title"
+            >
+              Options
+            </button>
+          </div>
+        )}
         <textarea
           value={safeRuntime.draft}
           onChange={(event) => setDraft(window.windowId, event.target.value)}

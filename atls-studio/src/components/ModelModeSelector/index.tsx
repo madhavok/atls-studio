@@ -173,7 +173,13 @@ function CompactModelPicker({
   );
 }
 
-function SubAgentModelSelector({ models, inline }: { models: ModelInfo[]; inline?: boolean }) {
+type MenuPlacement = 'up' | 'down';
+
+function menuPlacementClass(placement: MenuPlacement): string {
+  return placement === 'down' ? 'top-full mt-1' : 'bottom-full mb-1';
+}
+
+function SubAgentModelSelector({ models, inline, menuPlacement = 'up' }: { models: ModelInfo[]; inline?: boolean; menuPlacement?: MenuPlacement }) {
   const { settings, setSettings } = useAppStore();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -212,7 +218,7 @@ function SubAgentModelSelector({ models, inline }: { models: ModelInfo[]; inline
         </button>
 
         {open && (
-          <div className="absolute bottom-full left-0 mb-1 w-56 bg-studio-surface border border-studio-border rounded-lg shadow-xl z-50 max-h-64 overflow-y-auto scrollbar-thin">
+          <div className={`absolute ${menuPlacementClass(menuPlacement)} left-0 w-56 bg-studio-surface border border-studio-border rounded-lg shadow-xl z-50 max-h-64 overflow-y-auto scrollbar-thin`}>
             <div className="px-3 py-2 border-b border-studio-border/50">
               <div className="text-[10px] text-studio-muted uppercase tracking-wide">Worker Model</div>
               <div className="text-[10px] text-studio-muted">Delegated agent routing model</div>
@@ -401,7 +407,12 @@ function SubAgentGenerationSettings({ disabled }: { disabled: boolean }) {
   );
 }
 
-export function ModelModeSelector() {
+interface ModelModeSelectorProps {
+  autoFetchModels?: boolean;
+  menuPlacement?: MenuPlacement;
+}
+
+export function ModelModeSelector({ autoFetchModels = true, menuPlacement = 'up' }: ModelModeSelectorProps = {}) {
   const {
     settings,
     availableModels,
@@ -514,6 +525,7 @@ export function ModelModeSelector() {
 
   // Debounce model fetching to avoid rapid API calls when settings change
   useEffect(() => {
+    if (!autoFetchModels) return;
     // Clear any pending fetch
     if (fetchDebounceRef.current) {
       clearTimeout(fetchDebounceRef.current);
@@ -529,7 +541,7 @@ export function ModelModeSelector() {
         clearTimeout(fetchDebounceRef.current);
       }
     };
-  }, [fetchAllModels]);
+  }, [autoFetchModels, fetchAllModels]);
 
   // Get current model info
   const currentModel = availableModels.find(m => m.id === settings.selectedModel);
@@ -645,7 +657,7 @@ export function ModelModeSelector() {
 
         {modelMenuOpen && (
           <div
-            className="absolute bottom-full left-0 mb-1 max-h-80 overflow-y-auto bg-studio-surface border border-studio-border rounded-lg shadow-xl z-50"
+            className={`absolute ${menuPlacementClass(menuPlacement)} left-0 max-h-80 overflow-y-auto bg-studio-surface border border-studio-border rounded-lg shadow-xl z-50`}
             style={{
               width: `${modelMenuWidthCh}ch`,
               maxWidth: 'min(42rem, calc(100vw - 1rem))',
@@ -767,7 +779,7 @@ export function ModelModeSelector() {
                   </span>
                 </div>
                 <div className="rounded-lg border border-studio-border/60 bg-studio-surface/50 p-2">
-                  <SubAgentModelSelector models={availableModels} inline={false} />
+                  <SubAgentModelSelector models={availableModels} inline={false} menuPlacement={menuPlacement} />
                   <SubAgentGenerationSettings disabled={settings.subagentModel === 'none'} />
                 </div>
               </div>
@@ -1272,7 +1284,7 @@ export function ModelModeSelector() {
         </button>
 
         {modeMenuOpen && (
-          <div className="absolute bottom-full right-0 mb-1 w-48 bg-studio-surface border border-studio-border rounded-lg shadow-xl z-50">
+          <div className={`absolute ${menuPlacementClass(menuPlacement)} right-0 w-48 bg-studio-surface border border-studio-border rounded-lg shadow-xl z-50`}>
             {MODES.map(mode => (
               <button
                 key={mode.id}
@@ -1350,7 +1362,7 @@ export function ModelModeSelector() {
             </button>
 
             {agentMenuOpen && (
-              <div className="absolute bottom-full right-0 mb-1 w-56 bg-studio-surface border border-studio-border rounded-lg shadow-xl z-50 max-h-80 overflow-y-auto">
+              <div className={`absolute ${menuPlacementClass(menuPlacement)} right-0 w-56 bg-studio-surface border border-studio-border rounded-lg shadow-xl z-50 max-h-80 overflow-y-auto`}>
                 {currentAgent && (
                   <button
                     onClick={() => { setSelectedAgent(''); setAgentMenuOpen(false); }}

@@ -1,6 +1,6 @@
 import { useCallback } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { useAppStore } from '../stores/appStore';
+import { generateTitle, useAppStore, type Message } from '../stores/appStore';
 import { useAgentRuntimeStore, type AgentRuntimeMessage } from '../stores/agentRuntimeStore';
 import { useAgentWindowStore, type AgentWindow } from '../stores/agentWindowStore';
 import { useContextStore } from '../stores/contextStore';
@@ -118,6 +118,35 @@ async function persistMessage(sessionId: string, message: AgentRuntimeMessage): 
   }
 }
 
+function shouldAutoTitle(title: string): boolean {
+  return /^(Primary Chat|New Conversation|New Chat|Agent Session \d+|Agent Window \d+)$/i.test(title.trim());
+}
+
+function toTitleMessage(message: AgentRuntimeMessage): Message {
+  return {
+    id: message.id,
+    role: 'user',
+    content: message.content,
+    timestamp: message.timestamp,
+  };
+}
+
+function updateWindowSessionTitle(window: AgentWindow, title: string): void {
+  useAgentWindowStore.getState().renameWindow(window.windowId, title);
+  useAppStore.setState((state) => ({
+    chatSessions: state.chatSessions.map((session) => (
+      session.id === window.sessionId
+        ? { ...session, title, updatedAt: new Date() }
+        : session
+    )),
+  }));
+  if (chatDb.isInitialized()) {
+    void chatDb.updateSessionTitle(window.sessionId, title).catch((error) => {
+      console.warn('[AgentWindowRunner] Failed to update session title:', error);
+    });
+  }
+}
+
 export function useAgentWindowRunner() {
   const runWindow = useCallback(async (windowId: string, prompt: string) => {
     const trimmed = prompt.trim();
@@ -177,8 +206,13 @@ export function useAgentWindowRunner() {
       ? Array.from(new Set([appState.activeFile, ...appState.openFiles].filter((path): path is string => Boolean(path))))
       : [];
     runtimeStore.setFileClaims(windowId, fileClaims);
+    const hadUserMessage = runtime.messages.some((message) => message.role === 'user');
     const userMessage = runtimeStore.appendMessage(windowId, { role: 'user', content: trimmed });
     if (userMessage) void persistMessage(window.sessionId, userMessage);
+    if (userMessage && window.kind === 'primary' && !hadUserMessage && shouldAutoTitle(window.title)) {
+      const title = generateTitle([toTitleMessage(userMessage)]);
+      updateWindowSessionTitle(window, title);
+    }
     runtimeStore.setDraft(windowId, '');
     runtimeStore.startRun(windowId, controller);
     useAgentWindowStore.getState().setWindowStatus(windowId, 'running');

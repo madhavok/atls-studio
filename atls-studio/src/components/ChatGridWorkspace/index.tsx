@@ -14,6 +14,8 @@ import { chatDb } from '../../services/chatDb';
 import { ChatTelemetryPane } from './ChatTelemetryPane';
 import { AgentChatSurface } from './AgentChatSurface';
 import { useAgentRuntimeStore } from '../../stores/agentRuntimeStore';
+import { ModelModeSelector } from '../ModelModeSelector';
+import { Settings } from '../Settings';
 
 export type ChatGridVariant = 'primary' | 'dock';
 
@@ -128,7 +130,7 @@ function ChatWindowShell({
 }) {
   return (
     <section
-      className={`group flex min-h-[420px] flex-col overflow-hidden rounded-xl border bg-studio-surface/70 shadow-2xl backdrop-blur-sm transition-colors ${COLOR_CLASSES[window.groupColor]} ${
+      className={`group flex h-[520px] min-h-[420px] max-h-[calc(100vh-9rem)] flex-col overflow-hidden rounded-xl border bg-studio-surface/70 shadow-2xl backdrop-blur-sm transition-colors ${COLOR_CLASSES[window.groupColor]} ${
         selected ? 'ring-1 ring-studio-title/40' : 'hover:border-studio-title/35'
       }`}
       data-testid={testId}
@@ -142,7 +144,7 @@ function ChatWindowShell({
         totalRounds={totalRounds}
         actions={actions}
       />
-      <div className="min-h-0 flex-1">{children}</div>
+      <div className="min-h-0 flex-1 overflow-hidden">{children}</div>
     </section>
   );
 }
@@ -179,6 +181,56 @@ function SwarmTranscript({ task }: { task: SwarmTask }) {
   return <TranscriptPreview messages={messages} emptyText="This managed swarm window has not emitted a transcript yet." />;
 }
 
+function ChatOptionsModal({
+  open,
+  onClose,
+  onOpenSettings,
+}: {
+  open: boolean;
+  onClose: () => void;
+  onOpenSettings: () => void;
+}) {
+  if (!open) return null;
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-start justify-center bg-black/50 p-6 pt-20"
+      data-testid="chat-options-modal"
+      onClick={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
+      <div className="w-full max-w-3xl overflow-visible rounded-xl border border-studio-border bg-studio-surface shadow-2xl">
+        <div className="flex items-center justify-between gap-3 border-b border-studio-border px-3 py-2">
+          <div>
+            <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-studio-title">Chat Options</div>
+            <div className="text-[10px] text-studio-muted">Shared model, mode, routing, and generation controls</div>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={onOpenSettings}
+              className="rounded-lg border border-studio-title/40 bg-studio-title/10 px-2 py-1 text-[10px] uppercase tracking-wide text-studio-title"
+              title="Settings"
+            >
+              Settings
+            </button>
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-lg border border-studio-border px-2 py-1 text-[10px] uppercase tracking-wide text-studio-muted hover:text-studio-text"
+            >
+              Close
+            </button>
+          </div>
+        </div>
+        <div className="overflow-visible">
+          <ModelModeSelector menuPlacement="down" />
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export const ChatGridWorkspace = memo(function ChatGridWorkspace({ variant = 'primary' }: ChatGridWorkspaceProps) {
   const currentSessionId = useAppStore((s) => s.currentSessionId);
   const chatMode = useAppStore((s) => s.chatMode);
@@ -187,13 +239,16 @@ export const ChatGridWorkspace = memo(function ChatGridWorkspace({ variant = 'pr
   const contextUsage = useAppStore((s) => s.contextUsage);
   const promptMetrics = useAppStore((s) => s.promptMetrics);
   const chatSessions = useAppStore((s) => s.chatSessions);
+  const projectPath = useAppStore((s) => s.projectPath);
   const openFile = useAppStore((s) => s.openFile);
   const addToast = useAppStore((s) => s.addToast);
-  const setWindowStatus = useAgentWindowStore((s) => s.setWindowStatus);
+  const hydrateProject = useAgentWindowStore((s) => s.hydrateProject);
   const setActiveParentSession = useAgentWindowStore((s) => s.setActiveParentSession);
   const ensurePrimaryWindow = useAgentWindowStore((s) => s.ensurePrimaryWindow);
   const removeWindow = useAgentWindowStore((s) => s.removeWindow);
+  const closeParentSession = useAgentWindowStore((s) => s.closeParentSession);
   const selectWindow = useAgentWindowStore((s) => s.selectWindow);
+  const renameWindow = useAgentWindowStore((s) => s.renameWindow);
   const setTelemetryCollapsed = useAgentWindowStore((s) => s.setTelemetryCollapsed);
   const activeParentSessionId = useAgentWindowStore((s) => s.activeParentSessionId);
   const windowsByParent = useAgentWindowStore((s) => s.windowsByParent);
@@ -205,6 +260,8 @@ export const ChatGridWorkspace = memo(function ChatGridWorkspace({ variant = 'pr
   const snapshots = useRoundHistoryStore((s) => s.snapshots);
   const runtimesByWindow = useAgentRuntimeStore((s) => s.runtimesByWindow);
   const [previewBySession, setPreviewBySession] = useState<SessionPreviewMap>({});
+  const [optionsModalOpen, setOptionsModalOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   const activeGroupId = activeParentSessionId ?? currentSessionId ?? 'draft-parent';
   const parentEvents = useAgentRuntimeStore((s) => s.parentEventsBySession[activeGroupId] ?? EMPTY_PARENT_EVENTS);
@@ -215,6 +272,10 @@ export const ChatGridWorkspace = memo(function ChatGridWorkspace({ variant = 'pr
   }, [windowsByParent]);
   const selectedWindowId = selectedWindowByParent[activeGroupId] ?? `primary-${activeGroupId}`;
   const telemetryCollapsed = useAgentWindowStore((s) => s.telemetryCollapsedByParent[activeGroupId] ?? variant === 'dock');
+
+  useEffect(() => {
+    hydrateProject(projectPath, chatSessions);
+  }, [chatSessions, hydrateProject, projectPath]);
 
   useEffect(() => {
     if (currentSessionId && !activeParentSessionId) setActiveParentSession(currentSessionId);
@@ -230,6 +291,16 @@ export const ChatGridWorkspace = memo(function ChatGridWorkspace({ variant = 'pr
     if (!activeParentSessionId) return;
     ensurePrimaryWindow(activeParentSessionId, getSessionTitle(activeParentSession, 'Primary Chat'));
   }, [activeParentSession, activeParentSessionId, ensurePrimaryWindow]);
+
+  useEffect(() => {
+    for (const window of windows) {
+      if (window.kind !== 'primary') continue;
+      const session = chatSessions.find((candidate) => candidate.id === window.sessionId);
+      if (!session) continue;
+      const title = getSessionTitle(session, window.title);
+      if (title !== window.title) renameWindow(window.windowId, title);
+    }
+  }, [chatSessions, renameWindow, windows]);
 
   useEffect(() => {
     for (const task of swarmTasks) {
@@ -268,14 +339,6 @@ export const ChatGridWorkspace = memo(function ChatGridWorkspace({ variant = 'pr
       cancelled = true;
     };
   }, [currentSessionId, previewBySession, windows]);
-
-  useEffect(() => {
-    if (!currentSessionId) return;
-    const primaryWindow = windows.find((window) => window.kind === 'primary' && window.sessionId === currentSessionId);
-    if (primaryWindow) {
-      setWindowStatus(primaryWindow.windowId, isGenerating ? 'running' : 'idle');
-    }
-  }, [currentSessionId, isGenerating, setWindowStatus, windows]);
 
   const selectedWindow = windows.find((window) => window.windowId === selectedWindowId) ?? windows[0];
   const gridClass = variant === 'dock'
@@ -419,11 +482,28 @@ export const ChatGridWorkspace = memo(function ChatGridWorkspace({ variant = 'pr
                             Close
                           </button>
                         )}
+                        {window.kind === 'primary' && window.sessionId !== currentSessionId && (
+                          <button
+                            type="button"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              closeParentSession(window.parentSessionId);
+                            }}
+                            className="rounded-full border border-red-400/30 px-2 py-0.5 text-[9px] uppercase tracking-wide text-red-300 hover:bg-red-500/10"
+                            title="Close parent session window"
+                          >
+                            Close
+                          </button>
+                        )}
                       </>
                     }
                   >
                     {window.kind === 'standard' || window.kind === 'primary' ? (
-                      <AgentChatSurface window={window} />
+                      <AgentChatSurface
+                        window={window}
+                        showControls
+                        onOpenOptions={() => setOptionsModalOpen(true)}
+                      />
                     ) : task ? (
                       <SwarmTranscript task={task} />
                     ) : (
@@ -455,6 +535,12 @@ export const ChatGridWorkspace = memo(function ChatGridWorkspace({ variant = 'pr
           onToggleCollapsed={() => setTelemetryCollapsed(activeGroupId, !telemetryCollapsed)}
         />
       </div>
+      <ChatOptionsModal
+        open={optionsModalOpen}
+        onClose={() => setOptionsModalOpen(false)}
+        onOpenSettings={() => setSettingsOpen(true)}
+      />
+      <Settings isOpen={settingsOpen} onClose={() => setSettingsOpen(false)} />
     </div>
   );
 });

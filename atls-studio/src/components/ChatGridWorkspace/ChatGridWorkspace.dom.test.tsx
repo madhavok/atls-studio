@@ -15,15 +15,43 @@ const chatDbMock = vi.hoisted(() => ({
   createSession: vi.fn(),
   loadFullSession: vi.fn(),
   addMessage: vi.fn(),
+  updateSessionTitle: vi.fn(),
 }));
 
-vi.mock('../AiChat', () => ({ AiChat: () => <div data-testid="m-aichat" /> }));
+const fetchModelsMock = vi.hoisted(() => vi.fn(async () => [{
+  id: 'claude-sonnet-4-5',
+  name: 'Claude Sonnet 4.5',
+  provider: 'anthropic',
+  contextWindow: 200000,
+  isReasoning: true,
+}]));
+const streamChatMock = vi.hoisted(() => vi.fn(async (
+  _config: unknown,
+  _messages: unknown,
+  callbacks: {
+    onStreamId?: (streamId: string) => void;
+    onToken?: (token: string) => void;
+    onDone?: () => void;
+  },
+) => {
+  callbacks.onStreamId?.('stream-test');
+  callbacks.onToken?.('Streamed response');
+  callbacks.onDone?.();
+}));
+
+vi.mock('../../services/aiService', () => ({
+  fetchModels: fetchModelsMock,
+  resetStaticPromptCache: vi.fn(),
+  streamChat: streamChatMock,
+}));
+
 vi.mock('../../services/chatDb', () => ({
   chatDb: {
     isInitialized: () => chatDbMock.initialized,
     createSession: chatDbMock.createSession,
     loadFullSession: chatDbMock.loadFullSession,
     addMessage: chatDbMock.addMessage,
+    updateSessionTitle: chatDbMock.updateSessionTitle,
   },
 }));
 
@@ -54,6 +82,9 @@ describe('ChatGridWorkspace', () => {
     vi.clearAllMocks();
     chatDbMock.initialized = false;
     chatDbMock.loadFullSession.mockResolvedValue(null);
+    chatDbMock.updateSessionTitle.mockResolvedValue(undefined);
+    fetchModelsMock.mockClear();
+    streamChatMock.mockClear();
     useAgentWindowStore.getState().reset();
     useAgentRuntimeStore.getState().reset();
     useSwarmStore.getState().resetSwarm();
@@ -67,8 +98,23 @@ describe('ChatGridWorkspace', () => {
       activeFile: null,
       openFiles: [],
       projectPath: '/tmp/project',
+      chatSessions: [],
       contextUsage: { inputTokens: 0, outputTokens: 0, totalTokens: 0, maxTokens: 1000, percentage: 0 },
+      availableModels: [{
+        id: 'claude-sonnet-4-5',
+        name: 'Claude Sonnet 4.5',
+        provider: 'anthropic',
+        contextWindow: 200000,
+        isReasoning: true,
+      }],
+      settings: {
+        ...useAppStore.getState().settings,
+        selectedModel: 'claude-sonnet-4-5',
+        selectedProvider: 'anthropic',
+        anthropicApiKey: 'test-key',
+      },
     });
+    useAgentWindowStore.getState().hydrateProject('/tmp/project');
   });
 
   it('renders the primary chat as a full grid window', () => {
@@ -77,7 +123,103 @@ describe('ChatGridWorkspace', () => {
     expect(screen.getByTestId('chat-grid-primary')).toBeTruthy();
     expect(screen.getByTestId('chat-telemetry-pane')).toBeTruthy();
     expect(screen.getByTestId('primary-chat-window')).toBeTruthy();
-    expect(screen.getByText('This parent session is ready for agentic chat.')).toBeTruthy();
+    expect(screen.getByTestId('agent-runtime-transcript-primary-session-1')).toBeTruthy();
+    expect(screen.queryByTestId('m-aichat')).toBeNull();
+  });
+
+  it('restores project-scoped card layouts without leaking across projects', async () => {
+    useAppStore.setState({
+      currentSessionId: null,
+      projectPath: '/tmp/project-a',
+      chatSessions: [{
+        id: 'project-a-session',
+        title: 'Project A Chat',
+        messages: [],
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        contextUsage: { inputTokens: 0, outputTokens: 0, totalTokens: 0, costCents: 0 },
+      }],
+    });
+    const { rerender } = render(<ChatGridWorkspace />);
+
+    await waitFor(() => {
+      expect(screen.getAllByText('Project A Chat').length).toBeGreaterThan(0);
+    });
+    useAgentWindowStore.getState().ensurePrimaryWindow('project-a-extra', 'Project A Extra');
+    expect(useAgentWindowStore.getState().projectPath).toBe('/tmp/project-a');
+
+    useAppStore.setState({
+      projectPath: '/tmp/project-b',
+      chatSessions: [{
+        id: 'project-b-session',
+        title: 'Project B Chat',
+        messages: [],
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        contextUsage: { inputTokens: 0, outputTokens: 0, totalTokens: 0, costCents: 0 },
+      }],
+    });
+    rerender(<ChatGridWorkspace />);
+
+    await waitFor(() => {
+      expect(screen.getAllByText('Project B Chat').length).toBeGreaterThan(0);
+    });
+    expect(screen.queryByText('Project A Extra')).toBeNull();
+
+    useAppStore.setState({
+      projectPath: '/tmp/project-a',
+      chatSessions: [{
+        id: 'project-a-session',
+        title: 'Project A Chat',
+        messages: [],
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        contextUsage: { inputTokens: 0, outputTokens: 0, totalTokens: 0, costCents: 0 },
+      }],
+    });
+    rerender(<ChatGridWorkspace />);
+
+    await waitFor(() => {
+      expect(screen.getAllByText('Project A Extra').length).toBeGreaterThan(0);
+    });
+  });
+
+  it('shows shared chat controls on the selected card', () => {
+    render(<ChatGridWorkspace />);
+
+    expect(screen.getByText('Controls')).toBeTruthy();
+    expect(screen.getByText('Model: Claude Sonnet 4.5')).toBeTruthy();
+    expect(screen.getByText('Mode: agent')).toBeTruthy();
+    expect(screen.getByText('Options')).toBeTruthy();
+    expect(screen.queryByTitle('Select model')).toBeNull();
+
+    fireEvent.click(screen.getByText('Options'));
+    expect(screen.getByTestId('chat-options-modal').className).toContain('fixed');
+    expect(screen.getByTitle('Select model')).toBeTruthy();
+    expect(screen.getByTitle('Settings')).toBeTruthy();
+  });
+
+  it('keeps controls visible on every parent and agent card', () => {
+    useAgentWindowStore.getState().setActiveParentSession('session-1');
+    useAgentWindowStore.getState().ensurePrimaryWindow('session-1', 'Parent One');
+    useAgentWindowStore.getState().ensurePrimaryWindow('session-2', 'Parent Two');
+    const childWindowId = useAgentWindowStore.getState().spawnStandardWindow('session-1', 'session-3', 'Agent Window 1');
+
+    render(<ChatGridWorkspace />);
+
+    expect(screen.getByTestId('agent-card-controls-primary-session-1')).toBeTruthy();
+    expect(screen.getByTestId('agent-card-controls-primary-session-2')).toBeTruthy();
+    expect(screen.getByTestId(`agent-card-controls-${childWindowId}`)).toBeTruthy();
+    expect(screen.getAllByText('Options').length).toBeGreaterThanOrEqual(3);
+  });
+
+  it('opens global options model menus downward', () => {
+    render(<ChatGridWorkspace />);
+
+    fireEvent.click(screen.getByText('Options'));
+    fireEvent.click(screen.getByTitle('Select model'));
+    const searchInput = screen.getByPlaceholderText('Search models by provider...');
+    expect(searchInput.closest('.sticky')?.parentElement?.className).toContain('top-full');
   });
 
   it('spawns new agents as new parent sessions, not child windows', async () => {
@@ -92,6 +234,7 @@ describe('ChatGridWorkspace', () => {
     expect(useAppStore.getState().currentSessionId).toBe('session-1');
     expect(activeParentSessionId).not.toBe('session-1');
     expect(useAgentWindowStore.getState().windowsByParent[activeParentSessionId ?? '']?.some((window) => window.kind === 'standard')).toBe(false);
+    expect(screen.getByTestId(`agent-runtime-transcript-primary-${activeParentSessionId}`)).toBeTruthy();
   });
 
   it('selecting a standard window does not load it into the global parent session', async () => {
@@ -138,6 +281,7 @@ describe('ChatGridWorkspace', () => {
     useAgentRuntimeStore.getState().ensureRuntime({ windowId: 'primary-session-1', sessionId: 'session-1', parentSessionId: 'session-1' });
     useAgentRuntimeStore.getState().startRun('primary-session-1', new AbortController());
     useAgentRuntimeStore.getState().setStreamingText('primary-session-1', 'Parent stream still active');
+    useAppStore.setState({ currentSessionId: 'session-2' });
     render(<ChatGridWorkspace />);
 
     handleDelegateToolCall('session-1', {
@@ -155,6 +299,7 @@ describe('ChatGridWorkspace', () => {
   });
 
   it('keeps multiple parent window streams active while focus moves', () => {
+    useAppStore.setState({ currentSessionId: 'session-3' });
     useAgentWindowStore.getState().setActiveParentSession('session-1');
     useAgentWindowStore.getState().ensurePrimaryWindow('session-1', 'Parent One');
     useAgentWindowStore.getState().ensurePrimaryWindow('session-2', 'Parent Two');
@@ -172,6 +317,115 @@ describe('ChatGridWorkspace', () => {
     expect(screen.getByText('Parent two streaming')).toBeTruthy();
     expect(useAgentRuntimeStore.getState().runtimesByWindow['primary-session-1'].isGenerating).toBe(true);
     expect(useAgentRuntimeStore.getState().runtimesByWindow['primary-session-2'].isGenerating).toBe(true);
+  });
+
+  it('bounds transcript output inside the card viewport', () => {
+    useAgentWindowStore.getState().setActiveParentSession('session-1');
+    useAgentWindowStore.getState().ensurePrimaryWindow('session-1', 'Bounded Parent');
+    useAgentRuntimeStore.getState().ensureRuntime({ windowId: 'primary-session-1', sessionId: 'session-1', parentSessionId: 'session-1' });
+    useAgentRuntimeStore.getState().appendMessage('primary-session-1', {
+      role: 'assistant',
+      content: 'x'.repeat(500),
+    });
+
+    render(<ChatGridWorkspace />);
+    const card = screen.getByTestId('primary-chat-window');
+    const transcript = screen.getByTestId('agent-runtime-transcript-primary-session-1');
+
+    expect(card.className).toContain('h-[520px]');
+    expect(card.className).toContain('overflow-hidden');
+    expect(transcript.className).toContain('overflow-y-auto');
+    expect(transcript.className).toContain('overflow-x-hidden');
+    expect(screen.getByText('x'.repeat(500)).className).toContain('break-words');
+  });
+
+  it('keeps auto-scroll paused when the user scrolls up and can jump back to latest', async () => {
+    useAgentWindowStore.getState().setActiveParentSession('session-1');
+    useAgentWindowStore.getState().ensurePrimaryWindow('session-1', 'Scrollable Parent');
+    useAgentRuntimeStore.getState().ensureRuntime({ windowId: 'primary-session-1', sessionId: 'session-1', parentSessionId: 'session-1' });
+    useAgentRuntimeStore.getState().appendMessage('primary-session-1', {
+      role: 'assistant',
+      content: 'Initial output',
+    });
+
+    render(<ChatGridWorkspace />);
+    const transcript = screen.getByTestId('agent-runtime-transcript-primary-session-1');
+    Object.defineProperty(transcript, 'scrollHeight', { value: 1000, configurable: true });
+    Object.defineProperty(transcript, 'clientHeight', { value: 200, configurable: true });
+    Object.defineProperty(transcript, 'scrollTop', { value: 100, writable: true, configurable: true });
+
+    fireEvent.scroll(transcript);
+    await waitFor(() => {
+      expect(screen.getByText('Latest')).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByText('Latest'));
+    await waitFor(() => {
+      expect(screen.queryByText('Latest')).toBeNull();
+    });
+  });
+
+  it('renames parent cards from their own first prompt', async () => {
+    chatDbMock.initialized = true;
+    useAppStore.setState({
+      chatSessions: [{
+        id: 'session-1',
+        title: 'Agent Session 1',
+        messages: [],
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        contextUsage: { inputTokens: 0, outputTokens: 0, totalTokens: 0, costCents: 0 },
+      }],
+    });
+    useAgentWindowStore.getState().setActiveParentSession('session-1');
+    useAgentWindowStore.getState().ensurePrimaryWindow('session-1', 'Agent Session 1');
+
+    render(<ChatGridWorkspace />);
+    fireEvent.change(screen.getByPlaceholderText('Send a parent session task...'), {
+      target: { value: 'Build isolated card streaming now' },
+    });
+    fireEvent.click(screen.getByText('Run'));
+
+    await waitFor(() => {
+      expect(chatDbMock.updateSessionTitle).toHaveBeenCalledWith('session-1', 'Build isolated card streaming now');
+    });
+    expect(useAgentWindowStore.getState().windowsByParent['session-1'][0].title).toBe('Build isolated card streaming now');
+    expect(streamChatMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('syncs parent card titles from renamed chat sessions', async () => {
+    useAgentWindowStore.getState().setActiveParentSession('session-1');
+    useAgentWindowStore.getState().ensurePrimaryWindow('session-1', 'Old Parent Title');
+    useAppStore.setState({
+      chatSessions: [{
+        id: 'session-1',
+        title: 'Renamed Parent Mission',
+        messages: [],
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        contextUsage: { inputTokens: 0, outputTokens: 0, totalTokens: 0, costCents: 0 },
+      }],
+    });
+
+    render(<ChatGridWorkspace />);
+
+    await waitFor(() => {
+      expect(useAgentWindowStore.getState().windowsByParent['session-1'][0].title).toBe('Renamed Parent Mission');
+    });
+    expect(screen.getAllByText('Renamed Parent Mission').length).toBeGreaterThan(0);
+  });
+
+  it('closes older parent session windows without deleting the current chat', () => {
+    useAgentWindowStore.getState().setActiveParentSession('session-1');
+    useAgentWindowStore.getState().ensurePrimaryWindow('session-1', 'Parent One');
+    useAgentWindowStore.getState().ensurePrimaryWindow('session-2', 'Parent Two');
+
+    render(<ChatGridWorkspace />);
+    fireEvent.click(screen.getByTitle('Close parent session window'));
+
+    expect(useAgentWindowStore.getState().windowsByParent['session-2']).toBeUndefined();
+    expect(useAppStore.getState().currentSessionId).toBe('session-1');
+    expect(screen.queryByText('Parent Two')).toBeNull();
   });
 
   it('mirrors subagent progress into the spawned child runtime', async () => {

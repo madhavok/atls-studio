@@ -24,11 +24,13 @@ interface SerializedAgentWindow extends Omit<AgentWindow, 'createdAt' | 'updated
 }
 
 interface AgentWindowState {
+  projectPath: string | null;
   activeParentSessionId: string | null;
   windowsByParent: Record<string, AgentWindow[]>;
   selectedWindowByParent: Record<string, string>;
   telemetryCollapsedByParent: Record<string, boolean>;
 
+  hydrateProject: (projectPath: string | null, sessions?: Array<{ id: string; title?: string }>) => void;
   setActiveParentSession: (sessionId: string) => void;
   ensurePrimaryWindow: (parentSessionId: string, title?: string) => void;
   spawnStandardWindow: (
@@ -41,6 +43,7 @@ interface AgentWindowState {
   ) => string;
   upsertSwarmWindow: (parentSessionId: string, taskId: string, title: string, role?: string, status?: AgentWindowStatus) => string;
   removeWindow: (parentSessionId: string, windowId: string) => void;
+  closeParentSession: (parentSessionId: string) => void;
   selectWindow: (parentSessionId: string, windowId: string) => void;
   renameWindow: (windowId: string, title: string) => void;
   setWindowStatus: (windowId: string, status: AgentWindowStatus) => void;
@@ -48,8 +51,19 @@ interface AgentWindowState {
   reset: () => void;
 }
 
-const STORAGE_KEY = 'atls-agent-windows-v1';
+const STORAGE_KEY_PREFIX = 'atls-agent-windows-v1';
 const COLORS: AgentWindowColor[] = ['cyan', 'violet', 'emerald', 'amber', 'rose', 'blue'];
+const EMPTY_PERSISTED: PersistedAgentWindowState = {
+  activeParentSessionId: null,
+  windowsByParent: {},
+  selectedWindowByParent: {},
+  telemetryCollapsedByParent: {},
+};
+
+type PersistedAgentWindowState = Pick<
+  AgentWindowState,
+  'activeParentSessionId' | 'windowsByParent' | 'selectedWindowByParent' | 'telemetryCollapsedByParent'
+>;
 
 function createId(prefix: string): string {
   const random = Math.random().toString(36).slice(2, 9);
@@ -64,13 +78,18 @@ function reviveWindow(window: SerializedAgentWindow): AgentWindow {
   };
 }
 
-function loadPersisted(): Pick<AgentWindowState, 'activeParentSessionId' | 'windowsByParent' | 'selectedWindowByParent' | 'telemetryCollapsedByParent'> {
+function storageKeyForProject(projectPath: string | null): string {
+  const key = projectPath?.trim() ? encodeURIComponent(projectPath.trim()) : 'global';
+  return `${STORAGE_KEY_PREFIX}:${key}`;
+}
+
+function loadPersisted(projectPath: string | null): PersistedAgentWindowState {
   if (typeof localStorage === 'undefined') {
-    return { activeParentSessionId: null, windowsByParent: {}, selectedWindowByParent: {}, telemetryCollapsedByParent: {} };
+    return EMPTY_PERSISTED;
   }
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return { activeParentSessionId: null, windowsByParent: {}, selectedWindowByParent: {}, telemetryCollapsedByParent: {} };
+    const raw = localStorage.getItem(storageKeyForProject(projectPath));
+    if (!raw) return EMPTY_PERSISTED;
     const parsed = JSON.parse(raw) as {
       activeParentSessionId?: string | null;
       windowsByParent?: Record<string, SerializedAgentWindow[]>;
@@ -89,13 +108,41 @@ function loadPersisted(): Pick<AgentWindowState, 'activeParentSessionId' | 'wind
       telemetryCollapsedByParent: parsed.telemetryCollapsedByParent ?? {},
     };
   } catch {
-    return { activeParentSessionId: null, windowsByParent: {}, selectedWindowByParent: {}, telemetryCollapsedByParent: {} };
+    return EMPTY_PERSISTED;
   }
 }
 
-function persist(state: Pick<AgentWindowState, 'activeParentSessionId' | 'windowsByParent' | 'selectedWindowByParent' | 'telemetryCollapsedByParent'>) {
+function persist(projectPath: string | null, state: PersistedAgentWindowState) {
   if (typeof localStorage === 'undefined') return;
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  localStorage.setItem(storageKeyForProject(projectPath), JSON.stringify(state));
+}
+
+function pickPersisted(state: AgentWindowState): PersistedAgentWindowState {
+  return {
+    activeParentSessionId: state.activeParentSessionId,
+    windowsByParent: state.windowsByParent,
+    selectedWindowByParent: state.selectedWindowByParent,
+    telemetryCollapsedByParent: state.telemetryCollapsedByParent,
+  };
+}
+
+function seedFromSessions(sessions: Array<{ id: string; title?: string }> = []): PersistedAgentWindowState {
+  const windowsByParent = Object.fromEntries(
+    sessions.slice(0, 6).map((session) => [
+      session.id,
+      [primaryWindow(session.id, session.title?.trim() || 'Primary Chat')],
+    ]),
+  );
+  const selectedWindowByParent = Object.fromEntries(
+    Object.keys(windowsByParent).map((sessionId) => [sessionId, `primary-${sessionId}`]),
+  );
+  const activeParentSessionId = sessions[0]?.id ?? null;
+  return {
+    activeParentSessionId,
+    windowsByParent,
+    selectedWindowByParent,
+    telemetryCollapsedByParent: {},
+  };
 }
 
 function primaryWindow(parentSessionId: string, title = 'Primary Chat'): AgentWindow {
@@ -133,10 +180,25 @@ function mutateWindow(
   return changed ? next : windowsByParent;
 }
 
-const persisted = loadPersisted();
+const persisted = loadPersisted(null);
 
 export const useAgentWindowStore = create<AgentWindowState>((set, get) => ({
+  projectPath: null,
   ...persisted,
+
+  hydrateProject: (projectPath, sessions = []) => set((state) => {
+    if (state.projectPath === projectPath && Object.keys(state.windowsByParent).length > 0) return {};
+    const persistedProject = loadPersisted(projectPath);
+    const nextPersisted = Object.keys(persistedProject.windowsByParent).length > 0
+      ? persistedProject
+      : seedFromSessions(sessions);
+    const next = {
+      projectPath,
+      ...nextPersisted,
+    };
+    if (Object.keys(next.windowsByParent).length > 0) persist(projectPath, nextPersisted);
+    return next;
+  }),
 
   setActiveParentSession: (sessionId) => set((state) => {
     const windows = state.windowsByParent[sessionId] ?? [primaryWindow(sessionId)];
@@ -148,7 +210,7 @@ export const useAgentWindowStore = create<AgentWindowState>((set, get) => ({
         [sessionId]: state.selectedWindowByParent[sessionId] ?? windows[0].windowId,
       },
     };
-    persist({ ...state, ...next });
+    persist(state.projectPath, { ...pickPersisted(state), ...next });
     return next;
   }),
 
@@ -166,7 +228,7 @@ export const useAgentWindowStore = create<AgentWindowState>((set, get) => ({
         [parentSessionId]: state.selectedWindowByParent[parentSessionId] ?? primaryId,
       },
     };
-    persist({ ...state, ...next });
+    persist(state.projectPath, { ...pickPersisted(state), ...next });
     return next;
   }),
 
@@ -195,7 +257,7 @@ export const useAgentWindowStore = create<AgentWindowState>((set, get) => ({
           ? state.selectedWindowByParent
           : { ...state.selectedWindowByParent, [parentSessionId]: window.windowId },
       };
-      persist({ ...state, ...next });
+      persist(state.projectPath, { ...pickPersisted(state), ...next });
       return next;
     });
     return window.windowId;
@@ -224,7 +286,7 @@ export const useAgentWindowStore = create<AgentWindowState>((set, get) => ({
         ? windows.map((window) => window.windowId === windowId ? nextWindow : window)
         : [...windows, nextWindow];
       const next = { windowsByParent: { ...state.windowsByParent, [parentSessionId]: nextWindows } };
-      persist({ ...state, ...next });
+      persist(state.projectPath, { ...pickPersisted(state), ...next });
       return next;
     });
     return windowId;
@@ -238,13 +300,33 @@ export const useAgentWindowStore = create<AgentWindowState>((set, get) => ({
       windowsByParent: { ...state.windowsByParent, [parentSessionId]: windows },
       selectedWindowByParent,
     };
-    persist({ ...state, ...next });
+    persist(state.projectPath, { ...pickPersisted(state), ...next });
+    return next;
+  }),
+
+  closeParentSession: (parentSessionId) => set((state) => {
+    const windowsByParent = { ...state.windowsByParent };
+    delete windowsByParent[parentSessionId];
+    const selectedWindowByParent = { ...state.selectedWindowByParent };
+    delete selectedWindowByParent[parentSessionId];
+    const telemetryCollapsedByParent = { ...state.telemetryCollapsedByParent };
+    delete telemetryCollapsedByParent[parentSessionId];
+    const fallbackParentId = state.activeParentSessionId === parentSessionId
+      ? Object.keys(windowsByParent)[0] ?? null
+      : state.activeParentSessionId;
+    const next = {
+      activeParentSessionId: fallbackParentId,
+      windowsByParent,
+      selectedWindowByParent,
+      telemetryCollapsedByParent,
+    };
+    persist(state.projectPath, next);
     return next;
   }),
 
   selectWindow: (parentSessionId, windowId) => set((state) => {
     const selectedWindowByParent = { ...state.selectedWindowByParent, [parentSessionId]: windowId };
-    persist({ ...state, selectedWindowByParent });
+    persist(state.projectPath, { ...pickPersisted(state), selectedWindowByParent });
     return { selectedWindowByParent };
   }),
 
@@ -253,7 +335,7 @@ export const useAgentWindowStore = create<AgentWindowState>((set, get) => ({
       window.title === title ? window : { ...window, title, updatedAt: new Date() }
     ));
     if (windowsByParent === state.windowsByParent) return {};
-    persist({ ...state, windowsByParent });
+    persist(state.projectPath, { ...pickPersisted(state), windowsByParent });
     return { windowsByParent };
   }),
 
@@ -267,19 +349,20 @@ export const useAgentWindowStore = create<AgentWindowState>((set, get) => ({
       };
     });
     if (windowsByParent === state.windowsByParent) return {};
-    persist({ ...state, windowsByParent });
+    persist(state.projectPath, { ...pickPersisted(state), windowsByParent });
     return { windowsByParent };
   }),
 
   setTelemetryCollapsed: (parentSessionId, collapsed) => set((state) => {
     const telemetryCollapsedByParent = { ...state.telemetryCollapsedByParent, [parentSessionId]: collapsed };
-    persist({ ...state, telemetryCollapsedByParent });
+    persist(state.projectPath, { ...pickPersisted(state), telemetryCollapsedByParent });
     return { telemetryCollapsedByParent };
   }),
 
   reset: () => {
-    const next = { activeParentSessionId: null, windowsByParent: {}, selectedWindowByParent: {}, telemetryCollapsedByParent: {} };
-    persist(next);
+    const currentProjectPath = get().projectPath;
+    const next = { projectPath: null, ...EMPTY_PERSISTED };
+    persist(currentProjectPath, EMPTY_PERSISTED);
     set(next);
   },
 }));
