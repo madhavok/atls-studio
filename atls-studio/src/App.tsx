@@ -14,7 +14,6 @@ import { SessionPicker } from './components/SessionPicker';
 import { ToastContainer } from './components/Toast';
 import { INTERNALS_TAB_ID } from './components/AtlsInternals';
 import { useAppStore } from './stores/appStore';
-import { useAgentWindowStore } from './stores/agentWindowStore';
 import { activateAgentParentSession } from './services/activateAgentWindow';
 import { useAtls } from './hooks/useAtls';
 import { useOS } from './hooks/useOS';
@@ -260,10 +259,6 @@ function App() {
   const handleNewChat = useCallback(async () => {
     const sessionId = await createNewSession();
     if (sessionId) {
-      const grid = useAgentWindowStore.getState();
-      grid.ensurePrimaryWindow(sessionId, 'New Chat');
-      grid.setActiveParentSession(sessionId);
-      grid.selectWindow(sessionId, `primary-${sessionId}`);
       await activateAgentParentSession(sessionId, 'New Chat', projectPath);
     }
     resetStaticPromptCache();
@@ -404,10 +399,7 @@ function App() {
           setSessionPickerOpen(false);
           const sessionId = await createNewSession();
           if (sessionId) {
-            const grid = useAgentWindowStore.getState();
-            grid.ensurePrimaryWindow(sessionId, 'New Chat');
-            grid.setActiveParentSession(sessionId);
-            grid.selectWindow(sessionId, `primary-${sessionId}`);
+            await activateAgentParentSession(sessionId, 'New Chat', projectPath);
           }
           resetStaticPromptCache();
           resetAgentProgress();

@@ -86,6 +86,17 @@ export function buildAgentWindowStreamCallbacks(ctx: {
         thoughtSignature,
       });
     },
+    onStepStart: () => {
+      if (activeTextId) {
+        closeBlockById(streamRefs, activeTextId, 'text');
+        activeTextId = null;
+      }
+      if (activeReasoningId) {
+        closeBlockById(streamRefs, activeReasoningId, 'reasoning');
+        activeReasoningId = null;
+      }
+      streamRefs.segmentsRevisionRef.current++;
+    },
     onStepEnd: () => {
       streamRefs.streamingSegmentsRef.current.push({ type: 'step-boundary' });
       streamRefs.segmentsRevisionRef.current++;

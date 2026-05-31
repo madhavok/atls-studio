@@ -1,0 +1,39 @@
+import { beforeEach, describe, expect, it } from 'vitest';
+import { useAgentRuntimeStore } from '../stores/agentRuntimeStore';
+import { useAgentWindowStore } from '../stores/agentWindowStore';
+import { buildAgentWindowStreamCallbacks } from './agentWindowStreamCallbacks';
+import { getAgentWindowStreamRefs } from '../services/agentWindowStreamRefs';
+
+describe('buildAgentWindowStreamCallbacks', () => {
+  beforeEach(() => {
+    useAgentWindowStore.getState().reset();
+    useAgentRuntimeStore.getState().reset();
+    useAgentWindowStore.getState().hydrateProject('/tmp/project');
+    useAgentWindowStore.getState().ensurePrimaryWindow('session-1', 'Primary Chat');
+    useAgentRuntimeStore.getState().ensureRuntime({
+      windowId: 'primary-session-1',
+      sessionId: 'session-1',
+      parentSessionId: 'session-1',
+    });
+  });
+
+  it('closes open text blocks on onStepStart', () => {
+    const window = useAgentWindowStore.getState().windowsByParent['session-1'][0];
+    const callbacks = buildAgentWindowStreamCallbacks({
+      window,
+      windowId: window.windowId,
+      startedAt: Date.now(),
+      fullResponseRef: { current: '' },
+      runErroredRef: { current: false },
+      persistMessage: () => {},
+    });
+    const refs = getAgentWindowStreamRefs(window.windowId);
+
+    callbacks.onTextStart?.('text-1');
+    callbacks.onToken?.('hello');
+    callbacks.onStepStart?.();
+
+    expect(refs.streamingSegmentsRef.current.some((segment) => segment.type === 'text')).toBe(true);
+    expect(refs.streamingSegmentsRef.current.find((segment) => segment.type === 'text')?.state).toBe('done');
+  });
+});

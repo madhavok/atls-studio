@@ -64,7 +64,6 @@ vi.mock('./services/aiService', async (importOriginal) => {
 vi.mock('./services/activateAgentWindow', () => ({
   activateAgentParentSession: vi.fn(async () => undefined),
 }));
-
 vi.mock('./components/FileExplorer', () => ({ FileExplorer: () => <div data-testid="m-fe" /> }));
 vi.mock('./components/CodeViewer', async () => {
   const { useAppStore } = await import('./stores/appStore');
@@ -152,6 +151,7 @@ vi.mock('./components/SwarmPanel/SwarmErrorBoundary', () => ({
 vi.mock('./components/Toast', () => ({ ToastContainer: () => <div data-testid="m-toast" /> }));
 
 import { resetStaticPromptCache } from './services/aiService';
+import { activateAgentParentSession } from './services/activateAgentWindow';
 import { SWARM_ORCHESTRATION_TAB_ID } from './constants/swarmOrchestrationTab';
 import App from './App';
 
@@ -242,6 +242,7 @@ describe('App shell', () => {
       fireEvent.click(screen.getByTestId('mb-newchat'));
     });
     expect(chatPers.createNewSession).toHaveBeenCalled();
+    expect(activateAgentParentSession).toHaveBeenCalledWith('sess-new-id', 'New Chat', null);
     expect(resetStaticPromptCache).toHaveBeenCalled();
   });
 
