@@ -199,7 +199,7 @@ export const handleMerge: OpHandler = async (params, ctx) => {
   return err(`merge: ${result.error}`);
 };
 
-export const handleDesignWrite: OpHandler = async (params, _ctx) => {
+export const handleDesignWrite: OpHandler = async (params, ctx) => {
   const { useAppStore } = await import('../../../stores/appStore');
   const appStore = useAppStore.getState();
   if (appStore.chatMode !== 'designer') {
@@ -210,7 +210,7 @@ export const handleDesignWrite: OpHandler = async (params, _ctx) => {
   if (!content || typeof content !== 'string') return err('annotate.design: missing content');
 
   const append = params.append === true;
-  const sessionId = appStore.currentSessionId;
+  const sessionId = ctx.sessionId ?? appStore.currentSessionId;
   const prev = appStore.designPreviewContent;
   const next = append ? (prev + content) : content;
   appStore.setDesignPreview(next, sessionId);
