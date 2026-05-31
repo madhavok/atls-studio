@@ -6,6 +6,7 @@ import { useAgentWindowStore } from '../../stores/agentWindowStore';
 import { useAgentWindowRunner } from '../../hooks/useAgentWindowRunner';
 import { useAppStore } from '../../stores/appStore';
 import { AgentAttachmentBar } from './AgentAttachmentBar';
+import { syncShellToProjectPath } from '../../services/agentShellSync';
 
 interface AgentChatSurfaceProps {
   window: AgentWindow;
@@ -29,6 +30,7 @@ export const AgentChatSurface = memo(function AgentChatSurface({ window, showCon
   const activeRoot = useAppStore((s) => s.activeRoot);
   const projectPath = useAppStore((s) => s.projectPath);
   const setWindowProjectPath = useAgentWindowStore((s) => s.setWindowProjectPath);
+  const selectedWindowId = useAgentWindowStore((s) => s.selectedWindowByParent[window.parentSessionId]);
   const availableModels = useAppStore((s) => s.availableModels);
   const chatMode = useAppStore((s) => s.chatMode);
   const ensureRuntime = useAgentRuntimeStore((s) => s.ensureRuntime);
@@ -205,7 +207,13 @@ export const AgentChatSurface = memo(function AgentChatSurface({ window, showCon
                   <span className="shrink-0">Root:</span>
                   <select
                     value={windowProjectPath}
-                    onChange={(event) => setWindowProjectPath(window.windowId, event.target.value || undefined)}
+                    onChange={(event) => {
+                      const next = event.target.value || undefined;
+                      setWindowProjectPath(window.windowId, next);
+                      if (selectedWindowId === window.windowId && next) {
+                        void syncShellToProjectPath(next);
+                      }
+                    }}
                     className="min-w-0 max-w-[140px] truncate rounded border border-studio-border/60 bg-studio-bg/80 px-1 py-0.5 text-[9px] normal-case tracking-normal text-studio-text"
                     aria-label={`Project root for ${window.title}`}
                   >

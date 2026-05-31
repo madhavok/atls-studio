@@ -10,9 +10,8 @@ import { formatAttachmentForLLM } from '../utils/fileAttachments';
 import { getPricingProviderForModel } from '../utils/pricingProvider';
 import { isExtendedContextEnabled, modelSupportsExtendedContext } from '../utils/modelCapabilities';
 import { resolveModelSettings } from '../utils/modelSettings';
-import { buildDelegationContext, summarizeChildResult } from '../services/delegationContext';
-import { handleDelegateToolCall, handleSubAgentProgress } from '../services/agentDelegateBridge';
-import { notifyBackgroundWindowComplete } from '../services/agentWindowNotifications';
+import { buildDelegationContext } from '../services/delegationContext';
+import { buildAgentWindowStreamCallbacks } from './agentWindowStreamCallbacks';
 
 function getApiKeyForProvider(provider: AIProvider): string {
   const settings = useAppStore.getState().settings;
@@ -77,6 +76,9 @@ function getAIConfig(window: AgentWindow): AIConfig {
     provider,
     settings.maxTokens,
   );
+  const customAgent = !window.role && state.chatMode === 'agent'
+    ? state.customAgents.find((agent) => agent.id === state.selectedAgent)
+    : undefined;
   return {
     provider,
     model,
@@ -87,6 +89,7 @@ function getAIConfig(window: AgentWindow): AIConfig {
     region: provider === 'vertex' ? settings.vertexRegion : undefined,
     baseUrl: provider === 'lmstudio' ? settings.lmstudioBaseUrl : undefined,
     anthropicBeta,
+    systemPrompt: customAgent?.systemPrompt,
     ...modelSettings,
   };
 }
@@ -268,8 +271,8 @@ export function useAgentWindowRunner() {
     runtimeStore.startRun(windowId, controller);
     useAgentWindowStore.getState().setWindowStatus(windowId, 'running');
 
-    let fullResponse = '';
-    let runErrored = false;
+    const fullResponseRef = { current: '' };
+    const runErroredRef = { current: false };
     const startedAt = Date.now();
     const prior = useAgentRuntimeStore.getState().runtimesByWindow[windowId]?.messages ?? [];
     const chatMessages: ChatMessage[] = [
@@ -278,81 +281,15 @@ export function useAgentWindowRunner() {
     ];
 
     try {
-      await streamChat(config, chatMessages, {
-        onToken: (token) => {
-          fullResponse += token;
-          runtimeStore.setStreamingText(windowId, fullResponse);
-          runtimeStore.replaceLastAssistantMessage(windowId, fullResponse);
-        },
-        onToolCall: (toolCall) => {
-          runtimeStore.addToolCall(windowId, toolCall);
-          runtimeStore.updateTelemetry(windowId, { lastTool: toolCall.name });
-          handleDelegateToolCall(window.parentSessionId, toolCall);
-          toolCall.syntheticChildren?.forEach((child) => handleDelegateToolCall(window.parentSessionId, child));
-        },
-        onToolResult: (id, result) => {
-          runtimeStore.updateTelemetry(windowId, { lastTool: id });
-          const systemMessage = runtimeStore.appendMessage(windowId, {
-            role: 'system',
-            toolName: id,
-            content: result.slice(0, 800),
-          });
-          if (systemMessage) void persistMessage(window.sessionId, systemMessage);
-        },
-        onUsageUpdate: (usage) => {
-          runtimeStore.updateTelemetry(windowId, {
-            inputTokens: usage.inputTokens,
-            outputTokens: usage.outputTokens,
-            totalTokens: usage.totalTokens,
-            costCents: usage.costCents ?? 0,
-          });
-        },
-        onSubagentProgress: (stepId, progress) => {
-          handleSubAgentProgress(window.parentSessionId, stepId, progress);
-        },
-        onError: (error) => {
-          runErrored = true;
-          runtimeStore.finishRun(windowId, controller.signal.aborted ? 'cancelled' : 'failed', error.message);
-          useAgentWindowStore.getState().setWindowStatus(windowId, controller.signal.aborted ? 'paused' : 'failed');
-        },
-        onDone: () => {
-          if (runErrored) return;
-          const latest = useAgentRuntimeStore.getState().runtimesByWindow[windowId];
-          if (fullResponse.trim()) {
-            const finalMessage = latest?.messages[latest.messages.length - 1];
-            if (finalMessage?.role === 'assistant') void persistMessage(window.sessionId, finalMessage);
-          }
-          const hadToolActivity = (latest?.toolCalls.length ?? 0) > 0
-            || (latest?.messages.some((message) => message.toolName) ?? false);
-          const finalStatus = controller.signal.aborted
-            ? 'cancelled'
-            : (fullResponse.trim() || hadToolActivity) ? 'completed' : 'failed';
-          runtimeStore.updateTelemetry(windowId, { latencyMs: Date.now() - startedAt });
-          runtimeStore.finishRun(windowId, finalStatus);
-          useAgentWindowStore.getState().setWindowStatus(windowId, finalStatus === 'completed' ? 'completed' : finalStatus === 'cancelled' ? 'paused' : 'failed');
-          notifyBackgroundWindowComplete(windowId, finalStatus);
-          const completed = useAgentRuntimeStore.getState().runtimesByWindow[windowId];
-          if (window.role && completed) {
-            runtimeStore.appendParentEvent({
-              parentSessionId: window.parentSessionId,
-              childWindowId: windowId,
-              title: window.title,
-              role: window.role,
-              status: finalStatus,
-              summary: summarizeChildResult(completed.messages),
-            });
-          }
-        },
-        onStreamId: (streamId) => runtimeStore.addStreamId(windowId, streamId),
-        onClear: () => {
-          fullResponse = '';
-          runtimeStore.setStreamingText(windowId, '');
-        },
-        onStatus: (message) => {
-          if (!message) return;
-          runtimeStore.appendMessage(windowId, { role: 'system', content: message });
-        },
-      }, getWorkspaceContext(window), window.role === 'reviewer' ? 'reviewer' : 'agent', {
+      const callbacks = buildAgentWindowStreamCallbacks({
+        window,
+        windowId,
+        startedAt,
+        fullResponseRef,
+        runErroredRef,
+        persistMessage: (sessionId, message) => { void persistMessage(sessionId, message); },
+      });
+      await streamChat(config, chatMessages, callbacks, getWorkspaceContext(window), window.role === 'reviewer' ? 'reviewer' : 'agent', {
         allowConcurrent: true,
         abortSignal: controller.signal,
         dbSessionId: window.sessionId,
