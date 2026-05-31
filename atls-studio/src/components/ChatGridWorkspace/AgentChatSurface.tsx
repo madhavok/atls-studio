@@ -6,6 +6,7 @@ import { useAgentWindowStore } from '../../stores/agentWindowStore';
 import { useAgentWindowRunner } from '../../hooks/useAgentWindowRunner';
 import { useAppStore } from '../../stores/appStore';
 import { AgentAttachmentBar } from './AgentAttachmentBar';
+import { MarkdownMessage } from '../AiChat/MarkdownMessage';
 import { AgentToolTrace } from './AgentToolTrace';
 import { AgentStreamingSegments } from './AgentStreamingSegments';
 import { syncShellToProjectPath } from '../../services/agentShellSync';
@@ -162,7 +163,15 @@ export const AgentChatSurface = memo(function AgentChatSurface({ window, showCon
                   <span>{message.role}</span>
                   {message.toolName && <span className="truncate text-studio-title">{message.toolName}</span>}
                 </div>
-                <div className="whitespace-pre-wrap break-words leading-relaxed text-studio-text [overflow-wrap:anywhere]">{message.content}</div>
+                <div className={
+                  message.role === 'assistant'
+                    ? 'markdown-message text-xs leading-relaxed text-studio-text [overflow-wrap:anywhere]'
+                    : 'whitespace-pre-wrap break-words leading-relaxed text-studio-text [overflow-wrap:anywhere]'
+                }>
+                  {message.role === 'assistant'
+                    ? <MarkdownMessage content={message.content} />
+                    : message.content}
+                </div>
               </div>
               );
             })}

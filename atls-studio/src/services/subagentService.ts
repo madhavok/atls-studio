@@ -63,6 +63,8 @@ export interface SubAgentParams {
   token_budget?: number;
   /** File ownership claims from parent swarm worker — enforced on change ops. */
   fileClaims?: string[];
+  /** Context partition to use for subagent tool side-effects (parent session id). */
+  contextSessionId?: string;
 }
 
 export interface SubAgentRef {
@@ -912,6 +914,24 @@ function buildProviderMessages(
 // ============================================================================
 
 export async function executeSubagent(
+  params: SubAgentParams,
+  onProgress?: SubAgentProgressCallback,
+): Promise<SubAgentResult> {
+  const sessionId = params.contextSessionId?.trim();
+  if (sessionId) {
+    const { getActiveContextSessionId, withContextSession } = await import('./contextSessionPartition');
+    if (getActiveContextSessionId() !== sessionId) {
+      return withContextSession(
+        sessionId,
+        () => executeSubagentImpl(params, onProgress),
+        { loadFromDb: true, lite: true },
+      );
+    }
+  }
+  return executeSubagentImpl(params, onProgress);
+}
+
+async function executeSubagentImpl(
   params: SubAgentParams,
   onProgress?: SubAgentProgressCallback,
 ): Promise<SubAgentResult> {

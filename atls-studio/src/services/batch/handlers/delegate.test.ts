@@ -97,6 +97,34 @@ describe('delegate handlers', () => {
     expect(out.summary).toContain('Planning note only.');
   });
 
+  it('passes handler session id to executeSubagent for context partition scoping', async () => {
+    mockGetState.mockReturnValue({
+      projectPath: '/proj',
+      settings: { subagentModel: 'claude-3-haiku' },
+    });
+    mockContextGetState.mockReturnValue({
+      getCurrentRev: () => 'ws-rev-1',
+      getBlackboardEntry: () => null,
+      stagedSnippets: new Map(),
+      chunks: new Map(),
+    });
+    mockExecuteSubagent.mockResolvedValue({
+      ...baseSubagentResult,
+      bbKeys: [],
+      pinCount: 0,
+      pinTokens: 0,
+      rounds: 1,
+      invocationId: 'inv-session',
+    });
+
+    await handleDelegateCode({ query: 'fix bug' }, { sessionId: 'parent-session-9' } as never, 'step-code');
+
+    expect(mockExecuteSubagent).toHaveBeenCalledWith(
+      expect.objectContaining({ contextSessionId: 'parent-session-9' }),
+      undefined,
+    );
+  });
+
   it('summary never contains a trace line — refs + findings are the canonical signal', async () => {
     // A live audit showed the trace degenerated to "R1: batch | R2: batch |
     // ..." because the toolTrace captures the Anthropic-visible tool

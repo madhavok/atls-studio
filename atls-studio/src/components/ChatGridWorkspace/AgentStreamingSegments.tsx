@@ -3,18 +3,22 @@ import type { StreamSegment } from '../../types/streamSegments';
 import {
   getAgentWindowStreamRefs,
 } from '../../services/agentWindowStreamRefs';
+import { cleanStreamingContent } from '../AiChat/aiChatPure';
+import { MarkdownMessage } from '../AiChat/MarkdownMessage';
+import { ReasoningBlock } from '../AiChat/ReasoningBlock';
 import { AgentToolTrace } from './AgentToolTrace';
 
 function SegmentBlock({ segment }: { segment: StreamSegment }) {
   if (segment.type === 'text') {
-    if (!segment.content) return null;
+    const content = cleanStreamingContent(segment.content);
+    if (!content) return null;
     return (
       <div className="min-w-0 overflow-hidden rounded-lg border border-cyan-400/30 bg-cyan-500/8 p-2">
         <div className="mb-1 font-mono text-[9px] uppercase tracking-[0.16em] text-cyan-300">
           {segment.state === 'streaming' ? 'streaming' : 'response'}
         </div>
-        <div className="whitespace-pre-wrap break-words leading-relaxed text-studio-text [overflow-wrap:anywhere]">
-          {segment.content}
+        <div className="markdown-message text-xs leading-relaxed text-studio-text [overflow-wrap:anywhere]">
+          <MarkdownMessage content={content} />
         </div>
       </div>
     );
@@ -24,10 +28,7 @@ function SegmentBlock({ segment }: { segment: StreamSegment }) {
     if (!segment.content) return null;
     return (
       <div className="min-w-0 overflow-hidden rounded-lg border border-violet-400/25 bg-violet-500/8 p-2">
-        <div className="mb-1 font-mono text-[9px] uppercase tracking-[0.16em] text-violet-300">reasoning</div>
-        <div className="whitespace-pre-wrap break-words text-[11px] leading-relaxed text-violet-100/90 [overflow-wrap:anywhere]">
-          {segment.content}
-        </div>
+        <ReasoningBlock content={segment.content} isStreaming={segment.state === 'streaming'} />
       </div>
     );
   }
@@ -133,17 +134,14 @@ export const AgentStreamingSegments = memo(function AgentStreamingSegments({
       ))}
       {!hasSegments && fallbackReasoning && (
         <div className="min-w-0 overflow-hidden rounded-lg border border-violet-400/25 bg-violet-500/8 p-2">
-          <div className="mb-1 font-mono text-[9px] uppercase tracking-[0.16em] text-violet-300">reasoning</div>
-          <div className="whitespace-pre-wrap break-words text-[11px] leading-relaxed text-violet-100/90 [overflow-wrap:anywhere]">
-            {fallbackReasoning}
-          </div>
+          <ReasoningBlock content={fallbackReasoning} isStreaming />
         </div>
       )}
       {!hasSegments && fallbackText && (
         <div className="min-w-0 overflow-hidden rounded-lg border border-cyan-400/30 bg-cyan-500/8 p-2">
           <div className="mb-1 font-mono text-[9px] uppercase tracking-[0.16em] text-cyan-300">streaming</div>
-          <div className="whitespace-pre-wrap break-words leading-relaxed text-studio-text [overflow-wrap:anywhere]">
-            {fallbackText}
+          <div className="markdown-message text-xs leading-relaxed text-studio-text [overflow-wrap:anywhere]">
+            <MarkdownMessage content={cleanStreamingContent(fallbackText)} />
           </div>
         </div>
       )}

@@ -195,6 +195,7 @@ async function runDelegate(
       max_tokens: typeof params.max_tokens === 'number' ? params.max_tokens as number : undefined,
       token_budget: typeof params.token_budget === 'number' ? params.token_budget as number : undefined,
       fileClaims: ctx?.fileClaims,
+      contextSessionId: ctx?.sessionId ?? undefined,
     }, onProgress);
     ctx?.onSubagentProgress?.(stepId ?? role, {
       toolName: `delegate.${role === 'retriever' ? 'retrieve' : role}`,

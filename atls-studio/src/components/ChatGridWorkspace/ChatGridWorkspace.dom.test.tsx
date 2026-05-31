@@ -352,7 +352,8 @@ describe('ChatGridWorkspace', () => {
     expect(card.className).toContain('overflow-hidden');
     expect(transcript.className).toContain('overflow-y-auto');
     expect(transcript.className).toContain('overflow-x-hidden');
-    expect(screen.getByText('x'.repeat(500)).className).toContain('break-words');
+    expect(transcript.textContent).toContain('x'.repeat(100));
+    expect(transcript.querySelector('.markdown-message')).toBeTruthy();
   });
 
   it('keeps auto-scroll paused when the user scrolls up and can jump back to latest', async () => {

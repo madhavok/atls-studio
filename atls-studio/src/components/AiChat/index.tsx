@@ -21,6 +21,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWebview } from '@tauri-apps/api/webview';
 import { open as openFileDialog } from '@tauri-apps/plugin-dialog';
 import { MarkdownMessage } from './MarkdownMessage';
+import { ReasoningBlock } from './ReasoningBlock';
 import { TaskCompleteCard } from './TemplateCard';
 import { ToolTokenMetrics } from './ToolTokenMetrics';
 import { HashRefText } from './HashRefInline';
@@ -1818,47 +1819,6 @@ const TypingCursor = memo(function TypingCursor() {
 });
 
 // Segment type for inline streaming display (extended with reasoning, step-boundary, error, status)
-
-// ── ReasoningBlock: collapsible thinking display ────────────────────────
-const ReasoningBlock = memo(function ReasoningBlock({ 
-  content, 
-  isStreaming 
-}: { 
-  content: string; 
-  isStreaming: boolean;
-}) {
-  const [isOpen, setIsOpen] = useState(true);
-  
-  useEffect(() => {
-    if (!isStreaming) setIsOpen(false);
-  }, [isStreaming]);
-  
-  return (
-    <details open={isOpen || undefined} className="group">
-      <summary 
-        className="flex items-center gap-2 cursor-pointer select-none text-xs text-studio-text-secondary hover:text-studio-text-primary transition-colors py-1"
-        onClick={(e) => { e.preventDefault(); setIsOpen(!isOpen); }}
-      >
-        <svg className={`w-3 h-3 transition-transform ${isOpen ? 'rotate-90' : ''}`} viewBox="0 0 24 24" fill="currentColor">
-          <path d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6z" />
-        </svg>
-        <span className="font-medium">
-          {isStreaming ? (
-            <span className="flex items-center gap-1.5">
-              <span className="inline-block w-1.5 h-1.5 rounded-full bg-studio-accent animate-pulse" />
-              Thinking...
-            </span>
-          ) : 'Thought'}
-        </span>
-      </summary>
-      {isOpen && (
-        <div className="mt-1 ml-5 pl-3 border-l-2 border-studio-border/30 text-sm text-studio-text-secondary italic whitespace-pre-wrap leading-relaxed max-h-48 overflow-y-auto">
-          {content}
-        </div>
-      )}
-    </details>
-  );
-});
 
 // ── StepBoundary: visual divider between LLM rounds ────────────────────
 const StepBoundary = memo(function StepBoundary({ stepNumber }: { stepNumber: number }) {
