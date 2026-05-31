@@ -25,4 +25,10 @@ describe('activateParentSession', () => {
     expect(useAppStore.getState().currentSessionId).toBe('session-a');
     expect(useAgentRuntimeStore.getState().runtimesByWindow['primary-session-a']?.sessionId).toBe('session-a');
   });
+
+  it('writes last-active session id for the current project', () => {
+    useAgentWindowStore.setState({ projectPath: '/tmp/project' });
+    activateParentSession('session-b', 'Mission Beta');
+    expect(localStorage.getItem('atls:last-active-session-by-project-v1')).toContain('session-b');
+  });
 });

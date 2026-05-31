@@ -58,7 +58,7 @@ function App() {
     resetAgentProgress,
   } = useAppStore();
   const { newProject, openProjectWithPicker, loadFileTree, scanProject, refreshIssues, addFolderToWorkspace, saveWorkspace, openWorkspace, closeWorkspace } = useAtls();
-  const { loadSession, createNewSession, deleteSession } = useChatPersistence();
+  const { createNewSession, deleteSession } = useChatPersistence();
   const { isMac, isWindows, isLinux } = useOS();
   const [leftWidth, setLeftWidth] = useState(240);
   const [rightWidth, setRightWidth] = useState(380);
@@ -464,7 +464,7 @@ function App() {
               </div>
             </>
           ) : (
-            <ChatGridWorkspace variant="primary" loadSession={loadSession} />
+            <ChatGridWorkspace variant="primary" />
           )}
         </div>
 
@@ -513,7 +513,7 @@ function App() {
                   </button>
                 </div>
                 <div className="flex-1 overflow-hidden">
-                  <ChatGridWorkspace variant="dock" loadSession={loadSession} />
+                  <ChatGridWorkspace variant="dock" />
                 </div>
               </>
             )}

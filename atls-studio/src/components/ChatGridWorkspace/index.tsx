@@ -17,6 +17,7 @@ import { ConversationSelector } from './ConversationSelector';
 import { GridErrorBoundary } from './GridErrorBoundary';
 import { useAgentRuntimeStore } from '../../stores/agentRuntimeStore';
 import { activateAgentWindow } from '../../services/activateAgentWindow';
+import { writeLastActiveSessionId } from '../../services/lastActiveSession';
 import { disposeParentSessionRuntimes, disposeWindowRuntime } from '../../services/agentGridLifecycle';
 import { canRecoverSwarmTask, canStopSwarmTask, pauseSwarmTask, recoverSwarmTask, syncSwarmSelection } from '../../services/swarmWindowBridge';
 import { ModelModeSelector } from '../ModelModeSelector';
@@ -26,7 +27,6 @@ export type ChatGridVariant = 'primary' | 'dock';
 
 interface ChatGridWorkspaceProps {
   variant?: ChatGridVariant;
-  loadSession?: (sessionId: string) => Promise<boolean>;
 }
 
 type SessionPreviewMap = Record<string, Message[]>;
@@ -393,6 +393,8 @@ export const ChatGridWorkspace = memo(function ChatGridWorkspace({ variant = 'pr
     ensurePrimaryWindow(sessionId, title);
     setActiveParentSession(sessionId);
     selectWindow(sessionId, `primary-${sessionId}`);
+    const projectPath = useAgentWindowStore.getState().projectPath ?? useAppStore.getState().projectPath;
+    if (projectPath) writeLastActiveSessionId(projectPath, sessionId);
     useAgentRuntimeStore.getState().ensureRuntime({
       windowId: `primary-${sessionId}`,
       sessionId,
