@@ -17,8 +17,10 @@ import { ConversationSelector } from './ConversationSelector';
 import { GridErrorBoundary } from './GridErrorBoundary';
 import { useAgentRuntimeStore } from '../../stores/agentRuntimeStore';
 import { activateAgentWindow } from '../../services/activateAgentWindow';
+import { activateContextSession } from '../../services/contextSessionPartition';
 import { writeLastActiveSessionId } from '../../services/lastActiveSession';
 import { disposeParentSessionRuntimes, disposeWindowRuntime } from '../../services/agentGridLifecycle';
+import { evictContextPartition, persistContextSession } from '../../services/contextSessionPartition';
 import { canRecoverSwarmTask, canStopSwarmTask, pauseSwarmTask, recoverSwarmTask, syncSwarmSelection } from '../../services/swarmWindowBridge';
 import { ModelModeSelector } from '../ModelModeSelector';
 import { Settings } from '../Settings';
@@ -400,6 +402,7 @@ export const ChatGridWorkspace = memo(function ChatGridWorkspace({ variant = 'pr
       sessionId,
       parentSessionId: sessionId,
     });
+    await activateContextSession(sessionId, { fresh: true });
   }, [addToast, chatSessions, ensurePrimaryWindow, selectWindow, setActiveParentSession]);
 
   const focusChildWindow = useCallback((childWindowId: string) => {
@@ -560,7 +563,10 @@ export const ChatGridWorkspace = memo(function ChatGridWorkspace({ variant = 'pr
                             onClick={(event) => {
                               event.stopPropagation();
                               void disposeParentSessionRuntimes(window.parentSessionId).finally(() => {
-                                closeParentSession(window.parentSessionId);
+                                void persistContextSession(window.sessionId, { toDb: true }).finally(() => {
+                                  evictContextPartition(window.sessionId);
+                                  closeParentSession(window.parentSessionId);
+                                });
                               });
                             }}
                             className="rounded-full border border-red-400/30 px-2 py-0.5 text-[9px] uppercase tracking-wide text-red-300 hover:bg-red-500/10"

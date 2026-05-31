@@ -1,6 +1,7 @@
 import type { AgentWindow } from '../stores/agentWindowStore';
 import { activateSessionContext, activateParentSession } from './activateSessionContext';
 import { syncShellToProjectPath } from './agentShellSync';
+import { activateContextSession, isContextSessionLocked } from './contextSessionPartition';
 import { useAgentWindowStore } from '../stores/agentWindowStore';
 
 function resolveWindowProjectPath(window: AgentWindow): string | null {
@@ -10,6 +11,9 @@ function resolveWindowProjectPath(window: AgentWindow): string | null {
 /** Focus a grid window and sync shell ATLS root + chat DB to its project. */
 export async function activateAgentWindow(window: AgentWindow): Promise<void> {
   activateSessionContext(window);
+  if (!isContextSessionLocked()) {
+    await activateContextSession(window.sessionId, { loadFromDb: true });
+  }
   await syncShellToProjectPath(resolveWindowProjectPath(window));
 }
 

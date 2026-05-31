@@ -229,6 +229,7 @@ import {
 import { compressToolLoopHistory, compactRetentionOps, deflateToolResults, stubBatchToolUseInputs, estimateHistoryTokens, estimateHistoryTokensAsync } from './historyCompressor';
 import { createGuardrailCallbacks, runBeforeRoundMiddlewares, setPromptBudgetEstimates } from './chatMiddleware';
 import { syncCurrentSessionIdToLocalStorage } from './lastActiveSession';
+import { withContextSession } from './contextSessionPartition';
 import {
   getActiveRunScope,
   resolveDbSessionId,
@@ -2023,6 +2024,7 @@ async function streamChatViaTauri(
     }
   }
 
+  const runToolLoopBody = async (): Promise<void> => {
   try {
     for (let round = 0; round < maxRounds; round++) {
       resetRunRoundHadMutations();
@@ -3584,6 +3586,17 @@ async function streamChatViaTauri(
       _toolLoopState = null;
       useAppStore.getState().setToolLoopSteering(null);
     }
+  }
+  };
+
+  if (concurrent && options?.dbSessionId) {
+    await withContextSession(
+      options.dbSessionId,
+      runToolLoopBody,
+      { loadFromDb: true, lite: true },
+    );
+  } else {
+    await runToolLoopBody();
   }
 }
 

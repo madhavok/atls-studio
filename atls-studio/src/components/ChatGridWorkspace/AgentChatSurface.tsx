@@ -6,6 +6,7 @@ import { useAgentWindowStore } from '../../stores/agentWindowStore';
 import { useAgentWindowRunner } from '../../hooks/useAgentWindowRunner';
 import { useAppStore } from '../../stores/appStore';
 import { AgentAttachmentBar } from './AgentAttachmentBar';
+import { AgentToolTrace } from './AgentToolTrace';
 import { syncShellToProjectPath } from '../../services/agentShellSync';
 
 interface AgentChatSurfaceProps {
@@ -171,6 +172,7 @@ export const AgentChatSurface = memo(function AgentChatSurface({ window, showCon
                 <div className="whitespace-pre-wrap break-words leading-relaxed text-studio-text [overflow-wrap:anywhere]">{safeRuntime.streamingText}</div>
               </div>
             )}
+            <AgentToolTrace toolCalls={safeRuntime.toolCalls} />
             <div ref={transcriptEndRef} />
           </div>
         )}
