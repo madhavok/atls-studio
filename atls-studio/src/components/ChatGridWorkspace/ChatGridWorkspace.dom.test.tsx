@@ -431,7 +431,7 @@ describe('ChatGridWorkspace', () => {
     expect(screen.getAllByText('Renamed Parent Mission').length).toBeGreaterThan(0);
   });
 
-  it('closes older parent session windows without deleting the current chat', () => {
+  it('closes older parent session windows without deleting the current chat', async () => {
     useAppStore.setState({ currentSessionId: 'session-1' });
     useAgentWindowStore.getState().setActiveParentSession('session-2');
     useAgentWindowStore.getState().ensurePrimaryWindow('session-1', 'Parent One');
@@ -440,7 +440,9 @@ describe('ChatGridWorkspace', () => {
     render(<ChatGridWorkspace />);
     fireEvent.click(screen.getByTitle('Close parent session window'));
 
-    expect(useAgentWindowStore.getState().windowsByParent['session-2']).toBeUndefined();
+    await waitFor(() => {
+      expect(useAgentWindowStore.getState().windowsByParent['session-2']).toBeUndefined();
+    });
     expect(useAppStore.getState().currentSessionId).toBe('session-1');
     expect(screen.queryByText('Parent Two')).toBeNull();
   });
