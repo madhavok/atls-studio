@@ -17,12 +17,17 @@ export function buildAgentWindowStreamCallbacks(ctx: {
 }): StreamCallbacks {
   const { window, windowId, startedAt, fullResponseRef, runErroredRef, persistMessage } = ctx;
   const runtimeStore = () => useAgentRuntimeStore.getState();
+  const reasoningRef = { current: '' };
 
   return {
     onToken: (token) => {
       fullResponseRef.current += token;
       runtimeStore().setStreamingText(windowId, fullResponseRef.current);
       runtimeStore().replaceLastAssistantMessage(windowId, fullResponseRef.current);
+    },
+    onReasoningDelta: (delta) => {
+      reasoningRef.current += delta;
+      runtimeStore().setStreamingReasoning(windowId, reasoningRef.current);
     },
     onToolCall: (toolCall) => {
       runtimeStore().addToolCall(windowId, toolCall);
@@ -91,7 +96,9 @@ export function buildAgentWindowStreamCallbacks(ctx: {
     onStreamId: (streamId) => runtimeStore().addStreamId(windowId, streamId),
     onClear: () => {
       fullResponseRef.current = '';
+      reasoningRef.current = '';
       runtimeStore().setStreamingText(windowId, '');
+      runtimeStore().setStreamingReasoning(windowId, '');
     },
     onStatus: (message) => {
       if (!message) return;

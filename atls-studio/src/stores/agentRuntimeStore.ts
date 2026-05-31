@@ -43,6 +43,7 @@ export interface AgentRuntime {
   messages: AgentRuntimeMessage[];
   draft: string;
   streamingText: string;
+  streamingReasoning: string;
   isGenerating: boolean;
   status: AgentRuntimeStatus;
   toolCalls: MessageToolCall[];
@@ -67,6 +68,7 @@ interface AgentRuntimeState {
   appendMessage: (windowId: string, message: Omit<AgentRuntimeMessage, 'id' | 'timestamp'> & { id?: string; timestamp?: Date }) => AgentRuntimeMessage | null;
   replaceLastAssistantMessage: (windowId: string, content: string) => void;
   setStreamingText: (windowId: string, text: string) => void;
+  setStreamingReasoning: (windowId: string, text: string) => void;
   startRun: (windowId: string, controller: AbortController) => void;
   finishRun: (windowId: string, status: AgentRuntimeStatus, error?: string) => void;
   addStreamId: (windowId: string, streamId: string) => void;
@@ -115,6 +117,7 @@ function createRuntime(input: { windowId: string; sessionId: string; parentSessi
     messages: [],
     draft: '',
     streamingText: '',
+    streamingReasoning: '',
     isGenerating: false,
     status: 'idle',
     toolCalls: [],
@@ -210,6 +213,12 @@ export const useAgentRuntimeStore = create<AgentRuntimeState>((set, get) => ({
     return { runtimesByWindow: { ...state.runtimesByWindow, [windowId]: { ...runtime, streamingText, updatedAt: new Date() } } };
   }),
 
+  setStreamingReasoning: (windowId, streamingReasoning) => set((state) => {
+    const runtime = state.runtimesByWindow[windowId];
+    if (!runtime) return {};
+    return { runtimesByWindow: { ...state.runtimesByWindow, [windowId]: { ...runtime, streamingReasoning, updatedAt: new Date() } } };
+  }),
+
   startRun: (windowId, abortController) => set((state) => {
     const runtime = state.runtimesByWindow[windowId];
     if (!runtime) return {};
@@ -222,6 +231,7 @@ export const useAgentRuntimeStore = create<AgentRuntimeState>((set, get) => ({
           isGenerating: true,
           status: 'running',
           streamingText: '',
+          streamingReasoning: '',
           lastError: undefined,
           canContinue: false,
           telemetry: {
@@ -246,6 +256,7 @@ export const useAgentRuntimeStore = create<AgentRuntimeState>((set, get) => ({
           isGenerating: false,
           status,
           streamingText: '',
+          streamingReasoning: '',
           abortController: undefined,
           activeStreamIds: [],
           lastError: error,

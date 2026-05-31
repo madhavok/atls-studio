@@ -164,6 +164,14 @@ export const AgentChatSurface = memo(function AgentChatSurface({ window, showCon
               </div>
               );
             })}
+            {safeRuntime.isGenerating && safeRuntime.streamingReasoning && (
+              <div className="min-w-0 overflow-hidden rounded-lg border border-violet-400/25 bg-violet-500/8 p-2">
+                <div className="mb-1 font-mono text-[9px] uppercase tracking-[0.16em] text-violet-300">reasoning</div>
+                <div className="whitespace-pre-wrap break-words text-[11px] leading-relaxed text-violet-100/90 [overflow-wrap:anywhere]">
+                  {safeRuntime.streamingReasoning}
+                </div>
+              </div>
+            )}
             {safeRuntime.isGenerating && safeRuntime.streamingText && (
               <div className="min-w-0 overflow-hidden rounded-lg border border-cyan-400/30 bg-cyan-500/8 p-2">
                 <div className="mb-1 font-mono text-[9px] uppercase tracking-[0.16em] text-cyan-300">
