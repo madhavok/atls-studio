@@ -29,6 +29,10 @@ export async function syncShellToProjectPath(projectPath: string | null | undefi
   }
 
   app.setActiveRoot(target);
-  await invoke('atls_set_active_root', { rootPath: target }).catch(console.error);
+  try {
+    await invoke('atls_set_active_root', { rootPath: target });
+  } catch (error) {
+    console.warn('[agentShellSync] atls_set_active_root failed:', error);
+  }
   await chatDb.init(target).catch(() => undefined);
 }

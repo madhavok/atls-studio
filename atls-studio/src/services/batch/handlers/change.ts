@@ -14,6 +14,7 @@ import { parseHashRef } from '../../../utils/hashRefParsers';
 import { formatResult } from '../../../utils/toon';
 import { canonicalizeSnapshotHash } from '../snapshotTracker';
 import { resolveForwardChain as manifestResolveForwardChain } from '../../hashManifest';
+import { resolveDbSessionId } from '../../agentSessionScope';
 import { useRoundHistoryStore } from '../../../stores/roundHistoryStore';
 
 function ok(summary: string, refs: string[] = [], content?: unknown): StepOutput {
@@ -105,9 +106,9 @@ export function registerEditHashes(result: unknown, params: Record<string, unkno
     }
 
     const paramSource = (params.file_path || params.file) as string | undefined;
-    const sessionId = typeof localStorage !== 'undefined'
-      ? localStorage.getItem('current_session_id')
-      : null;
+    const sessionId = resolveDbSessionId(
+      typeof localStorage !== 'undefined' ? localStorage.getItem('current_session_id') : null,
+    );
 
     for (const entry of entries) {
       if (isNoOpBatchEntry(entry)) continue;
@@ -935,9 +936,9 @@ async function resolveTargetFiles(
       for (const assign of hashLookups.get(ref) ?? []) assign(source);
     });
     if (unresolvedRefs.length > 0) {
-      const sessionId = typeof localStorage !== 'undefined'
-        ? localStorage.getItem('current_session_id')
-        : null;
+      const sessionId = resolveDbSessionId(
+        typeof localStorage !== 'undefined' ? localStorage.getItem('current_session_id') : null,
+      );
       const fallbackEntries = await Promise.all(unresolvedRefs.map(async (ref) => {
         try {
           return await invoke<ResolvedHashEntry>('resolve_hash_ref', {

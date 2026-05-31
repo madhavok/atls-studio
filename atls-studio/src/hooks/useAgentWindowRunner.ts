@@ -11,6 +11,7 @@ import { getPricingProviderForModel } from '../utils/pricingProvider';
 import { isExtendedContextEnabled, modelSupportsExtendedContext } from '../utils/modelCapabilities';
 import { resolveModelSettings } from '../utils/modelSettings';
 import { buildDelegationContext } from '../services/delegationContext';
+import { syncShellToProjectPath } from '../services/agentShellSync';
 import { buildAgentWindowStreamCallbacks } from './agentWindowStreamCallbacks';
 
 function getApiKeyForProvider(provider: AIProvider): string {
@@ -281,6 +282,12 @@ export function useAgentWindowRunner() {
     ];
 
     try {
+      const shellPath = windowProjectPath ?? appState.projectPath ?? undefined;
+      if (shellPath) {
+        await syncShellToProjectPath(shellPath).catch((error) => {
+          console.warn('[AgentWindowRunner] shell sync failed:', error);
+        });
+      }
       const callbacks = buildAgentWindowStreamCallbacks({
         window,
         windowId,

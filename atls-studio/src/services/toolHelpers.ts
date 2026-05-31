@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
+import { resolveDbSessionId } from './agentSessionScope';
 import { useContextStore } from '../stores/contextStore';
 import { getPreflightAutomationDecision, runFreshnessPreflight } from './freshnessPreflight';
 import {
@@ -307,7 +308,7 @@ export async function atlsBatchQuery(
   timeoutMs: number = TOOL_TIMEOUT_MS
 ): Promise<unknown> {
   ensureHppRecencyResolversWired();
-  const sessionId = localStorage.getItem('current_session_id');
+  const sessionId = resolveDbSessionId(typeof localStorage !== 'undefined' ? localStorage.getItem('current_session_id') : null);
   const syncLookup = createHashLookup(sessionId);
   const setLookup = useContextStore.getState().createSetRefLookup();
 
@@ -400,7 +401,7 @@ export async function resolveToolParams(
   params: Record<string, unknown>,
 ): Promise<Record<string, unknown>> {
   ensureHppRecencyResolversWired();
-  const sessionId = localStorage.getItem('current_session_id');
+  const sessionId = resolveDbSessionId(typeof localStorage !== 'undefined' ? localStorage.getItem('current_session_id') : null);
   const syncLookup = createHashLookup(sessionId);
   const setLookup = useContextStore.getState().createSetRefLookup();
 

@@ -11,6 +11,7 @@
  */
 
 import { create } from 'zustand';
+import { resolveDbSessionId } from '../services/agentSessionScope';
 import { 
   type ChunkType, 
   hashContentSync, 
@@ -4955,8 +4956,9 @@ export const useContextStore = create<ContextStoreState>()(
     });
     // G1: persist supersede state to DB so it survives session reload
     if (supersededKeys.length > 0) {
-      const sessionId = typeof localStorage !== 'undefined'
-        ? localStorage.getItem('current_session_id') : null;
+      const sessionId = resolveDbSessionId(
+        typeof localStorage !== 'undefined' ? localStorage.getItem('current_session_id') : null,
+      );
       if (sessionId) {
         import('../services/chatDb').then(({ chatDb }) => {
           if (!chatDb.isInitialized()) return;
@@ -5455,7 +5457,9 @@ export const useContextStore = create<ContextStoreState>()(
     const currentTurn = useRoundHistoryStore.getState().snapshots.length;
     const current = newStaged.get(key);
     const lifecycle = classifyStageSnippet(key, tokens);
-    const sessionId = typeof localStorage !== 'undefined' ? localStorage.getItem('current_session_id') : null;
+    const sessionId = resolveDbSessionId(
+      typeof localStorage !== 'undefined' ? localStorage.getItem('current_session_id') : null,
+    );
     newStaged.set(key, {
       content,
       source,
