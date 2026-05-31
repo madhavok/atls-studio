@@ -36,6 +36,9 @@ export interface UsageRecord {
   cacheWriteTokens?: number;
   costCents: number;
   timestamp: Date;
+  /** Grid agent window attribution (concurrent runs) */
+  windowId?: string;
+  dbSessionId?: string;
 }
 
 export interface DailyUsage {

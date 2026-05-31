@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import type { ContextUsage, MessageToolCall } from './appStore';
+import type { ChatAttachment } from './attachmentStore';
 
 export type AgentRuntimeRole = 'user' | 'assistant' | 'system';
 export type AgentRuntimeStatus = 'idle' | 'running' | 'completed' | 'failed' | 'cancelled';
@@ -50,6 +51,8 @@ export interface AgentRuntime {
   lastError?: string;
   abortController?: AbortController;
   fileClaims: string[];
+  canContinue: boolean;
+  attachments: ChatAttachment[];
   createdAt: Date;
   updatedAt: Date;
 }
@@ -70,6 +73,10 @@ interface AgentRuntimeState {
   addToolCall: (windowId: string, toolCall: MessageToolCall) => void;
   updateTelemetry: (windowId: string, patch: Partial<AgentRuntimeTelemetry>) => void;
   setFileClaims: (windowId: string, fileClaims: string[]) => void;
+  setCanContinue: (windowId: string, canContinue: boolean) => void;
+  addAttachment: (windowId: string, attachment: ChatAttachment) => void;
+  removeAttachment: (windowId: string, attachmentId: string) => void;
+  clearAttachments: (windowId: string) => void;
   cancelRun: (windowId: string) => string[];
   appendParentEvent: (event: Omit<ParentAgentEvent, 'id' | 'createdAt'>) => void;
   reset: () => void;
@@ -84,6 +91,15 @@ const EMPTY_TELEMETRY: AgentRuntimeTelemetry = {
   retries: 0,
 };
 
+const MAX_RUNTIME_MESSAGES = 500;
+
+function trimMessages(messages: AgentRuntimeMessage[]): AgentRuntimeMessage[] {
+  if (messages.length <= MAX_RUNTIME_MESSAGES) return messages;
+  const system = messages.filter((message) => message.role === 'system');
+  const rest = messages.filter((message) => message.role !== 'system');
+  const keep = rest.slice(-(MAX_RUNTIME_MESSAGES - system.length));
+  return [...system, ...keep];
+}
 function createId(prefix: string): string {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 9)}`;
 }
@@ -104,6 +120,8 @@ function createRuntime(input: { windowId: string; sessionId: string; parentSessi
     telemetry: { ...EMPTY_TELEMETRY },
     activeStreamIds: [],
     fileClaims: [],
+    canContinue: false,
+    attachments: [],
     createdAt: now,
     updatedAt: now,
   };
@@ -164,7 +182,7 @@ export const useAgentRuntimeStore = create<AgentRuntimeState>((set, get) => ({
           ...state.runtimesByWindow,
           [windowId]: {
             ...runtime,
-            messages: [...runtime.messages, next],
+            messages: trimMessages([...runtime.messages, next]),
             updatedAt: new Date(),
           },
         },
@@ -201,8 +219,8 @@ export const useAgentRuntimeStore = create<AgentRuntimeState>((set, get) => ({
           isGenerating: true,
           status: 'running',
           streamingText: '',
-          activeStreamIds: [],
           lastError: undefined,
+          canContinue: false,
           telemetry: {
             ...runtime.telemetry,
             rounds: runtime.telemetry.rounds + 1,
@@ -228,6 +246,7 @@ export const useAgentRuntimeStore = create<AgentRuntimeState>((set, get) => ({
           abortController: undefined,
           activeStreamIds: [],
           lastError: error,
+          canContinue: false,
           updatedAt: new Date(),
         },
       },
@@ -259,6 +278,44 @@ export const useAgentRuntimeStore = create<AgentRuntimeState>((set, get) => ({
     const runtime = state.runtimesByWindow[windowId];
     if (!runtime) return {};
     return { runtimesByWindow: { ...state.runtimesByWindow, [windowId]: { ...runtime, fileClaims, updatedAt: new Date() } } };
+  }),
+
+  setCanContinue: (windowId, canContinue) => set((state) => {
+    const runtime = state.runtimesByWindow[windowId];
+    if (!runtime || runtime.canContinue === canContinue) return {};
+    return { runtimesByWindow: { ...state.runtimesByWindow, [windowId]: { ...runtime, canContinue, updatedAt: new Date() } } };
+  }),
+
+  addAttachment: (windowId, attachment) => set((state) => {
+    const runtime = state.runtimesByWindow[windowId];
+    if (!runtime) return {};
+    return {
+      runtimesByWindow: {
+        ...state.runtimesByWindow,
+        [windowId]: { ...runtime, attachments: [...runtime.attachments, attachment], updatedAt: new Date() },
+      },
+    };
+  }),
+
+  removeAttachment: (windowId, attachmentId) => set((state) => {
+    const runtime = state.runtimesByWindow[windowId];
+    if (!runtime) return {};
+    return {
+      runtimesByWindow: {
+        ...state.runtimesByWindow,
+        [windowId]: {
+          ...runtime,
+          attachments: runtime.attachments.filter((attachment) => attachment.id !== attachmentId),
+          updatedAt: new Date(),
+        },
+      },
+    };
+  }),
+
+  clearAttachments: (windowId) => set((state) => {
+    const runtime = state.runtimesByWindow[windowId];
+    if (!runtime || runtime.attachments.length === 0) return {};
+    return { runtimesByWindow: { ...state.runtimesByWindow, [windowId]: { ...runtime, attachments: [], updatedAt: new Date() } } };
   }),
 
   cancelRun: (windowId) => {

@@ -91,6 +91,7 @@ export function createGuardrailCallbacks(
     onStreamError: raw.onStreamError ? guard(raw.onStreamError) : undefined,
     onStatus: raw.onStatus ? guard(raw.onStatus) : undefined,
     onStreamId: raw.onStreamId ? guard(raw.onStreamId) : undefined,
+    onSubagentProgress: raw.onSubagentProgress ? guard(raw.onSubagentProgress) : undefined,
   };
 }
 

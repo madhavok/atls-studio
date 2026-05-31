@@ -20,6 +20,7 @@ interface ChatTelemetryPaneProps {
   swarmStats: SwarmStats;
   runtimesByWindow: Record<string, AgentRuntime>;
   parentEvents: ParentAgentEvent[];
+  onFocusChildWindow?: (childWindowId: string) => void;
   collapsed: boolean;
   onToggleCollapsed: () => void;
 }
@@ -100,6 +101,7 @@ export const ChatTelemetryPane = memo(function ChatTelemetryPane({
   swarmStats,
   runtimesByWindow,
   parentEvents,
+  onFocusChildWindow,
   collapsed,
   onToggleCollapsed,
 }: ChatTelemetryPaneProps) {
@@ -220,13 +222,18 @@ export const ChatTelemetryPane = memo(function ChatTelemetryPane({
               <div className="mb-2 text-[10px] uppercase tracking-[0.18em] text-studio-muted">Child Results</div>
               <div className="space-y-2">
                 {parentEvents.slice(0, 5).map((event) => (
-                  <div key={event.id} className="rounded-md border border-studio-border/50 bg-studio-bg/40 p-2">
+                  <button
+                    key={event.id}
+                    type="button"
+                    onClick={() => onFocusChildWindow?.(event.childWindowId)}
+                    className="w-full rounded-md border border-studio-border/50 bg-studio-bg/40 p-2 text-left hover:border-studio-title/40"
+                  >
                     <div className="flex items-center justify-between gap-2">
                       <div className="truncate text-[11px] text-studio-title">{event.title}</div>
                       <div className="font-mono text-[9px] uppercase text-studio-muted">{event.status}</div>
                     </div>
                     <div className="mt-1 line-clamp-3 text-[10px] leading-relaxed text-studio-muted">{event.summary}</div>
-                  </div>
+                  </button>
                 ))}
               </div>
             </section>

@@ -227,6 +227,7 @@ import {
 } from './promptMemory';
 import { compressToolLoopHistory, compactRetentionOps, deflateToolResults, stubBatchToolUseInputs, estimateHistoryTokens, estimateHistoryTokensAsync } from './historyCompressor';
 import { createGuardrailCallbacks, runBeforeRoundMiddlewares, setPromptBudgetEstimates } from './chatMiddleware';
+import { getActiveRunScope, resolveDbSessionId, setActiveRunScope } from './agentSessionScope';
 import { createTauriChatStream } from './chatTransport';
 
 // ============================================================================
@@ -1326,6 +1327,13 @@ export interface StreamCallbacks {
 export interface StreamChatOptions {
   allowConcurrent?: boolean;
   abortSignal?: AbortSignal;
+  /** Grid window db session — scopes batch tools + hash protocol reads */
+  dbSessionId?: string;
+  windowId?: string;
+  fileClaims?: string[];
+  projectPath?: string;
+  chatMode?: ChatMode;
+  onCanContinueChange?: (canContinue: boolean) => void;
 }
 
 export interface AIConfig {
@@ -1790,10 +1798,27 @@ async function streamChatViaTauri(
   // All other modes (including retriever): tools enabled
   const toolsEnabled = areToolsEnabledForProvider(config.provider, mode);
   
-  // Reset continuation state when starting new chat
-  useAppStore.getState().setAgentCanContinue(false);
-
   const concurrent = Boolean(options?.allowConcurrent);
+
+  const touchCanContinue = (value: boolean) => {
+    if (concurrent) options?.onCanContinueChange?.(value);
+    else useAppStore.getState().setAgentCanContinue(value);
+  };
+
+  // Reset continuation state when starting new chat (legacy singleton only)
+  if (!concurrent) {
+    useAppStore.getState().setAgentCanContinue(false);
+  }
+
+  if (concurrent && options?.dbSessionId) {
+    setActiveRunScope({
+      dbSessionId: options.dbSessionId,
+      windowId: options.windowId,
+      fileClaims: options.fileClaims,
+      projectPath: options.projectPath ?? useAppStore.getState().projectPath ?? undefined,
+    });
+  }
+
   // Create scoped session context. Legacy main chat remains singleton; agent windows opt into concurrent local sessions.
   const session = concurrent
     ? createConcurrentChatSession(false, options?.abortSignal)
@@ -1909,15 +1934,17 @@ async function streamChatViaTauri(
   // per-round `round > 0` preamble below so "user sent text" behaves like
   // "model continued" for context-statefulness purposes. Safe on the very
   // first stream (turn 0 -> 1, refs map empty, maintenance is no-op).
-  try {
-    await advanceTurn();
-    const ctxStoreAtBoundary = useContextStore.getState();
-    ctxStoreAtBoundary.compactDormantChunks();
-    ctxStoreAtBoundary.evictStaleDormantChunks();
-    ctxStoreAtBoundary.clearStaleReconcileStats();
-    ctxStoreAtBoundary.pruneHashStacks();
-  } catch (e) {
-    console.warn('[aiService] Stream-start HPP advance failed:', e);
+  if (!concurrent) {
+    try {
+      await advanceTurn();
+      const ctxStoreAtBoundary = useContextStore.getState();
+      ctxStoreAtBoundary.compactDormantChunks();
+      ctxStoreAtBoundary.evictStaleDormantChunks();
+      ctxStoreAtBoundary.clearStaleReconcileStats();
+      ctxStoreAtBoundary.pruneHashStacks();
+    } catch (e) {
+      console.warn('[aiService] Stream-start HPP advance failed:', e);
+    }
   }
 
   try {
@@ -1926,7 +1953,7 @@ async function streamChatViaTauri(
       resetRoundFingerprint();
 
       // HPP: advance turn counter so previously-materialized chunks become referenced
-      if (round > 0) {
+      if (round > 0 && !concurrent) {
         await advanceTurn();
         // Auto-compact dormant engrams so store tokens match prompt tokens
         useContextStore.getState().compactDormantChunks();
@@ -2463,8 +2490,27 @@ async function streamChatViaTauri(
           cacheWriteTokens: roundCacheWriteTokens,
           costCents: roundCostCents,
           timestamp: new Date(),
+          windowId: getActiveRunScope()?.windowId,
+          dbSessionId: getActiveRunScope()?.dbSessionId,
         });
         console.log(`[aiService] Recorded cost: ${roundCostCents}¢ for ${roundInputTokens}in/${roundOutputTokens}out (cache r:${roundCacheReadTokens} w:${roundCacheWriteTokens}) (${config.provider}/${config.model})`);
+        const modelInfo = useAppStore.getState().availableModels.find(m => m.id === config.model);
+        const st = useAppStore.getState().settings;
+        const extendedResolution = getExtendedContextResolutionFromSettings(st);
+        const maxTokens = modelInfo
+          ? (getEffectiveContextWindow(modelInfo.id, modelInfo.provider, modelInfo.contextWindow, extendedResolution)
+            ?? (config.provider === 'google' || config.provider === 'vertex' ? 1000000 : 200000))
+          : (config.provider === 'google' || config.provider === 'vertex' ? 1000000 : 200000);
+        const displayIn = totalInputTokens + roundInputTokens;
+        const displayOut = totalOutputTokens + roundOutputTokens;
+        safeCallbacks.onUsageUpdate({
+          inputTokens: displayIn,
+          outputTokens: displayOut,
+          totalTokens: displayIn + displayOut,
+          maxTokens,
+          percentage: Math.min(100, ((displayIn + displayOut) / maxTokens) * 100),
+          costCents: roundCostCents,
+        });
         // Token accuracy telemetry: compare provider-reported input with our estimate
         const estimatedInput = estimateHistoryTokens(conversationHistory) + countTokensSync(dynamicContextBlock);
         if (roundInputTokens > 0 && estimatedInput > 0) {
@@ -2751,7 +2797,7 @@ async function streamChatViaTauri(
               status: 'stopped',
               stoppedReason: runtimeCompletionBlocker ?? 'Final verification is still required before completion.',
             });
-            useAppStore.getState().setAgentCanContinue(true);
+            touchCanContinue(true);
             break;
           }
           if (hasBlockingPendingAction) {
@@ -2759,13 +2805,13 @@ async function streamChatViaTauri(
               status: 'stopped',
               stoppedReason: runtimeCompletionBlocker ?? getPendingActionStopReason(currentPendingAction),
             });
-            useAppStore.getState().setAgentCanContinue(canAutoContinuePendingAction(currentPendingAction));
+            touchCanContinue(canAutoContinuePendingAction(currentPendingAction));
             break;
           }
           console.log('[aiService] Detected st:done marker - treating as implicit completion');
           useAppStore.getState().clearAgentPendingAction();
           useAppStore.getState().setAgentProgress({ status: 'stopped', stoppedReason: 'completed' });
-          useAppStore.getState().setAgentCanContinue(false);
+          touchCanContinue(false);
           break;
         }
 
@@ -2773,7 +2819,7 @@ async function streamChatViaTauri(
         if (mode === 'ask') {
           useAppStore.getState().clearAgentPendingAction();
           useAppStore.getState().setAgentProgress({ status: 'stopped', stoppedReason: 'completed' });
-          useAppStore.getState().setAgentCanContinue(false);
+          touchCanContinue(false);
           break;
         }
 
@@ -2781,7 +2827,7 @@ async function streamChatViaTauri(
         if (mode === 'retriever') {
           useAppStore.getState().clearAgentPendingAction();
           useAppStore.getState().setAgentProgress({ status: 'stopped', stoppedReason: 'completed' });
-          useAppStore.getState().setAgentCanContinue(false);
+          touchCanContinue(false);
           break;
         }
 
@@ -2841,7 +2887,7 @@ async function streamChatViaTauri(
               status: 'stopped',
               stoppedReason: runtimeCompletionBlocker ?? 'Final verification is still required before completion.',
             });
-            useAppStore.getState().setAgentCanContinue(true);
+            touchCanContinue(true);
             break;
           }
           if (hasBlockingPendingAction) {
@@ -2849,14 +2895,14 @@ async function streamChatViaTauri(
               status: 'stopped',
               stoppedReason: runtimeCompletionBlocker ?? getPendingActionStopReason(currentPendingAction),
             });
-            useAppStore.getState().setAgentCanContinue(canAutoContinuePendingAction(currentPendingAction));
+            touchCanContinue(canAutoContinuePendingAction(currentPendingAction));
             break;
           }
           // Natural end_turn — accept as completion
           console.log('[aiService] Model ended turn naturally — accepting as completion');
           useAppStore.getState().clearAgentPendingAction();
           useAppStore.getState().setAgentProgress({ status: 'stopped', stoppedReason: 'completed' });
-          useAppStore.getState().setAgentCanContinue(false);
+          touchCanContinue(false);
           break;
         }
 
@@ -2871,7 +2917,7 @@ async function streamChatViaTauri(
           status: 'stopped',
           stoppedReason: `Auto-continue limit (${maxAutoContinues}) reached`,
         });
-        useAppStore.getState().setAgentCanContinue(true);
+        touchCanContinue(true);
         break;
       }
 
@@ -3079,6 +3125,7 @@ async function streamChatViaTauri(
           const execution = await executeToolCallDetailed(tc.name, tc.args, {
             onBatchStepProgress,
             onSubagentProgress: safeCallbacks.onSubagentProgress,
+            fileClaims: getActiveRunScope()?.fileClaims ?? options?.fileClaims,
           });
           result = execution.displayText;
 
@@ -3179,7 +3226,7 @@ async function streamChatViaTauri(
           status: 'stopped',
           stoppedReason: getPendingActionStopReason(roundPendingAction),
         });
-        useAppStore.getState().setAgentCanContinue(canAutoContinuePendingAction(roundPendingAction));
+        touchCanContinue(canAutoContinuePendingAction(roundPendingAction));
         console.log('[aiService] Pending action blocks completion - exiting loop');
         break;
       }
@@ -3255,7 +3302,7 @@ async function streamChatViaTauri(
         console.log('[aiService] task_complete called — stopping tool loop');
         useAppStore.getState().clearAgentPendingAction();
         useAppStore.getState().setAgentProgress({ status: 'stopped', stoppedReason: 'completed' });
-        useAppStore.getState().setAgentCanContinue(false);
+        touchCanContinue(false);
         break;
       }
 
@@ -3353,7 +3400,7 @@ async function streamChatViaTauri(
     if (loopExitProg.status !== 'stopped' && loopExitProg.status !== 'idle') {
       console.log(`[aiService] Tool loop exhausted ${maxRounds} rounds — forcing stopped state`);
       useAppStore.getState().setAgentProgress({ status: 'stopped', stoppedReason: 'max_rounds' });
-      useAppStore.getState().setAgentCanContinue(true);
+      touchCanContinue(true);
     }
   } catch (error) {
     console.error('[aiService] Stream error:', error);
@@ -3368,11 +3415,12 @@ async function streamChatViaTauri(
       }
     }
   } finally {
+    if (concurrent) setActiveRunScope(null);
     const shouldNotifyDone = concurrent || _activeSession === session;
     const shouldTouchGlobalEndState = !concurrent && _activeSession === session;
 
     if (shouldNotifyDone) {
-      callbacks.onDone();
+      safeCallbacks.onDone();
     }
 
     // End-of-turn compression: compress history NOW so the prefix is cached
@@ -3536,7 +3584,8 @@ function createHandlerContext(options?: { isSwarmAgent?: boolean; swarmTerminalI
   // but TS can't verify structural compatibility with the minimal projection.
   const store = useContextStore.getState as unknown as HandlerContext['store'];
   const setLookup = store().createSetRefLookup();
-  const sessionId = useAppStore.getState().currentSessionId;
+  const scopedSessionId = resolveDbSessionId(useAppStore.getState().currentSessionId);
+  const sessionId = scopedSessionId ?? useAppStore.getState().currentSessionId;
   const syncLookup = createHashLookup(sessionId);
   const hashLookup: import('../utils/hashResolver').HashLookup = async (hash: string) => {
     const r = syncLookup(hash.startsWith('h:') ? hash.slice(2) : hash);

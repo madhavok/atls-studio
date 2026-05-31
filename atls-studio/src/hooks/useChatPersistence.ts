@@ -789,7 +789,7 @@ export function useChatPersistence() {
       let memorySnapshot: PersistedMemorySnapshot | null = null;
       try {
         memorySnapshot = await chatDb.getMemorySnapshot(sessionId);
-        if (memorySnapshot && memorySnapshot.version >= 2 && memorySnapshot.version <= 7) {
+        if (memorySnapshot && memorySnapshot.version >= 2 && memorySnapshot.version <= 8) {
           const normalizedStagedSnippets = normalizePersistedStagedEntries(memorySnapshot.stagedSnippets);
           useContextStore.setState({
             chunks: new Map(rehydrateChunkDates(memorySnapshot.chunks).map(chunk => [chunk.hash, chunk])),

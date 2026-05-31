@@ -14,7 +14,8 @@ import { SessionPicker } from './components/SessionPicker';
 import { ToastContainer } from './components/Toast';
 import { INTERNALS_TAB_ID } from './components/AtlsInternals';
 import { useAppStore } from './stores/appStore';
-import { useCostStore } from './stores/costStore';
+import { useAgentWindowStore } from './stores/agentWindowStore';
+import { activateAgentParentSession } from './services/activateAgentWindow';
 import { useAtls } from './hooks/useAtls';
 import { useOS } from './hooks/useOS';
 import { useChatPersistence } from './hooks/useChatPersistence';
@@ -54,7 +55,6 @@ function App() {
     chatWorkspaceLayout,
     setChatWorkspaceLayout,
     addToast,
-    newChat,
     resetAgentProgress,
   } = useAppStore();
   const { newProject, openProjectWithPicker, loadFileTree, scanProject, refreshIssues, addFolderToWorkspace, saveWorkspace, openWorkspace, closeWorkspace } = useAtls();
@@ -257,10 +257,18 @@ function App() {
     await closeWorkspace();
   }, [closeWorkspace]);
 
-  const handleNewChat = useCallback(() => {
-    setPendingProjectPath(projectPath);
-    setSessionPickerOpen(true);
-  }, [projectPath]);
+  const handleNewChat = useCallback(async () => {
+    const sessionId = await createNewSession();
+    if (sessionId) {
+      const grid = useAgentWindowStore.getState();
+      grid.ensurePrimaryWindow(sessionId, 'New Chat');
+      grid.setActiveParentSession(sessionId);
+      grid.selectWindow(sessionId, `primary-${sessionId}`);
+      await activateAgentParentSession(sessionId, 'New Chat', projectPath);
+    }
+    resetStaticPromptCache();
+    resetAgentProgress();
+  }, [createNewSession, projectPath, resetAgentProgress]);
 
   const handleFindInFile = useCallback(() => {
     window.dispatchEvent(new CustomEvent('editor-action', { detail: { action: 'find' } }));
@@ -394,15 +402,20 @@ function App() {
         projectPath={pendingProjectPath || ''}
         onNewSession={async () => {
           setSessionPickerOpen(false);
-          await createNewSession();
-          newChat();
+          const sessionId = await createNewSession();
+          if (sessionId) {
+            const grid = useAgentWindowStore.getState();
+            grid.ensurePrimaryWindow(sessionId, 'New Chat');
+            grid.setActiveParentSession(sessionId);
+            grid.selectWindow(sessionId, `primary-${sessionId}`);
+          }
           resetStaticPromptCache();
           resetAgentProgress();
-          useCostStore.getState().resetChat();
         }}
         onLoadSession={async (sessionId) => {
           setSessionPickerOpen(false);
-          await loadSession(sessionId);
+          const title = useAppStore.getState().chatSessions.find((session) => session.id === sessionId)?.title ?? 'Primary Chat';
+          await activateAgentParentSession(sessionId, title, projectPath);
         }}
         onDeleteSession={deleteSession}
         onClose={() => setSessionPickerOpen(false)}

@@ -7,6 +7,7 @@ import { useSwarmStore, type AgentRole, type SwarmTask, type TaskStatus } from '
 import { useTerminalStore } from '../../stores/terminalStore';
 import { formatCost } from '../../stores/costStore';
 import { orchestrator } from '../../services/orchestrator';
+import { recoverSwarmTask } from '../../services/swarmWindowBridge';
 import { getProviderFromModel } from '../../services/aiService';
 import { AgentTerminalView } from '../Terminal/AgentTerminalView';
 import { SwarmExecutionProgress, SwarmResearchProgress } from './SwarmProgress';
@@ -301,27 +302,16 @@ function AgentWindows() {
   const tasks = useSwarmStore((s) => s.tasks);
   const selectedTaskId = useOrchestrationUiStore((s) => s.selectedTaskId);
   const selectTask = useOrchestrationUiStore((s) => s.selectTask);
-  const updateTaskStatus = useSwarmStore((s) => s.updateTaskStatus);
   const setTaskFailureReason = useSwarmStore((s) => s.setTaskFailureReason);
-  const setStatus = useSwarmStore((s) => s.setStatus);
-  const resumeExecution = useResumeSwarmExecution();
   const [recoveringTaskId, setRecoveringTaskId] = useState<string | null>(null);
 
   const recoverTask = async (task: SwarmTask) => {
-    selectTask(task.id);
     setRecoveringTaskId(task.id);
-    setTaskFailureReason(task.id, '');
-    updateTaskStatus(task.id, 'pending');
-    setStatus('running');
     try {
-      const resumed = await resumeExecution();
-      if (!resumed) {
-        setStatus('paused');
-        setTaskFailureReason(task.id, 'Recovery queued, but no active swarm session/project was available to dispatch it.');
+      const result = await recoverSwarmTask(task);
+      if (!result.ok && result.error) {
+        setTaskFailureReason(task.id, result.error);
       }
-    } catch (error) {
-      setStatus('paused');
-      setTaskFailureReason(task.id, error instanceof Error ? error.message : String(error));
     } finally {
       setRecoveringTaskId(null);
     }

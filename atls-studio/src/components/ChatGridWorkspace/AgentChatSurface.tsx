@@ -5,6 +5,7 @@ import { useAgentRuntimeStore, type AgentRuntimeMessage } from '../../stores/age
 import { useAgentWindowStore } from '../../stores/agentWindowStore';
 import { useAgentWindowRunner } from '../../hooks/useAgentWindowRunner';
 import { useAppStore } from '../../stores/appStore';
+import { AgentAttachmentBar } from './AgentAttachmentBar';
 
 interface AgentChatSurfaceProps {
   window: AgentWindow;
@@ -29,7 +30,7 @@ export const AgentChatSurface = memo(function AgentChatSurface({ window, showCon
   const ensureRuntime = useAgentRuntimeStore((s) => s.ensureRuntime);
   const hydrateRuntime = useAgentRuntimeStore((s) => s.hydrateRuntime);
   const setDraft = useAgentRuntimeStore((s) => s.setDraft);
-  const { runWindow, cancelWindow } = useAgentWindowRunner();
+  const { runWindow, cancelWindow, continueWindow } = useAgentWindowRunner();
   const transcriptRef = useRef<HTMLDivElement>(null);
   const transcriptEndRef = useRef<HTMLDivElement>(null);
   const userScrolledUpRef = useRef(false);
@@ -101,7 +102,8 @@ export const AgentChatSurface = memo(function AgentChatSurface({ window, showCon
       </div>
     );
   }
-  const canSend = safeRuntime.draft.trim().length > 0 && !safeRuntime.isGenerating;
+  const canSend = (safeRuntime.draft.trim().length > 0 || safeRuntime.attachments.length > 0) && !safeRuntime.isGenerating;
+  const showAttachments = window.kind === 'primary' || window.kind === 'standard';
   const selectedModel = availableModels.find((model) => model.id === settings.selectedModel);
   const modelLabel = selectedModel?.name ?? settings.selectedModel;
   const workerLabel = settings.subagentModel === 'none'
@@ -128,7 +130,13 @@ export const AgentChatSurface = memo(function AgentChatSurface({ window, showCon
           </div>
         ) : (
           <div className="space-y-2">
-            {safeRuntime.messages.map((message) => (
+            {safeRuntime.messages.map((message, index) => {
+              const isStreamingDuplicate = safeRuntime.isGenerating
+                && message.role === 'assistant'
+                && index === safeRuntime.messages.length - 1
+                && message.content === safeRuntime.streamingText;
+              if (isStreamingDuplicate) return null;
+              return (
               <div
                 key={message.id}
                 className={`min-w-0 overflow-hidden rounded-lg border p-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)] ${
@@ -145,8 +153,9 @@ export const AgentChatSurface = memo(function AgentChatSurface({ window, showCon
                 </div>
                 <div className="whitespace-pre-wrap break-words leading-relaxed text-studio-text [overflow-wrap:anywhere]">{message.content}</div>
               </div>
-            ))}
-            {safeRuntime.streamingText && (
+              );
+            })}
+            {safeRuntime.isGenerating && safeRuntime.streamingText && (
               <div className="min-w-0 overflow-hidden rounded-lg border border-cyan-400/30 bg-cyan-500/8 p-2">
                 <div className="mb-1 font-mono text-[9px] uppercase tracking-[0.16em] text-cyan-300">
                   {safeRuntime.isGenerating ? 'streaming' : 'latest stream'}
@@ -195,6 +204,9 @@ export const AgentChatSurface = memo(function AgentChatSurface({ window, showCon
             </button>
           </div>
         )}
+        {showAttachments && (
+          <AgentAttachmentBar windowId={window.windowId} disabled={safeRuntime.isGenerating} />
+        )}
         <textarea
           value={safeRuntime.draft}
           onChange={(event) => setDraft(window.windowId, event.target.value)}
@@ -210,24 +222,38 @@ export const AgentChatSurface = memo(function AgentChatSurface({ window, showCon
           <div className="font-mono text-[9px] uppercase tracking-[0.14em] text-studio-muted">
             {safeRuntime.isGenerating ? 'live stream active' : `${safeRuntime.telemetry.rounds} rounds`}
           </div>
-          {safeRuntime.isGenerating ? (
+          <div className="flex items-center gap-2">
+            {safeRuntime.canContinue && !safeRuntime.isGenerating && (
+              <button
+                type="button"
+                aria-label={`Continue ${window.title}`}
+                onClick={() => continueWindow(window.windowId)}
+                className="rounded-lg border border-emerald-400/50 bg-emerald-500/10 px-3 py-1 text-[10px] uppercase tracking-wide text-emerald-200"
+              >
+                Continue
+              </button>
+            )}
+            {safeRuntime.isGenerating ? (
             <button
               type="button"
+              aria-label={`Stop ${window.title}`}
               onClick={() => cancelWindow(window.windowId)}
               className="rounded-lg border border-red-400/50 bg-red-500/10 px-3 py-1 text-[10px] uppercase tracking-wide text-red-200"
             >
               Stop
             </button>
-          ) : (
-            <button
-              type="button"
-              disabled={!canSend}
-              onClick={() => { void runWindow(window.windowId, safeRuntime.draft); }}
-              className="rounded-lg border border-studio-title/50 bg-studio-title/10 px-3 py-1 text-[10px] uppercase tracking-wide text-studio-title disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              Run
-            </button>
-          )}
+            ) : (
+              <button
+                type="button"
+                disabled={!canSend}
+                aria-label={`Run ${window.title}`}
+                onClick={() => { void runWindow(window.windowId, safeRuntime.draft); }}
+                className="rounded-lg border border-studio-title/50 bg-studio-title/10 px-3 py-1 text-[10px] uppercase tracking-wide text-studio-title disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Run
+              </button>
+            )}
+          </div>
         </div>
       </div>
     </div>

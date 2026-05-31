@@ -10,6 +10,8 @@ import { transformIssues } from './useAtlsTransforms';
 import { normPath } from './useAtlsPaths';
 import { freshnessTelemetry } from '../services/freshnessTelemetry';
 import { resetProjectTreeCache } from '../services/aiService';
+import { cancelAllGridAgentRuns, resetAgentWindowStoreForWorkspaceClose, buildWorkspaceAgentGridSnapshot, restoreWorkspaceAgentGridSnapshot } from '../services/agentGridLifecycle';
+import type { AgentGridWorkspaceSnapshot } from '../stores/agentWindowStore';
 
 // ---------------------------------------------------------------------------
 // Own-write suppression: paths recently written by ATLS edits are excluded
@@ -703,7 +705,9 @@ export function useAtls() {
         if (!selected) return false;
         filePath = selected;
       }
-      await invoke('atls_save_workspace', { filePath });
+      const roots = useAppStore.getState().rootFolders;
+      const agentGrid = buildWorkspaceAgentGridSnapshot(roots);
+      await invoke('atls_save_workspace', { filePath, agentGrid });
       setWorkspaceFilePath(filePath);
       return true;
     } catch (error) {
@@ -719,8 +723,10 @@ export function useAtls() {
       const filePath = selected as string;
 
       await stopFileWatcher();
-      const result = await invoke<{ status: string; roots: string[]; workspaceFile: string }>('atls_open_workspace', { filePath });
+      await cancelAllGridAgentRuns();
+      const result = await invoke<{ status: string; roots: string[]; workspaceFile: string; agentGrid?: unknown }>('atls_open_workspace', { filePath });
       clearWorkspace();
+      resetAgentWindowStoreForWorkspaceClose();
       setAtlsInitialized(true);
       setWorkspaceFilePath(filePath);
       for (const root of result.roots) {
@@ -728,6 +734,7 @@ export function useAtls() {
         addToProjectHistory(root);
         await setupFileWatcher(root);
       }
+      restoreWorkspaceAgentGridSnapshot(result.agentGrid as AgentGridWorkspaceSnapshot | undefined);
       await refreshAllFileTrees();
       for (const root of result.roots) scanProject(root, false);
       return true;
@@ -740,8 +747,10 @@ export function useAtls() {
   const closeWorkspace = useCallback(async () => {
     try {
       await stopFileWatcher();
+      await cancelAllGridAgentRuns();
       await invoke('atls_dispose');
       clearWorkspace();
+      resetAgentWindowStoreForWorkspaceClose();
     } catch (error) {
       console.error('Failed to close workspace:', error);
     }

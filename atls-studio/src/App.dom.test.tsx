@@ -61,6 +61,10 @@ vi.mock('./services/aiService', async (importOriginal) => {
   return { ...a, resetStaticPromptCache: vi.fn() };
 });
 
+vi.mock('./services/activateAgentWindow', () => ({
+  activateAgentParentSession: vi.fn(async () => undefined),
+}));
+
 vi.mock('./components/FileExplorer', () => ({ FileExplorer: () => <div data-testid="m-fe" /> }));
 vi.mock('./components/CodeViewer', async () => {
   const { useAppStore } = await import('./stores/appStore');
@@ -231,22 +235,13 @@ describe('App shell', () => {
     add.mockRestore();
   });
 
-  it('toggles session picker from new chat in menu (Windows)', () => {
+  it('creates grid session from new chat in menu (Windows)', async () => {
+    chatPers.createNewSession.mockResolvedValue('sess-new-id');
     render(<App />);
-    fireEvent.click(screen.getByTestId('mb-newchat'));
-    expect(screen.getByTestId('m-sess')).toBeTruthy();
-  });
-
-  it('completes new session from SessionPicker and resets', async () => {
-    const resetChatSpy = vi.spyOn(useCostStore.getState(), 'resetChat');
-    render(<App />);
-    fireEvent.click(screen.getByTestId('mb-newchat'));
     await act(async () => {
-      fireEvent.click(screen.getByTestId('sess-new'));
+      fireEvent.click(screen.getByTestId('mb-newchat'));
     });
     expect(chatPers.createNewSession).toHaveBeenCalled();
-    expect(useAppStore.getState().messages).toEqual([]);
-    expect(resetChatSpy).toHaveBeenCalled();
     expect(resetStaticPromptCache).toHaveBeenCalled();
   });
 

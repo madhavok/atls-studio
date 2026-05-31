@@ -14,6 +14,8 @@ export interface AgentWindow {
   kind: AgentWindowKind;
   role?: string;
   sourceToolCallId?: string;
+  /** Project root this card operates against (defaults to shell projectPath). */
+  projectPath?: string;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -47,11 +49,15 @@ interface AgentWindowState {
   selectWindow: (parentSessionId: string, windowId: string) => void;
   renameWindow: (windowId: string, title: string) => void;
   setWindowStatus: (windowId: string, status: AgentWindowStatus) => void;
+  setWindowProjectPath: (windowId: string, projectPath: string | undefined) => void;
   setTelemetryCollapsed: (parentSessionId: string, collapsed: boolean) => void;
   reset: () => void;
+  /** Clear in-memory grid state without wiping per-project localStorage layout. */
+  resetInMemory: () => void;
 }
 
-const STORAGE_KEY_PREFIX = 'atls-agent-windows-v1';
+const STORAGE_KEY_PREFIX = 'atls-agent-windows-v2';
+const LEGACY_STORAGE_KEY_PREFIX = 'atls-agent-windows-v1';
 const COLORS: AgentWindowColor[] = ['cyan', 'violet', 'emerald', 'amber', 'rose', 'blue'];
 const EMPTY_PERSISTED: PersistedAgentWindowState = {
   activeParentSessionId: null,
@@ -88,7 +94,16 @@ function loadPersisted(projectPath: string | null): PersistedAgentWindowState {
     return EMPTY_PERSISTED;
   }
   try {
-    const raw = localStorage.getItem(storageKeyForProject(projectPath));
+    const key = storageKeyForProject(projectPath);
+    let raw = localStorage.getItem(key);
+    if (!raw && key.includes('v2')) {
+      const legacyKey = key.replace(STORAGE_KEY_PREFIX, LEGACY_STORAGE_KEY_PREFIX);
+      const legacyRaw = localStorage.getItem(legacyKey);
+      if (legacyRaw) {
+        localStorage.setItem(key, legacyRaw);
+        raw = legacyRaw;
+      }
+    }
     if (!raw) return EMPTY_PERSISTED;
     const parsed = JSON.parse(raw) as {
       activeParentSessionId?: string | null;
@@ -114,6 +129,7 @@ function loadPersisted(projectPath: string | null): PersistedAgentWindowState {
 
 function persist(projectPath: string | null, state: PersistedAgentWindowState) {
   if (typeof localStorage === 'undefined') return;
+  // Agent grid layout is stored per-project in localStorage and optionally in .atls-workspace agentGrid.
   localStorage.setItem(storageKeyForProject(projectPath), JSON.stringify(state));
 }
 
@@ -145,7 +161,7 @@ function seedFromSessions(sessions: Array<{ id: string; title?: string }> = []):
   };
 }
 
-function primaryWindow(parentSessionId: string, title = 'Primary Chat'): AgentWindow {
+function primaryWindow(parentSessionId: string, title = 'Primary Chat', projectPath?: string): AgentWindow {
   const now = new Date();
   return {
     windowId: `primary-${parentSessionId}`,
@@ -155,6 +171,7 @@ function primaryWindow(parentSessionId: string, title = 'Primary Chat'): AgentWi
     status: 'idle',
     groupColor: 'cyan',
     kind: 'primary',
+    projectPath,
     createdAt: now,
     updatedAt: now,
   };
@@ -218,9 +235,12 @@ export const useAgentWindowStore = create<AgentWindowState>((set, get) => ({
     const existing = state.windowsByParent[parentSessionId] ?? [];
     const primaryId = `primary-${parentSessionId}`;
     const hasPrimary = existing.some((window) => window.windowId === primaryId);
+    const projectPath = state.projectPath ?? undefined;
     const windows = hasPrimary
-      ? existing.map((window) => window.windowId === primaryId ? { ...window, title, sessionId: parentSessionId, parentSessionId } : window)
-      : [primaryWindow(parentSessionId, title), ...existing];
+      ? existing.map((window) => window.windowId === primaryId
+        ? { ...window, title, sessionId: parentSessionId, parentSessionId, projectPath: window.projectPath ?? projectPath }
+        : window)
+      : [primaryWindow(parentSessionId, title, projectPath), ...existing];
     const next = {
       windowsByParent: { ...state.windowsByParent, [parentSessionId]: windows },
       selectedWindowByParent: {
@@ -246,6 +266,7 @@ export const useAgentWindowStore = create<AgentWindowState>((set, get) => ({
       kind: 'standard',
       role,
       sourceToolCallId,
+      projectPath: get().projectPath ?? undefined,
       createdAt: now,
       updatedAt: now,
     };
@@ -353,6 +374,15 @@ export const useAgentWindowStore = create<AgentWindowState>((set, get) => ({
     return { windowsByParent };
   }),
 
+  setWindowProjectPath: (windowId, projectPath) => set((state) => {
+    const windowsByParent = mutateWindow(state.windowsByParent, windowId, (window) => (
+      window.projectPath === projectPath ? window : { ...window, projectPath, updatedAt: new Date() }
+    ));
+    if (windowsByParent === state.windowsByParent) return {};
+    persist(state.projectPath, { ...pickPersisted(state), windowsByParent });
+    return { windowsByParent };
+  }),
+
   setTelemetryCollapsed: (parentSessionId, collapsed) => set((state) => {
     const telemetryCollapsedByParent = { ...state.telemetryCollapsedByParent, [parentSessionId]: collapsed };
     persist(state.projectPath, { ...pickPersisted(state), telemetryCollapsedByParent });
@@ -365,4 +395,74 @@ export const useAgentWindowStore = create<AgentWindowState>((set, get) => ({
     persist(currentProjectPath, EMPTY_PERSISTED);
     set(next);
   },
+
+  resetInMemory: () => set({
+    projectPath: null,
+    activeParentSessionId: null,
+    windowsByParent: {},
+    selectedWindowByParent: {},
+    telemetryCollapsedByParent: {},
+  }),
 }));
+
+export type AgentGridWorkspaceSnapshot = {
+  version: 2;
+  byProject: Record<string, ReturnType<typeof serializePersistedGrid>>;
+};
+
+function serializePersistedGrid(state: PersistedAgentWindowState) {
+  return {
+    activeParentSessionId: state.activeParentSessionId,
+    selectedWindowByParent: state.selectedWindowByParent,
+    telemetryCollapsedByParent: state.telemetryCollapsedByParent,
+    windowsByParent: Object.fromEntries(
+      Object.entries(state.windowsByParent).map(([parentId, windows]) => [
+        parentId,
+        windows.map((window) => ({
+          ...window,
+          createdAt: window.createdAt.toISOString(),
+          updatedAt: window.updatedAt.toISOString(),
+        })),
+      ]),
+    ),
+  };
+}
+
+function importPersistedGrid(raw: ReturnType<typeof serializePersistedGrid>): PersistedAgentWindowState {
+  return {
+    activeParentSessionId: raw.activeParentSessionId ?? null,
+    selectedWindowByParent: raw.selectedWindowByParent ?? {},
+    telemetryCollapsedByParent: raw.telemetryCollapsedByParent ?? {},
+    windowsByParent: Object.fromEntries(
+      Object.entries(raw.windowsByParent ?? {}).map(([parentId, windows]) => [
+        parentId,
+        windows.map((window) => reviveWindow(window as SerializedAgentWindow)),
+      ]),
+    ),
+  };
+}
+
+/** Export per-root agent grid layout for .atls-workspace v2. */
+export function exportAgentGridSnapshot(projectPaths: string[]): AgentGridWorkspaceSnapshot {
+  const byProject: AgentGridWorkspaceSnapshot['byProject'] = {};
+  for (const projectPath of projectPaths) {
+    byProject[projectPath] = serializePersistedGrid(loadPersisted(projectPath));
+  }
+  return { version: 2, byProject };
+}
+
+/** Restore agent grid layout from workspace file into localStorage + in-memory store. */
+export function importAgentGridSnapshot(snapshot: AgentGridWorkspaceSnapshot | null | undefined): void {
+  if (!snapshot?.byProject) return;
+  for (const [projectPath, raw] of Object.entries(snapshot.byProject)) {
+    persist(projectPath, importPersistedGrid(raw));
+  }
+  const currentProjectPath = useAgentWindowStore.getState().projectPath;
+  if (currentProjectPath && snapshot.byProject[currentProjectPath]) {
+    const loaded = loadPersisted(currentProjectPath);
+    useAgentWindowStore.setState({
+      projectPath: currentProjectPath,
+      ...loaded,
+    });
+  }
+}

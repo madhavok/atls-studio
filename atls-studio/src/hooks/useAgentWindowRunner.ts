@@ -3,14 +3,16 @@ import { invoke } from '@tauri-apps/api/core';
 import { generateTitle, useAppStore, type Message } from '../stores/appStore';
 import { useAgentRuntimeStore, type AgentRuntimeMessage } from '../stores/agentRuntimeStore';
 import { useAgentWindowStore, type AgentWindow } from '../stores/agentWindowStore';
-import { useContextStore } from '../stores/contextStore';
+import type { ChatAttachment } from '../stores/attachmentStore';
 import { chatDb } from '../services/chatDb';
 import { streamChat, type AIConfig, type AIProvider, type ChatMessage, type WorkspaceContext } from '../services/aiService';
+import { formatAttachmentForLLM } from '../utils/fileAttachments';
 import { getPricingProviderForModel } from '../utils/pricingProvider';
 import { isExtendedContextEnabled, modelSupportsExtendedContext } from '../utils/modelCapabilities';
 import { resolveModelSettings } from '../utils/modelSettings';
 import { buildDelegationContext, summarizeChildResult } from '../services/delegationContext';
 import { handleDelegateToolCall, handleSubAgentProgress } from '../services/agentDelegateBridge';
+import { notifyBackgroundWindowComplete } from '../services/agentWindowNotifications';
 
 function getApiKeyForProvider(provider: AIProvider): string {
   const settings = useAppStore.getState().settings;
@@ -46,6 +48,12 @@ function getWindowModel(window: AgentWindow): string {
   return settings.selectedModel;
 }
 
+function getWindowMaxTokens(window: AgentWindow): number {
+  const settings = useAppStore.getState().settings;
+  if (window.role) return Math.min(settings.maxTokens, 8192);
+  return settings.maxTokens;
+}
+
 function getAIConfig(window: AgentWindow): AIConfig {
   const state = useAppStore.getState();
   const { settings } = state;
@@ -73,7 +81,7 @@ function getAIConfig(window: AgentWindow): AIConfig {
     provider,
     model,
     apiKey: getApiKeyForProvider(provider),
-    maxTokens: settings.maxTokens,
+    maxTokens: getWindowMaxTokens(window),
     temperature: settings.temperature,
     projectId: settings.vertexProjectId,
     region: provider === 'vertex' ? settings.vertexRegion : undefined,
@@ -83,22 +91,58 @@ function getAIConfig(window: AgentWindow): AIConfig {
   };
 }
 
-function getWorkspaceContext(): WorkspaceContext {
+function getWorkspaceContext(window?: AgentWindow): WorkspaceContext {
   const app = useAppStore.getState();
   const focus = app.focusProfile;
   const platform = navigator.platform.toLowerCase();
   const os = platform.includes('win') ? 'windows' : platform.includes('mac') ? 'macos' : 'linux';
   const shell = os === 'windows' ? 'powershell' : os === 'macos' ? 'zsh' : 'bash';
+  const cwd = window?.projectPath ?? app.projectPath ?? undefined;
   return {
     profile: app.projectProfile,
     activeFile: app.activeFile,
     openFiles: app.openFiles,
     os,
     shell,
-    cwd: app.projectPath || undefined,
+    cwd,
     atlsReady: app.atlsInitialized,
     focusProfile: { name: app.focusProfileName, matrix: focus.matrix },
   };
+}
+
+const CONTINUATION_PROMPT = 'Continue working. When fully done, either provide a brief final summary or call task_complete with a summary.';
+
+async function buildPromptWithAttachments(
+  trimmed: string,
+  attachments: ChatAttachment[],
+  projectPath: string | null | undefined,
+): Promise<{ prompt: string; displayContent: string }> {
+  if (attachments.length === 0) {
+    return { prompt: trimmed, displayContent: trimmed };
+  }
+
+  let fileContextBlock = '';
+  for (const att of attachments) {
+    if (att.type !== 'file') continue;
+    let content = att.content;
+    if (!content && att.path) {
+      try {
+        content = await invoke<string>('read_file_contents', { path: att.path, projectRoot: projectPath ?? undefined });
+      } catch {
+        content = `[Error reading ${att.name}]`;
+      }
+    }
+    if (!content) continue;
+    if (att.fileType === 'code' && att.metadata) {
+      fileContextBlock += `\n${formatAttachmentForLLM(att)}\n`;
+    } else {
+      fileContextBlock += `\n<file path="${att.path || att.name}">\n${content}\n</file>\n`;
+    }
+  }
+
+  const displayContent = trimmed + `\n\n[Attached: ${attachments.map((attachment) => attachment.name).join(', ')}]`;
+  const prompt = fileContextBlock ? `${trimmed}${fileContextBlock}` : displayContent;
+  return { prompt, displayContent };
 }
 
 function runtimeMessagesToChat(messages: AgentRuntimeMessage[]): ChatMessage[] {
@@ -191,23 +235,30 @@ export function useAgentWindowRunner() {
       ?.find((candidate) => candidate.sessionId === window.parentSessionId) ?? window;
     const parentRuntime = useAgentRuntimeStore.getState().runtimesByWindow[parentWindow.windowId];
     const parentMessages = parentRuntime?.messages ?? useAppStore.getState().messages;
+
+    const controller = new AbortController();
+    const appState = useAppStore.getState();
+    const windowProjectPath = window.projectPath ?? appState.projectPath ?? undefined;
+    const currentAttachments = useAgentRuntimeStore.getState().runtimesByWindow[windowId]?.attachments ?? [];
+    const { prompt: runPrompt, displayContent } = await buildPromptWithAttachments(trimmed, currentAttachments, windowProjectPath ?? null);
+    if (currentAttachments.length > 0) {
+      runtimeStore.clearAttachments(windowId);
+    }
+
     const delegationContext = window.role
       ? buildDelegationContext({
           parentWindow,
           childRole: window.role,
-          task: trimmed,
+          task: runPrompt,
           parentMessages,
         })
       : '';
-
-    const controller = new AbortController();
-    const appState = useAppStore.getState();
     const fileClaims = window.role === 'coder' || window.role === 'debugger' || window.role === 'tester'
       ? Array.from(new Set([appState.activeFile, ...appState.openFiles].filter((path): path is string => Boolean(path))))
       : [];
     runtimeStore.setFileClaims(windowId, fileClaims);
     const hadUserMessage = runtime.messages.some((message) => message.role === 'user');
-    const userMessage = runtimeStore.appendMessage(windowId, { role: 'user', content: trimmed });
+    const userMessage = runtimeStore.appendMessage(windowId, { role: 'user', content: displayContent });
     if (userMessage) void persistMessage(window.sessionId, userMessage);
     if (userMessage && window.kind === 'primary' && !hadUserMessage && shouldAutoTitle(window.title)) {
       const title = generateTitle([toTitleMessage(userMessage)]);
@@ -218,6 +269,7 @@ export function useAgentWindowRunner() {
     useAgentWindowStore.getState().setWindowStatus(windowId, 'running');
 
     let fullResponse = '';
+    let runErrored = false;
     const startedAt = Date.now();
     const prior = useAgentRuntimeStore.getState().runtimesByWindow[windowId]?.messages ?? [];
     const chatMessages: ChatMessage[] = [
@@ -259,19 +311,26 @@ export function useAgentWindowRunner() {
           handleSubAgentProgress(window.parentSessionId, stepId, progress);
         },
         onError: (error) => {
+          runErrored = true;
           runtimeStore.finishRun(windowId, controller.signal.aborted ? 'cancelled' : 'failed', error.message);
           useAgentWindowStore.getState().setWindowStatus(windowId, controller.signal.aborted ? 'paused' : 'failed');
         },
         onDone: () => {
+          if (runErrored) return;
           const latest = useAgentRuntimeStore.getState().runtimesByWindow[windowId];
           if (fullResponse.trim()) {
             const finalMessage = latest?.messages[latest.messages.length - 1];
             if (finalMessage?.role === 'assistant') void persistMessage(window.sessionId, finalMessage);
           }
-          const finalStatus = controller.signal.aborted ? 'cancelled' : fullResponse.trim() ? 'completed' : 'failed';
+          const hadToolActivity = (latest?.toolCalls.length ?? 0) > 0
+            || (latest?.messages.some((message) => message.toolName) ?? false);
+          const finalStatus = controller.signal.aborted
+            ? 'cancelled'
+            : (fullResponse.trim() || hadToolActivity) ? 'completed' : 'failed';
           runtimeStore.updateTelemetry(windowId, { latencyMs: Date.now() - startedAt });
           runtimeStore.finishRun(windowId, finalStatus);
           useAgentWindowStore.getState().setWindowStatus(windowId, finalStatus === 'completed' ? 'completed' : finalStatus === 'cancelled' ? 'paused' : 'failed');
+          notifyBackgroundWindowComplete(windowId, finalStatus);
           const completed = useAgentRuntimeStore.getState().runtimesByWindow[windowId];
           if (window.role && completed) {
             runtimeStore.appendParentEvent({
@@ -293,9 +352,17 @@ export function useAgentWindowRunner() {
           if (!message) return;
           runtimeStore.appendMessage(windowId, { role: 'system', content: message });
         },
-      }, getWorkspaceContext(), window.role === 'reviewer' ? 'reviewer' : 'agent', {
+      }, getWorkspaceContext(window), window.role === 'reviewer' ? 'reviewer' : 'agent', {
         allowConcurrent: true,
         abortSignal: controller.signal,
+        dbSessionId: window.sessionId,
+        windowId,
+        fileClaims,
+        projectPath: windowProjectPath,
+        chatMode: window.role ? 'agent' : useAppStore.getState().chatMode,
+        onCanContinueChange: (canContinue: boolean) => {
+          runtimeStore.setCanContinue(windowId, canContinue);
+        },
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -314,5 +381,12 @@ export function useAgentWindowRunner() {
     }
   }, []);
 
-  return { runWindow, cancelWindow };
+  const continueWindow = useCallback((windowId: string) => {
+    const runtime = useAgentRuntimeStore.getState().runtimesByWindow[windowId];
+    if (!runtime?.canContinue || runtime.isGenerating) return;
+    useAgentRuntimeStore.getState().setCanContinue(windowId, false);
+    void runWindow(windowId, CONTINUATION_PROMPT);
+  }, [runWindow]);
+
+  return { runWindow, cancelWindow, continueWindow };
 }

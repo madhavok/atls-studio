@@ -94,6 +94,13 @@ describe('createGuardrailCallbacks', () => {
     callbacks.onClear?.();
     expect(onClear).toHaveBeenCalled();
   });
+
+  it('forwards onSubagentProgress when session is valid', () => {
+    const onSubagentProgress = vi.fn();
+    const callbacks = createGuardrailCallbacks({ onSubagentProgress } as any, () => true);
+    callbacks.onSubagentProgress?.('step-1', { round: 1, status: 'ok', toolName: 'delegate.code', done: false });
+    expect(onSubagentProgress).toHaveBeenCalled();
+  });
 });
 
 describe('historyCompressionMiddleware', () => {

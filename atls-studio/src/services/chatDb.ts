@@ -136,6 +136,25 @@ function isAgentLaneMessageMetadata(metadata?: string | null): boolean {
 class ChatDbService {
   private initialized = false;
   private projectPath: string | null = null;
+  /** JS-side queue; Rust chat_db still serializes all ops on one Mutex<Connection>. */
+  private opQueue: Promise<unknown> = Promise.resolve();
+
+  /**
+   * Run a DB operation under the current project scope.
+   * Initializes the requested project if needed and serializes through opQueue
+   * so concurrent grid windows do not interleave init/close races in JS.
+   */
+  async withProjectScope<T>(projectPath: string | null, fn: () => Promise<T>): Promise<T> {
+    const run = async () => {
+      if (projectPath && (!this.initialized || this.projectPath !== projectPath)) {
+        await this.init(projectPath);
+      }
+      return fn();
+    };
+    const next = this.opQueue.then(run, run);
+    this.opQueue = next.catch(() => undefined);
+    return next;
+  }
 
   /**
    * Initialize chat database for a project

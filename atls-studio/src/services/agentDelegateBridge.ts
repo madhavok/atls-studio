@@ -171,6 +171,11 @@ export function handleDelegateToolCall(parentSessionId: string | null, toolCall:
   });
 }
 
+export function clearDelegateBridgeState(): void {
+  bridgeWindowByKey.clear();
+  pendingSessionCreates.clear();
+}
+
 export function handleSubAgentProgress(parentSessionId: string | null, stepId: string, progress: SubAgentProgressEvent): void {
   if (!parentSessionId) return;
   const role = delegateRoleFromName(progress.toolName);

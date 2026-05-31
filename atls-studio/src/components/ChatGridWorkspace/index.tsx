@@ -13,7 +13,11 @@ import { SWARM_ORCHESTRATION_TAB_ID } from '../../constants/swarmOrchestrationTa
 import { chatDb } from '../../services/chatDb';
 import { ChatTelemetryPane } from './ChatTelemetryPane';
 import { AgentChatSurface } from './AgentChatSurface';
+import { ConversationSelector } from './ConversationSelector';
+import { GridErrorBoundary } from './GridErrorBoundary';
 import { useAgentRuntimeStore } from '../../stores/agentRuntimeStore';
+import { activateAgentWindow } from '../../services/activateAgentWindow';
+import { canRecoverSwarmTask, canStopSwarmTask, pauseSwarmTask, recoverSwarmTask, syncSwarmSelection } from '../../services/swarmWindowBridge';
 import { ModelModeSelector } from '../ModelModeSelector';
 import { Settings } from '../Settings';
 
@@ -262,6 +266,7 @@ export const ChatGridWorkspace = memo(function ChatGridWorkspace({ variant = 'pr
   const [previewBySession, setPreviewBySession] = useState<SessionPreviewMap>({});
   const [optionsModalOpen, setOptionsModalOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [recoveringSwarmTaskId, setRecoveringSwarmTaskId] = useState<string | null>(null);
 
   const activeGroupId = activeParentSessionId ?? currentSessionId ?? 'draft-parent';
   const parentEvents = useAgentRuntimeStore((s) => s.parentEventsBySession[activeGroupId] ?? EMPTY_PARENT_EVENTS);
@@ -348,9 +353,13 @@ export const ChatGridWorkspace = memo(function ChatGridWorkspace({ variant = 'pr
       : 'grid grid-cols-1 gap-3 xl:grid-cols-2';
 
   const selectAndLoadWindow = useCallback(async (window: AgentWindow) => {
-    setActiveParentSession(window.parentSessionId);
+    await activateAgentWindow(window);
     selectWindow(window.parentSessionId, window.windowId);
-  }, [selectWindow, setActiveParentSession]);
+    if (window.kind === 'swarm') {
+      const taskId = window.windowId.replace(/^swarm-/, '');
+      syncSwarmSelection(taskId, window.parentSessionId);
+    }
+  }, [selectWindow]);
 
   const createParentSession = useCallback(async () => {
     const existingCount = chatSessions.filter((session) => session.title.startsWith('Agent Session')).length;
@@ -390,10 +399,19 @@ export const ChatGridWorkspace = memo(function ChatGridWorkspace({ variant = 'pr
     });
   }, [addToast, chatSessions, ensurePrimaryWindow, selectWindow, setActiveParentSession]);
 
+  const focusChildWindow = useCallback((childWindowId: string) => {
+    const window = Object.values(useAgentWindowStore.getState().windowsByParent)
+      .flat()
+      .find((candidate) => candidate.windowId === childWindowId);
+    if (!window) return;
+    void selectAndLoadWindow(window);
+  }, [selectAndLoadWindow]);
+
   const renderedWindows = useMemo(() => windows.filter((window) => {
+    if (window.parentSessionId !== activeGroupId) return false;
     if (window.kind !== 'swarm') return true;
     return swarmTasks.some((task) => `swarm-${task.id}` === window.windowId);
-  }), [swarmTasks, windows]);
+  }), [activeGroupId, swarmTasks, windows]);
 
   return (
     <div className="h-full min-h-0 overflow-hidden bg-studio-bg text-studio-text" data-testid={`chat-grid-${variant}`}>
@@ -401,6 +419,12 @@ export const ChatGridWorkspace = memo(function ChatGridWorkspace({ variant = 'pr
         <div className="flex min-w-0 flex-1 flex-col">
           <div className="border-b border-studio-border bg-gradient-to-r from-studio-surface/95 via-studio-bg/80 to-studio-surface/80 px-3 py-2 shadow-[0_10px_30px_rgba(0,0,0,0.18)]">
             <div className="flex items-center gap-2">
+              <ConversationSelector
+                projectPath={projectPath}
+                chatSessions={chatSessions}
+                activeParentSessionId={activeGroupId}
+                onCreateSession={() => { void createParentSession(); }}
+              />
               <div className="min-w-0 flex-1">
                 <h2 className="font-mono text-[11px] font-semibold uppercase tracking-[0.22em] text-studio-title">Standard Agent Window Grid</h2>
                 <p className="truncate text-[10px] text-studio-muted">
@@ -458,7 +482,50 @@ export const ChatGridWorkspace = memo(function ChatGridWorkspace({ variant = 'pr
                     testId={window.kind === 'primary' ? 'primary-chat-window' : window.kind === 'swarm' ? `swarm-chat-window-${task?.id ?? window.windowId}` : `agent-chat-window-${window.windowId}`}
                     actions={
                       <>
-                        {window.kind === 'swarm' && (
+                        {window.kind === 'swarm' && task && canStopSwarmTask(task) && (
+                          <button
+                            type="button"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              pauseSwarmTask(task);
+                            }}
+                            className="rounded-full border border-red-400/40 px-2 py-0.5 text-[9px] uppercase tracking-wide text-red-200 hover:bg-red-500/10"
+                          >
+                            Stop
+                          </button>
+                        )}
+                        {window.kind === 'swarm' && task && canRecoverSwarmTask(task) && (
+                          <button
+                            type="button"
+                            disabled={recoveringSwarmTaskId === task.id}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              setRecoveringSwarmTaskId(task.id);
+                              void recoverSwarmTask(task).then((result) => {
+                                if (!result.ok && result.error) {
+                                  addToast({ type: 'error', message: result.error });
+                                }
+                              }).finally(() => setRecoveringSwarmTaskId(null));
+                            }}
+                            className="rounded-full border border-yellow-500/40 px-2 py-0.5 text-[9px] uppercase tracking-wide text-yellow-200 disabled:opacity-60"
+                          >
+                            {recoveringSwarmTaskId === task.id ? 'Queuing' : task.status === 'awaiting_input' ? 'Continue' : 'Recover'}
+                          </button>
+                        )}
+                        {window.kind === 'swarm' && task && (
+                          <button
+                            type="button"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              syncSwarmSelection(task.id, window.parentSessionId);
+                              openFile(SWARM_ORCHESTRATION_TAB_ID);
+                            }}
+                            className="rounded-full border border-studio-title/40 px-2 py-0.5 text-[9px] uppercase tracking-wide text-studio-title"
+                          >
+                            Inspector
+                          </button>
+                        )}
+                        {window.kind === 'swarm' && !task && (
                           <button
                             type="button"
                             onClick={(event) => {
@@ -499,11 +566,13 @@ export const ChatGridWorkspace = memo(function ChatGridWorkspace({ variant = 'pr
                     }
                   >
                     {window.kind === 'standard' || window.kind === 'primary' ? (
-                      <AgentChatSurface
-                        window={window}
-                        showControls
-                        onOpenOptions={() => setOptionsModalOpen(true)}
-                      />
+                      <GridErrorBoundary windowId={window.windowId}>
+                        <AgentChatSurface
+                          window={window}
+                          showControls
+                          onOpenOptions={() => setOptionsModalOpen(true)}
+                        />
+                      </GridErrorBoundary>
                     ) : task ? (
                       <SwarmTranscript task={task} />
                     ) : (
@@ -531,6 +600,7 @@ export const ChatGridWorkspace = memo(function ChatGridWorkspace({ variant = 'pr
           swarmStats={swarmStats}
           runtimesByWindow={runtimesByWindow}
           parentEvents={parentEvents}
+          onFocusChildWindow={focusChildWindow}
           collapsed={telemetryCollapsed}
           onToggleCollapsed={() => setTelemetryCollapsed(activeGroupId, !telemetryCollapsed)}
         />

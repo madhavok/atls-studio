@@ -196,17 +196,24 @@ pub async fn atls_get_roots(app: AppHandle) -> Result<serde_json::Value, String>
 
 /// Save the current workspace to an .atls-workspace file.
 #[tauri::command]
-pub async fn atls_save_workspace(app: AppHandle, file_path: String) -> Result<(), String> {
+pub async fn atls_save_workspace(
+    app: AppHandle,
+    file_path: String,
+    agent_grid: Option<serde_json::Value>,
+) -> Result<(), String> {
     let state = app.state::<AtlsProjectState>();
     let roots = state.roots.lock().await;
 
     let folders: Vec<serde_json::Value> = roots.iter()
         .map(|rf| serde_json::json!({ "path": rf.path }))
         .collect();
-    let ws_json = serde_json::json!({
+    let mut ws_json = serde_json::json!({
         "folders": folders,
         "settings": {},
     });
+    if let Some(grid) = agent_grid {
+        ws_json["agentGrid"] = grid;
+    }
 
     let contents = serde_json::to_string_pretty(&ws_json)
         .map_err(|e| format!("Failed to serialize workspace: {}", e))?;
@@ -230,6 +237,7 @@ pub async fn atls_open_workspace(app: AppHandle, file_path: String) -> Result<se
     let folders = ws.get("folders")
         .and_then(|f| f.as_array())
         .ok_or("Workspace file missing 'folders' array")?;
+    let agent_grid = ws.get("agentGrid").cloned();
 
     let state = app.state::<AtlsProjectState>();
     let mut roots = state.roots.lock().await;
@@ -259,6 +267,7 @@ pub async fn atls_open_workspace(app: AppHandle, file_path: String) -> Result<se
         "status": "opened",
         "roots": root_paths,
         "workspaceFile": file_path,
+        "agentGrid": agent_grid,
     }))
 }
 
