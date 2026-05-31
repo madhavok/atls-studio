@@ -144,7 +144,9 @@ export const useAgentRuntimeStore = create<AgentRuntimeState>((set, get) => ({
 
   hydrateRuntime: (windowId, messages) => set((state) => {
     const runtime = state.runtimesByWindow[windowId];
-    if (!runtime || runtime.messages.length > 0 || messages.length === 0) return {};
+    if (!runtime || messages.length === 0) return {};
+    const hasPersistedContent = runtime.messages.some((message) => message.role === 'user' || message.role === 'assistant');
+    if (hasPersistedContent) return {};
     return {
       runtimesByWindow: {
         ...state.runtimesByWindow,

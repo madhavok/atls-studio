@@ -144,6 +144,7 @@ import { estimateFileViewTokens } from './fileViewTokens';
 import { INTERNALS_TAB_ID } from '../constants/atlsInternals';
 import { SWARM_ORCHESTRATION_TAB_ID } from '../constants/swarmOrchestrationTab';
 import { useRoundHistoryStore, type VerificationConfidence } from '../stores/roundHistoryStore';
+import { useAgentRuntimeStore } from '../stores/agentRuntimeStore';
 import {
   executeUnifiedBatch,
   normalizeBatchPolicyForExecution,
@@ -1545,16 +1546,37 @@ function setToolLoopState(
   if (_activeSession) _activeSession.toolLoopState = state;
 }
 
+function hasActiveGridStreams(): boolean {
+  return Object.values(useAgentRuntimeStore.getState().runtimesByWindow)
+    .some((runtime) => runtime.isGenerating);
+}
+
+function cancelStreamIds(streamIds: Iterable<string>): void {
+  const ids = [...streamIds];
+  if (ids.length > 0) {
+    for (const streamId of ids) {
+      invoke('cancel_chat_stream', { streamId }).catch((err) => {
+        console.warn('[aiService] cancel_chat_stream failed:', err);
+      });
+    }
+    return;
+  }
+  if (!hasActiveGridStreams()) {
+    invoke('cancel_all_chat_streams').catch((err) => {
+      console.warn('[aiService] cancel_all_chat_streams failed:', err);
+    });
+  }
+}
+
 function createChatSession(isSwarm: boolean): ChatSessionContext {
   // Abort prior session so we never have overlapping sessions; prevents stale
   // finally-block from clearing state belonging to this new session
   const prior = _activeSession;
   if (prior) {
+    const priorStreamIds = [...prior.activeStreamIds];
     prior.abortController.abort();
     prior.activeStreamIds.clear();
-    invoke('cancel_all_chat_streams').catch((err) => {
-      console.warn('[aiService] cancel_all_chat_streams failed:', err);
-    });
+    cancelStreamIds(priorStreamIds);
     _activeSession = null;
     currentAbortController = null;
   }
@@ -1663,13 +1685,12 @@ function looksLikeStructuredToolPayload(text: string): boolean {
 export function stopChat(): void {
   const session = getActiveSession();
   if (session) {
+    const streamIds = [...session.activeStreamIds];
     session.abortController.abort();
     session.activeStreamIds.clear();
     _activeSession = null;
     currentAbortController = null;
-    invoke('cancel_all_chat_streams').catch((err) => {
-      console.warn('[aiService] cancel_all_chat_streams failed:', err);
-    });
+    cancelStreamIds(streamIds);
     // Ensure UI exits generating state synchronously
     useAppStore.getState().setIsGenerating(false);
     const prog = useAppStore.getState().agentProgress;
@@ -2465,7 +2486,15 @@ async function streamChatViaTauri(
 
       if (!isSessionValid()) break;
 
-      useAppStore.getState().recordRound();
+      if (concurrent) {
+        const scopedWindowId = getActiveRunScope()?.windowId;
+        if (scopedWindowId) {
+          const priorRounds = useAgentRuntimeStore.getState().runtimesByWindow[scopedWindowId]?.telemetry.rounds ?? 0;
+          useAgentRuntimeStore.getState().updateTelemetry(scopedWindowId, { rounds: priorRounds + 1 });
+        }
+      } else {
+        useAppStore.getState().recordRound();
+      }
 
       // Record cost for this round (cache-aware for Anthropic)
       let roundCostCents = 0;
