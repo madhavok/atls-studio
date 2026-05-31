@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { ContextUsage, MessageToolCall } from './appStore';
+import type { ContextUsage, MessageToolCall, MessagePart, MessageSegment } from './appStore';
 import type { ChatAttachment } from './attachmentStore';
 
 export type AgentRuntimeRole = 'user' | 'assistant' | 'system';
@@ -11,6 +11,8 @@ export interface AgentRuntimeMessage {
   content: string;
   timestamp: Date;
   toolName?: string;
+  parts?: MessagePart[];
+  segments?: MessageSegment[];
 }
 
 export interface AgentRuntimeTelemetry {
@@ -67,6 +69,7 @@ interface AgentRuntimeState {
   setDraft: (windowId: string, draft: string) => void;
   appendMessage: (windowId: string, message: Omit<AgentRuntimeMessage, 'id' | 'timestamp'> & { id?: string; timestamp?: Date }) => AgentRuntimeMessage | null;
   replaceLastAssistantMessage: (windowId: string, content: string) => void;
+  finalizeLastAssistantMessage: (windowId: string, content: string, parts?: MessagePart[], segments?: MessageSegment[]) => AgentRuntimeMessage | null;
   setStreamingText: (windowId: string, text: string) => void;
   setStreamingReasoning: (windowId: string, text: string) => void;
   startRun: (windowId: string, controller: AbortController) => void;
@@ -206,6 +209,37 @@ export const useAgentRuntimeStore = create<AgentRuntimeState>((set, get) => ({
       : [...runtime.messages, { id: createId('rt-msg'), role: 'assistant' as const, content, timestamp: new Date() }];
     return { runtimesByWindow: { ...state.runtimesByWindow, [windowId]: { ...runtime, messages, updatedAt: new Date() } } };
   }),
+
+  finalizeLastAssistantMessage: (windowId, content, parts, segments) => {
+    let finalized: AgentRuntimeMessage | null = null;
+    set((state) => {
+      const runtime = state.runtimesByWindow[windowId];
+      if (!runtime) return {};
+      const last = runtime.messages[runtime.messages.length - 1];
+      const resolvedContent = content || last?.content || '';
+      const next: AgentRuntimeMessage = last?.role === 'assistant'
+        ? { ...last, content: resolvedContent, parts, segments }
+        : {
+          id: createId('rt-msg'),
+          role: 'assistant',
+          content: resolvedContent,
+          timestamp: new Date(),
+          parts,
+          segments,
+        };
+      finalized = next;
+      const messages = last?.role === 'assistant'
+        ? [...runtime.messages.slice(0, -1), next]
+        : [...runtime.messages, next];
+      return {
+        runtimesByWindow: {
+          ...state.runtimesByWindow,
+          [windowId]: { ...runtime, messages: trimMessages(messages), updatedAt: new Date() },
+        },
+      };
+    });
+    return finalized;
+  },
 
   setStreamingText: (windowId, streamingText) => set((state) => {
     const runtime = state.runtimesByWindow[windowId];

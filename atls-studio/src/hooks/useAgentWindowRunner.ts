@@ -13,6 +13,7 @@ import { resolveModelSettings } from '../utils/modelSettings';
 import { buildDelegationContext } from '../services/delegationContext';
 import { syncShellToProjectPath } from '../services/agentShellSync';
 import { buildAgentWindowStreamCallbacks } from './agentWindowStreamCallbacks';
+import { persistGridAssistantTurn, persistGridUserMessage } from '../services/agentGridMessagePersist';
 
 function getApiKeyForProvider(provider: AIProvider): string {
   const settings = useAppStore.getState().settings;
@@ -157,8 +158,15 @@ function runtimeMessagesToChat(messages: AgentRuntimeMessage[]): ChatMessage[] {
 }
 
 async function persistMessage(sessionId: string, message: AgentRuntimeMessage): Promise<void> {
-  if (!chatDb.isInitialized()) return;
-  if (message.role === 'system') return;
+  if (message.role === 'user') {
+    await persistGridUserMessage(sessionId, message);
+    return;
+  }
+  if (message.role === 'assistant' && message.parts?.length) {
+    await persistGridAssistantTurn(sessionId, message, message.parts, message.content);
+    return;
+  }
+  if (!chatDb.isInitialized() || message.role === 'system') return;
   try {
     await chatDb.addMessage(sessionId, message.role, message.content, undefined, message.id);
   } catch (error) {
@@ -295,6 +303,9 @@ export function useAgentWindowRunner() {
         fullResponseRef,
         runErroredRef,
         persistMessage: (sessionId, message) => { void persistMessage(sessionId, message); },
+        persistAssistantTurn: (sessionId, message, parts, content) => {
+          void persistGridAssistantTurn(sessionId, message, parts, content);
+        },
       });
       await streamChat(config, chatMessages, callbacks, getWorkspaceContext(window), window.role === 'reviewer' ? 'reviewer' : 'agent', {
         allowConcurrent: true,

@@ -15,6 +15,11 @@ import {
   endAgentWindowStreamRun,
   getAgentWindowStreamRefs,
 } from '../services/agentWindowStreamRefs';
+import {
+  finalizeStreamSegmentsToParts,
+  persistGridAssistantTurn,
+} from '../services/agentGridMessagePersist';
+import { persistContextSession } from '../services/contextSessionPartition';
 import { handleDelegateToolCall, handleSubAgentProgress } from '../services/agentDelegateBridge';
 import { summarizeChildResult } from '../services/delegationContext';
 import { notifyBackgroundWindowComplete } from '../services/agentWindowNotifications';
@@ -39,10 +44,12 @@ export function buildAgentWindowStreamCallbacks(ctx: {
   fullResponseRef: { current: string };
   runErroredRef: { current: boolean };
   persistMessage: (sessionId: string, message: AgentRuntimeMessage) => void;
+  persistAssistantTurn?: (sessionId: string, message: AgentRuntimeMessage, parts: import('../stores/appStore').MessagePart[], content: string) => void;
 }): StreamCallbacks {
-  const { window, windowId, startedAt, fullResponseRef, runErroredRef, persistMessage } = ctx;
+  const { window, windowId, startedAt, fullResponseRef, runErroredRef, persistMessage, persistAssistantTurn } = ctx;
   const runtimeStore = () => useAgentRuntimeStore.getState();
   const streamRefs = beginAgentWindowStreamRun(windowId);
+  const toolCallsById = new Map<string, ToolCall>();
   let activeTextId: string | null = null;
   let activeReasoningId: string | null = null;
 
@@ -82,6 +89,9 @@ export function buildAgentWindowStreamCallbacks(ctx: {
     onStepEnd: () => {
       streamRefs.streamingSegmentsRef.current.push({ type: 'step-boundary' });
       streamRefs.segmentsRevisionRef.current++;
+      void persistContextSession(window.sessionId, { toDb: true }).catch((error) => {
+        console.warn('[AgentWindowStream] checkpoint persist failed:', error);
+      });
     },
     onStreamError: (errorText) => {
       streamRefs.streamingSegmentsRef.current.push({ type: 'error', errorText });
@@ -89,6 +99,7 @@ export function buildAgentWindowStreamCallbacks(ctx: {
     },
     onToolCall: (toolCall) => {
       const mapped = toToolCall(toolCall);
+      toolCallsById.set(mapped.id, mapped);
       upsertToolSegment(streamRefs, mapped);
       runtimeStore().addToolCall(windowId, mapped);
       runtimeStore().updateTelemetry(windowId, { lastTool: toolCall.name });
@@ -125,8 +136,26 @@ export function buildAgentWindowStreamCallbacks(ctx: {
     onDone: () => {
       if (runErroredRef.current) return;
       const latest = runtimeStore().runtimesByWindow[windowId];
-      if (fullResponseRef.current.trim()) {
-        const finalMessage = latest?.messages[latest.messages.length - 1];
+      const { parts, segments, content } = finalizeStreamSegmentsToParts(streamRefs, toolCallsById);
+      const hasStructuredTurn = parts.some((part) => part.type === 'tool' || part.type === 'reasoning' || part.type === 'error' || part.type === 'step-boundary');
+      const resolvedContent = content || fullResponseRef.current.trim();
+      let finalMessage: AgentRuntimeMessage | null = null;
+      if (resolvedContent || hasStructuredTurn) {
+        finalMessage = runtimeStore().finalizeLastAssistantMessage(
+          windowId,
+          resolvedContent || '*(Tool execution completed)*',
+          parts.length > 0 ? parts : undefined,
+          segments.length > 0 ? segments : undefined,
+        );
+        if (finalMessage) {
+          if (persistAssistantTurn) {
+            void persistAssistantTurn(window.sessionId, finalMessage, parts, resolvedContent || finalMessage.content);
+          } else {
+            void persistMessage(window.sessionId, finalMessage);
+          }
+        }
+      } else if (fullResponseRef.current.trim()) {
+        finalMessage = latest?.messages[latest.messages.length - 1] ?? null;
         if (finalMessage?.role === 'assistant') void persistMessage(window.sessionId, finalMessage);
       }
       const hadToolActivity = (latest?.toolCalls.length ?? 0) > 0

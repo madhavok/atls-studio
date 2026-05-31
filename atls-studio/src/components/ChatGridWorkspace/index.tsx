@@ -20,6 +20,7 @@ import { activateAgentWindow } from '../../services/activateAgentWindow';
 import { activateContextSession } from '../../services/contextSessionPartition';
 import { writeLastActiveSessionId } from '../../services/lastActiveSession';
 import { disposeParentSessionRuntimes, disposeWindowRuntime } from '../../services/agentGridLifecycle';
+import { useAgentGridPersistence } from '../../hooks/useAgentGridPersistence';
 import { evictContextPartition, persistContextSession } from '../../services/contextSessionPartition';
 import { canRecoverSwarmTask, canStopSwarmTask, pauseSwarmTask, recoverSwarmTask, syncSwarmSelection } from '../../services/swarmWindowBridge';
 import { ModelModeSelector } from '../ModelModeSelector';
@@ -270,6 +271,7 @@ export const ChatGridWorkspace = memo(function ChatGridWorkspace({ variant = 'pr
   const [optionsModalOpen, setOptionsModalOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [recoveringSwarmTaskId, setRecoveringSwarmTaskId] = useState<string | null>(null);
+  useAgentGridPersistence();
 
   const activeGroupId = activeParentSessionId ?? currentSessionId ?? 'draft-parent';
   const parentEvents = useAgentRuntimeStore((s) => s.parentEventsBySession[activeGroupId] ?? EMPTY_PARENT_EVENTS);

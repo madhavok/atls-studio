@@ -3,6 +3,7 @@ import { useAgentRuntimeStore } from '../stores/agentRuntimeStore';
 import { useAgentWindowStore, exportAgentGridSnapshot, importAgentGridSnapshot, type AgentGridWorkspaceSnapshot } from '../stores/agentWindowStore';
 import { clearDelegateBridgeState } from './agentDelegateBridge';
 import { clearAllAgentWindowStreamRefs, evictAgentWindowStreamRefs } from './agentWindowStreamRefs';
+import { flushAllCachedContextPartitions } from './contextSessionPartition';
 
 /** Cancel all in-flight grid agent streams and reset runtime state. */
 export async function cancelAllGridAgentRuns(): Promise<void> {
@@ -17,6 +18,7 @@ export async function cancelAllGridAgentRuns(): Promise<void> {
   runtimeStore.reset();
   clearDelegateBridgeState();
   clearAllAgentWindowStreamRefs();
+  await flushAllCachedContextPartitions();
   await Promise.all(
     streamIds.map((streamId) =>
       invoke('cancel_chat_stream', { streamId }).catch(() => undefined),

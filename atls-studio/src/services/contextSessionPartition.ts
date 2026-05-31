@@ -180,3 +180,27 @@ export function evictContextPartition(sessionId: string): void {
     activeContextSessionId = null;
   }
 }
+
+/** Persist all hot cached memory snapshots (active session uses full persist path). */
+export async function flushAllCachedContextPartitions(): Promise<void> {
+  captureActivePartition();
+  const sessionIds = new Set<string>([
+    ...partitionCache.keys(),
+    ...auxPartitionCache.keys(),
+    ...(activeContextSessionId ? [activeContextSessionId] : []),
+  ]);
+  for (const sessionId of sessionIds) {
+    if (sessionId === activeContextSessionId) {
+      await persistContextSession(sessionId, { toDb: true });
+      continue;
+    }
+    const snapshot = partitionCache.get(sessionId);
+    if (snapshot && chatDb.isInitialized()) {
+      try {
+        await chatDb.saveMemorySnapshot(sessionId, snapshot);
+      } catch (error) {
+        console.warn('[contextSessionPartition] flush cached snapshot failed:', error);
+      }
+    }
+  }
+}

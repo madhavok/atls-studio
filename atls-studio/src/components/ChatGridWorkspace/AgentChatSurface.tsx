@@ -6,7 +6,8 @@ import { useAgentWindowStore } from '../../stores/agentWindowStore';
 import { useAgentWindowRunner } from '../../hooks/useAgentWindowRunner';
 import { useAppStore } from '../../stores/appStore';
 import { AgentAttachmentBar } from './AgentAttachmentBar';
-import { MarkdownMessage } from '../AiChat/MarkdownMessage';
+import type { Message } from '../../stores/appStore';
+import { AgentMessageParts } from './AgentMessageParts';
 import { AgentToolTrace } from './AgentToolTrace';
 import { AgentStreamingSegments } from './AgentStreamingSegments';
 import { syncShellToProjectPath } from '../../services/agentShellSync';
@@ -17,12 +18,14 @@ interface AgentChatSurfaceProps {
   onOpenOptions?: () => void;
 }
 
-function toRuntimeMessages(messages: Array<{ id: string; role: 'user' | 'assistant'; content: string; timestamp: Date }>): AgentRuntimeMessage[] {
+function toRuntimeMessages(messages: Message[]): AgentRuntimeMessage[] {
   return messages.map((message) => ({
     id: message.id,
     role: message.role,
     content: message.content,
     timestamp: message.timestamp,
+    parts: message.parts,
+    segments: message.segments,
   }));
 }
 
@@ -164,13 +167,23 @@ export const AgentChatSurface = memo(function AgentChatSurface({ window, showCon
                   {message.toolName && <span className="truncate text-studio-title">{message.toolName}</span>}
                 </div>
                 <div className={
-                  message.role === 'assistant'
-                    ? 'markdown-message text-xs leading-relaxed text-studio-text [overflow-wrap:anywhere]'
-                    : 'whitespace-pre-wrap break-words leading-relaxed text-studio-text [overflow-wrap:anywhere]'
+                  message.role === 'assistant' && (message.parts?.length || message.segments?.length)
+                    ? 'min-w-0 [overflow-wrap:anywhere]'
+                    : message.role === 'assistant'
+                      ? 'markdown-message text-xs leading-relaxed text-studio-text [overflow-wrap:anywhere]'
+                      : 'whitespace-pre-wrap break-words leading-relaxed text-studio-text [overflow-wrap:anywhere]'
                 }>
-                  {message.role === 'assistant'
-                    ? <MarkdownMessage content={message.content} />
-                    : message.content}
+                  {message.role === 'assistant' && (message.parts?.length || message.segments?.length) ? (
+                    <AgentMessageParts
+                      content={message.content}
+                      parts={message.parts}
+                      segments={message.segments}
+                    />
+                  ) : message.role === 'assistant' ? (
+                    <AgentMessageParts content={message.content} />
+                  ) : (
+                    message.content
+                  )}
                 </div>
               </div>
               );
