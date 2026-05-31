@@ -2,6 +2,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { useAgentRuntimeStore } from '../stores/agentRuntimeStore';
 import { useAgentWindowStore, exportAgentGridSnapshot, importAgentGridSnapshot, type AgentGridWorkspaceSnapshot } from '../stores/agentWindowStore';
 import { clearDelegateBridgeState } from './agentDelegateBridge';
+import { clearAllAgentWindowStreamRefs, evictAgentWindowStreamRefs } from './agentWindowStreamRefs';
 
 /** Cancel all in-flight grid agent streams and reset runtime state. */
 export async function cancelAllGridAgentRuns(): Promise<void> {
@@ -15,6 +16,7 @@ export async function cancelAllGridAgentRuns(): Promise<void> {
   }
   runtimeStore.reset();
   clearDelegateBridgeState();
+  clearAllAgentWindowStreamRefs();
   await Promise.all(
     streamIds.map((streamId) =>
       invoke('cancel_chat_stream', { streamId }).catch(() => undefined),
@@ -41,6 +43,7 @@ export function restoreWorkspaceAgentGridSnapshot(snapshot: AgentGridWorkspaceSn
 export async function disposeWindowRuntime(windowId: string): Promise<void> {
   const streamIds = useAgentRuntimeStore.getState().cancelRun(windowId);
   useAgentRuntimeStore.getState().evictRuntime(windowId);
+  evictAgentWindowStreamRefs(windowId);
   await Promise.all(
     streamIds.map((streamId) =>
       invoke('cancel_chat_stream', { streamId }).catch(() => undefined),

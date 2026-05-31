@@ -232,6 +232,7 @@ export const useAgentRuntimeStore = create<AgentRuntimeState>((set, get) => ({
           status: 'running',
           streamingText: '',
           streamingReasoning: '',
+          toolCalls: [],
           lastError: undefined,
           canContinue: false,
           telemetry: {

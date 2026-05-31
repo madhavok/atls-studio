@@ -3,6 +3,8 @@ import { processFileAttachment, processImageBytes, formatAttachmentForLLM } from
 import { useAppStore, Message, ToolCall, MessageToolCall, MessageSegment, MessagePart, StreamPart, coalesceReasoningParts, getMessageParts } from '../../stores/appStore';
 import { useContextStore } from '../../stores/contextStore';
 import { appendTextToSegments as _appendText, appendReasoningToSegments as _appendReasoning, closeBlockById as _closeBlock, upsertToolSegment as _upsertTool, resetStreamingState, clearStreamingState, type StreamingRefs } from './streamingHelpers';
+import type { StreamSegment } from '../../types/streamSegments';
+export type { StreamSegment } from '../../types/streamSegments';
 import { useSwarmStore } from '../../stores/swarmStore';
 import { useCostStore, formatCost, calculateCostBreakdown, type AIProvider as CostProvider } from '../../stores/costStore';
 import { useAttachmentStore, type ChatAttachment, consumeInternalDragPayload } from '../../stores/attachmentStore';
@@ -1816,13 +1818,6 @@ const TypingCursor = memo(function TypingCursor() {
 });
 
 // Segment type for inline streaming display (extended with reasoning, step-boundary, error, status)
-export type StreamSegment = 
-  | { type: 'text'; id?: string; content: string; state?: 'streaming' | 'done' }
-  | { type: 'reasoning'; id?: string; content: string; state?: 'streaming' | 'done' }
-  | { type: 'tool'; toolCall: ToolCall }
-  | { type: 'step-boundary' }
-  | { type: 'error'; errorText: string }
-  | { type: 'status'; message: string };
 
 // ── ReasoningBlock: collapsible thinking display ────────────────────────
 const ReasoningBlock = memo(function ReasoningBlock({ 

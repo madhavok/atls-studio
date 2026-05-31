@@ -2,6 +2,7 @@ import { useAppStore } from '../stores/appStore';
 import { useAgentRuntimeStore, type AgentRuntimeMessage } from '../stores/agentRuntimeStore';
 import { useAgentWindowStore, type AgentWindow } from '../stores/agentWindowStore';
 import { chatDb } from './chatDb';
+import { activateContextSession } from './contextSessionPartition';
 import type { ToolCallEvent } from './aiService';
 import type { SubAgentProgressEvent } from './batch/types';
 
@@ -97,6 +98,9 @@ function ensureDelegateWindow({
     void pendingCreate.finally(() => pendingSessionCreates.delete(sessionId));
   }
   upsertChatSession(sessionId, childTitle);
+  void activateContextSession(sessionId, { fresh: true }).catch((error) => {
+    console.warn('[DelegateBridge] Failed to seed delegate context partition:', error);
+  });
   const windowId = useAgentWindowStore.getState().spawnStandardWindow(
     parentSessionId,
     sessionId,

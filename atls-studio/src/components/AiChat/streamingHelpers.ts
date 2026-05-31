@@ -4,7 +4,7 @@ import type React from 'react';
  * Used by both handleSend and handleContinue to avoid code duplication.
  */
 import type { ToolCall } from '../../stores/appStore';
-import type { StreamSegment } from './index';
+import type { StreamSegment } from '../../types/streamSegments';
 
 export interface StreamingRefs {
   streamingSegmentsRef: React.MutableRefObject<StreamSegment[]>;

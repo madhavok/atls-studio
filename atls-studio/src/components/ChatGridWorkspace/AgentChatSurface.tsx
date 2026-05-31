@@ -7,6 +7,7 @@ import { useAgentWindowRunner } from '../../hooks/useAgentWindowRunner';
 import { useAppStore } from '../../stores/appStore';
 import { AgentAttachmentBar } from './AgentAttachmentBar';
 import { AgentToolTrace } from './AgentToolTrace';
+import { AgentStreamingSegments } from './AgentStreamingSegments';
 import { syncShellToProjectPath } from '../../services/agentShellSync';
 
 interface AgentChatSurfaceProps {
@@ -142,6 +143,7 @@ export const AgentChatSurface = memo(function AgentChatSurface({ window, showCon
             {safeRuntime.messages.map((message, index) => {
               const isStreamingDuplicate = safeRuntime.isGenerating
                 && message.role === 'assistant'
+                && !message.toolName
                 && index === safeRuntime.messages.length - 1
                 && message.content === safeRuntime.streamingText;
               if (isStreamingDuplicate) return null;
@@ -164,23 +166,16 @@ export const AgentChatSurface = memo(function AgentChatSurface({ window, showCon
               </div>
               );
             })}
-            {safeRuntime.isGenerating && safeRuntime.streamingReasoning && (
-              <div className="min-w-0 overflow-hidden rounded-lg border border-violet-400/25 bg-violet-500/8 p-2">
-                <div className="mb-1 font-mono text-[9px] uppercase tracking-[0.16em] text-violet-300">reasoning</div>
-                <div className="whitespace-pre-wrap break-words text-[11px] leading-relaxed text-violet-100/90 [overflow-wrap:anywhere]">
-                  {safeRuntime.streamingReasoning}
-                </div>
-              </div>
+            {safeRuntime.isGenerating ? (
+              <AgentStreamingSegments
+                windowId={window.windowId}
+                isGenerating={safeRuntime.isGenerating}
+                fallbackText={safeRuntime.streamingText}
+                fallbackReasoning={safeRuntime.streamingReasoning}
+              />
+            ) : (
+              <AgentToolTrace toolCalls={safeRuntime.toolCalls} />
             )}
-            {safeRuntime.isGenerating && safeRuntime.streamingText && (
-              <div className="min-w-0 overflow-hidden rounded-lg border border-cyan-400/30 bg-cyan-500/8 p-2">
-                <div className="mb-1 font-mono text-[9px] uppercase tracking-[0.16em] text-cyan-300">
-                  {safeRuntime.isGenerating ? 'streaming' : 'latest stream'}
-                </div>
-                <div className="whitespace-pre-wrap break-words leading-relaxed text-studio-text [overflow-wrap:anywhere]">{safeRuntime.streamingText}</div>
-              </div>
-            )}
-            <AgentToolTrace toolCalls={safeRuntime.toolCalls} />
             <div ref={transcriptEndRef} />
           </div>
         )}
