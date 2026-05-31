@@ -17,6 +17,7 @@ import { ConversationSelector } from './ConversationSelector';
 import { GridErrorBoundary } from './GridErrorBoundary';
 import { useAgentRuntimeStore } from '../../stores/agentRuntimeStore';
 import { activateAgentWindow } from '../../services/activateAgentWindow';
+import { disposeParentSessionRuntimes, disposeWindowRuntime } from '../../services/agentGridLifecycle';
 import { canRecoverSwarmTask, canStopSwarmTask, pauseSwarmTask, recoverSwarmTask, syncSwarmSelection } from '../../services/swarmWindowBridge';
 import { ModelModeSelector } from '../ModelModeSelector';
 import { Settings } from '../Settings';
@@ -542,7 +543,9 @@ export const ChatGridWorkspace = memo(function ChatGridWorkspace({ variant = 'pr
                             type="button"
                             onClick={(event) => {
                               event.stopPropagation();
-                              removeWindow(window.parentSessionId, window.windowId);
+                              void disposeWindowRuntime(window.windowId).finally(() => {
+                                removeWindow(window.parentSessionId, window.windowId);
+                              });
                             }}
                             className="rounded-full border border-red-400/30 px-2 py-0.5 text-[9px] uppercase tracking-wide text-red-300 hover:bg-red-500/10"
                           >
@@ -554,7 +557,9 @@ export const ChatGridWorkspace = memo(function ChatGridWorkspace({ variant = 'pr
                             type="button"
                             onClick={(event) => {
                               event.stopPropagation();
-                              closeParentSession(window.parentSessionId);
+                              void disposeParentSessionRuntimes(window.parentSessionId).finally(() => {
+                                closeParentSession(window.parentSessionId);
+                              });
                             }}
                             className="rounded-full border border-red-400/30 px-2 py-0.5 text-[9px] uppercase tracking-wide text-red-300 hover:bg-red-500/10"
                             title="Close parent session window"

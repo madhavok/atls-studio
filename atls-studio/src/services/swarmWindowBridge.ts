@@ -41,6 +41,17 @@ export function syncSwarmSelection(taskId: string, parentSessionId: string): voi
   useAgentWindowStore.getState().selectWindow(parentSessionId, `swarm-${taskId}`);
 }
 
+/** Mirror cockpit task selection onto the matching grid swarm card. */
+export function syncGridSwarmFromCockpit(taskId: string): void {
+  const swarm = useSwarmStore.getState();
+  const parentSessionId = swarm.sessionId;
+  if (!parentSessionId) return;
+  useAgentWindowStore.getState().ensurePrimaryWindow(parentSessionId);
+  useAgentWindowStore.getState().setActiveParentSession(parentSessionId);
+  useAgentWindowStore.getState().upsertSwarmWindow(parentSessionId, taskId, useSwarmStore.getState().tasks.find((task) => task.id === taskId)?.title ?? 'Swarm task');
+  syncSwarmSelection(taskId, parentSessionId);
+}
+
 export function canRecoverSwarmTask(task: SwarmTask): boolean {
   return task.status === 'failed' || task.status === 'cancelled' || task.status === 'awaiting_input';
 }

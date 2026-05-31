@@ -1,7 +1,9 @@
 /** @vitest-environment happy-dom */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { canRecoverSwarmTask, canStopSwarmTask } from './swarmWindowBridge';
+import { canRecoverSwarmTask, canStopSwarmTask, syncGridSwarmFromCockpit } from './swarmWindowBridge';
 import { useSwarmStore } from '../stores/swarmStore';
+import { useAgentWindowStore } from '../stores/agentWindowStore';
+import { useOrchestrationUiStore } from '../stores/orchestrationUiStore';
 
 vi.mock('./orchestrator', () => ({
   orchestrator: { resumeAfterApproval: vi.fn().mockResolvedValue(undefined) },
@@ -10,6 +12,7 @@ vi.mock('./orchestrator', () => ({
 describe('swarmWindowBridge', () => {
   beforeEach(() => {
     useSwarmStore.setState({
+      sessionId: 'parent-1',
       tasks: [{
         id: 'task-1',
         title: 'Task',
@@ -29,6 +32,8 @@ describe('swarmWindowBridge', () => {
         conversationLog: [],
       }],
     });
+    useAgentWindowStore.getState().resetInMemory();
+    useOrchestrationUiStore.getState().selectTask(null);
   });
 
   it('canRecoverSwarmTask accepts failed/cancelled/awaiting_input', () => {
@@ -41,5 +46,12 @@ describe('swarmWindowBridge', () => {
     const task = useSwarmStore.getState().tasks[0];
     expect(canStopSwarmTask({ ...task, status: 'running' })).toBe(true);
     expect(canStopSwarmTask(task)).toBe(false);
+  });
+
+  it('syncGridSwarmFromCockpit selects matching grid swarm card', () => {
+    syncGridSwarmFromCockpit('task-1');
+    expect(useOrchestrationUiStore.getState().selectedTaskId).toBe('task-1');
+    expect(useAgentWindowStore.getState().activeParentSessionId).toBe('parent-1');
+    expect(useAgentWindowStore.getState().selectedWindowByParent['parent-1']).toBe('swarm-task-1');
   });
 });

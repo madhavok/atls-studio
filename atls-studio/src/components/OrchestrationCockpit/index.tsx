@@ -7,7 +7,7 @@ import { useSwarmStore, type AgentRole, type SwarmTask, type TaskStatus } from '
 import { useTerminalStore } from '../../stores/terminalStore';
 import { formatCost } from '../../stores/costStore';
 import { orchestrator } from '../../services/orchestrator';
-import { recoverSwarmTask } from '../../services/swarmWindowBridge';
+import { recoverSwarmTask, syncGridSwarmFromCockpit } from '../../services/swarmWindowBridge';
 import { getProviderFromModel } from '../../services/aiService';
 import { AgentTerminalView } from '../Terminal/AgentTerminalView';
 import { SwarmExecutionProgress, SwarmResearchProgress } from './SwarmProgress';
@@ -329,7 +329,10 @@ function AgentWindows() {
             key={task.id}
             task={task}
             selected={selectedTaskId === task.id}
-            onSelect={() => selectTask(task.id)}
+            onSelect={() => {
+              selectTask(task.id);
+              syncGridSwarmFromCockpit(task.id);
+            }}
             onRecover={() => { void recoverTask(task); }}
             recovering={recoveringTaskId === task.id}
           />

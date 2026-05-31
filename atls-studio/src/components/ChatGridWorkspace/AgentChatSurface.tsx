@@ -25,6 +25,10 @@ function toRuntimeMessages(messages: Array<{ id: string; role: 'user' | 'assista
 export const AgentChatSurface = memo(function AgentChatSurface({ window, showControls = false, onOpenOptions }: AgentChatSurfaceProps) {
   const runtime = useAgentRuntimeStore((s) => s.runtimesByWindow[window.windowId]);
   const settings = useAppStore((s) => s.settings);
+  const rootFolders = useAppStore((s) => s.rootFolders);
+  const activeRoot = useAppStore((s) => s.activeRoot);
+  const projectPath = useAppStore((s) => s.projectPath);
+  const setWindowProjectPath = useAgentWindowStore((s) => s.setWindowProjectPath);
   const availableModels = useAppStore((s) => s.availableModels);
   const chatMode = useAppStore((s) => s.chatMode);
   const ensureRuntime = useAgentRuntimeStore((s) => s.ensureRuntime);
@@ -111,6 +115,8 @@ export const AgentChatSurface = memo(function AgentChatSurface({ window, showCon
     : settings.subagentModel
       ? settings.subagentModel
       : 'auto';
+  const projectOptions = rootFolders.length > 0 ? rootFolders : (projectPath ? [projectPath] : []);
+  const windowProjectPath = window.projectPath ?? activeRoot ?? projectPath ?? '';
 
   return (
     <div className="flex h-full max-h-full min-h-0 flex-col overflow-hidden" onClick={(event) => event.stopPropagation()}>
@@ -194,6 +200,21 @@ export const AgentChatSurface = memo(function AgentChatSurface({ window, showCon
               <span className="truncate" title={modelLabel}>Model: {modelLabel}</span>
               <span>Mode: {chatMode}</span>
               <span className="truncate" title={workerLabel}>Worker: {workerLabel}</span>
+              {projectOptions.length > 0 && (
+                <label className="flex min-w-0 items-center gap-1">
+                  <span className="shrink-0">Root:</span>
+                  <select
+                    value={windowProjectPath}
+                    onChange={(event) => setWindowProjectPath(window.windowId, event.target.value || undefined)}
+                    className="min-w-0 max-w-[140px] truncate rounded border border-studio-border/60 bg-studio-bg/80 px-1 py-0.5 text-[9px] normal-case tracking-normal text-studio-text"
+                    aria-label={`Project root for ${window.title}`}
+                  >
+                    {projectOptions.map((root) => (
+                      <option key={root} value={root}>{root.split(/[/\\]/).pop() || root}</option>
+                    ))}
+                  </select>
+                </label>
+              )}
             </div>
             <button
               type="button"

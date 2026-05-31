@@ -36,3 +36,20 @@ export function buildWorkspaceAgentGridSnapshot(projectPaths: string[]): AgentGr
 export function restoreWorkspaceAgentGridSnapshot(snapshot: AgentGridWorkspaceSnapshot | null | undefined): void {
   importAgentGridSnapshot(snapshot);
 }
+
+/** Cancel streams and drop in-memory runtime for one grid card. */
+export async function disposeWindowRuntime(windowId: string): Promise<void> {
+  const streamIds = useAgentRuntimeStore.getState().cancelRun(windowId);
+  useAgentRuntimeStore.getState().evictRuntime(windowId);
+  await Promise.all(
+    streamIds.map((streamId) =>
+      invoke('cancel_chat_stream', { streamId }).catch(() => undefined),
+    ),
+  );
+}
+
+/** Cancel streams and evict all runtimes for a parent session group. */
+export async function disposeParentSessionRuntimes(parentSessionId: string): Promise<void> {
+  const windows = useAgentWindowStore.getState().windowsByParent[parentSessionId] ?? [];
+  await Promise.all(windows.map((window) => disposeWindowRuntime(window.windowId)));
+}

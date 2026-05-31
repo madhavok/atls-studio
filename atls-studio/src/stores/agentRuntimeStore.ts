@@ -78,6 +78,7 @@ interface AgentRuntimeState {
   removeAttachment: (windowId: string, attachmentId: string) => void;
   clearAttachments: (windowId: string) => void;
   cancelRun: (windowId: string) => string[];
+  evictRuntime: (windowId: string) => void;
   appendParentEvent: (event: Omit<ParentAgentEvent, 'id' | 'createdAt'>) => void;
   reset: () => void;
 }
@@ -326,6 +327,12 @@ export const useAgentRuntimeStore = create<AgentRuntimeState>((set, get) => ({
     get().finishRun(windowId, 'cancelled');
     return streamIds;
   },
+
+  evictRuntime: (windowId) => set((state) => {
+    if (!state.runtimesByWindow[windowId]) return {};
+    const { [windowId]: _removed, ...runtimesByWindow } = state.runtimesByWindow;
+    return { runtimesByWindow };
+  }),
 
   appendParentEvent: (event) => set((state) => {
     const next: ParentAgentEvent = { ...event, id: createId('agent-event'), createdAt: new Date() };
