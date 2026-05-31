@@ -1,0 +1,55 @@
+/** @vitest-environment happy-dom */
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { useContextStore } from '../stores/contextStore';
+import {
+  activateContextSession,
+  evictContextPartition,
+  getActiveContextSessionId,
+  isContextSessionLocked,
+  withContextSession,
+} from './contextSessionPartition';
+
+vi.mock('./chatDb', () => ({
+  chatDb: {
+    isInitialized: () => false,
+    getMemorySnapshot: vi.fn(),
+    saveMemorySnapshot: vi.fn(),
+  },
+}));
+
+describe('contextSessionPartition', () => {
+  beforeEach(() => {
+    useContextStore.getState().resetSession();
+    evictContextPartition('session-a');
+    evictContextPartition('session-b');
+  });
+
+  it('activates fresh session partition', async () => {
+    await activateContextSession('session-a', { fresh: true });
+    expect(getActiveContextSessionId()).toBe('session-a');
+  });
+
+  it('swaps partitions and preserves cognitive rules per session', async () => {
+    await activateContextSession('session-a', { fresh: true });
+    useContextStore.getState().setRule('rule-a', 'Always validate imports');
+
+    await activateContextSession('session-b', { fresh: true });
+    useContextStore.getState().setRule('rule-b', 'Prefer batch tools');
+
+    await activateContextSession('session-a', { loadFromDb: false, lite: true });
+    expect(useContextStore.getState().cognitiveRules.has('rule-a')).toBe(true);
+    expect(useContextStore.getState().cognitiveRules.has('rule-b')).toBe(false);
+
+    await activateContextSession('session-b', { loadFromDb: false, lite: true });
+    expect(useContextStore.getState().cognitiveRules.has('rule-b')).toBe(true);
+  });
+
+  it('withContextSession locks during execution', async () => {
+    let lockedDuringRun = false;
+    await withContextSession('session-a', async () => {
+      lockedDuringRun = isContextSessionLocked();
+    }, { fresh: true });
+    expect(lockedDuringRun).toBe(true);
+    expect(isContextSessionLocked()).toBe(false);
+  });
+});

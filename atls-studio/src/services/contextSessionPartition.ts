@@ -1,0 +1,158 @@
+/**
+ * Session-scoped context partitions for grid agent windows.
+ * Swaps the singleton contextStore + HPP state per dbSessionId on focus and concurrent runs.
+ */
+
+import { useContextStore } from '../stores/contextStore';
+import { useRoundHistoryStore } from '../stores/roundHistoryStore';
+import { chatDb, type PersistedMemorySnapshot } from './chatDb';
+import { getGeminiCacheSnapshot } from './geminiCache';
+import { applyMemorySnapshotToStore } from './memorySnapshotApply';
+import { serializeMemorySnapshot } from '../hooks/useChatPersistence';
+
+export interface ActivateContextSessionOptions {
+  /** Reset to empty seeded session (new parent card). */
+  fresh?: boolean;
+  /** Load from chatDb when not in hot cache. Default true. */
+  loadFromDb?: boolean;
+  /** Skip hash-first freshness on restore (hot swap during concurrent runs). */
+  lite?: boolean;
+}
+
+let activeContextSessionId: string | null = null;
+const partitionCache = new Map<string, PersistedMemorySnapshot>();
+let contextOpChain: Promise<void> = Promise.resolve();
+let contextLockDepth = 0;
+
+export function getActiveContextSessionId(): string | null {
+  return activeContextSessionId;
+}
+
+export function isContextSessionLocked(): boolean {
+  return contextLockDepth > 0;
+}
+
+async function serializedContextOp<T>(fn: () => Promise<T>): Promise<T> {
+  const prior = contextOpChain;
+  let release!: () => void;
+  contextOpChain = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await prior;
+  try {
+    return await fn();
+  } finally {
+    release();
+  }
+}
+
+function captureActivePartition(): void {
+  if (!activeContextSessionId) return;
+  partitionCache.set(
+    activeContextSessionId,
+    serializeMemorySnapshot(useContextStore.getState(), getGeminiCacheSnapshot()),
+  );
+}
+
+export async function activateContextSession(
+  sessionId: string,
+  options?: ActivateContextSessionOptions,
+): Promise<void> {
+  if (!sessionId) return;
+  if (activeContextSessionId === sessionId && !options?.fresh) return;
+
+  if (activeContextSessionId && activeContextSessionId !== sessionId) {
+    captureActivePartition();
+  }
+
+  useContextStore.getState().resetSession();
+
+  if (options?.fresh) {
+    activeContextSessionId = sessionId;
+    return;
+  }
+
+  const cached = partitionCache.get(sessionId);
+  if (cached) {
+    await applyMemorySnapshotToStore(cached, { lite: options?.lite });
+    activeContextSessionId = sessionId;
+    return;
+  }
+
+  if (options?.loadFromDb !== false && chatDb.isInitialized()) {
+    try {
+      const fromDb = await chatDb.getMemorySnapshot(sessionId);
+      if (fromDb && fromDb.version >= 2 && fromDb.version <= 8) {
+        await applyMemorySnapshotToStore(fromDb, { lite: options?.lite });
+        partitionCache.set(sessionId, fromDb);
+        activeContextSessionId = sessionId;
+        return;
+      }
+    } catch (error) {
+      console.warn('[contextSessionPartition] DB snapshot load failed:', error);
+    }
+  }
+
+  activeContextSessionId = sessionId;
+}
+
+export async function persistContextSession(
+  sessionId: string,
+  options?: { toDb?: boolean; skipCache?: boolean },
+): Promise<void> {
+  if (!sessionId) return;
+  if (activeContextSessionId !== sessionId) return;
+  const snapshot = serializeMemorySnapshot(useContextStore.getState(), getGeminiCacheSnapshot());
+  if (!options?.skipCache) {
+    partitionCache.set(sessionId, snapshot);
+  }
+  if (options?.toDb !== false && chatDb.isInitialized()) {
+    try {
+      await chatDb.saveMemorySnapshot(sessionId, snapshot);
+    } catch (error) {
+      console.warn('[contextSessionPartition] DB snapshot save failed:', error);
+    }
+  }
+}
+
+export async function withContextSession<T>(
+  sessionId: string,
+  fn: () => Promise<T>,
+  options?: ActivateContextSessionOptions,
+): Promise<T> {
+  const previousSessionId = activeContextSessionId;
+  contextLockDepth++;
+  try {
+    return await serializedContextOp(async () => {
+      await activateContextSession(sessionId, options);
+      try {
+        return await fn();
+      } finally {
+        await persistContextSession(sessionId, { toDb: true });
+        if (previousSessionId && previousSessionId !== sessionId) {
+          await activateContextSession(previousSessionId, { loadFromDb: false, lite: true });
+        }
+      }
+    });
+  } finally {
+    contextLockDepth = Math.max(0, contextLockDepth - 1);
+  }
+}
+
+/** Drop hot cache entry when a window/session is closed. */
+export function evictContextPartition(sessionId: string): void {
+  partitionCache.delete(sessionId);
+  if (activeContextSessionId === sessionId) {
+    activeContextSessionId = null;
+  }
+}
+
+/** Restore round-history snapshots bundled in a memory snapshot (grid partition reload). */
+export function restoreRoundHistoryFromSnapshot(snapshot: { roundHistorySnapshots?: unknown[] }): void {
+  const rows = snapshot.roundHistorySnapshots;
+  if (!Array.isArray(rows) || rows.length === 0) return;
+  useRoundHistoryStore.getState().reset();
+  for (const row of rows) {
+    useRoundHistoryStore.getState().pushSnapshot(row as Parameters<ReturnType<typeof useRoundHistoryStore.getState>['pushSnapshot']>[0]);
+  }
+}
