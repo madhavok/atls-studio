@@ -7,6 +7,7 @@ import { cleanStreamingContent } from '../AiChat/aiChatPure';
 import { MarkdownMessage } from '../AiChat/MarkdownMessage';
 import { ReasoningBlock } from '../AiChat/ReasoningBlock';
 import { AgentToolTrace } from './AgentToolTrace';
+import { GridDelegateToolCard, isDelegateToolCall } from './GridDelegateToolCard';
 
 function SegmentBlock({ segment }: { segment: StreamSegment }) {
   if (segment.type === 'text') {
@@ -34,7 +35,9 @@ function SegmentBlock({ segment }: { segment: StreamSegment }) {
   }
 
   if (segment.type === 'tool') {
-    return <AgentToolTrace toolCalls={[segment.toolCall]} />;
+    return isDelegateToolCall(segment.toolCall.name)
+      ? <GridDelegateToolCard toolCall={segment.toolCall} />
+      : <AgentToolTrace toolCalls={[segment.toolCall]} />;
   }
 
   if (segment.type === 'step-boundary') {

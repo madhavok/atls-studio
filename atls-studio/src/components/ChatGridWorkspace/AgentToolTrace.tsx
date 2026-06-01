@@ -1,4 +1,5 @@
 import type { MessageToolCall } from '../../stores/appStore';
+import { GridDelegateToolCard, isDelegateToolCall } from './GridDelegateToolCard';
 
 function statusClass(status: MessageToolCall['status']): string {
   switch (status) {
@@ -30,6 +31,9 @@ export function AgentToolTrace({ toolCalls }: { toolCalls: MessageToolCall[] }) 
   return (
     <div className="mt-2 space-y-1" data-testid="agent-tool-trace">
       {toolCalls.map((toolCall) => (
+        isDelegateToolCall(toolCall.name) ? (
+          <GridDelegateToolCard key={toolCall.id} toolCall={toolCall} />
+        ) : (
         <div
           key={toolCall.id}
           className={`rounded border px-2 py-1 font-mono text-[10px] ${statusClass(toolCall.status)}`}
@@ -47,6 +51,7 @@ export function AgentToolTrace({ toolCalls }: { toolCalls: MessageToolCall[] }) 
             </div>
           )}
         </div>
+        )
       ))}
     </div>
   );

@@ -65,4 +65,30 @@ describe('contextSessionPartition', () => {
     expect(getRef('abc1234567890abcd')?.source).toBe('src/a.ts');
     expect(getRef('def1234567890abcd')).toBeUndefined();
   });
+
+  it('isolates blackboard entries across session swaps', async () => {
+    await activateContextSession('session-a', { fresh: true });
+    useContextStore.getState().setBlackboardEntry('plan', 'Session A plan');
+
+    await activateContextSession('session-b', { fresh: true });
+    useContextStore.getState().setBlackboardEntry('plan', 'Session B plan');
+
+    await activateContextSession('session-a', { loadFromDb: false, lite: true });
+    expect(useContextStore.getState().blackboardEntries.get('plan')?.content).toBe('Session A plan');
+
+    await activateContextSession('session-b', { loadFromDb: false, lite: true });
+    expect(useContextStore.getState().blackboardEntries.get('plan')?.content).toBe('Session B plan');
+  });
+
+  it('restores prior session blackboard after withContextSession', async () => {
+    await activateContextSession('session-a', { fresh: true });
+    useContextStore.getState().setBlackboardEntry('memo', 'Parent memo');
+
+    await withContextSession('session-b', async () => {
+      useContextStore.getState().setBlackboardEntry('memo', 'Child memo');
+      expect(useContextStore.getState().blackboardEntries.get('memo')?.content).toBe('Child memo');
+    }, { fresh: true });
+
+    expect(useContextStore.getState().blackboardEntries.get('memo')?.content).toBe('Parent memo');
+  });
 });

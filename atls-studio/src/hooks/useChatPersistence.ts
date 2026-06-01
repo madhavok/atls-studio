@@ -24,6 +24,7 @@ import {
   writeLastActiveSessionId,
   syncCurrentSessionIdToLocalStorage,
 } from '../services/lastActiveSession';
+import { flushAllCachedContextPartitions } from '../services/contextSessionPartition';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { getGeminiCacheSnapshot, restoreGeminiCacheSnapshot, type GeminiCacheSnapshot } from '../services/aiService';
 import { classifyStageSnippet, MAX_PERSISTENT_STAGE_ENTRY_TOKENS } from '../services/promptMemory';
@@ -1203,6 +1204,13 @@ export function useChatPersistence() {
       const isSwitch = prevPath !== null && prevPath !== projectPath;
 
       const init = async () => {
+        if (isSwitch) {
+          try {
+            await flushAllCachedContextPartitions();
+          } catch {
+            /* best effort */
+          }
+        }
         // Flush any pending debounced save before switching DB
         if (isSwitch && useAppStore.getState().messages.length > 0) {
           try {
@@ -1304,6 +1312,7 @@ export function useChatPersistence() {
   // Best-effort save on window close / refresh
   useEffect(() => {
     const handleBeforeUnload = () => {
+      void flushAllCachedContextPartitions();
       if (!chatDb.isInitialized() || useAppStore.getState().messages.length === 0) return;
       if (saveTimeoutRef.current) {
         clearTimeout(saveTimeoutRef.current);

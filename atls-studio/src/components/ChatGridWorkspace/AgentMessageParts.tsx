@@ -3,6 +3,7 @@ import { getMessageParts, type MessagePart, type MessageSegment } from '../../st
 import { MarkdownMessage } from '../AiChat/MarkdownMessage';
 import { ReasoningBlock } from '../AiChat/ReasoningBlock';
 import { AgentToolTrace } from './AgentToolTrace';
+import { GridDelegateToolCard, isDelegateToolCall } from './GridDelegateToolCard';
 
 function PartBlock({ part, index }: { part: MessagePart; index: number }) {
   if (part.type === 'text') {
@@ -24,7 +25,9 @@ function PartBlock({ part, index }: { part: MessagePart; index: number }) {
   if (part.type === 'tool') {
     return (
       <div key={`tool-${part.toolCall.id}`}>
-        <AgentToolTrace toolCalls={[part.toolCall]} />
+        {isDelegateToolCall(part.toolCall.name)
+          ? <GridDelegateToolCard toolCall={part.toolCall} />
+          : <AgentToolTrace toolCalls={[part.toolCall]} />}
       </div>
     );
   }
