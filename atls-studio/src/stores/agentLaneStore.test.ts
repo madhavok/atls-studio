@@ -41,4 +41,14 @@ describe('agentLaneStore', () => {
     expect(getLanePromptPrefix('debugger', 'Trace failing build')).toContain('Debugger lane');
     expect(getLanePromptPrefix('debugger', 'Trace failing build')).toContain('Trace failing build');
   });
+
+  it('prunes lanes for sessions removed from chat history', () => {
+    useAgentLaneStore.getState().spawnManualLane('session-old', 'coder');
+    useAgentLaneStore.getState().spawnManualLane('session-new', 'tester');
+
+    useAgentLaneStore.getState().pruneOrphanSessionLanes(['session-new']);
+
+    expect(useAgentLaneStore.getState().lanesBySession['session-old']).toBeUndefined();
+    expect(useAgentLaneStore.getState().lanesBySession['session-new']).toHaveLength(1);
+  });
 });

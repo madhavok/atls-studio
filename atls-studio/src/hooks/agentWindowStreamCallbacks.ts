@@ -119,12 +119,17 @@ export function buildAgentWindowStreamCallbacks(ctx: {
     },
     onToolResult: (id, result) => {
       runtimeStore().updateTelemetry(windowId, { lastTool: id });
-      const systemMessage = runtimeStore().appendMessage(windowId, {
-        role: 'system',
-        toolName: id,
-        content: result.slice(0, 800),
-      });
-      if (systemMessage) void persistMessage(window.sessionId, systemMessage);
+      const existing = toolCallsById.get(id);
+      if (!existing) return;
+      const updated = {
+        ...existing,
+        result,
+        status: 'completed' as const,
+        endTime: new Date(),
+      };
+      toolCallsById.set(id, updated);
+      upsertToolSegment(streamRefs, updated);
+      runtimeStore().addToolCall(windowId, updated);
     },
     onUsageUpdate: (usage) => {
       runtimeStore().updateTelemetry(windowId, {

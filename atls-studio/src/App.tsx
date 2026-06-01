@@ -55,6 +55,8 @@ function App() {
     setChatWorkspaceLayout,
     addToast,
     resetAgentProgress,
+    chatSessions,
+    currentSessionId,
   } = useAppStore();
   const { newProject, openProjectWithPicker, loadFileTree, scanProject, refreshIssues, addFolderToWorkspace, saveWorkspace, openWorkspace, closeWorkspace } = useAtls();
   const { createNewSession, deleteSession } = useChatPersistence();
@@ -123,44 +125,11 @@ function App() {
     setChatWorkspaceLayout(activeFile ? 'document' : 'grid');
   }, [activeFile, setChatWorkspaceLayout]);
 
-  // Global keyboard shortcuts
   useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      // Ctrl+Shift+P or Cmd+Shift+P - Quick Actions
-      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'p') {
-        e.preventDefault();
-        setQuickActionsOpen(true);
-      }
-      // Ctrl+P or Cmd+P - Quick Find (file search)
-      else if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === 'p') {
-        e.preventDefault();
-        setQuickFindOpen(true);
-      }
-      // Ctrl+, or Cmd+, - Settings
-      else if ((e.ctrlKey || e.metaKey) && e.key === ',') {
-        e.preventDefault();
-        setSettingsOpen(true);
-      }
-      // Ctrl+Shift+F or Cmd+Shift+F - Search in Files
-      else if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'f') {
-        e.preventDefault();
-        setSearchPanelOpen(true);
-      }
-      // Ctrl+O or Cmd+O - Open Project
-      else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'o') {
-        e.preventDefault();
-        openProjectWithPicker();
-      }
-      // Ctrl+` or Cmd+` - Toggle Terminal
-      else if ((e.ctrlKey || e.metaKey) && e.key === '`') {
-        e.preventDefault();
-        setTerminalOpen(!terminalOpen);
-      }
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [setQuickActionsOpen, setQuickFindOpen, setSearchPanelOpen, setTerminalOpen, terminalOpen, openProjectWithPicker]);
+    if (!projectPath || currentSessionId || chatSessions.length === 0 || sessionPickerOpen) return;
+    setPendingProjectPath(projectPath);
+    setSessionPickerOpen(true);
+  }, [projectPath, currentSessionId, chatSessions.length, sessionPickerOpen]);
 
   // Define Quick Actions
   const quickActions = useMemo<QuickAction[]>(() => [
@@ -264,6 +233,50 @@ function App() {
     resetStaticPromptCache();
     resetAgentProgress();
   }, [createNewSession, projectPath, resetAgentProgress]);
+
+  // Global keyboard shortcuts
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Ctrl+N or Cmd+N - New Chat
+      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === 'n') {
+        e.preventDefault();
+        void handleNewChat();
+      }
+      // Ctrl+Shift+P or Cmd+Shift+P - Quick Actions
+      else if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'p') {
+        e.preventDefault();
+        setQuickActionsOpen(true);
+      }
+      // Ctrl+P or Cmd+P - Quick Find (file search)
+      else if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === 'p') {
+        e.preventDefault();
+        setQuickFindOpen(true);
+      }
+      // Ctrl+, or Cmd+, - Settings
+      else if ((e.ctrlKey || e.metaKey) && e.key === ',') {
+        e.preventDefault();
+        setSettingsOpen(true);
+      }
+      // Ctrl+Shift+F or Cmd+Shift+F - Search in Files
+      else if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'f') {
+        e.preventDefault();
+        setSearchPanelOpen(true);
+      }
+      // Ctrl+O or Cmd+O - Open Project
+      else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'o') {
+        e.preventDefault();
+        openProjectWithPicker();
+      }
+      // Ctrl+` or Cmd+` - Toggle Terminal
+      else if ((e.ctrlKey || e.metaKey) && e.key === '`') {
+        e.preventDefault();
+        setTerminalOpen(!terminalOpen);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [handleNewChat, setQuickActionsOpen, setQuickFindOpen, setSearchPanelOpen, setTerminalOpen, terminalOpen, openProjectWithPicker]);
 
   const handleFindInFile = useCallback(() => {
     window.dispatchEvent(new CustomEvent('editor-action', { detail: { action: 'find' } }));
@@ -394,7 +407,7 @@ function App() {
       />
       <SessionPicker
         isOpen={sessionPickerOpen}
-        projectPath={pendingProjectPath || ''}
+        projectPath={pendingProjectPath || projectPath || ''}
         onNewSession={async () => {
           setSessionPickerOpen(false);
           const sessionId = await createNewSession();

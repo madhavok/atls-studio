@@ -76,6 +76,7 @@ interface AgentLaneState {
   replaceLastAssistantMessage: (laneId: string, content: string) => void;
   updateLaneTelemetry: (laneId: string, patch: Partial<AgentLaneTelemetry>) => void;
   clearSessionLanes: (sessionId: string) => void;
+  pruneOrphanSessionLanes: (validSessionIds: string[]) => void;
   mergeHydratedLanes: (sessionId: string, lanes: AgentLane[]) => void;
 }
 
@@ -314,6 +315,30 @@ export const useAgentLaneStore = create<AgentLaneState>((set, get) => ({
     const laneIds = new Set((state.lanesBySession[sessionId] ?? []).map((lane) => lane.id));
     const draftsByLane = Object.fromEntries(
       Object.entries(state.draftsByLane).filter(([laneId]) => !laneIds.has(laneId)),
+    );
+    const next = { lanesBySession, selectedLaneBySession, expandedLaneBySession, draftsByLane };
+    persist({ ...state, ...next });
+    return next;
+  }),
+
+  pruneOrphanSessionLanes: (validSessionIds) => set((state) => {
+    const valid = new Set(validSessionIds);
+    const orphanSessionIds = Object.keys(state.lanesBySession).filter((sessionId) => !valid.has(sessionId));
+    if (orphanSessionIds.length === 0) return state;
+    const lanesBySession = Object.fromEntries(
+      Object.entries(state.lanesBySession).filter(([sessionId]) => valid.has(sessionId)),
+    );
+    const selectedLaneBySession = Object.fromEntries(
+      Object.entries(state.selectedLaneBySession).filter(([sessionId]) => valid.has(sessionId)),
+    );
+    const expandedLaneBySession = Object.fromEntries(
+      Object.entries(state.expandedLaneBySession).filter(([sessionId]) => valid.has(sessionId)),
+    );
+    const orphanLaneIds = new Set(
+      orphanSessionIds.flatMap((sessionId) => (state.lanesBySession[sessionId] ?? []).map((lane) => lane.id)),
+    );
+    const draftsByLane = Object.fromEntries(
+      Object.entries(state.draftsByLane).filter(([laneId]) => !orphanLaneIds.has(laneId)),
     );
     const next = { lanesBySession, selectedLaneBySession, expandedLaneBySession, draftsByLane };
     persist({ ...state, ...next });

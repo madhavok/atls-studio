@@ -36,4 +36,30 @@ describe('buildAgentWindowStreamCallbacks', () => {
     expect(refs.streamingSegmentsRef.current.some((segment) => segment.type === 'text')).toBe(true);
     expect(refs.streamingSegmentsRef.current.find((segment) => segment.type === 'text')?.state).toBe('done');
   });
+
+  it('updates tool segments on onToolResult without system messages', () => {
+    const window = useAgentWindowStore.getState().windowsByParent['session-1'][0];
+    const callbacks = buildAgentWindowStreamCallbacks({
+      window,
+      windowId: window.windowId,
+      startedAt: Date.now(),
+      fullResponseRef: { current: '' },
+      runErroredRef: { current: false },
+      persistMessage: () => {},
+    });
+
+    callbacks.onToolInputAvailable?.('tool-1', 'read.context', { path: 'src/App.tsx' });
+    callbacks.onToolCall?.({
+      id: 'tool-1',
+      name: 'read.context',
+      args: { path: 'src/App.tsx' },
+      status: 'running',
+    });
+    callbacks.onToolResult?.('tool-1', 'file contents');
+
+    const runtime = useAgentRuntimeStore.getState().runtimesByWindow[window.windowId];
+    expect(runtime.messages.some((message) => message.role === 'system')).toBe(false);
+    expect(runtime.toolCalls[0]?.result).toBe('file contents');
+    expect(runtime.toolCalls[0]?.status).toBe('completed');
+  });
 });

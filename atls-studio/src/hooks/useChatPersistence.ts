@@ -17,6 +17,8 @@ import { useContextStore, getBulkRevisionResolver, type ContextChunk, type TaskP
 import { useCostStore, type SubAgentUsage, type AIProvider } from '../stores/costStore';
 import { chatDb, type PersistedMemorySnapshot, type PersistedSubAgentUsageRow } from '../services/chatDb';
 import { useRoundHistoryStore } from '../stores/roundHistoryStore';
+import { useAgentLaneStore } from '../stores/agentLaneStore';
+import { useAgentRuntimeStore } from '../stores/agentRuntimeStore';
 import {
   readLastActiveSessionId,
   writeLastActiveSessionId,
@@ -547,6 +549,7 @@ export function useChatPersistence() {
       
       // Sync to appStore
       useAppStore.setState({ chatSessions: sessions });
+      useAgentLaneStore.getState().pruneOrphanSessionLanes(sessions.map((session) => session.id));
       
       console.log('[ChatPersistence] Loaded', sessions.length, 'sessions from database');
       return sessions;
@@ -1127,6 +1130,7 @@ export function useChatPersistence() {
       useAppStore.setState({
         chatSessions: currentSessions.filter(s => s.id !== sessionId),
       });
+      useAgentLaneStore.getState().clearSessionLanes(sessionId);
       
       // If deleting current session, clear state and metrics
       if (currentSessionId === sessionId) {
@@ -1244,11 +1248,17 @@ export function useChatPersistence() {
             useContextStore.getState().resetSession();
           }
 
-          // Load sessions and auto-resume last active (or most recent)
+          // Load sessions; grid workspace uses SessionPicker + activateAgentParentSession instead of loadSession auto-resume
           const sessions = await loadSessions();
           if (sessions.length > 0) {
             const st = useAppStore.getState();
-            if (st.messages.length === 0 && !st.currentSessionId) {
+            const hasActiveGridRuns = Object.values(useAgentRuntimeStore.getState().runtimesByWindow)
+              .some((runtime) => runtime.isGenerating || runtime.proxyActive);
+            const shouldAutoResume = st.chatWorkspaceLayout !== 'grid'
+              && !hasActiveGridRuns
+              && st.messages.length === 0
+              && !st.currentSessionId;
+            if (shouldAutoResume) {
               const lastId = readLastActiveSessionId(projectPath);
               const targetId = lastId && sessions.some(s => s.id === lastId) ? lastId : sessions[0].id;
               try {

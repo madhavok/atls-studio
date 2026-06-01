@@ -4,6 +4,7 @@ import { useAgentWindowStore, exportAgentGridSnapshot, importAgentGridSnapshot, 
 import { clearDelegateBridgeState } from './agentDelegateBridge';
 import { clearAllAgentWindowStreamRefs, evictAgentWindowStreamRefs } from './agentWindowStreamRefs';
 import { flushAllCachedContextPartitions } from './contextSessionPartition';
+import { useAgentLaneStore } from '../stores/agentLaneStore';
 
 /** Cancel all in-flight grid agent streams and reset runtime state. */
 export async function cancelAllGridAgentRuns(): Promise<void> {
@@ -57,4 +58,5 @@ export async function disposeWindowRuntime(windowId: string): Promise<void> {
 export async function disposeParentSessionRuntimes(parentSessionId: string): Promise<void> {
   const windows = useAgentWindowStore.getState().windowsByParent[parentSessionId] ?? [];
   await Promise.all(windows.map((window) => disposeWindowRuntime(window.windowId)));
+  useAgentLaneStore.getState().clearSessionLanes(parentSessionId);
 }
