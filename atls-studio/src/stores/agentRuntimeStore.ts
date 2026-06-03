@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import type { ContextUsage, MessageToolCall, MessagePart, MessageSegment } from './appStore';
 import type { ChatAttachment } from './attachmentStore';
+import type { SubAgentProgressEvent } from '../services/batch/types';
 
 export type AgentRuntimeRole = 'user' | 'assistant' | 'system';
 export type AgentRuntimeStatus = 'idle' | 'running' | 'completed' | 'failed' | 'cancelled';
@@ -58,6 +59,8 @@ export interface AgentRuntime {
   fileClaims: string[];
   canContinue: boolean;
   attachments: ChatAttachment[];
+  /** Live delegate/batch step progress keyed by batch step id. */
+  subagentProgressByStep: Record<string, SubAgentProgressEvent[]>;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -79,6 +82,7 @@ interface AgentRuntimeState {
   finishRun: (windowId: string, status: AgentRuntimeStatus, error?: string) => void;
   addStreamId: (windowId: string, streamId: string) => void;
   addToolCall: (windowId: string, toolCall: MessageToolCall) => void;
+  pushSubagentProgress: (windowId: string, stepId: string, progress: SubAgentProgressEvent) => void;
   updateTelemetry: (windowId: string, patch: Partial<AgentRuntimeTelemetry>) => void;
   setFileClaims: (windowId: string, fileClaims: string[]) => void;
   setCanContinue: (windowId: string, canContinue: boolean) => void;
@@ -133,6 +137,7 @@ function createRuntime(input: { windowId: string; sessionId: string; parentSessi
     fileClaims: [],
     canContinue: false,
     attachments: [],
+    subagentProgressByStep: {},
     createdAt: now,
     updatedAt: now,
   };
@@ -272,6 +277,7 @@ export const useAgentRuntimeStore = create<AgentRuntimeState>((set, get) => ({
           streamingReasoning: '',
           toolCalls: [],
           proxyActive: false,
+          subagentProgressByStep: {},
           lastError: undefined,
           canContinue: false,
           telemetry: {
@@ -312,6 +318,7 @@ export const useAgentRuntimeStore = create<AgentRuntimeState>((set, get) => ({
           isGenerating: false,
           proxyActive: false,
           status,
+          subagentProgressByStep: {},
           streamingText: '',
           streamingReasoning: '',
           abortController: undefined,
@@ -337,6 +344,23 @@ export const useAgentRuntimeStore = create<AgentRuntimeState>((set, get) => ({
       ? runtime.toolCalls.map((call) => call.id === toolCall.id ? { ...call, ...toolCall } : call)
       : [...runtime.toolCalls, toolCall];
     return { runtimesByWindow: { ...state.runtimesByWindow, [windowId]: { ...runtime, toolCalls, updatedAt: new Date() } } };
+  }),
+
+  pushSubagentProgress: (windowId, stepId, progress) => set((state) => {
+    const runtime = state.runtimesByWindow[windowId];
+    if (!runtime || !stepId.trim()) return {};
+    const prior = runtime.subagentProgressByStep[stepId] ?? [];
+    const trace = [...prior, progress].slice(-12);
+    return {
+      runtimesByWindow: {
+        ...state.runtimesByWindow,
+        [windowId]: {
+          ...runtime,
+          subagentProgressByStep: { ...runtime.subagentProgressByStep, [stepId]: trace },
+          updatedAt: new Date(),
+        },
+      },
+    };
   }),
 
   updateTelemetry: (windowId, patch) => set((state) => {

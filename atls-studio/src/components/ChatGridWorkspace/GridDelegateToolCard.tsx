@@ -1,5 +1,6 @@
 import { memo } from 'react';
 import type { MessageToolCall } from '../../stores/appStore';
+import type { SubAgentProgressEvent } from '../../services/batch/types';
 
 const ROLE_LABELS: Record<string, string> = {
   code: 'Coder',
@@ -39,11 +40,18 @@ export function isDelegateToolCall(name: string): boolean {
   return name.startsWith('delegate.');
 }
 
-export const GridDelegateToolCard = memo(function GridDelegateToolCard({ toolCall }: { toolCall: MessageToolCall }) {
+export const GridDelegateToolCard = memo(function GridDelegateToolCard({
+  toolCall,
+  liveTrace,
+}: {
+  toolCall: MessageToolCall;
+  liveTrace?: SubAgentProgressEvent[];
+}) {
   const args = toolCall.args ?? {};
   const task = summarizeTask(args);
   const role = delegateRole(toolCall.name);
   const isRunning = toolCall.status === 'running' || toolCall.status === 'pending';
+  const lastProgress = liveTrace?.length ? liveTrace[liveTrace.length - 1] : undefined;
 
   return (
     <div
@@ -62,6 +70,13 @@ export const GridDelegateToolCard = memo(function GridDelegateToolCard({ toolCal
       {task && (
         <div className="mt-1 truncate text-[10px] opacity-90" title={task}>
           {task}
+        </div>
+      )}
+      {lastProgress && isRunning && (
+        <div className="mt-1 flex items-center gap-2 text-[10px] text-teal-300/85">
+          <span className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-teal-400" />
+          <span className="shrink-0 font-mono text-[9px] text-studio-muted">R{lastProgress.round}</span>
+          <span className="truncate">{lastProgress.status}</span>
         </div>
       )}
       {toolCall.result && (

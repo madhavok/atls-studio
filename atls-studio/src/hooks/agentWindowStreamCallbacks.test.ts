@@ -62,4 +62,27 @@ describe('buildAgentWindowStreamCallbacks', () => {
     expect(runtime.toolCalls[0]?.result).toBe('file contents');
     expect(runtime.toolCalls[0]?.status).toBe('completed');
   });
+
+  it('records subagent progress on the parent window runtime', () => {
+    const window = useAgentWindowStore.getState().windowsByParent['session-1'][0];
+    const callbacks = buildAgentWindowStreamCallbacks({
+      window,
+      windowId: window.windowId,
+      startedAt: Date.now(),
+      fullResponseRef: { current: '' },
+      runErroredRef: { current: false },
+      persistMessage: () => {},
+    });
+
+    callbacks.onSubagentProgress?.('step-delegate', {
+      toolName: 'delegate.code',
+      status: 'Reading src',
+      round: 2,
+      done: false,
+    });
+
+    const runtime = useAgentRuntimeStore.getState().runtimesByWindow[window.windowId];
+    expect(runtime.subagentProgressByStep['step-delegate']).toHaveLength(1);
+    expect(runtime.subagentProgressByStep['step-delegate'][0].round).toBe(2);
+  });
 });

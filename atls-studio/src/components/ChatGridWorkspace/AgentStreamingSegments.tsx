@@ -7,9 +7,11 @@ import { cleanStreamingContent } from '../AiChat/aiChatPure';
 import { MarkdownMessage } from '../AiChat/MarkdownMessage';
 import { ReasoningBlock } from '../AiChat/ReasoningBlock';
 import { AgentToolTrace } from './AgentToolTrace';
+import { GridBatchToolCalls } from './GridBatchToolCalls';
 import { GridDelegateToolCard, isDelegateToolCall } from './GridDelegateToolCard';
+import { isBatchCall } from '../AiChat/aiChatToolDisplayPure';
 
-function SegmentBlock({ segment }: { segment: StreamSegment }) {
+function SegmentBlock({ segment, windowId }: { segment: StreamSegment; windowId: string }) {
   if (segment.type === 'text') {
     const content = cleanStreamingContent(segment.content);
     if (!content) return null;
@@ -35,9 +37,12 @@ function SegmentBlock({ segment }: { segment: StreamSegment }) {
   }
 
   if (segment.type === 'tool') {
+    if (isBatchCall(segment.toolCall)) {
+      return <GridBatchToolCalls toolCall={segment.toolCall} windowId={windowId} />;
+    }
     return isDelegateToolCall(segment.toolCall.name)
       ? <GridDelegateToolCard toolCall={segment.toolCall} />
-      : <AgentToolTrace toolCalls={[segment.toolCall]} />;
+      : <AgentToolTrace toolCalls={[segment.toolCall]} windowId={windowId} />;
   }
 
   if (segment.type === 'step-boundary') {
@@ -133,7 +138,7 @@ export const AgentStreamingSegments = memo(function AgentStreamingSegments({
   return (
     <div className="space-y-2" data-testid="agent-stream-segments">
       {segments.map((segment, index) => (
-        <SegmentBlock key={`${segment.type}-${index}`} segment={segment} />
+        <SegmentBlock key={`${segment.type}-${index}`} segment={segment} windowId={windowId} />
       ))}
       {!hasSegments && fallbackReasoning && (
         <div className="min-w-0 overflow-hidden rounded-lg border border-violet-400/25 bg-violet-500/8 p-2">

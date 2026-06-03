@@ -201,7 +201,7 @@ export const AgentChatSurface = memo(function AgentChatSurface({ window, showCon
                 {safeRuntime.streamingText}
               </div>
             ) : (
-              <AgentToolTrace toolCalls={safeRuntime.toolCalls} />
+              <AgentToolTrace toolCalls={safeRuntime.toolCalls} windowId={window.windowId} />
             )}
             <div ref={transcriptEndRef} />
           </div>

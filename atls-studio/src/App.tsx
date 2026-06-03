@@ -15,6 +15,7 @@ import { ToastContainer } from './components/Toast';
 import { INTERNALS_TAB_ID } from './components/AtlsInternals';
 import { useAppStore } from './stores/appStore';
 import { activateAgentParentSession } from './services/activateAgentWindow';
+import { readLastActiveSessionId } from './services/lastActiveSession';
 import { useAtls } from './hooks/useAtls';
 import { useOS } from './hooks/useOS';
 import { useChatPersistence } from './hooks/useChatPersistence';
@@ -423,7 +424,18 @@ function App() {
           await activateAgentParentSession(sessionId, title, projectPath);
         }}
         onDeleteSession={deleteSession}
-        onClose={() => setSessionPickerOpen(false)}
+        onClose={() => {
+          setSessionPickerOpen(false);
+          const st = useAppStore.getState();
+          const path = pendingProjectPath || st.projectPath;
+          if (st.currentSessionId || !path || st.chatSessions.length === 0) return;
+          const lastId = readLastActiveSessionId(path);
+          const targetId = lastId && st.chatSessions.some((session) => session.id === lastId)
+            ? lastId
+            : st.chatSessions[0].id;
+          const title = st.chatSessions.find((session) => session.id === targetId)?.title ?? 'Primary Chat';
+          void activateAgentParentSession(targetId, title, path);
+        }}
       />
 
       {/* Main Content */}

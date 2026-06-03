@@ -140,6 +140,7 @@ export function buildAgentWindowStreamCallbacks(ctx: {
       });
     },
     onSubagentProgress: (stepId, progress) => {
+      runtimeStore().pushSubagentProgress(windowId, stepId, progress);
       handleSubAgentProgress(window.parentSessionId, stepId, progress);
     },
     onError: (error) => {

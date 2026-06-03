@@ -1,5 +1,21 @@
 import type { MessageToolCall } from '../../stores/appStore';
+import { useAgentRuntimeStore } from '../../stores/agentRuntimeStore';
+import { isBatchCall } from '../AiChat/aiChatToolDisplayPure';
+import { GridBatchToolCalls } from './GridBatchToolCalls';
 import { GridDelegateToolCard, isDelegateToolCall } from './GridDelegateToolCard';
+
+function delegateProgressTrace(
+  toolCall: MessageToolCall,
+  progressByStep?: Record<string, import('../../services/batch/types').SubAgentProgressEvent[]>,
+): import('../../services/batch/types').SubAgentProgressEvent[] | undefined {
+  if (!progressByStep) return undefined;
+  const stepId = typeof toolCall.args?.step_id === 'string' ? toolCall.args.step_id.trim() : '';
+  if (stepId) return progressByStep[stepId];
+  const sep = '::';
+  const idx = toolCall.id.indexOf(sep);
+  if (idx >= 0) return progressByStep[toolCall.id.slice(idx + sep.length)];
+  return undefined;
+}
 
 function statusClass(status: MessageToolCall['status']): string {
   switch (status) {
@@ -25,14 +41,23 @@ function summarizeArgs(args?: Record<string, unknown>): string {
   return keys.slice(0, 3).join(', ');
 }
 
-export function AgentToolTrace({ toolCalls }: { toolCalls: MessageToolCall[] }) {
+export function AgentToolTrace({ toolCalls, windowId }: { toolCalls: MessageToolCall[]; windowId?: string }) {
   if (toolCalls.length === 0) return null;
+  const progressByStep = useAgentRuntimeStore((state) => (
+    windowId ? state.runtimesByWindow[windowId]?.subagentProgressByStep : undefined
+  ));
 
   return (
     <div className="mt-2 space-y-1" data-testid="agent-tool-trace">
       {toolCalls.map((toolCall) => (
-        isDelegateToolCall(toolCall.name) ? (
-          <GridDelegateToolCard key={toolCall.id} toolCall={toolCall} />
+        isBatchCall(toolCall) ? (
+          <GridBatchToolCalls key={toolCall.id} toolCall={toolCall} windowId={windowId} />
+        ) : isDelegateToolCall(toolCall.name) ? (
+          <GridDelegateToolCard
+            key={toolCall.id}
+            toolCall={toolCall}
+            liveTrace={delegateProgressTrace(toolCall, progressByStep)}
+          />
         ) : (
         <div
           key={toolCall.id}
