@@ -91,4 +91,19 @@ describe('contextSessionPartition', () => {
 
     expect(useContextStore.getState().blackboardEntries.get('memo')?.content).toBe('Parent memo');
   });
+
+  it('serializes concurrent withContextSession without cross-contamination', async () => {
+    const readMemo = async (sessionId: string, value: string, delayMs: number) => withContextSession(sessionId, async () => {
+      useContextStore.getState().setBlackboardEntry('memo', value);
+      await new Promise((resolve) => { setTimeout(resolve, delayMs); });
+      return useContextStore.getState().blackboardEntries.get('memo')?.content;
+    }, { fresh: true });
+
+    const [a, b] = await Promise.all([
+      readMemo('session-a', 'Memo A', 15),
+      readMemo('session-b', 'Memo B', 5),
+    ]);
+
+    expect(new Set([a, b])).toEqual(new Set(['Memo A', 'Memo B']));
+  });
 });
