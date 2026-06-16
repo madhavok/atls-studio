@@ -162,20 +162,12 @@ class ChatDbService {
    */
   async init(projectPath: string): Promise<boolean> {
     try {
-      const _prevPath = this.projectPath;
-      const _wasInitialized = this.initialized;
-      
-      // CRITICAL: Always close existing connection first to prevent stale connections
-      // This ensures we switch databases cleanly when changing projects
-      if (this.initialized && this.projectPath !== projectPath) {
-        console.log('[ChatDb] Closing previous connection for:', this.projectPath);
-        await this.close();
-      }
-      
+      // The host pools one connection per repo and never closes-on-switch, so
+      // switching the active project is a cheap pointer swap (no stale connection).
       await invoke('chat_db_init', { projectPath });
       this.initialized = true;
       this.projectPath = projectPath;
-      console.log('[ChatDb] Initialized for:', projectPath);
+      console.log('[ChatDb] Active project:', projectPath);
       return true;
     } catch (error) {
       console.error('[ChatDb] Failed to initialize:', error);

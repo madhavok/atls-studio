@@ -219,7 +219,7 @@ describe('ChatGridWorkspace', () => {
     expect(screen.getByTitle('Settings')).toBeTruthy();
   });
 
-  it('keeps controls visible on every card in the active parent group', () => {
+  it('renders every window across parents on the flat canvas with controls', () => {
     useAgentWindowStore.getState().setActiveParentSession('session-1');
     useAgentWindowStore.getState().ensurePrimaryWindow('session-1', 'Parent One');
     useAgentWindowStore.getState().ensurePrimaryWindow('session-2', 'Parent Two');
@@ -229,7 +229,8 @@ describe('ChatGridWorkspace', () => {
 
     expect(screen.getByTestId('agent-card-controls-primary-session-1')).toBeTruthy();
     expect(screen.getByTestId(`agent-card-controls-${childWindowId}`)).toBeTruthy();
-    expect(screen.queryByTestId('agent-card-controls-primary-session-2')).toBeNull();
+    // Flat canvas: windows from other parent sessions are visible too.
+    expect(screen.getByTestId('agent-card-controls-primary-session-2')).toBeTruthy();
     expect(screen.getAllByText('Options').length).toBeGreaterThanOrEqual(2);
   });
 
@@ -245,7 +246,7 @@ describe('ChatGridWorkspace', () => {
   it('spawns new agents as new parent sessions, not child windows', async () => {
     render(<ChatGridWorkspace />);
 
-    fireEvent.click(screen.getByText('New Parent Session'));
+    fireEvent.click(screen.getByText('New Session'));
 
     await waitFor(() => {
       expect(screen.getAllByText('Agent Session 1').length).toBeGreaterThan(0);
@@ -319,7 +320,7 @@ describe('ChatGridWorkspace', () => {
     expect(useAgentRuntimeStore.getState().runtimesByWindow['primary-session-1'].isGenerating).toBe(true);
   });
 
-  it('keeps multiple parent window streams active while focus moves', () => {
+  it('renders multiple parent window streams together on the flat canvas', () => {
     useAppStore.setState({ currentSessionId: 'session-3' });
     useAgentWindowStore.getState().setActiveParentSession('session-1');
     useAgentWindowStore.getState().ensurePrimaryWindow('session-1', 'Parent One');
@@ -331,14 +332,10 @@ describe('ChatGridWorkspace', () => {
     useAgentRuntimeStore.getState().setStreamingText('primary-session-1', 'Parent one streaming');
     useAgentRuntimeStore.getState().setStreamingText('primary-session-2', 'Parent two streaming');
 
-    const { rerender } = render(<ChatGridWorkspace />);
+    render(<ChatGridWorkspace />);
+    // Flat canvas: both parent windows render and stream concurrently.
     expect(screen.getByText('Parent one streaming')).toBeTruthy();
-    expect(screen.queryByText('Parent two streaming')).toBeNull();
-
-    useAgentWindowStore.getState().setActiveParentSession('session-2');
-    rerender(<ChatGridWorkspace />);
     expect(screen.getByText('Parent two streaming')).toBeTruthy();
-    expect(screen.queryByText('Parent one streaming')).toBeNull();
     expect(useAgentRuntimeStore.getState().runtimesByWindow['primary-session-1'].isGenerating).toBe(true);
     expect(useAgentRuntimeStore.getState().runtimesByWindow['primary-session-2'].isGenerating).toBe(true);
   });
@@ -356,7 +353,6 @@ describe('ChatGridWorkspace', () => {
     const card = screen.getByTestId('primary-chat-window');
     const transcript = screen.getByTestId('agent-runtime-transcript-primary-session-1');
 
-    expect(card.className).toContain('h-[520px]');
     expect(card.className).toContain('overflow-hidden');
     expect(transcript.className).toContain('overflow-y-auto');
     expect(transcript.className).toContain('overflow-x-hidden');
@@ -447,13 +443,45 @@ describe('ChatGridWorkspace', () => {
     useAgentWindowStore.getState().ensurePrimaryWindow('session-2', 'Parent Two');
 
     render(<ChatGridWorkspace />);
-    fireEvent.click(screen.getByTitle('Close parent session window'));
+    fireEvent.click(screen.getByTestId('close-primary-session-2'));
 
     await waitFor(() => {
       expect(useAgentWindowStore.getState().windowsByParent['session-2']).toBeUndefined();
     });
     expect(useAppStore.getState().currentSessionId).toBe('session-1');
-    expect(screen.queryByText('Parent Two')).toBeNull();
+  });
+
+  it('closes the active primary window by switching to another session', async () => {
+    useAppStore.setState({
+      currentSessionId: 'session-1',
+      chatSessions: [
+        { id: 'session-1', title: 'Active One', messages: [], createdAt: new Date(), updatedAt: new Date(), contextUsage: { inputTokens: 0, outputTokens: 0, totalTokens: 0, costCents: 0 } },
+        { id: 'session-2', title: 'Other Two', messages: [], createdAt: new Date(), updatedAt: new Date(), contextUsage: { inputTokens: 0, outputTokens: 0, totalTokens: 0, costCents: 0 } },
+      ],
+    });
+    useAgentWindowStore.getState().setActiveParentSession('session-1');
+    useAgentWindowStore.getState().ensurePrimaryWindow('session-1', 'Active One');
+    useAgentWindowStore.getState().ensurePrimaryWindow('session-2', 'Other Two');
+
+    render(<ChatGridWorkspace />);
+    fireEvent.click(screen.getByTestId('close-primary-session-1'));
+
+    await waitFor(() => {
+      expect(useAgentWindowStore.getState().windowsByParent['session-1']).toBeUndefined();
+    });
+    expect(useAppStore.getState().currentSessionId).toBe('session-2');
+  });
+
+  it('closes a standard agent window from its header', async () => {
+    useAgentWindowStore.getState().setActiveParentSession('session-1');
+    const windowId = useAgentWindowStore.getState().spawnStandardWindow('session-1', 'session-2', 'Agent Window 1');
+
+    render(<ChatGridWorkspace />);
+    fireEvent.click(screen.getByTestId(`close-${windowId}`));
+
+    await waitFor(() => {
+      expect(useAgentWindowStore.getState().windowsByParent['session-1'].some((w) => w.windowId === windowId)).toBe(false);
+    });
   });
 
   it('mirrors subagent progress into the spawned child runtime', async () => {
@@ -555,6 +583,55 @@ describe('ChatGridWorkspace', () => {
     expect(screen.getByTestId('swarm-chat-window-task-1')).toBeTruthy();
     expect(screen.getByText('Implement grid')).toBeTruthy();
     expect(screen.getByText('Working through layout.')).toBeTruthy();
+  });
+
+  it('renders the pannable canvas surface with auto-arrange controls', () => {
+    render(<ChatGridWorkspace />);
+
+    expect(screen.getByTestId('agent-canvas-surface')).toBeTruthy();
+    expect(screen.getByTitle('Auto-arrange (grid)')).toBeTruthy();
+    expect(screen.getByTitle('Tidy by project')).toBeTruthy();
+    expect(screen.getByTitle('Auto-arrange (cascade)')).toBeTruthy();
+  });
+
+  it('auto-arranges windows when an arrange strategy is chosen', () => {
+    render(<ChatGridWorkspace />);
+
+    fireEvent.click(screen.getByTitle('Tidy by project'));
+    expect(useAgentWindowStore.getState().viewport.arrangeStrategy).toBe('tidy');
+  });
+
+  it('adds a cockpit panel as a canvas window from the panel menu', async () => {
+    render(<ChatGridWorkspace />);
+
+    fireEvent.click(screen.getByText('+ Panel'));
+    fireEvent.click(screen.getByText('Mission Control'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('panel-window-mission')).toBeTruthy();
+    });
+    const panels = Object.values(useAgentWindowStore.getState().windowsByParent).flat().filter((w) => w.kind === 'panel');
+    expect(panels.some((w) => w.panelKind === 'mission')).toBe(true);
+  });
+
+  it('shows a project badge on project-tagged windows', () => {
+    render(<ChatGridWorkspace />);
+    expect(screen.getAllByTitle('/tmp/project').length).toBeGreaterThan(0);
+  });
+
+  it('drags a window by its header and commits the new position without crashing', () => {
+    render(<ChatGridWorkspace />);
+    const header = screen.getByTestId('primary-chat-window-header');
+
+    fireEvent.pointerDown(header, { clientX: 100, clientY: 100, pointerId: 1 });
+    fireEvent.pointerMove(header, { clientX: 180, clientY: 240, pointerId: 1 });
+    fireEvent.pointerUp(header, { clientX: 180, clientY: 240, pointerId: 1 });
+    // A stray move after release must not throw (regression: null dragRef deref).
+    fireEvent.pointerMove(header, { clientX: 300, clientY: 300, pointerId: 1 });
+
+    const primary = useAgentWindowStore.getState().windowsByParent['session-1']
+      .find((w) => w.windowId === 'primary-session-1')!;
+    expect(primary.rect.x).not.toBe(40);
   });
 
   it('can collapse the selected chat telemetry pane', () => {

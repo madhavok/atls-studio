@@ -992,15 +992,12 @@ export function useChatPersistence() {
       if (pp) writeLastActiveSessionId(pp, sessionId);
       syncCurrentSessionIdToLocalStorage(sessionId);
 
-      // Rehydrate swarm task state when loading a swarm session
+      // Rehydrate swarm task state when loading a swarm session.
+      // Swarm tasks surface as canvas windows automatically; no dedicated tab to manage.
       if (result.tasks && result.tasks.length > 0) {
         useSwarmStore.getState().rehydrateTasks(sessionId, result.tasks);
         console.log('[ChatPersistence] Rehydrated', result.tasks.length, 'swarm tasks');
-        if (useSwarmStore.getState().isActive) {
-          useAppStore.getState().openFile(SWARM_ORCHESTRATION_TAB_ID);
-        }
       } else {
-        // Loading a non-swarm session — close orphaned swarm tab if present
         const appState = useAppStore.getState();
         if (appState.openFiles.includes(SWARM_ORCHESTRATION_TAB_ID)) {
           appState.closeFile(SWARM_ORCHESTRATION_TAB_ID);

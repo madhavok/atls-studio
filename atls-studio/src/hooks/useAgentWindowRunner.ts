@@ -294,10 +294,13 @@ export function useAgentWindowRunner() {
     try {
       const shellPath = windowProjectPath ?? appState.projectPath ?? undefined;
       if (shellPath) {
-        await syncShellToProjectPath(shellPath).catch((error) => {
+        // Only the foreground (selected) window flips the global active root;
+        // background windows on other repos register + open their DB without clobbering it.
+        const isForeground = useAgentWindowStore.getState().selectedWindowByParent[window.parentSessionId] === windowId;
+        await syncShellToProjectPath(shellPath, { setActive: isForeground }).catch((error) => {
           console.warn('[AgentWindowRunner] shell sync failed:', error);
         });
-        if (!useAppStore.getState().atlsInitialized) {
+        if (isForeground && !useAppStore.getState().atlsInitialized) {
           await initAtls(shellPath);
         }
       }

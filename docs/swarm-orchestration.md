@@ -131,9 +131,17 @@ Two rate limiters coexist and serve different roles:
 - **`swarmStore.rateLimiter`** — in-store queue per provider; gates agent dispatch at the orchestrator layer so concurrent agents don't burst past provider ceilings.
 - **`services/rateLimiter.ts`** — used by the main chat path; the orchestrator does not route through it.
 
+## Surfacing On The Agent Canvas
+
+Swarm execution is presented through the single [Agent Canvas](./studio-app-shell.md) rather than a dedicated cockpit tab:
+
+- Each `SwarmTask` is upserted as a `swarm`-kind window on the canvas (`agentWindowStore.upsertSwarmWindow`), showing its transcript, status, and stop/recover/Mission controls.
+- Starting a swarm adds a **Mission Control** panel window (`ensurePanelWindow(sessionId, 'mission', …)`) carrying plan approval, concurrency, pause/resume, and dispatch-recovery controls. Telemetry, Runtime Context, and Agent Terminal are available as additional panel windows.
+- Per-repo chat persistence is unchanged: each repo keeps its own `<repo>/.atls/chat.db`. The host pools one connection per repo (`ChatDbState` in [`chat_db.rs`](../atls-studio/src-tauri/src/chat_db.rs)) and never closes-on-switch, so windows tied to different repos can run concurrently without connection churn.
+
 ## How It Connects To Other Subsystems
 
-- **Studio App Shell**: the shell exposes the swarm panel and session controls.
+- **Studio App Shell**: swarm tasks and controls render as canvas windows (swarm windows + Mission Control panel).
 - **Session Persistence**: swarm state survives restarts by storing sessions, tasks, results, and stats — see rehydration above.
 - **Tauri Backend**: research and execution use Tauri-backed code search, file reads, AI streaming, and terminals.
 - **Cognitive Runtime**: agents still use ATLS memory, hash refs, and batch tools while working inside the swarm; hydration reduces redundant `read.context` for files already fetched in research.

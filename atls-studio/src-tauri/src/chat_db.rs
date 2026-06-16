@@ -4,6 +4,7 @@
 
 use rusqlite::{Connection, params, OptionalExtension};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Mutex;
 
@@ -128,16 +129,21 @@ pub struct DbBlackboardNote {
 // Chat Database State
 // ============================================================================
 
+/// Per-repo chat persistence. Each project keeps its own `<repo>/.atls/chat.db`.
+/// Connections are pooled by project path and kept open across project switches so
+/// multiple repos can be active without close-on-switch churn. `active_path` selects
+/// which pooled connection unscoped operations use; the JS layer serializes ops so the
+/// active pointer is set (via `init`) before each op runs.
 pub struct ChatDbState {
-    pub conn: Mutex<Option<Connection>>,
-    pub project_path: Mutex<Option<String>>,
+    pub conns: Mutex<HashMap<String, Connection>>,
+    pub active_path: Mutex<Option<String>>,
 }
 
 impl Default for ChatDbState {
     fn default() -> Self {
         Self {
-            conn: Mutex::new(None),
-            project_path: Mutex::new(None),
+            conns: Mutex::new(HashMap::new()),
+            active_path: Mutex::new(None),
         }
     }
 }
@@ -351,8 +357,19 @@ CREATE INDEX IF NOT EXISTS idx_shadow_versions_hash ON shadow_versions(hash);
 // ============================================================================
 
 impl ChatDbState {
-    /// Initialize database for a project
+    /// Initialize (or focus) the database for a project. Reuses an already-open
+    /// pooled connection when present so switching projects does not close/reopen.
     pub fn init(&self, project_path: &str) -> Result<(), String> {
+        {
+            let conns = self.conns.lock().map_err(|e| e.to_string())?;
+            if conns.contains_key(project_path) {
+                drop(conns);
+                let mut active = self.active_path.lock().map_err(|e| e.to_string())?;
+                *active = Some(project_path.to_string());
+                return Ok(());
+            }
+        }
+
         let db_path = PathBuf::from(project_path)
             .join(".atls")
             .join("chat.db");
@@ -377,34 +394,39 @@ impl ChatDbState {
         // Schema versioning and migrations
         Self::run_migrations(&conn)?;
 
-        // Store connection
-        let mut conn_guard = self.conn.lock().map_err(|e| e.to_string())?;
-        *conn_guard = Some(conn);
-        
-        let mut path_guard = self.project_path.lock().map_err(|e| e.to_string())?;
-        *path_guard = Some(project_path.to_string());
+        // Pool the connection and focus it as active.
+        {
+            let mut conns = self.conns.lock().map_err(|e| e.to_string())?;
+            conns.insert(project_path.to_string(), conn);
+        }
+        let mut active = self.active_path.lock().map_err(|e| e.to_string())?;
+        *active = Some(project_path.to_string());
         
         Ok(())
     }
     
-    /// Close database connection
+    /// Close and drop all pooled connections (used on workspace teardown).
     pub fn close(&self) -> Result<(), String> {
-        let mut conn_guard = self.conn.lock().map_err(|e| e.to_string())?;
-        *conn_guard = None;
+        let mut conns = self.conns.lock().map_err(|e| e.to_string())?;
+        conns.clear();
         
-        let mut path_guard = self.project_path.lock().map_err(|e| e.to_string())?;
-        *path_guard = None;
+        let mut active = self.active_path.lock().map_err(|e| e.to_string())?;
+        *active = None;
         
         Ok(())
     }
     
-    /// Execute a function with the database connection
+    /// Execute a function against the active project's pooled connection.
     pub fn with_conn<F, T>(&self, f: F) -> Result<T, String>
     where
         F: FnOnce(&Connection) -> Result<T, rusqlite::Error>,
     {
-        let conn_guard = self.conn.lock().map_err(|e| e.to_string())?;
-        let conn = conn_guard.as_ref().ok_or("Chat database not initialized")?;
+        let key = {
+            let active = self.active_path.lock().map_err(|e| e.to_string())?;
+            active.as_ref().ok_or("Chat database not initialized")?.clone()
+        };
+        let conns = self.conns.lock().map_err(|e| e.to_string())?;
+        let conn = conns.get(&key).ok_or("Chat database not initialized")?;
         f(conn).map_err(|e| e.to_string())
     }
 
@@ -1762,6 +1784,38 @@ mod tests {
     fn operations_fail_when_not_initialized() {
         let state = ChatDbState::default();
         assert!(create_session(&state, "s1", "t", "agent", false).is_err());
+    }
+
+    #[test]
+    fn pools_connections_per_repo_without_losing_data_on_switch() {
+        let dir_a = TempDir::new().unwrap();
+        let dir_b = TempDir::new().unwrap();
+        let root_a = dir_a.path().to_string_lossy().to_string();
+        let root_b = dir_b.path().to_string_lossy().to_string();
+        let state = ChatDbState::default();
+
+        // Open repo A, write a session.
+        state.init(&root_a).unwrap();
+        create_session(&state, "a1", "Repo A Session", "agent", false).unwrap();
+
+        // Switch active to repo B (does not close A), write a session.
+        state.init(&root_b).unwrap();
+        create_session(&state, "b1", "Repo B Session", "agent", false).unwrap();
+        assert_eq!(get_sessions(&state, 10).unwrap()[0].id, "b1");
+
+        // Switching back to A reuses the pooled connection and still sees A's data.
+        state.init(&root_a).unwrap();
+        let a_sessions = get_sessions(&state, 10).unwrap();
+        assert_eq!(a_sessions.len(), 1);
+        assert_eq!(a_sessions[0].id, "a1");
+
+        // Both connections remain pooled.
+        assert_eq!(state.conns.lock().unwrap().len(), 2);
+
+        // close() drops the whole pool.
+        state.close().unwrap();
+        assert!(state.conns.lock().unwrap().is_empty());
+        assert!(create_session(&state, "x", "t", "agent", false).is_err());
     }
 
     #[test]

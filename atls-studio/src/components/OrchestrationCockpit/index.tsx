@@ -105,7 +105,7 @@ function CockpitPanel({
   );
 }
 
-function MissionControl() {
+export function MissionControlBody() {
   const status = useSwarmStore((s) => s.status);
   const sessionId = useSwarmStore((s) => s.sessionId);
   const userRequest = useSwarmStore((s) => s.userRequest);
@@ -166,7 +166,6 @@ function MissionControl() {
   };
 
   return (
-    <CockpitPanel id="mission" title="Mission Control" className="col-span-12 xl:col-span-5">
       <div className="space-y-4">
         <div>
           <div className="flex items-center gap-2">
@@ -265,6 +264,13 @@ function MissionControl() {
           </div>
         )}
       </div>
+  );
+}
+
+function MissionControl() {
+  return (
+    <CockpitPanel id="mission" title="Mission Control" className="col-span-12 xl:col-span-5">
+      <MissionControlBody />
     </CockpitPanel>
   );
 }
@@ -481,7 +487,7 @@ function WorkbenchWindow() {
   );
 }
 
-function RuntimeContextWindow() {
+export function RuntimeContextBody() {
   const chunks = useContextStore((s) => s.chunks);
   const bbEntries = useContextStore((s) => s.blackboardEntries);
   const maxTokens = useContextStore((s) => s.maxTokens);
@@ -492,7 +498,6 @@ function RuntimeContextWindow() {
   const pinned = useMemo(() => Array.from(chunks.values()).filter((c) => c.pinned), [chunks]);
 
   return (
-    <CockpitPanel id="context" title="Runtime Context" className="col-span-12 lg:col-span-4">
       <div className="space-y-3">
         <div className="grid grid-cols-3 gap-2">
           <Metric label="WM" value={formatTokens(wmTokens)} />
@@ -521,18 +526,24 @@ function RuntimeContextWindow() {
           {bbEntries.size === 0 && <div className="text-xs text-studio-muted">No blackboard entries yet.</div>}
         </div>
       </div>
+  );
+}
+
+function RuntimeContextWindow() {
+  return (
+    <CockpitPanel id="context" title="Runtime Context" className="col-span-12 lg:col-span-4">
+      <RuntimeContextBody />
     </CockpitPanel>
   );
 }
 
-function TelemetryWindow() {
+export function TelemetryBody() {
   const stats = useSwarmStore((s) => s.stats);
   const snapshots = useRoundHistoryStore((s) => s.snapshots);
   const swarmSnapshots = useMemo(() => snapshots.filter((s) => s.isSwarmRound), [snapshots]);
   const latest = swarmSnapshots[swarmSnapshots.length - 1];
 
   return (
-    <CockpitPanel id="telemetry" title="Telemetry" className="col-span-12 lg:col-span-4">
       <div className="space-y-3">
         <div className="grid grid-cols-2 gap-2">
           <Metric label="Elapsed" value={formatElapsed(stats.elapsedMs)} />
@@ -558,11 +569,18 @@ function TelemetryWindow() {
           )}
         </div>
       </div>
+  );
+}
+
+function TelemetryWindow() {
+  return (
+    <CockpitPanel id="telemetry" title="Telemetry" className="col-span-12 lg:col-span-4">
+      <TelemetryBody />
     </CockpitPanel>
   );
 }
 
-function AgentTerminalWindow() {
+export function AgentTerminalBody() {
   const selectedTaskId = useOrchestrationUiStore((s) => s.selectedTaskId);
   const selectedTask = useSwarmStore((s) => s.tasks.find((t) => t.id === selectedTaskId));
   const terminalMap = useTerminalStore((s) => s.terminals);
@@ -579,7 +597,7 @@ function AgentTerminalWindow() {
   }, [activeAgentTerminalId, selectedTask, terminals]);
 
   return (
-    <CockpitPanel id="terminal" title="Agent Terminal" className="col-span-12">
+      <div className="flex h-full min-h-0 flex-col">
       <div className="mb-2 flex items-center gap-2 overflow-x-auto">
         {terminals.map((terminal) => (
           <button
@@ -592,7 +610,7 @@ function AgentTerminalWindow() {
           </button>
         ))}
       </div>
-      <div className="h-72 overflow-hidden rounded border border-studio-border bg-studio-bg">
+      <div className="min-h-0 flex-1 overflow-hidden rounded border border-studio-border bg-studio-bg">
         {matchedTerminal ? (
           <AgentTerminalView terminalId={matchedTerminal} />
         ) : (
@@ -601,6 +619,14 @@ function AgentTerminalWindow() {
           </div>
         )}
       </div>
+      </div>
+  );
+}
+
+function AgentTerminalWindow() {
+  return (
+    <CockpitPanel id="terminal" title="Agent Terminal" className="col-span-12">
+      <AgentTerminalBody />
     </CockpitPanel>
   );
 }

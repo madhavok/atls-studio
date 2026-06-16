@@ -197,6 +197,11 @@ export async function flushAllCachedContextPartitions(): Promise<void> {
     const snapshot = partitionCache.get(sessionId);
     if (snapshot && chatDb.isInitialized()) {
       try {
+        // The snapshot only persists into the project DB that owns this session.
+        // With per-repo pooled connections the active DB may belong to a different
+        // repo, so skip (its own project's persist path saves it) rather than FK-fail.
+        const owner = await chatDb.getSession(sessionId);
+        if (!owner) continue;
         await chatDb.saveMemorySnapshot(sessionId, snapshot);
       } catch (error) {
         console.warn('[contextSessionPartition] flush cached snapshot failed:', error);

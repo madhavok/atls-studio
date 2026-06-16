@@ -32,11 +32,21 @@ The runtime docs describe how ATLS manages memory, freshness, and prompt assembl
 The app shell centers around a persistent workspace layout:
 
 - Left: file explorer and project navigation.
-- Center: code viewer, or the swarm panel when a swarm session is active.
+- Center: the **Agent Canvas** ([`ChatGridWorkspace`](../atls-studio/src/components/ChatGridWorkspace/index.tsx)), or the code viewer when a file is focused (document mode), with the canvas docked to the right.
 - Bottom: ATLS intelligence and related lower-panel tooling.
-- Right: AI chat, with a collapsible mode during swarm workflows.
+- Right: per-window chat telemetry pane, collapsible.
 
 This separation matters because the shell keeps UI composition independent from the runtime subsystems underneath it. The same chat and memory runtime can be surfaced through different views without changing the underlying storage or orchestration model.
+
+### Agent Canvas
+
+The Agent Canvas is a single, flat, pannable/zoomable surface of agent windows — there is no separate orchestration cockpit tab. Every window is first-class and freely positioned:
+
+- **Window kinds**: `primary` (a parent chat session), `standard` (delegate/independent agent sessions), `swarm` (managed swarm-task windows), and `panel` (cockpit panels — Mission Control, Telemetry, Runtime Context, Agent Terminal — rendered as draggable windows via [`OrchestrationCockpit` body exports](../atls-studio/src/components/OrchestrationCockpit/index.tsx)).
+- **Project-tagged**: each window carries its own `projectPath` and shows a project badge. Windows targeting different repos can coexist on one canvas; the selected (foreground) window owns the global ATLS active root while background windows register and open their own per-repo chat DB without clobbering it.
+- **Geometry + persistence**: window rect, z-index, minimized, and pinned state, plus canvas pan/zoom, are stored per project in `agentWindowStore` (localStorage + `.atls-workspace` snapshot).
+- **Auto-arrange**: `Grid`, `Tidy by project` (cluster by `projectPath`), and `Cascade`. Pinned and minimized windows are left in place.
+- **Drag/resize**: [`CanvasFrame`](../atls-studio/src/components/ChatGridWorkspace/CanvasFrame.tsx) handles header-drag, corner-resize, bring-to-front, pin, minimize, and close. The dock variant renders the same windows as a simple vertical stack.
 
 ### ATLS Panel tabs
 
@@ -56,7 +66,7 @@ The panel also splits with a terminal pane for `system.exec` output when agent r
 
 - `Tauri Backend`: the shell uses Tauri `invoke()` calls and events to reach native file, search, AI, terminal, and persistence commands.
 - `Session Persistence`: the shell triggers session creation, loading, autosave, and restore through the persistence hook.
-- `Swarm And Orchestration`: the shell swaps the center panel and session controls when swarm execution is active.
+- `Swarm And Orchestration`: swarm tasks surface as `swarm` windows on the Agent Canvas, and a Mission Control panel window provides plan approval, pause/resume, and recovery controls (no dedicated cockpit editor tab).
 - `Cognitive Runtime`: the UI renders and manipulates the outputs of the runtime, but the runtime logic lives mostly under `src/services/` and `src/stores/`.
 
 ```mermaid

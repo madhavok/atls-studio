@@ -9,8 +9,6 @@ import { safeListen } from '../../utils/tauri';
 import { useAppStore } from '../../stores/appStore';
 import { MarkdownMessage } from '../AiChat/MarkdownMessage';
 import { AtlsInternals, INTERNALS_TAB_ID } from '../AtlsInternals';
-import { OrchestrationCockpit } from '../OrchestrationCockpit';
-import { SwarmErrorBoundary } from '../SwarmPanel/SwarmErrorBoundary';
 import { SWARM_ORCHESTRATION_TAB_ID } from '../../constants/swarmOrchestrationTab';
 import { normalizeEditorPath, toEditorModelPath } from './codeViewerPaths';
 import { mergeDefinitionsAndReferencesUnique } from './codeViewerSymbolRefs';
@@ -511,7 +509,6 @@ export function CodeViewer() {
   }, [closeFile, isDirty, normalizePath]);
 
   const isInternalsActive = activeFile === INTERNALS_TAB_ID;
-  const isSwarmTabActive = activeFile === SWARM_ORCHESTRATION_TAB_ID;
 
   if (openFiles.length === 0 && !hasDesignPreview) {
     return (
@@ -542,7 +539,7 @@ export function CodeViewer() {
     if (file === INTERNALS_TAB_ID) {
       tabs.push({ id: INTERNALS_TAB_ID, label: 'ATLS Internals', isInternals: true });
     } else if (file === SWARM_ORCHESTRATION_TAB_ID) {
-      tabs.push({ id: SWARM_ORCHESTRATION_TAB_ID, label: 'Orchestration Cockpit', isSwarmOrchestration: true });
+      // Orchestration is now rendered as canvas windows; no dedicated editor tab.
     } else {
       tabs.push({ id: file, label: file.split(/[/\\]/).pop() || file });
     }
@@ -632,11 +629,7 @@ export function CodeViewer() {
       <div className="flex-1 flex min-h-0">
         {/* Editor, Plan Preview, Swarm Orchestration, or ATLS Internals */}
         <div className="flex-1 flex flex-col relative min-h-0 overflow-hidden">
-          {isSwarmTabActive ? (
-            <SwarmErrorBoundary>
-              <OrchestrationCockpit />
-            </SwarmErrorBoundary>
-          ) : isInternalsActive ? (
+          {isInternalsActive ? (
             <AtlsInternals />
           ) : showDesignPreview ? (
             <div className="flex-1 overflow-y-auto p-4 markdown-message">

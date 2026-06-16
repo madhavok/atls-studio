@@ -10,6 +10,7 @@ import { atlsBatchQuery } from './toolHelpers';
 import { useSwarmStore, type SwarmTask, type AgentRole, type ResearchResult } from '../stores/swarmStore';
 import { useContextStore } from '../stores/contextStore';
 import { useAppStore } from '../stores/appStore';
+import { useAgentWindowStore } from '../stores/agentWindowStore';
 import { getTerminalStore } from '../stores/terminalStore';
 import { chatDb, type TaskStatus as ChatTaskStatus } from './chatDb';
 import { rateLimiter } from './rateLimiter';
@@ -19,8 +20,6 @@ import { resolveModelSettings } from '../utils/modelSettings';
 import { EDIT_DISCIPLINE } from '../prompts/editDiscipline';
 import { toTOON } from '../utils/toon';
 import { countTokensSync } from '../utils/tokenCounter';
-import { SWARM_ORCHESTRATION_TAB_ID } from '../constants/swarmOrchestrationTab';
-
 /** Persisted in agent_stats for LLM usage not tied to a worker task row */
 const SWARM_ORCHESTRATION_PLAN_TASK_ID = '__swarm_orchestration_plan__';
 const SWARM_ORCHESTRATION_SYNTHESIS_TASK_ID = '__swarm_orchestration_synthesis__';
@@ -266,7 +265,8 @@ class OrchestratorService {
     
     // Initialize swarm
     swarmStore.startSwarm(sessionId, userRequest);
-    useAppStore.getState().openFile(SWARM_ORCHESTRATION_TAB_ID);
+    // Swarm tasks surface as canvas windows; add a Mission Control panel for controls.
+    useAgentWindowStore.getState().ensurePanelWindow(sessionId, 'mission', 'Mission Control');
     
     try {
       // CRITICAL: Initialize chat DB for the correct project FIRST
@@ -345,7 +345,6 @@ class OrchestratorService {
         await chatDb.updateSwarmStatus(sessionId, 'failed');
       } catch { /* best-effort — DB may already be unreachable */ }
       swarmStore.resetSwarm();
-      useAppStore.getState().closeFile(SWARM_ORCHESTRATION_TAB_ID);
       // Normalize to Error so callers always get a .message
       if (error instanceof Error) throw error;
       const msg = typeof error === 'string' ? error

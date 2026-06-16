@@ -1,7 +1,6 @@
 /** @vitest-environment happy-dom */
-import React from 'react';
 import { describe, expect, it, beforeEach, vi } from 'vitest';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
 import { useAppStore } from '../../stores/appStore';
 import { useSwarmStore } from '../../stores/swarmStore';
 import { SWARM_ORCHESTRATION_TAB_ID } from '../../constants/swarmOrchestrationTab';
@@ -19,15 +18,7 @@ vi.mock('@tauri-apps/api/event', () => ({
   listen: vi.fn(() => Promise.resolve(() => undefined)),
 }));
 
-vi.mock('../OrchestrationCockpit', () => ({
-  OrchestrationCockpit: () => <div data-testid="m-cockpit" />,
-}));
-
-vi.mock('../SwarmPanel/SwarmErrorBoundary', () => ({
-  SwarmErrorBoundary: ({ children }: { children: React.ReactNode }) => <>{children}</>,
-}));
-
-describe('CodeViewer cockpit tab', () => {
+describe('CodeViewer orchestration surface', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     useSwarmStore.getState().resetSwarm();
@@ -39,7 +30,9 @@ describe('CodeViewer cockpit tab', () => {
     });
   });
 
-  it('renders the cockpit as a closable virtual tab while swarm is active', () => {
+  it('no longer renders a dedicated orchestration cockpit editor tab', () => {
+    // Orchestration is now rendered as canvas windows; the swarm tab id must not
+    // produce a cockpit surface or a virtual editor tab in the code viewer.
     useAppStore.setState({
       openFiles: [SWARM_ORCHESTRATION_TAB_ID],
       activeFile: SWARM_ORCHESTRATION_TAB_ID,
@@ -48,10 +41,8 @@ describe('CodeViewer cockpit tab', () => {
 
     render(<CodeViewer />);
 
-    expect(screen.getByTestId('m-cockpit')).toBeTruthy();
-    fireEvent.click(screen.getByTitle('Close Orchestration Cockpit'));
-
-    expect(useAppStore.getState().openFiles).not.toContain(SWARM_ORCHESTRATION_TAB_ID);
-    expect(useAppStore.getState().activeFile).toBeNull();
+    expect(screen.queryByTestId('m-cockpit')).toBeNull();
+    expect(screen.queryByText('Orchestration Cockpit')).toBeNull();
+    expect(screen.queryByTitle('Close Orchestration Cockpit')).toBeNull();
   });
 });
