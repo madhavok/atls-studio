@@ -90,7 +90,19 @@ export const AgentChatSurface = memo(function AgentChatSurface({ window, showCon
     let cancelled = false;
     void chatDb.loadFullSession(window.sessionId).then((result) => {
       if (cancelled || !result) return;
-      hydrateRuntime(window.windowId, toRuntimeMessages(result.messages));
+      const usage = result.session.context_usage;
+      hydrateRuntime(
+        window.windowId,
+        toRuntimeMessages(result.messages),
+        usage
+          ? {
+              inputTokens: usage.input_tokens,
+              outputTokens: usage.output_tokens,
+              totalTokens: usage.total_tokens,
+              costCents: usage.cost_cents ?? 0,
+            }
+          : undefined,
+      );
     }).catch(() => undefined);
     return () => {
       cancelled = true;

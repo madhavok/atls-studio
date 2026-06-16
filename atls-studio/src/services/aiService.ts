@@ -2607,13 +2607,17 @@ async function streamChatViaTauri(
           : (config.provider === 'google' || config.provider === 'vertex' ? 1000000 : 200000);
         const displayIn = totalInputTokens + roundInputTokens;
         const displayOut = totalOutputTokens + roundOutputTokens;
+        // Main chat: report cumulative chat cost so contextUsage.costCents stays a
+        // running total across rounds/turns. Concurrent grid runs own their own
+        // per-window telemetry in aiService and ignore this callback.
+        const cumulativeChatCostCents = useCostStore.getState().chatCostCents;
         safeCallbacks.onUsageUpdate({
           inputTokens: displayIn,
           outputTokens: displayOut,
           totalTokens: displayIn + displayOut,
           maxTokens,
           percentage: Math.min(100, ((displayIn + displayOut) / maxTokens) * 100),
-          costCents: roundCostCents,
+          costCents: concurrent ? roundCostCents : cumulativeChatCostCents,
         });
         // Token accuracy telemetry: compare provider-reported input with our estimate
         const estimatedInput = estimateHistoryTokens(conversationHistory) + countTokensSync(dynamicContextBlock);

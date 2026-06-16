@@ -22,6 +22,7 @@ import {
   persistGridAssistantTurn,
 } from '../services/agentGridMessagePersist';
 import { persistContextSession } from '../services/contextSessionPartition';
+import { chatDb } from '../services/chatDb';
 import { handleDelegateToolCall, handleSubAgentProgress } from '../services/agentDelegateBridge';
 import { summarizeChildResult } from '../services/delegationContext';
 import { notifyBackgroundWindowComplete } from '../services/agentWindowNotifications';
@@ -52,6 +53,17 @@ export function buildAgentWindowStreamCallbacks(ctx: {
   const runtimeStore = () => useAgentRuntimeStore.getState();
   const streamRefs = beginAgentWindowStreamRun(windowId);
   const toolCallsById = new Map<string, ToolCall>();
+
+  // Persist the window's accumulated telemetry (tokens + cost) to its session so
+  // it survives reload. aiService owns the in-memory accumulation; this snapshot
+  // mirrors the latest cumulative values into chat_db.context_usage.
+  const persistWindowTelemetry = (): void => {
+    const telemetry = runtimeStore().runtimesByWindow[windowId]?.telemetry;
+    if (!telemetry || !chatDb.isInitialized()) return;
+    void chatDb
+      .updateContextUsage(window.sessionId, telemetry.inputTokens, telemetry.outputTokens, telemetry.costCents)
+      .catch((error) => console.warn('[AgentWindowStream] telemetry persist failed:', error));
+  };
   let activeTextId: string | null = null;
   let activeReasoningId: string | null = null;
 
@@ -134,14 +146,11 @@ export function buildAgentWindowStreamCallbacks(ctx: {
       upsertToolSegment(streamRefs, updated);
       runtimeStore().addToolCall(windowId, updated);
     },
-    onUsageUpdate: (usage) => {
-      runtimeStore().updateTelemetry(windowId, {
-        inputTokens: usage.inputTokens,
-        outputTokens: usage.outputTokens,
-        totalTokens: usage.totalTokens,
-        costCents: usage.costCents ?? 0,
-      });
-    },
+    // No-op: cumulative tokens + cost per window are owned by aiService's
+    // concurrent end-of-round accumulation. Writing here would overwrite that
+    // total with per-invocation/per-round values, which reset to zero on each
+    // new user turn and previously dropped prior-turn cost/tokens.
+    onUsageUpdate: () => {},
     onSubagentProgress: (stepId, progress) => {
       runtimeStore().pushSubagentProgress(windowId, stepId, progress);
       handleSubAgentProgress(window.parentSessionId, stepId, progress);
@@ -151,6 +160,7 @@ export function buildAgentWindowStreamCallbacks(ctx: {
       const controller = runtimeStore().runtimesByWindow[windowId]?.abortController;
       runtimeStore().finishRun(windowId, controller?.signal.aborted ? 'cancelled' : 'failed', error.message);
       useAgentWindowStore.getState().setWindowStatus(windowId, controller?.signal.aborted ? 'paused' : 'failed');
+      persistWindowTelemetry();
       endAgentWindowStreamRun(windowId);
     },
     onDone: () => {
@@ -186,6 +196,7 @@ export function buildAgentWindowStreamCallbacks(ctx: {
         : (fullResponseRef.current.trim() || hadToolActivity) ? 'completed' : 'failed';
       runtimeStore().updateTelemetry(windowId, { latencyMs: Date.now() - startedAt });
       runtimeStore().finishRun(windowId, finalStatus);
+      persistWindowTelemetry();
       endAgentWindowStreamRun(windowId);
       useAgentWindowStore.getState().setWindowStatus(
         windowId,

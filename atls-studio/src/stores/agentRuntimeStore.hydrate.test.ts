@@ -30,4 +30,47 @@ describe('agentRuntimeStore hydrateRuntime', () => {
     expect(hydrated?.messages[0]?.role).toBe('user');
     expect(runtime.windowId).toBe('delegate-1');
   });
+
+  it('restores persisted cost and token telemetry on hydrate', () => {
+    useAgentRuntimeStore.getState().ensureRuntime({
+      windowId: 'delegate-2',
+      sessionId: 'session-2',
+      parentSessionId: 'parent-2',
+      role: 'coder',
+    });
+
+    useAgentRuntimeStore.getState().hydrateRuntime(
+      'delegate-2',
+      [
+        { id: 'u1', role: 'user', content: 'Build it', timestamp: new Date() },
+        { id: 'a1', role: 'assistant', content: 'Done.', timestamp: new Date() },
+      ],
+      { inputTokens: 1200, outputTokens: 800, totalTokens: 2000, costCents: 42 },
+    );
+
+    const telemetry = useAgentRuntimeStore.getState().runtimesByWindow['delegate-2']?.telemetry;
+    expect(telemetry?.costCents).toBe(42);
+    expect(telemetry?.inputTokens).toBe(1200);
+    expect(telemetry?.outputTokens).toBe(800);
+    expect(telemetry?.totalTokens).toBe(2000);
+    expect(telemetry?.rounds).toBe(1);
+  });
+
+  it('leaves telemetry at defaults when no persisted usage is provided', () => {
+    useAgentRuntimeStore.getState().ensureRuntime({
+      windowId: 'delegate-3',
+      sessionId: 'session-3',
+      parentSessionId: 'parent-3',
+      role: 'coder',
+    });
+
+    useAgentRuntimeStore.getState().hydrateRuntime('delegate-3', [
+      { id: 'u1', role: 'user', content: 'Hello', timestamp: new Date() },
+      { id: 'a1', role: 'assistant', content: 'Hi.', timestamp: new Date() },
+    ]);
+
+    const telemetry = useAgentRuntimeStore.getState().runtimesByWindow['delegate-3']?.telemetry;
+    expect(telemetry?.costCents).toBe(0);
+    expect(telemetry?.totalTokens).toBe(0);
+  });
 });

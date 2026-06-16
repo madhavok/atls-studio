@@ -70,7 +70,11 @@ interface AgentRuntimeState {
   parentEventsBySession: Record<string, ParentAgentEvent[]>;
 
   ensureRuntime: (input: { windowId: string; sessionId: string; parentSessionId: string; role?: string; title?: string }) => AgentRuntime;
-  hydrateRuntime: (windowId: string, messages: AgentRuntimeMessage[]) => void;
+  hydrateRuntime: (
+    windowId: string,
+    messages: AgentRuntimeMessage[],
+    persistedUsage?: { inputTokens: number; outputTokens: number; totalTokens: number; costCents: number },
+  ) => void;
   setDraft: (windowId: string, draft: string) => void;
   appendMessage: (windowId: string, message: Omit<AgentRuntimeMessage, 'id' | 'timestamp'> & { id?: string; timestamp?: Date }) => AgentRuntimeMessage | null;
   replaceLastAssistantMessage: (windowId: string, content: string) => void;
@@ -157,11 +161,13 @@ export const useAgentRuntimeStore = create<AgentRuntimeState>((set, get) => ({
     return runtime;
   },
 
-  hydrateRuntime: (windowId, messages) => set((state) => {
+  hydrateRuntime: (windowId, messages, persistedUsage) => set((state) => {
     const runtime = state.runtimesByWindow[windowId];
     if (!runtime || messages.length === 0) return {};
     const hasPersistedContent = runtime.messages.some((message) => message.role === 'user' || message.role === 'assistant');
     if (hasPersistedContent) return {};
+    const inputTokens = persistedUsage?.inputTokens ?? runtime.telemetry.inputTokens;
+    const outputTokens = persistedUsage?.outputTokens ?? runtime.telemetry.outputTokens;
     return {
       runtimesByWindow: {
         ...state.runtimesByWindow,
@@ -170,6 +176,10 @@ export const useAgentRuntimeStore = create<AgentRuntimeState>((set, get) => ({
           messages,
           telemetry: {
             ...runtime.telemetry,
+            inputTokens,
+            outputTokens,
+            totalTokens: persistedUsage?.totalTokens ?? (inputTokens + outputTokens),
+            costCents: persistedUsage?.costCents ?? runtime.telemetry.costCents,
             rounds: messages.filter((message) => message.role === 'assistant').length,
           },
           updatedAt: new Date(),

@@ -4,7 +4,7 @@ import type { RoundSnapshot } from '../../stores/roundHistoryStore';
 import type { SwarmStats, SwarmTask } from '../../stores/swarmStore';
 import type { AgentWindow } from '../../stores/agentWindowStore';
 import type { AgentRuntime, ParentAgentEvent } from '../../stores/agentRuntimeStore';
-import { formatCost } from '../../stores/costStore';
+import { formatCost, useCostStore } from '../../stores/costStore';
 import { buildMissionTelemetry, formatCompactNumber } from '../../utils/multiagentTelemetry';
 import { ContextMetrics } from '../AiChat/ContextMetrics';
 
@@ -111,6 +111,9 @@ export const ChatTelemetryPane = memo(function ChatTelemetryPane({
     : undefined;
   const isLiveSession = Boolean(selectedWindow && selectedWindow.sessionId === currentSessionId);
   const selectedRuntime = selectedWindow ? runtimesByWindow[selectedWindow.windowId] : undefined;
+  // Authoritative running total for the active main-chat session (avoids the
+  // throttled contextUsage snapshot lagging behind costStore).
+  const liveChatCostCents = useCostStore((state) => state.chatCostCents);
   const selectedTokens = selectedRuntime
     ? selectedRuntime.telemetry.totalTokens
     : isLiveSession
@@ -119,7 +122,7 @@ export const ChatTelemetryPane = memo(function ChatTelemetryPane({
   const selectedCost = selectedRuntime
     ? selectedRuntime.telemetry.costCents
     : isLiveSession
-    ? contextUsage.costCents ?? 0
+    ? liveChatCostCents
     : selectedSession?.contextUsage?.costCents ?? 0;
   const selectedRounds = selectedRuntime
     ? selectedRuntime.telemetry.rounds

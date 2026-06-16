@@ -63,6 +63,43 @@ describe('buildAgentWindowStreamCallbacks', () => {
     expect(runtime.toolCalls[0]?.status).toBe('completed');
   });
 
+  it('does not overwrite aiService-accumulated telemetry via a usage callback', () => {
+    const window = useAgentWindowStore.getState().windowsByParent['session-1'][0];
+    // Simulate aiService having accumulated cumulative cost/tokens for the window.
+    useAgentRuntimeStore.getState().updateTelemetry(window.windowId, {
+      inputTokens: 5000,
+      outputTokens: 3000,
+      totalTokens: 8000,
+      costCents: 123,
+    });
+
+    const callbacks = buildAgentWindowStreamCallbacks({
+      window,
+      windowId: window.windowId,
+      startedAt: Date.now(),
+      fullResponseRef: { current: '' },
+      runErroredRef: { current: false },
+      persistMessage: () => {},
+    });
+
+    // The grid callback must not own usage telemetry; aiService is the single
+    // source of truth. A per-round/per-invocation overwrite here previously
+    // dropped prior-turn cost on every new user message. Invoking onUsageUpdate
+    // with per-round values must leave the accumulated total untouched.
+    callbacks.onUsageUpdate({
+      inputTokens: 10,
+      outputTokens: 5,
+      totalTokens: 15,
+      maxTokens: 200000,
+      percentage: 0,
+      costCents: 1,
+    });
+
+    const telemetry = useAgentRuntimeStore.getState().runtimesByWindow[window.windowId]?.telemetry;
+    expect(telemetry?.costCents).toBe(123);
+    expect(telemetry?.totalTokens).toBe(8000);
+  });
+
   it('records subagent progress on the parent window runtime', () => {
     const window = useAgentWindowStore.getState().windowsByParent['session-1'][0];
     const callbacks = buildAgentWindowStreamCallbacks({
