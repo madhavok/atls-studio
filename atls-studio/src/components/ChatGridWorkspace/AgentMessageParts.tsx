@@ -4,12 +4,13 @@ import { MarkdownMessage } from '../AiChat/MarkdownMessage';
 import { ReasoningBlock } from '../AiChat/ReasoningBlock';
 import { AgentToolTrace } from './AgentToolTrace';
 import { GridDelegateToolCard, isDelegateToolCall } from './GridDelegateToolCard';
+import { RoundHeader } from './AgentStreamingSegments';
 
-function PartBlock({ part, index }: { part: MessagePart; index: number }) {
+function PartBlock({ part }: { part: MessagePart }) {
   if (part.type === 'text') {
     if (!part.content.trim()) return null;
     return (
-      <div key={`text-${index}`} className="markdown-message text-xs leading-relaxed text-studio-text [overflow-wrap:anywhere]">
+      <div className="markdown-message text-xs leading-relaxed text-studio-text [overflow-wrap:anywhere]">
         <MarkdownMessage content={part.content} />
       </div>
     );
@@ -17,35 +18,52 @@ function PartBlock({ part, index }: { part: MessagePart; index: number }) {
   if (part.type === 'reasoning') {
     if (!part.content.trim()) return null;
     return (
-      <div key={`reasoning-${index}`} className="rounded-lg border border-violet-400/20 bg-violet-500/6 p-2">
+      <div className="rounded-lg border border-violet-400/20 bg-violet-500/[0.06] p-2">
         <ReasoningBlock content={part.content} isStreaming={false} />
       </div>
     );
   }
   if (part.type === 'tool') {
-    return (
-      <div key={`tool-${part.toolCall.id}`}>
-        {isDelegateToolCall(part.toolCall.name)
-          ? <GridDelegateToolCard toolCall={part.toolCall} />
-          : <AgentToolTrace toolCalls={[part.toolCall]} />}
-      </div>
-    );
-  }
-  if (part.type === 'step-boundary') {
-    return (
-      <div key={`step-${index}`} className="my-1 border-t border-dashed border-studio-border/50 pt-1 font-mono text-[9px] uppercase tracking-[0.16em] text-studio-muted">
-        next round
-      </div>
-    );
+    return isDelegateToolCall(part.toolCall.name)
+      ? <GridDelegateToolCard toolCall={part.toolCall} />
+      : <AgentToolTrace toolCalls={[part.toolCall]} />;
   }
   if (part.type === 'error') {
     return (
-      <div key={`error-${index}`} className="rounded border border-red-400/30 bg-red-500/10 px-2 py-1 text-[10px] text-red-200">
+      <div className="rounded border border-red-400/30 bg-red-500/10 px-2 py-1 text-[10px] text-red-200">
         {part.errorText}
       </div>
     );
   }
   return null;
+}
+
+interface PartRoundGroup {
+  round: number;
+  parts: MessagePart[];
+}
+
+/**
+ * Split finalized parts into rounds at each `step-boundary` marker. Persisted
+ * parts carry no `round` field, so the boundary count is the canonical round
+ * index. The header replaces the old dashed "next round" divider.
+ */
+function groupPartsByRound(parts: MessagePart[]): PartRoundGroup[] {
+  const groups: PartRoundGroup[] = [{ round: 0, parts: [] }];
+  for (const part of parts) {
+    if (part.type === 'step-boundary') {
+      groups.push({ round: groups.length, parts: [] });
+      continue;
+    }
+    groups[groups.length - 1].parts.push(part);
+  }
+  return groups.filter((group) => group.parts.length > 0);
+}
+
+/** Stable per-part key within a round group. Tools key on id; others on round+index. */
+function partKey(part: MessagePart, round: number, index: number): string {
+  if (part.type === 'tool') return `tool-${part.toolCall.id}`;
+  return `${part.type}-${round}-${index}`;
 }
 
 export const AgentMessageParts = memo(function AgentMessageParts({
@@ -68,10 +86,17 @@ export const AgentMessageParts = memo(function AgentMessageParts({
       </div>
     );
   }
+  const rounds = groupPartsByRound(resolvedParts);
+  const showHeaders = rounds.length > 1;
   return (
     <div className="space-y-2">
-      {resolvedParts.map((part, index) => (
-        <PartBlock key={`${part.type}-${index}`} part={part} index={index} />
+      {rounds.map((group) => (
+        <div key={`round-${group.round}`} className="space-y-2">
+          {showHeaders && <RoundHeader round={group.round} />}
+          {group.parts.map((part, index) => (
+            <PartBlock key={partKey(part, group.round, index)} part={part} />
+          ))}
+        </div>
       ))}
     </div>
   );

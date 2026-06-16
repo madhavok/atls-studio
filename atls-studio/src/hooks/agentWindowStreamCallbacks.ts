@@ -5,9 +5,11 @@ import { useAgentWindowStore } from '../stores/agentWindowStore';
 import type { StreamCallbacks } from '../services/aiService';
 import type { ToolCall } from '../stores/appStore';
 import {
+  advanceRound,
   appendReasoningToSegments,
   appendTextToSegments,
   closeBlockById,
+  stampSegment,
   upsertToolSegment,
 } from '../components/AiChat/streamingHelpers';
 import {
@@ -98,14 +100,15 @@ export function buildAgentWindowStreamCallbacks(ctx: {
       streamRefs.segmentsRevisionRef.current++;
     },
     onStepEnd: () => {
-      streamRefs.streamingSegmentsRef.current.push({ type: 'step-boundary' });
+      streamRefs.streamingSegmentsRef.current.push(stampSegment(streamRefs, { type: 'step-boundary' }));
+      advanceRound(streamRefs);
       streamRefs.segmentsRevisionRef.current++;
       void persistContextSession(window.sessionId, { toDb: true }).catch((error) => {
         console.warn('[AgentWindowStream] checkpoint persist failed:', error);
       });
     },
     onStreamError: (errorText) => {
-      streamRefs.streamingSegmentsRef.current.push({ type: 'error', errorText });
+      streamRefs.streamingSegmentsRef.current.push(stampSegment(streamRefs, { type: 'error', errorText }));
       streamRefs.segmentsRevisionRef.current++;
     },
     onToolCall: (toolCall) => {
@@ -232,7 +235,7 @@ export function buildAgentWindowStreamCallbacks(ctx: {
         if (idx >= 0) {
           (segments[idx] as { type: 'status'; message: string }).message = message;
         } else {
-          segments.push({ type: 'status', message });
+          segments.push(stampSegment(streamRefs, { type: 'status', message }));
         }
         streamRefs.segmentsRevisionRef.current++;
         runtimeStore().appendMessage(windowId, { role: 'system', content: message });

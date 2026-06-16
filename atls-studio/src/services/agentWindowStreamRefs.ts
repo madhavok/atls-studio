@@ -11,6 +11,8 @@ function createRefs(): StreamingRefs {
     seenToolCallIds: { current: new Set() },
     accumulatedSegmentsRef: { current: [] },
     isStreamingRef: { current: false },
+    seqRef: { current: 0 },
+    roundRef: { current: 0 },
   };
 }
 

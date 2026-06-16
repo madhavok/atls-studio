@@ -9,6 +9,8 @@ function makeRefs(segments: StreamingRefs['streamingSegmentsRef']['current']): S
     segmentsRevisionRef: { current: 0 },
     seenToolCallIds: { current: new Set() },
     isStreamingRef: { current: false },
+    seqRef: { current: 0 },
+    roundRef: { current: 0 },
   };
 }
 

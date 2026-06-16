@@ -110,6 +110,13 @@ export function extractFirstTextFromMessage(msg: Message): string {
 /** Maximum characters for auto-generated chat titles. */
 const TITLE_MAX_LENGTH = 50;
 
+/**
+ * Bounded ceiling for the live tool-call ledger. Raised from 20 so a long
+ * tool-loop round stays fully ordered in the trace instead of dropping its
+ * earliest calls; still capped to keep memory bounded.
+ */
+const MAX_TOOL_CALLS = 200;
+
 // Generate chat title from first user message (handles multimodal/segmented)
 export function generateTitle(messages: Message[]): string {
   // Find first user message with actual text content
@@ -1451,7 +1458,6 @@ export const useAppStore = create<AppState>((set) => ({
   addToolCall: (call) => {
     const id = call.id || crypto.randomUUID();
     set((state) => {
-      const MAX_TOOL_CALLS = 20;
       const existingCalls = state.toolCalls.length >= MAX_TOOL_CALLS
         ? state.toolCalls.slice(-(MAX_TOOL_CALLS - 1))
         : state.toolCalls;
@@ -1488,7 +1494,6 @@ export const useAppStore = create<AppState>((set) => ({
           )
         };
       }
-      const MAX_TOOL_CALLS = 20;
       const newCall: ToolCall = {
         ...call,
         id,

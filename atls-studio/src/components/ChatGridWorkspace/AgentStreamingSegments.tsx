@@ -15,11 +15,9 @@ function SegmentBlock({ segment, windowId }: { segment: StreamSegment; windowId:
   if (segment.type === 'text') {
     const content = cleanStreamingContent(segment.content);
     if (!content) return null;
+    const streaming = segment.state === 'streaming';
     return (
-      <div className="min-w-0 overflow-hidden rounded-lg border border-cyan-400/30 bg-cyan-500/8 p-2">
-        <div className="mb-1 font-mono text-[9px] uppercase tracking-[0.16em] text-cyan-300">
-          {segment.state === 'streaming' ? 'streaming' : 'response'}
-        </div>
+      <div className={`min-w-0 overflow-hidden rounded-lg ${streaming ? 'border-l-2 border-cyan-400/40 pl-2' : ''}`}>
         <div className="markdown-message text-xs leading-relaxed text-studio-text [overflow-wrap:anywhere]">
           <MarkdownMessage content={content} />
         </div>
@@ -30,7 +28,7 @@ function SegmentBlock({ segment, windowId }: { segment: StreamSegment; windowId:
   if (segment.type === 'reasoning') {
     if (!segment.content) return null;
     return (
-      <div className="min-w-0 overflow-hidden rounded-lg border border-violet-400/25 bg-violet-500/8 p-2">
+      <div className="min-w-0 overflow-hidden rounded-lg border border-violet-400/20 bg-violet-500/[0.06] p-2">
         <ReasoningBlock content={segment.content} isStreaming={segment.state === 'streaming'} />
       </div>
     );
@@ -70,6 +68,66 @@ function SegmentBlock({ segment, windowId }: { segment: StreamSegment; windowId:
   }
 
   return null;
+}
+
+interface RoundGroupData {
+  round: number;
+  segments: StreamSegment[];
+}
+
+/**
+ * Group ordered segments into contiguous tool-loop rounds using the `round`
+ * stamp. `step-boundary` markers are dropped — the round header replaces them,
+ * so we never render a divider and a header for the same boundary. Falls back
+ * to a single round-0 group for legacy segments without a `round` stamp.
+ */
+export function groupSegmentsByRound(segments: StreamSegment[]): RoundGroupData[] {
+  const groups: RoundGroupData[] = [];
+  for (const segment of segments) {
+    if (segment.type === 'step-boundary') continue;
+    const round = segment.round ?? 0;
+    const last = groups[groups.length - 1];
+    if (last && last.round === round) {
+      last.segments.push(segment);
+    } else {
+      groups.push({ round, segments: [segment] });
+    }
+  }
+  return groups.filter((group) => group.segments.length > 0);
+}
+
+export function RoundHeader({ round }: { round: number }) {
+  return (
+    <div className="flex items-center gap-2 pt-1 text-studio-muted">
+      <span className="font-mono text-[9px] uppercase tracking-[0.18em]">round {round + 1}</span>
+      <span className="h-px flex-1 bg-studio-border/40" />
+    </div>
+  );
+}
+
+function RoundGroup({
+  round,
+  showHeader,
+  segments,
+  windowId,
+}: {
+  round: number;
+  showHeader: boolean;
+  segments: StreamSegment[];
+  windowId: string;
+}) {
+  return (
+    <div className="space-y-2">
+      {showHeader && <RoundHeader round={round} />}
+      {segments.map((segment, index) => (
+        <SegmentBlock
+          key={segment.seq ?? `${segment.type}-${round}-${index}`}
+          segment={segment}
+          windowId={windowId}
+        />
+      ))}
+    </div>
+  );
 }
 
 export const AgentStreamingSegments = memo(function AgentStreamingSegments({
@@ -135,10 +193,18 @@ export const AgentStreamingSegments = memo(function AgentStreamingSegments({
   const hasSegments = segments.length > 0;
   if (!hasSegments && !fallbackText && !fallbackReasoning) return null;
 
+  const rounds = groupSegmentsByRound(segments);
+
   return (
     <div className="space-y-2" data-testid="agent-stream-segments">
-      {segments.map((segment, index) => (
-        <SegmentBlock key={`${segment.type}-${index}`} segment={segment} windowId={windowId} />
+      {rounds.map((group) => (
+        <RoundGroup
+          key={`round-${group.round}`}
+          round={group.round}
+          showHeader={rounds.length > 1}
+          segments={group.segments}
+          windowId={windowId}
+        />
       ))}
       {!hasSegments && fallbackReasoning && (
         <div className="min-w-0 overflow-hidden rounded-lg border border-violet-400/25 bg-violet-500/8 p-2">

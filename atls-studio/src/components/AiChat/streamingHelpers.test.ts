@@ -1,11 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import type { ToolCall } from '../../stores/appStore';
 import {
+  advanceRound,
   appendReasoningToSegments,
   appendTextToSegments,
   clearStreamingState,
   closeBlockById,
   resetStreamingState,
+  stampSegment,
   type StreamingRefs,
   upsertToolSegment,
 } from './streamingHelpers';
@@ -17,6 +19,8 @@ function makeRefs(): StreamingRefs {
     seenToolCallIds: { current: new Set() },
     accumulatedSegmentsRef: { current: [] },
     isStreamingRef: { current: false },
+    seqRef: { current: 0 },
+    roundRef: { current: 0 },
   };
 }
 
@@ -84,17 +88,56 @@ describe('streamingHelpers', () => {
     }
   });
 
+  it('stamps new segments with a monotonic seq and the current round', () => {
+    const refs = makeRefs();
+    appendTextToSegments(refs, 'a', 'b1');
+    advanceRound(refs);
+    appendReasoningToSegments(refs, 'r', 'think');
+    upsertToolSegment(refs, toolCall({ id: 'tc1', name: 'grep' }));
+
+    const [text, reasoning, tool] = refs.streamingSegmentsRef.current;
+    expect(text.seq).toBe(0);
+    expect(text.round).toBe(0);
+    expect(reasoning.seq).toBe(1);
+    expect(reasoning.round).toBe(1);
+    expect(tool.seq).toBe(2);
+    expect(tool.round).toBe(1);
+  });
+
+  it('appending to an existing block does not consume a new seq', () => {
+    const refs = makeRefs();
+    appendTextToSegments(refs, 'a', 'b1');
+    appendTextToSegments(refs, 'b', 'b1');
+    expect(refs.streamingSegmentsRef.current).toHaveLength(1);
+    expect(refs.streamingSegmentsRef.current[0].seq).toBe(0);
+    expect(refs.seqRef.current).toBe(1);
+  });
+
+  it('stampSegment and advanceRound assign stable, increasing ordering metadata', () => {
+    const refs = makeRefs();
+    const first = stampSegment(refs, { type: 'step-boundary' });
+    advanceRound(refs);
+    const second = stampSegment(refs, { type: 'error', errorText: 'boom' });
+    expect(first.seq).toBe(0);
+    expect(first.round).toBe(0);
+    expect(second.seq).toBe(1);
+    expect(second.round).toBe(1);
+  });
+
   it('resetStreamingState clears segments and sets streaming flag', () => {
     const refs = makeRefs();
     appendTextToSegments(refs, 'x');
     refs.accumulatedSegmentsRef.current = [{ type: 'text', content: 'acc' }];
     refs.seenToolCallIds.current.add('a');
+    advanceRound(refs);
     resetStreamingState(refs);
     expect(refs.streamingSegmentsRef.current).toEqual([]);
     expect(refs.accumulatedSegmentsRef.current).toEqual([]);
     expect(refs.seenToolCallIds.current.size).toBe(0);
     expect(refs.isStreamingRef.current).toBe(true);
     expect(refs.segmentsRevisionRef.current).toBeGreaterThan(0);
+    expect(refs.seqRef.current).toBe(0);
+    expect(refs.roundRef.current).toBe(0);
   });
 
   it('clearStreamingState clears segments and ends streaming', () => {

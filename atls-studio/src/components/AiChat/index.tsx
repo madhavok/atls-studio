@@ -2093,6 +2093,9 @@ export function AiChat() {
   // Ordered archive of segments from prior tool-loop rounds (append-only activity log)
   const accumulatedSegmentsRef = useRef<StreamSegment[]>([]);
   const isStreamingRef = useRef(false);
+  // Monotonic per-run sequence + current round, for stable ordering/keys and grouping.
+  const seqRef = useRef(0);
+  const roundRef = useRef(0);
   const mountedRef = useRef(true); // Track if component is mounted
   const updateTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Track seen tool call IDs to know when a new one starts
@@ -2751,7 +2754,7 @@ export function AiChat() {
       clearToolCalls();
       
       // Reset streaming segments and mark as streaming
-      const streamRefs: StreamingRefs = { streamingSegmentsRef, segmentsRevisionRef, seenToolCallIds, accumulatedSegmentsRef, isStreamingRef };
+      const streamRefs: StreamingRefs = { streamingSegmentsRef, segmentsRevisionRef, seenToolCallIds, accumulatedSegmentsRef, isStreamingRef, seqRef, roundRef };
       resetStreamingState(streamRefs);
       
       // Active text/reasoning block IDs for the typed stream protocol
@@ -3155,7 +3158,7 @@ export function AiChat() {
     const messageToolCalls: Map<string, MessageToolCall> = new Map();
     clearToolCalls();
     // Reset streaming segments and mark as streaming
-    const streamRefs: StreamingRefs = { streamingSegmentsRef, segmentsRevisionRef, seenToolCallIds, accumulatedSegmentsRef, isStreamingRef };
+    const streamRefs: StreamingRefs = { streamingSegmentsRef, segmentsRevisionRef, seenToolCallIds, accumulatedSegmentsRef, isStreamingRef, seqRef, roundRef };
     resetStreamingState(streamRefs);
 
     // Active text/reasoning block IDs for the typed stream protocol

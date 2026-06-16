@@ -13,6 +13,28 @@ export interface StreamingRefs {
   /** Ordered archive of segments from prior tool-loop rounds (append-only). */
   accumulatedSegmentsRef: React.MutableRefObject<StreamSegment[]>;
   isStreamingRef: React.MutableRefObject<boolean>;
+  /** Monotonic per-run sequence counter; the canonical ordering + React key. */
+  seqRef: React.MutableRefObject<number>;
+  /** Current 0-based tool-loop round, for visual grouping of segments. */
+  roundRef: React.MutableRefObject<number>;
+}
+
+/** Next monotonic sequence id for this run (never reused, never reset mid-run). */
+export function nextSeq(refs: StreamingRefs): number {
+  return refs.seqRef.current++;
+}
+
+/** Stamp a freshly-created segment with monotonic `seq` and current `round`. */
+export function stampSegment<T extends StreamSegment>(refs: StreamingRefs, segment: T): T {
+  segment.seq = refs.seqRef.current++;
+  segment.round = refs.roundRef.current;
+  return segment;
+}
+
+/** Advance to the next tool-loop round. Returns the new round index. */
+export function advanceRound(refs: StreamingRefs): number {
+  refs.roundRef.current += 1;
+  return refs.roundRef.current;
 }
 
 /**
@@ -29,7 +51,7 @@ export function appendTextToSegments(
   if (lastSegment && lastSegment.type === 'text' && (!blockId || lastSegment.id === blockId)) {
     lastSegment.content += text;
   } else {
-    segments.push({ type: 'text', id: blockId, content: text, state: 'streaming' });
+    segments.push(stampSegment(refs, { type: 'text', id: blockId, content: text, state: 'streaming' }));
   }
   refs.segmentsRevisionRef.current++;
 }
@@ -49,7 +71,7 @@ export function appendReasoningToSegments(
     lastSegment.content += text;
     if (!lastSegment.id && blockId) lastSegment.id = blockId;
   } else {
-    segments.push({ type: 'reasoning', id: blockId, content: text, state: 'streaming' });
+    segments.push(stampSegment(refs, { type: 'reasoning', id: blockId, content: text, state: 'streaming' }));
   }
   refs.segmentsRevisionRef.current++;
 }
@@ -84,7 +106,7 @@ export function upsertToolSegment(
 
   if (!refs.seenToolCallIds.current.has(toolCall.id)) {
     refs.seenToolCallIds.current.add(toolCall.id);
-    segments.push({ type: 'tool', toolCall });
+    segments.push(stampSegment(refs, { type: 'tool', toolCall }));
   } else {
     // Search live segments first, then archived segments (tool may have been
     // moved to the archive by onClear before a late status update arrived).
@@ -119,6 +141,8 @@ export function resetStreamingState(refs: StreamingRefs): void {
   refs.accumulatedSegmentsRef.current = [];
   refs.seenToolCallIds.current.clear();
   refs.isStreamingRef.current = true;
+  refs.seqRef.current = 0;
+  refs.roundRef.current = 0;
 }
 
 /**

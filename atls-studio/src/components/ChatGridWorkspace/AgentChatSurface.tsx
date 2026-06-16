@@ -18,6 +18,26 @@ interface AgentChatSurfaceProps {
   onOpenOptions?: () => void;
 }
 
+/** Local wall-clock label for a message (HH:MM). Display-only; never sent to the model. */
+function formatClockTime(value: Date | string | number | undefined): string {
+  if (value === undefined) return '';
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  return date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+}
+
+const ROLE_BUBBLE_CLASS: Record<AgentRuntimeMessage['role'], string> = {
+  user: 'border-studio-title/30 bg-studio-title/[0.07] ring-1 ring-inset ring-studio-title/10',
+  system: 'border-amber-400/25 bg-amber-500/[0.07] text-amber-100/90',
+  assistant: 'border-studio-border/50 bg-studio-surface/40',
+};
+
+const ROLE_CHIP_CLASS: Record<AgentRuntimeMessage['role'], string> = {
+  user: 'text-studio-title',
+  system: 'text-amber-300/90',
+  assistant: 'text-studio-accent-bright/90',
+};
+
 function toRuntimeMessages(messages: Message[]): AgentRuntimeMessage[] {
   return messages.map((message) => ({
     id: message.id,
@@ -152,20 +172,16 @@ export const AgentChatSurface = memo(function AgentChatSurface({ window, showCon
                 && index === safeRuntime.messages.length - 1
                 && message.content === safeRuntime.streamingText;
               if (isStreamingDuplicate) return null;
+              const clock = formatClockTime(message.timestamp);
               return (
               <div
                 key={message.id}
-                className={`min-w-0 overflow-hidden rounded-lg border p-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)] ${
-                  message.role === 'user'
-                    ? 'border-studio-title/35 bg-studio-title/10'
-                    : message.role === 'system'
-                      ? 'border-amber-400/25 bg-amber-500/8 text-amber-100/90'
-                      : 'border-studio-border/50 bg-studio-bg/45'
-                }`}
+                className={`min-w-0 overflow-hidden rounded-xl border px-2.5 py-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)] ${ROLE_BUBBLE_CLASS[message.role]}`}
               >
-                <div className="mb-1 flex items-center gap-2 font-mono text-[9px] uppercase tracking-[0.16em] text-studio-muted">
-                  <span>{message.role}</span>
-                  {message.toolName && <span className="truncate text-studio-title">{message.toolName}</span>}
+                <div className="mb-1 flex items-center gap-2 font-mono text-[9px] uppercase tracking-[0.16em]">
+                  <span className={ROLE_CHIP_CLASS[message.role]}>{message.role}</span>
+                  {message.toolName && <span className="truncate text-studio-muted">{message.toolName}</span>}
+                  {clock && <span className="ml-auto shrink-0 normal-case tracking-normal text-studio-muted/70 tabular-nums">{clock}</span>}
                 </div>
                 <div className={
                   message.role === 'assistant' && (message.parts?.length || message.segments?.length)
@@ -196,13 +212,21 @@ export const AgentChatSurface = memo(function AgentChatSurface({ window, showCon
                 fallbackText={safeRuntime.streamingText}
                 fallbackReasoning={safeRuntime.streamingReasoning}
               />
-            ) : safeRuntime.proxyActive && safeRuntime.streamingText ? (
-              <div className="min-w-0 overflow-hidden rounded-lg border border-studio-border/50 bg-studio-bg/45 p-2 text-xs leading-relaxed text-studio-text [overflow-wrap:anywhere]">
-                {safeRuntime.streamingText}
-              </div>
-            ) : (
+            ) : safeRuntime.proxyActive ? (
+              <>
+                {safeRuntime.streamingText && (
+                  <div className="min-w-0 overflow-hidden rounded-xl border border-studio-border/50 bg-studio-surface/40 px-2.5 py-2 text-xs leading-relaxed text-studio-text [overflow-wrap:anywhere]">
+                    {safeRuntime.streamingText}
+                  </div>
+                )}
+                <AgentToolTrace toolCalls={safeRuntime.toolCalls} windowId={window.windowId} />
+              </>
+            ) : (safeRuntime.status === 'failed' || safeRuntime.status === 'cancelled') && safeRuntime.toolCalls.length > 0 ? (
+              // Failed/cancelled runs never finalize their parts into the transcript,
+              // so surface the partial tool trace here for diagnostics. Completed/idle
+              // runs already render their tools inside the finalized message above.
               <AgentToolTrace toolCalls={safeRuntime.toolCalls} windowId={window.windowId} />
-            )}
+            ) : null}
             <div ref={transcriptEndRef} />
           </div>
         )}

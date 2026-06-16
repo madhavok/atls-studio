@@ -26,7 +26,20 @@ function statusClass(status: MessageToolCall['status']): string {
     case 'failed':
       return 'border-red-400/35 bg-red-500/10 text-red-200';
     default:
-      return 'border-studio-border/50 bg-studio-bg/40 text-studio-muted';
+      return 'border-studio-border/50 bg-studio-surface/30 text-studio-muted';
+  }
+}
+
+function statusDotClass(status: MessageToolCall['status']): string {
+  switch (status) {
+    case 'running':
+      return 'bg-cyan-300 animate-pulse';
+    case 'completed':
+      return 'bg-emerald-300';
+    case 'failed':
+      return 'bg-red-300';
+    default:
+      return 'bg-studio-muted';
   }
 }
 
@@ -61,17 +74,18 @@ export function AgentToolTrace({ toolCalls, windowId }: { toolCalls: MessageTool
         ) : (
         <div
           key={toolCall.id}
-          className={`rounded border px-2 py-1 font-mono text-[10px] ${statusClass(toolCall.status)}`}
+          className={`rounded-lg border px-2 py-1 font-mono text-[10px] ${statusClass(toolCall.status)}`}
         >
-          <div className="flex items-center justify-between gap-2">
-            <span className="truncate">{toolCall.name}</span>
-            <span className="shrink-0 uppercase tracking-wide opacity-80">{toolCall.status}</span>
+          <div className="flex items-center gap-2">
+            <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${statusDotClass(toolCall.status)}`} />
+            <span className="truncate font-medium">{toolCall.name}</span>
+            <span className="ml-auto shrink-0 uppercase tracking-wide opacity-70">{toolCall.status}</span>
           </div>
           {summarizeArgs(toolCall.args) && (
-            <div className="mt-0.5 truncate opacity-80">{summarizeArgs(toolCall.args)}</div>
+            <div className="mt-0.5 truncate pl-3.5 opacity-80">{summarizeArgs(toolCall.args)}</div>
           )}
           {toolCall.result && (
-            <div className="mt-1 max-h-16 overflow-hidden whitespace-pre-wrap break-words opacity-75 [overflow-wrap:anywhere]">
+            <div className="mt-1 max-h-16 overflow-hidden whitespace-pre-wrap break-words pl-3.5 opacity-75 [overflow-wrap:anywhere]">
               {toolCall.result.slice(0, 240)}
             </div>
           )}
