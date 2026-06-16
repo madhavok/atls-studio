@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { listen } from '@tauri-apps/api/event';
 import { usePanelResize } from './hooks/usePanelResize';
 import { FileExplorer } from './components/FileExplorer';
+import { ProjectChatSidebar } from './components/ProjectChatSidebar';
 import { CodeViewer } from './components/CodeViewer';
 import { AtlsPanel } from './components/AtlsPanel';
 import { ChatGridWorkspace } from './components/ChatGridWorkspace';
@@ -37,6 +38,9 @@ import { resetStaticPromptCache } from './services/aiService';
 function App() {
   const { 
     explorerCollapsed,
+    toggleExplorerCollapsed,
+    leftPanelView,
+    setLeftPanelView,
     terminalCollapsed,
     projectPath,
     activeRoot,
@@ -440,12 +444,57 @@ function App() {
 
       {/* Main Content */}
       <div className="flex-1 flex overflow-hidden" data-testid="main-layout">
-        {/* Left Panel - File Explorer */}
+        {/* Left Panel - Chat orchestrator (default) or File Explorer */}
         <div 
           className={`shrink-0 bg-studio-surface border-r border-studio-border overflow-hidden ${isResizing ? '' : 'transition-[width] duration-150'}`}
           style={{ width: explorerCollapsed ? 40 : leftWidth }}
         >
-          <FileExplorer />
+          {explorerCollapsed ? (
+            <div className="h-full flex">
+              <div className="flex-1" />
+              <button
+                onClick={toggleExplorerCollapsed}
+                className="flex-shrink-0 w-8 flex items-center justify-center bg-studio-surface border-l border-studio-border rounded-l-md hover:bg-studio-border transition-colors text-studio-muted hover:text-studio-text self-center"
+                title={`Expand ${leftPanelView === 'chats' ? 'Chats' : 'Explorer'}`}
+              >
+                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                </svg>
+              </button>
+            </div>
+          ) : (
+            <div className="h-full flex flex-col">
+              <div className="flex items-center gap-1 px-2 pt-2" role="tablist" aria-label="Left panel view">
+                <button
+                  role="tab"
+                  aria-selected={leftPanelView === 'chats'}
+                  onClick={() => setLeftPanelView('chats')}
+                  className={`flex-1 rounded px-2 py-1 text-xs font-medium transition-colors ${
+                    leftPanelView === 'chats'
+                      ? 'bg-studio-accent/15 text-studio-title'
+                      : 'text-studio-muted hover:text-studio-text'
+                  }`}
+                >
+                  Chats
+                </button>
+                <button
+                  role="tab"
+                  aria-selected={leftPanelView === 'explorer'}
+                  onClick={() => setLeftPanelView('explorer')}
+                  className={`flex-1 rounded px-2 py-1 text-xs font-medium transition-colors ${
+                    leftPanelView === 'explorer'
+                      ? 'bg-studio-accent/15 text-studio-title'
+                      : 'text-studio-muted hover:text-studio-text'
+                  }`}
+                >
+                  Explorer
+                </button>
+              </div>
+              <div className="flex-1 min-h-0 overflow-hidden">
+                {leftPanelView === 'chats' ? <ProjectChatSidebar /> : <FileExplorer />}
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Left Resizer */}

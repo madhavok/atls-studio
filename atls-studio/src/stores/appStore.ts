@@ -16,6 +16,27 @@ import type { SpinMode } from '../services/spinDetector';
 
 export type { ProjectHistoryEntry };
 
+export type LeftPanelView = 'chats' | 'explorer';
+
+const LEFT_PANEL_VIEW_KEY = 'atls-left-panel-view';
+
+function loadLeftPanelView(): LeftPanelView {
+  try {
+    const v = localStorage.getItem(LEFT_PANEL_VIEW_KEY);
+    return v === 'explorer' ? 'explorer' : 'chats';
+  } catch {
+    return 'chats';
+  }
+}
+
+function persistLeftPanelView(view: LeftPanelView): void {
+  try {
+    localStorage.setItem(LEFT_PANEL_VIEW_KEY, view);
+  } catch {
+    // Ignore storage failures (private mode / quota); state still updates in-memory.
+  }
+}
+
 export interface RestoreUndoEntry {
   messages: Message[];
   memorySnapshot: PersistedMemorySnapshot;
@@ -1039,6 +1060,9 @@ interface AppState {
   terminalCollapsed: boolean;
   toggleExplorerCollapsed: () => void;
   toggleTerminalCollapsed: () => void;
+  /** Which surface the left panel shows: chat orchestrator (default) or file explorer. */
+  leftPanelView: LeftPanelView;
+  setLeftPanelView: (view: LeftPanelView) => void;
 
   // Clipboard
   clipboardPaths: string[];
@@ -1876,6 +1900,11 @@ export const useAppStore = create<AppState>((set) => ({
   terminalCollapsed: false,
   toggleExplorerCollapsed: () => set((s) => ({ explorerCollapsed: !s.explorerCollapsed })),
   toggleTerminalCollapsed: () => set((s) => ({ terminalCollapsed: !s.terminalCollapsed })),
+  leftPanelView: loadLeftPanelView(),
+  setLeftPanelView: (view) => {
+    persistLeftPanelView(view);
+    set({ leftPanelView: view });
+  },
   
   // Toast notifications
   toasts: [],
