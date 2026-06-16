@@ -6,6 +6,7 @@ import type { AgentWindow } from '../../stores/agentWindowStore';
 import type { AgentRuntime, ParentAgentEvent } from '../../stores/agentRuntimeStore';
 import { formatCost } from '../../stores/costStore';
 import { buildMissionTelemetry, formatCompactNumber } from '../../utils/multiagentTelemetry';
+import { ContextMetrics } from '../AiChat/ContextMetrics';
 
 interface ChatTelemetryPaneProps {
   selectedWindow: AgentWindow | undefined;
@@ -198,6 +199,15 @@ export const ChatTelemetryPane = memo(function ChatTelemetryPane({
               <Bar label="Output" value={outputTokens} max={Math.max(inputTokens, outputTokens, 1)} tone="violet" />
               <Bar label="Context Pressure" value={contextPressure} max={100} tone="amber" />
             </div>
+            {isLiveSession && (
+              // Full main-branch chat telemetry (overhead split, context savings
+              // incl. the input-compression encoder rollup, provider cache / BP3,
+              // budget split). Reads the live singletons, so only meaningful for
+              // the focused/live session; background windows keep the thin stats.
+              <div className="mt-3 border-t border-studio-border/50 pt-2" data-testid="live-context-metrics">
+                <ContextMetrics />
+              </div>
+            )}
           </section>
 
           <section className="rounded-lg border border-studio-border/70 bg-studio-bg/35 p-2.5 shadow-[0_12px_30px_rgba(0,0,0,0.16)]">
