@@ -11,6 +11,7 @@ import { AgentMessageParts } from './AgentMessageParts';
 import { AgentToolTrace } from './AgentToolTrace';
 import { AgentStreamingSegments } from './AgentStreamingSegments';
 import { syncShellToProjectPath } from '../../services/agentShellSync';
+import { ModelModeSelector } from '../ModelModeSelector';
 
 interface AgentChatSurfaceProps {
   window: AgentWindow;
@@ -51,14 +52,11 @@ function toRuntimeMessages(messages: Message[]): AgentRuntimeMessage[] {
 
 export const AgentChatSurface = memo(function AgentChatSurface({ window, showControls = false, onOpenOptions }: AgentChatSurfaceProps) {
   const runtime = useAgentRuntimeStore((s) => s.runtimesByWindow[window.windowId]);
-  const settings = useAppStore((s) => s.settings);
   const rootFolders = useAppStore((s) => s.rootFolders);
   const activeRoot = useAppStore((s) => s.activeRoot);
   const projectPath = useAppStore((s) => s.projectPath);
   const setWindowProjectPath = useAgentWindowStore((s) => s.setWindowProjectPath);
   const selectedWindowId = useAgentWindowStore((s) => s.selectedWindowByParent[window.parentSessionId]);
-  const availableModels = useAppStore((s) => s.availableModels);
-  const chatMode = useAppStore((s) => s.chatMode);
   const ensureRuntime = useAgentRuntimeStore((s) => s.ensureRuntime);
   const hydrateRuntime = useAgentRuntimeStore((s) => s.hydrateRuntime);
   const setDraft = useAgentRuntimeStore((s) => s.setDraft);
@@ -149,13 +147,6 @@ export const AgentChatSurface = memo(function AgentChatSurface({ window, showCon
   const canSend = (safeRuntime.draft.trim().length > 0 || safeRuntime.attachments.length > 0) && !safeRuntime.isGenerating;
   const streamLive = safeRuntime.isGenerating || safeRuntime.proxyActive;
   const showAttachments = window.kind === 'primary' || window.kind === 'standard';
-  const selectedModel = availableModels.find((model) => model.id === settings.selectedModel);
-  const modelLabel = selectedModel?.name ?? settings.selectedModel;
-  const workerLabel = settings.subagentModel === 'none'
-    ? 'off'
-    : settings.subagentModel
-      ? settings.subagentModel
-      : 'auto';
   const projectOptions = rootFolders.length > 0 ? rootFolders : (projectPath ? [projectPath] : []);
   const windowProjectPath = window.projectPath ?? activeRoot ?? projectPath ?? '';
 
@@ -264,41 +255,41 @@ export const AgentChatSurface = memo(function AgentChatSurface({ window, showCon
 
       <div className="shrink-0 border-t border-studio-border/70 bg-studio-bg/45 p-2">
         {showControls && (
-          <div className="mb-2 flex items-center justify-between gap-2 rounded-lg border border-studio-border/60 bg-studio-bg/60 px-2 py-1" data-testid={`agent-card-controls-${window.windowId}`}>
-            <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1 font-mono text-[9px] uppercase tracking-[0.14em] text-studio-muted">
-              <span className="text-studio-title">Controls</span>
-              <span className="truncate" title={modelLabel}>Model: {modelLabel}</span>
-              <span>Mode: {chatMode}</span>
-              <span className="truncate" title={workerLabel}>Worker: {workerLabel}</span>
-              {projectOptions.length > 0 && (
-                <label className="flex min-w-0 items-center gap-1">
-                  <span className="shrink-0">Root:</span>
-                  <select
-                    value={windowProjectPath}
-                    onChange={(event) => {
-                      const next = event.target.value || undefined;
-                      setWindowProjectPath(window.windowId, next);
-                      if (selectedWindowId === window.windowId && next) {
-                        void syncShellToProjectPath(next);
-                      }
-                    }}
-                    className="min-w-0 max-w-[140px] truncate rounded border border-studio-border/60 bg-studio-bg/80 px-1 py-0.5 text-[9px] normal-case tracking-normal text-studio-text"
-                    aria-label={`Project root for ${window.title}`}
-                  >
-                    {projectOptions.map((root) => (
-                      <option key={root} value={root}>{root.split(/[/\\]/).pop() || root}</option>
-                    ))}
-                  </select>
-                </label>
-              )}
+          <div className="mb-2 space-y-2 rounded-lg border border-studio-border/60 bg-studio-bg/60 px-2 py-1.5" data-testid={`agent-card-controls-${window.windowId}`}>
+            <ModelModeSelector menuPlacement="up" />
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1 font-mono text-[9px] uppercase tracking-[0.14em] text-studio-muted">
+                <span className="text-studio-title">Controls</span>
+                {projectOptions.length > 0 && (
+                  <label className="flex min-w-0 items-center gap-1">
+                    <span className="shrink-0">Root:</span>
+                    <select
+                      value={windowProjectPath}
+                      onChange={(event) => {
+                        const next = event.target.value || undefined;
+                        setWindowProjectPath(window.windowId, next);
+                        if (selectedWindowId === window.windowId && next) {
+                          void syncShellToProjectPath(next);
+                        }
+                      }}
+                      className="min-w-0 max-w-[140px] truncate rounded border border-studio-border/60 bg-studio-bg/80 px-1 py-0.5 text-[9px] normal-case tracking-normal text-studio-text"
+                      aria-label={`Project root for ${window.title}`}
+                    >
+                      {projectOptions.map((root) => (
+                        <option key={root} value={root}>{root.split(/[/\\]/).pop() || root}</option>
+                      ))}
+                    </select>
+                  </label>
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={onOpenOptions}
+                className="rounded border border-studio-title/40 bg-studio-title/10 px-2 py-0.5 text-[10px] uppercase tracking-wide text-studio-title hover:border-studio-title"
+              >
+                Options
+              </button>
             </div>
-            <button
-              type="button"
-              onClick={onOpenOptions}
-              className="rounded border border-studio-title/40 bg-studio-title/10 px-2 py-0.5 text-[10px] uppercase tracking-wide text-studio-title hover:border-studio-title"
-            >
-              Options
-            </button>
           </div>
         )}
         {showAttachments && (
@@ -308,8 +299,9 @@ export const AgentChatSurface = memo(function AgentChatSurface({ window, showCon
           value={safeRuntime.draft}
           onChange={(event) => setDraft(window.windowId, event.target.value)}
           onKeyDown={(event) => {
-            if (event.key === 'Enter' && (event.ctrlKey || event.metaKey) && canSend) {
-              void runWindow(window.windowId, safeRuntime.draft);
+            if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
+              event.preventDefault();
+              if (canSend) void runWindow(window.windowId, safeRuntime.draft);
             }
           }}
           placeholder={window.role ? `Send task to ${window.role} delegate...` : window.kind === 'primary' ? 'Send a parent session task...' : 'Send an independent task...'}

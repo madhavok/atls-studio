@@ -1,6 +1,6 @@
 /** @vitest-environment happy-dom */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { useAgentWindowStore } from '../../stores/agentWindowStore';
 import { useAgentRuntimeStore } from '../../stores/agentRuntimeStore';
 import { useAppStore } from '../../stores/appStore';
@@ -204,19 +204,34 @@ describe('ChatGridWorkspace', () => {
     });
   });
 
-  it('shows shared chat controls on the selected card', () => {
+  it('shows shared chat controls inline on the selected card', () => {
     render(<ChatGridWorkspace />);
 
     expect(screen.getByText('Controls')).toBeTruthy();
-    expect(screen.getByText('Model: Claude Sonnet 4.5')).toBeTruthy();
-    expect(screen.getByText('Mode: agent')).toBeTruthy();
     expect(screen.getByText('Options')).toBeTruthy();
-    expect(screen.queryByTitle('Select model')).toBeNull();
+    // Full model picker now lives inline on the window, not just in the modal.
+    expect(screen.getAllByTitle('Select model').length).toBeGreaterThanOrEqual(1);
 
     fireEvent.click(screen.getByText('Options'));
-    expect(screen.getByTestId('chat-options-modal').className).toContain('fixed');
-    expect(screen.getByTitle('Select model')).toBeTruthy();
-    expect(screen.getByTitle('Settings')).toBeTruthy();
+    const modal = screen.getByTestId('chat-options-modal');
+    expect(modal.className).toContain('fixed');
+    expect(within(modal).getByTitle('Select model')).toBeTruthy();
+    expect(within(modal).getByTitle('Settings')).toBeTruthy();
+  });
+
+  it('sends the draft on Enter and inserts a newline on Shift+Enter', async () => {
+    render(<ChatGridWorkspace />);
+
+    const textarea = screen.getByPlaceholderText('Send a parent session task...') as HTMLTextAreaElement;
+    fireEvent.change(textarea, { target: { value: 'hello world' } });
+
+    fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: true });
+    expect(streamChatMock).not.toHaveBeenCalled();
+
+    fireEvent.keyDown(textarea, { key: 'Enter' });
+    await waitFor(() => {
+      expect(streamChatMock).toHaveBeenCalledTimes(1);
+    });
   });
 
   it('renders every window across parents on the flat canvas with controls', () => {
@@ -238,8 +253,9 @@ describe('ChatGridWorkspace', () => {
     render(<ChatGridWorkspace />);
 
     fireEvent.click(screen.getByText('Options'));
-    fireEvent.click(screen.getByTitle('Select model'));
-    const searchInput = screen.getByPlaceholderText('Search models by provider...');
+    const modal = screen.getByTestId('chat-options-modal');
+    fireEvent.click(within(modal).getByTitle('Select model'));
+    const searchInput = within(modal).getByPlaceholderText('Search models by provider...');
     expect(searchInput.closest('.sticky')?.parentElement?.className).toContain('top-full');
   });
 
