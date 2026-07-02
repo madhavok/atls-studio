@@ -68,7 +68,7 @@ describe('ModelModeSelector', () => {
       await Promise.resolve();
     });
 
-    fireEvent.click(screen.getByRole('button', { name: 'V2' }));
+    fireEvent.change(screen.getByLabelText('Agent prompt surface'), { target: { value: 'v2' } });
 
     expect(useAppStore.getState().chatMode).toBe('agent');
     expect(useAppStore.getState().settings.agentPromptVersion).toBe('v2');
@@ -106,7 +106,7 @@ describe('ModelModeSelector', () => {
       await Promise.resolve();
     });
 
-    expect(screen.queryByRole('button', { name: 'XHi' })).toBeNull();
+    expect(screen.queryByRole('option', { name: 'XHi' })).toBeNull();
   });
 
   it('shows extra-high thinking for adaptive-thinking models', async () => {
@@ -124,6 +124,6 @@ describe('ModelModeSelector', () => {
       await Promise.resolve();
     });
 
-    expect(screen.getByRole('button', { name: 'XHi' })).toBeTruthy();
+    expect(screen.getByRole('option', { name: 'XHi' })).toBeTruthy();
   });
 });

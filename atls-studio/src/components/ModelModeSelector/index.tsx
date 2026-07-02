@@ -179,6 +179,46 @@ function menuPlacementClass(placement: MenuPlacement): string {
   return placement === 'down' ? 'top-full mt-1' : 'bottom-full mb-1';
 }
 
+/**
+ * Compact labeled native dropdown used for the inline generation controls
+ * (speed / thinking / entry-manifest / prompt surface). Native `<select>`
+ * keeps the controls to a single element each so they don't wrap the toolbar
+ * in narrow chat windows.
+ */
+function InlineLevelSelect<T extends string>({
+  label,
+  title,
+  ariaLabel,
+  value,
+  options,
+  onChange,
+}: {
+  label: string;
+  title: string;
+  ariaLabel: string;
+  value: T;
+  options: ReadonlyArray<{ id: T; label: string; title?: string }>;
+  onChange: (value: T) => void;
+}) {
+  return (
+    <label className="flex items-center gap-1" title={title}>
+      <span className="text-[10px] text-studio-muted">{label}</span>
+      <select
+        aria-label={ariaLabel}
+        value={value}
+        onChange={(event) => onChange(event.target.value as T)}
+        className="rounded border border-studio-border/60 bg-studio-bg/80 px-1 py-0.5 text-[10px] text-studio-text focus:outline-none focus:border-studio-accent"
+      >
+        {options.map((option) => (
+          <option key={option.id} value={option.id} title={option.title}>
+            {option.label}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
 function SubAgentModelSelector({ models, inline, menuPlacement = 'up' }: { models: ModelInfo[]; inline?: boolean; menuPlacement?: MenuPlacement }) {
   const { settings, setSettings } = useAppStore();
   const [open, setOpen] = useState(false);
@@ -809,54 +849,26 @@ export function ModelModeSelector({ autoFetchModels = true, menuPlacement = 'up'
           { id: 'high', label: 'Hi', title: 'High reasoning budget' },
           { id: 'xhigh', label: 'XHi', title: 'Extra-high reasoning budget (supported models)' },
         ] as { id: ThinkingLevel; label: string; title: string }[]).filter((level) => supportedThinkingLevels.includes(level.id));
-        const speedColor = (id: OutputSpeedLevel) =>
-          speed === id
-            ? id === 'low' ? 'bg-sky-500/80 text-white'
-              : id === 'medium' ? 'bg-emerald-500/80 text-white'
-              : 'bg-amber-500/80 text-white'
-            : 'bg-studio-surface/30 text-studio-muted hover:bg-studio-surface';
-        const thinkColor = (id: ThinkingLevel) =>
-          thinking === id
-            ? id === 'off' ? 'bg-studio-border text-studio-text'
-              : id === 'low' ? 'bg-sky-500/80 text-white'
-              : id === 'medium' ? 'bg-emerald-500/80 text-white'
-              : id === 'high' ? 'bg-violet-500/80 text-white'
-              : 'bg-fuchsia-500/80 text-white'
-            : 'bg-studio-surface/30 text-studio-muted hover:bg-studio-surface';
         return (
           <>
             <span className="text-studio-border">|</span>
-            <div className="flex items-center gap-1" title="Output speed / verbosity">
-              <span className="text-[10px] text-studio-muted">Spd</span>
-              <div className="flex rounded overflow-hidden border border-studio-border/60">
-                {speedLevels.map(l => (
-                  <button
-                    key={l.id}
-                    onClick={() => setSpeed(l.id)}
-                    title={l.title}
-                    className={`px-1.5 py-0.5 text-[9px] font-medium transition-colors ${speedColor(l.id)}`}
-                  >
-                    {l.label}
-                  </button>
-                ))}
-              </div>
-            </div>
+            <InlineLevelSelect
+              label="Spd"
+              title="Output speed / verbosity"
+              ariaLabel="Output speed"
+              value={speed}
+              options={speedLevels}
+              onChange={setSpeed}
+            />
             <span className="text-studio-border">|</span>
-            <div className="flex items-center gap-1" title="Reasoning depth / extended thinking">
-              <span className="text-[10px] text-studio-muted">Thk</span>
-              <div className="flex rounded overflow-hidden border border-studio-border/60">
-                {thinkingLevels.map(l => (
-                  <button
-                    key={l.id}
-                    onClick={() => setThinking(l.id)}
-                    title={l.title}
-                    className={`px-1.5 py-0.5 text-[9px] font-medium transition-colors ${thinkColor(l.id)}`}
-                  >
-                    {l.label}
-                  </button>
-                ))}
-              </div>
-            </div>
+            <InlineLevelSelect
+              label="Thk"
+              title="Reasoning depth / extended thinking"
+              ariaLabel="Reasoning depth"
+              value={thinking}
+              options={thinkingLevels}
+              onChange={setThinking}
+            />
           </>
         );
       })()}
@@ -881,28 +893,14 @@ export function ModelModeSelector({ autoFetchModels = true, menuPlacement = 'up'
         return (
           <>
             <span className="text-studio-border">|</span>
-            <div className="flex items-center gap-1" title="Entry manifest depth">
-              <span className="text-[10px] text-studio-muted">EM</span>
-              <div className="flex rounded overflow-hidden border border-studio-border/60">
-                {levels.map(l => (
-                  <button
-                    key={l.id}
-                    onClick={() => setDepth(l.id)}
-                    title={l.title}
-                    className={`px-1.5 py-0.5 text-[9px] font-medium transition-colors ${
-                      depth === l.id
-                        ? l.id === 'sigs' ? 'bg-emerald-500/80 text-white'
-                          : l.id === 'paths' ? 'bg-amber-500/80 text-white'
-                          : l.id === 'paths_sigs' ? 'bg-sky-500/80 text-white'
-                          : 'bg-studio-border text-studio-text'
-                        : 'bg-studio-surface/30 text-studio-muted hover:bg-studio-surface'
-                    }`}
-                  >
-                    {l.label}
-                  </button>
-                ))}
-              </div>
-            </div>
+            <InlineLevelSelect
+              label="EM"
+              title="Entry manifest depth"
+              ariaLabel="Entry manifest depth"
+              value={depth}
+              options={levels}
+              onChange={setDepth}
+            />
           </>
         );
       })()}
@@ -1310,30 +1308,20 @@ export function ModelModeSelector({ autoFetchModels = true, menuPlacement = 'up'
       {chatMode === 'agent' && (
         <>
           <span className="text-studio-border">|</span>
-          <div className="flex rounded overflow-hidden border border-studio-border/60" title="Agent prompt surface">
-            {(['v1', 'v2'] as const).map((version) => (
-              <button
-                key={version}
-                type="button"
-                onClick={() => {
-                  useAppStore.getState().setSettings({ agentPromptVersion: version });
-                  resetStaticPromptCache();
-                }}
-                className={`px-1.5 py-0.5 text-[9px] font-medium transition-colors ${
-                  agentPromptVersion === version
-                    ? version === 'v2'
-                      ? 'bg-violet-500/80 text-white'
-                      : 'bg-studio-border text-studio-text'
-                    : 'bg-studio-surface/30 text-studio-muted hover:bg-studio-surface'
-                }`}
-                title={version === 'v2'
-                  ? 'Agent v2 compact all-model prompt surface'
-                  : 'Agent v1 stable prompt surface'}
-              >
-                {version.toUpperCase()}
-              </button>
-            ))}
-          </div>
+          <InlineLevelSelect<'v1' | 'v2'>
+            label="Prompt"
+            title="Agent prompt surface"
+            ariaLabel="Agent prompt surface"
+            value={agentPromptVersion}
+            options={[
+              { id: 'v1', label: 'V1', title: 'Agent v1 stable prompt surface' },
+              { id: 'v2', label: 'V2', title: 'Agent v2 compact all-model prompt surface' },
+            ]}
+            onChange={(version) => {
+              useAppStore.getState().setSettings({ agentPromptVersion: version });
+              resetStaticPromptCache();
+            }}
+          />
         </>
       )}
 
